@@ -1,0 +1,1348 @@
+use crate::ast::{
+    AsyncFunctionDecl, BinaryOp, BuiltinFunction, ErrorTypeDecl, ExportDecl, Expr, Function,
+    FunctionDecl, ImportDecl, LetDecl, MatchArm, Pattern, Program, PromiseType, Statement, UnaryOp,
+    Value,
+};
+use crate::async_runtime::AsyncRuntime;
+use crate::builtin::BuiltinFunctions;
+use crate::internal::{check_memory_pressure, LazyConfig};
+use crate::ovm::gc::SafepointManager;
+use crate::type_checker::TypeChecker;
+use std::collections::HashMap;
+use std::sync::Arc;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum InterpreterError {
+    #[error("Undefined variable: {name}")]
+    UndefinedVariable { name: String },
+    #[error("Type error: {message}")]
+    TypeError { message: String },
+    #[error("Runtime error: {message}")]
+    RuntimeError { message: String },
+    #[error("Arity mismatch: expected {expected}, got {got}")]
+    ArityMismatch { expected: usize, got: usize },
+    #[error("Pattern match failed")]
+    PatternMatchFailed,
+}
+
+pub struct Environment {
+    variables: HashMap<String, Value>,
+    parent: Option<Box<Environment>>,
+}
+
+impl Default for Environment {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Environment {
+    pub fn new() -> Self {
+        Self {
+            variables: HashMap::new(),
+            parent: None,
+        }
+    }
+
+    pub fn with_parent(parent: Environment) -> Self {
+        Self {
+            variables: HashMap::new(),
+            parent: Some(Box::new(parent)),
+        }
+    }
+
+    pub fn define(&mut self, name: String, value: Value) {
+        self.variables.insert(name, value);
+    }
+
+    pub fn get(&self, name: &str) -> Option<Value> {
+        if let Some(value) = self.variables.get(name) {
+            Some(value.clone())
+        } else if let Some(parent) = &self.parent {
+            parent.get(name)
+        } else {
+            None
+        }
+    }
+
+    pub fn set(&mut self, name: &str, value: Value) -> Result<(), InterpreterError> {
+        if self.variables.contains_key(name) {
+            self.variables.insert(name.to_string(), value);
+            Ok(())
+        } else if let Some(parent) = &mut self.parent {
+            parent.set(name, value)
+        } else {
+            Err(InterpreterError::UndefinedVariable {
+                name: name.to_string(),
+            })
+        }
+    }
+}
+
+/// Olang interpreter with optional type checking
+pub struct Interpreter {
+    environment: Environment,
+    builtin_functions: BuiltinFunctions,
+    type_checker: Option<TypeChecker>,
+    async_runtime: AsyncRuntime,
+    lazy_config: LazyConfig,
+    safepoint_manager: Arc<SafepointManager>,
+}
+
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Interpreter {
+    pub fn new() -> Self {
+        let mut interpreter = Self {
+            environment: Environment::new(),
+            builtin_functions: BuiltinFunctions::new(),
+            type_checker: None,
+            async_runtime: AsyncRuntime::new(),
+            lazy_config: LazyConfig::default(),
+            safepoint_manager: Arc::new(SafepointManager::new()),
+        };
+
+        // Register built-in functions
+        interpreter.register_builtins();
+        interpreter
+    }
+
+    /// Create a new interpreter with type checking enabled
+    pub fn with_type_checking() -> Self {
+        let mut interpreter = Self::new();
+        interpreter.type_checker = Some(TypeChecker::new());
+        interpreter
+    }
+
+    /// Enable or disable type checking
+    pub fn set_type_checking(&mut self, enabled: bool) {
+        if enabled {
+            self.type_checker = Some(TypeChecker::new());
+        } else {
+            self.type_checker = None;
+        }
+    }
+
+    /// Register built-in functions in the environment
+    fn register_builtins(&mut self) {
+        for (name, func) in self.builtin_functions.get_functions() {
+            self.environment
+                .define(name.clone(), Value::Builtin(func.clone()));
+        }
+
+        // Register stdlib modules
+        let stdlib = crate::stdlib::get_stdlib();
+        for (module_name, module_value) in stdlib {
+            self.environment.define(module_name, module_value);
+        }
+    }
+
+    /// Evaluate a program
+    pub fn eval_program(&mut self, program: Program) -> Result<Value, InterpreterError> {
+        // Optional type checking
+        if let Some(ref mut type_checker) = self.type_checker {
+            if let Err(type_errors) = type_checker.check_program(&program) {
+                // For now, just print type errors and continue
+                for error in type_errors {
+                    eprintln!("Type Error: {:?}", error);
+                }
+            }
+        }
+
+        let mut last_value = Value::Unit;
+        for statement in program.statements {
+            last_value = self.eval_statement(statement)?;
+        }
+        Ok(last_value)
+    }
+
+    pub fn eval_statement(&mut self, statement: Statement) -> Result<Value, InterpreterError> {
+        // Safepoint poll for GC coordination
+        self.safepoint_poll()?;
+        
+        match statement {
+            Statement::Expression(expr) => self.eval_expr(expr),
+            Statement::LetDecl(let_decl) => self.eval_let_decl(let_decl),
+            Statement::FunctionDecl(func_decl) => self.eval_function_decl(func_decl),
+            Statement::AsyncFunctionDecl(async_func_decl) => {
+                self.eval_async_function_decl(async_func_decl)
+            }
+            Statement::TypeDecl(type_decl) => self.eval_type_decl(type_decl),
+            Statement::ImportDecl(import_decl) => self.eval_import_decl(import_decl),
+            Statement::ExportDecl(export_decl) => self.eval_export_decl(export_decl),
+            Statement::ErrorTypeDecl(error_type_decl) => self.eval_error_type_decl(error_type_decl),
+        }
+    }
+
+    fn eval_error_type_decl(
+        &mut self,
+        _error_type_decl: ErrorTypeDecl,
+    ) -> Result<Value, InterpreterError> {
+        // For now, error type declarations don't produce runtime values
+        // In a full implementation, we'd store error type information for later use
+        Ok(Value::Unit)
+    }
+
+    fn eval_let_decl(&mut self, let_decl: LetDecl) -> Result<Value, InterpreterError> {
+        let value = if let Some(expr) = let_decl.value {
+            self.eval_expr(expr)?
+        } else {
+            Value::Unit
+        };
+
+        self.environment.define(let_decl.name, value.clone());
+        Ok(value)
+    }
+
+    fn eval_function_decl(&mut self, func_decl: FunctionDecl) -> Result<Value, InterpreterError> {
+        let closure = self.environment.variables.clone();
+        let function = Function {
+            name: Some(func_decl.name.clone()),
+            parameters: func_decl.parameters,
+            body: func_decl.body,
+            closure,
+        };
+
+        let function_value = Value::Function(function);
+
+        // Define the function in the current environment so it can be called recursively
+        self.environment
+            .define(func_decl.name, function_value.clone());
+
+        Ok(function_value)
+    }
+
+    fn eval_expr(&mut self, expr: Expr) -> Result<Value, InterpreterError> {
+        match expr {
+            Expr::Integer(n) => Ok(Value::Integer(n)),
+            Expr::Float(x) => Ok(Value::Float(x)),
+            Expr::String(s) => Ok(Value::String(std::sync::Arc::new((*s).clone()))),
+            Expr::Boolean(b) => Ok(Value::Boolean(b)),
+            Expr::List(items_rc) => {
+                let mut values = Vec::new();
+                for item in items_rc.iter() {
+                    values.push(self.eval_expr(item.clone())?);
+                }
+                Ok(Value::List(std::sync::Arc::from(values)))
+            }
+            Expr::Tuple(items_rc) => {
+                let mut values = Vec::new();
+                for item in items_rc.iter() {
+                    values.push(self.eval_expr(item.clone())?);
+                }
+                Ok(Value::Tuple(std::sync::Arc::new(values)))
+            }
+            Expr::Identifier(name) => self
+                .environment
+                .get(&name)
+                .ok_or(InterpreterError::UndefinedVariable { name }),
+            Expr::Call { callee, arguments } => {
+                let callee_value = self.eval_expr(*callee)?;
+                let mut arg_values = Vec::new();
+
+                for arg in arguments {
+                    arg_values.push(self.eval_expr(arg)?);
+                }
+
+                self.call_function(callee_value, arg_values)
+            }
+            Expr::Lambda {
+                parameters, body, ..
+            } => {
+                // Capture all accessible variables from the environment chain
+                let closure = self.collect_all_accessible_variables();
+                Ok(Value::Function(Function {
+                    name: None,
+                    parameters: parameters.clone(),
+                    body: *body,
+                    closure,
+                }))
+            }
+            Expr::Pipeline { left, right } => {
+                let left_value = self.eval_expr(*left)?;
+                match *right {
+                    Expr::Call { callee, arguments } => {
+                        let mut new_args = vec![left_value];
+                        for arg in arguments {
+                            new_args.push(self.eval_expr(arg)?);
+                        }
+                        let callee_value = self.eval_expr(*callee)?;
+                        self.call_function(callee_value, new_args)
+                    }
+                    Expr::Identifier(name) => {
+                        let function_value = self.environment.get(&name).ok_or_else(|| {
+                            InterpreterError::UndefinedVariable { name: name.clone() }
+                        })?;
+                        self.call_function(function_value, vec![left_value])
+                    }
+                    _ => Err(InterpreterError::RuntimeError {
+                        message:
+                            "Pipeline right side must be a function call or function identifier"
+                                .to_string(),
+                    }),
+                }
+            }
+            Expr::Match { value, arms } => {
+                let value = self.eval_expr(*value)?;
+                self.eval_match(value, arms)
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let condition = self.eval_expr(*condition)?;
+                let condition_bool = self.to_boolean(&condition)?;
+
+                if condition_bool {
+                    self.eval_expr(*then_branch)
+                } else if let Some(else_expr) = else_branch {
+                    self.eval_expr(*else_expr)
+                } else {
+                    Ok(Value::Unit)
+                }
+            }
+            Expr::Block(statements) => {
+                let mut result = Value::Unit;
+                for statement in statements {
+                    result = self.eval_statement(statement)?;
+                }
+                Ok(result)
+            }
+            Expr::BinaryOp { left, op, right } => {
+                let left = self.eval_expr(*left)?;
+                let right = self.eval_expr(*right)?;
+                self.eval_binary_op(left, op, right)
+            }
+            Expr::UnaryOp { op, operand } => {
+                let operand = self.eval_expr(*operand)?;
+                self.eval_unary_op(op, operand)
+            }
+            Expr::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let start_val = self.eval_expr(*start)?;
+                let end_val = self.eval_expr(*end)?;
+                self.eval_range(start_val, end_val, inclusive)
+            }
+            Expr::StructLiteral(struct_literal) => self.eval_struct_literal(struct_literal),
+            Expr::FieldAccess { object, field } => self.eval_field_access(object, field),
+            Expr::ResultOk(expr) => {
+                let value = self.eval_expr(*expr)?;
+                Ok(Value::Ok(Box::new(value)))
+            }
+            Expr::ResultErr(expr) => {
+                let value = self.eval_expr(*expr)?;
+                Ok(Value::Err(Box::new(value)))
+            }
+            Expr::Try(expr) => {
+                let value = self.eval_expr(*expr)?;
+                match value {
+                    Value::Ok(inner) => Ok(*inner),
+                    Value::Err(err) => Err(InterpreterError::RuntimeError {
+                        message: format!("Tried to unwrap error: {:?}", err),
+                    }),
+                    _ => Err(InterpreterError::TypeError {
+                        message: "Try operator can only be used on Result values".to_string(),
+                    }),
+                }
+            }
+            Expr::TryCatch {
+                try_block,
+                error_var,
+                catch_block,
+            } => {
+                let try_result = self.eval_expr(*try_block)?;
+                match try_result {
+                    Value::Ok(inner) => Ok(*inner),
+                    Value::Err(err) => {
+                        // Create new scope for catch block with error variable
+                        let parent = self.environment.clone();
+                        self.environment = Environment::with_parent(parent);
+                        self.environment.define(error_var, *err);
+
+                        let result = self.eval_expr(*catch_block);
+
+                        // Restore parent environment
+                        if let Some(parent) = self.environment.parent.take() {
+                            self.environment = *parent;
+                        }
+
+                        result
+                    }
+                    _ => Err(InterpreterError::TypeError {
+                        message: "Try-catch can only be used on Result values".to_string(),
+                    }),
+                }
+            }
+            Expr::ForLoop {
+                variable,
+                iterable,
+                body,
+            } => self.eval_for_loop(&variable, &iterable, &body),
+            Expr::WhileLoop { condition, body } => self.eval_while_loop(&condition, &body),
+            Expr::Loop { body } => self.eval_loop(&body),
+            Expr::Break => Err(InterpreterError::RuntimeError {
+                message: "break".to_string(),
+            }),
+            Expr::Continue => Err(InterpreterError::RuntimeError {
+                message: "continue".to_string(),
+            }),
+            Expr::Assignment { name, value } => {
+                let val = self.eval_expr(*value)?;
+                self.environment.set(&name, val.clone()).or_else(|_| {
+                    // If variable not defined, define it
+                    self.environment.define(name.clone(), val.clone());
+                    Ok(())
+                })?;
+                Ok(val)
+            }
+            Expr::Index { object, index } => {
+                let object_value = self.eval_expr(*object)?;
+                let index_value = self.eval_expr(*index)?;
+
+                match (object_value, index_value) {
+                    (Value::List(list), Value::Integer(idx)) => {
+                        let index = if idx < 0 {
+                            // Negative indexing from end
+                            (list.len() as i64 + idx) as usize
+                        } else {
+                            idx as usize
+                        };
+
+                        if index < list.len() {
+                            Ok(list[index].clone())
+                        } else {
+                            Err(InterpreterError::RuntimeError {
+                                message: format!(
+                                    "Index {} out of bounds for list of length {}",
+                                    idx,
+                                    list.len()
+                                ),
+                            })
+                        }
+                    }
+                    (Value::Tuple(tuple), Value::Integer(idx)) => {
+                        let index = if idx < 0 {
+                            // Negative indexing from end
+                            (tuple.len() as i64 + idx) as usize
+                        } else {
+                            idx as usize
+                        };
+
+                        if index < tuple.len() {
+                            Ok(tuple[index].clone())
+                        } else {
+                            Err(InterpreterError::RuntimeError {
+                                message: format!(
+                                    "Index {} out of bounds for tuple of length {}",
+                                    idx,
+                                    tuple.len()
+                                ),
+                            })
+                        }
+                    }
+                    (Value::String(string), Value::Integer(idx)) => {
+                        let chars: Vec<char> = string.chars().collect();
+                        let index = if idx < 0 {
+                            // Negative indexing from end
+                            (chars.len() as i64 + idx) as usize
+                        } else {
+                            idx as usize
+                        };
+
+                        if index < chars.len() {
+                            Ok(Value::String(chars[index].to_string().into()))
+                        } else {
+                            Err(InterpreterError::RuntimeError {
+                                message: format!(
+                                    "Index {} out of bounds for string of length {}",
+                                    idx,
+                                    chars.len()
+                                ),
+                            })
+                        }
+                    }
+                    (_, Value::Integer(_)) => Err(InterpreterError::TypeError {
+                        message: "Only lists, tuples, and strings can be indexed".to_string(),
+                    }),
+                    (_, _) => Err(InterpreterError::TypeError {
+                        message: "Index must be an integer".to_string(),
+                    }),
+                }
+            }
+            // Async expressions - placeholder implementations for now
+            Expr::Async {
+                parameters,
+                body,
+                return_type,
+            } => {
+                // Create async function like regular function but mark as async
+                let closure = self.environment.variables.clone();
+                Ok(Value::Function(Function {
+                    name: None,
+                    parameters,
+                    body: *body,
+                    closure,
+                }))
+            }
+            Expr::Await { expression } => {
+                // For now, just evaluate the expression directly
+                // In full implementation, this would handle promise resolution
+                let value = self.eval_expr(*expression)?;
+                match value {
+                    Value::Promise {
+                        state: crate::ast::PromiseState::Resolved,
+                        value: Some(resolved_value),
+                        ..
+                    } => Ok(*resolved_value),
+                    Value::Promise {
+                        state: crate::ast::PromiseState::Rejected,
+                        error: Some(error_value),
+                        ..
+                    } => Err(InterpreterError::RuntimeError {
+                        message: format!("Promise rejected: {:?}", error_value),
+                    }),
+                    Value::Promise {
+                        state: crate::ast::PromiseState::Pending,
+                        ..
+                    } => Err(InterpreterError::RuntimeError {
+                        message: "Cannot await pending promise".to_string(),
+                    }),
+                    _ => Ok(value), // If not a promise, return as-is
+                }
+            }
+            Expr::Promise {
+                promise_type,
+                value,
+                delay,
+            } => {
+                let evaluated_value = self.eval_expr(*value)?;
+                match promise_type {
+                    PromiseType::Resolve => Ok(self.async_runtime.promise_resolve(evaluated_value)),
+                    PromiseType::Reject => Ok(self.async_runtime.promise_reject(evaluated_value)),
+                    PromiseType::Delay => {
+                        // For now, just resolve immediately
+                        // In full implementation, would use delay
+                        Ok(self.async_runtime.promise_resolve(evaluated_value))
+                    }
+                }
+            }
+            Expr::All(expressions) => {
+                // Evaluate all expressions and return as list
+                let mut results = Vec::new();
+                for expr in expressions {
+                    results.push(self.eval_expr(expr)?);
+                }
+                Ok(Value::List(std::sync::Arc::from(results)))
+            }
+            Expr::Race(expressions) => {
+                // For now, just return the first expression result
+                // In full implementation, would race promises
+                if let Some(first_expr) = expressions.into_iter().next() {
+                    self.eval_expr(first_expr)
+                } else {
+                    Err(InterpreterError::RuntimeError {
+                        message: "Race expression requires at least one argument".to_string(),
+                    })
+                }
+            }
+            Expr::Spawn(expression) => {
+                // For now, just evaluate the expression
+                // In full implementation, would spawn async task
+                self.eval_expr(*expression)
+            }
+        }
+    }
+
+    fn eval_async_function_decl(
+        &mut self,
+        async_func_decl: AsyncFunctionDecl,
+    ) -> Result<Value, InterpreterError> {
+        // For now, treat async functions like regular functions
+        // In full implementation, would mark as async
+        let closure = self.environment.variables.clone();
+        let function = Function {
+            name: Some(async_func_decl.name.clone()),
+            parameters: async_func_decl.parameters,
+            body: async_func_decl.body,
+            closure,
+        };
+
+        let function_value = Value::Function(function);
+
+        // Define the function in the current environment so it can be called recursively
+        self.environment
+            .define(async_func_decl.name, function_value.clone());
+
+        Ok(function_value)
+    }
+
+    pub fn call_function(
+        &mut self,
+        callee: Value,
+        arguments: Vec<Value>,
+    ) -> Result<Value, InterpreterError> {
+        match callee {
+            Value::Function(func) => {
+                if func.parameters.len() != arguments.len() {
+                    return Err(InterpreterError::ArityMismatch {
+                        expected: func.parameters.len(),
+                        got: arguments.len(),
+                    });
+                }
+
+                // Create new environment with closure
+                let mut new_env = Environment::new();
+                for (k, v) in func.closure.iter() {
+                    new_env.define(k.clone(), v.clone());
+                }
+
+                // If this is a named function, add it to its own scope for recursion
+                if let Some(name) = &func.name {
+                    new_env.define(name.clone(), Value::Function(func.clone()));
+                }
+
+                // Add parameters to environment
+                for (param, arg) in func.parameters.iter().zip(arguments.iter()) {
+                    new_env.define(param.name.clone(), arg.clone());
+                }
+
+                let mut new_interpreter = Interpreter {
+                    environment: new_env,
+                    builtin_functions: self.builtin_functions.clone(),
+                    type_checker: self.type_checker.clone(),
+                    async_runtime: AsyncRuntime::new(),
+                    lazy_config: self.lazy_config.clone(),
+                    safepoint_manager: self.safepoint_manager.clone(),
+                };
+                new_interpreter.eval_expr(func.body)
+            }
+            Value::Builtin(builtin) => {
+                let name = builtin.name.clone();
+                let builtin_functions = self.builtin_functions.clone();
+                BuiltinFunctions::call(&builtin_functions, &name, arguments, self)
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: "Cannot call non-function value".to_string(),
+            }),
+        }
+    }
+
+    /// Create a thread-safe clone for parallel operations
+    pub fn thread_safe_clone(&self) -> Self {
+        Self {
+            environment: self.environment.clone(),
+            builtin_functions: self.builtin_functions.clone(),
+            type_checker: self.type_checker.clone(),
+            async_runtime: AsyncRuntime::new(),
+            lazy_config: self.lazy_config.clone(),
+            safepoint_manager: self.safepoint_manager.clone(),
+        }
+    }
+
+    /// Call function in a thread-safe manner (immutable)
+    pub fn call_function_safe(
+        &self,
+        function: Value,
+        args: Vec<Value>,
+    ) -> Result<Value, InterpreterError> {
+        // Create a local copy of interpreter state for this thread
+        let mut local_interpreter = self.thread_safe_clone();
+        local_interpreter.call_function(function, args)
+    }
+
+    fn eval_match(&mut self, value: Value, arms: Vec<MatchArm>) -> Result<Value, InterpreterError> {
+        for arm in arms {
+            let mut bindings = HashMap::new();
+            if self.pattern_matches_bind(&arm.pattern, &value, &mut bindings)? {
+                let parent = self.environment.clone();
+                self.environment = Environment::with_parent(parent);
+                for (k, v) in bindings {
+                    self.environment.define(k, v);
+                }
+                let result = self.eval_expr(arm.expression);
+                if let Some(parent) = self.environment.parent.take() {
+                    self.environment = *parent;
+                }
+                return result;
+            }
+        }
+        Err(InterpreterError::PatternMatchFailed)
+    }
+
+    fn pattern_matches_bind(
+        &self,
+        pattern: &Pattern,
+        value: &Value,
+        bindings: &mut HashMap<String, Value>,
+    ) -> Result<bool, InterpreterError> {
+        match (pattern, value) {
+            (Pattern::Literal(lit), val) => Ok(lit == val),
+            (Pattern::Identifier(name), val) => {
+                bindings.insert(name.clone(), val.clone());
+                Ok(true)
+            }
+            (Pattern::Wildcard, _) => Ok(true),
+            (Pattern::List(patterns), Value::List(values)) => {
+                if patterns.len() != values.len() {
+                    return Ok(false);
+                }
+                for (p, v) in patterns.iter().zip(values.iter()) {
+                    if !self.pattern_matches_bind(p, v, bindings)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            (Pattern::Tuple(patterns), Value::Tuple(values)) => {
+                if patterns.len() != values.len() {
+                    return Ok(false);
+                }
+                for (p, v) in patterns.iter().zip(values.iter()) {
+                    if !self.pattern_matches_bind(p, v, bindings)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            // Result pattern matching
+            (Pattern::Ok(inner_pattern), Value::Ok(inner_value)) => {
+                self.pattern_matches_bind(inner_pattern, inner_value, bindings)
+            }
+            (Pattern::Err(inner_pattern), Value::Err(inner_value)) => {
+                self.pattern_matches_bind(inner_pattern, inner_value, bindings)
+            }
+            (Pattern::Ok(_), _) => Ok(false), // Ok pattern doesn't match non-Ok values
+            (Pattern::Err(_), _) => Ok(false), // Err pattern doesn't match non-Err values
+            // Enum variant patterns
+            (
+                Pattern::EnumVariant {
+                    variant_name: _,
+                    patterns,
+                },
+                Value::Tuple(values),
+            ) => {
+                // For now, treat enum variants as tuples
+                // TODO: Implement proper enum value type
+                if patterns.len() != values.len() {
+                    return Ok(false);
+                }
+                for (p, v) in patterns.iter().zip(values.iter()) {
+                    if !self.pattern_matches_bind(p, v, bindings)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            // Struct patterns
+            (
+                Pattern::Struct {
+                    type_name: _,
+                    field_patterns,
+                },
+                Value::Struct { fields, .. },
+            ) => {
+                for (field_name, pattern) in field_patterns {
+                    if let Some(field_value) = fields.get(field_name) {
+                        if !self.pattern_matches_bind(pattern, field_value, bindings)? {
+                            return Ok(false);
+                        }
+                    } else {
+                        return Ok(false); // Field not found
+                    }
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn eval_binary_op(
+        &self,
+        left: Value,
+        op: BinaryOp,
+        right: Value,
+    ) -> Result<Value, InterpreterError> {
+        match (left, op, right) {
+            (Value::Integer(a), BinaryOp::Add, Value::Integer(b)) => Ok(Value::Integer(a + b)),
+            (Value::Float(a), BinaryOp::Add, Value::Float(b)) => Ok(Value::Float(a + b)),
+            (Value::Integer(a), BinaryOp::Add, Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
+            (Value::Float(a), BinaryOp::Add, Value::Integer(b)) => Ok(Value::Float(a + b as f64)),
+            (Value::Integer(a), BinaryOp::Subtract, Value::Integer(b)) => Ok(Value::Integer(a - b)),
+            (Value::Float(a), BinaryOp::Subtract, Value::Float(b)) => Ok(Value::Float(a - b)),
+            (Value::Integer(a), BinaryOp::Subtract, Value::Float(b)) => {
+                Ok(Value::Float(a as f64 - b))
+            }
+            (Value::Float(a), BinaryOp::Subtract, Value::Integer(b)) => {
+                Ok(Value::Float(a - b as f64))
+            }
+            (Value::Integer(a), BinaryOp::Multiply, Value::Integer(b)) => Ok(Value::Integer(a * b)),
+            (Value::Float(a), BinaryOp::Multiply, Value::Float(b)) => Ok(Value::Float(a * b)),
+            (Value::Integer(a), BinaryOp::Multiply, Value::Float(b)) => {
+                Ok(Value::Float(a as f64 * b))
+            }
+            (Value::Float(a), BinaryOp::Multiply, Value::Integer(b)) => {
+                Ok(Value::Float(a * b as f64))
+            }
+            (Value::Integer(a), BinaryOp::Divide, Value::Integer(b)) => {
+                if b == 0 {
+                    Err(InterpreterError::RuntimeError {
+                        message: "Division by zero".to_string(),
+                    })
+                } else {
+                    Ok(Value::Integer(a / b))
+                }
+            }
+            (Value::Float(a), BinaryOp::Divide, Value::Float(b)) => {
+                if b == 0.0 {
+                    Err(InterpreterError::RuntimeError {
+                        message: "Division by zero".to_string(),
+                    })
+                } else {
+                    Ok(Value::Float(a / b))
+                }
+            }
+            (Value::Integer(a), BinaryOp::Divide, Value::Float(b)) => {
+                if b == 0.0 {
+                    Err(InterpreterError::RuntimeError {
+                        message: "Division by zero".to_string(),
+                    })
+                } else {
+                    Ok(Value::Float(a as f64 / b))
+                }
+            }
+            (Value::Float(a), BinaryOp::Divide, Value::Integer(b)) => {
+                if b == 0 {
+                    Err(InterpreterError::RuntimeError {
+                        message: "Division by zero".to_string(),
+                    })
+                } else {
+                    Ok(Value::Float(a / b as f64))
+                }
+            }
+            (Value::Integer(a), BinaryOp::Modulo, Value::Integer(b)) => {
+                if b == 0 {
+                    Err(InterpreterError::RuntimeError {
+                        message: "Modulo by zero".to_string(),
+                    })
+                } else {
+                    Ok(Value::Integer(a % b))
+                }
+            }
+            (Value::Float(a), BinaryOp::Modulo, Value::Float(b)) => {
+                if b == 0.0 {
+                    Err(InterpreterError::RuntimeError {
+                        message: "Modulo by zero".to_string(),
+                    })
+                } else {
+                    Ok(Value::Float(a % b))
+                }
+            }
+            (Value::Integer(a), BinaryOp::Modulo, Value::Float(b)) => {
+                if b == 0.0 {
+                    Err(InterpreterError::RuntimeError {
+                        message: "Modulo by zero".to_string(),
+                    })
+                } else {
+                    Ok(Value::Float(a as f64 % b))
+                }
+            }
+            (Value::Float(a), BinaryOp::Modulo, Value::Integer(b)) => {
+                if b == 0 {
+                    Err(InterpreterError::RuntimeError {
+                        message: "Modulo by zero".to_string(),
+                    })
+                } else {
+                    Ok(Value::Float(a % b as f64))
+                }
+            }
+            (Value::Integer(a), BinaryOp::Equal, Value::Integer(b)) => Ok(Value::Boolean(a == b)),
+            (Value::Float(a), BinaryOp::Equal, Value::Float(b)) => Ok(Value::Boolean(a == b)),
+            (Value::String(a), BinaryOp::Equal, Value::String(b)) => Ok(Value::Boolean(*a == *b)),
+            (Value::Boolean(a), BinaryOp::Equal, Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
+            (Value::Integer(a), BinaryOp::NotEqual, Value::Integer(b)) => {
+                Ok(Value::Boolean(a != b))
+            }
+            (Value::Float(a), BinaryOp::NotEqual, Value::Float(b)) => Ok(Value::Boolean(a != b)),
+            (Value::String(a), BinaryOp::NotEqual, Value::String(b)) => {
+                Ok(Value::Boolean(*a != *b))
+            }
+            (Value::Boolean(a), BinaryOp::NotEqual, Value::Boolean(b)) => {
+                Ok(Value::Boolean(a != b))
+            }
+            (Value::Integer(a), BinaryOp::Equal, Value::Float(b)) => {
+                Ok(Value::Boolean((a as f64) == b))
+            }
+            (Value::Float(a), BinaryOp::Equal, Value::Integer(b)) => {
+                Ok(Value::Boolean(a == b as f64))
+            }
+            (Value::Integer(a), BinaryOp::NotEqual, Value::Float(b)) => {
+                Ok(Value::Boolean((a as f64) != b))
+            }
+            (Value::Float(a), BinaryOp::NotEqual, Value::Integer(b)) => {
+                Ok(Value::Boolean(a != b as f64))
+            }
+            (Value::Integer(a), BinaryOp::LessThan, Value::Integer(b)) => Ok(Value::Boolean(a < b)),
+            (Value::Float(a), BinaryOp::LessThan, Value::Float(b)) => Ok(Value::Boolean(a < b)),
+            (Value::Integer(a), BinaryOp::LessThan, Value::Float(b)) => {
+                Ok(Value::Boolean((a as f64) < b))
+            }
+            (Value::Float(a), BinaryOp::LessThan, Value::Integer(b)) => {
+                Ok(Value::Boolean(a < b as f64))
+            }
+            (Value::Integer(a), BinaryOp::LessThanEqual, Value::Integer(b)) => {
+                Ok(Value::Boolean(a <= b))
+            }
+            (Value::Float(a), BinaryOp::LessThanEqual, Value::Float(b)) => {
+                Ok(Value::Boolean(a <= b))
+            }
+            (Value::Integer(a), BinaryOp::LessThanEqual, Value::Float(b)) => {
+                Ok(Value::Boolean((a as f64) <= b))
+            }
+            (Value::Float(a), BinaryOp::LessThanEqual, Value::Integer(b)) => {
+                Ok(Value::Boolean(a <= b as f64))
+            }
+            (Value::Integer(a), BinaryOp::GreaterThan, Value::Integer(b)) => {
+                Ok(Value::Boolean(a > b))
+            }
+            (Value::Float(a), BinaryOp::GreaterThan, Value::Float(b)) => Ok(Value::Boolean(a > b)),
+            (Value::Integer(a), BinaryOp::GreaterThan, Value::Float(b)) => {
+                Ok(Value::Boolean((a as f64) > b))
+            }
+            (Value::Float(a), BinaryOp::GreaterThan, Value::Integer(b)) => {
+                Ok(Value::Boolean(a > b as f64))
+            }
+            (Value::Integer(a), BinaryOp::GreaterThanEqual, Value::Integer(b)) => {
+                Ok(Value::Boolean(a >= b))
+            }
+            (Value::Float(a), BinaryOp::GreaterThanEqual, Value::Float(b)) => {
+                Ok(Value::Boolean(a >= b))
+            }
+            (Value::Integer(a), BinaryOp::GreaterThanEqual, Value::Float(b)) => {
+                Ok(Value::Boolean((a as f64) >= b))
+            }
+            (Value::Float(a), BinaryOp::GreaterThanEqual, Value::Integer(b)) => {
+                Ok(Value::Boolean(a >= b as f64))
+            }
+            (Value::Boolean(a), BinaryOp::And, Value::Boolean(b)) => Ok(Value::Boolean(a && b)),
+            (Value::Boolean(a), BinaryOp::Or, Value::Boolean(b)) => Ok(Value::Boolean(a || b)),
+            (Value::String(a), BinaryOp::Add, Value::String(b)) => {
+                let mut s = (*a).clone();
+                s.push_str(&b);
+                Ok(Value::String(std::sync::Arc::new(s)))
+            }
+            (Value::String(a), BinaryOp::Add, Value::Integer(b)) => {
+                let mut s = (*a).clone();
+                s.push_str(&b.to_string());
+                Ok(Value::String(std::sync::Arc::new(s)))
+            }
+            (Value::Integer(a), BinaryOp::Add, Value::String(b)) => {
+                let mut s = a.to_string();
+                s.push_str(&b);
+                Ok(Value::String(std::sync::Arc::new(s)))
+            }
+            (Value::String(a), BinaryOp::Add, Value::Float(b)) => {
+                let mut s = (*a).clone();
+                s.push_str(&b.to_string());
+                Ok(Value::String(std::sync::Arc::new(s)))
+            }
+            (Value::Float(a), BinaryOp::Add, Value::String(b)) => {
+                let mut s = a.to_string();
+                s.push_str(&b);
+                Ok(Value::String(std::sync::Arc::new(s)))
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: "Invalid binary operation".to_string(),
+            }),
+        }
+    }
+
+    fn eval_unary_op(&self, op: UnaryOp, operand: Value) -> Result<Value, InterpreterError> {
+        match (op, operand) {
+            (UnaryOp::Negate, Value::Integer(n)) => Ok(Value::Integer(-n)),
+            (UnaryOp::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
+            _ => Err(InterpreterError::TypeError {
+                message: "Invalid unary operation".to_string(),
+            }),
+        }
+    }
+
+    fn to_boolean(&self, value: &Value) -> Result<bool, InterpreterError> {
+        match value {
+            Value::Boolean(b) => Ok(*b),
+            Value::Integer(n) => Ok(*n != 0),
+            Value::Float(x) => Ok(*x != 0.0),
+            Value::String(s) => Ok(!s.is_empty()),
+            Value::List(items) => Ok(!items.is_empty()),
+            Value::Tuple(items) => Ok(!items.is_empty()),
+            Value::Range { start, end, .. } => Ok(start < end), // Range is truthy if non-empty
+            Value::Unit => Ok(false),
+            _ => Ok(true),
+        }
+    }
+
+    fn eval_range(
+        &self,
+        start: Value,
+        end: Value,
+        inclusive: bool,
+    ) -> Result<Value, InterpreterError> {
+        let start_int = match start {
+            Value::Integer(n) => n,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "Range start must be an integer".to_string(),
+                })
+            }
+        };
+
+        let end_int = match end {
+            Value::Integer(n) => n,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "Range end must be an integer".to_string(),
+                })
+            }
+        };
+
+        // Return a proper Range value instead of expanding to a list
+        Ok(Value::Range {
+            start: start_int,
+            end: end_int,
+            inclusive,
+        })
+    }
+
+    fn eval_import_decl(&mut self, import_decl: ImportDecl) -> Result<Value, InterpreterError> {
+        // For now, just return a placeholder - full module system would require file loading
+        println!(
+            "Import: {} (items: {:?})",
+            import_decl.module_path, import_decl.items
+        );
+        Ok(Value::Unit)
+    }
+
+    fn eval_export_decl(&mut self, export_decl: ExportDecl) -> Result<Value, InterpreterError> {
+        // Evaluate the export value and store it
+        let value = self.eval_expr(export_decl.value)?;
+        self.environment
+            .define(export_decl.name.clone(), value.clone());
+        println!("Export: {} = {:?}", export_decl.name, value);
+        Ok(value)
+    }
+
+    fn eval_type_decl(
+        &mut self,
+        _type_decl: crate::ast::TypeDecl,
+    ) -> Result<Value, InterpreterError> {
+        // For now, type declarations don't produce runtime values
+        // In a full implementation, we'd store type information for later use
+        Ok(Value::Unit)
+    }
+
+    fn eval_struct_literal(
+        &mut self,
+        struct_literal: crate::ast::StructLiteral,
+    ) -> Result<Value, InterpreterError> {
+        let mut fields = std::collections::HashMap::new();
+
+        for field_value in struct_literal.fields {
+            let value = self.eval_expr(field_value.value)?;
+            fields.insert(field_value.name, value);
+        }
+
+        Ok(Value::Struct {
+            type_name: struct_literal.type_name,
+            fields,
+        })
+    }
+
+    fn eval_field_access(
+        &mut self,
+        object: Box<crate::ast::Expr>,
+        field: String,
+    ) -> Result<Value, InterpreterError> {
+        let object_value = self.eval_expr(*object)?;
+
+        match object_value {
+            Value::Struct { fields, type_name } => {
+                if type_name == "Module" {
+                    // Handle module function access (e.g., fs.read_file)
+                    fields
+                        .get(&field)
+                        .cloned()
+                        .ok_or_else(|| InterpreterError::TypeError {
+                            message: format!("Function '{}' not found in module", field),
+                        })
+                } else {
+                    // Handle regular struct field access
+                    fields
+                        .get(&field)
+                        .cloned()
+                        .ok_or_else(|| InterpreterError::TypeError {
+                            message: format!("Field '{}' not found", field),
+                        })
+                }
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: format!("Cannot access field '{}' on non-struct value", field),
+            }),
+        }
+    }
+
+    /// Get a reference to the current environment for REPL inspection
+    pub fn get_environment(&self) -> &Environment {
+        &self.environment
+    }
+
+    /// Get all user-defined variables (excluding built-ins)
+    pub fn get_user_variables(&self) -> HashMap<String, &Value> {
+        let mut user_vars = HashMap::new();
+        let builtin_names: std::collections::HashSet<String> = self
+            .builtin_functions
+            .get_functions()
+            .keys()
+            .cloned()
+            .collect();
+
+        for (name, value) in &self.environment.variables {
+            if !builtin_names.contains(name) {
+                user_vars.insert(name.clone(), value);
+            }
+        }
+        user_vars
+    }
+
+    /// Get all built-in functions
+    pub fn get_builtin_functions(&self) -> &HashMap<String, BuiltinFunction> {
+        self.builtin_functions.get_functions()
+    }
+
+    /// Clear user-defined variables (keep built-ins and stdlib modules)
+    pub fn clear_user_environment(&mut self) {
+        let builtin_names: std::collections::HashSet<String> = self
+            .builtin_functions
+            .get_functions()
+            .keys()
+            .cloned()
+            .collect();
+
+        // Identify stdlib modules before the retain operation
+        let stdlib_names: std::collections::HashSet<String> = self
+            .environment
+            .variables
+            .iter()
+            .filter_map(|(name, value)| {
+                if Self::is_stdlib_module_static(name, value) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        self.environment.variables.retain(|name, _| {
+            // Keep builtin functions
+            builtin_names.contains(name) ||
+            // Keep stdlib modules
+            stdlib_names.contains(name)
+        });
+    }
+
+    /// Check if a variable is a standard library module (static version)
+    fn is_stdlib_module_static(name: &str, value: &Value) -> bool {
+        // Check if it's a known stdlib module name with Module type
+        matches!(
+            name,
+            "dates"
+                | "math"
+                | "http"
+                | "fs"
+                | "random"
+                | "json"
+                | "csv"
+                | "base64"
+                | "os"
+                | "crypto"
+        ) && matches!(value, Value::Struct { type_name, .. } if type_name == "Module")
+    }
+
+    /// Check if a variable is a standard library module (instance method for REPL)
+    fn is_stdlib_module(&self, name: &str, value: &Value) -> bool {
+        Self::is_stdlib_module_static(name, value)
+    }
+
+    /// Define a variable in the current environment (for REPL use)
+    pub fn define_variable(&mut self, name: String, value: Value) {
+        self.environment.define(name, value);
+    }
+
+    /// Get the current lazy evaluation configuration
+    pub fn get_lazy_config(&self) -> &LazyConfig {
+        &self.lazy_config
+    }
+
+    /// Update the lazy evaluation configuration
+    pub fn set_lazy_config(&mut self, config: LazyConfig) {
+        self.lazy_config = config;
+    }
+
+    /// Check if memory pressure detection suggests forcing lazy values
+    pub fn should_force_evaluation(&self) -> bool {
+        check_memory_pressure(self.lazy_config.memory_threshold_mb)
+    }
+
+    /// Perform safepoint poll for GC coordination
+    /// This should be called periodically during evaluation
+    pub fn safepoint_poll(&self) -> Result<(), InterpreterError> {
+        self.safepoint_manager.safepoint_poll()
+            .map_err(|e| InterpreterError::RuntimeError { 
+                message: format!("Safepoint coordination failed: {}", e) 
+            })
+    }
+
+    /// Register this thread with the safepoint manager
+    pub fn register_thread(&self) {
+        self.safepoint_manager.register_thread();
+    }
+
+    /// Unregister this thread from the safepoint manager
+    pub fn unregister_thread(&self) {
+        self.safepoint_manager.unregister_thread();
+    }
+
+    /// Get the safepoint manager for external coordination
+    pub fn get_safepoint_manager(&self) -> Arc<SafepointManager> {
+        Arc::clone(&self.safepoint_manager)
+    }
+
+    /// Collect all accessible variables from the current environment and its parent chain
+    fn collect_all_accessible_variables(&self) -> HashMap<String, Value> {
+        let mut all_variables = HashMap::new();
+        let mut current_env = &self.environment;
+
+        // Traverse the environment chain from parent to current
+        // This ensures that current environment variables override parent ones
+        let mut env_chain = Vec::new();
+        while let Some(env) = current_env.parent.as_ref() {
+            env_chain.push(current_env);
+            current_env = env;
+        }
+        env_chain.push(current_env); // Add the root environment
+        
+        // Add variables from root to current (parents first, current last)
+        for env in env_chain.iter().rev() {
+            for (name, value) in &env.variables {
+                all_variables.insert(name.clone(), value.clone());
+            }
+        }
+
+        all_variables
+    }
+
+    fn eval_for_loop(
+        &mut self,
+        variable: &str,
+        iterable: &Expr,
+        body: &Expr,
+    ) -> Result<Value, InterpreterError> {
+        let iterable_value = self.eval_expr(iterable.clone())?;
+
+        match iterable_value {
+            Value::List(items) => {
+                let mut last_value = Value::Unit;
+                let parent_env = std::mem::replace(&mut self.environment, Environment::new());
+                self.environment.parent = Some(Box::new(parent_env));
+
+                for item in items.iter() {
+                    // Safepoint poll for GC coordination during iteration
+                    self.safepoint_poll()?;
+                    
+                    self.environment.define(variable.to_string(), item.clone());
+                    last_value = self.eval_expr(body.clone())?;
+                }
+
+                // Restore parent environment
+                if let Some(parent) = self.environment.parent.take() {
+                    self.environment = *parent;
+                }
+
+                Ok(last_value)
+            }
+            Value::Range { start, end, inclusive } => {
+                let mut last_value = Value::Unit;
+                let parent_env = std::mem::replace(&mut self.environment, Environment::new());
+                self.environment.parent = Some(Box::new(parent_env));
+
+                let range_end = if inclusive { end + 1 } else { end };
+                for i in start..range_end {
+                    // Safepoint poll for GC coordination during iteration
+                    self.safepoint_poll()?;
+                    
+                    self.environment.define(variable.to_string(), Value::Integer(i));
+                    last_value = self.eval_expr(body.clone())?;
+                }
+
+                // Restore parent environment
+                if let Some(parent) = self.environment.parent.take() {
+                    self.environment = *parent;
+                }
+
+                Ok(last_value)
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: format!("Cannot iterate over {:?}", iterable_value),
+            }),
+        }
+    }
+
+    fn eval_while_loop(
+        &mut self,
+        condition: &Expr,
+        body: &Expr,
+    ) -> Result<Value, InterpreterError> {
+        let mut last_value = Value::Unit;
+
+        loop {
+            // Safepoint poll for GC coordination at start of each iteration
+            self.safepoint_poll()?;
+            
+            let condition_value = self.eval_expr(condition.clone())?;
+            let condition_bool = self.to_boolean(&condition_value)?;
+
+            if !condition_bool {
+                break;
+            }
+
+            last_value = self.eval_expr(body.clone())?;
+        }
+
+        Ok(last_value)
+    }
+
+    fn eval_loop(&mut self, body: &Expr) -> Result<Value, InterpreterError> {
+        loop {
+            // Safepoint poll for GC coordination at start of each iteration
+            self.safepoint_poll()?;
+            
+            let _ = self.eval_expr(body.clone())?;
+        }
+    }
+}
+
+impl Clone for Environment {
+    fn clone(&self) -> Self {
+        Self {
+            variables: self.variables.clone(),
+            parent: self.parent.clone(),
+        }
+    }
+}

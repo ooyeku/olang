@@ -1,0 +1,123 @@
+// robust_demo.rap - A working demo of Olang features
+// Simplified to avoid memory issues
+
+// ---------- Basic Data Structures ----------
+type Point = struct {
+    x: Float,
+    y: Float
+}
+
+type Person = struct {
+    name: String,
+    age: Int
+}
+
+// ---------- Simple Functions ----------
+fn add_numbers(a: Int, b: Int) -> Int = a + b
+
+fn greet(name: String) -> String = "Hello, " + name + "!"
+
+fn circle_area(radius: Float) -> Float = 3.14159 * radius * radius
+
+fn distance(p1: Point, p2: Point) -> Float = {
+    let dx = p2.x - p1.x;
+    let dy = p2.y - p1.y;
+    math.sqrt(dx * dx + dy * dy)
+}
+
+// ---------- Simple Demos ----------
+fn demo_basic_math() = {
+    println("=== Basic Math ===");
+    let sum = add_numbers(5, 3);
+    println("5 + 3 =", sum);
+    
+    let area = circle_area(5.0);
+    println("Circle area (r=5):", area);
+}
+
+fn demo_data_structures() = {
+    println("\n=== Data Structures ===");
+    
+    let person = Person { name: "Alice", age: 25 };
+    println(greet(person.name));
+    println("Age:", person.age);
+    
+    let p1 = Point { x: 0.0, y: 0.0 };
+    let p2 = Point { x: 3.0, y: 4.0 };
+    println("Distance:", distance(p1, p2));
+}
+
+fn demo_control_flow() = {
+    println("\n=== Control Flow ===");
+    
+    let score = 85;
+    let grade = if score >= 90 => "A" else => {
+        if score >= 80 => "B" else => "C"
+    };
+    
+    println("Score:", score, "Grade:", grade);
+    
+    // Simple pattern matching
+    let classify = (x: Int) => {
+        match x {
+            0 => "zero",
+            1 => "one", 
+            _ => "other"
+        }
+    };
+    
+    println("0 is", classify(0));
+    println("1 is", classify(1));
+    println("5 is", classify(5));
+}
+
+fn demo_lists() = {
+    println("\n=== Lists ===");
+    
+    let numbers = [1, 2, 3, 4, 5];
+    println("Numbers:", numbers);
+    
+    let sum = 0;
+    for num in numbers {
+        sum = sum + num
+    };
+    println("Sum:", sum);
+    
+    // List indexing
+    println("First number:", numbers[0]);
+    println("Last number:", numbers[4]);
+}
+
+fn demo_stdlib() = {
+    println("\n=== Standard Library ===");
+    
+    // Math functions
+    println("sqrt(16):", math.sqrt(16.0));
+    println("abs(-5):", math.abs(-5));
+    println("max(3,7):", math.max(3, 7));
+    
+    // Random numbers (just one to avoid memory issues)
+    let rand_num = random.random();
+    println("Random number:", rand_num);
+    
+    // Current date/time
+    let today = dates.today();
+    println("Today:", today);
+}
+
+// ---------- Main Function ----------
+fn main() = {
+    println("🚀 Olang Demo - Working Features");
+    println("================================");
+    
+    demo_basic_math();
+    demo_data_structures();
+    demo_control_flow();
+    demo_lists();
+    demo_stdlib();
+    
+    println("\n✅ Demo completed!");
+    println("🎉 Olang is working great!");
+}
+
+main()

@@ -1,0 +1,28 @@
+// Simple Generics Test File
+println("=== Simple Generics Test ===");
+
+// Generic identity function
+fn identity<T>(x: T) -> T = x;
+
+// Test with different types
+let int_result = identity(42);
+let float_result = identity(3.14);
+let string_result = identity("hello");
+
+println("identity(42) =", int_result);
+println("identity(3.14) =", float_result);
+println("identity(hello) =", string_result);
+
+// Generic Box type
+type Box<T> = struct {
+    value: T
+};
+
+// Create boxes with different types
+let int_box = Box { value: 42 };
+let string_box = Box { value: "hello" };
+
+println("int_box.value =", int_box.value);
+println("string_box.value =", string_box.value);
+
+println("=== Simple Generics Test Complete ===");

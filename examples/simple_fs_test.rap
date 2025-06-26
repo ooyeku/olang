@@ -1,0 +1,34 @@
+// Simple filesystem test that avoids if statements
+println("=== Simple Filesystem Test ===")
+
+// Test writing a file
+println("Writing to test file...")
+let write_result = fs.write_file("test.txt", "Hello from Olang!\n")
+println("Write result:")
+println(write_result)
+
+// Test reading the file back
+println("Reading from test file...")
+let read_result = fs.read_file("test.txt")
+println("Read result:")
+println(read_result)
+
+// Test file existence
+println("Checking if file exists...")
+let exists_result = fs.exists("test.txt")
+println("Exists result:")
+println(exists_result)
+
+// Test file size
+println("Getting file size...")
+let size_result = fs.file_size("test.txt")
+println("Size result:")
+println(size_result)
+
+// Clean up
+println("Cleaning up...")
+let remove_result = fs.remove_file("test.txt")
+println("Remove result:")
+println(remove_result)
+
+println("=== Test Complete ===") 

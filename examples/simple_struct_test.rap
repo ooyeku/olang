@@ -1,0 +1,23 @@
+// Simple struct test without complex type annotations
+
+println("=== Simple Struct Test ===");
+
+// 1. Define a simple struct
+type Point = struct {
+    x: Int,
+    y: Int,
+};
+
+// 2. Create a struct instance
+let p = Point { x: 10, y: 20 };
+
+println("Created point:", p);
+println("Point x:", p.x);
+println("Point y:", p.y);
+
+// 3. Simple function without parameter type annotations
+fn get_x(point) = point.x;
+
+println("get_x(p):", get_x(p));
+
+println("=== Simple Structs Working! ==="); 

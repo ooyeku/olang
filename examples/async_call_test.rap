@@ -1,0 +1,17 @@
+// Async Call Test for Olang
+println("=== Async Call Test ===")
+
+// Test async function declaration
+async fn get_message() = "Hello from async function"
+
+println("1. Async function declared")
+
+// Test calling async function
+let promise = get_message()
+println("2. Async function called, result:", promise)
+
+// Test await expression
+let message = await get_message()
+println("3. Await result:", message)
+
+println("=== Async Call Test Complete ===") 

@@ -1,0 +1,98 @@
+// Module System Example
+println("=== Module System ===");
+
+// Define a math utilities module
+mod math_utils {
+    fn square(x: Int) -> Int {
+        x * x
+    }
+    
+    fn cube(x: Int) -> Int {
+        x * x * x
+    }
+    
+    fn power(base: Int, exp: Int) -> Int {
+        if exp == 0 => 1
+        else => base * power(base, exp - 1)
+    }
+    
+    let PI: Float = 3.14159;
+    let E: Float = 2.71828;
+}
+
+// Define a string utilities module
+mod string_utils {
+    fn capitalize(s: String) -> String {
+        // Simplified capitalization
+        s
+    }
+    
+    fn reverse_string(s: String) -> String {
+        // Simplified reverse
+        s
+    }
+    
+    fn word_count(s: String) -> Int {
+        len(split(s, " "))
+    }
+}
+
+// Import specific functions
+import math_utils::{square, cube, PI};
+import string_utils::word_count;
+
+// Import with alias
+import math_utils::power as pow;
+
+// Import everything from a module
+import string_utils::*;
+
+println("Using imported functions:");
+println("square(5) =", square(5));
+println("cube(3) =", cube(3));
+println("pow(2, 8) =", pow(2, 8));
+println("PI =", PI);
+
+let text = "Hello world from Olang";
+println("word_count(\"" + text + "\") =", word_count(text));
+
+// Module access without import
+println("Direct module access:");
+println("math_utils::square(7) =", math_utils::square(7));
+
+// Nested modules
+mod graphics {
+    mod shapes {
+        type Point = struct {
+            x: Float,
+            y: Float
+        }
+        
+        type Circle = struct {
+            center: Point,
+            radius: Float
+        }
+        
+        fn area(circle: Circle) -> Float {
+            PI * circle.radius * circle.radius
+        }
+    }
+    
+    mod colors {
+        type RGB = struct {
+            r: Int,
+            g: Int, 
+            b: Int
+        }
+        
+        let RED = RGB { r: 255, g: 0, b: 0 };
+        let GREEN = RGB { r: 0, g: 255, b: 0 };
+        let BLUE = RGB { r: 0, g: 0, b: 255 };
+    }
+}
+
+println("Nested modules:");
+let point = graphics::shapes::Point { x: 0.0, y: 0.0 };
+let circle = graphics::shapes::Circle { center: point, radius: 5.0 };
+println("Circle area =", graphics::shapes::area(circle));
+println("Red color =", graphics::colors::RED); 

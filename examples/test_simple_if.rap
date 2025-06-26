@@ -1,0 +1,5 @@
+println("Before if")
+if true {
+    println("Inside if")
+}
+println("After if") 

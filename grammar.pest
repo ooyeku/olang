@@ -1,0 +1,150 @@
+// Olang Grammar Definition
+// Supports functions, pipelines, pattern matching, and minimal syntax
+
+WHITESPACE  = _{ " " | "\t" | NEWLINE }
+NEWLINE     = _{ "\n" | "\r\n" }
+COMMENT     = _{ "//" ~ (!NEWLINE ~ ANY)* }
+
+// Identifiers and literals
+identifier  = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+integer     = @{ ("+" | "-")? ~ ASCII_DIGIT+ }
+float       = @{ ("+" | "-")? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+string      = @{ "\"" ~ string_char* ~ "\"" }
+string_char = { !("\"" | "\\") ~ ANY | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "u" ~ ASCII_HEX_DIGIT{4}) }
+boolean     = { "true" | "false" }
+
+// Lists and tuples
+list        = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
+tuple       = { "(" ~ expr ~ "," ~ expr ~ ("," ~ expr)* ~ ")" }
+
+// Program structure
+program     = { SOI ~ (statement ~ ";"?)* ~ EOI }
+statement   = { error_type_decl | type_decl | let_decl | async_function_decl | function_decl | import_decl | export_decl | expr }
+
+// Error type declaration (enum-like with variants)
+error_type_decl = { "error" ~ identifier ~ "{" ~ error_variant_list? ~ "}" }
+error_variant_list = { error_variant ~ ("," ~ error_variant)* ~ ","? }
+error_variant = { identifier ~ (":" ~ (unit_type | ("{" ~ struct_field_list ~ "}")))? }
+
+// Type declarations
+type_decl   = { "type" ~ identifier ~ type_params? ~ "=" ~ type_definition }
+type_definition = { struct_def | enum_def }
+struct_def  = { "struct" ~ "{" ~ struct_field_list? ~ "}" }
+struct_field_list = { struct_field ~ ("," ~ struct_field)* ~ ","? }
+struct_field = { identifier ~ ":" ~ type_annotation }
+enum_def    = { "enum" ~ "{" ~ enum_variant_list? ~ "}" }
+enum_variant_list = { enum_variant ~ ("," ~ enum_variant)* ~ ","? }
+enum_variant = { identifier ~ (("(" ~ type_annotation ~ ("," ~ type_annotation)* ~ ")") | ("{" ~ struct_field_list ~ "}"))? }
+
+// Function declarations
+function_decl = { "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ expr }
+async_function_decl = { "async" ~ "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ expr }
+type_params  = { "<" ~ identifier ~ ("," ~ identifier)* ~ ">" }
+param_list   = { parameter ~ ("," ~ parameter)* }
+parameter    = { identifier ~ (":" ~ type_annotation)? }
+
+// Variable declarations
+let_decl    = { "let" ~ identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
+
+// Expression hierarchy (with proper operator precedence)
+expr        = { assignment_expr | for_loop | while_loop | loop_expr | break_expr | continue_expr | binary_expr }
+
+add_op        = { "+" | "-" }
+mul_op        = { "*" | "/" | "%" }
+bool_op       = { "&&" | "||" }
+comp_op       = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
+range_op      = { "..=" | ".." }
+
+binary_expr   = { comparison_expr ~ (bool_op ~ comparison_expr)* }
+comparison_expr = { additive_expr ~ (comp_op ~ additive_expr)* }
+additive_expr = { multiplicative_expr ~ (add_op ~ multiplicative_expr)* }
+multiplicative_expr = { pipe_expr ~ (mul_op ~ pipe_expr)* }
+pipe_op       = { "|>" }
+pipe_expr     = { range_expr ~ (pipe_op ~ range_expr)* }
+range_expr    = { call_expr ~ (range_op ~ call_expr)? }
+call_expr   = { primary ~ ( (" "+ ~ primary) | function_call | ("." ~ identifier) | ("[" ~ expr ~ "]") | postfix_op )* }
+
+// Function call with parentheses (including empty calls)
+function_call = { "(" ~ arg_list? ~ ")" }
+
+// Function call arguments (different from tuple literals)
+arg_list    = { expr ~ ("," ~ expr)* }
+
+// Try-catch expressions
+try_catch_expr = { "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block }
+
+// Postfix operators
+postfix_op = { "?" }
+
+primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | literal | identifier | "(" ~ expr ~ ")" | block }
+
+// Lambda functions
+lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ (block | expr) }
+
+// Async expressions
+async_expr  = { "async" ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ (block | expr) }
+await_expr  = { "await" ~ call_expr }
+
+// Promise expressions
+promise_expr = { "Promise" ~ "." ~ promise_method ~ "(" ~ expr ~ ("," ~ expr)? ~ ")" }
+promise_method = { "resolve" | "reject" | "delay" }
+
+// Concurrent operations
+all_expr    = { "Promise" ~ "." ~ "all" ~ "(" ~ "[" ~ arg_list? ~ "]" ~ ")" }
+race_expr   = { "Promise" ~ "." ~ "race" ~ "(" ~ "[" ~ arg_list? ~ "]" ~ ")" }
+spawn_expr  = { "spawn" ~ call_expr }
+
+// Pattern matching
+match_expr  = { "match" ~ expr ~ "{" ~ match_arm+ ~ "}" }
+match_arm   = { pattern ~ "=>" ~ expr ~ (","?) }
+pattern     = { result_pattern | struct_pattern | integer | string | boolean | wildcard | list_pattern | tuple_pattern | identifier | enum_variant_pattern }
+wildcard    = { "_" }
+result_pattern = { "Ok" ~ "(" ~ pattern ~ ")" | "Err" ~ "(" ~ pattern ~ ")" }
+enum_variant_pattern = { identifier ~ ("(" ~ pattern ~ ("," ~ pattern)* ~ ")")? }
+struct_pattern = { identifier ~ "{" ~ struct_pattern_fields? ~ "}" }
+struct_pattern_fields = { struct_pattern_field ~ ("," ~ struct_pattern_field)* ~ ","? }
+struct_pattern_field = { (identifier ~ ":" ~ pattern) | identifier }
+list_pattern = { "[" ~ (pattern ~ ("," ~ pattern)*)? ~ "]" }
+tuple_pattern = { "(" ~ pattern ~ "," ~ pattern ~ ("," ~ pattern)* ~ ")" }
+
+// Blocks and control flow
+block       = { "{" ~ (statement ~ ";"?)* ~ "}" }
+
+// Conditionals
+if_expr     = { "if" ~ expr ~ "=>" ~ (block | expr) ~ ("else" ~ "=>" ~ (block | expr))? }
+
+// Literals
+literal     = { float | integer | string | boolean | list | tuple }
+
+// Built-in types (for future type system)
+builtin_type = _{ "Int" | "Float" | "String" | "Bool" | "List" | "Tuple" }
+
+// Type annotations
+type_annotation = { basic_type | unit_type | list_type | function_type | generic_type | result_type | promise_type | custom_type }
+basic_type = { "Int" | "Float" | "String" | "Bool" }
+unit_type = { "()" }
+custom_type = { identifier }
+generic_type = { identifier ~ "<" ~ type_annotation ~ ("," ~ type_annotation)* ~ ">" }
+list_type = { "[" ~ type_annotation ~ "]" }
+function_type = { "(" ~ (type_annotation ~ ("," ~ type_annotation)*)? ~ ")" ~ "->" ~ type_annotation }
+result_type = { "Result" ~ "<" ~ type_annotation ~ "," ~ type_annotation ~ ">" }
+promise_type = { "Promise" ~ "<" ~ type_annotation ~ ("," ~ type_annotation)? ~ ">" }
+
+// Module statements
+import_decl = { "import" ~ (import_items ~ "from")? ~ string }
+import_items = { "{" ~ identifier ~ ("," ~ identifier)* ~ "}" | "*" }
+export_decl = { "export" ~ identifier ~ "=" ~ expr }
+
+// Struct expressions
+struct_literal = { identifier ~ "{" ~ field_value_list? ~ "}" }
+field_value_list = { field_value ~ ("," ~ field_value)* ~ ","? }
+field_value = { identifier ~ ":" ~ expr }
+
+// Loop constructs
+for_loop    = { "for" ~ identifier ~ "in" ~ expr ~ block }
+while_loop  = { "while" ~ expr ~ block }
+loop_expr   = { "loop" ~ block }
+break_expr  = { "break" }
+continue_expr = { "continue" }
+
+assignment_expr = { identifier ~ "=" ~ expr } 
