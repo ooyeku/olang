@@ -158,20 +158,32 @@ pub struct ThreadLocalBuffer {
     position: AtomicUsize,
 }
 
+impl Drop for MemoryManager {
+    fn drop(&mut self) {
+        // Ensure GC is properly shut down
+        let _ = self.stop_gc();
+    }
+}
+
 impl MemoryManager {
     pub fn new(config: &OvmConfig) -> Result<Self, MemoryError> {
         let heap = UnifiedHeap::new(&config.memory)?;
         let allocator = TieredAllocator::new(&config.memory)?;
-        let gc = GarbageCollector::new(&config.memory)?;
+        let mut gc = GarbageCollector::new(&config.memory)?;
         let stats = Arc::new(Mutex::new(MemoryStats::new()));
 
-        Ok(Self {
+        let memory_manager = Self {
             config: config.memory.clone(),
             heap,
             allocator,
             gc,
             stats,
-        })
+        };
+
+        // Note: Don't start GC automatically in constructor
+        // It will be started explicitly by the caller when ready
+
+        Ok(memory_manager)
     }
 
     /// Fast path allocation with bump pointer

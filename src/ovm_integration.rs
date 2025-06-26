@@ -103,6 +103,12 @@ impl OvmInterpreter {
 
     /// Initialize the OVM with given configuration
     pub fn initialize_ovm(&mut self, ovm_config: OvmConfig) -> Result<(), IntegrationError> {
+        // Stop any existing OVM first
+        if let Some(ovm) = &mut self.ovm {
+            let _ = ovm.stop();
+        }
+        self.ovm = None;
+
         let mut ovm =
             OlangVirtualMachine::new(ovm_config).map_err(IntegrationError::OvmInitError)?;
 
@@ -114,7 +120,13 @@ impl OvmInterpreter {
 
     /// Initialize OVM with default configuration
     pub fn initialize_ovm_default(&mut self) -> Result<(), IntegrationError> {
-        self.initialize_ovm(OvmConfig::default())
+        match self.initialize_ovm(OvmConfig::default()) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!("OVM initialization failed: {}", e);
+                Err(e)
+            }
+        }
     }
 
     /// Check if OVM is available and running

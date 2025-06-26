@@ -123,7 +123,15 @@ impl OlangVirtualMachine {
         }
 
         // Start garbage collector
-        self.memory_manager.start_gc()?;
+        if let Err(e) = self.memory_manager.start_gc() {
+            // If GC is already running, that's okay - just log and continue
+            match e {
+                memory::MemoryError::GcError(gc::GcError::AlreadyRunning) => {
+                    // GC already running is okay
+                }
+                _ => return Err(OvmError::from(e)),
+            }
+        }
 
         // Start optimization background threads
         self.optimization_engine.start_background_compilation()?;

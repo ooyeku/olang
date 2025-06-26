@@ -230,6 +230,11 @@ impl GarbageCollector {
             allocation_counter: Arc::new(AtomicUsize::new(0)),
         })
     }
+    
+    /// Set the memory manager reference for integration
+    pub fn set_memory_manager(&mut self, memory_manager: Arc<Mutex<crate::ovm::memory::MemoryManager>>) {
+        self.memory_manager = Some(memory_manager);
+    }
 
     pub fn start(&mut self) -> Result<(), GcError> {
         if self.is_running.load(Ordering::Relaxed) {
@@ -237,12 +242,9 @@ impl GarbageCollector {
         }
 
         self.is_running.store(true, Ordering::Relaxed);
-        // Temporarily disable write barriers to reduce complexity
-        // self.write_barrier_manager.enable_barriers();
+        self.write_barrier_manager.enable_barriers();
 
-        // Temporarily disable background GC thread to reduce race conditions
-        // This makes GC synchronous for now, which is safer during debugging
-        /*
+        // Start background GC thread with improved safety
         let is_running = Arc::clone(&self.is_running);
         let stats = self.stats.clone();
         let marking_engine = self.marking_engine.clone();
@@ -272,7 +274,6 @@ impl GarbageCollector {
         });
 
         self.collector_thread = Some(handle);
-        */
         Ok(())
     }
 
@@ -398,15 +399,26 @@ impl GarbageCollector {
         while is_running.load(Ordering::Relaxed) {
             // Wait for collection trigger or timeout
             let triggered = {
-                let triggered = lock.lock().unwrap();
-                let mut result = cvar
-                    .wait_timeout_while(triggered, Duration::from_millis(100), |&mut triggered| {
-                        !triggered
-                            && allocation_counter.load(Ordering::Relaxed) < gc_trigger_threshold
-                    })
-                    .unwrap();
-                let should_collect =
-                    *result.0 || allocation_counter.load(Ordering::Relaxed) >= gc_trigger_threshold;
+                let triggered = match lock.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => {
+                        // If mutex is poisoned, try to recover
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                };
+                
+                let mut result = match cvar.wait_timeout_while(triggered, Duration::from_millis(100), |&mut triggered| {
+                    !triggered && allocation_counter.load(Ordering::Relaxed) < gc_trigger_threshold
+                }) {
+                    Ok(result) => result,
+                    Err(_) => {
+                        // Handle timeout or other errors gracefully
+                        continue;
+                    }
+                };
+                
+                let should_collect = *result.0 || allocation_counter.load(Ordering::Relaxed) >= gc_trigger_threshold;
                 if should_collect {
                     *result.0 = false;
                 }
@@ -414,15 +426,14 @@ impl GarbageCollector {
             };
 
             if triggered {
-                // Perform garbage collection
-                let collection_type =
-                    if allocation_counter.load(Ordering::Relaxed) >= gc_trigger_threshold * 2 {
-                        CollectionType::Major
-                    } else {
-                        CollectionType::Minor
-                    };
+                // Perform garbage collection with improved error handling
+                let collection_type = if allocation_counter.load(Ordering::Relaxed) >= gc_trigger_threshold * 2 {
+                    CollectionType::Major
+                } else {
+                    CollectionType::Minor
+                };
 
-                if let Err(e) = Self::perform_collection_impl(
+                match Self::perform_collection_impl(
                     &stats,
                     &marking_engine,
                     &sweeping_engine,
@@ -432,11 +443,19 @@ impl GarbageCollector {
                     &remembered_set,
                     collection_type,
                 ) {
-                    eprintln!("GC collection failed: {}", e);
+                    Ok(_) => {
+                        // Successfully completed GC cycle
+                        allocation_counter.store(0, Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        // Log error but continue running
+                        eprintln!("Background GC collection failed: {}", e);
+                        // Reset counter anyway to prevent infinite triggering
+                        allocation_counter.store(0, Ordering::Relaxed);
+                        // Brief pause before next attempt
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
                 }
-
-                // Reset allocation counter
-                allocation_counter.store(0, Ordering::Relaxed);
             }
         }
     }
