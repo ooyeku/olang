@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::ast::{Expr, Value as AstValue};
 
@@ -54,6 +54,23 @@ pub struct ValueHeader {
 
     /// Size of the value
     pub size: u32,
+}
+
+impl Clone for ValueHeader {
+    fn clone(&self) -> Self {
+        Self {
+            gc_bits: AtomicU32::new(self.gc_bits.load(Ordering::Relaxed)),
+            type_tag: self.type_tag,
+            tier: self.tier,
+            optimization_data: self.optimization_data,
+            lazy_state: self.lazy_state,
+            force_count: AtomicU32::new(self.force_count.load(Ordering::Relaxed)),
+            ref_count: AtomicU32::new(self.ref_count.load(Ordering::Relaxed)),
+            gc_mark: self.gc_mark,
+            age: self.age,
+            size: self.size,
+        }
+    }
 }
 
 /// Type tags for fast runtime type checking

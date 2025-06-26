@@ -4,11 +4,13 @@
 //! and lazy evaluation integration.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::ptr::NonNull;
 
 use crate::ovm::config::{MemoryConfig, OvmConfig};
 use crate::ovm::gc::{GarbageCollector, GcStats};
+use crate::ovm::value::{GcPtr, ValueHeader};
 
 /// Main memory manager for the OVM
 pub struct MemoryManager {
@@ -19,7 +21,7 @@ pub struct MemoryManager {
     stats: Arc<Mutex<MemoryStats>>,
 }
 
-/// Unified heap structure
+/// Unified heap structure with actual memory regions
 pub struct UnifiedHeap {
     nursery: NurserySpace,
     young_gen: YoungGeneration,
@@ -27,13 +29,41 @@ pub struct UnifiedHeap {
     large_objects: LargeObjectSpace,
     code_space: CodeSpace,
     lazy_space: LazySpace,
+    regions: RwLock<Vec<Arc<HeapRegion>>>,
 }
 
-/// Tiered allocation strategy
+/// Heap region with bump pointer allocation
+pub struct HeapRegion {
+    start: *mut u8,
+    end: *mut u8,
+    current: AtomicPtr<u8>,
+    objects: RwLock<Vec<GcPtr<ValueHeader>>>,
+    generation: Generation,
+    region_id: usize,
+}
+
+/// Generation for generational GC
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Generation {
+    Nursery,
+    Young,
+    Old,
+    Large,
+}
+
+/// Tiered allocation strategy with actual implementation
 pub struct TieredAllocator {
     tlab_manager: TlabManager,
     lockfree_allocator: LockFreeAllocator,
     global_allocator: GlobalAllocator,
+    region_allocator: RegionAllocator,
+}
+
+/// Region-based allocator
+pub struct RegionAllocator {
+    current_region: AtomicPtr<HeapRegion>,
+    region_size: usize,
+    available_regions: Mutex<Vec<Arc<HeapRegion>>>,
 }
 
 /// Memory statistics
@@ -45,6 +75,8 @@ pub struct MemoryStats {
     pub allocation_rate: f64,
     pub gc_pressure: f64,
     pub fragmentation: f64,
+    pub regions_allocated: usize,
+    pub objects_allocated: u64,
 }
 
 /// Memory management errors
@@ -61,48 +93,63 @@ pub enum MemoryError {
 
     #[error("Heap corruption detected")]
     HeapCorruption,
+
+    #[error("Region allocation failed")]
+    RegionAllocationFailed,
+
+    #[error("Invalid heap region")]
+    InvalidRegion,
 }
 
-// Placeholder implementations for heap spaces
+// Heap space implementations with actual memory management
 pub struct NurserySpace {
     size: usize,
     used: AtomicUsize,
+    region: Option<Arc<HeapRegion>>,
 }
 
 pub struct YoungGeneration {
     size: usize,
     used: AtomicUsize,
+    regions: RwLock<Vec<Arc<HeapRegion>>>,
 }
 
 pub struct OldGeneration {
     size: usize,
     used: AtomicUsize,
+    regions: RwLock<Vec<Arc<HeapRegion>>>,
 }
 
 pub struct LargeObjectSpace {
-    objects: Vec<*mut u8>,
+    objects: RwLock<Vec<(*mut u8, usize)>>, // (ptr, size) pairs
+    total_size: AtomicUsize,
 }
 
 pub struct CodeSpace {
     size: usize,
     used: AtomicUsize,
+    region: Option<Arc<HeapRegion>>,
 }
 
 pub struct LazySpace {
     size: usize,
     used: AtomicUsize,
+    region: Option<Arc<HeapRegion>>,
 }
 
 pub struct TlabManager {
     tlabs: HashMap<std::thread::ThreadId, ThreadLocalBuffer>,
+    tlab_size: usize,
 }
 
 pub struct LockFreeAllocator {
-    // Placeholder for lock-free allocation
+    bump_pointer: AtomicPtr<u8>,
+    limit: AtomicPtr<u8>,
 }
 
 pub struct GlobalAllocator {
-    // Placeholder for global allocation
+    heap_lock: Mutex<()>,
+    free_list: Mutex<Vec<(*mut u8, usize)>>,
 }
 
 pub struct ThreadLocalBuffer {
@@ -127,23 +174,125 @@ impl MemoryManager {
         })
     }
 
+    /// Fast path allocation with bump pointer
     pub fn allocate(&mut self, size: usize) -> Result<*mut u8, MemoryError> {
         if size == 0 {
             return Err(MemoryError::InvalidSize { size });
         }
 
-        // Try TLAB first
+        // Record allocation for GC triggering
+        self.gc.record_allocation(size);
+
+        // Try fast allocation paths
         if let Some(ptr) = self.allocator.try_tlab_allocate(size) {
+            self.update_stats_allocated(size);
             return Ok(ptr);
         }
 
-        // Fall back to lock-free allocator
-        if let Some(ptr) = self.allocator.try_lockfree_allocate(size) {
+        if let Some(ptr) = self.allocator.try_region_allocate(size) {
+            self.update_stats_allocated(size);
             return Ok(ptr);
         }
 
-        // Last resort: global allocator with potential GC
+        // Slow path: potential GC trigger
+        self.slow_allocate(size)
+    }
+
+    /// Allocate a GC-managed object with proper header
+    pub fn allocate_object<T>(&mut self, data: T, type_tag: crate::ovm::value::TypeTag) -> Result<GcPtr<ValueHeader>, MemoryError> {
+        let total_size = std::mem::size_of::<ValueHeader>() + std::mem::size_of::<T>();
+        let ptr = self.allocate(total_size)?;
+
+        unsafe {
+            // Initialize header
+            let header_ptr = ptr as *mut ValueHeader;
+            let header = ValueHeader::new(
+                type_tag,
+                crate::ovm::value::ExecutionTier::Interpreter,
+                crate::ovm::value::LazyState::Eager,
+            );
+            std::ptr::write(header_ptr, header);
+            (*header_ptr).size = total_size as u32;
+
+            // Initialize data after header
+            let data_ptr = header_ptr.add(1) as *mut T;
+            std::ptr::write(data_ptr, data);
+
+            let gc_ptr = GcPtr::new(header_ptr);
+            
+            // Register with appropriate heap region
+            self.register_object_with_region(gc_ptr.clone())?;
+            
+            Ok(gc_ptr)
+        }
+    }
+
+    /// Deallocate memory (called by GC sweeper)
+    pub unsafe fn deallocate(&mut self, ptr: *mut u8, size: usize) {
+        self.allocator.deallocate(ptr, size);
+        self.update_stats_freed(size);
+    }
+
+    /// Get all allocated objects for GC root scanning
+    pub fn get_all_objects(&self) -> Vec<GcPtr<ValueHeader>> {
+        let mut objects = Vec::new();
+        
+        if let Ok(regions) = self.heap.regions.read() {
+            for region in regions.iter() {
+                if let Ok(region_objects) = region.objects.read() {
+                    objects.extend(region_objects.iter().cloned());
+                }
+            }
+        }
+        
+        objects
+    }
+
+    fn slow_allocate(&mut self, size: usize) -> Result<*mut u8, MemoryError> {
+        // Check if GC should be triggered
+        if self.gc.should_collect() {
+            let _ = self.gc.force_collection();
+        }
+
+        // Try allocation again after potential GC
+        if let Some(ptr) = self.allocator.try_region_allocate(size) {
+            self.update_stats_allocated(size);
+            return Ok(ptr);
+        }
+
+        // Try global allocator as last resort
         self.allocator.global_allocate(size, &mut self.gc)
+    }
+
+    fn register_object_with_region(&mut self, gc_ptr: GcPtr<ValueHeader>) -> Result<(), MemoryError> {
+        let ptr = gc_ptr.as_ptr() as *mut u8;
+        
+        if let Ok(regions) = self.heap.regions.read() {
+            for region in regions.iter() {
+                if ptr >= region.start && ptr < region.end {
+                    if let Ok(mut objects) = region.objects.write() {
+                        objects.push(gc_ptr);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        
+        Err(MemoryError::InvalidRegion)
+    }
+
+    fn update_stats_allocated(&self, size: usize) {
+        if let Ok(mut stats) = self.stats.lock() {
+            stats.heap_used += size as u64;
+            stats.objects_allocated += 1;
+        }
+    }
+
+    fn update_stats_freed(&self, size: usize) {
+        if let Ok(mut stats) = self.stats.lock() {
+            stats.heap_used = stats.heap_used.saturating_sub(size as u64);
+            stats.heap_free += size as u64;
+        }
     }
 
     pub fn start_gc(&mut self) -> Result<(), MemoryError> {
@@ -167,15 +316,105 @@ impl MemoryManager {
     }
 }
 
+impl HeapRegion {
+    pub fn new(size: usize, generation: Generation, region_id: usize) -> Result<Arc<Self>, MemoryError> {
+        let layout = std::alloc::Layout::from_size_align(size, 8)
+            .map_err(|_| MemoryError::RegionAllocationFailed)?;
+        
+        unsafe {
+            let ptr = std::alloc::alloc(layout);
+            if ptr.is_null() {
+                return Err(MemoryError::OutOfMemory);
+            }
+
+            let region = Arc::new(HeapRegion {
+                start: ptr,
+                end: ptr.add(size),
+                current: AtomicPtr::new(ptr),
+                objects: RwLock::new(Vec::new()),
+                generation,
+                region_id,
+            });
+
+            Ok(region)
+        }
+    }
+
+    /// Bump pointer allocation within region
+    pub fn allocate(&self, size: usize) -> Option<*mut u8> {
+        let aligned_size = (size + 7) & !7; // 8-byte alignment
+        
+        loop {
+            let current = self.current.load(Ordering::Relaxed);
+            let new_ptr = unsafe { current.add(aligned_size) };
+            
+            if new_ptr <= self.end {
+                match self.current.compare_exchange_weak(
+                    current, 
+                    new_ptr, 
+                    Ordering::Relaxed, 
+                    Ordering::Relaxed
+                ) {
+                    Ok(_) => return Some(current),
+                    Err(_) => continue, // Retry on contention
+                }
+            } else {
+                return None; // Region full
+            }
+        }
+    }
+
+    pub fn reset(&self) {
+        self.current.store(self.start, Ordering::Relaxed);
+        if let Ok(mut objects) = self.objects.write() {
+            objects.clear();
+        }
+    }
+
+    pub fn usage(&self) -> f64 {
+        let current = self.current.load(Ordering::Relaxed);
+        let used = unsafe { current.offset_from(self.start) } as usize;
+        let total = unsafe { self.end.offset_from(self.start) } as usize;
+        
+        if total == 0 {
+            0.0
+        } else {
+            used as f64 / total as f64
+        }
+    }
+}
+
+impl Drop for HeapRegion {
+    fn drop(&mut self) {
+        unsafe {
+            let size = self.end.offset_from(self.start) as usize;
+            let layout = std::alloc::Layout::from_size_align_unchecked(size, 8);
+            std::alloc::dealloc(self.start, layout);
+        }
+    }
+}
+
 impl UnifiedHeap {
     fn new(config: &MemoryConfig) -> Result<Self, MemoryError> {
+        let mut regions = Vec::new();
+        
+        // Create initial regions
+        let nursery_region = HeapRegion::new(config.nursery_size, Generation::Nursery, 0)?;
+        let young_region = HeapRegion::new(config.young_gen_size, Generation::Young, 1)?;
+        let old_region = HeapRegion::new(config.young_gen_size * 4, Generation::Old, 2)?;
+        
+        regions.push(nursery_region.clone());
+        regions.push(young_region.clone());
+        regions.push(old_region.clone());
+
         Ok(Self {
-            nursery: NurserySpace::new(config.nursery_size),
+            nursery: NurserySpace::new(config.nursery_size, Some(nursery_region)),
             young_gen: YoungGeneration::new(config.young_gen_size),
             old_gen: OldGeneration::new(),
             large_objects: LargeObjectSpace::new(),
             code_space: CodeSpace::new(),
             lazy_space: LazySpace::new(),
+            regions: RwLock::new(regions),
         })
     }
 }
@@ -186,6 +425,7 @@ impl TieredAllocator {
             tlab_manager: TlabManager::new(config)?,
             lockfree_allocator: LockFreeAllocator::new(config)?,
             global_allocator: GlobalAllocator::new(config)?,
+            region_allocator: RegionAllocator::new(1024 * 1024), // 1MB regions
         })
     }
 
@@ -193,8 +433,8 @@ impl TieredAllocator {
         self.tlab_manager.allocate(size)
     }
 
-    fn try_lockfree_allocate(&mut self, size: usize) -> Option<*mut u8> {
-        self.lockfree_allocator.allocate(size)
+    fn try_region_allocate(&mut self, size: usize) -> Option<*mut u8> {
+        self.region_allocator.allocate(size)
     }
 
     fn global_allocate(
@@ -216,6 +456,63 @@ impl TieredAllocator {
             Err(MemoryError::OutOfMemory)
         }
     }
+
+    unsafe fn deallocate(&mut self, ptr: *mut u8, size: usize) {
+        self.global_allocator.deallocate(ptr, size);
+    }
+}
+
+impl RegionAllocator {
+    fn new(region_size: usize) -> Self {
+        Self {
+            current_region: AtomicPtr::new(std::ptr::null_mut()),
+            region_size,
+            available_regions: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn allocate(&self, size: usize) -> Option<*mut u8> {
+        // Try current region first
+        let current_ptr = self.current_region.load(Ordering::Relaxed);
+        if !current_ptr.is_null() {
+            unsafe {
+                let region = &*current_ptr;
+                if let Some(ptr) = region.allocate(size) {
+                    return Some(ptr);
+                }
+            }
+        }
+
+        // Try to get a new region
+        self.get_new_region_and_allocate(size)
+    }
+
+    fn get_new_region_and_allocate(&self, size: usize) -> Option<*mut u8> {
+        if let Ok(mut available) = self.available_regions.lock() {
+            if let Some(region) = available.pop() {
+                let region_ptr = Arc::as_ptr(&region) as *mut HeapRegion;
+                self.current_region.store(region_ptr, Ordering::Relaxed);
+                
+                unsafe {
+                    let region_ref = &*region_ptr;
+                    return region_ref.allocate(size);
+                }
+            }
+        }
+
+        // Create new region if needed
+        if let Ok(new_region) = HeapRegion::new(self.region_size, Generation::Young, 0) {
+            let region_ptr = Arc::as_ptr(&new_region) as *mut HeapRegion;
+            self.current_region.store(region_ptr, Ordering::Relaxed);
+            
+            unsafe {
+                let region_ref = &*region_ptr;
+                return region_ref.allocate(size);
+            }
+        }
+
+        None
+    }
 }
 
 impl MemoryStats {
@@ -227,6 +524,8 @@ impl MemoryStats {
             allocation_rate: 0.0,
             gc_pressure: 0.0,
             fragmentation: 0.0,
+            regions_allocated: 0,
+            objects_allocated: 0,
         }
     }
 
@@ -245,39 +544,37 @@ impl MemoryStats {
 
 // Placeholder implementations for heap spaces
 impl NurserySpace {
-    fn new(size: usize) -> Self {
+    fn new(size: usize, region: Option<Arc<HeapRegion>>) -> Self {
         Self {
             size,
             used: AtomicUsize::new(0),
+            region,
         }
     }
 
     pub fn allocate(&self, size: usize) -> Option<*mut u8> {
-        let current = self.used.load(Ordering::Relaxed);
-        if current + size <= self.size
-            && self
-                .used
-                .compare_exchange_weak(
-                    current,
-                    current + size,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            // In a real implementation, this would return actual memory
-            // For now, return a dummy pointer
-            return Some((current + 0x1000_0000) as *mut u8);
+        if let Some(region) = &self.region {
+            region.allocate(size)
+        } else {
+            None
         }
-        None
     }
 
-    pub fn reset(&self) {
+    pub fn collect(&self) -> usize {
+        let collected = self.used.load(Ordering::Relaxed);
         self.used.store(0, Ordering::Relaxed);
+        
+        if let Some(region) = &self.region {
+            region.reset();
+        }
+        
+        collected
     }
 
     pub fn usage(&self) -> f64 {
-        if self.size == 0 {
+        if let Some(region) = &self.region {
+            region.usage()
+        } else if self.size == 0 {
             0.0
         } else {
             self.used.load(Ordering::Relaxed) as f64 / self.size as f64
@@ -290,23 +587,17 @@ impl YoungGeneration {
         Self {
             size,
             used: AtomicUsize::new(0),
+            regions: RwLock::new(Vec::new()),
         }
     }
 
     pub fn allocate(&self, size: usize) -> Option<*mut u8> {
-        let current = self.used.load(Ordering::Relaxed);
-        if current + size <= self.size
-            && self
-                .used
-                .compare_exchange_weak(
-                    current,
-                    current + size,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            return Some((current + 0x2000_0000) as *mut u8);
+        if let Ok(regions) = self.regions.read() {
+            for region in regions.iter() {
+                if let Some(ptr) = region.allocate(size) {
+                    return Some(ptr);
+                }
+            }
         }
         None
     }
@@ -314,14 +605,26 @@ impl YoungGeneration {
     pub fn collect(&self) -> usize {
         let collected = self.used.load(Ordering::Relaxed);
         self.used.store(0, Ordering::Relaxed);
+        
+        if let Ok(regions) = self.regions.read() {
+            for region in regions.iter() {
+                region.reset();
+            }
+        }
+        
         collected
     }
 
     pub fn usage(&self) -> f64 {
-        if self.size == 0 {
-            0.0
+        if let Ok(regions) = self.regions.read() {
+            if regions.is_empty() {
+                return 0.0;
+            }
+            
+            let total_usage: f64 = regions.iter().map(|r| r.usage()).sum();
+            total_usage / regions.len() as f64
         } else {
-            self.used.load(Ordering::Relaxed) as f64 / self.size as f64
+            0.0
         }
     }
 }
@@ -331,37 +634,44 @@ impl OldGeneration {
         Self {
             size: 64 * 1024 * 1024, // 64MB default
             used: AtomicUsize::new(0),
+            regions: RwLock::new(Vec::new()),
         }
     }
 
     pub fn allocate(&self, size: usize) -> Option<*mut u8> {
-        let current = self.used.load(Ordering::Relaxed);
-        if current + size <= self.size
-            && self
-                .used
-                .compare_exchange_weak(
-                    current,
-                    current + size,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            return Some((current + 0x3000_0000) as *mut u8);
+        if let Ok(regions) = self.regions.read() {
+            for region in regions.iter() {
+                if let Some(ptr) = region.allocate(size) {
+                    return Some(ptr);
+                }
+            }
         }
         None
     }
 
-    pub fn promote_from_young(&self, object: *mut u8, size: usize) -> Option<*mut u8> {
-        // In a real implementation, this would copy the object
-        self.allocate(size)
+    pub fn collect(&self) -> usize {
+        let collected = self.used.load(Ordering::Relaxed);
+        self.used.store(0, Ordering::Relaxed);
+        
+        if let Ok(regions) = self.regions.read() {
+            for region in regions.iter() {
+                region.reset();
+            }
+        }
+        
+        collected
     }
 
     pub fn usage(&self) -> f64 {
-        if self.size == 0 {
-            0.0
+        if let Ok(regions) = self.regions.read() {
+            if regions.is_empty() {
+                return 0.0;
+            }
+            
+            let total_usage: f64 = regions.iter().map(|r| r.usage()).sum();
+            total_usage / regions.len() as f64
         } else {
-            self.used.load(Ordering::Relaxed) as f64 / self.size as f64
+            0.0
         }
     }
 }
@@ -369,33 +679,60 @@ impl OldGeneration {
 impl LargeObjectSpace {
     fn new() -> Self {
         Self {
-            objects: Vec::new(),
+            objects: RwLock::new(Vec::new()),
+            total_size: AtomicUsize::new(0),
         }
     }
 
-    pub fn allocate(&mut self, size: usize) -> Option<*mut u8> {
+    pub fn allocate(&self, size: usize) -> Option<*mut u8> {
         if size > 32 * 1024 {
             // Objects larger than 32KB go here
-            // In a real implementation, this would allocate actual memory
-            let ptr = (0x4000_0000 + self.objects.len() * 1024 * 1024) as *mut u8;
-            self.objects.push(ptr);
-            Some(ptr)
+            let layout = std::alloc::Layout::from_size_align(size, 8).ok()?;
+            unsafe {
+                let ptr = std::alloc::alloc(layout);
+                if !ptr.is_null() {
+                    if let Ok(mut objects) = self.objects.write() {
+                        objects.push((ptr, size));
+                        self.total_size.fetch_add(size, Ordering::Relaxed);
+                        Some(ptr)
+                    } else {
+                        std::alloc::dealloc(ptr, layout);
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
         } else {
             None
         }
     }
 
-    pub fn deallocate(&mut self, ptr: *mut u8) -> bool {
-        if let Some(pos) = self.objects.iter().position(|&p| p == ptr) {
-            self.objects.remove(pos);
-            true
+    pub fn deallocate(&self, ptr: *mut u8) -> bool {
+        if let Ok(mut objects) = self.objects.write() {
+            if let Some(pos) = objects.iter().position(|&(p, _)| p == ptr) {
+                let (_, size) = objects.remove(pos);
+                self.total_size.fetch_sub(size, Ordering::Relaxed);
+                
+                unsafe {
+                    let layout = std::alloc::Layout::from_size_align_unchecked(size, 8);
+                    std::alloc::dealloc(ptr, layout);
+                }
+                true
+            } else {
+                false
+            }
         } else {
             false
         }
     }
 
     pub fn object_count(&self) -> usize {
-        self.objects.len()
+        self.objects.read().map(|objects| objects.len()).unwrap_or(0)
+    }
+
+    pub fn total_size(&self) -> usize {
+        self.total_size.load(Ordering::Relaxed)
     }
 }
 
@@ -404,34 +741,22 @@ impl CodeSpace {
         Self {
             size: 16 * 1024 * 1024, // 16MB for JIT code
             used: AtomicUsize::new(0),
+            region: None,
         }
     }
 
-    pub fn allocate_code(&self, size: usize) -> Option<*mut u8> {
-        let current = self.used.load(Ordering::Relaxed);
-        if current + size <= self.size
-            && self
-                .used
-                .compare_exchange_weak(
-                    current,
-                    current + size,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            // In a real implementation, this would be executable memory
-            return Some((current + 0x5000_0000) as *mut u8);
+    pub fn allocate(&self, size: usize) -> Option<*mut u8> {
+        if let Some(region) = &self.region {
+            region.allocate(size)
+        } else {
+            None
         }
-        None
-    }
-
-    pub fn deallocate_code(&self, _ptr: *mut u8, size: usize) {
-        self.used.fetch_sub(size, Ordering::Relaxed);
     }
 
     pub fn usage(&self) -> f64 {
-        if self.size == 0 {
+        if let Some(region) = &self.region {
+            region.usage()
+        } else if self.size == 0 {
             0.0
         } else {
             self.used.load(Ordering::Relaxed) as f64 / self.size as f64
@@ -444,33 +769,22 @@ impl LazySpace {
         Self {
             size: 32 * 1024 * 1024, // 32MB for lazy values
             used: AtomicUsize::new(0),
+            region: None,
         }
     }
 
-    pub fn allocate_lazy(&self, size: usize) -> Option<*mut u8> {
-        let current = self.used.load(Ordering::Relaxed);
-        if current + size <= self.size
-            && self
-                .used
-                .compare_exchange_weak(
-                    current,
-                    current + size,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            return Some((current + 0x6000_0000) as *mut u8);
+    pub fn allocate(&self, size: usize) -> Option<*mut u8> {
+        if let Some(region) = &self.region {
+            region.allocate(size)
+        } else {
+            None
         }
-        None
-    }
-
-    pub fn deallocate_lazy(&self, _ptr: *mut u8, size: usize) {
-        self.used.fetch_sub(size, Ordering::Relaxed);
     }
 
     pub fn usage(&self) -> f64 {
-        if self.size == 0 {
+        if let Some(region) = &self.region {
+            region.usage()
+        } else if self.size == 0 {
             0.0
         } else {
             self.used.load(Ordering::Relaxed) as f64 / self.size as f64
@@ -482,123 +796,142 @@ impl TlabManager {
     fn new(config: &MemoryConfig) -> Result<Self, MemoryError> {
         Ok(Self {
             tlabs: HashMap::new(),
+            tlab_size: config.tlab_size,
         })
     }
 
-    pub fn allocate(&mut self, size: usize) -> Option<*mut u8> {
+    fn allocate(&mut self, size: usize) -> Option<*mut u8> {
         let thread_id = std::thread::current().id();
-
-        // Get or create TLAB for current thread
-        self.tlabs.entry(thread_id).or_insert_with(|| {
-            // 64KB TLAB
-            ThreadLocalBuffer::new(64 * 1024)
-        });
-
-        if let Some(tlab) = self.tlabs.get_mut(&thread_id) {
+        
+        if let Some(tlab) = self.tlabs.get(&thread_id) {
             tlab.allocate(size)
+        } else {
+            // Create new TLAB for this thread
+            if let Some(new_tlab) = ThreadLocalBuffer::new(self.tlab_size) {
+                let ptr = new_tlab.allocate(size);
+                self.tlabs.insert(thread_id, new_tlab);
+                ptr
+            } else {
+                None
+            }
+        }
+    }
+}
+
+impl ThreadLocalBuffer {
+    fn new(size: usize) -> Option<Self> {
+        let layout = std::alloc::Layout::from_size_align(size, 8).ok()?;
+        unsafe {
+            let buffer = std::alloc::alloc(layout);
+            if !buffer.is_null() {
+                Some(Self {
+                    buffer,
+                    size,
+                    position: AtomicUsize::new(0),
+                })
+            } else {
+                None
+            }
+        }
+    }
+
+    fn allocate(&self, size: usize) -> Option<*mut u8> {
+        let aligned_size = (size + 7) & !7; // 8-byte alignment
+        let current = self.position.fetch_add(aligned_size, Ordering::Relaxed);
+        
+        if current + aligned_size <= self.size {
+            unsafe { Some(self.buffer.add(current)) }
         } else {
             None
         }
     }
+}
 
-    pub fn reset_tlab(&mut self, thread_id: std::thread::ThreadId) {
-        if let Some(tlab) = self.tlabs.get_mut(&thread_id) {
-            tlab.reset();
+impl Drop for ThreadLocalBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            let layout = std::alloc::Layout::from_size_align_unchecked(self.size, 8);
+            std::alloc::dealloc(self.buffer, layout);
         }
-    }
-
-    pub fn get_tlab_usage(&self, thread_id: std::thread::ThreadId) -> Option<f64> {
-        self.tlabs.get(&thread_id).map(|tlab| tlab.usage())
     }
 }
 
 impl LockFreeAllocator {
     fn new(_config: &MemoryConfig) -> Result<Self, MemoryError> {
         Ok(Self {
-            // Placeholder - would contain lock-free data structures
+            bump_pointer: AtomicPtr::new(std::ptr::null_mut()),
+            limit: AtomicPtr::new(std::ptr::null_mut()),
         })
     }
 
-    pub fn allocate(&self, size: usize) -> Option<*mut u8> {
-        // Simplified lock-free allocation
-        // In a real implementation, this would use lock-free data structures
-        if size <= 1024 {
-            Some((0x7000_0000 + size) as *mut u8)
-        } else {
-            None
+    fn allocate(&self, size: usize) -> Option<*mut u8> {
+        let aligned_size = (size + 7) & !7; // 8-byte alignment
+        
+        loop {
+            let current = self.bump_pointer.load(Ordering::Relaxed);
+            let limit = self.limit.load(Ordering::Relaxed);
+            
+            if current.is_null() || limit.is_null() {
+                return None;
+            }
+            
+            unsafe {
+                let new_ptr = current.add(aligned_size);
+                if new_ptr <= limit {
+                    match self.bump_pointer.compare_exchange_weak(
+                        current,
+                        new_ptr,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => return Some(current),
+                        Err(_) => continue,
+                    }
+                } else {
+                    return None;
+                }
+            }
         }
-    }
-
-    pub fn deallocate(&self, _ptr: *mut u8, _size: usize) {
-        // Simplified deallocation
     }
 }
 
 impl GlobalAllocator {
     fn new(_config: &MemoryConfig) -> Result<Self, MemoryError> {
         Ok(Self {
-            // Placeholder - would contain global allocation state
+            heap_lock: Mutex::new(()),
+            free_list: Mutex::new(Vec::new()),
         })
     }
 
-    pub fn allocate(&self, size: usize) -> Option<*mut u8> {
-        // Simplified global allocation
-        // In a real implementation, this would be a fallback allocator
-        if size <= 64 * 1024 {
-            Some((0x8000_0000 + size) as *mut u8)
-        } else {
-            None
-        }
-    }
-
-    pub fn deallocate(&self, _ptr: *mut u8, _size: usize) {
-        // Simplified deallocation
-    }
-}
-
-impl ThreadLocalBuffer {
-    fn new(size: usize) -> Self {
-        Self {
-            buffer: (0x9000_0000) as *mut u8, // Placeholder address
-            size,
-            position: AtomicUsize::new(0),
-        }
-    }
-
-    pub fn allocate(&self, size: usize) -> Option<*mut u8> {
-        let current = self.position.load(Ordering::Relaxed);
-        if current + size <= self.size
-            && self
-                .position
-                .compare_exchange_weak(
-                    current,
-                    current + size,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            unsafe {
-                return Some(self.buffer.add(current));
+    fn allocate(&self, size: usize) -> Option<*mut u8> {
+        let _lock = self.heap_lock.lock().ok()?;
+        
+        if let Ok(mut free_list) = self.free_list.lock() {
+            // Try to find a suitable free block
+            for (i, &(ptr, block_size)) in free_list.iter().enumerate() {
+                if block_size >= size {
+                    free_list.remove(i);
+                    return Some(ptr);
+                }
             }
         }
-        None
-    }
-
-    pub fn reset(&self) {
-        self.position.store(0, Ordering::Relaxed);
-    }
-
-    pub fn usage(&self) -> f64 {
-        if self.size == 0 {
-            0.0
-        } else {
-            self.position.load(Ordering::Relaxed) as f64 / self.size as f64
+        
+        // Allocate new memory if no free block found
+        let layout = std::alloc::Layout::from_size_align(size, 8).ok()?;
+        unsafe {
+            let ptr = std::alloc::alloc(layout);
+            if !ptr.is_null() {
+                Some(ptr)
+            } else {
+                None
+            }
         }
     }
 
-    pub fn remaining(&self) -> usize {
-        self.size - self.position.load(Ordering::Relaxed)
+    fn deallocate(&mut self, ptr: *mut u8, size: usize) {
+        if let Ok(mut free_list) = self.free_list.lock() {
+            free_list.push((ptr, size));
+        }
     }
 }
 
@@ -635,27 +968,35 @@ impl MemoryManager {
     pub fn allocate_code(&mut self, size: usize) -> Result<*mut u8, MemoryError> {
         self.heap
             .code_space
-            .allocate_code(size)
+            .allocate(size)
             .ok_or(MemoryError::OutOfMemory)
     }
 
     pub fn allocate_lazy(&mut self, size: usize) -> Result<*mut u8, MemoryError> {
         self.heap
             .lazy_space
-            .allocate_lazy(size)
+            .allocate(size)
             .ok_or(MemoryError::OutOfMemory)
     }
 
     pub fn promote_to_old(&mut self, object: *mut u8, size: usize) -> Result<*mut u8, MemoryError> {
-        self.heap
+        // Allocate space in old generation
+        let new_ptr = self.heap
             .old_gen
-            .promote_from_young(object, size)
-            .ok_or(MemoryError::OutOfMemory)
+            .allocate(size)
+            .ok_or(MemoryError::OutOfMemory)?;
+        
+        // Copy the object data
+        unsafe {
+            std::ptr::copy_nonoverlapping(object, new_ptr, size);
+        }
+        
+        Ok(new_ptr)
     }
 
     pub fn collect_young_generation(&mut self) -> Result<usize, MemoryError> {
         let collected = self.heap.young_gen.collect();
-        self.heap.nursery.reset();
+        self.heap.nursery.collect();
         Ok(collected)
     }
 
