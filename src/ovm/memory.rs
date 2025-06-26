@@ -61,7 +61,7 @@ pub struct TieredAllocator {
 
 /// Region-based allocator
 pub struct RegionAllocator {
-    current_region: AtomicPtr<HeapRegion>,
+    current_region: Arc<Mutex<Option<Arc<HeapRegion>>>>,
     region_size: usize,
     available_regions: Mutex<Vec<Arc<HeapRegion>>>,
 }
@@ -192,18 +192,27 @@ impl MemoryManager {
             return Err(MemoryError::InvalidSize { size });
         }
 
+        // Safety check for extremely large allocations
+        if size > 1024 * 1024 * 1024 {  // 1GB limit
+            return Err(MemoryError::InvalidSize { size });
+        }
+
         // Record allocation for GC triggering
         self.gc.record_allocation(size);
 
-        // Try fast allocation paths
+        // Try fast allocation paths with safety checks
         if let Some(ptr) = self.allocator.try_tlab_allocate(size) {
-            self.update_stats_allocated(size);
-            return Ok(ptr);
+            if !ptr.is_null() {
+                self.update_stats_allocated(size);
+                return Ok(ptr);
+            }
         }
 
         if let Some(ptr) = self.allocator.try_region_allocate(size) {
-            self.update_stats_allocated(size);
-            return Ok(ptr);
+            if !ptr.is_null() {
+                self.update_stats_allocated(size);
+                return Ok(ptr);
+            }
         }
 
         // Slow path: potential GC trigger
@@ -354,24 +363,51 @@ impl HeapRegion {
 
     /// Bump pointer allocation within region
     pub fn allocate(&self, size: usize) -> Option<*mut u8> {
+        if size == 0 {
+            return None;
+        }
+        
+        // Safety: limit allocation size to prevent overflow issues
+        if size > 64 * 1024 * 1024 {  // 64MB max allocation per region
+            return None;
+        }
+        
         let aligned_size = (size + 7) & !7; // 8-byte alignment
+        
+        // Verify aligned_size didn't overflow
+        if aligned_size < size {
+            return None;
+        }
         
         loop {
             let current = self.current.load(Ordering::Relaxed);
+            
+            // Validate current pointer is within bounds
+            if current < self.start || current >= self.end {
+                return None;
+            }
+            
+            // Safety check: ensure we don't overflow pointer arithmetic
+            let remaining = unsafe { self.end.offset_from(current) } as usize;
+            if aligned_size > remaining {
+                return None; // Region full
+            }
+            
             let new_ptr = unsafe { current.add(aligned_size) };
             
-            if new_ptr <= self.end {
-                match self.current.compare_exchange_weak(
-                    current, 
-                    new_ptr, 
-                    Ordering::Relaxed, 
-                    Ordering::Relaxed
-                ) {
-                    Ok(_) => return Some(current),
-                    Err(_) => continue, // Retry on contention
-                }
-            } else {
-                return None; // Region full
+            // Double-check bounds
+            if new_ptr > self.end {
+                return None;
+            }
+            
+            match self.current.compare_exchange_weak(
+                current, 
+                new_ptr, 
+                Ordering::Relaxed, 
+                Ordering::Relaxed
+            ) {
+                Ok(_) => return Some(current),
+                Err(_) => continue, // Retry on contention
             }
         }
     }
@@ -477,7 +513,7 @@ impl TieredAllocator {
 impl RegionAllocator {
     fn new(region_size: usize) -> Self {
         Self {
-            current_region: AtomicPtr::new(std::ptr::null_mut()),
+            current_region: Arc::new(Mutex::new(None)),
             region_size,
             available_regions: Mutex::new(Vec::new()),
         }
@@ -485,10 +521,8 @@ impl RegionAllocator {
 
     fn allocate(&self, size: usize) -> Option<*mut u8> {
         // Try current region first
-        let current_ptr = self.current_region.load(Ordering::Relaxed);
-        if !current_ptr.is_null() {
-            unsafe {
-                let region = &*current_ptr;
+        if let Ok(region_guard) = self.current_region.lock() {
+            if let Some(region) = region_guard.as_ref() {
                 if let Some(ptr) = region.allocate(size) {
                     return Some(ptr);
                 }
@@ -500,26 +534,23 @@ impl RegionAllocator {
     }
 
     fn get_new_region_and_allocate(&self, size: usize) -> Option<*mut u8> {
+        // Try to get an available region first
         if let Ok(mut available) = self.available_regions.lock() {
             if let Some(region) = available.pop() {
-                let region_ptr = Arc::as_ptr(&region) as *mut HeapRegion;
-                self.current_region.store(region_ptr, Ordering::Relaxed);
-                
-                unsafe {
-                    let region_ref = &*region_ptr;
-                    return region_ref.allocate(size);
+                // Store the Arc safely
+                if let Ok(mut current) = self.current_region.lock() {
+                    *current = Some(region.clone());
+                    return region.allocate(size);
                 }
             }
         }
 
         // Create new region if needed
         if let Ok(new_region) = HeapRegion::new(self.region_size, Generation::Young, 0) {
-            let region_ptr = Arc::as_ptr(&new_region) as *mut HeapRegion;
-            self.current_region.store(region_ptr, Ordering::Relaxed);
-            
-            unsafe {
-                let region_ref = &*region_ptr;
-                return region_ref.allocate(size);
+            // Store the Arc safely
+            if let Ok(mut current) = self.current_region.lock() {
+                *current = Some(new_region.clone());
+                return new_region.allocate(size);
             }
         }
 

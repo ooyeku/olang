@@ -97,12 +97,12 @@ impl Repl {
             }
         }
 
-        // Create OVM configuration with auto mode (OVM by default)
+        // Create OVM configuration with auto mode (OVM DISABLED by default for stability)
         let integration_config = IntegrationConfig {
-            use_ovm_by_default: true,
+            use_ovm_by_default: false,  // Disabled due to memory management issues
             ovm_complexity_threshold: 50,
-            auto_compile_functions: true,
-            enable_ovm_lazy_eval: true,
+            auto_compile_functions: false,  // Disabled due to memory management issues
+            enable_ovm_lazy_eval: false,    // Disabled due to memory management issues
             fallback_on_error: true,
         };
 
