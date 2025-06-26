@@ -1,3 +1,0 @@
-println("Before variable assignment")
-let x = 5
-println("After variable assignment") 
