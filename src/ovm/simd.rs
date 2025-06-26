@@ -10,8 +10,7 @@ use std::time::{Duration, Instant};
 
 // SIMD imports for Phase 4 Sprint 2
 use wide::*;
-// use simdeez::prelude::*; // Removed - crate not available
-use num_traits::{Zero, One, FromPrimitive, ToPrimitive};
+
 
 /// Main SIMD vectorization engine
 pub struct SimdEngine {

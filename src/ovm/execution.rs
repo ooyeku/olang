@@ -10,9 +10,7 @@ use crate::ovm::gc::SafepointManager;
 use crate::ovm::optimization::{OptimizationEngine, OptimizationError};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use thiserror::Error;
-use std::sync::MutexGuard;
+
 
 /// Main execution engine with tiered execution
 pub struct ExecutionEngine {

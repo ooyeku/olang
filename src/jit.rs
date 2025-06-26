@@ -1,6 +1,6 @@
 use crate::ast::{Expr, Statement};
-use crate::ovm::{FunctionId, OvmValue};
-use crate::ovm::optimization::{OptimizationEngine, OptimizationError};
+use crate::ovm::{FunctionId};
+use crate::ovm::optimization::{OptimizationError};
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone, PartialEq)]

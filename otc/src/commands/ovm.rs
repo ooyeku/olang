@@ -183,7 +183,7 @@ impl OvmCommand {
         }
 
         // Parse the program
-        let mut parser = Parser::new();
+        let parser = Parser::new();
         let program = parser
             .parse(&content)
             .map_err(|e| anyhow::anyhow!("Parse error: {:?}", e))?;

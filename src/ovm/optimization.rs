@@ -13,9 +13,9 @@ use std::time::{Duration, Instant};
 // Cranelift JIT imports for Phase 4
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{Linkage, Module, FuncId};
+use cranelift_module::{Linkage, Module};
 use cranelift_codegen::ir::FuncRef;
-use cranelift_codegen::control::ControlPlane;
+
 
 /// Main optimization engine with JIT compilation and profiling
 pub struct OptimizationEngine {
