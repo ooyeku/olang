@@ -92,7 +92,7 @@ impl OvmCommand {
 
         // Create OVM configuration
         let ovm_config = OvmConfig {
-            optimization: olang::ovm::config::OptimizationConfig {
+            optimization: olang::ovm::config::OptimizationConfig {  
                 optimization_level,
                 inline_threshold: 50,
                 vectorization: true,

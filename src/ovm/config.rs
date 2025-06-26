@@ -118,6 +118,9 @@ pub struct OptimizationConfig {
     /// Enable aggressive optimizations (may increase compilation time)
     pub aggressive_optimizations: bool,
 
+    /// Enable adaptive optimization with machine learning
+    pub adaptive_optimization: bool,
+
     /// Maximum compilation time budget per function (ms)
     pub compilation_time_budget_ms: u64,
 }
@@ -275,6 +278,7 @@ impl Default for OptimizationConfig {
             dead_code_elimination: true,
             common_subexpression_elimination: true,
             aggressive_optimizations: false,
+            adaptive_optimization: false,
             compilation_time_budget_ms: 100, // 100ms compilation budget
         }
     }

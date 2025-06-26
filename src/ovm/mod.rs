@@ -9,6 +9,8 @@ use std::time::Instant;
 use crate::ast::{Expr, FunctionDecl};
 
 // Core OVM modules
+pub mod adaptive;     // Adaptive optimization system
+pub mod bytecode;     // Register-based bytecode VM
 pub mod config;
 pub mod execution;
 pub mod fusion;
@@ -18,7 +20,8 @@ pub mod memory;
 pub mod metrics;
 pub mod optimization;
 pub mod pipeline;
-pub mod value; // Phase 4 Sprint 3: Advanced Pipeline Fusion Engine
+pub mod simd;         // SIMD vectorization engine
+pub mod value;        // Phase 4 Sprint 3: Advanced Pipeline Fusion Engine
 
 // Re-export core types
 pub use config::{OptimizationLevel, OvmConfig};
@@ -47,6 +50,9 @@ pub struct OlangVirtualMachine {
 
     // Phase 4 Sprint 3: Advanced fusion engine
     fusion_engine: fusion::AdvancedFusionEngine,
+
+    // Adaptive optimization system
+    adaptive_optimizer: Option<adaptive::AdaptiveOptimizationSystem>,
 
     // System configuration
     config: OvmConfig,
@@ -79,13 +85,18 @@ impl OlangVirtualMachine {
         // Initialize pipeline processing engine
         let pipeline_engine = pipeline::PipelineEngine::new(&config)?;
 
-        // Phase 4 Sprint 2: Initialize SIMD vectorization engine (temporarily disabled)
-        // let simd_engine = simd::SimdEngine::new(&config)?;
-
         // Phase 4 Sprint 3: Initialize advanced fusion engine
         let fusion_engine = fusion::AdvancedFusionEngine::new(&config).map_err(|e| {
             OvmError::ConfigError(format!("Fusion engine initialization failed: {}", e))
         })?;
+
+        // Initialize adaptive optimizer if enabled
+        let adaptive_optimizer = if config.optimization.adaptive_optimization {
+            Some(adaptive::AdaptiveOptimizationSystem::new(&config)
+                .map_err(|e| OvmError::InitializationError(format!("Adaptive optimizer init failed: {}", e)))?)
+        } else {
+            None
+        };
 
         // Initialize metrics collection
         let metrics = Arc::new(Mutex::new(OvmMetrics::new()));
@@ -97,7 +108,7 @@ impl OlangVirtualMachine {
             lazy_engine,
             pipeline_engine,
             fusion_engine,
-            // simd_engine,
+            adaptive_optimizer,
             config,
             metrics,
             startup_time,
@@ -117,6 +128,12 @@ impl OlangVirtualMachine {
         // Start optimization background threads
         self.optimization_engine.start_background_compilation()?;
 
+        // Start adaptive optimization if enabled
+        if let Some(adaptive_optimizer) = &mut self.adaptive_optimizer {
+            adaptive_optimizer.start()
+                .map_err(|e| OvmError::InitializationError(format!("Failed to start adaptive optimizer: {}", e)))?;
+        }
+
         // Start metrics collection
         self.start_metrics_collection()?;
 
@@ -135,6 +152,11 @@ impl OlangVirtualMachine {
     pub fn stop(&mut self) -> Result<(), OvmError> {
         if !self.is_running {
             return Ok(());
+        }
+
+        // Stop adaptive optimization
+        if let Some(adaptive_optimizer) = &mut self.adaptive_optimizer {
+            let _ = adaptive_optimizer.stop();
         }
 
         // Stop background services
@@ -227,6 +249,34 @@ impl OlangVirtualMachine {
             .map_err(OvmError::from)
     }
 
+    /// Get adaptive optimization status
+    pub fn get_adaptive_status(&self) -> Option<adaptive::AdaptiveOptimizationStatus> {
+        self.adaptive_optimizer.as_ref().map(|optimizer| optimizer.get_status())
+    }
+
+    /// Enable or disable adaptive optimization at runtime
+    pub fn set_adaptive_optimization(&mut self, enabled: bool) -> Result<(), OvmError> {
+        if enabled && self.adaptive_optimizer.is_none() {
+            // Create and start adaptive optimizer
+            let mut adaptive_optimizer = adaptive::AdaptiveOptimizationSystem::new(&self.config)
+                .map_err(|e| OvmError::InitializationError(format!("Failed to create adaptive optimizer: {}", e)))?;
+            
+            if self.is_running {
+                adaptive_optimizer.start()
+                    .map_err(|e| OvmError::InitializationError(format!("Failed to start adaptive optimizer: {}", e)))?;
+            }
+            
+            self.adaptive_optimizer = Some(adaptive_optimizer);
+        } else if !enabled && self.adaptive_optimizer.is_some() {
+            // Stop and remove adaptive optimizer
+            if let Some(mut adaptive_optimizer) = self.adaptive_optimizer.take() {
+                let _ = adaptive_optimizer.stop();
+            }
+        }
+        
+        Ok(())
+    }
+
     // Private helper methods
 
     fn convert_expression(&self, expr: Expr) -> Result<execution::OvmExpr, OvmError> {
@@ -306,6 +356,9 @@ pub enum OvmError {
 
     #[error("Conversion error: {0}")]
     ConversionError(String),
+
+    #[error("Initialization error: {0}")]
+    InitializationError(String),
 }
 
 /// Result type for OVM operations

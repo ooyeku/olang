@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 // SIMD imports for Phase 4 Sprint 2
 use wide::*;
-use simdeez::prelude::*;
+// use simdeez::prelude::*; // Removed - crate not available
 use num_traits::{Zero, One, FromPrimitive, ToPrimitive};
 
 /// Main SIMD vectorization engine
@@ -115,7 +115,7 @@ pub enum VectorOperationType {
     Statistical,   // Statistics operations
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VectorDataType {
     I8,
     I16,
@@ -521,9 +521,10 @@ impl SimdEngine {
         for chunk in chunks {
             let vector = f64x4::from([chunk[0], chunk[1], chunk[2], chunk[3]]);
             let squared = vector * vector;
+            let array = squared.to_array();
             
             for i in 0..SIMD_WIDTH {
-                result.push(OvmValue::from_f64(squared.as_array()[i]));
+                result.push(OvmValue::from_f64(array[i]));
             }
         }
         
@@ -558,9 +559,10 @@ impl SimdEngine {
         for chunk in chunks {
             let vector = f64x4::from([chunk[0], chunk[1], chunk[2], chunk[3]]);
             let doubled = vector + vector; // x * 2 = x + x
+            let array = doubled.to_array();
             
             for i in 0..SIMD_WIDTH {
-                result.push(OvmValue::from_f64(doubled.as_array()[i]));
+                result.push(OvmValue::from_f64(array[i]));
             }
         }
         
@@ -594,9 +596,10 @@ impl SimdEngine {
         for chunk in chunks {
             let vector = f64x4::from([chunk[0], chunk[1], chunk[2], chunk[3]]);
             let sqrt_result = vector.sqrt();
+            let array = sqrt_result.to_array();
             
             for i in 0..SIMD_WIDTH {
-                result.push(OvmValue::from_f64(sqrt_result.as_array()[i]));
+                result.push(OvmValue::from_f64(array[i]));
             }
         }
         
@@ -610,8 +613,8 @@ impl SimdEngine {
     /// Extract f64 from OvmValue
     fn extract_f64(&self, value: &OvmValue) -> Option<f64> {
         match value.to_ast() {
-            Value::Integer(i) => Some(i as f64),
-            Value::Float(f) => Some(f),
+            Ok(Value::Integer(i)) => Some(i as f64),
+            Ok(Value::Float(f)) => Some(f),
             _ => None,
         }
     }
@@ -871,8 +874,8 @@ impl MemoryAligner {
         let mut alignment_requirements = HashMap::new();
         alignment_requirements.insert(VectorDataType::F64, 32); // 32-byte alignment for AVX
         alignment_requirements.insert(VectorDataType::F32, 16); // 16-byte alignment for SSE
-        alignment_requirements.insert(VectorDataType::I64, 32);
-        alignment_requirements.insert(VectorDataType::I32, 16);
+        alignment_requirements.insert(VectorDataType::I64, 32); // 32-byte alignment for AVX
+        alignment_requirements.insert(VectorDataType::I32, 16); // 16-byte alignment for SSE
         
         Self {
             alignment_requirements,

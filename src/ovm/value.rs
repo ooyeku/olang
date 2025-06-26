@@ -432,6 +432,12 @@ pub enum RuntimeError {
 
 // Implementation of core methods
 
+impl Clone for OvmValue {
+    fn clone(&self) -> Self {
+        self.clone_simple()
+    }
+}
+
 impl OvmValue {
     /// Create a new integer value
     pub fn new_integer(value: i64) -> Self {

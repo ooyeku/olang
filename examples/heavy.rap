@@ -1,5 +1,5 @@
 
-let n = 1..50
+let n = range(100)
 
 fn is_even(n) = n % 2 == 0
 
@@ -11,17 +11,17 @@ let v = random.choice(n)
 
 for number in n { 
     n |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum() |> println()
-    let data = 1..10 |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum()
+    let data = 1..100 |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum()
     n |> map((x) => x * math.pow(x, random.choice(n))) |> filter((x) => x % 2 == 0) |> sum() |> println()
-    let data = 1..10 |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum()
+    let data = 1..100 |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum()
     n |> map((x) => x * math.pow(x, 2)) |> filter((x) => x % 2 == 0) |> sum() |> println()
-    let data = 1..10 |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum()
+    let data = 1..100 |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum()
 
 }
 
 for number in n { 
     n |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum() |> println()
-    let data = 1..10 |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum()
+    let data = 1..100 |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum()
     n |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum() |> println()
     println("data: " + data)
     println(is_even(number))
@@ -30,7 +30,7 @@ for number in n {
     println(math.pow(number, number))
 }
 
-let n = 1..10
+let n = 1..100
 
 for number in n { 
     n |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum() |> println()
@@ -41,7 +41,7 @@ for number in n {
     while p < 3 {
         let v = random.choice(n)
         n |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum() |> println()
-        let data = 1..9 |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum()
+        let data = 1..100 |> map((x) => x * math.pow(x, v)) |> filter((x) => x % 2 == 0) |> sum()
         p = p + 1
         println("p: " + p)
         println(is_even(p))
