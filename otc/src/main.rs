@@ -45,6 +45,18 @@ fn main() {
     let cli = Cli::parse();
     let verbose = cli.verbose;
 
+    // Initialize parallelization for optimal performance
+    if let Err(e) = olang::parallel::initialize_parallelization(None) {
+        if verbose {
+            eprintln!("Warning: Failed to initialize parallel processing: {}", e);
+        }
+    } else if verbose {
+        println!("Parallel processing initialized with {} threads", num_cpus::get());
+    }
+
+    // Set a very aggressive parallel threshold for maximum multi-threading by default
+    olang::parallel::set_parallel_threshold(10);
+
     let result = match cli.command {
         Commands::Run { file } => commands::run::execute(file, verbose),
         Commands::Check { file } => commands::check::execute(file, verbose),

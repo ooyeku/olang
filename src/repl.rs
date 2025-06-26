@@ -63,6 +63,22 @@ pub struct Repl {
 
 impl Repl {
     pub fn new(verbose: bool) -> Result<Self, ReplError> {
+        // Initialize parallelization for optimal performance
+        if let Err(e) = crate::parallel::initialize_parallelization(None) {
+            if verbose {
+                eprintln!("Warning: Failed to initialize parallel processing: {}", e);
+            }
+        } else if verbose {
+            println!("✅ Multi-threading enabled: {} CPU cores detected", num_cpus::get());
+        }
+
+        // Set a very aggressive parallel threshold for maximum multi-threading by default
+        crate::parallel::set_parallel_threshold(10);
+        
+        if verbose {
+            println!("🚀 Automatic parallelization: Lists with 10+ items will use all {} cores", num_cpus::get());
+        }
+
         let config = Config::builder()
             .auto_add_history(true)
             .history_ignore_space(true)
@@ -550,6 +566,62 @@ impl Repl {
                 } else {
                     println!("  Classic interpreter mode");
                     println!("  Note: Enable OVM for detailed performance statistics");
+                }
+            }
+            ":parallel" => {
+                if parts.len() > 1 {
+                    match parts[1] {
+                        "status" => {
+                            let config = crate::parallel::get_config();
+                            println!("=== Parallel Processing Status ===");
+                            println!("  Enabled: {}", config.enabled.to_string().bright_green());
+                            println!("  Max threads: {}", config.max_threads.to_string().bright_cyan());
+                            println!("  Parallel threshold: {} items", config.min_parallel_size.to_string().bright_yellow());
+                            println!("  Available CPU cores: {}", num_cpus::get().to_string().bright_white());
+                            
+                            // Test parallel processing
+                            let large_list: Vec<usize> = (1..=config.min_parallel_size + 100).collect();
+                            println!("  Test: List of {} items would use {} processing", 
+                                large_list.len(),
+                                if crate::parallel::should_parallelize(large_list.len()) { 
+                                    "PARALLEL".bright_green() 
+                                } else { 
+                                    "SEQUENTIAL".bright_red() 
+                                }
+                            );
+                        }
+                        "enable" => {
+                            crate::parallel::set_parallel_enabled(true);
+                            println!("✅ Parallel processing enabled");
+                        }
+                        "disable" => {
+                            crate::parallel::set_parallel_enabled(false);
+                            println!("⚠️  Parallel processing disabled");
+                        }
+                        "threshold" => {
+                            if parts.len() > 2 {
+                                if let Ok(threshold) = parts[2].parse::<usize>() {
+                                    crate::parallel::set_parallel_threshold(threshold);
+                                    println!("✅ Parallel threshold set to {} items", threshold);
+                                } else {
+                                    println!("Error: Invalid threshold value");
+                                }
+                            } else {
+                                let config = crate::parallel::get_config();
+                                println!("Current parallel threshold: {} items", config.min_parallel_size);
+                                println!("Usage: :parallel threshold <number>");
+                            }
+                        }
+                        _ => {
+                            println!("Usage: :parallel [status|enable|disable|threshold <number>]");
+                        }
+                    }
+                } else {
+                    let config = crate::parallel::get_config();
+                    println!("Parallel processing: {} | Threads: {} | Threshold: {} items", 
+                        if config.enabled { "enabled".bright_green() } else { "disabled".bright_red() },
+                        config.max_threads.to_string().bright_cyan(),
+                        config.min_parallel_size.to_string().bright_yellow());
                 }
             }
             ":run" => {

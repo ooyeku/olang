@@ -1011,11 +1011,19 @@ impl BuiltinFunctions {
         };
         let list = list_rc.as_ref();
 
-        let mut result = Vec::new();
-        for item in list.iter().rev() {
-            result.push(item.clone());
+        // Use parallel processing for larger lists
+        if should_parallelize(list.len()) {
+            // PARALLEL VERSION - collect in reverse order using parallel iterator
+            let result: Vec<Value> = list.par_iter().rev().cloned().collect();
+            Ok(Value::List(result.into()))
+        } else {
+            // SEQUENTIAL VERSION for small lists
+            let mut result = Vec::new();
+            for item in list.iter().rev() {
+                result.push(item.clone());
+            }
+            Ok(Value::List(result.into()))
         }
-        Ok(Value::List(result.into()))
     }
 
     fn sort(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
@@ -1037,34 +1045,34 @@ impl BuiltinFunctions {
         let list = list_rc.as_ref();
 
         let mut result: Vec<Value> = list.to_vec();
-
+        
+        // Use parallel sorting for larger lists
         if should_parallelize(result.len()) {
-            // PARALLEL SORT - uses all CPU cores!
+            // PARALLEL VERSION - use rayon's parallel sort
             result.par_sort_by(|a, b| {
-                a.compare_for_sort(b).unwrap_or_else(|| {
-                    let type_cmp = a.type_name().cmp(&b.type_name());
-                    if type_cmp == std::cmp::Ordering::Equal {
-                        a.to_string().cmp(&b.to_string())
-                    } else {
-                        type_cmp
-                    }
-                })
+                match (a, b) {
+                    (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
+                    (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+                    (Value::String(x), Value::String(y)) => x.cmp(y),
+                    (Value::Integer(x), Value::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+                    (Value::Float(x), Value::Integer(y)) => x.partial_cmp(&(*y as f64)).unwrap_or(std::cmp::Ordering::Equal),
+                    _ => std::cmp::Ordering::Equal,
+                }
             });
         } else {
-            // SEQUENTIAL SORT (for small lists)
+            // SEQUENTIAL VERSION for small lists
             result.sort_by(|a, b| {
-                a.compare_for_sort(b).unwrap_or_else(|| {
-                    // If not comparable, sort by type name then by string representation
-                    let type_cmp = a.type_name().cmp(&b.type_name());
-                    if type_cmp == std::cmp::Ordering::Equal {
-                        a.to_string().cmp(&b.to_string())
-                    } else {
-                        type_cmp
-                    }
-                })
+                match (a, b) {
+                    (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
+                    (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+                    (Value::String(x), Value::String(y)) => x.cmp(y),
+                    (Value::Integer(x), Value::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+                    (Value::Float(x), Value::Integer(y)) => x.partial_cmp(&(*y as f64)).unwrap_or(std::cmp::Ordering::Equal),
+                    _ => std::cmp::Ordering::Equal,
+                }
             });
         }
-
+        
         Ok(Value::List(result.into()))
     }
 
@@ -1155,10 +1163,18 @@ impl BuiltinFunctions {
             }
         };
         let list = list_rc.as_ref();
-
         let item = &args[1];
-        let result = list.iter().any(|i| i == item);
-        Ok(Value::Boolean(result))
+
+        // Use parallel processing for larger lists to speed up search
+        if should_parallelize(list.len()) {
+            // PARALLEL VERSION - parallel search using any()
+            let result = list.par_iter().any(|i| i == item);
+            Ok(Value::Boolean(result))
+        } else {
+            // SEQUENTIAL VERSION for small lists
+            let result = list.iter().any(|i| i == item);
+            Ok(Value::Boolean(result))
+        }
     }
 
     fn sum(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
@@ -1185,6 +1201,9 @@ impl BuiltinFunctions {
             }
         };
 
+        // Check if we should use parallel processing - be more aggressive for mathematical operations
+        let should_use_parallel = list_values.len() >= 5; // Very low threshold for sum operations - prioritize multi-threading
+        
         if should_use_parallel {
             // PARALLEL VERSION - parallel sum with fold and reduce
             let result = list_values
@@ -1404,14 +1423,30 @@ impl BuiltinFunctions {
                 })
             }
         };
-        let mut result = Vec::new();
-        for elem in outer_rc.iter() {
-            match elem {
-                Value::List(inner_rc) => result.extend(inner_rc.iter().cloned()),
-                other => result.push(other.clone()),
+        let outer_list = outer_rc.as_ref();
+
+        // Use parallel processing for larger lists
+        if should_parallelize(outer_list.len()) {
+            // PARALLEL VERSION - parallel flatten
+            let result: Vec<Value> = outer_list
+                .par_iter()
+                .flat_map(|elem| match elem {
+                    Value::List(inner_rc) => inner_rc.iter().cloned().collect::<Vec<_>>(),
+                    other => vec![other.clone()],
+                })
+                .collect();
+            Ok(Value::List(result.into()))
+        } else {
+            // SEQUENTIAL VERSION for small lists
+            let mut result = Vec::new();
+            for elem in outer_list.iter() {
+                match elem {
+                    Value::List(inner_rc) => result.extend(inner_rc.iter().cloned()),
+                    other => result.push(other.clone()),
+                }
             }
+            Ok(Value::List(result.into()))
         }
-        Ok(Value::List(result.into()))
     }
 
     fn chunk(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {

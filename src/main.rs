@@ -5,6 +5,7 @@ use std::process;
 use olang::interpreter::Interpreter;
 use olang::parser::Parser as OlangParser;
 use olang::repl::Repl;
+use olang::parallel::{initialize_parallelization, set_parallel_threshold};
 
 #[derive(Parser)]
 #[command(name = "olang")]
@@ -30,6 +31,23 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
+
+    // Initialize parallelization early for optimal performance
+    if let Err(e) = initialize_parallelization(None) {
+        if cli.verbose {
+            eprintln!("Warning: Failed to initialize parallel processing: {}", e);
+        }
+    } else if cli.verbose {
+        println!("✅ Multi-threading enabled: {} CPU cores detected, using aggressive parallelization", num_cpus::get());
+    }
+
+    // Set a very aggressive parallel threshold for maximum multi-threading by default
+    // Parallelize even small lists (10+ items) to utilize all CPU cores
+    set_parallel_threshold(10);
+    
+    if cli.verbose {
+        println!("🚀 Automatic parallelization: Lists with 10+ items will use all {} cores", num_cpus::get());
+    }
 
     // Initialize tracing if requested
     if cli.trace {
