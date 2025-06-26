@@ -88,6 +88,19 @@ impl OvmCommand {
             auto_compile_functions: true,
             enable_ovm_lazy_eval: self.lazy,
             fallback_on_error: !self.no_fallback,
+            enable_ovm_builtins: true,
+            ovm_preferred_builtins: vec![
+                "len".to_string(),
+                "typeof".to_string(),
+                "to_string".to_string(),
+                "sum".to_string(),
+                "average".to_string(),
+                "min".to_string(),
+                "max".to_string(),
+                "reverse".to_string(),
+                "sort".to_string(),
+                "contains".to_string(),
+            ],
         };
 
         // Create OVM configuration

@@ -2,7 +2,8 @@
 //!
 //! Provides tiered execution with interpreter, bytecode VM, and JIT compilation
 
-use crate::ast::{Expr, FunctionDecl, Statement, Value};
+use crate::ast::{BinaryOp, Expr, FunctionDecl, Statement, Value, UnaryOp};
+use crate::builtin::BuiltinFunctions;
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::ovm::{FunctionId, MemoryManager, OvmConfig, OvmValue};
 use crate::ovm::bytecode::{BytecodeVm, BytecodeError};
@@ -19,6 +20,9 @@ pub struct ExecutionEngine {
 
     // Bytecode VM for intermediate tier execution
     bytecode_vm: Arc<Mutex<BytecodeVm>>,
+
+    // Builtin functions registry for OVM-native builtin execution
+    builtin_functions: BuiltinFunctions,
 
     // Function registry
     functions: HashMap<FunctionId, FunctionDecl>,
@@ -129,6 +133,7 @@ impl ExecutionEngine {
         Ok(Self {
             interpreter: Arc::new(Mutex::new(Interpreter::new())),
             bytecode_vm: Arc::new(Mutex::new(BytecodeVm::new())),
+            builtin_functions: BuiltinFunctions::new(),
             functions: HashMap::new(),
             execution_stats: HashMap::new(),
             config: execution_config,
@@ -137,7 +142,48 @@ impl ExecutionEngine {
         })
     }
 
-    /// Execute an OVM expression
+    /// Execute a builtin function call natively in OVM
+    pub fn execute_builtin(
+        &mut self,
+        function_name: &str,
+        args: &[OvmValue],
+    ) -> Result<OvmValue, ExecutionError> {
+        // Convert OVM values to AST values for builtin execution
+        let mut ast_args = Vec::new();
+        for arg in args {
+            ast_args.push(arg.to_ast().map_err(|e| {
+                ExecutionError::ConversionError(format!("OVM to AST conversion failed: {:?}", e))
+            })?);
+        }
+
+        // Execute builtin function using the interpreter's builtin system
+        let mut interpreter = self
+            .interpreter
+            .lock()
+            .map_err(|_| ExecutionError::Failed("Failed to lock interpreter".to_string()))?;
+
+        let result = BuiltinFunctions::call(
+            &self.builtin_functions,
+            function_name,
+            ast_args,
+            &mut interpreter,
+        )?;
+
+        // Convert result back to OVM value
+        Ok(OvmValue::from_ast(result))
+    }
+
+    /// Check if a function name is a builtin function
+    pub fn is_builtin_function(&self, name: &str) -> bool {
+        self.builtin_functions.get_functions().contains_key(name)
+    }
+
+    /// Get the list of available builtin functions
+    pub fn get_builtin_functions(&self) -> Vec<String> {
+        self.builtin_functions.get_functions().keys().cloned().collect()
+    }
+
+    /// Execute an OVM expression, with enhanced builtin support
     pub fn execute_expression(&mut self, ovm_expr: OvmExpr) -> Result<OvmValue, ExecutionError> {
         // Register thread for safepoint coordination
         self.safepoint_manager.register_thread();
@@ -151,18 +197,24 @@ impl ExecutionEngine {
         self.safepoint_manager.safepoint_poll()
             .map_err(|e| ExecutionError::Failed(format!("Safepoint coordination failed: {}", e)))?;
 
-        // Route expressions through appropriate execution tier
-        let result = match ovm_expr.execution_tier {
-            ExecutionTier::Interpreter => self.execute_with_interpreter(ovm_expr.expr)?,
-            ExecutionTier::Bytecode => {
-                // For expressions, fall back to interpreter for now
-                // Full bytecode compilation is more suitable for functions
-                self.execute_with_interpreter(ovm_expr.expr)?
-            }
-            ExecutionTier::Native => {
-                // For expressions, fall back to interpreter for now  
-                // JIT compilation is more suitable for functions
-                self.execute_with_interpreter(ovm_expr.expr)?
+        // Check if this is a builtin function call
+        let result = if let Some((builtin_name, args)) = self.extract_builtin_call(&ovm_expr.expr) {
+            // Execute builtin function natively in OVM
+            self.execute_builtin(&builtin_name, &args)?
+        } else {
+            // Route expressions through appropriate execution tier
+            match ovm_expr.execution_tier {
+                ExecutionTier::Interpreter => self.execute_with_interpreter(ovm_expr.expr)?,
+                ExecutionTier::Bytecode => {
+                    // For expressions, fall back to interpreter for now
+                    // Full bytecode compilation is more suitable for functions
+                    self.execute_with_interpreter(ovm_expr.expr)?
+                }
+                ExecutionTier::Native => {
+                    // For expressions, fall back to interpreter for now  
+                    // JIT compilation is more suitable for functions
+                    self.execute_with_interpreter(ovm_expr.expr)?
+                }
             }
         };
 
@@ -174,6 +226,45 @@ impl ExecutionEngine {
         }
 
         Ok(result)
+    }
+
+    /// Extract builtin function call information from an expression
+    fn extract_builtin_call(&self, expr: &Expr) -> Option<(String, Vec<OvmValue>)> {
+        match expr {
+            Expr::Call { callee, arguments } => {
+                if let Expr::Identifier(name) = callee.as_ref() {
+                    if self.is_builtin_function(name) {
+                        // Convert arguments to OVM values
+                        let mut ovm_args = Vec::new();
+                        for arg_expr in arguments {
+                            // For now, we'll evaluate arguments using the interpreter
+                            // In a full implementation, we'd recursively evaluate them in OVM
+                            if let Ok(ast_value) = self.evaluate_expr_to_ast(arg_expr) {
+                                ovm_args.push(OvmValue::from_ast(ast_value));
+                            } else {
+                                // If argument evaluation fails, don't treat as builtin call
+                                return None;
+                            }
+                        }
+                        return Some((name.clone(), ovm_args));
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Helper to evaluate an expression to AST value (temporary implementation)
+    fn evaluate_expr_to_ast(&self, expr: &Expr) -> Result<Value, ExecutionError> {
+        // This is a temporary implementation - in production, we'd evaluate recursively in OVM
+        let mut interpreter = self
+            .interpreter
+            .lock()
+            .map_err(|_| ExecutionError::Failed("Failed to lock interpreter".to_string()))?;
+        
+        interpreter.eval_statement(Statement::Expression(expr.clone()))
+            .map_err(ExecutionError::from)
     }
 
     /// Execute a function by ID

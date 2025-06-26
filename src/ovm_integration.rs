@@ -44,6 +44,12 @@ pub struct IntegrationConfig {
 
     /// Fallback to classic interpreter on OVM errors
     pub fallback_on_error: bool,
+
+    /// Whether to enable OVM builtin execution
+    pub enable_ovm_builtins: bool,
+
+    /// List of builtin functions that should use OVM
+    pub ovm_preferred_builtins: Vec<String>,
 }
 
 impl Default for IntegrationConfig {
@@ -54,6 +60,30 @@ impl Default for IntegrationConfig {
             auto_compile_functions: true,
             enable_ovm_lazy_eval: true,
             fallback_on_error: true,
+            enable_ovm_builtins: true,
+            ovm_preferred_builtins: vec![
+                // Simple mathematical builtins that can benefit from OVM
+                "len".to_string(),
+                "typeof".to_string(),
+                "to_string".to_string(),
+                "to_int".to_string(),
+                "to_float".to_string(),
+                "sum".to_string(),
+                "average".to_string(),
+                "min".to_string(),
+                "max".to_string(),
+                "clamp".to_string(),
+                "reverse".to_string(),
+                "sort".to_string(),
+                "contains".to_string(),
+                "starts_with".to_string(),
+                "ends_with".to_string(),
+                "flatten".to_string(),
+                // Simple list operations
+                "head".to_string(),
+                "tail".to_string(),
+                "cons".to_string(),
+            ],
         }
     }
 }
@@ -159,7 +189,7 @@ impl OvmInterpreter {
         Ok(result)
     }
 
-    /// Evaluate using OVM
+    /// Evaluate using OVM with enhanced builtin support
     pub fn eval_program_ovm(&mut self, program: Program) -> Result<Value, IntegrationError> {
         if self.ovm.is_none() {
             return Err(IntegrationError::OvmNotInitialized);
@@ -173,16 +203,9 @@ impl OvmInterpreter {
         for statement in program.statements {
             match statement {
                 crate::ast::Statement::Expression(expr) => {
-                    // Check if this should use classic interpreter (builtin functions, pipelines, etc.)
-                    if self.should_use_classic_interpreter(&expr) {
-                        // Fallback to classic interpreter for builtin functions and pipelines
-                        last_value = self
-                            .classic_interpreter
-                            .eval_statement(crate::ast::Statement::Expression(expr))
-                            .map_err(IntegrationError::ClassicInterpreterError)?;
-                        self.increment_fallback_count();
-                    } else {
-                        // Use OVM for other expressions
+                    // Enhanced builtin routing logic
+                    if self.should_use_ovm_for_expression(&expr) {
+                        // Use OVM for enhanced execution
                         let ovm_value = self
                             .ovm
                             .as_mut()
@@ -190,6 +213,13 @@ impl OvmInterpreter {
                             .execute_expression(expr)
                             .map_err(IntegrationError::OvmExecutionError)?;
                         last_value = self.convert_ovm_to_ast_value(ovm_value)?;
+                    } else {
+                        // Fallback to classic interpreter for complex builtins and pipelines
+                        last_value = self
+                            .classic_interpreter
+                            .eval_statement(crate::ast::Statement::Expression(expr))
+                            .map_err(IntegrationError::ClassicInterpreterError)?;
+                        self.increment_fallback_count();
                     }
                 }
                 crate::ast::Statement::FunctionDecl(func_decl) => {
@@ -200,22 +230,22 @@ impl OvmInterpreter {
                             .unwrap()
                             .register_function(func_decl.clone())
                             .map_err(IntegrationError::OvmExecutionError)?;
-                        self.function_registry
-                            .insert(func_decl.name.clone(), func_id);
+                        
+                        self.function_registry.insert(func_decl.name.clone(), func_id);
                         self.increment_compilation_count();
                     }
 
-                    // Also register with classic interpreter for fallback
+                    // Also register with classic interpreter for compatibility
                     last_value = self
                         .classic_interpreter
                         .eval_statement(crate::ast::Statement::FunctionDecl(func_decl))
                         .map_err(IntegrationError::ClassicInterpreterError)?;
                 }
-                _ => {
-                    // For other statement types, use classic interpreter
+                other_statement => {
+                    // Handle other statement types with classic interpreter
                     last_value = self
                         .classic_interpreter
-                        .eval_statement(statement)
+                        .eval_statement(other_statement)
                         .map_err(IntegrationError::ClassicInterpreterError)?;
                 }
             }
@@ -223,7 +253,6 @@ impl OvmInterpreter {
 
         let duration = start.elapsed();
         self.update_ovm_stats(duration);
-
         Ok(last_value)
     }
 
@@ -359,58 +388,94 @@ impl OvmInterpreter {
         }
     }
 
-    /// Check if an expression should use the classic interpreter
-    fn should_use_classic_interpreter(&self, expr: &crate::ast::Expr) -> bool {
+    /// Enhanced expression routing logic
+    fn should_use_ovm_for_expression(&self, expr: &crate::ast::Expr) -> bool {
         match expr {
-            // Pipeline expressions should use classic interpreter for now
-            crate::ast::Expr::Pipeline { .. } => true,
-
-            // Function calls should use classic interpreter for builtins and user functions
+            // Function calls - enhanced builtin routing
             crate::ast::Expr::Call { callee, .. } => {
                 match callee.as_ref() {
                     crate::ast::Expr::Identifier(name) => {
-                        // Use classic interpreter for builtin functions, module functions, 
-                        // and any function calls (to ensure consistent environment access)
-                        self.is_builtin_function(name) || self.is_user_function(name)
+                        if self.is_builtin_function(name) {
+                            // Check if this builtin should use OVM
+                            self.should_use_ovm_for_builtin(name)
+                        } else {
+                            // User functions can use OVM
+                            self.integration_config.use_ovm_by_default
+                        }
                     }
-                    _ => true, // For complex callees, use classic interpreter for safety
+                    _ => false, // Complex callees use classic interpreter for safety
                 }
             }
             
-            // CRITICAL FIX: All identifiers should use classic interpreter for now
-            // This ensures consistent environment access for variables and user-defined functions
-            crate::ast::Expr::Identifier(_) => true,
+            // Pipeline expressions should still use classic interpreter for now
+            crate::ast::Expr::Pipeline { .. } => false,
             
-            // CRITICAL FIX: For loops should use classic interpreter to ensure variable environment consistency
-            crate::ast::Expr::ForLoop { .. } => true,
-            crate::ast::Expr::WhileLoop { .. } => true,
-            crate::ast::Expr::Loop { .. } => true,
-            
-            // Complex expressions that benefit from OVM optimization
-            crate::ast::Expr::Lambda { .. } => false,
-            crate::ast::Expr::Match { .. } => false,
+            // Identifiers, loops should use classic interpreter for environment consistency
+            crate::ast::Expr::Identifier(_) => false,
+            crate::ast::Expr::ForLoop { .. } => false,
+            crate::ast::Expr::WhileLoop { .. } => false,
+            crate::ast::Expr::Loop { .. } => false,
             
             // Simple expressions can use OVM
-            crate::ast::Expr::Integer(_) => false,
-            crate::ast::Expr::Float(_) => false,
-            crate::ast::Expr::String(_) => false,
-            crate::ast::Expr::Boolean(_) => false,
-            crate::ast::Expr::List(_) => false,
-            crate::ast::Expr::Tuple(_) => false,
-            crate::ast::Expr::StructLiteral(_) => false,
-            crate::ast::Expr::FieldAccess { .. } => false,
-            crate::ast::Expr::Index { .. } => false,
-            crate::ast::Expr::BinaryOp { .. } => false,
-            crate::ast::Expr::UnaryOp { .. } => false,
+            crate::ast::Expr::Integer(_) => true,
+            crate::ast::Expr::Float(_) => true,
+            crate::ast::Expr::String(_) => true,
+            crate::ast::Expr::Boolean(_) => true,
+            crate::ast::Expr::List(_) => true,
+            crate::ast::Expr::Tuple(_) => true,
+            crate::ast::Expr::BinaryOp { .. } => true,
+            crate::ast::Expr::UnaryOp { .. } => true,
             
-            // Let other expressions go through OVM
-            _ => false,
+            // Complex expressions that can benefit from OVM optimization
+            crate::ast::Expr::Lambda { .. } => true,
+            crate::ast::Expr::Match { .. } => false, // Pattern matching uses classic for now
+            crate::ast::Expr::StructLiteral(_) => true,
+            crate::ast::Expr::FieldAccess { .. } => true,
+            crate::ast::Expr::Index { .. } => true,
+            
+            // Default to OVM if configured
+            _ => self.integration_config.use_ovm_by_default,
         }
     }
 
-    /// Check if an expression is a builtin function call (kept for backwards compatibility)
-    fn is_builtin_function_call(&self, expr: &crate::ast::Expr) -> bool {
-        self.should_use_classic_interpreter(expr)
+    /// Determine if a builtin function should use OVM execution
+    fn should_use_ovm_for_builtin(&self, builtin_name: &str) -> bool {
+        // Check if OVM builtins are enabled
+        if !self.integration_config.enable_ovm_builtins {
+            return false;
+        }
+
+        // Check if this builtin is in the OVM-preferred list
+        self.integration_config.ovm_preferred_builtins.contains(&builtin_name.to_string())
+    }
+
+    /// Get OVM execution statistics
+    pub fn get_ovm_builtin_stats(&self) -> HashMap<String, u32> {
+        // In a full implementation, this would track per-builtin execution counts
+        HashMap::new()
+    }
+
+    /// Force enable/disable OVM builtins at runtime
+    pub fn set_ovm_builtins_enabled(&mut self, enabled: bool) {
+        self.integration_config.enable_ovm_builtins = enabled;
+    }
+
+    /// Add a builtin to the OVM-preferred list
+    pub fn add_ovm_preferred_builtin(&mut self, builtin_name: String) {
+        if !self.integration_config.ovm_preferred_builtins.contains(&builtin_name) {
+            self.integration_config.ovm_preferred_builtins.push(builtin_name);
+        }
+    }
+
+    /// Remove a builtin from the OVM-preferred list
+    pub fn remove_ovm_preferred_builtin(&mut self, builtin_name: &str) {
+        self.integration_config.ovm_preferred_builtins.retain(|name| name != builtin_name);
+    }
+
+    /// Check if an expression should use the classic interpreter (updated logic)
+    fn should_use_classic_interpreter(&self, expr: &crate::ast::Expr) -> bool {
+        // Use the inverse of the enhanced OVM routing logic
+        !self.should_use_ovm_for_expression(expr)
     }
 
     /// Check if a name corresponds to a builtin function
@@ -457,21 +522,6 @@ impl OvmInterpreter {
                 | "force"
                 | "lazy"
         ) || name.contains('.') // Module functions like math.sqrt, fs.read_file, etc.
-    }
-
-    /// Check if a name corresponds to a user-defined function
-    fn is_user_function(&self, name: &str) -> bool {
-        // Check if the function exists in the classic interpreter's environment
-        // This is a bit of a hack, but we need to check if it's a user-defined function
-        
-        // First check if it's NOT a builtin function
-        if self.is_builtin_function(name) {
-            return false;
-        }
-        
-        // For now, assume any non-builtin function call should use classic interpreter
-        // This ensures consistency until we have better environment synchronization
-        true
     }
 }
 
@@ -558,5 +608,81 @@ mod tests {
         let stats = interpreter.get_stats();
         assert_eq!(stats.classic_executions, 1);
         assert_eq!(stats.ovm_executions, 0);
+    }
+
+    #[test]
+    fn test_builtin_routing_configuration() {
+        let mut interpreter = OvmInterpreter::new();
+        
+        // Test default configuration
+        assert!(interpreter.integration_config.enable_ovm_builtins);
+        assert!(interpreter.integration_config.ovm_preferred_builtins.contains(&"len".to_string()));
+        
+        // Test runtime configuration changes
+        interpreter.set_ovm_builtins_enabled(false);
+        assert!(!interpreter.integration_config.enable_ovm_builtins);
+        
+        interpreter.add_ovm_preferred_builtin("custom_builtin".to_string());
+        assert!(interpreter.integration_config.ovm_preferred_builtins.contains(&"custom_builtin".to_string()));
+        
+        interpreter.remove_ovm_preferred_builtin("len");
+        assert!(!interpreter.integration_config.ovm_preferred_builtins.contains(&"len".to_string()));
+    }
+
+    #[test]
+    fn test_builtin_function_detection() {
+        let interpreter = OvmInterpreter::new();
+        
+        // Test builtin detection
+        assert!(interpreter.is_builtin_function("len"));
+        assert!(interpreter.is_builtin_function("map"));
+        assert!(interpreter.is_builtin_function("println"));
+        assert!(!interpreter.is_builtin_function("not_a_builtin"));
+        
+        // Test OVM builtin preferences
+        assert!(interpreter.should_use_ovm_for_builtin("len"));
+        assert!(interpreter.should_use_ovm_for_builtin("sum"));
+        assert!(!interpreter.should_use_ovm_for_builtin("map")); // Not in OVM preferred list
+    }
+
+    #[test]
+    fn test_expression_routing() {
+        let interpreter = OvmInterpreter::new();
+        
+        // Test simple expressions route to OVM
+        let simple_expr = Expr::Integer(42);
+        assert!(interpreter.should_use_ovm_for_expression(&simple_expr));
+        
+        // Test complex expressions route to classic
+        let identifier_expr = Expr::Identifier("some_var".to_string());
+        assert!(!interpreter.should_use_ovm_for_expression(&identifier_expr));
+        
+        // Test OVM-preferred builtin call routes to OVM
+        let len_call = Expr::Call {
+            callee: Box::new(Expr::Identifier("len".to_string())),
+            arguments: vec![Expr::List(std::rc::Rc::from([Expr::Integer(1), Expr::Integer(2)] as [Expr; 2]))],
+        };
+        assert!(interpreter.should_use_ovm_for_expression(&len_call));
+        
+        // Test non-OVM builtin call routes to classic
+        let map_call = Expr::Call {
+            callee: Box::new(Expr::Identifier("map".to_string())),
+            arguments: vec![
+                Expr::List(std::rc::Rc::from([Expr::Integer(1), Expr::Integer(2)] as [Expr; 2])),
+                Expr::Lambda {
+                    parameters: vec![crate::ast::Parameter {
+                        name: "x".to_string(),
+                        type_annotation: None,
+                    }],
+                    body: Box::new(Expr::BinaryOp {
+                        left: Box::new(Expr::Identifier("x".to_string())),
+                        op: crate::ast::BinaryOp::Add,
+                        right: Box::new(Expr::Integer(1)),
+                    }),
+                    return_type: None,
+                },
+            ],
+        };
+        assert!(!interpreter.should_use_ovm_for_expression(&map_call));
     }
 }

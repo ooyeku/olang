@@ -99,11 +99,13 @@ impl Repl {
 
         // Create OVM configuration with auto mode (OVM DISABLED by default for stability)
         let integration_config = IntegrationConfig {
-            use_ovm_by_default: false,  // Disabled due to memory management issues
-            ovm_complexity_threshold: 50,
-            auto_compile_functions: false,  // Disabled due to memory management issues
-            enable_ovm_lazy_eval: false,    // Disabled due to memory management issues
+            use_ovm_by_default: false,
+            ovm_complexity_threshold: 100,
+            auto_compile_functions: false,
+            enable_ovm_lazy_eval: true,
             fallback_on_error: true,
+            enable_ovm_builtins: false,
+            ovm_preferred_builtins: vec![],
         };
 
         let mut ovm_interpreter = OvmInterpreter::with_config(integration_config);

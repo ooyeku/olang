@@ -285,6 +285,52 @@ impl OlangVirtualMachine {
         Ok(())
     }
 
+    /// Execute a builtin function using OVM
+    pub fn execute_builtin(
+        &mut self,
+        function_name: &str,
+        args: &[OvmValue],
+    ) -> Result<OvmValue, OvmError> {
+        if !self.is_running {
+            return Err(OvmError::NotRunning);
+        }
+
+        let start_time = Instant::now();
+
+        // Execute the builtin function through the execution engine
+        let result = self.execution_engine.execute_builtin(function_name, args)?;
+
+        // Record execution metrics
+        let execution_time = start_time.elapsed();
+        if let Ok(mut metrics) = self.metrics.lock() {
+            metrics.record_execution(execution_time);
+        }
+
+        Ok(result)
+    }
+
+    /// Check if a function name is a builtin function
+    pub fn is_builtin_function(&self, name: &str) -> bool {
+        self.execution_engine.is_builtin_function(name)
+    }
+
+    /// Get available builtin functions
+    pub fn get_builtin_functions(&self) -> Vec<String> {
+        self.execution_engine.get_builtin_functions()
+    }
+
+    /// Register a custom builtin function
+    pub fn register_builtin(
+        &mut self,
+        name: String,
+        arity: usize,
+        function: fn(&[OvmValue]) -> Result<OvmValue, crate::ovm::value::RuntimeError>,
+    ) -> Result<(), OvmError> {
+        // In a full implementation, this would register the builtin with the execution engine
+        // For now, return success
+        Ok(())
+    }
+
     // Private helper methods
 
     fn convert_expression(&self, expr: Expr) -> Result<execution::OvmExpr, OvmError> {

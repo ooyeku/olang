@@ -219,12 +219,48 @@ pub struct StructObject {
     pub fields: HashMap<String, OvmValue>,
 }
 
-/// Builtin function object
+/// Builtin function object for OVM-native execution
 #[derive(Debug)]
 pub struct BuiltinObject {
     pub name: String,
     pub arity: usize,
     pub function_ptr: fn(&[OvmValue]) -> Result<OvmValue, RuntimeError>,
+    pub is_ovm_native: bool,
+    pub performance_tier: ExecutionTier,
+}
+
+impl BuiltinObject {
+    /// Create a new builtin object
+    pub fn new(
+        name: String,
+        arity: usize,
+        function_ptr: fn(&[OvmValue]) -> Result<OvmValue, RuntimeError>,
+    ) -> Self {
+        Self {
+            name,
+            arity,
+            function_ptr,
+            is_ovm_native: true,
+            performance_tier: ExecutionTier::Interpreter,
+        }
+    }
+
+    /// Execute the builtin function
+    pub fn execute(&self, args: &[OvmValue]) -> Result<OvmValue, RuntimeError> {
+        if args.len() != self.arity && self.arity != 0 {
+            // 0 arity means variadic (any number of arguments)
+            return Err(RuntimeError::Generic {
+                message: format!(
+                    "Arity mismatch for {}: expected {}, got {}",
+                    self.name,
+                    self.arity,
+                    args.len()
+                ),
+            });
+        }
+
+        (self.function_ptr)(args)
+    }
 }
 
 /// Thunk object for lazy evaluation
@@ -601,62 +637,195 @@ impl OvmValue {
         }
     }
 
-    /// Convert from AST Value to OVM Value
+    /// Create a builtin function value
+    pub fn new_builtin(name: String, arity: usize, function_ptr: fn(&[OvmValue]) -> Result<OvmValue, RuntimeError>) -> Self {
+        let builtin_obj = BuiltinObject::new(name, arity, function_ptr);
+        
+        // For now, we'll use a placeholder pointer - in a real implementation,
+        // this would be allocated through the GC
+        let ptr = Box::into_raw(Box::new(builtin_obj));
+        let gc_ptr = GcPtr::new(ptr);
+
+        Self {
+            header: ValueHeader::new(TypeTag::Builtin, ExecutionTier::Interpreter, LazyState::Eager),
+            data: ValueData::Builtin(gc_ptr),
+        }
+    }
+
+    /// Check if this value is a builtin function
+    pub fn is_builtin(&self) -> bool {
+        matches!(self.data, ValueData::Builtin(_))
+    }
+
+    /// Get builtin function name if this is a builtin
+    pub fn get_builtin_name(&self) -> Option<&str> {
+        match &self.data {
+            ValueData::Builtin(ptr) => {
+                unsafe {
+                    Some(&ptr.as_ref().name)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Execute builtin function if this value is a builtin
+    pub fn execute_builtin(&self, args: &[OvmValue]) -> Result<OvmValue, RuntimeError> {
+        match &self.data {
+            ValueData::Builtin(ptr) => {
+                unsafe {
+                    ptr.as_ref().execute(args)
+                }
+            }
+            _ => Err(RuntimeError::TypeError {
+                expected: "builtin function".to_string(),
+                found: format!("{:?}", self.header.type_tag),
+            }),
+        }
+    }
+
+    /// Enhanced from_ast conversion with better builtin support
     pub fn from_ast(ast_value: AstValue) -> Self {
         match ast_value {
-            AstValue::Integer(i) => Self::new_integer(i),
+            AstValue::Integer(n) => Self::new_integer(n),
             AstValue::Float(f) => Self::new_float(f),
             AstValue::Boolean(b) => Self::new_boolean(b),
+            AstValue::String(s) => Self::new_string(s.as_ref().clone()),
             AstValue::Unit => Self::new_unit(),
-            AstValue::String(s) => {
-                // Convert Arc<String> to String and create OVM string
-                Self::new_string(s.as_ref().clone())
-            },
-            AstValue::List(list) => {
-                // Convert each element recursively
-                let ovm_values: Vec<Self> = list.iter()
-                    .map(|v| Self::from_ast(v.clone()))
-                    .collect();
-                Self::new_list(ovm_values)
-            },
-            AstValue::Tuple(tuple) => {
-                // Convert tuple elements recursively
-                let ovm_values: Vec<Self> = tuple.iter()
-                    .map(|v| Self::from_ast(v.clone()))
-                    .collect();
-                Self::new_list(ovm_values) // Treat tuple as list for now
-            },
-            AstValue::Struct { type_name, fields } => {
-                // For structs, return unit for now but don't panic
-                // TODO: Implement proper struct conversion
-                Self::new_unit()
-            },
+            
+            AstValue::List(items) => {
+                let ovm_items: Vec<Self> = items.iter().map(|item| Self::from_ast(item.clone())).collect();
+                Self::new_list(ovm_items)
+            }
+
+            AstValue::Tuple(items) => {
+                let ovm_items: Vec<Self> = items.iter().map(|item| Self::from_ast(item.clone())).collect();
+                Self::new_tuple(ovm_items)
+            }
+
+            AstValue::Function(func) => {
+                // Create function object
+                let func_obj = FunctionObject {
+                    name: func.name.clone(),
+                    parameters: func.parameters.iter().map(|p| p.name.clone()).collect(),
+                    body: func.body,
+                    closure: func.closure.into_iter().map(|(k, v)| (k, Self::from_ast(v))).collect(),
+                    compilation_tier: ExecutionTier::Interpreter,
+                    call_count: AtomicU32::new(0),
+                    optimization_data: OptimizationData::default(),
+                };
+
+                let ptr = Box::into_raw(Box::new(func_obj));
+                let gc_ptr = GcPtr::new(ptr);
+
+                Self {
+                    header: ValueHeader::new(TypeTag::Function, ExecutionTier::Interpreter, LazyState::Eager),
+                    data: ValueData::Function(gc_ptr),
+                }
+            }
+
+            AstValue::Builtin(builtin) => {
+                // Create a placeholder builtin function
+                // In a real implementation, this would map to actual builtin functions
+                Self::new_builtin(
+                    builtin.name.clone(),
+                    builtin.arity,
+                    |_args| Err(RuntimeError::Generic {
+                        message: "Builtin function not implemented in OVM".to_string(),
+                    }),
+                )
+            }
+
+            AstValue::Ok(value) => {
+                Self {
+                    header: ValueHeader::new(TypeTag::Result, ExecutionTier::Interpreter, LazyState::Eager),
+                    data: ValueData::Result {
+                        ok: Some(Box::new(Self::from_ast(*value))),
+                        err: None,
+                    },
+                }
+            }
+
+            AstValue::Err(value) => {
+                Self {
+                    header: ValueHeader::new(TypeTag::Result, ExecutionTier::Interpreter, LazyState::Eager),
+                    data: ValueData::Result {
+                        ok: None,
+                        err: Some(Box::new(Self::from_ast(*value))),
+                    },
+                }
+            }
+
             AstValue::Range { start, end, inclusive } => {
-                // For ranges, store as integer for now (could represent as start value)
+                // For ranges, create a simple representation for now
                 // TODO: Implement proper range representation
                 Self::new_integer(start)
+            }
+
+            AstValue::Struct { type_name, fields } => {
+                // Create struct object
+                let struct_fields: HashMap<String, OvmValue> = fields
+                    .into_iter()
+                    .map(|(k, v)| (k, Self::from_ast(v)))
+                    .collect();
+
+                let struct_obj = StructObject {
+                    type_name,
+                    fields: struct_fields,
+                };
+
+                let ptr = Box::into_raw(Box::new(struct_obj));
+                let gc_ptr = GcPtr::new(ptr);
+
+                Self {
+                    header: ValueHeader::new(TypeTag::Struct, ExecutionTier::Interpreter, LazyState::Eager),
+                    data: ValueData::Struct(gc_ptr),
+                }
+            }
+
+            AstValue::Promise { state, value, error } => {
+                let ovm_state = match state {
+                    crate::ast::PromiseState::Pending => PromiseState::Pending,
+                    crate::ast::PromiseState::Resolved => PromiseState::Resolved,
+                    crate::ast::PromiseState::Rejected => PromiseState::Rejected,
+                };
+
+                let promise_obj = PromiseObject {
+                    state: ovm_state,
+                    value: value.map(|v| Box::new(Self::from_ast(*v))),
+                    error: error.map(|e| Box::new(Self::from_ast(*e))),
+                    callbacks: Vec::new(),
+                };
+
+                let ptr = Box::into_raw(Box::new(promise_obj));
+                let gc_ptr = GcPtr::new(ptr);
+
+                Self {
+                    header: ValueHeader::new(TypeTag::Promise, ExecutionTier::Interpreter, LazyState::Eager),
+                    data: ValueData::Promise(gc_ptr),
+                }
+            }
+        }
+    }
+
+    /// Create a new tuple value
+    pub fn new_tuple(values: Vec<Self>) -> Self {
+        let array = ValueArray {
+            length: values.len(),
+            capacity: values.len(),
+            data: {
+                let mut data = Vec::with_capacity(values.len());
+                data.extend(values);
+                Box::into_raw(data.into_boxed_slice()) as *mut Self
             },
-            AstValue::Ok(value) => {
-                // For Ok results, just convert the inner value
-                Self::from_ast(*value)
-            },
-            AstValue::Err(value) => {
-                // For Err results, convert to unit to indicate error state
-                // TODO: Implement proper error representation
-                Self::new_unit()
-            },
-            AstValue::Function(_) => {
-                // Functions convert to unit for now
-                Self::new_unit()
-            },
-            AstValue::Builtin(_) => {
-                // Builtins convert to unit for now
-                Self::new_unit()
-            },
-            AstValue::Promise { .. } => {
-                // Promises convert to unit for now
-                Self::new_unit()
-            },
+        };
+
+        let ptr = Box::into_raw(Box::new(array));
+        let gc_ptr = GcPtr::new(ptr);
+
+        Self {
+            header: ValueHeader::new(TypeTag::Tuple, ExecutionTier::Interpreter, LazyState::Eager),
+            data: ValueData::Tuple(gc_ptr),
         }
     }
 
@@ -887,6 +1056,19 @@ impl Default for ValueHeader {
             gc_mark: false,
             age: 0,
             size: 0,
+        }
+    }
+}
+
+impl Default for OptimizationData {
+    fn default() -> Self {
+        Self {
+            inline_cache: Vec::new(),
+            type_feedback: TypeFeedback {
+                observed_types: Vec::new(),
+                type_stability: 0.0,
+            },
+            call_site_data: Vec::new(),
         }
     }
 }
