@@ -102,6 +102,7 @@ impl OvmCommand {
                 common_subexpression_elimination: true,
                 aggressive_optimizations: matches!(optimization_level, OptimizationLevel::Release),
                 compilation_time_budget_ms: 100,
+                adaptive_optimization: matches!(optimization_level, OptimizationLevel::Adaptive),
             },
             memory: olang::ovm::config::MemoryConfig {
                 heap_size: Some(self.memory_threshold * 1024 * 1024),
