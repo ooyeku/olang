@@ -353,19 +353,20 @@ impl OvmInterpreter {
             // Pipeline expressions should use classic interpreter for now
             crate::ast::Expr::Pipeline { .. } => true,
 
-            // Builtin function calls should use classic interpreter
+            // Function calls should use classic interpreter for builtins and user functions
             crate::ast::Expr::Call { callee, .. } => {
                 match callee.as_ref() {
                     crate::ast::Expr::Identifier(name) => {
-                        // Check if this is a builtin function or module function
-                        self.is_builtin_function(name)
+                        // Use classic interpreter for builtin functions, module functions, 
+                        // and any function calls (to ensure consistent environment access)
+                        self.is_builtin_function(name) || self.is_user_function(name)
                     }
-                    _ => false,
+                    _ => true, // For complex callees, use classic interpreter for safety
                 }
             }
             
-            // CRITICAL FIX: Variable identifiers should use classic interpreter
-            // This ensures consistency with variable assignments which also use classic interpreter
+            // CRITICAL FIX: All identifiers should use classic interpreter for now
+            // This ensures consistent environment access for variables and user-defined functions
             crate::ast::Expr::Identifier(_) => true,
             
             // CRITICAL FIX: For loops should use classic interpreter to ensure variable environment consistency
@@ -444,6 +445,21 @@ impl OvmInterpreter {
                 | "force"
                 | "lazy"
         ) || name.contains('.') // Module functions like math.sqrt, fs.read_file, etc.
+    }
+
+    /// Check if a name corresponds to a user-defined function
+    fn is_user_function(&self, name: &str) -> bool {
+        // Check if the function exists in the classic interpreter's environment
+        // This is a bit of a hack, but we need to check if it's a user-defined function
+        
+        // First check if it's NOT a builtin function
+        if self.is_builtin_function(name) {
+            return false;
+        }
+        
+        // For now, assume any non-builtin function call should use classic interpreter
+        // This ensures consistency until we have better environment synchronization
+        true
     }
 }
 
