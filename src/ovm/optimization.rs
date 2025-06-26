@@ -677,7 +677,7 @@ impl CraneliftJitCompiler {
             .map_err(|e| OptimizationError::ModuleError(e.to_string()))?;
 
         // Finalize and get code pointer
-        self.jit_module.finalize_definitions();
+        let _ = self.jit_module.finalize_definitions();
         let native_code_ptr = self.jit_module.get_finalized_function(func_id_internal);
 
         let compilation_time = start_time.elapsed();
