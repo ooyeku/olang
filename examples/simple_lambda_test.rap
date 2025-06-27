@@ -1,7 +1,0 @@
-let double = (n) => n * 2;
-println("double(5) =", double(5));
-
-let test = (n) => {
-    if n > 5 => "big" else => "small"
-};
-println("test(10) =", test(10)); 
