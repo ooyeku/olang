@@ -18,7 +18,7 @@ pub mod gc;
 pub mod lazy;
 pub mod memory;
 pub mod metrics;
-pub mod optimization;
+pub mod optimization;  
 pub mod pipeline;
 pub mod simd;         // SIMD vectorization engine
 pub mod value;        // Phase 4 Sprint 3: Advanced Pipeline Fusion Engine
