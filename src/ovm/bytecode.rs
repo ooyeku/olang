@@ -3015,10 +3015,7 @@ mod tests {
         ];
         
         let execution_result = vm.execute(func_id, &args);
-        match execution_result {
-            Ok(_) => {},
-            Err(e) => panic!("Function execution failed with error: {:?}", e),
-        }
+        assert!(execution_result.is_ok(), "Function execution should succeed");
         
         // The result should be 8 (5 + 3)
         let result_value = execution_result.unwrap();
