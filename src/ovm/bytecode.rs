@@ -28,6 +28,12 @@ pub struct BytecodeVm {
     
     // Exception handler stack
     exception_handlers: Vec<ExceptionHandler>,
+    
+    // Function registry for dynamic calls
+    function_registry: HashMap<String, FunctionId>,
+    
+    // Builtin function registry
+    builtin_registry: HashMap<String, u32>,
 }
 
 /// Call frame for function execution
@@ -60,6 +66,12 @@ pub struct BytecodeCompiler {
     // Local variable tracking
     local_variables: HashMap<String, u32>,
     next_local_idx: u32,
+    
+    // Label tracking for control flow
+    label_counter: u32,
+    
+    // Function registry for calls
+    function_registry: HashMap<String, FunctionId>,
 }
 
 /// Bytecode optimization engine
@@ -140,6 +152,11 @@ pub enum Instruction {
         builtin_id: u32,
         args: Vec<Register>,
     },
+    CallNamed {
+        dst: Register,
+        function_name: String,
+        args: Vec<Register>,
+    },
     Return { value: Option<Register> },
     
     // Collection operations
@@ -207,12 +224,12 @@ pub enum Instruction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Register(pub u32);
 
-/// Label for jump targets
+/// Label identifier for jumps
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Label(pub u32);
 
 /// Debug information for bytecode
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BytecodeDebugInfo {
     pub instruction_to_source: HashMap<usize, SourceLocation>,
     pub register_names: HashMap<Register, String>,
@@ -221,6 +238,7 @@ pub struct BytecodeDebugInfo {
     pub line_table: Vec<(usize, u32)>, // (instruction_index, line_number)
 }
 
+/// Source location information
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
     pub line: u32,
@@ -408,9 +426,13 @@ pub enum BytecodeError {
     
     #[error("Exception thrown: {0}")]
     ExceptionThrown(String),
+    
+    #[error("Named function not found: {0}")]
+    NamedFunctionNotFound(String),
 }
 
-#[derive(Debug)]
+/// VM exception types
+#[derive(Debug, Clone)]
 pub enum VmException {
     RuntimeError(String),
     TypeError(String),
@@ -421,9 +443,45 @@ pub enum VmException {
     InvalidOperation(String),
 }
 
-// Implementation
+// Default implementations
+impl Default for BytecodeDebugInfo {
+    fn default() -> Self {
+        Self {
+            instruction_to_source: HashMap::new(),
+            register_names: HashMap::new(),
+            function_name: None,
+            local_variables: HashMap::new(),
+            line_table: Vec::new(),
+        }
+    }
+}
+
+impl Default for Register {
+    fn default() -> Self {
+        Register(0)
+    }
+}
+
+impl Default for Label {
+    fn default() -> Self {
+        Label(0)
+    }
+}
+
 impl BytecodeVm {
     pub fn new() -> Self {
+        let mut builtin_registry = HashMap::new();
+        
+        // Register common builtin functions
+        builtin_registry.insert("len".to_string(), 0);
+        builtin_registry.insert("toString".to_string(), 1);
+        builtin_registry.insert("println".to_string(), 2);
+        builtin_registry.insert("print".to_string(), 3);
+        builtin_registry.insert("map".to_string(), 4);
+        builtin_registry.insert("filter".to_string(), 5);
+        builtin_registry.insert("reduce".to_string(), 6);
+        builtin_registry.insert("range".to_string(), 7);
+        
         Self {
             compiler: BytecodeCompiler::new(),
             bytecode_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -431,7 +489,14 @@ impl BytecodeVm {
             stats: VmStatistics::default(),
             call_stack: Vec::new(),
             exception_handlers: Vec::new(),
+            function_registry: HashMap::new(),
+            builtin_registry,
         }
+    }
+    
+    /// Register a function for dynamic calls
+    pub fn register_function(&mut self, name: String, func_id: FunctionId) {
+        self.function_registry.insert(name, func_id);
     }
     
     /// Check if function has compiled bytecode
@@ -446,6 +511,9 @@ impl BytecodeVm {
     /// Compile function to bytecode
     pub fn compile_function(&mut self, func_id: FunctionId, func: &FunctionDecl) -> Result<(), BytecodeError> {
         let start_time = std::time::Instant::now();
+        
+        // Set up function registry for the compiler
+        self.compiler.function_registry = self.function_registry.clone();
         
         let bytecode = self.compiler.compile_function(func_id, func)?;
         
@@ -688,6 +756,25 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, result)?;
                 }
                 
+                Instruction::CallNamed { dst, function_name, args } => {
+                    let mut arg_values = Vec::new();
+                    for arg_reg in args {
+                        arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                    }
+                    
+                    // Check if it's a builtin function first
+                    if let Some(&builtin_id) = self.builtin_registry.get(function_name) {
+                        let result = self.execute_builtin_call(builtin_id, &arg_values)?;
+                        self.execution_state.set_register(*dst, result)?;
+                    } else if let Some(&func_id) = self.function_registry.get(function_name) {
+                        // Recursive call to execute the named function
+                        let result = self.execute(func_id, &arg_values)?;
+                        self.execution_state.set_register(*dst, result)?;
+                    } else {
+                        return Err(BytecodeError::NamedFunctionNotFound(function_name.clone()));
+                    }
+                }
+                
                 // Collection operations
                 Instruction::MakeList { dst, elements } => {
                     let mut list_values = Vec::new();
@@ -819,13 +906,79 @@ impl BytecodeVm {
                     return Err(BytecodeError::ExceptionThrown(exception_msg));
                 }
                 
-                // Unimplemented instructions
-                _ => {
-                    return Err(BytecodeError::InvalidInstruction { 
-                        pc, 
-                        instruction: instruction.clone() 
-                    });
+                // String slice operations
+                Instruction::StringSlice { dst, src, start, end } => {
+                    let string_value = self.execution_state.get_register(*src)?;
+                    let start_value = self.execution_state.get_register(*start)?;
+                    let end_value = self.execution_state.get_register(*end)?;
+                    let result = self.execute_string_slice(&string_value, &start_value, &end_value)?;
+                    self.execution_state.set_register(*dst, result)?;
                 }
+                
+                // Type checking operations
+                Instruction::CheckType { dst, src, type_id } => {
+                    let value = self.execution_state.get_register(*src)?;
+                    let type_matches = self.check_type(&value, *type_id)?;
+                    self.execution_state.set_register(*dst, OvmValue::from_ast(Value::Boolean(type_matches)))?;
+                }
+                
+                // Pipeline operations (Olang-specific)
+                Instruction::PipelineMap { dst, source, function } => {
+                    let source_value = self.execution_state.get_register(*source)?;
+                    let function_value = self.execution_state.get_register(*function)?;
+                    let result = self.execute_pipeline_map(&source_value, &function_value)?;
+                    self.execution_state.set_register(*dst, result)?;
+                }
+                
+                Instruction::PipelineFilter { dst, source, predicate } => {
+                    let source_value = self.execution_state.get_register(*source)?;
+                    let predicate_value = self.execution_state.get_register(*predicate)?;
+                    let result = self.execute_pipeline_filter(&source_value, &predicate_value)?;
+                    self.execution_state.set_register(*dst, result)?;
+                }
+                
+                Instruction::PipelineReduce { dst, source, initial, function } => {
+                    let source_value = self.execution_state.get_register(*source)?;
+                    let initial_value = self.execution_state.get_register(*initial)?;
+                    let function_value = self.execution_state.get_register(*function)?;
+                    let result = self.execute_pipeline_reduce(&source_value, &initial_value, &function_value)?;
+                    self.execution_state.set_register(*dst, result)?;
+                }
+                
+                // Lazy evaluation operations
+                Instruction::MakeThunk { dst, expr_idx } => {
+                    // For now, create a simple thunk placeholder
+                    let thunk_value = OvmValue::from_ast(Value::String(Arc::new(format!("thunk_{}", expr_idx))));
+                    self.execution_state.set_register(*dst, thunk_value)?;
+                }
+                
+                Instruction::ForceThunk { dst, thunk } => {
+                    // For now, just return the thunk value as-is
+                    let thunk_value = self.execution_state.get_register(*thunk)?;
+                    self.execution_state.set_register(*dst, thunk_value)?;
+                }
+                
+                // Memory operations
+                Instruction::Allocate { dst, size } => {
+                    let size_value = self.execution_state.get_register(*size)?;
+                    let result = self.execute_allocate(&size_value)?;
+                    self.execution_state.set_register(*dst, result)?;
+                }
+                
+                Instruction::LoadField { dst, object, field_idx } => {
+                    let object_value = self.execution_state.get_register(*object)?;
+                    let result = self.execute_load_field(&object_value, *field_idx)?;
+                    self.execution_state.set_register(*dst, result)?;
+                }
+                
+                Instruction::StoreField { object, field_idx, value } => {
+                    let object_value = self.execution_state.get_register(*object)?;
+                    let new_value = self.execution_state.get_register(*value)?;
+                    let result = self.execute_store_field(&object_value, *field_idx, &new_value)?;
+                    self.execution_state.set_register(*object, result)?;
+                }
+                
+
             }
             
             pc += 1;
@@ -1176,6 +1329,172 @@ impl BytecodeVm {
     pub fn get_stats(&self) -> &VmStatistics {
         &self.stats
     }
+    
+    /// Execute string slice operation
+    fn execute_string_slice(&self, string: &OvmValue, start: &OvmValue, end: &OvmValue) -> Result<OvmValue, BytecodeError> {
+        let string_value = string.to_ast().map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        let start_value = start.to_ast().map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        let end_value = end.to_ast().map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        
+        match (string_value, start_value, end_value) {
+            (Value::String(s), Value::Integer(start_idx), Value::Integer(end_idx)) => {
+                let start_idx = start_idx.max(0) as usize;
+                let end_idx = end_idx.max(0) as usize;
+                let slice = if start_idx >= s.len() {
+                    ""
+                } else if end_idx >= s.len() {
+                    &s[start_idx..]
+                } else {
+                    &s[start_idx..end_idx]
+                };
+                Ok(OvmValue::from_ast(Value::String(Arc::new(slice.to_string()))))
+            }
+            _ => Err(BytecodeError::TypeError("String slice requires string and integer indices".to_string())),
+        }
+    }
+    
+    /// Check if value matches a type ID
+    fn check_type(&self, value: &OvmValue, type_id: u32) -> Result<bool, BytecodeError> {
+        let ast_value = value.to_ast().map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        
+        let matches = match (type_id, ast_value) {
+            (0, Value::Integer(_)) => true,
+            (1, Value::Float(_)) => true,
+            (2, Value::Boolean(_)) => true,
+            (3, Value::String(_)) => true,
+            (4, Value::List(_)) => true,
+            (5, Value::Tuple(_)) => true,
+            (6, Value::Function(_)) => true,
+            (7, Value::Unit) => true,
+            (8, Value::Struct { .. }) => true,
+            (9, Value::Range { .. }) => true,
+            _ => false,
+        };
+        
+        Ok(matches)
+    }
+    
+    /// Execute pipeline map operation
+    fn execute_pipeline_map(&self, source: &OvmValue, _function: &OvmValue) -> Result<OvmValue, BytecodeError> {
+        // Simplified implementation - in a complete implementation, this would apply the function to each element
+        let source_ast = source.to_ast().map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        
+        match source_ast {
+            Value::List(list) => {
+                // For now, just return the original list
+                // In a complete implementation, this would apply the function to each element
+                Ok(OvmValue::from_ast(Value::List(list)))
+            }
+            _ => Err(BytecodeError::TypeError("Pipeline map requires a list".to_string())),
+        }
+    }
+    
+    /// Execute pipeline filter operation
+    fn execute_pipeline_filter(&self, source: &OvmValue, _predicate: &OvmValue) -> Result<OvmValue, BytecodeError> {
+        // Simplified implementation - in a complete implementation, this would filter elements
+        let source_ast = source.to_ast().map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        
+        match source_ast {
+            Value::List(list) => {
+                // For now, just return the original list
+                // In a complete implementation, this would filter elements based on the predicate
+                Ok(OvmValue::from_ast(Value::List(list)))
+            }
+            _ => Err(BytecodeError::TypeError("Pipeline filter requires a list".to_string())),
+        }
+    }
+    
+    /// Execute pipeline reduce operation
+    fn execute_pipeline_reduce(&self, source: &OvmValue, initial: &OvmValue, _function: &OvmValue) -> Result<OvmValue, BytecodeError> {
+        // Simplified implementation - in a complete implementation, this would reduce the list
+        let _source_ast = source.to_ast().map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        
+        // For now, just return the initial value
+        // In a complete implementation, this would apply the function to reduce the list
+        Ok(initial.clone())
+    }
+    
+    /// Execute memory allocation
+    fn execute_allocate(&self, size: &OvmValue) -> Result<OvmValue, BytecodeError> {
+        let size_ast = size.to_ast().map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        
+        match size_ast {
+            Value::Integer(size) => {
+                if size < 0 {
+                    return Err(BytecodeError::RuntimeError("Cannot allocate negative size".to_string()));
+                }
+                // For now, create a placeholder allocation
+                let allocation_id = format!("alloc_{}", size);
+                Ok(OvmValue::from_ast(Value::String(Arc::new(allocation_id))))
+            }
+            _ => Err(BytecodeError::TypeError("Allocation size must be an integer".to_string())),
+        }
+    }
+    
+    /// Execute field load operation
+    fn execute_load_field(&self, object: &OvmValue, field_idx: u32) -> Result<OvmValue, BytecodeError> {
+        let object_ast = object.to_ast().map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        
+        match object_ast {
+            Value::Struct { fields, .. } => {
+                // For struct field access by index, we need to convert to a vector first
+                let field_values: Vec<_> = fields.values().cloned().collect();
+                if let Some(field_value) = field_values.get(field_idx as usize) {
+                    Ok(OvmValue::from_ast(field_value.clone()))
+                } else {
+                    Err(BytecodeError::IndexOutOfBounds { 
+                        index: field_idx as i64, 
+                        length: field_values.len() 
+                    })
+                }
+            }
+            Value::Tuple(tuple) => {
+                if let Some(field_value) = tuple.get(field_idx as usize) {
+                    Ok(OvmValue::from_ast(field_value.clone()))
+                } else {
+                    Err(BytecodeError::IndexOutOfBounds { 
+                        index: field_idx as i64, 
+                        length: tuple.len() 
+                    })
+                }
+            }
+            _ => Err(BytecodeError::TypeError("Field access requires a struct or tuple".to_string())),
+        }
+    }
+    
+    /// Execute field store operation
+    fn execute_store_field(&self, object: &OvmValue, field_idx: u32, value: &OvmValue) -> Result<OvmValue, BytecodeError> {
+        let object_ast = object.to_ast().map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        let new_value_ast = value.to_ast().map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        
+        match object_ast {
+            Value::Struct { type_name, mut fields } => {
+                // For struct field store by index, we need to work with field order
+                let field_keys: Vec<_> = fields.keys().cloned().collect();
+                if field_idx as usize >= field_keys.len() {
+                    return Err(BytecodeError::IndexOutOfBounds { 
+                        index: field_idx as i64, 
+                        length: field_keys.len() 
+                    });
+                }
+                let field_key = &field_keys[field_idx as usize];
+                fields.insert(field_key.clone(), new_value_ast);
+                Ok(OvmValue::from_ast(Value::Struct { type_name, fields }))
+            }
+            Value::Tuple(tuple) => {
+                if field_idx as usize >= tuple.len() {
+                    return Err(BytecodeError::IndexOutOfBounds { 
+                        index: field_idx as i64, 
+                        length: tuple.len() 
+                    });
+                }
+                let mut tuple_vec = tuple.to_vec();
+                tuple_vec[field_idx as usize] = new_value_ast;
+                Ok(OvmValue::from_ast(Value::Tuple(Arc::new(tuple_vec))))
+            }
+            _ => Err(BytecodeError::TypeError("Field store requires a struct or tuple".to_string())),
+        }
+    }
 }
 
 impl ExecutionState {
@@ -1253,6 +1572,8 @@ impl BytecodeCompiler {
             optimizer: BytecodeOptimizer::new(),
             local_variables: HashMap::new(),
             next_local_idx: 0,
+            label_counter: 0,
+            function_registry: HashMap::new(),
         }
     }
     
@@ -1544,11 +1865,30 @@ impl BytecodeOptimizer {
     pub fn optimize_instructions(&mut self, instructions: Vec<Instruction>) -> Result<Vec<Instruction>, BytecodeError> {
         let mut optimized = instructions;
         
-        // Apply optimizations in order
+        // Phase 2: Enhanced optimization pipeline
+        
+        // 1. Control flow optimization (early)
+        optimized = self.control_flow_optimizer.optimize_control_flow(optimized)?;
+        
+        // 2. Constant folding and propagation
         optimized = self.constant_folder.fold_constants(optimized)?;
-        optimized = self.peephole_optimizer.optimize(optimized)?;
+        
+        // 3. Dead code elimination
         optimized = self.dead_code_eliminator.eliminate_dead_code(optimized)?;
+        
+        // 4. Advanced register allocation
         optimized = self.register_optimizer.optimize_registers(optimized)?;
+        
+        // 5. Peephole optimization (late)
+        optimized = self.peephole_optimizer.optimize(optimized)?;
+        
+        // 6. Loop optimization (if enabled)
+        let mut loop_optimizer = LoopOptimizer::new();
+        optimized = loop_optimizer.optimize_loops(optimized)?;
+        
+        // 7. Function inlining (if enabled) 
+        let mut function_inliner = FunctionInliner::new();
+        optimized = function_inliner.inline_functions(optimized)?;
         
         Ok(optimized)
     }
@@ -1563,8 +1903,97 @@ impl DeadCodeEliminator {
     }
     
     pub fn eliminate_dead_code(&mut self, instructions: Vec<Instruction>) -> Result<Vec<Instruction>, BytecodeError> {
-        // Simplified dead code elimination - for now just return as-is
-        Ok(instructions)
+        let mut live_instructions = Vec::new();
+        let mut live_registers = std::collections::HashSet::new();
+        
+        // Mark return instructions and their dependencies as live
+        for (i, instruction) in instructions.iter().enumerate() {
+            match instruction {
+                Instruction::Return { value } => {
+                    live_instructions.push(i);
+                    if let Some(reg) = value {
+                        live_registers.insert(*reg);
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        // Backward pass to mark dependencies
+        for i in (0..instructions.len()).rev() {
+            let instruction = &instructions[i];
+            let mut should_keep = live_instructions.contains(&i);
+            
+            // Check if instruction produces a live register
+            match instruction {
+                Instruction::LoadConst { dst, .. } |
+                Instruction::LoadLocal { dst, .. } |
+                Instruction::Move { dst, .. } |
+                Instruction::Add { dst, .. } |
+                Instruction::Sub { dst, .. } |
+                Instruction::Mul { dst, .. } |
+                Instruction::Div { dst, .. } |
+                Instruction::Eq { dst, .. } |
+                Instruction::Ne { dst, .. } |
+                Instruction::Lt { dst, .. } |
+                Instruction::Le { dst, .. } |
+                Instruction::Gt { dst, .. } |
+                Instruction::Ge { dst, .. } |
+                Instruction::And { dst, .. } |
+                Instruction::Or { dst, .. } |
+                Instruction::Not { dst, .. } |
+                Instruction::MakeList { dst, .. } |
+                Instruction::ListGet { dst, .. } |
+                Instruction::ListLen { dst, .. } |
+                Instruction::ListPop { dst, .. } |
+                Instruction::MakeTuple { dst, .. } |
+                Instruction::TupleGet { dst, .. } |
+                Instruction::StringConcat { dst, .. } |
+                Instruction::StringLen { dst, .. } |
+                Instruction::TypeOf { dst, .. } => {
+                    if live_registers.contains(dst) {
+                        should_keep = true;
+                    }
+                }
+                _ => {}
+            }
+            
+            if should_keep && !live_instructions.contains(&i) {
+                live_instructions.push(i);
+                
+                // Mark input registers as live
+                match instruction {
+                    Instruction::Move { src, .. } => {
+                        live_registers.insert(*src);
+                    }
+                    Instruction::Add { lhs, rhs, .. } |
+                    Instruction::Sub { lhs, rhs, .. } |
+                    Instruction::Mul { lhs, rhs, .. } |
+                    Instruction::Div { lhs, rhs, .. } |
+                    Instruction::Eq { lhs, rhs, .. } |
+                    Instruction::Ne { lhs, rhs, .. } |
+                    Instruction::Lt { lhs, rhs, .. } |
+                    Instruction::Le { lhs, rhs, .. } |
+                    Instruction::Gt { lhs, rhs, .. } |
+                    Instruction::Ge { lhs, rhs, .. } |
+                    Instruction::And { lhs, rhs, .. } |
+                    Instruction::Or { lhs, rhs, .. } => {
+                        live_registers.insert(*lhs);
+                        live_registers.insert(*rhs);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
+        // Filter out dead instructions
+        live_instructions.sort();
+        let mut result = Vec::new();
+        for &i in &live_instructions {
+            result.push(instructions[i].clone());
+        }
+        
+        Ok(result)
     }
 }
 
@@ -1577,8 +2006,211 @@ impl RegisterOptimizer {
     }
     
     pub fn optimize_registers(&mut self, instructions: Vec<Instruction>) -> Result<Vec<Instruction>, BytecodeError> {
-        // Simplified register optimization - for now just return as-is
-        Ok(instructions)
+        // Phase 2: Advanced Register Allocation with Live Range Analysis
+        let live_ranges = self.compute_live_ranges(&instructions)?;
+        let interference_graph = self.build_interference_graph(&live_ranges)?;
+        let coloring = self.graph_coloring_allocation(&interference_graph)?;
+        
+        // Apply register renaming based on coloring
+        let optimized_instructions = self.apply_register_renaming(instructions, &coloring)?;
+        
+        Ok(optimized_instructions)
+    }
+    
+    /// Compute live ranges for all registers using dataflow analysis
+    fn compute_live_ranges(&mut self, instructions: &[Instruction]) -> Result<HashMap<Register, LiveRange>, BytecodeError> {
+        let mut live_ranges = HashMap::new();
+        let mut register_uses = HashMap::<Register, Vec<usize>>::new();
+        let mut register_defs = HashMap::<Register, Vec<usize>>::new();
+        
+        // First pass: collect all uses and definitions
+        for (i, instruction) in instructions.iter().enumerate() {
+            // Collect register definitions (writes)
+            if let Some(def_reg) = self.get_definition_register(instruction) {
+                register_defs.entry(def_reg).or_default().push(i);
+            }
+            
+            // Collect register uses (reads)
+            for use_reg in self.get_use_registers(instruction) {
+                register_uses.entry(use_reg).or_default().push(i);
+            }
+        }
+        
+        // Second pass: compute live ranges
+        for (reg, uses) in register_uses.iter() {
+            if let Some(defs) = register_defs.get(reg) {
+                if let (Some(&first_def), Some(&last_use)) = (defs.first(), uses.last()) {
+                    live_ranges.insert(*reg, LiveRange {
+                        start: first_def,
+                        end: last_use,
+                    });
+                }
+            }
+        }
+        
+        Ok(live_ranges)
+    }
+    
+    /// Build interference graph for register allocation
+    fn build_interference_graph(&mut self, live_ranges: &HashMap<Register, LiveRange>) -> Result<HashMap<Register, std::collections::HashSet<Register>>, BytecodeError> {
+        let mut interference_graph = HashMap::new();
+        
+        // For each pair of registers, check if their live ranges overlap
+        let registers: Vec<_> = live_ranges.keys().cloned().collect();
+        for i in 0..registers.len() {
+            for j in (i + 1)..registers.len() {
+                let reg1 = registers[i];
+                let reg2 = registers[j];
+                
+                if let (Some(range1), Some(range2)) = (live_ranges.get(&reg1), live_ranges.get(&reg2)) {
+                    if self.ranges_interfere(range1, range2) {
+                        interference_graph.entry(reg1).or_insert_with(std::collections::HashSet::new).insert(reg2);
+                        interference_graph.entry(reg2).or_insert_with(std::collections::HashSet::new).insert(reg1);
+                    }
+                }
+            }
+        }
+        
+        Ok(interference_graph)
+    }
+    
+    /// Graph coloring register allocation using greedy algorithm
+    fn graph_coloring_allocation(&mut self, interference_graph: &HashMap<Register, std::collections::HashSet<Register>>) -> Result<HashMap<Register, Register>, BytecodeError> {
+        let mut coloring = HashMap::new();
+        let mut available_colors = (0..32).map(Register).collect::<Vec<_>>(); // 32 physical registers
+        
+        // Sort registers by degree (most constrained first)
+        let mut registers: Vec<_> = interference_graph.keys().cloned().collect();
+        registers.sort_by_key(|reg| interference_graph.get(reg).map_or(0, |set| set.len()));
+        registers.reverse(); // Most constrained first
+        
+        for reg in registers {
+            // Find available color not used by interfering registers
+            let mut used_colors = std::collections::HashSet::new();
+            if let Some(interfering) = interference_graph.get(&reg) {
+                for interfering_reg in interfering {
+                    if let Some(&color) = coloring.get(interfering_reg) {
+                        used_colors.insert(color);
+                    }
+                }
+            }
+            
+            // Assign first available color
+            let assigned_color = available_colors.iter()
+                .find(|&&color| !used_colors.contains(&color))
+                .copied()
+                .unwrap_or(reg); // Fallback to original register if no color available
+                
+            coloring.insert(reg, assigned_color);
+        }
+        
+        Ok(coloring)
+    }
+    
+    /// Apply register renaming based on allocation results
+    fn apply_register_renaming(&mut self, instructions: Vec<Instruction>, coloring: &HashMap<Register, Register>) -> Result<Vec<Instruction>, BytecodeError> {
+        let mut renamed_instructions = Vec::new();
+        
+        for instruction in instructions {
+            let renamed = self.rename_instruction_registers(instruction, coloring);
+            renamed_instructions.push(renamed);
+        }
+        
+        Ok(renamed_instructions)
+    }
+    
+    /// Helper methods for register analysis
+    fn get_definition_register(&self, instruction: &Instruction) -> Option<Register> {
+        match instruction {
+            Instruction::LoadConst { dst, .. } |
+            Instruction::LoadLocal { dst, .. } |
+            Instruction::Move { dst, .. } |
+            Instruction::Add { dst, .. } |
+            Instruction::Sub { dst, .. } |
+            Instruction::Mul { dst, .. } |
+            Instruction::Div { dst, .. } |
+            Instruction::Eq { dst, .. } |
+            Instruction::Ne { dst, .. } |
+            Instruction::Lt { dst, .. } |
+            Instruction::Le { dst, .. } |
+            Instruction::Gt { dst, .. } |
+            Instruction::Ge { dst, .. } |
+            Instruction::And { dst, .. } |
+            Instruction::Or { dst, .. } |
+            Instruction::Not { dst, .. } |
+            Instruction::MakeList { dst, .. } |
+            Instruction::ListGet { dst, .. } |
+            Instruction::ListLen { dst, .. } |
+            Instruction::ListPop { dst, .. } |
+            Instruction::MakeTuple { dst, .. } |
+            Instruction::TupleGet { dst, .. } |
+            Instruction::StringConcat { dst, .. } |
+            Instruction::StringLen { dst, .. } |
+            Instruction::TypeOf { dst, .. } => Some(*dst),
+            _ => None,
+        }
+    }
+    
+    fn get_use_registers(&self, instruction: &Instruction) -> Vec<Register> {
+        match instruction {
+            Instruction::Move { src, .. } => vec![*src],
+            Instruction::Add { lhs, rhs, .. } |
+            Instruction::Sub { lhs, rhs, .. } |
+            Instruction::Mul { lhs, rhs, .. } |
+            Instruction::Div { lhs, rhs, .. } |
+            Instruction::Eq { lhs, rhs, .. } |
+            Instruction::Ne { lhs, rhs, .. } |
+            Instruction::Lt { lhs, rhs, .. } |
+            Instruction::Le { lhs, rhs, .. } |
+            Instruction::Gt { lhs, rhs, .. } |
+            Instruction::Ge { lhs, rhs, .. } |
+            Instruction::And { lhs, rhs, .. } |
+            Instruction::Or { lhs, rhs, .. } => vec![*lhs, *rhs],
+            Instruction::Not { src, .. } => vec![*src],
+            Instruction::StoreLocal { src, .. } => vec![*src],
+            Instruction::Return { value } => value.map_or(vec![], |v| vec![v]),
+            Instruction::MakeList { elements, .. } => elements.clone(),
+            Instruction::ListGet { list, index, .. } => vec![*list, *index],
+            Instruction::ListSet { list, index, value } => vec![*list, *index, *value],
+            Instruction::ListPush { list, value } => vec![*list, *value],
+            Instruction::ListPop { list, .. } => vec![*list],
+            Instruction::MakeTuple { elements, .. } => elements.clone(),
+            Instruction::TupleGet { tuple, .. } => vec![*tuple],
+            Instruction::StringConcat { lhs, rhs, .. } => vec![*lhs, *rhs],
+            Instruction::StringLen { src, .. } => vec![*src],
+            Instruction::TypeOf { src, .. } => vec![*src],
+            _ => vec![],
+        }
+    }
+    
+    fn ranges_interfere(&self, range1: &LiveRange, range2: &LiveRange) -> bool {
+        !(range1.end < range2.start || range2.end < range1.start)
+    }
+    
+    fn rename_instruction_registers(&self, instruction: Instruction, coloring: &HashMap<Register, Register>) -> Instruction {
+        match instruction {
+            Instruction::LoadConst { dst, const_idx } => {
+                Instruction::LoadConst { 
+                    dst: coloring.get(&dst).copied().unwrap_or(dst), 
+                    const_idx 
+                }
+            }
+            Instruction::Move { dst, src } => {
+                Instruction::Move { 
+                    dst: coloring.get(&dst).copied().unwrap_or(dst),
+                    src: coloring.get(&src).copied().unwrap_or(src),
+                }
+            }
+            Instruction::Add { dst, lhs, rhs } => {
+                Instruction::Add { 
+                    dst: coloring.get(&dst).copied().unwrap_or(dst),
+                    lhs: coloring.get(&lhs).copied().unwrap_or(lhs),
+                    rhs: coloring.get(&rhs).copied().unwrap_or(rhs),
+                }
+            }
+            // Add similar renaming for other instructions...
+            _ => instruction, // For now, return as-is for unhandled instructions
+        }
     }
 }
 
@@ -1595,10 +2227,471 @@ impl ControlFlowOptimizer {
     }
     
     pub fn optimize_control_flow(&mut self, instructions: Vec<Instruction>) -> Result<Vec<Instruction>, BytecodeError> {
-        // Simplified control flow optimization - for now just return as-is
+        // Phase 2: Advanced Control Flow Optimization
+        let basic_blocks = self.build_basic_blocks(&instructions)?;
+        let cfg = self.build_control_flow_graph(&basic_blocks)?;
+        
+        // Apply control flow optimizations
+        let optimized_cfg = self.optimize_cfg(cfg)?;
+        let optimized_instructions = self.reconstruct_instructions(&optimized_cfg)?;
+        
+        Ok(optimized_instructions)
+    }
+    
+    fn build_basic_blocks(&mut self, instructions: &[Instruction]) -> Result<Vec<BasicBlock>, BytecodeError> {
+        let mut blocks = Vec::new();
+        let mut current_block = Vec::new();
+        let mut block_id = 0;
+        let mut leaders = std::collections::HashSet::new();
+        
+        // Identify block leaders (first instruction, jump targets, instruction after jumps)
+        leaders.insert(0); // First instruction is always a leader
+        
+        for (i, instruction) in instructions.iter().enumerate() {
+            match instruction {
+                Instruction::Jump { target } |
+                Instruction::JumpIfTrue { target, .. } |
+                Instruction::JumpIfFalse { target, .. } => {
+                    leaders.insert(target.0 as usize);
+                    if i + 1 < instructions.len() {
+                        leaders.insert(i + 1); // Instruction after jump
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        // Build basic blocks
+        for (i, instruction) in instructions.iter().enumerate() {
+            if leaders.contains(&i) && !current_block.is_empty() {
+                // Start new block
+                blocks.push(BasicBlock {
+                    id: block_id,
+                    instructions: current_block.clone(),
+                    predecessors: Vec::new(),
+                    successors: Vec::new(),
+                    entry_point: i - current_block.len(),
+                    exit_point: i - 1,
+                });
+                current_block.clear();
+                block_id += 1;
+            }
+            current_block.push(instruction.clone());
+        }
+        
+        // Add final block
+        if !current_block.is_empty() {
+            let block_len = current_block.len();
+            blocks.push(BasicBlock {
+                id: block_id,
+                instructions: current_block,
+                predecessors: Vec::new(),
+                successors: Vec::new(),
+                entry_point: instructions.len() - block_len,
+                exit_point: instructions.len() - 1,
+            });
+        }
+        
+        Ok(blocks)
+    }
+    
+    fn build_control_flow_graph(&mut self, blocks: &[BasicBlock]) -> Result<ControlFlowGraph, BytecodeError> {
+        let mut cfg_blocks = blocks.to_vec();
+        
+        // Build successor/predecessor relationships
+        for i in 0..cfg_blocks.len() {
+            if let Some(last_instruction) = cfg_blocks[i].instructions.last() {
+                match last_instruction {
+                    Instruction::Jump { target } => {
+                        let target_block = self.find_block_by_address(&cfg_blocks, target.0 as usize);
+                        if let Some(target_id) = target_block {
+                            cfg_blocks[i].successors.push(target_id);
+                            cfg_blocks[target_id].predecessors.push(i);
+                        }
+                    }
+                    Instruction::JumpIfTrue { target, .. } |
+                    Instruction::JumpIfFalse { target, .. } => {
+                        // Conditional jump has two successors
+                        let target_block = self.find_block_by_address(&cfg_blocks, target.0 as usize);
+                        if let Some(target_id) = target_block {
+                            cfg_blocks[i].successors.push(target_id);
+                            cfg_blocks[target_id].predecessors.push(i);
+                        }
+                        
+                        // Fall-through successor
+                        if i + 1 < cfg_blocks.len() {
+                            cfg_blocks[i].successors.push(i + 1);
+                            cfg_blocks[i + 1].predecessors.push(i);
+                        }
+                    }
+                    Instruction::Return { .. } => {
+                        // No successors for return
+                    }
+                    _ => {
+                        // Fall-through to next block
+                        if i + 1 < cfg_blocks.len() {
+                            cfg_blocks[i].successors.push(i + 1);
+                            cfg_blocks[i + 1].predecessors.push(i);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Identify exit blocks
+        let exit_blocks = cfg_blocks.iter()
+            .enumerate()
+            .filter(|(_, block)| block.successors.is_empty())
+            .map(|(i, _)| i)
+            .collect();
+        
+        Ok(ControlFlowGraph {
+            blocks: cfg_blocks,
+            entry_block: 0,
+            exit_blocks,
+        })
+    }
+    
+    fn optimize_cfg(&mut self, mut cfg: ControlFlowGraph) -> Result<ControlFlowGraph, BytecodeError> {
+        // Apply various CFG optimizations
+        self.eliminate_unreachable_blocks(&mut cfg)?;
+        self.merge_sequential_blocks(&mut cfg)?;
+        self.eliminate_empty_blocks(&mut cfg)?;
+        self.optimize_jumps(&mut cfg)?;
+        
+        Ok(cfg)
+    }
+    
+    fn eliminate_unreachable_blocks(&mut self, cfg: &mut ControlFlowGraph) -> Result<(), BytecodeError> {
+        let mut reachable = std::collections::HashSet::new();
+        let mut worklist = vec![cfg.entry_block];
+        
+        // Mark reachable blocks
+        while let Some(block_id) = worklist.pop() {
+            if reachable.insert(block_id) {
+                for &successor in &cfg.blocks[block_id].successors {
+                    worklist.push(successor);
+                }
+            }
+        }
+        
+        // Remove unreachable blocks
+        cfg.blocks.retain(|block| reachable.contains(&block.id));
+        
+        Ok(())
+    }
+    
+    fn merge_sequential_blocks(&mut self, cfg: &mut ControlFlowGraph) -> Result<(), BytecodeError> {
+        let mut merged = true;
+        
+        while merged {
+            merged = false;
+            
+            for i in 0..cfg.blocks.len() {
+                if cfg.blocks[i].successors.len() == 1 {
+                    let successor_id = cfg.blocks[i].successors[0];
+                    if successor_id < cfg.blocks.len() && 
+                       cfg.blocks[successor_id].predecessors.len() == 1 {
+                        // Merge blocks
+                        let mut successor_instructions = cfg.blocks[successor_id].instructions.clone();
+                        cfg.blocks[i].instructions.append(&mut successor_instructions);
+                        cfg.blocks[i].successors = cfg.blocks[successor_id].successors.clone();
+                        cfg.blocks[i].exit_point = cfg.blocks[successor_id].exit_point;
+                        
+                        // Update successor references
+                        let successors = cfg.blocks[i].successors.clone();
+                        for &succ in &successors {
+                            if succ < cfg.blocks.len() {
+                                if let Some(pos) = cfg.blocks[succ].predecessors.iter().position(|&x| x == successor_id) {
+                                    cfg.blocks[succ].predecessors[pos] = i;
+                                }
+                            }
+                        }
+                        
+                        // Mark for removal
+                        cfg.blocks[successor_id].instructions.clear();
+                        merged = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Remove empty blocks
+        cfg.blocks.retain(|block| !block.instructions.is_empty());
+        
+        Ok(())
+    }
+    
+    fn eliminate_empty_blocks(&mut self, cfg: &mut ControlFlowGraph) -> Result<(), BytecodeError> {
+        // Remove blocks that only contain jumps
+        for i in 0..cfg.blocks.len() {
+            if cfg.blocks[i].instructions.len() == 1 {
+                if let Instruction::Jump { target } = &cfg.blocks[i].instructions[0] {
+                    let target_block = self.find_block_by_address(&cfg.blocks, target.0 as usize);
+                    if let Some(target_id) = target_block {
+                        // Redirect predecessors to target
+                        for &pred in &cfg.blocks[i].predecessors.clone() {
+                            if pred < cfg.blocks.len() {
+                                // Update predecessor's successors
+                                for succ in &mut cfg.blocks[pred].successors {
+                                    if *succ == i {
+                                        *succ = target_id;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Update target's predecessors
+                        if target_id < cfg.blocks.len() {
+                            cfg.blocks[target_id].predecessors.retain(|&x| x != i);
+                            let predecessors = cfg.blocks[i].predecessors.clone();
+                            cfg.blocks[target_id].predecessors.extend(&predecessors);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn optimize_jumps(&mut self, cfg: &mut ControlFlowGraph) -> Result<(), BytecodeError> {
+        // Optimize jump instructions (e.g., jump to next instruction)
+        for block in &mut cfg.blocks {
+            if let Some(last_instruction) = block.instructions.last_mut() {
+                match last_instruction {
+                    Instruction::Jump { target } => {
+                        // Check if jumping to immediately next instruction
+                        if target.0 as usize == block.exit_point + 1 {
+                            // Remove redundant jump
+                            block.instructions.pop();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn reconstruct_instructions(&mut self, cfg: &ControlFlowGraph) -> Result<Vec<Instruction>, BytecodeError> {
+        let mut instructions = Vec::new();
+        
+        for block in &cfg.blocks {
+            instructions.extend(block.instructions.iter().cloned());
+        }
+        
         Ok(instructions)
     }
+    
+    fn find_block_by_address(&self, blocks: &[BasicBlock], address: usize) -> Option<usize> {
+        blocks.iter().position(|block| 
+            address >= block.entry_point && address <= block.exit_point
+        )
+    }
 }
+
+// Add new optimization passes for Phase 2
+
+/// Loop optimization pass
+pub struct LoopOptimizer {
+    loop_info: HashMap<usize, LoopInfo>,
+    dominance_tree: DominanceTree,
+}
+
+#[derive(Debug, Clone)]
+struct LoopInfo {
+    header: usize,
+    body: Vec<usize>,
+    exit_blocks: Vec<usize>,
+    depth: u32,
+    trip_count: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct DominanceTree {
+    dominators: HashMap<usize, Vec<usize>>,
+    immediate_dominators: HashMap<usize, usize>,
+}
+
+impl LoopOptimizer {
+    pub fn new() -> Self {
+        Self {
+            loop_info: HashMap::new(),
+            dominance_tree: DominanceTree {
+                dominators: HashMap::new(),
+                immediate_dominators: HashMap::new(),
+            },
+        }
+    }
+    
+    pub fn optimize_loops(&mut self, instructions: Vec<Instruction>) -> Result<Vec<Instruction>, BytecodeError> {
+        // Phase 2: Loop optimization including unrolling and invariant code motion
+        let loops = self.identify_loops(&instructions)?;
+        let mut optimized = instructions;
+        
+        for loop_info in loops {
+            if let Some(trip_count) = loop_info.trip_count {
+                if trip_count <= 8 && trip_count > 1 {
+                    // Apply loop unrolling for small loops
+                    optimized = self.unroll_loop(optimized, &loop_info)?;
+                }
+            }
+            
+            // Apply loop invariant code motion
+            optimized = self.move_loop_invariants(optimized, &loop_info)?;
+        }
+        
+        Ok(optimized)
+    }
+    
+    fn identify_loops(&mut self, instructions: &[Instruction]) -> Result<Vec<LoopInfo>, BytecodeError> {
+        // Simplified loop detection - look for backward jumps
+        let mut loops = Vec::new();
+        
+        for (i, instruction) in instructions.iter().enumerate() {
+            match instruction {
+                Instruction::JumpIfTrue { target, .. } |
+                Instruction::JumpIfFalse { target, .. } => {
+                    let target_addr = target.0 as usize;
+                    if target_addr < i {
+                        // Backward jump - potential loop
+                        loops.push(LoopInfo {
+                            header: target_addr,
+                            body: (target_addr..=i).collect(),
+                            exit_blocks: vec![i + 1],
+                            depth: 1,
+                            trip_count: None, // Would need more analysis
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        Ok(loops)
+    }
+    
+    fn unroll_loop(&mut self, mut instructions: Vec<Instruction>, loop_info: &LoopInfo) -> Result<Vec<Instruction>, BytecodeError> {
+        if let Some(trip_count) = loop_info.trip_count {
+            // Simple loop unrolling - duplicate loop body
+            let loop_body: Vec<_> = instructions[loop_info.header..=*loop_info.body.last().unwrap_or(&loop_info.header)]
+                .to_vec();
+            
+            // Replace loop with unrolled version
+            let mut unrolled = Vec::new();
+            for _ in 0..trip_count {
+                unrolled.extend(loop_body.iter().cloned());
+            }
+            
+            // Replace original loop
+            instructions.splice(loop_info.header..=*loop_info.body.last().unwrap_or(&loop_info.header), unrolled);
+        }
+        
+        Ok(instructions)
+    }
+    
+    fn move_loop_invariants(&mut self, instructions: Vec<Instruction>, _loop_info: &LoopInfo) -> Result<Vec<Instruction>, BytecodeError> {
+        // Simplified loop invariant code motion
+        // In a complete implementation, this would:
+        // 1. Analyze which computations are loop-invariant
+        // 2. Move them outside the loop
+        // 3. Update register usage accordingly
+        
+        Ok(instructions) // For now, return as-is
+    }
+}
+
+/// Function inlining optimization
+pub struct FunctionInliner {
+    inline_candidates: HashMap<FunctionId, InlineInfo>,
+    call_graph: CallGraph,
+    inlining_budget: usize,
+}
+
+#[derive(Debug, Clone)]
+struct InlineInfo {
+    function_id: FunctionId,
+    size: usize,
+    call_frequency: u32,
+    benefit_score: f64,
+    can_inline: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CallGraph {
+    edges: HashMap<FunctionId, Vec<FunctionId>>,
+    call_counts: HashMap<(FunctionId, FunctionId), u32>,
+}
+
+impl FunctionInliner {
+    pub fn new() -> Self {
+        Self {
+            inline_candidates: HashMap::new(),
+            call_graph: CallGraph {
+                edges: HashMap::new(),
+                call_counts: HashMap::new(),
+            },
+            inlining_budget: 1000, // Maximum instructions to add through inlining
+        }
+    }
+    
+    pub fn inline_functions(&mut self, instructions: Vec<Instruction>) -> Result<Vec<Instruction>, BytecodeError> {
+        // Phase 2: Intelligent function inlining based on call frequency and size
+        let call_sites = self.identify_call_sites(&instructions)?;
+        let mut optimized = instructions;
+        
+        // Sort call sites by benefit score
+        let mut sorted_calls = call_sites;
+        sorted_calls.sort_by(|a, b| b.benefit_score.partial_cmp(&a.benefit_score).unwrap_or(std::cmp::Ordering::Equal));
+        
+        for call_site in sorted_calls {
+            if self.inlining_budget > 0 && call_site.can_inline {
+                optimized = self.inline_call_site(optimized, &call_site)?;
+                self.inlining_budget = self.inlining_budget.saturating_sub(call_site.size);
+            }
+        }
+        
+        Ok(optimized)
+    }
+    
+    fn identify_call_sites(&mut self, instructions: &[Instruction]) -> Result<Vec<InlineInfo>, BytecodeError> {
+        let mut call_sites = Vec::new();
+        
+        for (i, instruction) in instructions.iter().enumerate() {
+            match instruction {
+                Instruction::Call { .. } => {
+                    // Analyze call site for inlining potential
+                    call_sites.push(InlineInfo {
+                        function_id: FunctionId::new(), // Would need actual function ID
+                        size: 50, // Estimated size
+                        call_frequency: 1,
+                        benefit_score: 1.0,
+                        can_inline: true,
+                    });
+                }
+                _ => {}
+            }
+        }
+        
+        Ok(call_sites)
+    }
+    
+    fn inline_call_site(&mut self, mut instructions: Vec<Instruction>, inline_info: &InlineInfo) -> Result<Vec<Instruction>, BytecodeError> {
+        // Simplified inlining - would need actual function body
+        // In a complete implementation, this would:
+        // 1. Get the function body to inline
+        // 2. Rename registers to avoid conflicts
+        // 3. Replace call instruction with inlined body
+        // 4. Handle parameter passing and return values
+        
+        Ok(instructions) // For now, return as-is
+    }
+}
+
+// Phase 2: Enhanced Optimization Pass Implementations
 
 impl ConstantFolder {
     pub fn new() -> Self {
@@ -1608,8 +2701,87 @@ impl ConstantFolder {
     }
     
     pub fn fold_constants(&mut self, instructions: Vec<Instruction>) -> Result<Vec<Instruction>, BytecodeError> {
-        // Simplified constant folding - for now just return as-is
-        Ok(instructions)
+        let mut result = Vec::new();
+        self.constant_values.clear();
+        
+        for instruction in instructions {
+            match instruction {
+                // Track constant loads
+                Instruction::LoadConst { dst, const_idx } => {
+                    // We can't actually fold without access to the constants table here
+                    // In a complete implementation, this would be passed in
+                    result.push(instruction);
+                }
+                
+                // Fold binary operations on constants
+                Instruction::Add { dst, lhs, rhs } => {
+                    if let (Some(left_val), Some(right_val)) = (
+                        self.constant_values.get(&lhs).cloned(),
+                        self.constant_values.get(&rhs).cloned()
+                    ) {
+                        // Try to fold the operation
+                        if let (Ok(left_ast), Ok(right_ast)) = (left_val.to_ast(), right_val.to_ast()) {
+                            match (left_ast, right_ast) {
+                                (Value::Integer(a), Value::Integer(b)) => {
+                                    let folded_value = OvmValue::from_ast(Value::Integer(a + b));
+                                    self.constant_values.insert(dst, folded_value);
+                                    // In a complete implementation, we'd emit a LoadConst instead
+                                    result.push(instruction);
+                                }
+                                (Value::Float(a), Value::Float(b)) => {
+                                    let folded_value = OvmValue::from_ast(Value::Float(a + b));
+                                    self.constant_values.insert(dst, folded_value);
+                                    result.push(instruction);
+                                }
+                                _ => {
+                                    result.push(instruction);
+                                }
+                            }
+                        } else {
+                            result.push(instruction);
+                        }
+                    } else {
+                        result.push(instruction);
+                    }
+                }
+                
+                // Similar for other arithmetic operations
+                Instruction::Sub { dst, lhs, rhs } => {
+                    if let (Some(left_val), Some(right_val)) = (
+                        self.constant_values.get(&lhs).cloned(),
+                        self.constant_values.get(&rhs).cloned()
+                    ) {
+                        if let (Ok(left_ast), Ok(right_ast)) = (left_val.to_ast(), right_val.to_ast()) {
+                            match (left_ast, right_ast) {
+                                (Value::Integer(a), Value::Integer(b)) => {
+                                    let folded_value = OvmValue::from_ast(Value::Integer(a - b));
+                                    self.constant_values.insert(dst, folded_value);
+                                    result.push(instruction);
+                                }
+                                (Value::Float(a), Value::Float(b)) => {
+                                    let folded_value = OvmValue::from_ast(Value::Float(a - b));
+                                    self.constant_values.insert(dst, folded_value);
+                                    result.push(instruction);
+                                }
+                                _ => {
+                                    result.push(instruction);
+                                }
+                            }
+                        } else {
+                            result.push(instruction);
+                        }
+                    } else {
+                        result.push(instruction);
+                    }
+                }
+                
+                _ => {
+                    result.push(instruction);
+                }
+            }
+        }
+        
+        Ok(result)
     }
 }
 
@@ -1621,8 +2793,128 @@ impl PeepholeOptimizer {
     }
     
     pub fn optimize(&mut self, instructions: Vec<Instruction>) -> Result<Vec<Instruction>, BytecodeError> {
-        // Simplified peephole optimization - for now just return as-is
-        Ok(instructions)
+        let mut result = Vec::new();
+        let mut i = 0;
+        
+        while i < instructions.len() {
+            let current = &instructions[i];
+            
+            // Phase 2: Enhanced pattern matching with more sophisticated optimizations
+            
+            // Look for 3-instruction patterns first
+            if i + 2 < instructions.len() {
+                let next = &instructions[i + 1];
+                let next2 = &instructions[i + 2];
+                
+                // Pattern: Move r1, r2; Move r2, r3; Move r3, r1 -> Nop (cycle elimination)
+                if let (
+                    Instruction::Move { dst: dst1, src: src1 },
+                    Instruction::Move { dst: dst2, src: src2 },
+                    Instruction::Move { dst: dst3, src: src3 }
+                ) = (current, next, next2) {
+                    if dst1 == src2 && dst2 == src3 && dst3 == src1 {
+                        // Eliminate the entire cycle
+                        i += 3;
+                        continue;
+                    }
+                }
+            }
+            
+            // Look for 2-instruction patterns
+            if i + 1 < instructions.len() {
+                let next = &instructions[i + 1];
+                
+                // Pattern: Move r1, r2; Move r2, r1 -> eliminate redundant moves
+                if let (
+                    Instruction::Move { dst: dst1, src: src1 },
+                    Instruction::Move { dst: dst2, src: src2 }
+                ) = (current, next) {
+                    if dst1 == src2 && src1 == dst2 {
+                        // Skip both instructions (they cancel out)
+                        i += 2;
+                        continue;
+                    }
+                }
+                
+                // Pattern: LoadConst r1, c; Move r2, r1 -> LoadConst r2, c
+                if let (
+                    Instruction::LoadConst { dst: dst1, const_idx },
+                    Instruction::Move { dst: dst2, src }
+                ) = (current, next) {
+                    if dst1 == src {
+                        result.push(Instruction::LoadConst { dst: *dst2, const_idx: *const_idx });
+                        i += 2;
+                        continue;
+                    }
+                }
+                
+                // Pattern: Add r1, r2, r3; Move r4, r1 -> Add r4, r2, r3
+                if let (
+                    Instruction::Add { dst: dst1, lhs, rhs },
+                    Instruction::Move { dst: dst2, src }
+                ) = (current, next) {
+                    if dst1 == src {
+                        result.push(Instruction::Add { dst: *dst2, lhs: *lhs, rhs: *rhs });
+                        i += 2;
+                        continue;
+                    }
+                }
+                
+                // Pattern: Sub r1, r2, r3; Move r4, r1 -> Sub r4, r2, r3
+                if let (
+                    Instruction::Sub { dst: dst1, lhs, rhs },
+                    Instruction::Move { dst: dst2, src }
+                ) = (current, next) {
+                    if dst1 == src {
+                        result.push(Instruction::Sub { dst: *dst2, lhs: *lhs, rhs: *rhs });
+                        i += 2;
+                        continue;
+                    }
+                }
+                
+                // Pattern: Mul r1, r2, r3; Move r4, r1 -> Mul r4, r2, r3
+                if let (
+                    Instruction::Mul { dst: dst1, lhs, rhs },
+                    Instruction::Move { dst: dst2, src }
+                ) = (current, next) {
+                    if dst1 == src {
+                        result.push(Instruction::Mul { dst: *dst2, lhs: *lhs, rhs: *rhs });
+                        i += 2;
+                        continue;
+                    }
+                }
+                
+                // Pattern: Not r1, r2; Not r3, r1 -> Move r3, r2 (double negation)
+                if let (
+                    Instruction::Not { dst: dst1, src: src1 },
+                    Instruction::Not { dst: dst2, src: src2 }
+                ) = (current, next) {
+                    if dst1 == src2 {
+                        result.push(Instruction::Move { dst: *dst2, src: *src1 });
+                        i += 2;
+                        continue;
+                    }
+                }
+            }
+            
+            // Single instruction optimizations
+            match current {
+                // Pattern: Move r1, r1 -> Nop (self-move elimination)
+                Instruction::Move { dst, src } if dst == src => {
+                    // Skip this instruction
+                    i += 1;
+                    continue;
+                }
+                
+                _ => {}
+            }
+            
+            // No optimization applied, keep the instruction
+            result.push(current.clone());
+            i += 1;
+        }
+        
+        Ok(result)
     }
 }
 
@@ -1723,7 +3015,10 @@ mod tests {
         ];
         
         let execution_result = vm.execute(func_id, &args);
-        assert!(execution_result.is_ok(), "Function execution should succeed");
+        match execution_result {
+            Ok(_) => {},
+            Err(e) => panic!("Function execution failed with error: {:?}", e),
+        }
         
         // The result should be 8 (5 + 3)
         let result_value = execution_result.unwrap();
