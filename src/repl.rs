@@ -220,6 +220,9 @@ impl Repl {
                             }
                         }
                     }
+                    if self.ovm_interpreter.is_ovm_available() {
+                        self.ovm_interpreter.force_gc();
+                    }
                 } else {
                     if !self.multiline_buffer.is_empty() {
                         self.multiline_buffer.push('\n');
@@ -233,6 +236,9 @@ impl Repl {
             if line.starts_with(':') || line == "help" || line == "quit" {
                 if let Err(e) = self.handle_command(line) {
                     eprintln!("Command error: {}", e);
+                }
+                if self.ovm_interpreter.is_ovm_available() {
+                    self.ovm_interpreter.force_gc();
                 }
                 continue;
             }
@@ -281,6 +287,9 @@ impl Repl {
                     }
                 }
             }
+            if self.ovm_interpreter.is_ovm_available() {
+                self.ovm_interpreter.force_gc();
+            }
         }
 
         // Save history
@@ -319,6 +328,18 @@ impl Repl {
             }
             "quit" | ":quit" => {
                 std::process::exit(0);
+            }
+            ":gc" => {
+                if self.ovm_interpreter.is_ovm_available() {
+                    println!("Forcing garbage collection...");
+                    if let Err(e) = self.ovm_interpreter.force_gc() {
+                        eprintln!("GC failed: {}", e);
+                    } else {
+                        println!("✅ Garbage collection completed successfully");
+                    }
+                } else {
+                    println!("OVM is not available, cannot run GC.");
+                }
             }
             ":env" => {
                 if parts.len() > 1 && parts[1] == "--full" {
@@ -630,15 +651,34 @@ impl Repl {
                 if parts.len() > 1 {
                     let filename = parts[1];
                     match std::fs::read_to_string(filename) {
-                        Ok(content) => match self.eval_line(&content) {
-                            Ok(value) => {
-                                if value != Value::Unit {
-                                    println!("{}", value);
+                        Ok(content) => {
+                            match self.eval_line(&content) {
+                                Ok(value) => {
+                                    if value != Value::Unit {
+                                        println!("{}", value);
+                                    }
+                                    println!("File '{}' executed successfully", filename);
                                 }
-                                println!("File '{}' executed successfully", filename);
+                                Err(e) => {
+                                    eprintln!("Error executing '{}': {}", filename, e);
+                                }
                             }
-                            Err(e) => {
-                                eprintln!("Error executing '{}': {}", filename, e);
+                            // Aggressive cleanup after script execution
+                            // 1. Clear user environment to free variables
+                            self.ovm_interpreter
+                                .get_classic_interpreter()
+                                .clear_user_environment();
+                            
+                            // 2. Force garbage collection multiple times
+                            if self.ovm_interpreter.is_ovm_available() {
+                                for _ in 0..3 {
+                                    if let Err(e) = self.ovm_interpreter.force_gc() {
+                                        if self.verbose {
+                                            eprintln!("GC after script execution failed: {}", e);
+                                        }
+                                        break;
+                                    }
+                                }
                             }
                         },
                         Err(e) => {
