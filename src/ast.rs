@@ -593,13 +593,17 @@ impl std::fmt::Display for Value {
             }
             Value::Ok(value) => write!(f, "Ok({})", value),
             Value::Err(value) => write!(f, "Err({})", value),
-            Value::Range { start, end, inclusive } => {
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 if *inclusive {
                     write!(f, "{}..={}", start, end)
                 } else {
                     write!(f, "{}..{}", start, end)
                 }
-            },
+            }
             Value::Unit => write!(f, "()"),
             Value::Promise {
                 state,

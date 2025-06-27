@@ -1299,7 +1299,7 @@ mod tests {
 
         // List empty directory
         let list_result = list_dir(vec![string_val(test_dir_str)]).unwrap();
-        let entries = assert_ok(&list_result);  
+        let entries = assert_ok(&list_result);
         if let Value::List(list) = entries {
             assert_eq!(list.len(), 0);
         }

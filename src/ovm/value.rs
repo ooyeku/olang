@@ -601,9 +601,13 @@ impl OvmValue {
         // Allocate string on heap and create GC pointer
         let heap_string = Box::into_raw(Box::new(value));
         let gc_ptr = GcPtr::new(heap_string);
-        
+
         Self {
-            header: ValueHeader::new(TypeTag::String, ExecutionTier::Interpreter, LazyState::Eager),
+            header: ValueHeader::new(
+                TypeTag::String,
+                ExecutionTier::Interpreter,
+                LazyState::Eager,
+            ),
             data: ValueData::String(gc_ptr),
         }
     }
@@ -621,16 +625,16 @@ impl OvmValue {
             std::mem::forget(boxed_values); // Prevent deallocation
             ptr
         };
-        
+
         let value_array = ValueArray {
             length: len,
             capacity: cap,
             data: data_ptr,
         };
-        
+
         let heap_array = Box::into_raw(Box::new(value_array));
         let gc_ptr = GcPtr::new(heap_array);
-        
+
         Self {
             header: ValueHeader::new(TypeTag::List, ExecutionTier::Interpreter, LazyState::Eager),
             data: ValueData::List(gc_ptr),
@@ -638,16 +642,24 @@ impl OvmValue {
     }
 
     /// Create a builtin function value
-    pub fn new_builtin(name: String, arity: usize, function_ptr: fn(&[OvmValue]) -> Result<OvmValue, RuntimeError>) -> Self {
+    pub fn new_builtin(
+        name: String,
+        arity: usize,
+        function_ptr: fn(&[OvmValue]) -> Result<OvmValue, RuntimeError>,
+    ) -> Self {
         let builtin_obj = BuiltinObject::new(name, arity, function_ptr);
-        
+
         // For now, we'll use a placeholder pointer - in a real implementation,
         // this would be allocated through the GC
         let ptr = Box::into_raw(Box::new(builtin_obj));
         let gc_ptr = GcPtr::new(ptr);
 
         Self {
-            header: ValueHeader::new(TypeTag::Builtin, ExecutionTier::Interpreter, LazyState::Eager),
+            header: ValueHeader::new(
+                TypeTag::Builtin,
+                ExecutionTier::Interpreter,
+                LazyState::Eager,
+            ),
             data: ValueData::Builtin(gc_ptr),
         }
     }
@@ -660,11 +672,7 @@ impl OvmValue {
     /// Get builtin function name if this is a builtin
     pub fn get_builtin_name(&self) -> Option<&str> {
         match &self.data {
-            ValueData::Builtin(ptr) => {
-                unsafe {
-                    Some(&ptr.as_ref().name)
-                }
-            }
+            ValueData::Builtin(ptr) => unsafe { Some(&ptr.as_ref().name) },
             _ => None,
         }
     }
@@ -672,11 +680,7 @@ impl OvmValue {
     /// Execute builtin function if this value is a builtin
     pub fn execute_builtin(&self, args: &[OvmValue]) -> Result<OvmValue, RuntimeError> {
         match &self.data {
-            ValueData::Builtin(ptr) => {
-                unsafe {
-                    ptr.as_ref().execute(args)
-                }
-            }
+            ValueData::Builtin(ptr) => unsafe { ptr.as_ref().execute(args) },
             _ => Err(RuntimeError::TypeError {
                 expected: "builtin function".to_string(),
                 found: format!("{:?}", self.header.type_tag),
@@ -692,14 +696,20 @@ impl OvmValue {
             AstValue::Boolean(b) => Self::new_boolean(b),
             AstValue::String(s) => Self::new_string(s.as_ref().clone()),
             AstValue::Unit => Self::new_unit(),
-            
+
             AstValue::List(items) => {
-                let ovm_items: Vec<Self> = items.iter().map(|item| Self::from_ast(item.clone())).collect();
+                let ovm_items: Vec<Self> = items
+                    .iter()
+                    .map(|item| Self::from_ast(item.clone()))
+                    .collect();
                 Self::new_list(ovm_items)
             }
 
             AstValue::Tuple(items) => {
-                let ovm_items: Vec<Self> = items.iter().map(|item| Self::from_ast(item.clone())).collect();
+                let ovm_items: Vec<Self> = items
+                    .iter()
+                    .map(|item| Self::from_ast(item.clone()))
+                    .collect();
                 Self::new_tuple(ovm_items)
             }
 
@@ -709,7 +719,11 @@ impl OvmValue {
                     name: func.name.clone(),
                     parameters: func.parameters.iter().map(|p| p.name.clone()).collect(),
                     body: func.body,
-                    closure: func.closure.into_iter().map(|(k, v)| (k, Self::from_ast(v))).collect(),
+                    closure: func
+                        .closure
+                        .into_iter()
+                        .map(|(k, v)| (k, Self::from_ast(v)))
+                        .collect(),
                     compilation_tier: ExecutionTier::Interpreter,
                     call_count: AtomicU32::new(0),
                     optimization_data: OptimizationData::default(),
@@ -719,7 +733,11 @@ impl OvmValue {
                 let gc_ptr = GcPtr::new(ptr);
 
                 Self {
-                    header: ValueHeader::new(TypeTag::Function, ExecutionTier::Interpreter, LazyState::Eager),
+                    header: ValueHeader::new(
+                        TypeTag::Function,
+                        ExecutionTier::Interpreter,
+                        LazyState::Eager,
+                    ),
                     data: ValueData::Function(gc_ptr),
                 }
             }
@@ -727,36 +745,42 @@ impl OvmValue {
             AstValue::Builtin(builtin) => {
                 // Create a placeholder builtin function
                 // In a real implementation, this would map to actual builtin functions
-                Self::new_builtin(
-                    builtin.name.clone(),
-                    builtin.arity,
-                    |_args| Err(RuntimeError::Generic {
+                Self::new_builtin(builtin.name.clone(), builtin.arity, |_args| {
+                    Err(RuntimeError::Generic {
                         message: "Builtin function not implemented in OVM".to_string(),
-                    }),
-                )
+                    })
+                })
             }
 
-            AstValue::Ok(value) => {
-                Self {
-                    header: ValueHeader::new(TypeTag::Result, ExecutionTier::Interpreter, LazyState::Eager),
-                    data: ValueData::Result {
-                        ok: Some(Box::new(Self::from_ast(*value))),
-                        err: None,
-                    },
-                }
-            }
+            AstValue::Ok(value) => Self {
+                header: ValueHeader::new(
+                    TypeTag::Result,
+                    ExecutionTier::Interpreter,
+                    LazyState::Eager,
+                ),
+                data: ValueData::Result {
+                    ok: Some(Box::new(Self::from_ast(*value))),
+                    err: None,
+                },
+            },
 
-            AstValue::Err(value) => {
-                Self {
-                    header: ValueHeader::new(TypeTag::Result, ExecutionTier::Interpreter, LazyState::Eager),
-                    data: ValueData::Result {
-                        ok: None,
-                        err: Some(Box::new(Self::from_ast(*value))),
-                    },
-                }
-            }
+            AstValue::Err(value) => Self {
+                header: ValueHeader::new(
+                    TypeTag::Result,
+                    ExecutionTier::Interpreter,
+                    LazyState::Eager,
+                ),
+                data: ValueData::Result {
+                    ok: None,
+                    err: Some(Box::new(Self::from_ast(*value))),
+                },
+            },
 
-            AstValue::Range { start, end, inclusive } => {
+            AstValue::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 // For ranges, create a simple representation for now
                 // TODO: Implement proper range representation
                 Self::new_integer(start)
@@ -778,12 +802,20 @@ impl OvmValue {
                 let gc_ptr = GcPtr::new(ptr);
 
                 Self {
-                    header: ValueHeader::new(TypeTag::Struct, ExecutionTier::Interpreter, LazyState::Eager),
+                    header: ValueHeader::new(
+                        TypeTag::Struct,
+                        ExecutionTier::Interpreter,
+                        LazyState::Eager,
+                    ),
                     data: ValueData::Struct(gc_ptr),
                 }
             }
 
-            AstValue::Promise { state, value, error } => {
+            AstValue::Promise {
+                state,
+                value,
+                error,
+            } => {
                 let ovm_state = match state {
                     crate::ast::PromiseState::Pending => PromiseState::Pending,
                     crate::ast::PromiseState::Resolved => PromiseState::Resolved,
@@ -801,7 +833,11 @@ impl OvmValue {
                 let gc_ptr = GcPtr::new(ptr);
 
                 Self {
-                    header: ValueHeader::new(TypeTag::Promise, ExecutionTier::Interpreter, LazyState::Eager),
+                    header: ValueHeader::new(
+                        TypeTag::Promise,
+                        ExecutionTier::Interpreter,
+                        LazyState::Eager,
+                    ),
                     data: ValueData::Promise(gc_ptr),
                 }
             }
@@ -842,83 +878,85 @@ impl OvmValue {
                     let string_ref = gc_ptr.as_ref();
                     Ok(AstValue::String(std::sync::Arc::new(string_ref.clone())))
                 }
-            },
+            }
             ValueData::List(gc_ptr) => {
                 // Convert GC list back to Arc<[Value]>
                 unsafe {
                     let array_ref = gc_ptr.as_ref();
                     let mut ast_values = Vec::with_capacity(array_ref.length);
-                    
+
                     if array_ref.length > 0 && !array_ref.data.is_null() {
-                        let data_slice = std::slice::from_raw_parts(array_ref.data, array_ref.length);
+                        let data_slice =
+                            std::slice::from_raw_parts(array_ref.data, array_ref.length);
                         for ovm_val in data_slice {
                             ast_values.push(ovm_val.to_ast()?);
                         }
                     }
-                    
+
                     Ok(AstValue::List(ast_values.into()))
                 }
-            },
+            }
             ValueData::Tuple(gc_ptr) => {
                 // Convert GC tuple back to Arc<Vec<Value>>
                 unsafe {
                     let array_ref = gc_ptr.as_ref();
                     let mut ast_values = Vec::with_capacity(array_ref.length);
-                    
+
                     if array_ref.length > 0 && !array_ref.data.is_null() {
-                        let data_slice = std::slice::from_raw_parts(array_ref.data, array_ref.length);
+                        let data_slice =
+                            std::slice::from_raw_parts(array_ref.data, array_ref.length);
                         for ovm_val in data_slice {
                             ast_values.push(ovm_val.to_ast()?);
                         }
                     }
-                    
+
                     Ok(AstValue::Tuple(std::sync::Arc::new(ast_values)))
                 }
-            },
+            }
             ValueData::Function(_) => {
                 // Functions return unit for now
                 Ok(AstValue::Unit)
-            },
+            }
             ValueData::Struct(_) => {
                 // Structs return unit for now
                 Ok(AstValue::Unit)
-            },
+            }
             ValueData::Builtin(_) => {
                 // Builtins return unit for now
                 Ok(AstValue::Unit)
-            },
+            }
             ValueData::Thunk(_) => {
                 // Thunks return unit for now
                 Ok(AstValue::Unit)
-            },
+            }
             ValueData::Stream(_) => {
                 // Streams return unit for now
                 Ok(AstValue::Unit)
-            },
+            }
             ValueData::LazyList(_) => {
                 // Lazy lists return unit for now
                 Ok(AstValue::Unit)
-            },
+            }
             ValueData::Promise(_) => {
                 // Promises return unit for now
                 Ok(AstValue::Unit)
-            },
+            }
             ValueData::CompiledFunction(_) => {
                 // Compiled functions return unit for now
                 Ok(AstValue::Unit)
-            },
+            }
             ValueData::OptimizedValue(_) => {
-                // Optimized values return unit for now  
+                // Optimized values return unit for now
                 Ok(AstValue::Unit)
-            },
+            }
             ValueData::Error(_) => {
                 // Errors return unit for now
                 Ok(AstValue::Unit)
-            },
+            }
             ValueData::Result { ok, err } => {
                 // Results return unit for now
                 Ok(AstValue::Unit)
-            },
+            }
         }
     }
 }
@@ -982,47 +1020,41 @@ impl fmt::Display for OvmValue {
             ValueData::Float(fl) => write!(f, "{}", fl),
             ValueData::Boolean(b) => write!(f, "{}", b),
             ValueData::Unit => write!(f, "()"),
-            ValueData::String(gc_ptr) => {
-                unsafe {
-                    let string_ref = gc_ptr.as_ref();
-                    write!(f, "\"{}\"", string_ref)
-                }
+            ValueData::String(gc_ptr) => unsafe {
+                let string_ref = gc_ptr.as_ref();
+                write!(f, "\"{}\"", string_ref)
             },
-            ValueData::List(gc_ptr) => {
-                unsafe {
-                    let array_ref = gc_ptr.as_ref();
-                    write!(f, "[")?;
-                    
-                    if array_ref.length > 0 && !array_ref.data.is_null() {
-                        let data_slice = std::slice::from_raw_parts(array_ref.data, array_ref.length);
-                        for (i, val) in data_slice.iter().enumerate() {
-                            if i > 0 {
-                                write!(f, ", ")?;
-                            }
-                            write!(f, "{}", val)?;
+            ValueData::List(gc_ptr) => unsafe {
+                let array_ref = gc_ptr.as_ref();
+                write!(f, "[")?;
+
+                if array_ref.length > 0 && !array_ref.data.is_null() {
+                    let data_slice = std::slice::from_raw_parts(array_ref.data, array_ref.length);
+                    for (i, val) in data_slice.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
                         }
+                        write!(f, "{}", val)?;
                     }
-                    
-                    write!(f, "]")
                 }
+
+                write!(f, "]")
             },
-            ValueData::Tuple(gc_ptr) => {
-                unsafe {
-                    let array_ref = gc_ptr.as_ref();
-                    write!(f, "(")?;
-                    
-                    if array_ref.length > 0 && !array_ref.data.is_null() {
-                        let data_slice = std::slice::from_raw_parts(array_ref.data, array_ref.length);
-                        for (i, val) in data_slice.iter().enumerate() {
-                            if i > 0 {
-                                write!(f, ", ")?;
-                            }
-                            write!(f, "{}", val)?;
+            ValueData::Tuple(gc_ptr) => unsafe {
+                let array_ref = gc_ptr.as_ref();
+                write!(f, "(")?;
+
+                if array_ref.length > 0 && !array_ref.data.is_null() {
+                    let data_slice = std::slice::from_raw_parts(array_ref.data, array_ref.length);
+                    for (i, val) in data_slice.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
                         }
+                        write!(f, "{}", val)?;
                     }
-                    
-                    write!(f, ")")
                 }
+
+                write!(f, ")")
             },
             ValueData::Function(_) => write!(f, "<function>"),
             ValueData::Struct(_) => write!(f, "<struct>"),

@@ -518,11 +518,15 @@ impl BuiltinFunctions {
 
         let list_values = match list {
             Value::List(items) => items.as_ref().to_vec(),
-            Value::Range { start, end, inclusive } => {
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 // Convert range to vector of integers
                 let end_val = if *inclusive { end + 1 } else { *end };
                 (*start..end_val).map(Value::Integer).collect()
-            },
+            }
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "map: first argument must be a list or range".to_string(),
@@ -582,11 +586,15 @@ impl BuiltinFunctions {
 
         let list_values = match list {
             Value::List(items) => items.as_ref().to_vec(),
-            Value::Range { start, end, inclusive } => {
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 // Convert range to vector of integers
                 let end_val = if *inclusive { end + 1 } else { *end };
                 (*start..end_val).map(Value::Integer).collect()
-            },
+            }
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "filter: first argument must be a list or range".to_string(),
@@ -1045,34 +1053,42 @@ impl BuiltinFunctions {
         let list = list_rc.as_ref();
 
         let mut result: Vec<Value> = list.to_vec();
-        
+
         // Use parallel sorting for larger lists
         if should_parallelize(result.len()) {
             // PARALLEL VERSION - use rayon's parallel sort
-            result.par_sort_by(|a, b| {
-                match (a, b) {
-                    (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
-                    (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-                    (Value::String(x), Value::String(y)) => x.cmp(y),
-                    (Value::Integer(x), Value::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-                    (Value::Float(x), Value::Integer(y)) => x.partial_cmp(&(*y as f64)).unwrap_or(std::cmp::Ordering::Equal),
-                    _ => std::cmp::Ordering::Equal,
+            result.par_sort_by(|a, b| match (a, b) {
+                (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
+                (Value::Float(x), Value::Float(y)) => {
+                    x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
                 }
+                (Value::String(x), Value::String(y)) => x.cmp(y),
+                (Value::Integer(x), Value::Float(y)) => (*x as f64)
+                    .partial_cmp(y)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                (Value::Float(x), Value::Integer(y)) => x
+                    .partial_cmp(&(*y as f64))
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                _ => std::cmp::Ordering::Equal,
             });
         } else {
             // SEQUENTIAL VERSION for small lists
-            result.sort_by(|a, b| {
-                match (a, b) {
-                    (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
-                    (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-                    (Value::String(x), Value::String(y)) => x.cmp(y),
-                    (Value::Integer(x), Value::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-                    (Value::Float(x), Value::Integer(y)) => x.partial_cmp(&(*y as f64)).unwrap_or(std::cmp::Ordering::Equal),
-                    _ => std::cmp::Ordering::Equal,
+            result.sort_by(|a, b| match (a, b) {
+                (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
+                (Value::Float(x), Value::Float(y)) => {
+                    x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
                 }
+                (Value::String(x), Value::String(y)) => x.cmp(y),
+                (Value::Integer(x), Value::Float(y)) => (*x as f64)
+                    .partial_cmp(y)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                (Value::Float(x), Value::Integer(y)) => x
+                    .partial_cmp(&(*y as f64))
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                _ => std::cmp::Ordering::Equal,
             });
         }
-        
+
         Ok(Value::List(result.into()))
     }
 
@@ -1187,13 +1203,17 @@ impl BuiltinFunctions {
 
         let (list_values, should_use_parallel) = match &args[0] {
             Value::List(items) => (items.as_ref().to_vec(), should_parallelize(items.len())),
-            Value::Range { start, end, inclusive } => {
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 // Convert range to vector of integers
                 let end_val = if *inclusive { end + 1 } else { *end };
                 let values: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
                 let use_parallel = should_parallelize(values.len());
                 (values, use_parallel)
-            },
+            }
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "sum: argument must be a list or range".to_string(),
@@ -1203,7 +1223,7 @@ impl BuiltinFunctions {
 
         // Check if we should use parallel processing - be more aggressive for mathematical operations
         let should_use_parallel = list_values.len() >= 5; // Very low threshold for sum operations - prioritize multi-threading
-        
+
         if should_use_parallel {
             // PARALLEL VERSION - parallel sum with fold and reduce
             let result = list_values

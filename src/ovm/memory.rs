@@ -4,9 +4,9 @@
 //! and lazy evaluation integration.
 
 use std::collections::HashMap;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::ptr::NonNull;
 
 use crate::ovm::config::{MemoryConfig, OvmConfig};
 use crate::ovm::gc::{GarbageCollector, GcStats};
@@ -193,7 +193,8 @@ impl MemoryManager {
         }
 
         // Safety check for extremely large allocations
-        if size > 1024 * 1024 * 1024 {  // 1GB limit
+        if size > 1024 * 1024 * 1024 {
+            // 1GB limit
             return Err(MemoryError::InvalidSize { size });
         }
 
@@ -232,12 +233,16 @@ impl MemoryManager {
                 Err(e) => return Err(e),
             }
         }
-    
+
         Err(MemoryError::OutOfMemory)
     }
 
     /// Allocate a GC-managed object with proper header
-    pub fn allocate_object<T>(&mut self, data: T, type_tag: crate::ovm::value::TypeTag) -> Result<GcPtr<ValueHeader>, MemoryError> {
+    pub fn allocate_object<T>(
+        &mut self,
+        data: T,
+        type_tag: crate::ovm::value::TypeTag,
+    ) -> Result<GcPtr<ValueHeader>, MemoryError> {
         let total_size = std::mem::size_of::<ValueHeader>() + std::mem::size_of::<T>();
         let ptr = self.allocate(total_size)?;
 
@@ -257,10 +262,10 @@ impl MemoryManager {
             std::ptr::write(data_ptr, data);
 
             let gc_ptr = GcPtr::new(header_ptr);
-            
+
             // Register with appropriate heap region
             self.register_object_with_region(gc_ptr.clone())?;
-            
+
             Ok(gc_ptr)
         }
     }
@@ -274,7 +279,7 @@ impl MemoryManager {
     /// Get all allocated objects for GC root scanning
     pub fn get_all_objects(&self) -> Vec<GcPtr<ValueHeader>> {
         let mut objects = Vec::new();
-        
+
         if let Ok(regions) = self.heap.regions.read() {
             for region in regions.iter() {
                 if let Ok(region_objects) = region.objects.read() {
@@ -282,7 +287,7 @@ impl MemoryManager {
                 }
             }
         }
-        
+
         objects
     }
 
@@ -302,9 +307,12 @@ impl MemoryManager {
         self.allocator.global_allocate(size, &mut self.gc)
     }
 
-    fn register_object_with_region(&mut self, gc_ptr: GcPtr<ValueHeader>) -> Result<(), MemoryError> {
+    fn register_object_with_region(
+        &mut self,
+        gc_ptr: GcPtr<ValueHeader>,
+    ) -> Result<(), MemoryError> {
         let ptr = gc_ptr.as_ptr() as *mut u8;
-        
+
         if let Ok(regions) = self.heap.regions.read() {
             for region in regions.iter() {
                 if ptr >= region.start && ptr < region.end {
@@ -315,7 +323,7 @@ impl MemoryManager {
                 }
             }
         }
-        
+
         Err(MemoryError::InvalidRegion)
     }
 
@@ -373,20 +381,24 @@ impl MemoryManager {
     pub fn emergency_cleanup(&mut self) -> Result<(), MemoryError> {
         // Force an immediate, complete GC cycle
         self.force_collection()?;
-        
+
         // In a more advanced implementation, we could also:
         // - Clear any non-essential caches
         // - Trigger compaction if fragmentation is high
-        
+
         Ok(())
     }
 }
 
 impl HeapRegion {
-    pub fn new(size: usize, generation: Generation, region_id: usize) -> Result<Arc<Self>, MemoryError> {
+    pub fn new(
+        size: usize,
+        generation: Generation,
+        region_id: usize,
+    ) -> Result<Arc<Self>, MemoryError> {
         let layout = std::alloc::Layout::from_size_align(size, 8)
             .map_err(|_| MemoryError::RegionAllocationFailed)?;
-        
+
         unsafe {
             let ptr = std::alloc::alloc(layout);
             if ptr.is_null() {
@@ -411,45 +423,46 @@ impl HeapRegion {
         if size == 0 {
             return None;
         }
-        
+
         // Safety: limit allocation size to prevent overflow issues
-        if size > 64 * 1024 * 1024 {  // 64MB max allocation per region
+        if size > 64 * 1024 * 1024 {
+            // 64MB max allocation per region
             return None;
         }
-        
+
         let aligned_size = (size + 7) & !7; // 8-byte alignment
-        
+
         // Verify aligned_size didn't overflow
         if aligned_size < size {
             return None;
         }
-        
+
         loop {
             let current = self.current.load(Ordering::Relaxed);
-            
+
             // Validate current pointer is within bounds
             if current < self.start || current >= self.end {
                 return None;
             }
-            
+
             // Safety check: ensure we don't overflow pointer arithmetic
             let remaining = unsafe { self.end.offset_from(current) } as usize;
             if aligned_size > remaining {
                 return None; // Region full
             }
-            
+
             let new_ptr = unsafe { current.add(aligned_size) };
-            
+
             // Double-check bounds
             if new_ptr > self.end {
                 return None;
             }
-            
+
             match self.current.compare_exchange_weak(
-                current, 
-                new_ptr, 
-                Ordering::Relaxed, 
-                Ordering::Relaxed
+                current,
+                new_ptr,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
             ) {
                 Ok(_) => return Some(current),
                 Err(_) => continue, // Retry on contention
@@ -468,7 +481,7 @@ impl HeapRegion {
         let current = self.current.load(Ordering::Relaxed);
         let used = unsafe { current.offset_from(self.start) } as usize;
         let total = unsafe { self.end.offset_from(self.start) } as usize;
-        
+
         if total == 0 {
             0.0
         } else {
@@ -490,12 +503,12 @@ impl Drop for HeapRegion {
 impl UnifiedHeap {
     fn new(config: &MemoryConfig) -> Result<Self, MemoryError> {
         let mut regions = Vec::new();
-        
+
         // Create initial regions
         let nursery_region = HeapRegion::new(config.nursery_size, Generation::Nursery, 0)?;
         let young_region = HeapRegion::new(config.young_gen_size, Generation::Young, 1)?;
         let old_region = HeapRegion::new(config.young_gen_size * 4, Generation::Old, 2)?;
-        
+
         regions.push(nursery_region.clone());
         regions.push(young_region.clone());
         regions.push(old_region.clone());
@@ -651,11 +664,11 @@ impl NurserySpace {
     pub fn collect(&self) -> usize {
         let collected = self.used.load(Ordering::Relaxed);
         self.used.store(0, Ordering::Relaxed);
-        
+
         if let Some(region) = &self.region {
             region.reset();
         }
-        
+
         collected
     }
 
@@ -693,13 +706,13 @@ impl YoungGeneration {
     pub fn collect(&self) -> usize {
         let collected = self.used.load(Ordering::Relaxed);
         self.used.store(0, Ordering::Relaxed);
-        
+
         if let Ok(regions) = self.regions.read() {
             for region in regions.iter() {
                 region.reset();
             }
         }
-        
+
         collected
     }
 
@@ -708,7 +721,7 @@ impl YoungGeneration {
             if regions.is_empty() {
                 return 0.0;
             }
-            
+
             let total_usage: f64 = regions.iter().map(|r| r.usage()).sum();
             total_usage / regions.len() as f64
         } else {
@@ -740,13 +753,13 @@ impl OldGeneration {
     pub fn collect(&self) -> usize {
         let collected = self.used.load(Ordering::Relaxed);
         self.used.store(0, Ordering::Relaxed);
-        
+
         if let Ok(regions) = self.regions.read() {
             for region in regions.iter() {
                 region.reset();
             }
         }
-        
+
         collected
     }
 
@@ -755,7 +768,7 @@ impl OldGeneration {
             if regions.is_empty() {
                 return 0.0;
             }
-            
+
             let total_usage: f64 = regions.iter().map(|r| r.usage()).sum();
             total_usage / regions.len() as f64
         } else {
@@ -801,7 +814,7 @@ impl LargeObjectSpace {
             if let Some(pos) = objects.iter().position(|&(p, _)| p == ptr) {
                 let (_, size) = objects.remove(pos);
                 self.total_size.fetch_sub(size, Ordering::Relaxed);
-                
+
                 unsafe {
                     let layout = std::alloc::Layout::from_size_align_unchecked(size, 8);
                     std::alloc::dealloc(ptr, layout);
@@ -816,7 +829,10 @@ impl LargeObjectSpace {
     }
 
     pub fn object_count(&self) -> usize {
-        self.objects.read().map(|objects| objects.len()).unwrap_or(0)
+        self.objects
+            .read()
+            .map(|objects| objects.len())
+            .unwrap_or(0)
     }
 
     pub fn total_size(&self) -> usize {
@@ -890,7 +906,7 @@ impl TlabManager {
 
     fn allocate(&mut self, size: usize) -> Option<*mut u8> {
         let thread_id = std::thread::current().id();
-        
+
         if let Some(tlab) = self.tlabs.get(&thread_id) {
             tlab.allocate(size)
         } else {
@@ -926,7 +942,7 @@ impl ThreadLocalBuffer {
     fn allocate(&self, size: usize) -> Option<*mut u8> {
         let aligned_size = (size + 7) & !7; // 8-byte alignment
         let current = self.position.fetch_add(aligned_size, Ordering::Relaxed);
-        
+
         if current + aligned_size <= self.size {
             unsafe { Some(self.buffer.add(current)) }
         } else {
@@ -954,15 +970,15 @@ impl LockFreeAllocator {
 
     fn allocate(&self, size: usize) -> Option<*mut u8> {
         let aligned_size = (size + 7) & !7; // 8-byte alignment
-        
+
         loop {
             let current = self.bump_pointer.load(Ordering::Relaxed);
             let limit = self.limit.load(Ordering::Relaxed);
-            
+
             if current.is_null() || limit.is_null() {
                 return None;
             }
-            
+
             unsafe {
                 let new_ptr = current.add(aligned_size);
                 if new_ptr <= limit {
@@ -993,7 +1009,7 @@ impl GlobalAllocator {
 
     fn allocate(&self, size: usize) -> Option<*mut u8> {
         let _lock = self.heap_lock.lock().ok()?;
-        
+
         if let Ok(mut free_list) = self.free_list.lock() {
             // Try to find a suitable free block
             for (i, &(ptr, block_size)) in free_list.iter().enumerate() {
@@ -1003,7 +1019,7 @@ impl GlobalAllocator {
                 }
             }
         }
-        
+
         // Allocate new memory if no free block found
         let layout = std::alloc::Layout::from_size_align(size, 8).ok()?;
         unsafe {
@@ -1069,16 +1085,17 @@ impl MemoryManager {
 
     pub fn promote_to_old(&mut self, object: *mut u8, size: usize) -> Result<*mut u8, MemoryError> {
         // Allocate space in old generation
-        let new_ptr = self.heap
+        let new_ptr = self
+            .heap
             .old_gen
             .allocate(size)
             .ok_or(MemoryError::OutOfMemory)?;
-        
+
         // Copy the object data
         unsafe {
             std::ptr::copy_nonoverlapping(object, new_ptr, size);
         }
-        
+
         Ok(new_ptr)
     }
 

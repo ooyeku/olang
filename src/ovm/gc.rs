@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 
 use crate::ovm::config::MemoryConfig;
 use crate::ovm::value::{
-    GcPtr, ValueHeader, TypeTag, ValueArray, FunctionObject, StructObject, ThunkObject, 
-    LazyListObject, PromiseObject, CompiledFunctionObject, OptimizedValueObject, 
-    ErrorObject, OvmValue, ValueData
+    CompiledFunctionObject, ErrorObject, FunctionObject, GcPtr, LazyListObject,
+    OptimizedValueObject, OvmValue, PromiseObject, StructObject, ThunkObject, TypeTag, ValueArray,
+    ValueData, ValueHeader,
 };
 
 /// Main garbage collector with concurrent marking and generational collection
@@ -230,9 +230,12 @@ impl GarbageCollector {
             allocation_counter: Arc::new(AtomicUsize::new(0)),
         })
     }
-    
+
     /// Set the memory manager reference for integration
-    pub fn set_memory_manager(&mut self, memory_manager: Arc<Mutex<crate::ovm::memory::MemoryManager>>) {
+    pub fn set_memory_manager(
+        &mut self,
+        memory_manager: Arc<Mutex<crate::ovm::memory::MemoryManager>>,
+    ) {
         self.memory_manager = Some(memory_manager);
     }
 
@@ -324,7 +327,8 @@ impl GarbageCollector {
         }
 
         match result {
-            Ok(()) => self.stats
+            Ok(()) => self
+                .stats
                 .lock()
                 .map(|stats| stats.clone())
                 .map_err(|_| GcError::CollectionFailed("Failed to lock stats".to_string())),
@@ -334,17 +338,17 @@ impl GarbageCollector {
 
     fn perform_simplified_collection(&self) -> Result<(), GcError> {
         // Simplified collection without safepoints for debugging
-        
+
         // Phase 1: Mark roots (without safepoint)
         let roots = self.root_scanner.scan_roots()?;
         self.marking_engine.initial_mark(&roots)?;
-        
+
         // Phase 2: Simple sweep (use fallback implementation)
         self.sweeping_engine.concurrent_sweep_simple()?;
-        
+
         // Reset allocation counter
         self.allocation_counter.store(0, Ordering::Relaxed);
-        
+
         Ok(())
     }
 
@@ -407,18 +411,24 @@ impl GarbageCollector {
                         continue;
                     }
                 };
-                
-                let mut result = match cvar.wait_timeout_while(triggered, Duration::from_millis(100), |&mut triggered| {
-                    !triggered && allocation_counter.load(Ordering::Relaxed) < gc_trigger_threshold
-                }) {
+
+                let mut result = match cvar.wait_timeout_while(
+                    triggered,
+                    Duration::from_millis(100),
+                    |&mut triggered| {
+                        !triggered
+                            && allocation_counter.load(Ordering::Relaxed) < gc_trigger_threshold
+                    },
+                ) {
                     Ok(result) => result,
                     Err(_) => {
                         // Handle timeout or other errors gracefully
                         continue;
                     }
                 };
-                
-                let should_collect = *result.0 || allocation_counter.load(Ordering::Relaxed) >= gc_trigger_threshold;
+
+                let should_collect =
+                    *result.0 || allocation_counter.load(Ordering::Relaxed) >= gc_trigger_threshold;
                 if should_collect {
                     *result.0 = false;
                 }
@@ -427,11 +437,12 @@ impl GarbageCollector {
 
             if triggered {
                 // Perform garbage collection with improved error handling
-                let collection_type = if allocation_counter.load(Ordering::Relaxed) >= gc_trigger_threshold * 2 {
-                    CollectionType::Major
-                } else {
-                    CollectionType::Minor
-                };
+                let collection_type =
+                    if allocation_counter.load(Ordering::Relaxed) >= gc_trigger_threshold * 2 {
+                        CollectionType::Major
+                    } else {
+                        CollectionType::Minor
+                    };
 
                 match Self::perform_collection_impl(
                     &stats,
@@ -662,18 +673,18 @@ impl ConcurrentMarkingEngine {
             if object.as_ptr().is_null() {
                 return Err(GcError::InvalidReference);
             }
-            
+
             let header = &*object.as_ptr();
-            
+
             // Check if already marked to avoid cycles
             if header.is_marked() {
                 return Ok(());
             }
-            
+
             // Mark the object atomically to prevent races
             header.mark_for_gc();
             self.marked_objects.fetch_add(1, Ordering::Relaxed);
-            
+
             // Safely traverse object references
             match self.safe_traverse_references(object) {
                 Ok(()) => Ok(()),
@@ -689,7 +700,7 @@ impl ConcurrentMarkingEngine {
     fn safe_traverse_references(&self, object: GcPtr<ValueHeader>) -> Result<(), GcError> {
         // Get references safely
         let references = self.get_object_references_safe(object)?;
-        
+
         // Add all references to the mark stack
         if let Ok(mut stack) = self.mark_stack.lock() {
             for reference in references {
@@ -704,7 +715,7 @@ impl ConcurrentMarkingEngine {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -713,36 +724,39 @@ impl ConcurrentMarkingEngine {
         self.safe_traverse_references(object)
     }
 
-    fn get_object_references_safe(&self, object: GcPtr<ValueHeader>) -> Result<Vec<GcPtr<ValueHeader>>, GcError> {
+    fn get_object_references_safe(
+        &self,
+        object: GcPtr<ValueHeader>,
+    ) -> Result<Vec<GcPtr<ValueHeader>>, GcError> {
         let mut references = Vec::new();
-        
+
         unsafe {
             // Validate object pointer
             if object.as_ptr().is_null() {
                 return Err(GcError::InvalidReference);
             }
-            
+
             let header = &*object.as_ptr();
-            
+
             // Check object size and bounds before accessing data
             if header.size < std::mem::size_of::<ValueHeader>() as u32 {
-                return Err(GcError::MemoryCorruption { 
-                    address: object.as_ptr() as usize 
+                return Err(GcError::MemoryCorruption {
+                    address: object.as_ptr() as usize,
                 });
             }
-            
+
             // Safely calculate data pointer with bounds checking
             let header_size = std::mem::size_of::<ValueHeader>();
             let object_size = header.size as usize;
-            
+
             if object_size < header_size {
-                return Err(GcError::MemoryCorruption { 
-                    address: object.as_ptr() as usize 
+                return Err(GcError::MemoryCorruption {
+                    address: object.as_ptr() as usize,
                 });
             }
-            
+
             let data_ptr = (object.as_ptr() as *mut u8).add(header_size);
-            
+
             // Match on type tag and safely extract references
             match header.type_tag {
                 TypeTag::String => {
@@ -753,9 +767,9 @@ impl ConcurrentMarkingEngine {
                     if object_size < header_size + std::mem::size_of::<ValueArray>() {
                         return Ok(references); // Skip corrupted object
                     }
-                    
+
                     let array = &*(data_ptr as *const ValueArray);
-                    
+
                     // Validate array bounds
                     if array.length > 0 && !array.data.is_null() {
                         for i in 0..array.length {
@@ -764,7 +778,7 @@ impl ConcurrentMarkingEngine {
                             if element_ptr.is_null() {
                                 continue; // Skip null elements
                             }
-                            
+
                             let element = &*element_ptr;
                             if let Some(ref_ptr) = self.extract_gc_reference_safe(element) {
                                 references.push(ref_ptr);
@@ -777,7 +791,7 @@ impl ConcurrentMarkingEngine {
                     if object_size < header_size + std::mem::size_of::<FunctionObject>() {
                         return Ok(references); // Skip corrupted object
                     }
-                    
+
                     let function = &*(data_ptr as *const FunctionObject);
                     for (_, value) in &function.closure {
                         if let Some(ref_ptr) = self.extract_gc_reference_safe(value) {
@@ -789,7 +803,7 @@ impl ConcurrentMarkingEngine {
                     if object_size < header_size + std::mem::size_of::<StructObject>() {
                         return Ok(references);
                     }
-                    
+
                     let struct_obj = &*(data_ptr as *const StructObject);
                     for (_, value) in &struct_obj.fields {
                         if let Some(ref_ptr) = self.extract_gc_reference_safe(value) {
@@ -801,7 +815,7 @@ impl ConcurrentMarkingEngine {
                     if object_size < header_size + std::mem::size_of::<ThunkObject>() {
                         return Ok(references);
                     }
-                    
+
                     let thunk = &*(data_ptr as *const ThunkObject);
                     for (_, value) in &thunk.environment {
                         if let Some(ref_ptr) = self.extract_gc_reference_safe(value) {
@@ -825,7 +839,7 @@ impl ConcurrentMarkingEngine {
                     if object_size < header_size + std::mem::size_of::<LazyListObject>() {
                         return Ok(references);
                     }
-                    
+
                     let lazy_list = &*(data_ptr as *const LazyListObject);
                     if let Some(ref_ptr) = self.extract_gc_reference_safe(&lazy_list.source) {
                         references.push(ref_ptr);
@@ -840,7 +854,7 @@ impl ConcurrentMarkingEngine {
                     if object_size < header_size + std::mem::size_of::<PromiseObject>() {
                         return Ok(references);
                     }
-                    
+
                     let promise = &*(data_ptr as *const PromiseObject);
                     if let Some(ref value) = &promise.value {
                         if let Some(ref_ptr) = self.extract_gc_reference_safe(value) {
@@ -858,11 +872,14 @@ impl ConcurrentMarkingEngine {
                 }
             }
         }
-        
+
         Ok(references)
     }
 
-    fn get_object_references(&self, object: GcPtr<ValueHeader>) -> Result<Vec<GcPtr<ValueHeader>>, GcError> {
+    fn get_object_references(
+        &self,
+        object: GcPtr<ValueHeader>,
+    ) -> Result<Vec<GcPtr<ValueHeader>>, GcError> {
         // Use the safer version
         self.get_object_references_safe(object)
     }
@@ -870,96 +887,96 @@ impl ConcurrentMarkingEngine {
     fn extract_gc_reference_safe(&self, value: &OvmValue) -> Option<GcPtr<ValueHeader>> {
         match &value.data {
             ValueData::String(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::List(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::Tuple(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::Function(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::Struct(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::Builtin(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::Thunk(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::Stream(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::LazyList(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::Promise(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::CompiledFunction(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::OptimizedValue(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::Error(ptr) => {
-                if ptr.as_ptr().is_null() { 
-                    None 
-                } else { 
-                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader)) 
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
                 }
-            },
+            }
             ValueData::Result { ok, err } => {
                 if let Some(ref ok_value) = ok {
                     return self.extract_gc_reference_safe(ok_value);
@@ -970,7 +987,10 @@ impl ConcurrentMarkingEngine {
                 None
             }
             // Immediate values have no GC references
-            ValueData::Integer(_) | ValueData::Float(_) | ValueData::Boolean(_) | ValueData::Unit => None,
+            ValueData::Integer(_)
+            | ValueData::Float(_)
+            | ValueData::Boolean(_)
+            | ValueData::Unit => None,
         }
     }
 
@@ -991,7 +1011,10 @@ impl IncrementalSweepingEngine {
     }
 
     /// Main concurrent sweep implementation
-    pub fn concurrent_sweep(&self, memory_manager: &Arc<Mutex<crate::ovm::memory::MemoryManager>>) -> Result<(), GcError> {
+    pub fn concurrent_sweep(
+        &self,
+        memory_manager: &Arc<Mutex<crate::ovm::memory::MemoryManager>>,
+    ) -> Result<(), GcError> {
         let start = Instant::now();
         let mut swept_objects = 0;
         let mut bytes_freed = 0;
@@ -1000,7 +1023,9 @@ impl IncrementalSweepingEngine {
         let all_objects = if let Ok(mm) = memory_manager.lock() {
             mm.get_all_objects()
         } else {
-            return Err(GcError::CollectionFailed("Failed to lock memory manager".to_string()));
+            return Err(GcError::CollectionFailed(
+                "Failed to lock memory manager".to_string(),
+            ));
         };
 
         // Phase 1: Identify live and dead objects
@@ -1017,9 +1042,9 @@ impl IncrementalSweepingEngine {
                 if obj_ptr.as_ptr().is_null() {
                     continue;
                 }
-                
+
                 let header = &*obj_ptr.as_ptr();
-                
+
                 // Check if object is marked as live
                 if !header.is_marked() {
                     // Object is garbage - add to free list
@@ -1029,7 +1054,7 @@ impl IncrementalSweepingEngine {
                         // Fallback size calculation for corrupted headers
                         std::mem::size_of::<ValueHeader>() + 64 // Minimum object size
                     };
-                    
+
                     objects_to_free.push((obj_ptr.as_ptr() as *mut u8, object_size));
                     bytes_freed += object_size;
                     swept_objects += 1;
@@ -1048,19 +1073,21 @@ impl IncrementalSweepingEngine {
                     // Deallocate the object memory
                     mm.deallocate(obj_ptr, object_size);
                 }
-                
+
                 // Add freed memory to free list for reuse
                 if let Ok(mut free_list) = self.free_list.lock() {
                     free_list.add_block(obj_ptr as usize, object_size);
                 }
             }
         } else {
-            return Err(GcError::CollectionFailed("Failed to lock memory manager for deallocation".to_string()));
+            return Err(GcError::CollectionFailed(
+                "Failed to lock memory manager for deallocation".to_string(),
+            ));
         }
 
         // Update statistics
         self.swept_bytes.fetch_add(bytes_freed, Ordering::Relaxed);
-        
+
         Ok(())
     }
 
@@ -1074,10 +1101,13 @@ impl IncrementalSweepingEngine {
         if let Ok(mut free_list) = self.free_list.lock() {
             let mut blocks_to_consolidate = Vec::new();
             let total_blocks = free_list.blocks.len();
-            
+
             // Process blocks within our pause budget
             let mut processed = 0;
-            while start.elapsed() < self.pause_budget && processed < 100 && sweep_position < total_blocks {
+            while start.elapsed() < self.pause_budget
+                && processed < 100
+                && sweep_position < total_blocks
+            {
                 if let Some(block) = free_list.blocks.get(sweep_position) {
                     blocks_to_consolidate.push(block.clone());
                     freed_bytes += block.size;
@@ -1085,10 +1115,10 @@ impl IncrementalSweepingEngine {
                 sweep_position += 1;
                 processed += 1;
             }
-            
+
             // Consolidate adjacent free blocks
             self.consolidate_free_blocks(&mut free_list, blocks_to_consolidate)?;
-            
+
             // Reset sweep position if we've processed all blocks
             if sweep_position >= total_blocks {
                 sweep_position = 0;
@@ -1097,15 +1127,19 @@ impl IncrementalSweepingEngine {
 
         // Update sweep position for next cycle
         self.sweep_position.store(sweep_position, Ordering::Relaxed);
-        
+
         // Record the freed bytes
         self.swept_bytes.fetch_add(freed_bytes, Ordering::Relaxed);
-        
+
         Ok(())
     }
 
     /// Consolidate adjacent free blocks to reduce fragmentation
-    fn consolidate_free_blocks(&self, free_list: &mut FreeList, mut blocks: Vec<FreeBlock>) -> Result<(), GcError> {
+    fn consolidate_free_blocks(
+        &self,
+        free_list: &mut FreeList,
+        mut blocks: Vec<FreeBlock>,
+    ) -> Result<(), GcError> {
         if blocks.is_empty() {
             return Ok(());
         }
@@ -1127,7 +1161,7 @@ impl IncrementalSweepingEngine {
                 current_block = next_block;
             }
         }
-        
+
         // Add the last block
         consolidated.push(current_block);
 
@@ -1136,7 +1170,7 @@ impl IncrementalSweepingEngine {
         for block in consolidated {
             free_list.blocks.push_back(block);
         }
-        
+
         // Update total free size
         free_list.total_free = free_list.blocks.iter().map(|b| b.size).sum();
 
@@ -1144,7 +1178,10 @@ impl IncrementalSweepingEngine {
     }
 
     /// Force a complete sweep regardless of pause budget
-    pub fn force_complete_sweep(&self, memory_manager: &Arc<Mutex<crate::ovm::memory::MemoryManager>>) -> Result<usize, GcError> {
+    pub fn force_complete_sweep(
+        &self,
+        memory_manager: &Arc<Mutex<crate::ovm::memory::MemoryManager>>,
+    ) -> Result<usize, GcError> {
         let start = Instant::now();
         let mut total_freed = 0;
 
@@ -1152,7 +1189,9 @@ impl IncrementalSweepingEngine {
         let all_objects = if let Ok(mm) = memory_manager.lock() {
             mm.get_all_objects()
         } else {
-            return Err(GcError::CollectionFailed("Failed to lock memory manager".to_string()));
+            return Err(GcError::CollectionFailed(
+                "Failed to lock memory manager".to_string(),
+            ));
         };
 
         let mut dead_objects = Vec::new();
@@ -1163,16 +1202,16 @@ impl IncrementalSweepingEngine {
                 if obj_ptr.as_ptr().is_null() {
                     continue;
                 }
-                
+
                 let header = &*obj_ptr.as_ptr();
-                
+
                 if !header.is_marked() {
                     let object_size = if header.size > 0 && header.size < 1024 * 1024 * 1024 {
                         header.size as usize
                     } else {
                         std::mem::size_of::<ValueHeader>() + 64
                     };
-                    
+
                     dead_objects.push((obj_ptr.as_ptr() as *mut u8, object_size));
                     total_freed += object_size;
                 } else {
@@ -1188,7 +1227,7 @@ impl IncrementalSweepingEngine {
                 unsafe {
                     mm.deallocate(obj_ptr, object_size);
                 }
-                
+
                 // Add to free list
                 if let Ok(mut free_list) = self.free_list.lock() {
                     free_list.add_block(obj_ptr as usize, object_size);
@@ -1198,7 +1237,7 @@ impl IncrementalSweepingEngine {
 
         // Update statistics
         self.swept_bytes.fetch_add(total_freed, Ordering::Relaxed);
-        
+
         Ok(total_freed)
     }
 
@@ -1217,7 +1256,9 @@ impl IncrementalSweepingEngine {
         if let Ok(free_list) = self.free_list.lock() {
             Ok((free_list.total_free(), free_list.largest_block()))
         } else {
-            Err(GcError::CollectionFailed("Failed to lock free list".to_string()))
+            Err(GcError::CollectionFailed(
+                "Failed to lock free list".to_string(),
+            ))
         }
     }
 
@@ -1306,13 +1347,22 @@ impl SafepointManager {
         if result.1.timed_out() {
             // Reset safepoint request on timeout
             self.safepoint_requested.store(false, Ordering::Relaxed);
-            
+
             // Log debugging information
             eprintln!("🚨 SAFEPOINT TIMEOUT DEBUG INFO:");
-            eprintln!("   Total threads registered: {}", self.total_threads.load(Ordering::Relaxed));
-            eprintln!("   Threads at safepoint: {}", self.threads_at_safepoint.load(Ordering::Relaxed));
-            eprintln!("   Safepoint requested: {}", self.safepoint_requested.load(Ordering::Relaxed));
-            
+            eprintln!(
+                "   Total threads registered: {}",
+                self.total_threads.load(Ordering::Relaxed)
+            );
+            eprintln!(
+                "   Threads at safepoint: {}",
+                self.threads_at_safepoint.load(Ordering::Relaxed)
+            );
+            eprintln!(
+                "   Safepoint requested: {}",
+                self.safepoint_requested.load(Ordering::Relaxed)
+            );
+
             return Err(GcError::SafepointTimeout);
         }
 
@@ -1327,7 +1377,7 @@ impl SafepointManager {
         let mut reached = lock.lock().unwrap();
         *reached = false;
         cvar.notify_all();
-        
+
         // Reset threads at safepoint counter
         self.threads_at_safepoint.store(0, Ordering::Relaxed);
     }
@@ -1353,13 +1403,15 @@ impl SafepointManager {
 
         // Wait for safepoint to be released
         let (lock, cvar) = &*self.safepoint_barrier;
-        let _guard = cvar.wait_while(lock.lock().unwrap(), |&mut reached| {
-            self.safepoint_requested.load(Ordering::Relaxed) && reached
-        }).unwrap();
+        let _guard = cvar
+            .wait_while(lock.lock().unwrap(), |&mut reached| {
+                self.safepoint_requested.load(Ordering::Relaxed) && reached
+            })
+            .unwrap();
 
         // Decrement thread count when leaving safepoint
         self.threads_at_safepoint.fetch_sub(1, Ordering::Relaxed);
-        
+
         Ok(())
     }
 
@@ -1367,10 +1419,13 @@ impl SafepointManager {
     /// Must be called by each thread that participates in safepoint coordination
     pub fn register_thread(&self) {
         let new_count = self.total_threads.fetch_add(1, Ordering::Relaxed) + 1;
-        
+
         // Debug logging for thread registration
         if cfg!(debug_assertions) {
-            println!("🧵 Thread registered for safepoint coordination. Total: {}", new_count);
+            println!(
+                "🧵 Thread registered for safepoint coordination. Total: {}",
+                new_count
+            );
         }
     }
 
@@ -1378,19 +1433,22 @@ impl SafepointManager {
     /// Must be called when a thread exits to avoid safepoint deadlocks
     pub fn unregister_thread(&self) {
         let prev_count = self.total_threads.fetch_sub(1, Ordering::Relaxed);
-        
+
         // Ensure we don't underflow
         if prev_count == 0 {
             self.total_threads.store(0, Ordering::Relaxed);
         }
-        
+
         let new_count = prev_count.saturating_sub(1);
-        
+
         // Debug logging for thread unregistration
         if cfg!(debug_assertions) {
-            println!("🧵 Thread unregistered from safepoint coordination. Total: {}", new_count);
+            println!(
+                "🧵 Thread unregistered from safepoint coordination. Total: {}",
+                new_count
+            );
         }
-        
+
         // If this was the last thread and safepoint is pending, signal completion
         if new_count == 0 && self.safepoint_requested.load(Ordering::Relaxed) {
             let (lock, cvar) = &*self.safepoint_barrier;
@@ -1678,7 +1736,7 @@ mod tests {
     #[test]
     fn test_safepoint_basic_coordination() {
         let manager = SafepointManager::new();
-        
+
         // Test with no threads registered
         assert!(manager.request_safepoint().is_ok());
         manager.release_safepoint();
@@ -1687,10 +1745,10 @@ mod tests {
     #[test]
     fn test_safepoint_single_thread() {
         let manager = Arc::new(SafepointManager::new());
-        
+
         // Register thread
         manager.register_thread();
-        
+
         let manager_clone = Arc::clone(&manager);
         let handle = thread::spawn(move || {
             // Simulate thread doing work and polling safepoints
@@ -1701,14 +1759,14 @@ mod tests {
             // Unregister when done
             manager_clone.unregister_thread();
         });
-        
+
         // Give thread time to start
         thread::sleep(Duration::from_millis(50));
-        
+
         // Request safepoint - should succeed quickly
         assert!(manager.request_safepoint().is_ok());
         manager.release_safepoint();
-        
+
         // Wait for thread to complete
         handle.join().unwrap();
     }
@@ -1717,14 +1775,14 @@ mod tests {
     fn test_safepoint_multiple_threads() {
         let manager = Arc::new(SafepointManager::new());
         let mut handles = Vec::new();
-        
+
         // Start multiple threads
         for i in 0..3 {
             let manager_clone = Arc::clone(&manager);
             let handle = thread::spawn(move || {
                 // Register with safepoint manager
                 manager_clone.register_thread();
-                
+
                 // Simulate work with periodic safepoint polls
                 for j in 0..5 {
                     thread::sleep(Duration::from_millis(20));
@@ -1732,23 +1790,23 @@ mod tests {
                         eprintln!("Thread {} iteration {} safepoint poll failed: {}", i, j, e);
                     }
                 }
-                
+
                 // Unregister when done
                 manager_clone.unregister_thread();
             });
             handles.push(handle);
         }
-        
+
         // Give threads time to start and register
         thread::sleep(Duration::from_millis(100));
-        
+
         // Request safepoint - should coordinate with all threads
         let debug_info = manager.get_debug_info();
         println!("Debug info before safepoint: {:?}", debug_info);
-        
+
         assert!(manager.request_safepoint().is_ok());
         manager.release_safepoint();
-        
+
         // Wait for all threads to complete
         for handle in handles {
             handle.join().unwrap();
@@ -1758,10 +1816,10 @@ mod tests {
     #[test]
     fn test_safepoint_timeout_recovery() {
         let manager = Arc::new(SafepointManager::new());
-        
+
         // Register a thread but don't start polling
         manager.register_thread();
-        
+
         // Request safepoint - should timeout since no thread is polling
         let result = manager.request_safepoint();
         assert!(result.is_err());
@@ -1770,7 +1828,7 @@ mod tests {
         } else {
             panic!("Expected SafepointTimeout error");
         }
-        
+
         // After timeout, system should recover
         manager.unregister_thread();
         assert!(manager.request_safepoint().is_ok());
@@ -1780,16 +1838,16 @@ mod tests {
     #[test]
     fn test_safepoint_debug_info() {
         let manager = SafepointManager::new();
-        
+
         let debug_info = manager.get_debug_info();
         assert_eq!(debug_info.total_threads, 0);
         assert_eq!(debug_info.threads_at_safepoint, 0);
         assert!(!debug_info.safepoint_requested);
-        
+
         manager.register_thread();
         let debug_info = manager.get_debug_info();
         assert_eq!(debug_info.total_threads, 1);
-        
+
         manager.unregister_thread();
         let debug_info = manager.get_debug_info();
         assert_eq!(debug_info.total_threads, 0);

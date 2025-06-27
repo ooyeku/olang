@@ -51,7 +51,10 @@ fn main() {
             eprintln!("Warning: Failed to initialize parallel processing: {}", e);
         }
     } else if verbose {
-        println!("Parallel processing initialized with {} threads", num_cpus::get());
+        println!(
+            "Parallel processing initialized with {} threads",
+            num_cpus::get()
+        );
     }
 
     // Set a very aggressive parallel threshold for maximum multi-threading by default

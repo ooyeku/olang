@@ -164,7 +164,7 @@ impl Interpreter {
     pub fn eval_statement(&mut self, statement: Statement) -> Result<Value, InterpreterError> {
         // Safepoint poll for GC coordination
         self.safepoint_poll()?;
-        
+
         match statement {
             Statement::Expression(expr) => self.eval_expr(expr),
             Statement::LetDecl(let_decl) => self.eval_let_decl(let_decl),
@@ -1203,9 +1203,10 @@ impl Interpreter {
     /// Perform safepoint poll for GC coordination
     /// This should be called periodically during evaluation
     pub fn safepoint_poll(&self) -> Result<(), InterpreterError> {
-        self.safepoint_manager.safepoint_poll()
-            .map_err(|e| InterpreterError::RuntimeError { 
-                message: format!("Safepoint coordination failed: {}", e) 
+        self.safepoint_manager
+            .safepoint_poll()
+            .map_err(|e| InterpreterError::RuntimeError {
+                message: format!("Safepoint coordination failed: {}", e),
             })
     }
 
@@ -1237,7 +1238,7 @@ impl Interpreter {
             current_env = env;
         }
         env_chain.push(current_env); // Add the root environment
-        
+
         // Add variables from root to current (parents first, current last)
         for env in env_chain.iter().rev() {
             for (name, value) in &env.variables {
@@ -1265,7 +1266,7 @@ impl Interpreter {
                 for item in items.iter() {
                     // Safepoint poll for GC coordination during iteration
                     self.safepoint_poll()?;
-                    
+
                     self.environment.define(variable.to_string(), item.clone());
                     last_value = self.eval_expr(body.clone())?;
                 }
@@ -1277,7 +1278,11 @@ impl Interpreter {
 
                 Ok(last_value)
             }
-            Value::Range { start, end, inclusive } => {
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 let mut last_value = Value::Unit;
                 let parent_env = std::mem::replace(&mut self.environment, Environment::new());
                 self.environment.parent = Some(Box::new(parent_env));
@@ -1286,8 +1291,9 @@ impl Interpreter {
                 for i in start..range_end {
                     // Safepoint poll for GC coordination during iteration
                     self.safepoint_poll()?;
-                    
-                    self.environment.define(variable.to_string(), Value::Integer(i));
+
+                    self.environment
+                        .define(variable.to_string(), Value::Integer(i));
                     last_value = self.eval_expr(body.clone())?;
                 }
 
@@ -1314,7 +1320,7 @@ impl Interpreter {
         loop {
             // Safepoint poll for GC coordination at start of each iteration
             self.safepoint_poll()?;
-            
+
             let condition_value = self.eval_expr(condition.clone())?;
             let condition_bool = self.to_boolean(&condition_value)?;
 
@@ -1332,7 +1338,7 @@ impl Interpreter {
         loop {
             // Safepoint poll for GC coordination at start of each iteration
             self.safepoint_poll()?;
-            
+
             let _ = self.eval_expr(body.clone())?;
         }
     }

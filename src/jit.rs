@@ -1,13 +1,13 @@
 use crate::ast::{Expr, Statement};
-use crate::ovm::{FunctionId};
-use crate::ovm::optimization::{OptimizationError};
+use crate::ovm::optimization::OptimizationError;
+use crate::ovm::FunctionId;
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum JitError {
     #[error("JIT compilation is not supported for this expression")]
     UnsupportedExpression { expr: Expr },
-    
+
     #[error("OVM optimization error: {0}")]
     OptimizationError(String),
 }
@@ -75,7 +75,11 @@ impl JitCompiler {
                 self.compile_expression(body)?;
                 Ok(())
             }
-            Expr::ForLoop { variable: _, iterable, body } => {
+            Expr::ForLoop {
+                variable: _,
+                iterable,
+                body,
+            } => {
                 // For loops are excellent JIT targets
                 println!("JIT: Analyzing for loop for optimization opportunities");
                 self.compile_expression(iterable)?;
@@ -84,7 +88,10 @@ impl JitCompiler {
             }
             Expr::Call { callee, arguments } => {
                 // Function calls are good candidates for JIT compilation
-                println!("JIT: Analyzing function call with {} arguments", arguments.len());
+                println!(
+                    "JIT: Analyzing function call with {} arguments",
+                    arguments.len()
+                );
                 self.compile_expression(callee)?;
                 for arg in arguments {
                     self.compile_expression(arg)?;
@@ -136,45 +143,54 @@ mod tests {
     #[test]
     fn test_jit_compilation() {
         let mut compiler = JitCompiler::new();
-        
+
         // Test binary operation compilation
         let expr = Expr::BinaryOp {
             left: Box::new(Expr::Integer(42)),
             op: BinaryOp::Add,
             right: Box::new(Expr::Integer(10)),
         };
-        
+
         assert!(compiler.compile_expression(&expr).is_ok());
     }
 
     #[test]
     fn test_jit_readiness_assessment() {
         let compiler = JitCompiler::new();
-        
+
         // Function calls should have high JIT benefit
         let func_call = Expr::Call {
             callee: Box::new(Expr::Identifier("test_func".to_string())),
             arguments: vec![],
         };
-        assert_eq!(compiler.assess_jit_readiness(&func_call), JitReadiness::HighBenefit);
-        
+        assert_eq!(
+            compiler.assess_jit_readiness(&func_call),
+            JitReadiness::HighBenefit
+        );
+
         // Binary operations should have medium benefit
         let binary_op = Expr::BinaryOp {
             left: Box::new(Expr::Integer(1)),
             op: BinaryOp::Add,
             right: Box::new(Expr::Integer(2)),
         };
-        assert_eq!(compiler.assess_jit_readiness(&binary_op), JitReadiness::MediumBenefit);
-        
+        assert_eq!(
+            compiler.assess_jit_readiness(&binary_op),
+            JitReadiness::MediumBenefit
+        );
+
         // Literals should have low benefit
         let literal = Expr::Integer(42);
-        assert_eq!(compiler.assess_jit_readiness(&literal), JitReadiness::LowBenefit);
+        assert_eq!(
+            compiler.assess_jit_readiness(&literal),
+            JitReadiness::LowBenefit
+        );
     }
 
     #[test]
     fn test_pipeline_compilation() {
         let mut compiler = JitCompiler::new();
-        
+
         // Test pipeline expression compilation
         let pipeline = Expr::Pipeline {
             left: Box::new(Expr::Integer(1)),
@@ -183,8 +199,11 @@ mod tests {
                 arguments: vec![],
             }),
         };
-        
+
         assert!(compiler.compile_expression(&pipeline).is_ok());
-        assert_eq!(compiler.assess_jit_readiness(&pipeline), JitReadiness::HighBenefit);
+        assert_eq!(
+            compiler.assess_jit_readiness(&pipeline),
+            JitReadiness::HighBenefit
+        );
     }
 }

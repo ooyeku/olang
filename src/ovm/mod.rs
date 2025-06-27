@@ -9,8 +9,8 @@ use std::time::Instant;
 use crate::ast::{Expr, FunctionDecl};
 
 // Core OVM modules
-pub mod adaptive;     // Adaptive optimization system
-pub mod bytecode;     // Register-based bytecode VM
+pub mod adaptive; // Adaptive optimization system
+pub mod bytecode; // Register-based bytecode VM
 pub mod config;
 pub mod execution;
 pub mod fusion;
@@ -18,10 +18,10 @@ pub mod gc;
 pub mod lazy;
 pub mod memory;
 pub mod metrics;
-pub mod optimization;  
+pub mod optimization;
 pub mod pipeline;
-pub mod simd;         // SIMD vectorization engine
-pub mod value;        // Phase 4 Sprint 3: Advanced Pipeline Fusion Engine
+pub mod simd; // SIMD vectorization engine
+pub mod value; // Phase 4 Sprint 3: Advanced Pipeline Fusion Engine
 
 // Re-export core types
 pub use config::{OptimizationLevel, OvmConfig};
@@ -92,8 +92,11 @@ impl OlangVirtualMachine {
 
         // Initialize adaptive optimizer if enabled
         let adaptive_optimizer = if config.optimization.adaptive_optimization {
-            Some(adaptive::AdaptiveOptimizationSystem::new(&config)
-                .map_err(|e| OvmError::InitializationError(format!("Adaptive optimizer init failed: {}", e)))?)
+            Some(
+                adaptive::AdaptiveOptimizationSystem::new(&config).map_err(|e| {
+                    OvmError::InitializationError(format!("Adaptive optimizer init failed: {}", e))
+                })?,
+            )
         } else {
             None
         };
@@ -138,8 +141,9 @@ impl OlangVirtualMachine {
 
         // Start adaptive optimization if enabled
         if let Some(adaptive_optimizer) = &mut self.adaptive_optimizer {
-            adaptive_optimizer.start()
-                .map_err(|e| OvmError::InitializationError(format!("Failed to start adaptive optimizer: {}", e)))?;
+            adaptive_optimizer.start().map_err(|e| {
+                OvmError::InitializationError(format!("Failed to start adaptive optimizer: {}", e))
+            })?;
         }
 
         // Start metrics collection
@@ -259,7 +263,9 @@ impl OlangVirtualMachine {
 
     /// Get adaptive optimization status
     pub fn get_adaptive_status(&self) -> Option<adaptive::AdaptiveOptimizationStatus> {
-        self.adaptive_optimizer.as_ref().map(|optimizer| optimizer.get_status())
+        self.adaptive_optimizer
+            .as_ref()
+            .map(|optimizer| optimizer.get_status())
     }
 
     /// Enable or disable adaptive optimization at runtime
@@ -267,13 +273,22 @@ impl OlangVirtualMachine {
         if enabled && self.adaptive_optimizer.is_none() {
             // Create and start adaptive optimizer
             let mut adaptive_optimizer = adaptive::AdaptiveOptimizationSystem::new(&self.config)
-                .map_err(|e| OvmError::InitializationError(format!("Failed to create adaptive optimizer: {}", e)))?;
-            
+                .map_err(|e| {
+                    OvmError::InitializationError(format!(
+                        "Failed to create adaptive optimizer: {}",
+                        e
+                    ))
+                })?;
+
             if self.is_running {
-                adaptive_optimizer.start()
-                    .map_err(|e| OvmError::InitializationError(format!("Failed to start adaptive optimizer: {}", e)))?;
+                adaptive_optimizer.start().map_err(|e| {
+                    OvmError::InitializationError(format!(
+                        "Failed to start adaptive optimizer: {}",
+                        e
+                    ))
+                })?;
             }
-            
+
             self.adaptive_optimizer = Some(adaptive_optimizer);
         } else if !enabled && self.adaptive_optimizer.is_some() {
             // Stop and remove adaptive optimizer
@@ -281,7 +296,7 @@ impl OlangVirtualMachine {
                 let _ = adaptive_optimizer.stop();
             }
         }
-        
+
         Ok(())
     }
 

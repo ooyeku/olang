@@ -13,20 +13,20 @@ use thiserror::Error;
 pub struct AdaptiveOptimizationSystem {
     // Performance monitoring
     performance_monitor: Arc<ContinuousPerformanceMonitor>,
-    
+
     // Machine learning for optimization decisions
     ml_optimizer: Arc<Mutex<MachineLearningOptimizer>>,
-    
+
     // Feedback-driven optimization
     feedback_loop: Arc<Mutex<OptimizationFeedbackLoop>>,
-    
+
     // Dynamic reconfiguration
     dynamic_reconfig: Arc<Mutex<DynamicReconfigurationEngine>>,
-    
+
     // Background optimization thread
     optimization_thread: Option<JoinHandle<()>>,
     is_running: Arc<std::sync::atomic::AtomicBool>,
-    
+
     // Configuration
     config: AdaptiveConfig,
 }
@@ -35,19 +35,19 @@ pub struct AdaptiveOptimizationSystem {
 pub struct ContinuousPerformanceMonitor {
     // Hardware performance counters
     perf_counters: Arc<RwLock<HardwarePerfCounters>>,
-    
+
     // Software metrics
     execution_metrics: Arc<RwLock<ExecutionMetrics>>,
-    
+
     // Memory metrics
     memory_metrics: Arc<RwLock<MemoryMetrics>>,
-    
+
     // Energy consumption (for mobile/edge)
     energy_monitor: Arc<Mutex<EnergyMonitor>>,
-    
+
     // Performance history
     performance_history: Arc<Mutex<VecDeque<PerformanceSnapshot>>>,
-    
+
     // Real-time metrics collection
     metrics_collector: MetricsCollector,
 }
@@ -58,13 +58,13 @@ pub struct MachineLearningOptimizer {
     tier_transition_model: TierTransitionModel,
     compilation_timing_model: CompilationTimingModel,
     optimization_strategy_model: OptimizationStrategyModel,
-    
+
     // Training data
     training_data: TrainingDataset,
-    
+
     // Model performance tracking
     model_accuracy: ModelAccuracy,
-    
+
     // Feature extraction
     feature_extractor: FeatureExtractor,
 }
@@ -73,13 +73,13 @@ pub struct MachineLearningOptimizer {
 pub struct OptimizationFeedbackLoop {
     // Decision tracking
     decisions: Vec<OptimizationDecision>,
-    
+
     // Outcome measurement
     outcomes: HashMap<u64, OptimizationOutcome>, // decision_id -> outcome
-    
+
     // Performance impact analysis
     impact_analyzer: ImpactAnalyzer,
-    
+
     // Model retraining triggers
     retraining_scheduler: RetrainingScheduler,
 }
@@ -88,13 +88,13 @@ pub struct OptimizationFeedbackLoop {
 pub struct DynamicReconfigurationEngine {
     // Current configuration
     current_config: OvmConfig,
-    
+
     // Configuration history
     config_history: Vec<ConfigurationSnapshot>,
-    
+
     // Adaptation strategies
     adaptation_strategies: Vec<AdaptationStrategy>,
-    
+
     // Environment monitoring
     environment_monitor: EnvironmentMonitor,
 }
@@ -135,7 +135,7 @@ pub struct MemoryMetrics {
 /// Energy consumption monitoring
 #[derive(Debug, Default)]
 pub struct EnergyMonitor {
-    pub total_energy_consumed: f64, // Joules
+    pub total_energy_consumed: f64,     // Joules
     pub average_power_consumption: f64, // Watts
     pub energy_per_operation: f64,
     pub thermal_efficiency: f64,
@@ -190,10 +190,10 @@ pub struct ModelAccuracy {
 pub struct FeatureExtractor {
     // Function characteristics
     function_features: FunctionFeatureExtractor,
-    
+
     // Workload characteristics
     workload_features: WorkloadFeatureExtractor,
-    
+
     // System characteristics
     system_features: SystemFeatureExtractor,
 }
@@ -211,10 +211,20 @@ pub struct OptimizationDecision {
 
 #[derive(Debug, Clone)]
 pub enum OptimizationDecisionType {
-    TierTransition { from: String, to: String },
-    CompilationTrigger { optimization_level: OptimizationLevel },
-    Deoptimization { reason: String },
-    ConfigurationChange { parameter: String, new_value: String },
+    TierTransition {
+        from: String,
+        to: String,
+    },
+    CompilationTrigger {
+        optimization_level: OptimizationLevel,
+    },
+    Deoptimization {
+        reason: String,
+    },
+    ConfigurationChange {
+        parameter: String,
+        new_value: String,
+    },
 }
 
 /// Optimization outcome measurement
@@ -376,16 +386,16 @@ pub struct ImpactMeasurement {
 pub enum AdaptiveError {
     #[error("Model training failed: {0}")]
     ModelTrainingFailed(String),
-    
+
     #[error("Performance monitoring error: {0}")]
     MonitoringError(String),
-    
+
     #[error("Configuration adaptation failed: {0}")]
     AdaptationFailed(String),
-    
+
     #[error("ML model prediction error: {0}")]
     PredictionError(String),
-    
+
     #[error("Feedback collection failed: {0}")]
     FeedbackError(String),
 }
@@ -394,29 +404,32 @@ pub enum AdaptiveError {
 impl AdaptiveOptimizationSystem {
     pub fn new(config: &OvmConfig) -> Result<Self, AdaptiveError> {
         let adaptive_config = AdaptiveConfig::default();
-        
+
         Ok(Self {
             performance_monitor: Arc::new(ContinuousPerformanceMonitor::new()?),
             ml_optimizer: Arc::new(Mutex::new(MachineLearningOptimizer::new()?)),
             feedback_loop: Arc::new(Mutex::new(OptimizationFeedbackLoop::new())),
-            dynamic_reconfig: Arc::new(Mutex::new(DynamicReconfigurationEngine::new(config.clone()))),
+            dynamic_reconfig: Arc::new(Mutex::new(DynamicReconfigurationEngine::new(
+                config.clone(),
+            ))),
             optimization_thread: None,
             is_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config: adaptive_config,
         })
     }
-    
+
     /// Start continuous optimization
     pub fn start(&mut self) -> Result<(), AdaptiveError> {
-        self.is_running.store(true, std::sync::atomic::Ordering::Relaxed);
-        
+        self.is_running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
         let is_running = Arc::clone(&self.is_running);
         let performance_monitor = Arc::clone(&self.performance_monitor);
         let ml_optimizer = Arc::clone(&self.ml_optimizer);
         let feedback_loop = Arc::clone(&self.feedback_loop);
         let dynamic_reconfig = Arc::clone(&self.dynamic_reconfig);
         let monitoring_interval = Duration::from_millis(self.config.monitoring_interval_ms);
-        
+
         let optimization_thread = thread::spawn(move || {
             Self::optimization_loop(
                 is_running,
@@ -427,24 +440,25 @@ impl AdaptiveOptimizationSystem {
                 monitoring_interval,
             );
         });
-        
+
         self.optimization_thread = Some(optimization_thread);
         Ok(())
     }
-    
+
     /// Stop continuous optimization
     pub fn stop(&mut self) -> Result<(), AdaptiveError> {
-        self.is_running.store(false, std::sync::atomic::Ordering::Relaxed);
-        
+        self.is_running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+
         if let Some(thread) = self.optimization_thread.take() {
             thread.join().map_err(|_| {
                 AdaptiveError::AdaptationFailed("Failed to join optimization thread".to_string())
             })?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Main optimization loop
     fn optimization_loop(
         is_running: Arc<std::sync::atomic::AtomicBool>,
@@ -461,7 +475,9 @@ impl AdaptiveOptimizationSystem {
                 if let Ok(ml_optimizer) = ml_optimizer.lock() {
                     if let Ok(analysis) = ml_optimizer.analyze_patterns(&metrics) {
                         // 3. Generate optimization recommendations
-                        if let Ok(recommendations) = ml_optimizer.generate_recommendations(&analysis) {
+                        if let Ok(recommendations) =
+                            ml_optimizer.generate_recommendations(&analysis)
+                        {
                             // 4. Apply optimizations
                             if let Ok(mut reconfig) = dynamic_reconfig.lock() {
                                 let _ = reconfig.apply_optimizations(recommendations);
@@ -469,21 +485,23 @@ impl AdaptiveOptimizationSystem {
                         }
                     }
                 }
-                
+
                 // 5. Record feedback
                 if let Ok(mut feedback) = feedback_loop.lock() {
                     feedback.record_performance_impact(&metrics);
                 }
             }
-            
+
             // 6. Sleep until next optimization cycle
             thread::sleep(monitoring_interval);
         }
     }
-    
+
     /// Get current optimization status
     pub fn get_status(&self) -> AdaptiveOptimizationStatus {
-        let performance_snapshot = self.performance_monitor.get_latest_snapshot()
+        let performance_snapshot = self
+            .performance_monitor
+            .get_latest_snapshot()
             .unwrap_or_else(|| PerformanceSnapshot {
                 timestamp: Instant::now(),
                 throughput: 0.0,
@@ -493,19 +511,25 @@ impl AdaptiveOptimizationSystem {
                 energy_efficiency: 0.0,
                 optimization_level: OptimizationLevel::Balanced,
             });
-        
-        let model_accuracy = self.ml_optimizer.lock()
+
+        let model_accuracy = self
+            .ml_optimizer
+            .lock()
             .map(|optimizer| optimizer.get_model_accuracy())
             .unwrap_or_default();
-        
+
         AdaptiveOptimizationStatus {
             is_running: self.is_running.load(std::sync::atomic::Ordering::Relaxed),
             current_performance: performance_snapshot,
             model_accuracy,
-            decisions_made: self.feedback_loop.lock()
+            decisions_made: self
+                .feedback_loop
+                .lock()
                 .map(|feedback| feedback.get_decision_count())
                 .unwrap_or(0),
-            adaptations_applied: self.dynamic_reconfig.lock()
+            adaptations_applied: self
+                .dynamic_reconfig
+                .lock()
                 .map(|reconfig| reconfig.get_adaptation_count())
                 .unwrap_or(0),
         }
@@ -537,7 +561,7 @@ impl ContinuousPerformanceMonitor {
             },
         })
     }
-    
+
     pub fn collect_current_metrics(&self) -> Result<PerformanceSnapshot, AdaptiveError> {
         // Simplified metrics collection - in a real implementation, this would
         // interface with system APIs to collect actual performance counters
@@ -551,7 +575,7 @@ impl ContinuousPerformanceMonitor {
             optimization_level: OptimizationLevel::Balanced,
         })
     }
-    
+
     pub fn get_latest_snapshot(&self) -> Option<PerformanceSnapshot> {
         self.performance_history.lock().ok()?.back().cloned()
     }
@@ -590,8 +614,11 @@ impl MachineLearningOptimizer {
             },
         })
     }
-    
-    pub fn analyze_patterns(&self, _metrics: &PerformanceSnapshot) -> Result<PerformanceAnalysis, AdaptiveError> {
+
+    pub fn analyze_patterns(
+        &self,
+        _metrics: &PerformanceSnapshot,
+    ) -> Result<PerformanceAnalysis, AdaptiveError> {
         // Simplified pattern analysis
         Ok(PerformanceAnalysis {
             trend: PerformanceTrend::Improving,
@@ -600,20 +627,21 @@ impl MachineLearningOptimizer {
             confidence: 0.8,
         })
     }
-    
-    pub fn generate_recommendations(&self, _analysis: &PerformanceAnalysis) -> Result<Vec<OptimizationRecommendation>, AdaptiveError> {
+
+    pub fn generate_recommendations(
+        &self,
+        _analysis: &PerformanceAnalysis,
+    ) -> Result<Vec<OptimizationRecommendation>, AdaptiveError> {
         // Simplified recommendation generation
-        Ok(vec![
-            OptimizationRecommendation {
-                recommendation_type: OptimizationRecommendationType::TierTransition,
-                priority: RecommendationPriority::Medium,
-                expected_impact: 0.15, // 15% improvement
-                confidence: 0.8,
-                implementation_cost: ImplementationCost::Low,
-            }
-        ])
+        Ok(vec![OptimizationRecommendation {
+            recommendation_type: OptimizationRecommendationType::TierTransition,
+            priority: RecommendationPriority::Medium,
+            expected_impact: 0.15, // 15% improvement
+            confidence: 0.8,
+            implementation_cost: ImplementationCost::Low,
+        }])
     }
-    
+
     pub fn get_model_accuracy(&self) -> ModelAccuracy {
         self.model_accuracy
     }
@@ -635,11 +663,11 @@ impl OptimizationFeedbackLoop {
             },
         }
     }
-    
+
     pub fn record_performance_impact(&mut self, _metrics: &PerformanceSnapshot) {
         // Record the impact of recent decisions
     }
-    
+
     pub fn get_decision_count(&self) -> u64 {
         self.decisions.len() as u64
     }
@@ -659,12 +687,15 @@ impl DynamicReconfigurationEngine {
             },
         }
     }
-    
-    pub fn apply_optimizations(&mut self, _recommendations: Vec<OptimizationRecommendation>) -> Result<(), AdaptiveError> {
+
+    pub fn apply_optimizations(
+        &mut self,
+        _recommendations: Vec<OptimizationRecommendation>,
+    ) -> Result<(), AdaptiveError> {
         // Apply configuration changes based on recommendations
         Ok(())
     }
-    
+
     pub fn get_adaptation_count(&self) -> u64 {
         self.config_history.len() as u64
     }
@@ -717,4 +748,4 @@ pub enum ImplementationCost {
     Low,
     Medium,
     High,
-} 
+}

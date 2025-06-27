@@ -237,14 +237,18 @@ fn random_choice(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 
             Ok(items[index].clone())
         }
-        Value::Range { start, end, inclusive } => {
+        Value::Range {
+            start,
+            end,
+            inclusive,
+        } => {
             if start >= end {
                 return Err("choice: cannot choose from empty range".into());
             }
 
             let rng = get_rng();
             let mut rng = rng.lock().unwrap();
-            
+
             let random_value = if *inclusive {
                 rng.gen_range(*start..=*end)
             } else {
@@ -284,7 +288,11 @@ fn random_choices(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
                 result.push(items[index].clone());
             }
         }
-        Value::Range { start, end, inclusive } => {
+        Value::Range {
+            start,
+            end,
+            inclusive,
+        } => {
             if start >= end {
                 return Err("choices: cannot choose from empty range".into());
             }
@@ -335,7 +343,11 @@ fn random_sample(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 
             Ok(Value::List(items_mut.into()))
         }
-        Value::Range { start, end, inclusive } => {
+        Value::Range {
+            start,
+            end,
+            inclusive,
+        } => {
             let range_size = if *inclusive {
                 (*end - *start + 1) as usize
             } else {

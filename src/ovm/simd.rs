@@ -2,8 +2,8 @@
 //!
 //! Phase 4 Sprint 2: Hardware acceleration through SIMD vectorization
 
-use crate::ovm::{OvmValue, OvmConfig};
 use crate::ast::Value;
+use crate::ovm::{OvmConfig, OvmValue};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -11,24 +11,23 @@ use std::time::{Duration, Instant};
 // SIMD imports for Phase 4 Sprint 2
 use wide::*;
 
-
 /// Main SIMD vectorization engine
 pub struct SimdEngine {
     // Hardware capability detection
     hardware_caps: SimdCapabilities,
-    
+
     // Vectorization configuration
     config: VectorizationConfig,
-    
+
     // Operation registry
     vectorized_ops: Arc<RwLock<HashMap<String, VectorizedOperation>>>,
-    
+
     // Performance monitoring
     performance_stats: Arc<Mutex<VectorizationStats>>,
-    
+
     // Automatic vectorization analysis
     auto_vectorizer: AutoVectorizer,
-    
+
     // Memory alignment manager
     memory_aligner: MemoryAligner,
 }
@@ -46,15 +45,15 @@ pub struct SimdCapabilities {
     pub avx: bool,
     pub avx2: bool,
     pub avx512f: bool,
-    
+
     // ARM capabilities
     pub neon: bool,
     pub sve: bool,
-    
+
     // Vector register sizes
     pub max_vector_width: usize,
     pub preferred_vector_width: usize,
-    
+
     // Cache information
     pub l1_cache_size: usize,
     pub l2_cache_size: usize,
@@ -68,16 +67,16 @@ pub struct VectorizationConfig {
     pub enable_auto_vectorization: bool,
     pub vectorization_threshold: usize,
     pub alignment_preference: usize,
-    
+
     // Performance tuning
     pub unroll_factor: usize,
     pub prefetch_distance: usize,
     pub enable_cache_optimization: bool,
-    
+
     // Safety settings
     pub enable_unsafe_optimizations: bool,
     pub max_memory_bandwidth: f64,
-    
+
     // Target-specific optimizations
     pub optimize_for_platform: Platform,
 }
@@ -132,11 +131,11 @@ pub enum VectorDataType {
 /// Vector implementation strategies
 #[derive(Debug, Clone)]
 pub enum VectorImplementation {
-    Scalar,                    // Fallback scalar implementation
-    SimdFixed(usize),         // Fixed-width SIMD (128, 256, 512 bits)
-    SimdAdaptive,             // Adaptive SIMD based on hardware
-    SimdUnrolled(usize),      // Unrolled SIMD loops
-    Parallel(usize),          // Multi-threaded SIMD
+    Scalar,              // Fallback scalar implementation
+    SimdFixed(usize),    // Fixed-width SIMD (128, 256, 512 bits)
+    SimdAdaptive,        // Adaptive SIMD based on hardware
+    SimdUnrolled(usize), // Unrolled SIMD loops
+    Parallel(usize),     // Multi-threaded SIMD
 }
 
 /// Performance profile for operations
@@ -165,10 +164,10 @@ pub struct VectorizationStats {
 pub struct AutoVectorizer {
     // Pattern recognition for vectorizable operations
     vectorizable_patterns: Vec<VectorizationPattern>,
-    
+
     // Cost model for vectorization decisions
     cost_model: VectorizationCostModel,
-    
+
     // Dependency analysis
     dependency_analyzer: DependencyAnalyzer,
 }
@@ -214,7 +213,7 @@ pub struct VectorizationCostModel {
     vector_cost_per_operation: f64,
     memory_cost_per_byte: f64,
     cache_miss_penalty: f64,
-    
+
     // Vectorization overhead costs
     setup_cost: f64,
     alignment_cost: f64,
@@ -225,10 +224,10 @@ pub struct VectorizationCostModel {
 pub struct DependencyAnalyzer {
     // Loop dependency analysis
     loop_dependencies: Vec<LoopDependency>,
-    
+
     // Memory alias analysis
     alias_sets: Vec<AliasSet>,
-    
+
     // Control flow analysis
     control_dependencies: Vec<ControlDependency>,
 }
@@ -259,10 +258,10 @@ pub struct ControlDependency {
 pub struct MemoryAligner {
     // Alignment requirements for different data types
     alignment_requirements: HashMap<VectorDataType, usize>,
-    
+
     // Aligned memory allocator
     aligned_allocator: AlignedAllocator,
-    
+
     // Alignment statistics
     alignment_stats: Arc<Mutex<AlignmentStats>>,
 }
@@ -279,7 +278,7 @@ pub struct AlignmentStats {
 pub struct AlignedAllocator {
     // Memory pools for different alignments
     memory_pools: HashMap<usize, Vec<*mut u8>>,
-    
+
     // Allocation tracking
     active_allocations: HashMap<*mut u8, AllocInfo>,
 }
@@ -296,22 +295,22 @@ pub struct AllocInfo {
 pub enum SimdError {
     #[error("SIMD operation not supported on this hardware")]
     UnsupportedOperation,
-    
+
     #[error("Vector size mismatch: expected {expected}, got {actual}")]
     VectorSizeMismatch { expected: usize, actual: usize },
-    
+
     #[error("Memory alignment error: required {required}, got {actual}")]
     AlignmentError { required: usize, actual: usize },
-    
+
     #[error("Vectorization failed: {0}")]
     VectorizationFailed(String),
-    
+
     #[error("Hardware capability detection failed: {0}")]
     HardwareDetectionFailed(String),
-    
+
     #[error("Memory allocation failed")]
     AllocationFailed,
-    
+
     #[error("Auto-vectorization analysis failed: {0}")]
     AutoVectorizationFailed(String),
 }
@@ -322,7 +321,7 @@ impl SimdEngine {
     pub fn new(config: &OvmConfig) -> Result<Self, SimdError> {
         let hardware_caps = Self::detect_hardware_capabilities()?;
         let vectorization_config = VectorizationConfig::from_ovm_config(config);
-        
+
         Ok(Self {
             hardware_caps,
             config: vectorization_config,
@@ -332,7 +331,7 @@ impl SimdEngine {
             memory_aligner: MemoryAligner::new(),
         })
     }
-    
+
     /// Detect hardware SIMD capabilities
     fn detect_hardware_capabilities() -> Result<SimdCapabilities, SimdError> {
         let mut caps = SimdCapabilities {
@@ -349,11 +348,11 @@ impl SimdEngine {
             sve: false,
             max_vector_width: 128,
             preferred_vector_width: 128,
-            l1_cache_size: 32768,      // 32KB default
-            l2_cache_size: 262144,     // 256KB default
-            cache_line_size: 64,       // 64 bytes default
+            l1_cache_size: 32768,  // 32KB default
+            l2_cache_size: 262144, // 256KB default
+            cache_line_size: 64,   // 64 bytes default
         };
-        
+
         // Use std::arch for hardware detection
         #[cfg(target_arch = "x86_64")]
         {
@@ -391,22 +390,22 @@ impl SimdEngine {
                 caps.preferred_vector_width = 512;
             }
         }
-        
+
         #[cfg(target_arch = "aarch64")]
         {
             // ARM NEON is always available on AArch64
             caps.neon = true;
             caps.max_vector_width = 128;
             caps.preferred_vector_width = 128;
-            
+
             // Check for SVE (Scalable Vector Extension)
             // Note: SVE detection would need platform-specific code
             caps.sve = false; // Conservative default
         }
-        
+
         Ok(caps)
     }
-    
+
     /// **Phase 4 Sprint 2: Vectorized Array Operations**
     pub fn vectorize_array_operation(
         &self,
@@ -415,33 +414,36 @@ impl SimdEngine {
         operation_func: Option<&str>,
     ) -> Result<Vec<OvmValue>, SimdError> {
         let start_time = Instant::now();
-        
+
         // Analyze input for vectorization potential
-        let vectorization_analysis = self.analyze_vectorization_potential(input_arrays, operation)?;
-        
+        let vectorization_analysis =
+            self.analyze_vectorization_potential(input_arrays, operation)?;
+
         if !vectorization_analysis.should_vectorize {
             // Fall back to scalar implementation
             return self.scalar_fallback(operation, input_arrays, operation_func);
         }
-        
+
         // Determine optimal vector implementation
         let implementation = self.select_vector_implementation(&vectorization_analysis)?;
-        
+
         // Execute vectorized operation
         let result = match operation {
             "map" => self.vectorized_map(input_arrays, operation_func, &implementation)?,
             "filter" => self.vectorized_filter(input_arrays, operation_func, &implementation)?,
             "reduce" => self.vectorized_reduce(input_arrays, operation_func, &implementation)?,
-            "arithmetic" => self.vectorized_arithmetic(input_arrays, operation_func, &implementation)?,
+            "arithmetic" => {
+                self.vectorized_arithmetic(input_arrays, operation_func, &implementation)?
+            }
             _ => return Err(SimdError::UnsupportedOperation),
         };
-        
+
         // Update performance statistics
         self.update_performance_stats(start_time, input_arrays.len(), true);
-        
+
         Ok(result)
     }
-    
+
     /// **Phase 4 Sprint 2: Vectorized Map Operation**
     fn vectorized_map(
         &self,
@@ -452,13 +454,13 @@ impl SimdEngine {
         if input_arrays.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         let input = &input_arrays[0];
         let mut result = Vec::with_capacity(input.len());
-        
+
         // Determine operation type
         let op_type = operation_func.unwrap_or("identity");
-        
+
         match implementation {
             VectorImplementation::SimdFixed(width) => {
                 self.vectorized_map_simd_fixed(input, &mut result, op_type, *width)?;
@@ -471,10 +473,10 @@ impl SimdEngine {
                 return self.scalar_map(input, op_type);
             }
         }
-        
+
         Ok(result)
     }
-    
+
     /// SIMD map with fixed vector width
     fn vectorized_map_simd_fixed(
         &self,
@@ -490,10 +492,10 @@ impl SimdEngine {
             "sqrt" => self.vectorized_sqrt_f64(input, result, vector_width)?,
             _ => return Err(SimdError::UnsupportedOperation),
         }
-        
+
         Ok(())
     }
-    
+
     /// **Phase 4 Sprint 2: Vectorized Square Operation (f64)**
     fn vectorized_square_f64(
         &self,
@@ -507,34 +509,36 @@ impl SimdEngine {
             if let Some(f) = self.extract_f64(value) {
                 f64_values.push(f);
             } else {
-                return Err(SimdError::VectorizationFailed("Non-numeric value in array".to_string()));
+                return Err(SimdError::VectorizationFailed(
+                    "Non-numeric value in array".to_string(),
+                ));
             }
         }
-        
+
         // Process in chunks using wide crate for SIMD
         const SIMD_WIDTH: usize = 4; // f64x4 vectors
         let chunks = f64_values.chunks_exact(SIMD_WIDTH);
         let remainder = chunks.remainder();
-        
+
         // Process SIMD chunks
         for chunk in chunks {
             let vector = f64x4::from([chunk[0], chunk[1], chunk[2], chunk[3]]);
             let squared = vector * vector;
             let array = squared.to_array();
-            
+
             for i in 0..SIMD_WIDTH {
                 result.push(OvmValue::from_f64(array[i]));
             }
         }
-        
+
         // Process remainder scalar
         for &value in remainder {
             result.push(OvmValue::from_f64(value * value));
         }
-        
+
         Ok(())
     }
-    
+
     /// **Phase 4 Sprint 2: Vectorized Double Operation (f64)**
     fn vectorized_double_f64(
         &self,
@@ -547,31 +551,33 @@ impl SimdEngine {
             if let Some(f) = self.extract_f64(value) {
                 f64_values.push(f);
             } else {
-                return Err(SimdError::VectorizationFailed("Non-numeric value in array".to_string()));
+                return Err(SimdError::VectorizationFailed(
+                    "Non-numeric value in array".to_string(),
+                ));
             }
         }
-        
+
         const SIMD_WIDTH: usize = 4;
         let chunks = f64_values.chunks_exact(SIMD_WIDTH);
         let remainder = chunks.remainder();
-        
+
         for chunk in chunks {
             let vector = f64x4::from([chunk[0], chunk[1], chunk[2], chunk[3]]);
             let doubled = vector + vector; // x * 2 = x + x
             let array = doubled.to_array();
-            
+
             for i in 0..SIMD_WIDTH {
                 result.push(OvmValue::from_f64(array[i]));
             }
         }
-        
+
         for &value in remainder {
             result.push(OvmValue::from_f64(value * 2.0));
         }
-        
+
         Ok(())
     }
-    
+
     /// **Phase 4 Sprint 2: Vectorized Square Root Operation (f64)**
     fn vectorized_sqrt_f64(
         &self,
@@ -584,31 +590,33 @@ impl SimdEngine {
             if let Some(f) = self.extract_f64(value) {
                 f64_values.push(f);
             } else {
-                return Err(SimdError::VectorizationFailed("Non-numeric value in array".to_string()));
+                return Err(SimdError::VectorizationFailed(
+                    "Non-numeric value in array".to_string(),
+                ));
             }
         }
-        
+
         const SIMD_WIDTH: usize = 4;
         let chunks = f64_values.chunks_exact(SIMD_WIDTH);
         let remainder = chunks.remainder();
-        
+
         for chunk in chunks {
             let vector = f64x4::from([chunk[0], chunk[1], chunk[2], chunk[3]]);
             let sqrt_result = vector.sqrt();
             let array = sqrt_result.to_array();
-            
+
             for i in 0..SIMD_WIDTH {
                 result.push(OvmValue::from_f64(array[i]));
             }
         }
-        
+
         for &value in remainder {
             result.push(OvmValue::from_f64(value.sqrt()));
         }
-        
+
         Ok(())
     }
-    
+
     /// Extract f64 from OvmValue
     fn extract_f64(&self, value: &OvmValue) -> Option<f64> {
         match value.to_ast() {
@@ -617,7 +625,7 @@ impl SimdEngine {
             _ => None,
         }
     }
-    
+
     /// Adaptive SIMD implementation based on hardware capabilities
     fn vectorized_map_simd_adaptive(
         &self,
@@ -635,45 +643,51 @@ impl SimdEngine {
         } else {
             1 // Scalar fallback
         };
-        
+
         self.vectorized_map_simd_fixed(input, result, operation, optimal_width)
     }
-    
+
     /// Scalar fallback implementation
     fn scalar_map(&self, input: &[OvmValue], operation: &str) -> Result<Vec<OvmValue>, SimdError> {
         let mut result = Vec::with_capacity(input.len());
-        
+
         for value in input {
             let new_value = match operation {
                 "square" => {
                     if let Some(f) = self.extract_f64(value) {
                         OvmValue::from_f64(f * f)
                     } else {
-                        return Err(SimdError::VectorizationFailed("Non-numeric value".to_string()));
+                        return Err(SimdError::VectorizationFailed(
+                            "Non-numeric value".to_string(),
+                        ));
                     }
                 }
                 "double" => {
                     if let Some(f) = self.extract_f64(value) {
                         OvmValue::from_f64(f * 2.0)
                     } else {
-                        return Err(SimdError::VectorizationFailed("Non-numeric value".to_string()));
+                        return Err(SimdError::VectorizationFailed(
+                            "Non-numeric value".to_string(),
+                        ));
                     }
                 }
                 "sqrt" => {
                     if let Some(f) = self.extract_f64(value) {
                         OvmValue::from_f64(f.sqrt())
                     } else {
-                        return Err(SimdError::VectorizationFailed("Non-numeric value".to_string()));
+                        return Err(SimdError::VectorizationFailed(
+                            "Non-numeric value".to_string(),
+                        ));
                     }
                 }
                 _ => value.clone(),
             };
             result.push(new_value);
         }
-        
+
         Ok(result)
     }
-    
+
     /// Placeholder implementations for other operations
     fn vectorized_filter(
         &self,
@@ -688,7 +702,7 @@ impl SimdEngine {
             Ok(input_arrays[0].clone())
         }
     }
-    
+
     fn vectorized_reduce(
         &self,
         input_arrays: &[Vec<OvmValue>],
@@ -702,7 +716,7 @@ impl SimdEngine {
             Ok(vec![input_arrays[0][0].clone()])
         }
     }
-    
+
     fn vectorized_arithmetic(
         &self,
         input_arrays: &[Vec<OvmValue>],
@@ -716,7 +730,7 @@ impl SimdEngine {
             Ok(input_arrays[0].clone())
         }
     }
-    
+
     fn scalar_fallback(
         &self,
         operation: &str,
@@ -727,15 +741,20 @@ impl SimdEngine {
         if input_arrays.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         match operation {
             "map" => self.scalar_map(&input_arrays[0], "identity"),
             _ => Ok(input_arrays[0].clone()),
         }
     }
-    
+
     /// Update performance statistics
-    fn update_performance_stats(&self, start_time: Instant, elements_processed: usize, vectorized: bool) {
+    fn update_performance_stats(
+        &self,
+        start_time: Instant,
+        elements_processed: usize,
+        vectorized: bool,
+    ) {
         if let Ok(mut stats) = self.performance_stats.lock() {
             if vectorized {
                 stats.operations_vectorized += 1;
@@ -743,19 +762,20 @@ impl SimdEngine {
                 stats.scalar_operations += 1;
             }
             stats.total_elements_processed += elements_processed as u64;
-            
+
             // Calculate approximate speedup (simplified)
             if vectorized && stats.scalar_operations > 0 {
-                stats.vectorization_speedup = stats.operations_vectorized as f64 / stats.scalar_operations as f64;
+                stats.vectorization_speedup =
+                    stats.operations_vectorized as f64 / stats.scalar_operations as f64;
             }
         }
     }
-    
+
     /// Get performance statistics
     pub fn get_performance_stats(&self) -> VectorizationStats {
         self.performance_stats.lock().unwrap().clone()
     }
-    
+
     /// Get hardware capabilities
     pub fn get_hardware_capabilities(&self) -> &SimdCapabilities {
         &self.hardware_caps
@@ -785,12 +805,12 @@ impl SimdEngine {
                 estimated_speedup: 1.0,
             });
         }
-        
+
         let array_size = input_arrays[0].len();
-        
+
         // Simple heuristic: vectorize if array is large enough
         let should_vectorize = array_size >= self.config.vectorization_threshold;
-        
+
         Ok(VectorizationAnalysis {
             should_vectorize,
             optimal_vector_width: self.hardware_caps.preferred_vector_width / 64, // Assume f64
@@ -798,7 +818,7 @@ impl SimdEngine {
             estimated_speedup: if should_vectorize { 4.0 } else { 1.0 },
         })
     }
-    
+
     fn select_vector_implementation(
         &self,
         analysis: &VectorizationAnalysis,
@@ -806,7 +826,7 @@ impl SimdEngine {
         if !analysis.should_vectorize {
             return Ok(VectorImplementation::Scalar);
         }
-        
+
         // Select based on hardware capabilities
         if self.hardware_caps.avx2 {
             Ok(VectorImplementation::SimdFixed(256))
@@ -875,7 +895,7 @@ impl MemoryAligner {
         alignment_requirements.insert(VectorDataType::F32, 16); // 16-byte alignment for SSE
         alignment_requirements.insert(VectorDataType::I64, 32); // 32-byte alignment for AVX
         alignment_requirements.insert(VectorDataType::I32, 16); // 16-byte alignment for SSE
-        
+
         Self {
             alignment_requirements,
             aligned_allocator: AlignedAllocator::new(),
@@ -898,8 +918,8 @@ impl OvmValue {
     pub fn from_f64(value: f64) -> Self {
         OvmValue::from_ast(Value::Float(value))
     }
-    
+
     pub fn from_i64(value: i64) -> Self {
         OvmValue::from_ast(Value::Integer(value))
     }
-} 
+}

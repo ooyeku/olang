@@ -12,10 +12,9 @@ use std::time::{Duration, Instant};
 
 // Cranelift JIT imports for Phase 3
 use cranelift::prelude::*;
+use cranelift_codegen::ir::FuncRef;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
-use cranelift_codegen::ir::FuncRef;
-
 
 /// Main optimization engine with JIT compilation and profiling
 pub struct OptimizationEngine {
@@ -419,8 +418,10 @@ impl OptimizationEngine {
 
         // **Phase 3: Single-threaded background compilation to avoid JIT memory provider threading issues**
         // Note: Multi-threading will be implemented in Phase 4 with proper thread-safe JIT infrastructure
-        
-        println!("JIT background compilation system initialized (single-threaded mode for Phase 3)");
+
+        println!(
+            "JIT background compilation system initialized (single-threaded mode for Phase 3)"
+        );
 
         Ok(())
     }
@@ -428,17 +429,19 @@ impl OptimizationEngine {
     /// **Phase 3: Process compilation queue synchronously**
     pub fn process_compilation_queue(&mut self) -> Result<u32, OptimizationError> {
         let mut processed_count = 0;
-        
+
         if let Ok(mut queue) = self.compilation_queue.lock() {
             let requests: Vec<_> = queue.drain(..).collect();
             drop(queue); // Release lock early
-            
+
             for request in requests {
                 if let Ok(mut compiler) = self.jit_compiler.lock() {
                     match compiler.compile_function(request.clone()) {
                         Ok(_compiled_func) => {
-                            println!("Successfully compiled function {:?} (tier: {:?})", 
-                                    request.function_id, request.target_tier);
+                            println!(
+                                "Successfully compiled function {:?} (tier: {:?})",
+                                request.function_id, request.target_tier
+                            );
                             processed_count += 1;
                         }
                         Err(e) => {
@@ -448,7 +451,7 @@ impl OptimizationEngine {
                 }
             }
         }
-        
+
         Ok(processed_count)
     }
 
@@ -509,7 +512,7 @@ impl OptimizationEngine {
 
                 // **Phase 3: Intelligent tier promotion**
                 let should_promote = self.should_promote_compilation_tier(profile);
-                
+
                 if should_promote && profile.compilation_tier == CompilationTier::Interpreter {
                     // Promote to BasicJit
                     profile.compilation_tier = CompilationTier::BasicJit;
@@ -531,12 +534,11 @@ impl OptimizationEngine {
     /// **Phase 3: Determine if function should be promoted to next compilation tier**
     fn should_promote_compilation_tier(&self, profile: &FunctionProfile) -> bool {
         match profile.compilation_tier {
-            CompilationTier::Interpreter => {
-                profile.call_count >= self.config.jit_threshold
-            }
+            CompilationTier::Interpreter => profile.call_count >= self.config.jit_threshold,
             CompilationTier::BasicJit => {
-                profile.call_count >= self.config.hot_function_threshold &&
-                profile.average_execution_time > Duration::from_millis(1) // Only for slow functions
+                profile.call_count >= self.config.hot_function_threshold
+                    && profile.average_execution_time > Duration::from_millis(1)
+                // Only for slow functions
             }
             CompilationTier::OptimizedJit => {
                 // Could promote to SpecializedJit based on type feedback
@@ -552,8 +554,9 @@ impl OptimizationEngine {
             function_id: func_id,
             function_name: format!("func_{:?}", func_id),
             function_body: "".to_string(), // Will be populated when needed
-            profile: self.get_function_profile(func_id).unwrap_or_else(|| {
-                FunctionProfile {
+            profile: self
+                .get_function_profile(func_id)
+                .unwrap_or_else(|| FunctionProfile {
                     function_id: func_id,
                     call_count: 0,
                     total_execution_time: Duration::ZERO,
@@ -563,8 +566,7 @@ impl OptimizationEngine {
                     optimization_opportunities: Vec::new(),
                     last_compiled: None,
                     deoptimization_count: 0,
-                }
-            }),
+                }),
             target_tier,
             priority: match target_tier {
                 CompilationTier::BasicJit => CompilationPriority::Normal,
@@ -576,7 +578,10 @@ impl OptimizationEngine {
 
         if let Ok(mut queue) = self.compilation_queue.lock() {
             queue.push(request);
-            println!("Queued compilation request for function {:?} (tier: {:?})", func_id, target_tier);
+            println!(
+                "Queued compilation request for function {:?} (tier: {:?})",
+                func_id, target_tier
+            );
         }
     }
 
@@ -590,9 +595,9 @@ impl OptimizationEngine {
                 average_time: profile.average_execution_time,
                 optimization_potential: self.calculate_optimization_potential(profile),
             };
-            
+
             profile.hot_paths.push(hot_path);
-            
+
             // Identify optimization opportunities
             self.identify_optimization_opportunities(profile);
         }
@@ -603,7 +608,7 @@ impl OptimizationEngine {
         // Simple heuristic: more calls + longer execution time = higher potential
         let call_factor = (profile.call_count as f64).ln();
         let time_factor = profile.average_execution_time.as_millis() as f64;
-        
+
         (call_factor * time_factor / 1000.0).min(10.0) // Cap at 10.0
     }
 
@@ -611,21 +616,25 @@ impl OptimizationEngine {
     fn identify_optimization_opportunities(&self, profile: &mut FunctionProfile) {
         // Add various optimization opportunities based on profile data
         if profile.call_count > 100 {
-            profile.optimization_opportunities.push(OptimizationOpportunity {
-                opportunity_type: OptimizationType::FunctionInlining,
-                confidence: 0.8,
-                estimated_speedup: 1.5,
-                implementation_cost: OptimizationCost::Low,
-            });
+            profile
+                .optimization_opportunities
+                .push(OptimizationOpportunity {
+                    opportunity_type: OptimizationType::FunctionInlining,
+                    confidence: 0.8,
+                    estimated_speedup: 1.5,
+                    implementation_cost: OptimizationCost::Low,
+                });
         }
 
         if profile.average_execution_time > Duration::from_millis(5) {
-            profile.optimization_opportunities.push(OptimizationOpportunity {
-                opportunity_type: OptimizationType::LoopUnrolling,
-                confidence: 0.6,
-                estimated_speedup: 2.0,
-                implementation_cost: OptimizationCost::Medium,
-            });
+            profile
+                .optimization_opportunities
+                .push(OptimizationOpportunity {
+                    opportunity_type: OptimizationType::LoopUnrolling,
+                    confidence: 0.6,
+                    estimated_speedup: 2.0,
+                    implementation_cost: OptimizationCost::Medium,
+                });
         }
     }
 
@@ -655,8 +664,9 @@ impl OptimizationEngine {
         func_body: Option<String>,
     ) -> Result<(), OptimizationError> {
         // Get current profile for optimization decisions
-        let profile = self.get_function_profile(func_id).unwrap_or_else(|| {
-            FunctionProfile {
+        let profile = self
+            .get_function_profile(func_id)
+            .unwrap_or_else(|| FunctionProfile {
                 function_id: func_id,
                 call_count: 0,
                 total_execution_time: Duration::ZERO,
@@ -666,8 +676,7 @@ impl OptimizationEngine {
                 optimization_opportunities: Vec::new(),
                 last_compiled: None,
                 deoptimization_count: 0,
-            }
-        });
+            });
 
         // **Phase 3: Determine optimal compilation tier based on profile**
         let target_tier = self.determine_optimal_compilation_tier(&profile);
@@ -691,7 +700,8 @@ impl OptimizationEngine {
 
     /// **Phase 3: Determine optimal compilation tier based on profile data**
     fn determine_optimal_compilation_tier(&self, profile: &FunctionProfile) -> CompilationTier {
-        if profile.call_count >= self.config.hot_function_threshold && !profile.hot_paths.is_empty() {
+        if profile.call_count >= self.config.hot_function_threshold && !profile.hot_paths.is_empty()
+        {
             CompilationTier::OptimizedJit
         } else if profile.call_count >= self.config.jit_threshold {
             CompilationTier::BasicJit
@@ -718,7 +728,9 @@ impl OptimizationEngine {
         if let Ok(mut compiler) = self.jit_compiler.lock() {
             compiler.execute_compiled_function(func_id, args)
         } else {
-            Err(OptimizationError::Failed("JIT compiler lock failed".to_string()))
+            Err(OptimizationError::Failed(
+                "JIT compiler lock failed".to_string(),
+            ))
         }
     }
 
@@ -727,7 +739,9 @@ impl OptimizationEngine {
         if let Ok(mut compiler) = self.jit_compiler.lock() {
             compiler.deoptimize_function(func_id)
         } else {
-            Err(OptimizationError::Failed("JIT compiler lock failed".to_string()))
+            Err(OptimizationError::Failed(
+                "JIT compiler lock failed".to_string(),
+            ))
         }
     }
 
@@ -768,7 +782,8 @@ impl OptimizationEngine {
     /// **Phase 3: Count hot functions for metrics**
     fn count_hot_functions(&self) -> u32 {
         if let Ok(profiles) = self.function_profiles.read() {
-            profiles.values()
+            profiles
+                .values()
                 .filter(|p| p.call_count >= self.config.hot_function_threshold)
                 .count() as u32
         } else {
@@ -779,7 +794,9 @@ impl OptimizationEngine {
     /// **Phase 3: Get JIT compilation readiness assessment**
     pub fn assess_compilation_readiness(&self, func_id: FunctionId) -> CompilationReadiness {
         if let Some(profile) = self.get_function_profile(func_id) {
-            if profile.call_count >= self.config.hot_function_threshold && !profile.hot_paths.is_empty() {
+            if profile.call_count >= self.config.hot_function_threshold
+                && !profile.hot_paths.is_empty()
+            {
                 CompilationReadiness::HighPriority
             } else if profile.call_count >= self.config.jit_threshold {
                 CompilationReadiness::Medium
@@ -798,8 +815,9 @@ impl OptimizationEngine {
         func_name: String,
         target_tier: CompilationTier,
     ) -> Result<(), OptimizationError> {
-        let profile = self.get_function_profile(func_id).unwrap_or_else(|| {
-            FunctionProfile {
+        let profile = self
+            .get_function_profile(func_id)
+            .unwrap_or_else(|| FunctionProfile {
                 function_id: func_id,
                 call_count: 0,
                 total_execution_time: Duration::ZERO,
@@ -809,8 +827,7 @@ impl OptimizationEngine {
                 optimization_opportunities: Vec::new(),
                 last_compiled: None,
                 deoptimization_count: 0,
-            }
-        });
+            });
 
         let request = CompilationRequest {
             function_id: func_id,
@@ -842,12 +859,14 @@ impl OptimizationEngine {
         let mut total_optimization_opportunities = 0;
 
         for profile in profiles.values() {
-            *tier_distribution.entry(profile.compilation_tier).or_insert(0) += 1;
-            
+            *tier_distribution
+                .entry(profile.compilation_tier)
+                .or_insert(0) += 1;
+
             if profile.call_count >= self.config.hot_function_threshold {
                 hot_function_count += 1;
             }
-            
+
             total_optimization_opportunities += profile.optimization_opportunities.len();
         }
 
@@ -929,11 +948,12 @@ impl CraneliftJitCompiler {
 
         // **Phase 3: Enhanced function signature based on Olang function analysis**
         let mut sig = self.jit_module.make_signature();
-        
+
         // Olang functions: (args: *const OvmValue, argc: usize) -> *mut OvmValue
         sig.params.push(AbiParam::new(self.ir_context.pointer_type)); // args array pointer
         sig.params.push(AbiParam::new(self.ir_context.int_type)); // args count
-        sig.returns.push(AbiParam::new(self.ir_context.pointer_type)); // Return OVM value pointer
+        sig.returns
+            .push(AbiParam::new(self.ir_context.pointer_type)); // Return OVM value pointer
 
         // Declare function in module
         let func_id_internal = self
@@ -964,16 +984,38 @@ impl CraneliftJitCompiler {
             // **Phase 3: Profile-guided IR generation**
             match request.target_tier {
                 CompilationTier::BasicJit => {
-                    Self::generate_basic_jit_ir_static(&mut builder, args_ptr, args_count, &self.ir_context)?;
+                    Self::generate_basic_jit_ir_static(
+                        &mut builder,
+                        args_ptr,
+                        args_count,
+                        &self.ir_context,
+                    )?;
                 }
                 CompilationTier::OptimizedJit => {
-                    Self::generate_optimized_jit_ir_static(&mut builder, args_ptr, args_count, &request, &self.ir_context)?;
+                    Self::generate_optimized_jit_ir_static(
+                        &mut builder,
+                        args_ptr,
+                        args_count,
+                        &request,
+                        &self.ir_context,
+                    )?;
                 }
                 CompilationTier::SpecializedJit => {
-                    Self::generate_specialized_jit_ir_static(&mut builder, args_ptr, args_count, &request, &self.ir_context)?;
+                    Self::generate_specialized_jit_ir_static(
+                        &mut builder,
+                        args_ptr,
+                        args_count,
+                        &request,
+                        &self.ir_context,
+                    )?;
                 }
                 _ => {
-                    Self::generate_basic_jit_ir_static(&mut builder, args_ptr, args_count, &self.ir_context)?;
+                    Self::generate_basic_jit_ir_static(
+                        &mut builder,
+                        args_ptr,
+                        args_count,
+                        &self.ir_context,
+                    )?;
                 }
             }
 
@@ -982,9 +1024,11 @@ impl CraneliftJitCompiler {
 
         // **Phase 3: Enhanced Cranelift optimizations**
         let mut ctrl_plane = cranelift_codegen::control::ControlPlane::default();
-        func_ctx.optimize(self.jit_module.isa(), &mut ctrl_plane).map_err(|e| {
-            OptimizationError::CraneliftError(format!("Cranelift optimization failed: {}", e))
-        })?;
+        func_ctx
+            .optimize(self.jit_module.isa(), &mut ctrl_plane)
+            .map_err(|e| {
+                OptimizationError::CraneliftError(format!("Cranelift optimization failed: {}", e))
+            })?;
 
         // Compile to native code
         self.jit_module
@@ -1022,8 +1066,10 @@ impl CraneliftJitCompiler {
         self.compiled_functions
             .insert(request.function_id, compiled_function.clone());
 
-        println!("Compiled function {:?} to native code (tier: {:?}, size: {} bytes, time: {:?})", 
-                request.function_id, request.target_tier, code_size, compilation_time);
+        println!(
+            "Compiled function {:?} to native code (tier: {:?}, size: {} bytes, time: {:?})",
+            request.function_id, request.target_tier, code_size, compilation_time
+        );
 
         Ok(compiled_function)
     }
@@ -1036,62 +1082,68 @@ impl CraneliftJitCompiler {
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
         // **Phase 3: Improved basic compilation with runtime helper calls**
-        
+
         // Create a simple dispatcher that calls back to the interpreter
         // This provides a significant speedup over AST interpretation while maintaining compatibility
-        
+
         // Load constants
         let zero = builder.ins().iconst(ir_context.int_type, 0);
-        
+
         // **Phase 3: Bounds checking for safety**
-        let args_valid = builder.ins().icmp(IntCC::UnsignedGreaterThan, args_count, zero);
-        
+        let args_valid = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, args_count, zero);
+
         // Create blocks for valid and invalid argument paths
         let valid_block = builder.create_block();
         let invalid_block = builder.create_block();
         let merge_block = builder.create_block();
-        
+
         // Add block parameter for result
         builder.append_block_param(merge_block, ir_context.pointer_type);
-        
+
         // Branch based on argument validity
-        builder.ins().brif(args_valid, valid_block, &[], invalid_block, &[]);
-        
+        builder
+            .ins()
+            .brif(args_valid, valid_block, &[], invalid_block, &[]);
+
         // Valid arguments path
         builder.switch_to_block(valid_block);
-        
+
         // **Phase 3: Simple arithmetic optimization for common cases**
         // If we have exactly 2 arguments, try to do direct arithmetic
         let two = builder.ins().iconst(ir_context.int_type, 2);
         let is_binary_op = builder.ins().icmp(IntCC::Equal, args_count, two);
-        
+
         let arithmetic_block = builder.create_block();
         let fallback_block = builder.create_block();
-        
-        builder.ins().brif(is_binary_op, arithmetic_block, &[], fallback_block, &[]);
-        
+
+        builder
+            .ins()
+            .brif(is_binary_op, arithmetic_block, &[], fallback_block, &[]);
+
         // Arithmetic optimization block
         builder.switch_to_block(arithmetic_block);
-        
+
         // Load first two arguments for binary operation
         let arg0_ptr = args_ptr;
         let ptr_size = builder.ins().iconst(ir_context.int_type, 8); // Assuming 64-bit pointers
         let arg1_ptr = builder.ins().iadd(args_ptr, ptr_size);
-        
+
         // For now, create a simple result (this would be expanded with actual arithmetic)
         let arithmetic_result = builder.ins().iconst(ir_context.pointer_type, 42); // Placeholder
         builder.ins().jump(merge_block, &[]);
-        
+
         // Fallback to interpreter block
         builder.switch_to_block(fallback_block);
         let fallback_result = builder.ins().iconst(ir_context.pointer_type, 0); // Null for interpreter fallback
         builder.ins().jump(merge_block, &[]);
-        
+
         // Invalid arguments path
         builder.switch_to_block(invalid_block);
         let error_result = builder.ins().iconst(ir_context.pointer_type, 0); // Null for error
         builder.ins().jump(merge_block, &[]);
-        
+
         // Merge block - return result
         builder.switch_to_block(merge_block);
         builder.seal_block(valid_block);
@@ -1099,11 +1151,11 @@ impl CraneliftJitCompiler {
         builder.seal_block(arithmetic_block);
         builder.seal_block(fallback_block);
         builder.seal_block(merge_block);
-        
+
         // Return a simple result since we removed block parameters
         let final_result = builder.ins().iconst(ir_context.pointer_type, 42);
         builder.ins().return_(&[final_result]);
-        
+
         Ok(())
     }
 
@@ -1118,7 +1170,9 @@ impl CraneliftJitCompiler {
         // **Phase 3: Profile-guided optimization**
         if !request.profile.hot_paths.is_empty() {
             // Generate optimized code for identified hot paths
-            Self::generate_hot_path_optimized_ir_static(builder, args_ptr, args_count, request, ir_context)?;
+            Self::generate_hot_path_optimized_ir_static(
+                builder, args_ptr, args_count, request, ir_context,
+            )?;
         } else {
             // Enhanced basic compilation with additional optimizations
             Self::generate_enhanced_basic_ir_static(builder, args_ptr, args_count, ir_context)?;
@@ -1135,22 +1189,26 @@ impl CraneliftJitCompiler {
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
         // **Phase 3: Specialized hot path compilation**
-        
+
         // Analyze the most frequent hot path
         if let Some(hot_path) = request.profile.hot_paths.first() {
             // Generate specialized code based on hot path characteristics
             if hot_path.execution_count > 1000 {
                 // Very hot path - aggressive optimization
-                Self::generate_aggressive_optimized_ir_static(builder, args_ptr, args_count, ir_context)?;
+                Self::generate_aggressive_optimized_ir_static(
+                    builder, args_ptr, args_count, ir_context,
+                )?;
             } else {
                 // Moderately hot path - balanced optimization
-                Self::generate_balanced_optimized_ir_static(builder, args_ptr, args_count, ir_context)?;
+                Self::generate_balanced_optimized_ir_static(
+                    builder, args_ptr, args_count, ir_context,
+                )?;
             }
         } else {
             // Fallback to enhanced basic
             Self::generate_enhanced_basic_ir_static(builder, args_ptr, args_count, ir_context)?;
         }
-        
+
         Ok(())
     }
 
@@ -1162,59 +1220,63 @@ impl CraneliftJitCompiler {
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
         // **Phase 3: Aggressive inlining and specialization**
-        
+
         // Assume common case: binary arithmetic operations
         let one = builder.ins().iconst(ir_context.int_type, 1);
         let two = builder.ins().iconst(ir_context.int_type, 2);
-        
+
         // Fast path for single argument (unary operations)
         let is_unary = builder.ins().icmp(IntCC::Equal, args_count, one);
         let unary_block = builder.create_block();
         let binary_check_block = builder.create_block();
-        
-        builder.ins().brif(is_unary, unary_block, &[], binary_check_block, &[]);
-        
+
+        builder
+            .ins()
+            .brif(is_unary, unary_block, &[], binary_check_block, &[]);
+
         // Unary operations block
         builder.switch_to_block(unary_block);
         // Inline common unary operations (negation, etc.)
         let unary_result = builder.ins().iconst(ir_context.pointer_type, 1); // Placeholder for actual unary result
         builder.ins().return_(&[unary_result]);
-        
+
         // Binary operations check
         builder.switch_to_block(binary_check_block);
         builder.seal_block(unary_block);
-        
+
         let is_binary = builder.ins().icmp(IntCC::Equal, args_count, two);
         let binary_block = builder.create_block();
         let fallback_block = builder.create_block();
-        
-        builder.ins().brif(is_binary, binary_block, &[], fallback_block, &[]);
-        
+
+        builder
+            .ins()
+            .brif(is_binary, binary_block, &[], fallback_block, &[]);
+
         // Binary operations block - inline arithmetic
         builder.switch_to_block(binary_block);
-        
+
         // **Phase 3: Inlined binary arithmetic**
         // Load arguments and perform direct arithmetic operations
         let ptr_size = builder.ins().iconst(ir_context.int_type, 8);
         let arg1_offset = builder.ins().iadd(args_ptr, ptr_size);
-        
+
         // Simulate loading integer values and adding them
         let val1 = builder.ins().iconst(ir_context.int_type, 10); // Placeholder
         let val2 = builder.ins().iconst(ir_context.int_type, 20); // Placeholder
         let sum = builder.ins().iadd(val1, val2);
         let result_ptr = builder.ins().ireduce(ir_context.pointer_type, sum);
-        
+
         builder.ins().return_(&[result_ptr]);
-        
+
         // Fallback block
         builder.switch_to_block(fallback_block);
         builder.seal_block(binary_check_block);
         builder.seal_block(binary_block);
         builder.seal_block(fallback_block);
-        
+
         let fallback_result = builder.ins().iconst(ir_context.pointer_type, 0);
         builder.ins().return_(&[fallback_result]);
-        
+
         Ok(())
     }
 
@@ -1226,48 +1288,58 @@ impl CraneliftJitCompiler {
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
         // **Phase 3: Balanced approach - some inlining with bounds checking**
-        
+
         let zero = builder.ins().iconst(ir_context.int_type, 0);
-        let args_valid = builder.ins().icmp(IntCC::UnsignedGreaterThan, args_count, zero);
-        
+        let args_valid = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, args_count, zero);
+
         let valid_block = builder.create_block();
         let error_block = builder.create_block();
-        
-        builder.ins().brif(args_valid, valid_block, &[], error_block, &[]);
-        
+
+        builder
+            .ins()
+            .brif(args_valid, valid_block, &[], error_block, &[]);
+
         // Valid arguments - try to optimize common patterns
         builder.switch_to_block(valid_block);
-        
+
         // Simple optimization: if args_count <= 4, handle inline
         let four = builder.ins().iconst(ir_context.int_type, 4);
-        let is_small = builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, args_count, four);
-        
+        let is_small = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, args_count, four);
+
         let inline_block = builder.create_block();
         let delegate_block = builder.create_block();
-        
-        builder.ins().brif(is_small, inline_block, &[], delegate_block, &[]);
-        
+
+        builder
+            .ins()
+            .brif(is_small, inline_block, &[], delegate_block, &[]);
+
         // Inline block for small argument counts
         builder.switch_to_block(inline_block);
         let inline_result = builder.ins().imul(args_count, args_count); // Square the argument count as demo
-        let inline_result_ptr = builder.ins().ireduce(ir_context.pointer_type, inline_result);
+        let inline_result_ptr = builder
+            .ins()
+            .ireduce(ir_context.pointer_type, inline_result);
         builder.ins().return_(&[inline_result_ptr]);
-        
+
         // Delegate to interpreter for complex cases
         builder.switch_to_block(delegate_block);
         builder.seal_block(valid_block);
         builder.seal_block(inline_block);
         builder.seal_block(delegate_block);
-        
+
         let delegate_result = builder.ins().iconst(ir_context.pointer_type, 0); // Signal interpreter fallback
         builder.ins().return_(&[delegate_result]);
-        
+
         // Error block
         builder.switch_to_block(error_block);
         builder.seal_block(error_block);
         let error_result = builder.ins().iconst(ir_context.pointer_type, 0);
         builder.ins().return_(&[error_result]);
-        
+
         Ok(())
     }
 
@@ -1279,34 +1351,38 @@ impl CraneliftJitCompiler {
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
         // **Phase 3: Enhanced basic compilation with better error handling**
-        
+
         // Basic bounds checking and simple dispatch
         let zero = builder.ins().iconst(ir_context.int_type, 0);
-        let args_valid = builder.ins().icmp(IntCC::UnsignedGreaterThan, args_count, zero);
-        
+        let args_valid = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, args_count, zero);
+
         let valid_block = builder.create_block();
         let invalid_block = builder.create_block();
-        
-        builder.ins().brif(args_valid, valid_block, &[], invalid_block, &[]);
-        
+
+        builder
+            .ins()
+            .brif(args_valid, valid_block, &[], invalid_block, &[]);
+
         // Valid path - simple processing
         builder.switch_to_block(valid_block);
-        
+
         // Simple computation based on argument count
         let multiplier = builder.ins().iconst(ir_context.int_type, 3);
         let result_val = builder.ins().imul(args_count, multiplier);
         let result_ptr = builder.ins().ireduce(ir_context.pointer_type, result_val);
-        
+
         builder.ins().return_(&[result_ptr]);
-        
+
         // Invalid path
         builder.switch_to_block(invalid_block);
         builder.seal_block(valid_block);
         builder.seal_block(invalid_block);
-        
+
         let error_result = builder.ins().iconst(ir_context.pointer_type, 0);
         builder.ins().return_(&[error_result]);
-        
+
         Ok(())
     }
 
@@ -1319,27 +1395,33 @@ impl CraneliftJitCompiler {
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
         // **Phase 3: Full specialization based on profile feedback**
-        
+
         // Analyze optimization opportunities from profile
-        let has_inlining_opportunity = request.profile.optimization_opportunities
+        let has_inlining_opportunity = request
+            .profile
+            .optimization_opportunities
             .iter()
             .any(|op| matches!(op.opportunity_type, OptimizationType::FunctionInlining));
-            
-        let has_loop_opportunity = request.profile.optimization_opportunities
+
+        let has_loop_opportunity = request
+            .profile
+            .optimization_opportunities
             .iter()
             .any(|op| matches!(op.opportunity_type, OptimizationType::LoopUnrolling));
-        
+
         if has_inlining_opportunity && has_loop_opportunity {
             // Full specialization with inlining and loop unrolling
             Self::generate_fully_specialized_ir_static(builder, args_ptr, args_count, ir_context)?;
         } else if has_inlining_opportunity {
             // Function inlining specialization
-            Self::generate_inlining_specialized_ir_static(builder, args_ptr, args_count, ir_context)?;
+            Self::generate_inlining_specialized_ir_static(
+                builder, args_ptr, args_count, ir_context,
+            )?;
         } else {
             // Fall back to optimized compilation
             Self::generate_balanced_optimized_ir_static(builder, args_ptr, args_count, ir_context)?;
         }
-        
+
         Ok(())
     }
 
@@ -1351,14 +1433,14 @@ impl CraneliftJitCompiler {
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
         // **Phase 3: Maximum optimization - unroll loops, inline everything**
-        
+
         // Specialized for very specific patterns
         let zero = builder.ins().iconst(ir_context.int_type, 0);
         let one = builder.ins().iconst(ir_context.int_type, 1);
         let two = builder.ins().iconst(ir_context.int_type, 2);
         let three = builder.ins().iconst(ir_context.int_type, 3);
         let four = builder.ins().iconst(ir_context.int_type, 4);
-        
+
         // Create blocks for different argument counts (unrolled dispatch)
         let zero_args_block = builder.create_block();
         let one_arg_block = builder.create_block();
@@ -1366,58 +1448,68 @@ impl CraneliftJitCompiler {
         let three_args_block = builder.create_block();
         let four_args_block = builder.create_block();
         let many_args_block = builder.create_block();
-        
+
         // Unrolled switch on argument count
         let is_zero = builder.ins().icmp(IntCC::Equal, args_count, zero);
         let check_one_block = builder.create_block();
-        builder.ins().brif(is_zero, zero_args_block, &[], check_one_block, &[]);
-        
+        builder
+            .ins()
+            .brif(is_zero, zero_args_block, &[], check_one_block, &[]);
+
         builder.switch_to_block(check_one_block);
         let is_one = builder.ins().icmp(IntCC::Equal, args_count, one);
         let check_two_block = builder.create_block();
-        builder.ins().brif(is_one, one_arg_block, &[], check_two_block, &[]);
-        
+        builder
+            .ins()
+            .brif(is_one, one_arg_block, &[], check_two_block, &[]);
+
         builder.switch_to_block(check_two_block);
         let is_two = builder.ins().icmp(IntCC::Equal, args_count, two);
         let check_three_block = builder.create_block();
-        builder.ins().brif(is_two, two_args_block, &[], check_three_block, &[]);
-        
+        builder
+            .ins()
+            .brif(is_two, two_args_block, &[], check_three_block, &[]);
+
         builder.switch_to_block(check_three_block);
         let is_three = builder.ins().icmp(IntCC::Equal, args_count, three);
         let check_four_block = builder.create_block();
-        builder.ins().brif(is_three, three_args_block, &[], check_four_block, &[]);
-        
+        builder
+            .ins()
+            .brif(is_three, three_args_block, &[], check_four_block, &[]);
+
         builder.switch_to_block(check_four_block);
         let is_four = builder.ins().icmp(IntCC::Equal, args_count, four);
-        builder.ins().brif(is_four, four_args_block, &[], many_args_block, &[]);
-        
+        builder
+            .ins()
+            .brif(is_four, four_args_block, &[], many_args_block, &[]);
+
         // Specialized handlers for each case
         builder.switch_to_block(zero_args_block);
         let zero_result = builder.ins().iconst(ir_context.pointer_type, 0);
         builder.ins().return_(&[zero_result]);
-        
+
         builder.switch_to_block(one_arg_block);
         let one_result = builder.ins().iconst(ir_context.pointer_type, 1);
         builder.ins().return_(&[one_result]);
-        
+
         builder.switch_to_block(two_args_block);
         let two_result = builder.ins().iconst(ir_context.pointer_type, 4); // 2^2
         builder.ins().return_(&[two_result]);
-        
+
         builder.switch_to_block(three_args_block);
         let three_result = builder.ins().iconst(ir_context.pointer_type, 9); // 3^2
         builder.ins().return_(&[three_result]);
-        
+
         builder.switch_to_block(four_args_block);
         let four_result = builder.ins().iconst(ir_context.pointer_type, 16); // 4^2
         builder.ins().return_(&[four_result]);
-        
+
         builder.switch_to_block(many_args_block);
         // For many arguments, fall back to a more general computation
         let many_result = builder.ins().imul(args_count, args_count);
         let many_result_ptr = builder.ins().ireduce(ir_context.pointer_type, many_result);
         builder.ins().return_(&[many_result_ptr]);
-        
+
         // Seal all blocks
         builder.seal_block(check_one_block);
         builder.seal_block(check_two_block);
@@ -1429,7 +1521,7 @@ impl CraneliftJitCompiler {
         builder.seal_block(three_args_block);
         builder.seal_block(four_args_block);
         builder.seal_block(many_args_block);
-        
+
         Ok(())
     }
 
@@ -1441,35 +1533,39 @@ impl CraneliftJitCompiler {
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
         // **Phase 3: Aggressive function inlining**
-        
+
         // Inline common function patterns
         let zero = builder.ins().iconst(ir_context.int_type, 0);
-        let args_valid = builder.ins().icmp(IntCC::UnsignedGreaterThan, args_count, zero);
-        
+        let args_valid = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, args_count, zero);
+
         let valid_block = builder.create_block();
         let error_block = builder.create_block();
-        
-        builder.ins().brif(args_valid, valid_block, &[], error_block, &[]);
-        
+
+        builder
+            .ins()
+            .brif(args_valid, valid_block, &[], error_block, &[]);
+
         builder.switch_to_block(valid_block);
-        
+
         // Inline arithmetic operations
         let ptr_size = builder.ins().iconst(ir_context.int_type, 8);
-        
+
         // Simulate inlined addition of first two arguments
         let base_val = builder.ins().iconst(ir_context.int_type, 100);
         let scaled_count = builder.ins().imul(args_count, base_val);
         let inlined_result = builder.ins().ireduce(ir_context.pointer_type, scaled_count);
-        
+
         builder.ins().return_(&[inlined_result]);
-        
+
         builder.switch_to_block(error_block);
         builder.seal_block(valid_block);
         builder.seal_block(error_block);
-        
+
         let error_result = builder.ins().iconst(ir_context.pointer_type, 0);
         builder.ins().return_(&[error_result]);
-        
+
         Ok(())
     }
 
@@ -1482,39 +1578,39 @@ impl CraneliftJitCompiler {
         if let Some(compiled_func) = self.compiled_functions.get_mut(&func_id) {
             // Update call count for profiling
             compiled_func.call_count += 1;
-            
+
             // Get native function pointer
             let native_fn_ptr = compiled_func.native_code_address;
-            
+
             if native_fn_ptr == 0 {
                 return Err(OptimizationError::CompilationFailed(
-                    "Invalid native function pointer".to_string()
+                    "Invalid native function pointer".to_string(),
                 ));
             }
-            
+
             // **Phase 3: Enhanced native function calling with better error handling**
             type NativeFn = unsafe extern "C" fn(*const OvmValue, usize) -> *mut OvmValue;
-            
+
             unsafe {
                 // Cast the address to a function pointer
                 let native_fn: NativeFn = std::mem::transmute(native_fn_ptr);
-                
+
                 // Prepare arguments for native calling convention
                 let args_ptr = args.as_ptr();
                 let args_count = args.len();
-                
+
                 // Call the native function
                 let result_ptr = native_fn(args_ptr, args_count);
-                
+
                 // **Phase 3: Enhanced result handling**
                 if result_ptr.is_null() {
                     // Null result indicates fallback to interpreter or error
                     self.compilation_stats.cache_misses += 1;
                     return Err(OptimizationError::CompilationFailed(
-                        "Native function returned null - interpreter fallback required".to_string()
+                        "Native function returned null - interpreter fallback required".to_string(),
                     ));
                 }
-                
+
                 // **Phase 3: Better result conversion**
                 // For Phase 3, we simulate the result since we don't have full OvmValue integration
                 let simulated_result = if args.is_empty() {
@@ -1524,10 +1620,10 @@ impl CraneliftJitCompiler {
                     let result_val = result_ptr as i64;
                     OvmValue::new_integer(result_val % 1000) // Keep it reasonable
                 };
-                
+
                 // Update compilation statistics
                 self.compilation_stats.cache_hits += 1;
-                
+
                 Ok(simulated_result)
             }
         } else {
@@ -1551,19 +1647,20 @@ impl CraneliftJitCompiler {
         if let Some(_compiled_func) = self.compiled_functions.remove(&func_id) {
             // Update stats
             self.compilation_stats.deoptimizations += 1;
-            
-            println!("Deoptimized function {:?} - removed from JIT cache", func_id);
-            
+
+            println!(
+                "Deoptimized function {:?} - removed from JIT cache",
+                func_id
+            );
+
             // **Phase 3: Reset function profile to allow recompilation with fresh data**
             // This allows the function to be recompiled with updated profile information
-            
+
             Ok(())
         } else {
             Err(OptimizationError::FunctionNotFound(func_id))
         }
     }
-
-
 }
 
 impl MultiPassOptimizer {
@@ -1617,9 +1714,9 @@ impl LazyOptimizer {
 /// **Phase 3: Compilation readiness assessment**
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompilationReadiness {
-    NotReady,    // Function not suitable for compilation yet
-    Low,         // Low priority for compilation
-    Medium,      // Medium priority for compilation
+    NotReady,     // Function not suitable for compilation yet
+    Low,          // Low priority for compilation
+    Medium,       // Medium priority for compilation
     HighPriority, // High priority for compilation
 }
 
@@ -1660,12 +1757,12 @@ mod tests {
     fn test_compilation_readiness_assessment() {
         let config = OvmConfig::default();
         let engine = OptimizationEngine::new(&config).unwrap();
-        
+
         // Test with non-existent function
         let func_id = FunctionId(42);
         let readiness = engine.assess_compilation_readiness(func_id);
         assert_eq!(readiness, CompilationReadiness::NotReady);
-        
+
         println!("Phase 3: Compilation readiness assessment working");
     }
 
@@ -1673,14 +1770,14 @@ mod tests {
     fn test_compilation_queue_processing() {
         let config = OvmConfig::default();
         let mut engine = OptimizationEngine::new(&config).unwrap();
-        
+
         // Queue a compilation request
         engine.queue_compilation_request(FunctionId(1), CompilationTier::BasicJit);
-        
+
         // Process the queue
         let processed = engine.process_compilation_queue();
         assert!(processed.is_ok());
-        
+
         println!("Phase 3: Compilation queue processing working");
     }
 
@@ -1688,17 +1785,17 @@ mod tests {
     fn test_force_compile_function() {
         let config = OvmConfig::default();
         let mut engine = OptimizationEngine::new(&config).unwrap();
-        
+
         let result = engine.force_compile_function(
             FunctionId(1),
             "test_function".to_string(),
             CompilationTier::BasicJit,
         );
-        
+
         // Should fail because we don't have a real function body to compile
         // This is expected behavior for Phase 3 - we test the infrastructure, not full compilation
         assert!(result.is_err());
-        
+
         println!("Phase 3: Force compilation working (correctly fails without real function body)");
     }
 
@@ -1706,25 +1803,25 @@ mod tests {
     fn test_compilation_analytics() {
         let config = OvmConfig::default();
         let engine = OptimizationEngine::new(&config).unwrap();
-        
+
         let analytics = engine.get_compilation_analytics();
-        
+
         // Should have default values for new engine
         assert_eq!(analytics.total_functions, 0);
         assert_eq!(analytics.compiled_functions, 0);
         assert_eq!(analytics.hot_functions, 0);
-        
+
         println!("Phase 3: Compilation analytics working");
     }
 
     #[test]
     fn test_jit_native_function_execution() {
         let mut compiler = CraneliftJitCompiler::new().unwrap();
-        
+
         // Test with empty args - this should return an error since function doesn't exist
         let args = vec![];
         let result = compiler.execute_compiled_function(FunctionId(0), &args);
-        
+
         // Should fail because function doesn't exist (expected behavior)
         assert!(result.is_err());
         println!("Phase 3: Native function execution working (correctly returns error for non-existent function)");
@@ -1739,17 +1836,17 @@ mod tests {
             CompilationTier::OptimizedJit,
             CompilationTier::SpecializedJit,
         ];
-        
+
         for tier in &tiers {
             println!("Phase 3: Testing tier: {:?}", tier);
         }
-        
+
         // Test Hash trait works
         let mut tier_counts = std::collections::HashMap::new();
         for tier in tiers {
             *tier_counts.entry(tier).or_insert(0) += 1;
         }
-        
+
         assert_eq!(tier_counts.len(), 4);
         println!("Phase 3: Compilation tiers working with Hash");
     }
@@ -1786,15 +1883,15 @@ mod tests {
     fn test_optimization_stats() {
         let config = OvmConfig::default();
         let engine = OptimizationEngine::new(&config).unwrap();
-        
+
         let stats = engine.get_stats();
-        
+
         // New engine should have zero stats
         assert_eq!(stats.functions_compiled, 0);
         assert_eq!(stats.cache_hits, 0);
         assert_eq!(stats.cache_misses, 0);
         assert_eq!(stats.deoptimizations, 0);
-        
+
         println!("Phase 3: Optimization stats working");
     }
 
@@ -1802,11 +1899,11 @@ mod tests {
     fn test_hot_function_detection() {
         let config = OvmConfig::default();
         let engine = OptimizationEngine::new(&config).unwrap();
-        
+
         // Test hot function counting (should be 0 for new engine)
         let hot_count = engine.count_hot_functions();
         assert_eq!(hot_count, 0);
-        
+
         println!("Phase 3: Hot function detection working");
     }
 }

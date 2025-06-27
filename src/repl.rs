@@ -69,14 +69,20 @@ impl Repl {
                 eprintln!("Warning: Failed to initialize parallel processing: {}", e);
             }
         } else if verbose {
-            println!("✅ Multi-threading enabled: {} CPU cores detected", num_cpus::get());
+            println!(
+                "✅ Multi-threading enabled: {} CPU cores detected",
+                num_cpus::get()
+            );
         }
 
         // Set a very aggressive parallel threshold for maximum multi-threading by default
         crate::parallel::set_parallel_threshold(10);
-        
+
         if verbose {
-            println!("🚀 Automatic parallelization: Lists with 10+ items will use all {} cores", num_cpus::get());
+            println!(
+                "🚀 Automatic parallelization: Lists with 10+ items will use all {} cores",
+                num_cpus::get()
+            );
         }
 
         let config = Config::builder()
@@ -139,24 +145,46 @@ impl Repl {
 
     pub fn run(&mut self) -> Result<(), ReplError> {
         println!("Olang v{} - A minimal, expressive language", VERSION);
-        
+
         // Display OVM status with enhanced messaging
         if self.ovm_interpreter.is_ovm_available() {
             let stats = self.ovm_interpreter.get_stats();
-            println!("{}", "🚀 OVM (Olang Virtual Machine) is running in the background".bright_green());
-            println!("{}", "   • Advanced pipeline fusion optimization active".bright_cyan());
-            println!("{}", "   • Automatic SIMD vectorization enabled".bright_cyan());
-            println!("{}", "   • Garbage collection and memory optimization active".bright_cyan());
-            println!("{}", "   • Your code is being optimized automatically!".bright_white());
-            
+            println!(
+                "{}",
+                "🚀 OVM (Olang Virtual Machine) is running in the background".bright_green()
+            );
+            println!(
+                "{}",
+                "   • Advanced pipeline fusion optimization active".bright_cyan()
+            );
+            println!(
+                "{}",
+                "   • Automatic SIMD vectorization enabled".bright_cyan()
+            );
+            println!(
+                "{}",
+                "   • Garbage collection and memory optimization active".bright_cyan()
+            );
+            println!(
+                "{}",
+                "   • Your code is being optimized automatically!".bright_white()
+            );
+
             if stats.ovm_executions > 0 || stats.classic_executions > 0 {
-                println!("   • Previous session: {} total executions", 
-                    (stats.ovm_executions + stats.classic_executions).to_string().bright_white());
+                println!(
+                    "   • Previous session: {} total executions",
+                    (stats.ovm_executions + stats.classic_executions)
+                        .to_string()
+                        .bright_white()
+                );
             }
         } else {
-            println!("{}", "⚠️  OVM not available - using classic interpreter".bright_yellow());
+            println!(
+                "{}",
+                "⚠️  OVM not available - using classic interpreter".bright_yellow()
+            );
         }
-        
+
         println!();
         println!("Type 'help' for help, ':ovm status' for OVM details, ':env' to see environment, 'quit' to exit");
         println!();
@@ -193,7 +221,7 @@ impl Repl {
                 continue;
             }
 
-            // Handle multiline mode
+
             if self.multiline_mode {
                 if line == ":end" {
                     self.multiline_mode = false;
@@ -220,9 +248,7 @@ impl Repl {
                             }
                         }
                     }
-                    if self.ovm_interpreter.is_ovm_available() {
-                        self.ovm_interpreter.force_gc();
-                    }
+                    let _ = self.ovm_interpreter.force_gc();
                 } else {
                     if !self.multiline_buffer.is_empty() {
                         self.multiline_buffer.push('\n');
@@ -237,9 +263,7 @@ impl Repl {
                 if let Err(e) = self.handle_command(line) {
                     eprintln!("Command error: {}", e);
                 }
-                if self.ovm_interpreter.is_ovm_available() {
-                    self.ovm_interpreter.force_gc();
-                }
+                let _ = self.ovm_interpreter.force_gc();
                 continue;
             }
 
@@ -287,9 +311,7 @@ impl Repl {
                     }
                 }
             }
-            if self.ovm_interpreter.is_ovm_available() {
-                self.ovm_interpreter.force_gc();
-            }
+            let _ = self.ovm_interpreter.force_gc();
         }
 
         // Save history
@@ -376,43 +398,88 @@ impl Repl {
                         "status" => {
                             println!("=== OVM Status ===");
                             let ovm_status = self.ovm_interpreter.get_ovm_status();
-                            println!("  Initialized: {}", ovm_status.initialized.to_string().bright_green());
-                            println!("  Running: {}", ovm_status.running.to_string().bright_green());
-                            println!("  Healthy: {}", self.ovm_interpreter.is_ovm_healthy().to_string().bright_green());
-                            
+                            println!(
+                                "  Initialized: {}",
+                                ovm_status.initialized.to_string().bright_green()
+                            );
+                            println!(
+                                "  Running: {}",
+                                ovm_status.running.to_string().bright_green()
+                            );
+                            println!(
+                                "  Healthy: {}",
+                                self.ovm_interpreter
+                                    .is_ovm_healthy()
+                                    .to_string()
+                                    .bright_green()
+                            );
+
                             println!("\n=== Execution Statistics ===");
                             let stats = self.ovm_interpreter.get_stats();
                             let total_executions = stats.ovm_executions + stats.classic_executions;
-                            
-                            println!("  Total executions: {}", total_executions.to_string().bright_white());
+
+                            println!(
+                                "  Total executions: {}",
+                                total_executions.to_string().bright_white()
+                            );
                             if total_executions > 0 {
-                                let ovm_percentage = (stats.ovm_executions as f64 / total_executions as f64) * 100.0;
-                                let classic_percentage = (stats.classic_executions as f64 / total_executions as f64) * 100.0;
-                                
-                                println!("  OVM executions: {} ({:.1}%)", 
-                                    stats.ovm_executions.to_string().bright_cyan(), 
-                                    ovm_percentage.to_string().bright_cyan());
-                                println!("  Classic executions: {} ({:.1}%)", 
-                                    stats.classic_executions.to_string().bright_yellow(), 
-                                    classic_percentage.to_string().bright_yellow());
+                                let ovm_percentage =
+                                    (stats.ovm_executions as f64 / total_executions as f64) * 100.0;
+                                let classic_percentage = (stats.classic_executions as f64
+                                    / total_executions as f64)
+                                    * 100.0;
+
+                                println!(
+                                    "  OVM executions: {} ({:.1}%)",
+                                    stats.ovm_executions.to_string().bright_cyan(),
+                                    ovm_percentage.to_string().bright_cyan()
+                                );
+                                println!(
+                                    "  Classic executions: {} ({:.1}%)",
+                                    stats.classic_executions.to_string().bright_yellow(),
+                                    classic_percentage.to_string().bright_yellow()
+                                );
                             } else {
-                                println!("  OVM executions: {}", stats.ovm_executions.to_string().bright_cyan());
-                                println!("  Classic executions: {}", stats.classic_executions.to_string().bright_yellow());
+                                println!(
+                                    "  OVM executions: {}",
+                                    stats.ovm_executions.to_string().bright_cyan()
+                                );
+                                println!(
+                                    "  Classic executions: {}",
+                                    stats.classic_executions.to_string().bright_yellow()
+                                );
                             }
-                            println!("  Fallback executions: {}", stats.fallback_executions.to_string().bright_red());
-                            println!("  Function compilations: {}", stats.compilation_count.to_string().bright_blue());
-                            
+                            println!(
+                                "  Fallback executions: {}",
+                                stats.fallback_executions.to_string().bright_red()
+                            );
+                            println!(
+                                "  Function compilations: {}",
+                                stats.compilation_count.to_string().bright_blue()
+                            );
+
                             if stats.average_ovm_time_ms > 0.0 {
                                 println!("  Avg OVM time: {:.2}ms", stats.average_ovm_time_ms);
                             }
                             if stats.average_classic_time_ms > 0.0 {
-                                println!("  Avg classic time: {:.2}ms", stats.average_classic_time_ms);
+                                println!(
+                                    "  Avg classic time: {:.2}ms",
+                                    stats.average_classic_time_ms
+                                );
                             }
-                            
+
                             if ovm_status.running {
-                                println!("\n{}", "✅ OVM is actively optimizing your code in the background".bright_green());
+                                println!(
+                                    "\n{}",
+                                    "✅ OVM is actively optimizing your code in the background"
+                                        .bright_green()
+                                );
                             } else {
-                                println!("\n{}", "⚠️  OVM is not running - falling back to classic interpreter".bright_yellow());
+                                println!(
+                                    "\n{}",
+                                    "⚠️  OVM is not running - falling back to classic interpreter"
+                                        .bright_yellow()
+                                );
                             }
                         }
                         "gc" => {
@@ -422,12 +489,10 @@ impl Repl {
                                 println!("✅ Garbage collection completed successfully");
                             }
                         }
-                        "restart" => {
-                            match self.ovm_interpreter.ensure_ovm_running() {
-                                Ok(()) => println!("✅ OVM restarted successfully"),
-                                Err(e) => eprintln!("Failed to restart OVM: {}", e),
-                            }
-                        }
+                        "restart" => match self.ovm_interpreter.ensure_ovm_running() {
+                            Ok(()) => println!("✅ OVM restarted successfully"),
+                            Err(e) => eprintln!("Failed to restart OVM: {}", e),
+                        },
                         _ => {
                             println!("Usage: :ovm [status|gc|restart]");
                         }
@@ -435,13 +500,19 @@ impl Repl {
                 } else {
                     let available = self.ovm_interpreter.is_ovm_available();
                     let healthy = self.ovm_interpreter.is_ovm_healthy();
-                    println!("OVM available: {} | Healthy: {}", 
-                        available.to_string().bright_green(), 
-                        healthy.to_string().bright_green());
+                    println!(
+                        "OVM available: {} | Healthy: {}",
+                        available.to_string().bright_green(),
+                        healthy.to_string().bright_green()
+                    );
                     if available && healthy {
                         println!("{}", "✅ OVM is running in the background".bright_green());
                     } else {
-                        println!("{}", "⚠️  OVM may need attention - use ':ovm status' for details".bright_yellow());
+                        println!(
+                            "{}",
+                            "⚠️  OVM may need attention - use ':ovm status' for details"
+                                .bright_yellow()
+                        );
                     }
                 }
             }
@@ -598,18 +669,29 @@ impl Repl {
                             let config = crate::parallel::get_config();
                             println!("=== Parallel Processing Status ===");
                             println!("  Enabled: {}", config.enabled.to_string().bright_green());
-                            println!("  Max threads: {}", config.max_threads.to_string().bright_cyan());
-                            println!("  Parallel threshold: {} items", config.min_parallel_size.to_string().bright_yellow());
-                            println!("  Available CPU cores: {}", num_cpus::get().to_string().bright_white());
-                            
+                            println!(
+                                "  Max threads: {}",
+                                config.max_threads.to_string().bright_cyan()
+                            );
+                            println!(
+                                "  Parallel threshold: {} items",
+                                config.min_parallel_size.to_string().bright_yellow()
+                            );
+                            println!(
+                                "  Available CPU cores: {}",
+                                num_cpus::get().to_string().bright_white()
+                            );
+
                             // Test parallel processing
-                            let large_list: Vec<usize> = (1..=config.min_parallel_size + 100).collect();
-                            println!("  Test: List of {} items would use {} processing", 
+                            let large_list: Vec<usize> =
+                                (1..=config.min_parallel_size + 100).collect();
+                            println!(
+                                "  Test: List of {} items would use {} processing",
                                 large_list.len(),
-                                if crate::parallel::should_parallelize(large_list.len()) { 
-                                    "PARALLEL".bright_green() 
-                                } else { 
-                                    "SEQUENTIAL".bright_red() 
+                                if crate::parallel::should_parallelize(large_list.len()) {
+                                    "PARALLEL".bright_green()
+                                } else {
+                                    "SEQUENTIAL".bright_red()
                                 }
                             );
                         }
@@ -631,7 +713,10 @@ impl Repl {
                                 }
                             } else {
                                 let config = crate::parallel::get_config();
-                                println!("Current parallel threshold: {} items", config.min_parallel_size);
+                                println!(
+                                    "Current parallel threshold: {} items",
+                                    config.min_parallel_size
+                                );
                                 println!("Usage: :parallel threshold <number>");
                             }
                         }
@@ -641,10 +726,16 @@ impl Repl {
                     }
                 } else {
                     let config = crate::parallel::get_config();
-                    println!("Parallel processing: {} | Threads: {} | Threshold: {} items", 
-                        if config.enabled { "enabled".bright_green() } else { "disabled".bright_red() },
+                    println!(
+                        "Parallel processing: {} | Threads: {} | Threshold: {} items",
+                        if config.enabled {
+                            "enabled".bright_green()
+                        } else {
+                            "disabled".bright_red()
+                        },
                         config.max_threads.to_string().bright_cyan(),
-                        config.min_parallel_size.to_string().bright_yellow());
+                        config.min_parallel_size.to_string().bright_yellow()
+                    );
                 }
             }
             ":run" => {
@@ -668,7 +759,7 @@ impl Repl {
                             self.ovm_interpreter
                                 .get_classic_interpreter()
                                 .clear_user_environment();
-                            
+
                             // 2. Force garbage collection multiple times
                             if self.ovm_interpreter.is_ovm_available() {
                                 for _ in 0..3 {
@@ -680,7 +771,7 @@ impl Repl {
                                     }
                                 }
                             }
-                        },
+                        }
                         Err(e) => {
                             eprintln!("Error reading file '{}': {}", filename, e);
                         }

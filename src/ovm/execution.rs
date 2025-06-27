@@ -2,16 +2,15 @@
 //!
 //! Provides tiered execution with interpreter, bytecode VM, and JIT compilation
 
-use crate::ast::{BinaryOp, Expr, FunctionDecl, Statement, Value, UnaryOp};
+use crate::ast::{BinaryOp, Expr, FunctionDecl, Statement, UnaryOp, Value};
 use crate::builtin::BuiltinFunctions;
 use crate::interpreter::{Interpreter, InterpreterError};
-use crate::ovm::{FunctionId, MemoryManager, OvmConfig, OvmValue};
-use crate::ovm::bytecode::{BytecodeVm, BytecodeError};
+use crate::ovm::bytecode::{BytecodeError, BytecodeVm};
 use crate::ovm::gc::SafepointManager;
 use crate::ovm::optimization::{OptimizationEngine, OptimizationError};
+use crate::ovm::{FunctionId, MemoryManager, OvmConfig, OvmValue};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
 
 /// Main execution engine with tiered execution
 pub struct ExecutionEngine {
@@ -180,21 +179,26 @@ impl ExecutionEngine {
 
     /// Get the list of available builtin functions
     pub fn get_builtin_functions(&self) -> Vec<String> {
-        self.builtin_functions.get_functions().keys().cloned().collect()
+        self.builtin_functions
+            .get_functions()
+            .keys()
+            .cloned()
+            .collect()
     }
 
     /// Execute an OVM expression, with enhanced builtin support
     pub fn execute_expression(&mut self, ovm_expr: OvmExpr) -> Result<OvmValue, ExecutionError> {
         // Register thread for safepoint coordination
         self.safepoint_manager.register_thread();
-        
+
         // Ensure thread is unregistered when done
         let _guard = ThreadSafepointGuard::new(Arc::clone(&self.safepoint_manager));
-        
+
         let start_time = std::time::Instant::now();
 
         // Safepoint poll before execution
-        self.safepoint_manager.safepoint_poll()
+        self.safepoint_manager
+            .safepoint_poll()
             .map_err(|e| ExecutionError::Failed(format!("Safepoint coordination failed: {}", e)))?;
 
         // Check if this is a builtin function call
@@ -211,7 +215,7 @@ impl ExecutionEngine {
                     self.execute_with_interpreter(ovm_expr.expr)?
                 }
                 ExecutionTier::Native => {
-                    // For expressions, fall back to interpreter for now  
+                    // For expressions, fall back to interpreter for now
                     // JIT compilation is more suitable for functions
                     self.execute_with_interpreter(ovm_expr.expr)?
                 }
@@ -262,8 +266,9 @@ impl ExecutionEngine {
             .interpreter
             .lock()
             .map_err(|_| ExecutionError::Failed("Failed to lock interpreter".to_string()))?;
-        
-        interpreter.eval_statement(Statement::Expression(expr.clone()))
+
+        interpreter
+            .eval_statement(Statement::Expression(expr.clone()))
             .map_err(ExecutionError::from)
     }
 
@@ -275,10 +280,10 @@ impl ExecutionEngine {
     ) -> Result<OvmValue, ExecutionError> {
         // Register thread for safepoint coordination
         self.safepoint_manager.register_thread();
-        
+
         // Ensure thread is unregistered when done
         let _guard = ThreadSafepointGuard::new(Arc::clone(&self.safepoint_manager));
-        
+
         let func_decl = self
             .functions
             .get(&func_id)
@@ -288,7 +293,8 @@ impl ExecutionEngine {
         let start_time = std::time::Instant::now();
 
         // Safepoint poll before execution
-        self.safepoint_manager.safepoint_poll()
+        self.safepoint_manager
+            .safepoint_poll()
             .map_err(|e| ExecutionError::Failed(format!("Safepoint coordination failed: {}", e)))?;
 
         // Convert OVM values to AST values for interpreter
@@ -418,13 +424,19 @@ impl ExecutionEngine {
                     if stats.call_count >= self.config.bytecode_threshold {
                         // Transition to bytecode tier
                         stats.tier = ExecutionTier::Bytecode;
-                        println!("Function {:?} promoted to bytecode tier (call count: {})", func_id, stats.call_count);
-                        
+                        println!(
+                            "Function {:?} promoted to bytecode tier (call count: {})",
+                            func_id, stats.call_count
+                        );
+
                         // Pre-compile function to bytecode for next execution
                         if let Some(func_decl) = self.functions.get(&func_id) {
                             if let Ok(mut bytecode_vm) = self.bytecode_vm.lock() {
                                 if let Err(e) = bytecode_vm.compile_function(func_id, func_decl) {
-                                    println!("Bytecode compilation failed for {:?}: {}", func_id, e);
+                                    println!(
+                                        "Bytecode compilation failed for {:?}: {}",
+                                        func_id, e
+                                    );
                                     // Stay at interpreter tier
                                     stats.tier = ExecutionTier::Interpreter;
                                 }
@@ -436,7 +448,7 @@ impl ExecutionEngine {
                     if stats.call_count >= self.config.native_threshold {
                         // Transition to native tier (JIT compilation)
                         stats.tier = ExecutionTier::Native;
-                        
+
                         // Trigger JIT compilation in background
                         if let Ok(mut opt_engine) = self.optimization_engine.lock() {
                             let func_name = format!("func_{:?}", func_id);
@@ -445,7 +457,10 @@ impl ExecutionEngine {
                                 // Fall back to bytecode tier
                                 stats.tier = ExecutionTier::Bytecode;
                             } else {
-                                println!("Function {:?} JIT compiled successfully (call count: {})", func_id, stats.call_count);
+                                println!(
+                                    "Function {:?} JIT compiled successfully (call count: {})",
+                                    func_id, stats.call_count
+                                );
                             }
                         }
                     }
@@ -457,14 +472,18 @@ impl ExecutionEngine {
                     } else {
                         0
                     };
-                    
+
                     // If performance degrades significantly, consider deoptimization
-                    if avg_time > 1_000_000 && stats.call_count % 100 == 0 { // 1ms threshold, check every 100 calls
+                    if avg_time > 1_000_000 && stats.call_count % 100 == 0 {
+                        // 1ms threshold, check every 100 calls
                         if let Ok(mut opt_engine) = self.optimization_engine.lock() {
                             if let Err(e) = opt_engine.deoptimize_function(func_id) {
                                 println!("Deoptimization failed for {:?}: {}", func_id, e);
                             } else {
-                                println!("Function {:?} deoptimized back to bytecode tier", func_id);
+                                println!(
+                                    "Function {:?} deoptimized back to bytecode tier",
+                                    func_id
+                                );
                                 stats.tier = ExecutionTier::Bytecode; // Deoptimize to bytecode, not interpreter
                             }
                         }
@@ -490,7 +509,9 @@ impl ExecutionEngine {
         let execution_result = if let Ok(mut opt_engine) = self.optimization_engine.lock() {
             opt_engine.execute_compiled_function(func_id, &ovm_args)
         } else {
-            Err(OptimizationError::Failed("Optimization engine lock failed".to_string()))
+            Err(OptimizationError::Failed(
+                "Optimization engine lock failed".to_string(),
+            ))
         };
 
         match execution_result {
@@ -521,7 +542,7 @@ impl ExecutionEngine {
             .get(&func_id)
             .ok_or(ExecutionError::FunctionNotFound(func_id))?
             .clone();
-        
+
         self.execute_function_with_interpreter(&func_decl, args)
     }
 
@@ -543,7 +564,11 @@ impl ExecutionEngine {
                 }
 
                 // Execute with bytecode
-                Some(bytecode_vm.execute(func_id, args).map_err(ExecutionError::from))
+                Some(
+                    bytecode_vm
+                        .execute(func_id, args)
+                        .map_err(ExecutionError::from),
+                )
             } else {
                 None
             }
@@ -554,9 +579,13 @@ impl ExecutionEngine {
             Some(result) => result,
             None => {
                 // Fall back to interpreter if bytecode VM is unavailable
-                println!("Bytecode VM lock failed, falling back to interpreter for {:?}", func_id);
-                let ast_args: Result<Vec<_>, _> = args.iter().map(|arg| self.ovm_value_to_ast(arg)).collect();
-                self.execute_function_with_interpreter(func_decl, &ast_args?)   
+                println!(
+                    "Bytecode VM lock failed, falling back to interpreter for {:?}",
+                    func_id
+                );
+                let ast_args: Result<Vec<_>, _> =
+                    args.iter().map(|arg| self.ovm_value_to_ast(arg)).collect();
+                self.execute_function_with_interpreter(func_decl, &ast_args?)
             }
         }
     }

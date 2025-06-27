@@ -25,9 +25,9 @@ impl ThreadSafeFunction {
 
     /// Convert back to a regular function for evaluation
     pub fn to_function(&self) -> Function {
-        let body = serde_json::from_str(&self.body_code)
-            .unwrap_or_else(|_| crate::ast::Expr::Integer(0)); // Fallback to 0 instead of 42
-        
+        let body =
+            serde_json::from_str(&self.body_code).unwrap_or_else(|_| crate::ast::Expr::Integer(0)); // Fallback to 0 instead of 42
+
         Function {
             name: self.name.clone(),
             parameters: self.parameters.clone(),
@@ -269,7 +269,11 @@ impl LazyValue {
                 }
                 Ok(Value::List(Arc::from(results)))
             }
-            Value::Range { start, end, inclusive } => {
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 // Convert range to vector and map
                 let end_val = if inclusive { end + 1 } else { end };
                 let mut results = Vec::new();
@@ -312,7 +316,11 @@ impl LazyValue {
                 }
                 Ok(Value::List(Arc::from(results)))
             }
-            Value::Range { start, end, inclusive } => {
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 // Convert range to vector and filter
                 let end_val = if inclusive { end + 1 } else { end };
                 let mut results = Vec::new();
@@ -388,7 +396,11 @@ impl LazyValue {
                 }
                 Ok(Value::List(Arc::from(results)))
             }
-            Value::Range { start, end, inclusive } => {
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 // Convert range to vector, filter, then map
                 let end_val = if inclusive { end + 1 } else { end };
                 let mut results = Vec::new();
@@ -402,10 +414,8 @@ impl LazyValue {
 
                     if let Value::Boolean(true) = pred_result {
                         // Then apply the mapper
-                        let mapped_result = interpreter.call_function(
-                            Value::Function((**mapper).to_function()),
-                            vec![item],
-                        )?;
+                        let mapped_result = interpreter
+                            .call_function(Value::Function((**mapper).to_function()), vec![item])?;
                         results.push(mapped_result);
                     }
                 }

@@ -230,8 +230,9 @@ impl OvmInterpreter {
                             .unwrap()
                             .register_function(func_decl.clone())
                             .map_err(IntegrationError::OvmExecutionError)?;
-                        
-                        self.function_registry.insert(func_decl.name.clone(), func_id);
+
+                        self.function_registry
+                            .insert(func_decl.name.clone(), func_id);
                         self.increment_compilation_count();
                     }
 
@@ -300,8 +301,8 @@ impl OvmInterpreter {
         if let Some(_ovm) = &self.ovm {
             OvmStatus {
                 initialized: true,
-                running: true, // Assume running if OVM exists
-                memory_usage: 0, // Would need additional OVM methods for this
+                running: true,                     // Assume running if OVM exists
+                memory_usage: 0,                   // Would need additional OVM methods for this
                 uptime: std::time::Duration::ZERO, // Would need additional OVM methods for this
             }
         } else {
@@ -406,16 +407,16 @@ impl OvmInterpreter {
                     _ => false, // Complex callees use classic interpreter for safety
                 }
             }
-            
+
             // Pipeline expressions should still use classic interpreter for now
             crate::ast::Expr::Pipeline { .. } => false,
-            
+
             // Identifiers, loops should use classic interpreter for environment consistency
             crate::ast::Expr::Identifier(_) => false,
             crate::ast::Expr::ForLoop { .. } => false,
             crate::ast::Expr::WhileLoop { .. } => false,
             crate::ast::Expr::Loop { .. } => false,
-            
+
             // Simple expressions can use OVM
             crate::ast::Expr::Integer(_) => true,
             crate::ast::Expr::Float(_) => true,
@@ -425,14 +426,14 @@ impl OvmInterpreter {
             crate::ast::Expr::Tuple(_) => true,
             crate::ast::Expr::BinaryOp { .. } => true,
             crate::ast::Expr::UnaryOp { .. } => true,
-            
+
             // Complex expressions that can benefit from OVM optimization
             crate::ast::Expr::Lambda { .. } => true,
             crate::ast::Expr::Match { .. } => false, // Pattern matching uses classic for now
             crate::ast::Expr::StructLiteral(_) => true,
             crate::ast::Expr::FieldAccess { .. } => true,
             crate::ast::Expr::Index { .. } => true,
-            
+
             // Default to OVM if configured
             _ => self.integration_config.use_ovm_by_default,
         }
@@ -446,7 +447,9 @@ impl OvmInterpreter {
         }
 
         // Check if this builtin is in the OVM-preferred list
-        self.integration_config.ovm_preferred_builtins.contains(&builtin_name.to_string())
+        self.integration_config
+            .ovm_preferred_builtins
+            .contains(&builtin_name.to_string())
     }
 
     /// Get OVM execution statistics
@@ -462,14 +465,22 @@ impl OvmInterpreter {
 
     /// Add a builtin to the OVM-preferred list
     pub fn add_ovm_preferred_builtin(&mut self, builtin_name: String) {
-        if !self.integration_config.ovm_preferred_builtins.contains(&builtin_name) {
-            self.integration_config.ovm_preferred_builtins.push(builtin_name);
+        if !self
+            .integration_config
+            .ovm_preferred_builtins
+            .contains(&builtin_name)
+        {
+            self.integration_config
+                .ovm_preferred_builtins
+                .push(builtin_name);
         }
     }
 
     /// Remove a builtin from the OVM-preferred list
     pub fn remove_ovm_preferred_builtin(&mut self, builtin_name: &str) {
-        self.integration_config.ovm_preferred_builtins.retain(|name| name != builtin_name);
+        self.integration_config
+            .ovm_preferred_builtins
+            .retain(|name| name != builtin_name);
     }
 
     /// Check if an expression should use the classic interpreter (updated logic)
@@ -613,32 +624,41 @@ mod tests {
     #[test]
     fn test_builtin_routing_configuration() {
         let mut interpreter = OvmInterpreter::new();
-        
+
         // Test default configuration
         assert!(interpreter.integration_config.enable_ovm_builtins);
-        assert!(interpreter.integration_config.ovm_preferred_builtins.contains(&"len".to_string()));
-        
+        assert!(interpreter
+            .integration_config
+            .ovm_preferred_builtins
+            .contains(&"len".to_string()));
+
         // Test runtime configuration changes
         interpreter.set_ovm_builtins_enabled(false);
         assert!(!interpreter.integration_config.enable_ovm_builtins);
-        
+
         interpreter.add_ovm_preferred_builtin("custom_builtin".to_string());
-        assert!(interpreter.integration_config.ovm_preferred_builtins.contains(&"custom_builtin".to_string()));
-        
+        assert!(interpreter
+            .integration_config
+            .ovm_preferred_builtins
+            .contains(&"custom_builtin".to_string()));
+
         interpreter.remove_ovm_preferred_builtin("len");
-        assert!(!interpreter.integration_config.ovm_preferred_builtins.contains(&"len".to_string()));
+        assert!(!interpreter
+            .integration_config
+            .ovm_preferred_builtins
+            .contains(&"len".to_string()));
     }
 
     #[test]
     fn test_builtin_function_detection() {
         let interpreter = OvmInterpreter::new();
-        
+
         // Test builtin detection
         assert!(interpreter.is_builtin_function("len"));
         assert!(interpreter.is_builtin_function("map"));
         assert!(interpreter.is_builtin_function("println"));
         assert!(!interpreter.is_builtin_function("not_a_builtin"));
-        
+
         // Test OVM builtin preferences
         assert!(interpreter.should_use_ovm_for_builtin("len"));
         assert!(interpreter.should_use_ovm_for_builtin("sum"));
@@ -648,27 +668,31 @@ mod tests {
     #[test]
     fn test_expression_routing() {
         let interpreter = OvmInterpreter::new();
-        
+
         // Test simple expressions route to OVM
         let simple_expr = Expr::Integer(42);
         assert!(interpreter.should_use_ovm_for_expression(&simple_expr));
-        
+
         // Test complex expressions route to classic
         let identifier_expr = Expr::Identifier("some_var".to_string());
         assert!(!interpreter.should_use_ovm_for_expression(&identifier_expr));
-        
+
         // Test OVM-preferred builtin call routes to OVM
         let len_call = Expr::Call {
             callee: Box::new(Expr::Identifier("len".to_string())),
-            arguments: vec![Expr::List(std::rc::Rc::from([Expr::Integer(1), Expr::Integer(2)] as [Expr; 2]))],
+            arguments: vec![Expr::List(std::rc::Rc::from(
+                [Expr::Integer(1), Expr::Integer(2)] as [Expr; 2],
+            ))],
         };
         assert!(interpreter.should_use_ovm_for_expression(&len_call));
-        
+
         // Test non-OVM builtin call routes to classic
         let map_call = Expr::Call {
             callee: Box::new(Expr::Identifier("map".to_string())),
             arguments: vec![
-                Expr::List(std::rc::Rc::from([Expr::Integer(1), Expr::Integer(2)] as [Expr; 2])),
+                Expr::List(std::rc::Rc::from(
+                    [Expr::Integer(1), Expr::Integer(2)] as [Expr; 2]
+                )),
                 Expr::Lambda {
                     parameters: vec![crate::ast::Parameter {
                         name: "x".to_string(),
