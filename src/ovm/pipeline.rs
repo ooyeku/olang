@@ -50,10 +50,10 @@ impl Default for PipelineConfig {
         Self {
             enable_fusion: true,
             enable_parallel: true,
-            parallel_threshold: 1000,
+            parallel_threshold: 500,
             enable_vectorization: true,
             buffer_size: 8192,
-            max_fusion_length: 10,
+            max_fusion_length: 15,
             parallel_worker_count: num_cpus::get(),
         }
     }

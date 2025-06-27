@@ -64,14 +64,14 @@ impl Default for OptimizationConfig {
     fn default() -> Self {
         Self {
             optimization_level: OptimizationLevel::Balanced,
-            jit_threshold: 100,
+            jit_threshold: 10,
             compilation_threads: 2,
             enable_function_inlining: true,
             enable_dead_code_elimination: true,
             enable_constant_folding: true,
             enable_loop_optimization: true,
-            max_inline_size: 1000,
-            hot_function_threshold: 1000,
+            max_inline_size: 100,
+            hot_function_threshold: 100,
         }
     }
 }

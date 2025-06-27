@@ -186,7 +186,7 @@ impl MemoryManager {
         Ok(memory_manager)
     }
 
-    /// Fast path allocation with bump pointer
+    /// Fast path allocation with bump pointer, now with improved failure handling
     pub fn allocate(&mut self, size: usize) -> Result<*mut u8, MemoryError> {
         if size == 0 {
             return Err(MemoryError::InvalidSize { size });
@@ -195,6 +195,11 @@ impl MemoryManager {
         // Safety check for extremely large allocations
         if size > 1024 * 1024 * 1024 {  // 1GB limit
             return Err(MemoryError::InvalidSize { size });
+        }
+
+        // Check memory pressure before attempting allocation
+        if self.is_under_pressure() {
+            self.emergency_cleanup()?;
         }
 
         // Record allocation for GC triggering
@@ -215,8 +220,20 @@ impl MemoryManager {
             }
         }
 
-        // Slow path: potential GC trigger
-        self.slow_allocate(size)
+        // Slow path with retry logic
+        for attempt in 0..3 {
+            match self.slow_allocate(size) {
+                Ok(ptr) => return Ok(ptr),
+                Err(MemoryError::OutOfMemory) if attempt < 2 => {
+                    // Emergency cleanup and retry
+                    self.emergency_cleanup()?;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    
+        Err(MemoryError::OutOfMemory)
     }
 
     /// Allocate a GC-managed object with proper header
@@ -334,6 +351,34 @@ impl MemoryManager {
                 "Failed to lock stats".to_string(),
             ))
         })
+    }
+
+    /// Check if the system is under memory pressure
+    pub fn is_under_pressure(&self) -> bool {
+        if let Ok(stats) = self.stats.lock() {
+            // Consider under pressure if heap is > 80% full
+            if let Some(heap_size) = self.config.heap_size {
+                if heap_size > 0 {
+                    return (stats.heap_used as f64 / heap_size as f64) > 0.8;
+                }
+            } else {
+                // For unlimited heap, check if we've allocated > 1GB as a heuristic
+                return stats.heap_used > 1 * 1024 * 1024 * 1024;
+            }
+        }
+        false
+    }
+
+    /// Force an aggressive cleanup when under memory pressure
+    pub fn emergency_cleanup(&mut self) -> Result<(), MemoryError> {
+        // Force an immediate, complete GC cycle
+        self.force_collection()?;
+        
+        // In a more advanced implementation, we could also:
+        // - Clear any non-essential caches
+        // - Trigger compaction if fragmentation is high
+        
+        Ok(())
     }
 }
 

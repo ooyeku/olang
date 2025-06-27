@@ -441,6 +441,7 @@ impl GarbageCollector {
                     &safepoint_manager,
                     &root_scanner,
                     &remembered_set,
+                    &None, // Background GC thread uses simple sweep
                     collection_type,
                 ) {
                     Ok(_) => {
@@ -469,6 +470,7 @@ impl GarbageCollector {
             &self.safepoint_manager,
             &self.root_scanner,
             &self.remembered_set,
+            &self.memory_manager,
             collection_type,
         )
     }
@@ -481,6 +483,7 @@ impl GarbageCollector {
         safepoint_manager: &Arc<SafepointManager>,
         root_scanner: &Arc<RootScanner>,
         remembered_set: &Arc<Mutex<RememberedSet>>,
+        memory_manager: &Option<Arc<Mutex<crate::ovm::memory::MemoryManager>>>,
         collection_type: CollectionType,
     ) -> Result<(), GcError> {
         let collection_start = Instant::now();
@@ -505,7 +508,11 @@ impl GarbageCollector {
 
         // Phase 4: Concurrent sweep
         let sweep_start = Instant::now();
-        sweeping_engine.concurrent_sweep_simple()?;
+        if let Some(mm) = memory_manager {
+            sweeping_engine.concurrent_sweep(mm)?;
+        } else {
+            sweeping_engine.concurrent_sweep_simple()?;
+        }
         let sweep_time = sweep_start.elapsed();
 
         // Phase 5: Selective compaction (if needed)
@@ -983,9 +990,10 @@ impl IncrementalSweepingEngine {
         }
     }
 
+    /// Main concurrent sweep implementation
     pub fn concurrent_sweep(&self, memory_manager: &Arc<Mutex<crate::ovm::memory::MemoryManager>>) -> Result<(), GcError> {
         let start = Instant::now();
-        let mut swept = 0;
+        let mut swept_objects = 0;
         let mut bytes_freed = 0;
 
         // Get all objects from memory manager
@@ -995,14 +1003,13 @@ impl IncrementalSweepingEngine {
             return Err(GcError::CollectionFailed("Failed to lock memory manager".to_string()));
         };
 
-        // Separate live and dead objects to avoid concurrent modification issues
+        // Phase 1: Identify live and dead objects
         let mut objects_to_free = Vec::new();
         let mut live_objects = Vec::new();
 
-        // First pass: identify objects to free and clear marks on live objects
         for obj_ptr in all_objects {
             if start.elapsed() >= self.pause_budget {
-                break; // Respect pause budget
+                break; // Respect pause budget - continue in next cycle
             }
 
             unsafe {
@@ -1013,54 +1020,218 @@ impl IncrementalSweepingEngine {
                 
                 let header = &*obj_ptr.as_ptr();
                 
+                // Check if object is marked as live
                 if !header.is_marked() {
-                    // Object is garbage - mark for deallocation
-                    let object_size = header.size as usize;
-                    if object_size > 0 && object_size < 1024 * 1024 * 1024 { // Sanity check
-                        objects_to_free.push((obj_ptr, object_size));
-                        bytes_freed += object_size;
-                        swept += 1;
-                    }
+                    // Object is garbage - add to free list
+                    let object_size = if header.size > 0 && header.size < 1024 * 1024 * 1024 {
+                        header.size as usize
+                    } else {
+                        // Fallback size calculation for corrupted headers
+                        std::mem::size_of::<ValueHeader>() + 64 // Minimum object size
+                    };
+                    
+                    objects_to_free.push((obj_ptr.as_ptr() as *mut u8, object_size));
+                    bytes_freed += object_size;
+                    swept_objects += 1;
                 } else {
-                    // Object is live - clear mark for next collection
+                    // Object is live - clear mark for next collection and keep reference
                     header.clear_mark();
                     live_objects.push(obj_ptr);
                 }
             }
         }
 
-        // Second pass: safely deallocate dead objects
+        // Phase 2: Actually deallocate dead objects and update free list
         if let Ok(mut mm) = memory_manager.lock() {
             for (obj_ptr, object_size) in objects_to_free {
                 unsafe {
-                    mm.deallocate(obj_ptr.as_ptr() as *mut u8, object_size);
+                    // Deallocate the object memory
+                    mm.deallocate(obj_ptr, object_size);
+                }
+                
+                // Add freed memory to free list for reuse
+                if let Ok(mut free_list) = self.free_list.lock() {
+                    free_list.add_block(obj_ptr as usize, object_size);
+                }
+            }
+        } else {
+            return Err(GcError::CollectionFailed("Failed to lock memory manager for deallocation".to_string()));
+        }
+
+        // Update statistics
+        self.swept_bytes.fetch_add(bytes_freed, Ordering::Relaxed);
+        
+        Ok(())
+    }
+
+    /// Simplified sweep for when memory manager is not fully available
+    pub fn concurrent_sweep_simple(&self) -> Result<(), GcError> {
+        let start = Instant::now();
+        let mut freed_bytes = 0;
+        let mut sweep_position = self.sweep_position.load(Ordering::Relaxed);
+
+        // Simulate sweep by cleaning up free list and consolidating blocks
+        if let Ok(mut free_list) = self.free_list.lock() {
+            let mut blocks_to_consolidate = Vec::new();
+            let total_blocks = free_list.blocks.len();
+            
+            // Process blocks within our pause budget
+            let mut processed = 0;
+            while start.elapsed() < self.pause_budget && processed < 100 && sweep_position < total_blocks {
+                if let Some(block) = free_list.blocks.get(sweep_position) {
+                    blocks_to_consolidate.push(block.clone());
+                    freed_bytes += block.size;
+                }
+                sweep_position += 1;
+                processed += 1;
+            }
+            
+            // Consolidate adjacent free blocks
+            self.consolidate_free_blocks(&mut free_list, blocks_to_consolidate)?;
+            
+            // Reset sweep position if we've processed all blocks
+            if sweep_position >= total_blocks {
+                sweep_position = 0;
+            }
+        }
+
+        // Update sweep position for next cycle
+        self.sweep_position.store(sweep_position, Ordering::Relaxed);
+        
+        // Record the freed bytes
+        self.swept_bytes.fetch_add(freed_bytes, Ordering::Relaxed);
+        
+        Ok(())
+    }
+
+    /// Consolidate adjacent free blocks to reduce fragmentation
+    fn consolidate_free_blocks(&self, free_list: &mut FreeList, mut blocks: Vec<FreeBlock>) -> Result<(), GcError> {
+        if blocks.is_empty() {
+            return Ok(());
+        }
+
+        // Sort blocks by address
+        blocks.sort_by_key(|block| block.address);
+
+        let mut consolidated = Vec::new();
+        let mut current_block = blocks[0].clone();
+
+        for next_block in blocks.into_iter().skip(1) {
+            // Check if blocks are adjacent
+            if current_block.address + current_block.size == next_block.address {
+                // Merge blocks
+                current_block.size += next_block.size;
+            } else {
+                // Add current block to consolidated list and start new block
+                consolidated.push(current_block);
+                current_block = next_block;
+            }
+        }
+        
+        // Add the last block
+        consolidated.push(current_block);
+
+        // Replace original blocks with consolidated ones
+        free_list.blocks.clear();
+        for block in consolidated {
+            free_list.blocks.push_back(block);
+        }
+        
+        // Update total free size
+        free_list.total_free = free_list.blocks.iter().map(|b| b.size).sum();
+
+        Ok(())
+    }
+
+    /// Force a complete sweep regardless of pause budget
+    pub fn force_complete_sweep(&self, memory_manager: &Arc<Mutex<crate::ovm::memory::MemoryManager>>) -> Result<usize, GcError> {
+        let start = Instant::now();
+        let mut total_freed = 0;
+
+        // Get all objects
+        let all_objects = if let Ok(mm) = memory_manager.lock() {
+            mm.get_all_objects()
+        } else {
+            return Err(GcError::CollectionFailed("Failed to lock memory manager".to_string()));
+        };
+
+        let mut dead_objects = Vec::new();
+
+        // Identify all dead objects (no pause budget limit)
+        for obj_ptr in all_objects {
+            unsafe {
+                if obj_ptr.as_ptr().is_null() {
+                    continue;
+                }
+                
+                let header = &*obj_ptr.as_ptr();
+                
+                if !header.is_marked() {
+                    let object_size = if header.size > 0 && header.size < 1024 * 1024 * 1024 {
+                        header.size as usize
+                    } else {
+                        std::mem::size_of::<ValueHeader>() + 64
+                    };
+                    
+                    dead_objects.push((obj_ptr.as_ptr() as *mut u8, object_size));
+                    total_freed += object_size;
+                } else {
+                    // Clear mark on live objects
+                    header.clear_mark();
                 }
             }
         }
 
-        self.swept_bytes.fetch_add(bytes_freed, Ordering::Relaxed);
-        Ok(())
-    }
-
-    pub fn concurrent_sweep_simple(&self) -> Result<(), GcError> {
-        let start = Instant::now();
-        let mut swept = 0;
-
-        // Fallback implementation for when memory manager is not available
-        while start.elapsed() < self.pause_budget {
-            swept += 1;
-
-            if swept > 1000 {
-                break;
+        // Free all dead objects
+        if let Ok(mut mm) = memory_manager.lock() {
+            for (obj_ptr, object_size) in dead_objects {
+                unsafe {
+                    mm.deallocate(obj_ptr, object_size);
+                }
+                
+                // Add to free list
+                if let Ok(mut free_list) = self.free_list.lock() {
+                    free_list.add_block(obj_ptr as usize, object_size);
+                }
             }
         }
 
-        self.swept_bytes.fetch_add(swept * 64, Ordering::Relaxed);
-        Ok(())
+        // Update statistics
+        self.swept_bytes.fetch_add(total_freed, Ordering::Relaxed);
+        
+        Ok(total_freed)
     }
 
+    /// Get the amount of memory swept in the last collection
     pub fn get_swept_bytes(&self) -> u64 {
         self.swept_bytes.load(Ordering::Relaxed) as u64
+    }
+
+    /// Reset swept bytes counter
+    pub fn reset_swept_bytes(&self) {
+        self.swept_bytes.store(0, Ordering::Relaxed);
+    }
+
+    /// Get current free list statistics
+    pub fn get_free_list_stats(&self) -> Result<(usize, usize), GcError> {
+        if let Ok(free_list) = self.free_list.lock() {
+            Ok((free_list.total_free(), free_list.largest_block()))
+        } else {
+            Err(GcError::CollectionFailed("Failed to lock free list".to_string()))
+        }
+    }
+
+    /// Allocate from free list if possible
+    pub fn allocate_from_free_list(&self, size: usize) -> Option<*mut u8> {
+        if let Ok(mut free_list) = self.free_list.lock() {
+            if let Some(address) = free_list.allocate(size) {
+                Some(address as *mut u8)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 }
 

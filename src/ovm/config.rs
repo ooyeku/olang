@@ -240,14 +240,14 @@ impl Default for MemoryConfig {
         Self {
             heap_size: None,                    // Unlimited by default
             gc_threads: num_cpus::get().min(4), // Up to 4 GC threads
-            gc_target_pause_ms: 1,              // 1ms target pause time
+            gc_target_pause_ms: 5,              // 5ms target pause time
             nursery_size: 8 * 1024 * 1024,      // 8MB nursery
             young_gen_size: 64 * 1024 * 1024,   // 64MB young generation
             large_object_threshold: 32 * 1024,  // 32KB large object threshold
             tlab_size: 256 * 1024,              // 256KB TLAB size
             concurrent_gc: true,
             generational_gc: true,
-            gc_trigger_threshold: 16 * 1024 * 1024, // 16MB allocation trigger
+            gc_trigger_threshold: 2 * 1024 * 1024, // 2MB allocation trigger
         }
     }
 }
