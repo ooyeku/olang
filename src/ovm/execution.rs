@@ -54,7 +54,7 @@ struct ExecutionStats {
 }
 
 /// Current execution tier for expressions/functions
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionTier {
     Interpreter,
     Bytecode,
@@ -272,7 +272,7 @@ impl ExecutionEngine {
             .map_err(ExecutionError::from)
     }
 
-    /// Execute a function by ID
+    /// Execute a function with tiered execution strategy
     pub fn execute_function(
         &mut self,
         func_id: FunctionId,
@@ -284,57 +284,83 @@ impl ExecutionEngine {
         // Ensure thread is unregistered when done
         let _guard = ThreadSafepointGuard::new(Arc::clone(&self.safepoint_manager));
 
-        let func_decl = self
-            .functions
-            .get(&func_id)
-            .ok_or(ExecutionError::FunctionNotFound(func_id))?
-            .clone();
-
         let start_time = std::time::Instant::now();
 
-        // Safepoint poll before execution
-        self.safepoint_manager
-            .safepoint_poll()
-            .map_err(|e| ExecutionError::Failed(format!("Safepoint coordination failed: {}", e)))?;
-
-        // Convert OVM values to AST values for interpreter
-        let mut ast_args = Vec::new();
-        for arg in args {
-            ast_args.push(self.ovm_value_to_ast(arg)?);
-        }
-
-        // Get current execution tier for this function
-        let tier = self
-            .execution_stats
-            .get(&func_id)
-            .map(|stats| stats.tier)
-            .unwrap_or(ExecutionTier::Interpreter);
-
-        let result = match tier {
-            ExecutionTier::Interpreter => {
-                self.execute_function_with_interpreter(&func_decl, &ast_args)?
-            }
-            ExecutionTier::Bytecode => {
-                // Execute with bytecode VM
-                self.execute_function_with_bytecode(func_id, &func_decl, args)?
-            }
-            ExecutionTier::Native => {
-                // Execute with JIT compiled code
-                self.execute_function_with_native_code(func_id, &ast_args)?
+        // **Phase 3: Enhanced tiered execution with JIT compilation**
+        
+        // First, check if we have compiled native code and execute if available
+        let has_native_code = {
+            if let Ok(optimization_engine) = self.optimization_engine.lock() {
+                optimization_engine.has_compiled_function(func_id)
+            } else {
+                false
             }
         };
 
-        let execution_time = start_time.elapsed();
-
-        // Update execution statistics
-        self.update_function_stats(func_id, execution_time);
-
-        // Check for tier transition
-        if self.config.enable_tier_transition {
-            self.consider_tier_transition(func_id);
+        if has_native_code {
+            // **Phase 3: Execute with native JIT code**
+            let result = {
+                if let Ok(mut opt_engine) = self.optimization_engine.lock() {
+                    opt_engine.execute_compiled_function(func_id, args)
+                } else {
+                    Err(OptimizationError::Failed("JIT compiler lock failed".to_string()))
+                }
+            };
+            
+            // Update execution statistics
+            let execution_time = start_time.elapsed();
+            self.update_function_stats(func_id, execution_time);
+            
+            return result.map_err(ExecutionError::OptimizationError);
         }
 
-        Ok(result)
+        // Check if we have bytecode for this function and execute if available
+        let has_bytecode = {
+            if let Ok(bytecode_vm) = self.bytecode_vm.lock() {
+                bytecode_vm.has_bytecode(func_id)
+            } else {
+                false
+            }
+        };
+
+        if has_bytecode {
+            // Execute with bytecode VM
+            let result = {
+                if let Ok(mut vm) = self.bytecode_vm.lock() {
+                    vm.execute(func_id, args)
+                } else {
+                    Err(BytecodeError::RuntimeError("Bytecode VM lock failed".to_string()))
+                }
+            };
+            
+            // Update execution statistics
+            let execution_time = start_time.elapsed();
+            self.update_function_stats(func_id, execution_time);
+            
+            return result.map_err(ExecutionError::BytecodeError);
+        }
+
+        // **Phase 3: Fallback to interpreter with compilation consideration**
+        if let Some(func_decl) = self.functions.get(&func_id) {
+            let func_decl = func_decl.clone();
+            // Convert OVM values to AST values for interpreter
+            let mut ast_args = Vec::new();
+            for arg in args {
+                ast_args.push(self.ovm_value_to_ast(arg)?);
+            }
+
+            // Execute with interpreter
+            let result = self.execute_function_with_interpreter(&func_decl, &ast_args)?;
+
+            // **Phase 3: Consider compilation after interpreter execution**
+            let execution_time = start_time.elapsed();
+            self.update_function_stats(func_id, execution_time);
+            self.consider_tier_transition(func_id);
+
+            Ok(result)
+        } else {
+            Err(ExecutionError::FunctionNotFound(func_id))
+        }
     }
 
     /// Register a function for execution
@@ -416,176 +442,70 @@ impl ExecutionEngine {
         }
     }
 
-    /// Consider whether a function should transition to a higher tier
+    /// **Phase 3: Enhanced tier transition with JIT compilation**
     fn consider_tier_transition(&mut self, func_id: FunctionId) {
-        if let Some(stats) = self.execution_stats.get_mut(&func_id) {
-            match stats.tier {
-                ExecutionTier::Interpreter => {
-                    if stats.call_count >= self.config.bytecode_threshold {
-                        // Transition to bytecode tier
-                        stats.tier = ExecutionTier::Bytecode;
-                        println!(
-                            "Function {:?} promoted to bytecode tier (call count: {})",
-                            func_id, stats.call_count
-                        );
+        if !self.config.enable_tier_transition {
+            return;
+        }
 
-                        // Pre-compile function to bytecode for next execution
-                        if let Some(func_decl) = self.functions.get(&func_id) {
-                            if let Ok(mut bytecode_vm) = self.bytecode_vm.lock() {
-                                if let Err(e) = bytecode_vm.compile_function(func_id, func_decl) {
-                                    println!(
-                                        "Bytecode compilation failed for {:?}: {}",
-                                        func_id, e
-                                    );
-                                    // Stay at interpreter tier
-                                    stats.tier = ExecutionTier::Interpreter;
+        if let Some(stats) = self.execution_stats.get(&func_id) {
+            let current_tier = stats.tier;
+
+            // **Phase 3: JIT compilation threshold check**
+            if current_tier == ExecutionTier::Bytecode && stats.call_count >= self.config.native_threshold {
+                // Consider JIT compilation
+                if let Ok(mut optimization_engine) = self.optimization_engine.lock() {
+                    let readiness = optimization_engine.assess_compilation_readiness(func_id);
+                    
+                    match readiness {
+                        crate::ovm::optimization::CompilationReadiness::HighPriority => {
+                            // Force JIT compilation
+                            if let Some(func_decl) = self.functions.get(&func_id) {
+                                let _ = optimization_engine.force_compile_function(
+                                    func_id,
+                                    format!("func_{}", func_id.0),
+                                    crate::ovm::optimization::CompilationTier::OptimizedJit,
+                                );
+                                
+                                // Update tier
+                                if let Some(stats) = self.execution_stats.get_mut(&func_id) {
+                                    stats.tier = ExecutionTier::Native;
                                 }
+                                
+                                println!("Phase 3: Function {:?} promoted to Native tier", func_id);
                             }
+                        }
+                        crate::ovm::optimization::CompilationReadiness::Medium => {
+                            // Queue for background compilation
+                            if let Some(func_decl) = self.functions.get(&func_id) {
+                                let _ = optimization_engine.compile_function_with_body(
+                                    func_id,
+                                    format!("func_{}", func_id.0),
+                                    Some("compiled_function".to_string()),
+                                );
+                            }
+                        }
+                        _ => {
+                            // Not ready for compilation yet
                         }
                     }
                 }
-                ExecutionTier::Bytecode => {
-                    if stats.call_count >= self.config.native_threshold {
-                        // Transition to native tier (JIT compilation)
-                        stats.tier = ExecutionTier::Native;
-
-                        // Trigger JIT compilation in background
-                        if let Ok(mut opt_engine) = self.optimization_engine.lock() {
-                            let func_name = format!("func_{:?}", func_id);
-                            if let Err(e) = opt_engine.compile_function_sync(func_id, func_name) {
-                                println!("JIT compilation failed for {:?}: {}", func_id, e);
-                                // Fall back to bytecode tier
+            }
+            // **Phase 3: Bytecode compilation threshold check**
+            else if current_tier == ExecutionTier::Interpreter && stats.call_count >= self.config.bytecode_threshold {
+                // Compile to bytecode
+                if let Some(func_decl) = self.functions.get(&func_id) {
+                    if let Ok(mut vm) = self.bytecode_vm.lock() {
+                        if let Ok(()) = vm.compile_function(func_id, func_decl) {
+                            // Update tier
+                            if let Some(stats) = self.execution_stats.get_mut(&func_id) {
                                 stats.tier = ExecutionTier::Bytecode;
-                            } else {
-                                println!(
-                                    "Function {:?} JIT compiled successfully (call count: {})",
-                                    func_id, stats.call_count
-                                );
                             }
+                            
+                            println!("Phase 3: Function {:?} promoted to Bytecode tier", func_id);
                         }
                     }
                 }
-                ExecutionTier::Native => {
-                    // Already at highest tier - check for deoptimization conditions
-                    let avg_time = if stats.call_count > 0 {
-                        stats.total_time_ns / stats.call_count as u64
-                    } else {
-                        0
-                    };
-
-                    // If performance degrades significantly, consider deoptimization
-                    if avg_time > 1_000_000 && stats.call_count % 100 == 0 {
-                        // 1ms threshold, check every 100 calls
-                        if let Ok(mut opt_engine) = self.optimization_engine.lock() {
-                            if let Err(e) = opt_engine.deoptimize_function(func_id) {
-                                println!("Deoptimization failed for {:?}: {}", func_id, e);
-                            } else {
-                                println!(
-                                    "Function {:?} deoptimized back to bytecode tier",
-                                    func_id
-                                );
-                                stats.tier = ExecutionTier::Bytecode; // Deoptimize to bytecode, not interpreter
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Execute a function using native JIT compiled code
-    fn execute_function_with_native_code(
-        &mut self,
-        func_id: FunctionId,
-        args: &[Value],
-    ) -> Result<OvmValue, ExecutionError> {
-        // Convert AST values to OVM values for JIT execution
-        let mut ovm_args = Vec::new();
-        for arg in args {
-            ovm_args.push(OvmValue::from_ast(arg.clone()));
-        }
-
-        // Execute with JIT compiler
-        let execution_result = if let Ok(mut opt_engine) = self.optimization_engine.lock() {
-            opt_engine.execute_compiled_function(func_id, &ovm_args)
-        } else {
-            Err(OptimizationError::Failed(
-                "Optimization engine lock failed".to_string(),
-            ))
-        };
-
-        match execution_result {
-            Ok(result) => Ok(result),
-            Err(OptimizationError::FunctionNotFound(_)) => {
-                // Function not compiled yet, fall back to interpreter
-                self.execute_function_with_interpreter_fallback(func_id, args)
-            }
-            Err(e) => {
-                println!("Native execution failed for {:?}: {}", func_id, e);
-                // Deoptimize and fall back to interpreter
-                if let Some(stats) = self.execution_stats.get_mut(&func_id) {
-                    stats.tier = ExecutionTier::Interpreter;
-                }
-                self.execute_function_with_interpreter_fallback(func_id, args)
-            }
-        }
-    }
-
-    /// Fallback to interpreter execution with function lookup
-    fn execute_function_with_interpreter_fallback(
-        &mut self,
-        func_id: FunctionId,
-        args: &[Value],
-    ) -> Result<OvmValue, ExecutionError> {
-        let func_decl = self
-            .functions
-            .get(&func_id)
-            .ok_or(ExecutionError::FunctionNotFound(func_id))?
-            .clone();
-
-        self.execute_function_with_interpreter(&func_decl, args)
-    }
-
-    /// Execute function using bytecode VM
-    fn execute_function_with_bytecode(
-        &mut self,
-        func_id: FunctionId,
-        func_decl: &FunctionDecl,
-        args: &[OvmValue],
-    ) -> Result<OvmValue, ExecutionError> {
-        // Try to execute with bytecode VM
-        let bytecode_result = {
-            if let Ok(mut bytecode_vm) = self.bytecode_vm.lock() {
-                // Check if function is already compiled to bytecode
-                if !bytecode_vm.has_bytecode(func_id) {
-                    // Compile function to bytecode
-                    bytecode_vm.compile_function(func_id, func_decl)?;
-                    println!("Function {:?} compiled to bytecode", func_id);
-                }
-
-                // Execute with bytecode
-                Some(
-                    bytecode_vm
-                        .execute(func_id, args)
-                        .map_err(ExecutionError::from),
-                )
-            } else {
-                None
-            }
-        };
-
-        // Handle result or fall back to interpreter
-        match bytecode_result {
-            Some(result) => result,
-            None => {
-                // Fall back to interpreter if bytecode VM is unavailable
-                println!(
-                    "Bytecode VM lock failed, falling back to interpreter for {:?}",
-                    func_id
-                );
-                let ast_args: Result<Vec<_>, _> =
-                    args.iter().map(|arg| self.ovm_value_to_ast(arg)).collect();
-                self.execute_function_with_interpreter(func_decl, &ast_args?)
             }
         }
     }
