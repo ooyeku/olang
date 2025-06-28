@@ -76,11 +76,10 @@ pub struct LazyScheduler {
 }
 
 /// Integration with garbage collection
-#[allow(dead_code)]
 pub struct LazyGcIntegration {
     weak_refs: Arc<RwLock<HashMap<ThunkId, Weak<LazyThunk>>>>,
     cleanup_queue: Arc<Mutex<VecDeque<ThunkId>>>,
-    gc_callback: Option<Arc<dyn Fn(&[ThunkId]) + Send + Sync>>,
+    gc_callback: Arc<Mutex<Option<Arc<dyn Fn(&[ThunkId]) + Send + Sync>>>>,
 }
 
 /// Lazy thunk representing a deferred computation
@@ -100,7 +99,7 @@ pub struct LazyThunk {
 pub struct LazyStream {
     id: StreamId,
     state: Arc<RwLock<StreamState>>,
-    generator: Arc<dyn StreamGenerator + Send + Sync>,
+    generator: Arc<Mutex<dyn StreamGenerator + Send + Sync>>,
     buffer: Arc<Mutex<StreamBuffer>>,
     fusion_info: Arc<RwLock<FusionInfo>>,
     subscribers: Arc<RwLock<Vec<StreamSubscriber>>>,
@@ -199,6 +198,67 @@ pub struct StreamBuffer {
     total_memory: usize,
     read_position: usize,
     write_position: usize,
+}
+
+impl StreamBuffer {
+    pub fn new(max_size: usize) -> Self {
+        Self {
+            elements: VecDeque::new(),
+            max_size,
+            total_memory: 0,
+            read_position: 0,
+            write_position: 0,
+        }
+    }
+
+    pub fn write_element(&mut self, value: OvmValue) -> Result<(), LazyError> {
+        if self.elements.len() >= self.max_size {
+            return Err(LazyError::BufferOverflow);
+        }
+
+        let memory_size = self.estimate_value_size(&value);
+        self.elements.push_back(value);
+        self.total_memory += memory_size;
+        self.write_position += 1;
+        Ok(())
+    }
+
+    pub fn read_element(&mut self) -> Option<OvmValue> {
+        if let Some(value) = self.elements.pop_front() {
+            let memory_size = self.estimate_value_size(&value);
+            self.total_memory = self.total_memory.saturating_sub(memory_size);
+            self.read_position += 1;
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    pub fn has_elements(&self) -> bool {
+        !self.elements.is_empty()
+    }
+
+    pub fn buffer_usage(&self) -> f64 {
+        if self.max_size == 0 {
+            0.0
+        } else {
+            self.elements.len() as f64 / self.max_size as f64
+        }
+    }
+
+    pub fn memory_usage(&self) -> usize {
+        self.total_memory
+    }
+
+    fn estimate_value_size(&self, value: &OvmValue) -> usize {
+        match &value.data {
+            ValueData::Integer(_) => 8,
+            ValueData::Float(_) => 8,
+            ValueData::Boolean(_) => 1,
+            ValueData::Unit => 0,
+            _ => 64, // Conservative estimate for complex types
+        }
+    }
 }
 
 /// Stream subscriber
@@ -505,14 +565,13 @@ impl LazyEngine {
 
     /// Integrate with garbage collector
     pub fn integrate_with_gc(&self, _gc: &Arc<GarbageCollector>) {
-        self.gc_integration.set_gc_callback(Arc::new({
-            let thunk_manager = self.thunk_manager.clone();
-            move |dead_thunks: &[ThunkId]| {
-                for &thunk_id in dead_thunks {
-                    let _ = thunk_manager.cleanup_thunk(thunk_id);
-                }
+        let thunk_manager = self.thunk_manager.clone();
+        let callback = Arc::new(move |dead_thunks: &[ThunkId]| {
+            for &thunk_id in dead_thunks {
+                let _ = thunk_manager.cleanup_thunk(thunk_id);
             }
-        }));
+        });
+        self.gc_integration.set_gc_callback(callback);
     }
 
     /// Optimize stream fusion
@@ -695,42 +754,103 @@ impl StreamProcessor {
         })
     }
 
-    fn create_stream<G>(&self, _generator: G) -> Result<StreamId, LazyError>
+    fn create_stream<G>(&self, generator: G) -> Result<StreamId, LazyError>
     where
         G: StreamGenerator + Send + Sync + 'static,
     {
         let id = self.stream_counter.fetch_add(1, Ordering::Relaxed);
-        // Simplified implementation
+        
+        let stream = Arc::new(LazyStream {
+            id,
+            state: Arc::new(RwLock::new(StreamState::Active)),
+            generator: Arc::new(Mutex::new(generator)),
+            buffer: Arc::new(Mutex::new(StreamBuffer::new(1000))), // 1000 element buffer
+            fusion_info: Arc::new(RwLock::new(FusionInfo {
+                can_fuse: true,
+                fusion_type: FusionType::Map,
+                pipeline_stage: 0,
+                optimization_potential: 1.0,
+            })),
+            subscribers: Arc::new(RwLock::new(Vec::new())),
+        });
+
+        // Store the stream
+        if let Ok(mut streams) = self.active_streams.write() {
+            streams.insert(id, stream);
+        }
+
+        // Register with buffer manager
+        self.buffer_manager.register_stream(id, 1000)?;
+
         Ok(id)
     }
 
-    fn take(&self, _stream_id: StreamId, count: usize) -> Result<Vec<OvmValue>, LazyError> {
-        // Simplified implementation - return dummy values
-        let mut result = Vec::new();
-        for i in 0..count {
-            result.push(OvmValue {
-                header: ValueHeader::default(),
-                data: ValueData::Integer(i as i64),
-            });
+    fn take(&self, stream_id: StreamId, count: usize) -> Result<Vec<OvmValue>, LazyError> {
+        if let Ok(streams) = self.active_streams.read() {
+            if let Some(stream) = streams.get(&stream_id) {
+                let mut result = Vec::new();
+                
+                // First, check the buffer for existing elements
+                if let Ok(mut buffer) = stream.buffer.lock() {
+                    while result.len() < count && buffer.has_elements() {
+                        if let Some(value) = buffer.read_element() {
+                            result.push(value);
+                        }
+                    }
+                }
+
+                // If we need more elements, generate them
+                while result.len() < count {
+                    // Check if stream is still active
+                    if let Ok(state) = stream.state.read() {
+                        match &*state {
+                            StreamState::Completed => break,
+                            StreamState::Failed(_) => return Err(LazyError::StreamNotFound { id: stream_id }),
+                            StreamState::Paused => break,
+                            StreamState::Active => {
+                                // Generate next element
+                                if let Ok(mut gen) = stream.generator.lock() {
+                                    if let Some(value) = gen.next() {
+                                        result.push(value);
+                                    } else {
+                                        // Stream is exhausted
+                                        if let Ok(mut state) = stream.state.write() {
+                                            *state = StreamState::Completed;
+                                        }
+                                        break;
+                                    }
+                                } else {
+                                    return Err(LazyError::Failed("Failed to lock generator".to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return Ok(result);
+            }
         }
-        Ok(result)
+        
+        Err(LazyError::StreamNotFound { id: stream_id })
     }
 
     fn start_optimizer(&self) -> Result<(), LazyError> {
-        Ok(())
+        // Start background fusion optimization
+        self.fusion_optimizer.start_background_optimization()
     }
 
     fn stop_optimizer(&self) -> Result<(), LazyError> {
-        Ok(())
+        self.fusion_optimizer.stop_background_optimization()
     }
 
     fn optimize_fusion(&self) -> Result<OptimizationStats, LazyError> {
-        Ok(OptimizationStats {
-            fusions_performed: 0,
-            speedup_achieved: 1.0,
-            memory_saved: 0,
-            optimization_time: Duration::ZERO,
-        })
+        let streams = if let Ok(streams) = self.active_streams.read() {
+            streams.clone()
+        } else {
+            return Err(LazyError::Failed("Failed to read streams".to_string()));
+        };
+
+        self.fusion_optimizer.analyze_and_optimize(streams)
     }
 }
 
@@ -828,12 +948,142 @@ impl LazyScheduler {
 
     fn start(&self) -> Result<(), LazyError> {
         self.is_running.store(true, Ordering::Relaxed);
+        
+        // Start background worker threads for task processing
+        let num_workers = 2; // Could be configurable
+        for worker_id in 0..num_workers {
+            self.start_worker_thread(worker_id)?;
+        }
+        
         Ok(())
     }
 
     fn stop(&self) -> Result<(), LazyError> {
         self.is_running.store(false, Ordering::Relaxed);
+        
+        // Wake up all worker threads to shut down
+        self.notify_all_workers();
+        
         Ok(())
+    }
+
+    fn start_worker_thread(&self, worker_id: usize) -> Result<(), LazyError> {
+        let work_queue = self.work_queue.clone();
+        let priority_queue = self.priority_queue.clone();
+        let is_running = self.is_running.clone();
+
+        let _handle = thread::spawn(move || {
+            Self::worker_thread_main(worker_id, work_queue, priority_queue, is_running);
+        });
+
+        // Note: In the current implementation, we don't store the handle
+        // In a production system, we'd need to store and manage these handles
+        
+        Ok(())
+    }
+
+    fn worker_thread_main(
+        worker_id: usize,
+        work_queue: Arc<Mutex<VecDeque<LazyTask>>>,
+        priority_queue: Arc<Mutex<std::collections::BinaryHeap<PriorityTask>>>,
+        is_running: Arc<AtomicBool>,
+    ) {
+        while is_running.load(Ordering::Relaxed) {
+            // Try to get a high-priority task first
+            let task = if let Ok(mut pq) = priority_queue.lock() {
+                pq.pop().map(|priority_task| priority_task.task)
+            } else {
+                None
+            };
+
+            let task = task.or_else(|| {
+                // Fallback to regular work queue
+                if let Ok(mut queue) = work_queue.lock() {
+                    queue.pop_front()
+                } else {
+                    None
+                }
+            });
+
+            if let Some(task) = task {
+                Self::process_task(worker_id, task);
+            } else {
+                // No work available, sleep briefly
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    fn process_task(worker_id: usize, task: LazyTask) {
+        let _start_time = Instant::now();
+        
+        // In a real implementation, this would:
+        // 1. Force evaluate the thunk
+        // 2. Handle dependencies
+        // 3. Update caches
+        // 4. Report completion
+        
+        // For now, just simulate work
+        thread::sleep(Duration::from_millis(1));
+        
+        // Log task completion (would use proper logging in production)
+        if cfg!(debug_assertions) {
+            println!("Worker {} completed task for thunk {}", worker_id, task.thunk_id);
+        }
+    }
+
+    fn notify_all_workers(&self) {
+        // Add dummy tasks to wake up sleeping workers
+        if let Ok(mut queue) = self.work_queue.lock() {
+            for _ in 0..2 { // Assuming 2 workers
+                queue.push_back(LazyTask {
+                    thunk_id: usize::MAX, // Sentinel value for shutdown
+                    priority: ThunkPriority::Low,
+                    created_at: Instant::now(),
+                });
+            }
+        }
+    }
+
+    pub fn schedule_task(&self, task: LazyTask) -> Result<(), LazyError> {
+        if task.priority >= ThunkPriority::High {
+            // High priority tasks go to priority queue
+            let priority_task = PriorityTask {
+                priority_score: task.priority as u64 * 1000 + task.created_at.elapsed().as_millis() as u64,
+                task,
+            };
+            
+            if let Ok(mut pq) = self.priority_queue.lock() {
+                pq.push(priority_task);
+            } else {
+                return Err(LazyError::Failed("Failed to schedule high priority task".to_string()));
+            }
+        } else {
+            // Normal tasks go to work queue
+            if let Ok(mut queue) = self.work_queue.lock() {
+                queue.push_back(task);
+            } else {
+                return Err(LazyError::Failed("Failed to schedule task".to_string()));
+            }
+        }
+        
+        Ok(())
+    }
+
+    pub fn get_queue_stats(&self) -> (usize, usize) {
+        let work_queue_size = if let Ok(queue) = self.work_queue.lock() {
+            queue.len()
+        } else {
+            0
+        };
+
+        let priority_queue_size = if let Ok(pq) = self.priority_queue.lock() {
+            pq.len()
+        } else {
+            0
+        };
+
+        (work_queue_size, priority_queue_size)
     }
 }
 
@@ -842,12 +1092,66 @@ impl LazyGcIntegration {
         Self {
             weak_refs: Arc::new(RwLock::new(HashMap::new())),
             cleanup_queue: Arc::new(Mutex::new(VecDeque::new())),
-            gc_callback: None,
+            gc_callback: Arc::new(Mutex::new(None)),
         }
     }
 
-    fn set_gc_callback(&self, _callback: Arc<dyn Fn(&[ThunkId]) + Send + Sync>) {
-        // Implementation would store the callback
+    fn set_gc_callback(&self, callback: Arc<dyn Fn(&[ThunkId]) + Send + Sync>) {
+        if let Ok(mut gc_callback) = self.gc_callback.lock() {
+            *gc_callback = Some(callback);
+        }
+    }
+
+    pub fn register_thunk(&self, thunk_id: ThunkId, thunk: &Arc<LazyThunk>) -> Result<(), LazyError> {
+        if let Ok(mut weak_refs) = self.weak_refs.write() {
+            weak_refs.insert(thunk_id, Arc::downgrade(thunk));
+            Ok(())
+        } else {
+            Err(LazyError::Failed("Failed to register thunk with GC".to_string()))
+        }
+    }
+
+    pub fn cleanup_dead_thunks(&self) -> Result<Vec<ThunkId>, LazyError> {
+        let mut dead_thunks = Vec::new();
+        
+        if let Ok(mut weak_refs) = self.weak_refs.write() {
+            weak_refs.retain(|&thunk_id, weak_ref| {
+                if weak_ref.strong_count() == 0 {
+                    dead_thunks.push(thunk_id);
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+
+        // Add to cleanup queue
+        if let Ok(mut queue) = self.cleanup_queue.lock() {
+            for &thunk_id in &dead_thunks {
+                queue.push_back(thunk_id);
+            }
+        }
+
+        // Notify GC callback if available
+        if let Ok(gc_callback) = self.gc_callback.lock() {
+            if let Some(ref callback) = *gc_callback {
+                callback(&dead_thunks);
+            }
+        }
+
+        Ok(dead_thunks)
+    }
+
+    pub fn force_cleanup(&self) -> Result<usize, LazyError> {
+        let cleaned = if let Ok(mut queue) = self.cleanup_queue.lock() {
+            let count = queue.len();
+            queue.clear();
+            count
+        } else {
+            0
+        };
+
+        Ok(cleaned)
     }
 }
 
@@ -858,6 +1162,98 @@ impl StreamBufferManager {
             buffer_size_limit: 1000,
             eviction_policy: BufferEvictionPolicy::Lru,
         }
+    }
+
+    pub fn register_stream(&self, stream_id: StreamId, buffer_size: usize) -> Result<(), LazyError> {
+        let buffer = Arc::new(Mutex::new(StreamBuffer::new(buffer_size)));
+        
+        if let Ok(mut buffers) = self.buffers.write() {
+            buffers.insert(stream_id, buffer);
+            Ok(())
+        } else {
+            Err(LazyError::Failed("Failed to register stream buffer".to_string()))
+        }
+    }
+
+    pub fn get_buffer(&self, stream_id: StreamId) -> Option<Arc<Mutex<StreamBuffer>>> {
+        if let Ok(buffers) = self.buffers.read() {
+            buffers.get(&stream_id).cloned()
+        } else {
+            None
+        }
+    }
+
+    pub fn remove_stream(&self, stream_id: StreamId) -> Result<(), LazyError> {
+        if let Ok(mut buffers) = self.buffers.write() {
+            buffers.remove(&stream_id);
+            Ok(())
+        } else {
+            Err(LazyError::Failed("Failed to remove stream buffer".to_string()))
+        }
+    }
+
+    pub fn total_memory_usage(&self) -> usize {
+        if let Ok(buffers) = self.buffers.read() {
+            buffers.values()
+                .filter_map(|buffer| buffer.lock().ok())
+                .map(|buffer| buffer.memory_usage())
+                .sum()
+        } else {
+            0
+        }
+    }
+
+    pub fn evict_if_needed(&self) -> Result<(), LazyError> {
+        let total_memory = self.total_memory_usage();
+        let memory_limit = 50 * 1024 * 1024; // 50MB limit
+        
+        if total_memory > memory_limit {
+            self.apply_eviction_policy()?;
+        }
+        
+        Ok(())
+    }
+
+    fn apply_eviction_policy(&self) -> Result<(), LazyError> {
+        match self.eviction_policy {
+            BufferEvictionPolicy::Lru => self.evict_lru(),
+            BufferEvictionPolicy::Lfu => self.evict_lfu(),
+            BufferEvictionPolicy::Fifo => self.evict_fifo(),
+            BufferEvictionPolicy::Random => self.evict_random(),
+        }
+    }
+
+    fn evict_lru(&self) -> Result<(), LazyError> {
+        // Simplified LRU eviction - would use access timestamps in production
+        if let Ok(mut buffers) = self.buffers.write() {
+            if let Some((&oldest_id, _)) = buffers.iter().next() {
+                buffers.remove(&oldest_id);
+            }
+        }
+        Ok(())
+    }
+
+    fn evict_lfu(&self) -> Result<(), LazyError> {
+        // Simplified LFU eviction
+        self.evict_lru() // Fallback to LRU for now
+    }
+
+    fn evict_fifo(&self) -> Result<(), LazyError> {
+        // Simplified FIFO eviction
+        self.evict_lru() // Fallback to LRU for now
+    }
+
+    fn evict_random(&self) -> Result<(), LazyError> {
+        // Random eviction
+        if let Ok(mut buffers) = self.buffers.write() {
+            if !buffers.is_empty() {
+                let keys: Vec<_> = buffers.keys().cloned().collect();
+                if let Some(random_key) = keys.first() {
+                    buffers.remove(random_key);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -873,6 +1269,149 @@ impl StreamFusionOptimizer {
                 optimization_time: Duration::ZERO,
             })),
         }
+    }
+
+    pub fn start_background_optimization(&self) -> Result<(), LazyError> {
+        // In a full implementation, this would start background threads
+        // For now, just mark as ready
+        Ok(())
+    }
+
+    pub fn stop_background_optimization(&self) -> Result<(), LazyError> {
+        // Stop background optimization threads
+        Ok(())
+    }
+
+    pub fn analyze_and_optimize(&self, streams: HashMap<StreamId, Arc<LazyStream>>) -> Result<OptimizationStats, LazyError> {
+        let start_time = Instant::now();
+        let mut opportunities = Vec::new();
+
+        // Analyze streams for fusion opportunities
+        for (stream_id, stream) in &streams {
+            if let Ok(fusion_info) = stream.fusion_info.read() {
+                if fusion_info.can_fuse {
+                    opportunities.push(FusionOpportunity {
+                        streams: vec![*stream_id],
+                        fusion_type: fusion_info.fusion_type,
+                        estimated_speedup: fusion_info.optimization_potential,
+                        memory_savings: 1024, // Estimated
+                    });
+                }
+            }
+        }
+
+        // Look for streams that can be fused together
+        let fusable_pairs = self.find_fusable_pairs(&streams);
+        for (stream1, stream2, fusion_type) in fusable_pairs {
+            opportunities.push(FusionOpportunity {
+                streams: vec![stream1, stream2],
+                fusion_type,
+                estimated_speedup: 1.5, // 50% speedup estimate
+                memory_savings: 2048,
+            });
+        }
+
+        // Store opportunities
+        if let Ok(mut stored_opportunities) = self.fusion_opportunities.write() {
+            stored_opportunities.extend(opportunities.clone());
+        }
+
+        // Apply best fusion opportunities
+        let mut fusions_performed = 0;
+        let mut total_speedup = 1.0;
+        let mut memory_saved = 0;
+
+        for opportunity in opportunities {
+            if self.should_apply_fusion(&opportunity) {
+                self.apply_fusion_opportunity(&opportunity)?;
+                fusions_performed += 1;
+                total_speedup *= opportunity.estimated_speedup;
+                memory_saved += opportunity.memory_savings;
+            }
+        }
+
+        let optimization_time = start_time.elapsed();
+
+        // Update statistics
+        let stats = OptimizationStats {
+            fusions_performed,
+            speedup_achieved: total_speedup,
+            memory_saved,
+            optimization_time,
+        };
+
+        if let Ok(mut stored_stats) = self.optimization_stats.lock() {
+            stored_stats.fusions_performed += fusions_performed;
+            stored_stats.speedup_achieved = total_speedup;
+            stored_stats.memory_saved += memory_saved;
+            stored_stats.optimization_time += optimization_time;
+        }
+
+        Ok(stats)
+    }
+
+    fn find_fusable_pairs(&self, streams: &HashMap<StreamId, Arc<LazyStream>>) -> Vec<(StreamId, StreamId, FusionType)> {
+        let mut pairs = Vec::new();
+        let stream_ids: Vec<_> = streams.keys().cloned().collect();
+
+        for (i, &id1) in stream_ids.iter().enumerate() {
+            for &id2 in stream_ids.iter().skip(i + 1) {
+                if let (Some(stream1), Some(stream2)) = (streams.get(&id1), streams.get(&id2)) {
+                    if let (Ok(info1), Ok(info2)) = (stream1.fusion_info.read(), stream2.fusion_info.read()) {
+                        if self.can_fuse_streams(&info1, &info2) {
+                            pairs.push((id1, id2, self.determine_fusion_type(&info1, &info2)));
+                        }
+                    }
+                }
+            }
+        }
+
+        pairs
+    }
+
+    fn can_fuse_streams(&self, info1: &FusionInfo, info2: &FusionInfo) -> bool {
+        info1.can_fuse && info2.can_fuse && 
+        info1.pipeline_stage + 1 == info2.pipeline_stage
+    }
+
+    fn determine_fusion_type(&self, info1: &FusionInfo, info2: &FusionInfo) -> FusionType {
+        // Simple heuristic for determining fusion type
+        match (info1.fusion_type, info2.fusion_type) {
+            (FusionType::Map, FusionType::Filter) => FusionType::Map,
+            (FusionType::Filter, FusionType::Map) => FusionType::Filter,
+            (FusionType::Map, FusionType::Map) => FusionType::Map,
+            (FusionType::Filter, FusionType::Filter) => FusionType::Filter,
+            _ => info1.fusion_type, // Default to first stream's type
+        }
+    }
+
+    fn should_apply_fusion(&self, opportunity: &FusionOpportunity) -> bool {
+        // Apply fusion if it's estimated to provide significant benefit
+        opportunity.estimated_speedup > 1.2 && opportunity.memory_savings > 512
+    }
+
+    fn apply_fusion_opportunity(&self, opportunity: &FusionOpportunity) -> Result<(), LazyError> {
+        let pipeline_id = self.generate_pipeline_id();
+        
+        let fused_pipeline = FusedPipeline {
+            id: pipeline_id,
+            stages: Vec::new(), // Would be populated with actual pipeline stages
+            input_streams: opportunity.streams.clone(),
+            output_stream: pipeline_id as StreamId, // Simplified
+            optimization_level: 1,
+        };
+
+        if let Ok(mut pipelines) = self.fused_pipelines.write() {
+            pipelines.insert(pipeline_id, fused_pipeline);
+        }
+
+        Ok(())
+    }
+
+    fn generate_pipeline_id(&self) -> PipelineId {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        COUNTER.fetch_add(1, Ordering::SeqCst)
     }
 }
 
@@ -981,5 +1520,111 @@ mod tests {
                 assert_eq!(v, 42);
             }
         }
+    }
+
+    // Example stream generator for testing
+    struct RangeGenerator {
+        current: i64,
+        end: i64,
+        step: i64,
+    }
+
+    impl RangeGenerator {
+        fn new(start: i64, end: i64, step: i64) -> Self {
+            Self {
+                current: start,
+                end,
+                step,
+            }
+        }
+    }
+
+    impl StreamGenerator for RangeGenerator {
+        fn next(&mut self) -> Option<OvmValue> {
+            if (self.step > 0 && self.current < self.end) || (self.step < 0 && self.current > self.end) {
+                let value = OvmValue {
+                    header: ValueHeader::default(),
+                    data: ValueData::Integer(self.current),
+                };
+                self.current += self.step;
+                Some(value)
+            } else {
+                None
+            }
+        }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            let remaining = if self.step != 0 {
+                ((self.end - self.current) / self.step).max(0) as usize
+            } else {
+                0
+            };
+            (remaining, Some(remaining))
+        }
+
+        fn is_infinite(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn test_stream_processing() {
+        let config = OvmConfig::default();
+        let engine = LazyEngine::new(&config).unwrap();
+
+        let generator = RangeGenerator::new(1, 10, 1);
+        let stream_id = engine.create_stream(generator).unwrap();
+
+        let values = engine.take_from_stream(stream_id, 5).unwrap();
+        assert_eq!(values.len(), 5);
+    }
+
+    #[test]
+    fn test_stream_buffer() {
+        let mut buffer = StreamBuffer::new(3);
+        
+        // Test writing elements
+        for i in 0..3 {
+            let value = OvmValue {
+                header: ValueHeader::default(),
+                data: ValueData::Integer(i),
+            };
+            assert!(buffer.write_element(value).is_ok());
+        }
+        
+        // Buffer should be full
+        assert_eq!(buffer.buffer_usage(), 1.0);
+        
+        // Reading elements
+        for i in 0..3 {
+            if let Some(value) = buffer.read_element() {
+                if let ValueData::Integer(v) = value.data {
+                    assert_eq!(v, i);
+                }
+            } else {
+                panic!("Expected value at position {}", i);
+            }
+        }
+        
+        // Buffer should be empty
+        assert!(!buffer.has_elements());
+    }
+
+    #[test]
+    fn test_lazy_scheduler() {
+        let config = LazyConfig::default();
+        let scheduler = LazyScheduler::new(&config).unwrap();
+        
+        let task = LazyTask {
+            thunk_id: 1,
+            priority: ThunkPriority::Normal,
+            created_at: Instant::now(),
+        };
+        
+        assert!(scheduler.schedule_task(task).is_ok());
+        
+        let (work_queue_size, priority_queue_size) = scheduler.get_queue_stats();
+        assert_eq!(work_queue_size, 1);
+        assert_eq!(priority_queue_size, 0);
     }
 }
