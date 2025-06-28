@@ -155,11 +155,10 @@ mod tests {
         match result {
             Value::List(items) => {
                 assert_eq!(items.len(), 3);
-                // Note: Currently returns placeholder value (42) due to ThreadSafeFunction limitation
-                // In full implementation, this would properly evaluate the function
-                assert_eq!(items[0], Value::Integer(42));
-                assert_eq!(items[1], Value::Integer(42));
-                assert_eq!(items[2], Value::Integer(42));
+                // The mapper function should double each value: [1, 2, 3] -> [2, 4, 6]
+                assert_eq!(items[0], Value::Integer(2));
+                assert_eq!(items[1], Value::Integer(4));
+                assert_eq!(items[2], Value::Integer(6));
             }
             _ => panic!("Expected list value"),
         }

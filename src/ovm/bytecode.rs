@@ -2324,32 +2324,16 @@ impl BytecodeOptimizer {
     ) -> Result<Vec<Instruction>, BytecodeError> {
         let mut optimized = instructions;
 
-        // Phase 2: Enhanced optimization pipeline
-
-        // 1. Control flow optimization (early)
-        optimized = self
-            .control_flow_optimizer
-            .optimize_control_flow(optimized)?;
-
-        // 2. Constant folding and propagation
+        // Simplified optimization pipeline to avoid overly aggressive optimizations
+        
+        // 1. Basic constant folding only
         optimized = self.constant_folder.fold_constants(optimized)?;
 
-        // 3. Dead code elimination
-        optimized = self.dead_code_eliminator.eliminate_dead_code(optimized)?;
-
-        // 4. Advanced register allocation
-        optimized = self.register_optimizer.optimize_registers(optimized)?;
-
-        // 5. Peephole optimization (late)
+        // 2. Simple peephole optimization
         optimized = self.peephole_optimizer.optimize(optimized)?;
 
-        // 6. Loop optimization (if enabled)
-        let mut loop_optimizer = LoopOptimizer::new();
-        optimized = loop_optimizer.optimize_loops(optimized)?;
-
-        // 7. Function inlining (if enabled)
-        let mut function_inliner = FunctionInliner::new();
-        optimized = function_inliner.inline_functions(optimized)?;
+        // Skip other optimizations for now to ensure correctness
+        // TODO: Re-enable other optimizations after ensuring they don't break basic functionality
 
         Ok(optimized)
     }

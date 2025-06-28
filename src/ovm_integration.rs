@@ -83,6 +83,11 @@ impl Default for IntegrationConfig {
                 "head".to_string(),
                 "tail".to_string(),
                 "cons".to_string(),
+                // Pipeline operations like map and filter are removed to use classic interpreter
+                "reduce".to_string(),
+                "fold".to_string(),
+                "take".to_string(),
+                "skip".to_string(),
             ],
         }
     }
@@ -404,12 +409,16 @@ impl OvmInterpreter {
                             self.integration_config.use_ovm_by_default
                         }
                     }
-                    _ => false, // Complex callees use classic interpreter for safety
+                    crate::ast::Expr::FieldAccess { .. } => {
+                        // Module functions (like math.sqrt) can use OVM
+                        true
+                    }
+                    _ => false, // Other complex callees use classic interpreter for safety
                 }
             }
 
-            // Pipeline expressions should still use classic interpreter for now
-            crate::ast::Expr::Pipeline { .. } => false,
+            // Pipeline expressions can benefit from OVM optimization
+            crate::ast::Expr::Pipeline { .. } => true,
 
             // Identifiers, loops should use classic interpreter for environment consistency
             crate::ast::Expr::Identifier(_) => false,
@@ -533,7 +542,7 @@ impl OvmInterpreter {
                 | "skip"
                 | "force"
                 | "lazy"
-        ) || name.contains('.') // Module functions like math.sqrt, fs.read_file, etc.
+        )
     }
 }
 
