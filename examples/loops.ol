@@ -1,4 +1,4 @@
-let n = range(100)
+let n = range(10000)
 
 let v = random.choice(n)
 
