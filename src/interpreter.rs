@@ -1175,11 +1175,6 @@ impl Interpreter {
         ) && matches!(value, Value::Struct { type_name, .. } if type_name == "Module")
     }
 
-    /// Check if a variable is a standard library module (instance method for REPL)
-    fn is_stdlib_module(&self, name: &str, value: &Value) -> bool {
-        Self::is_stdlib_module_static(name, value)
-    }
-
     /// Define a variable in the current environment (for REPL use)
     pub fn define_variable(&mut self, name: String, value: Value) {
         self.environment.define(name, value);

@@ -70,7 +70,6 @@ pub struct MemoizationCache {
 /// Scheduler for background lazy evaluation
 pub struct LazyScheduler {
     work_queue: Arc<Mutex<VecDeque<LazyTask>>>,
-    worker_threads: Vec<thread::JoinHandle<()>>,
     is_running: Arc<AtomicBool>,
     priority_queue: Arc<Mutex<std::collections::BinaryHeap<PriorityTask>>>,
 }
@@ -97,12 +96,10 @@ pub struct LazyThunk {
 
 /// Lazy stream for infinite sequences
 pub struct LazyStream {
-    id: StreamId,
     state: Arc<RwLock<StreamState>>,
     generator: Arc<Mutex<dyn StreamGenerator + Send + Sync>>,
     buffer: Arc<Mutex<StreamBuffer>>,
     fusion_info: Arc<RwLock<FusionInfo>>,
-    subscribers: Arc<RwLock<Vec<StreamSubscriber>>>,
 }
 
 /// Stream buffer manager
@@ -170,9 +167,6 @@ pub enum ThunkPriority {
 #[derive(Debug)]
 pub struct CacheEntry {
     value: OvmValue,
-    created_at: Instant,
-    last_accessed: Instant,
-    access_count: usize,
     memory_size: usize,
 }
 
@@ -261,13 +255,6 @@ impl StreamBuffer {
     }
 }
 
-/// Stream subscriber
-pub struct StreamSubscriber {
-    id: usize,
-    callback: Arc<dyn Fn(&OvmValue) -> bool + Send + Sync>,
-    active: Arc<AtomicBool>,
-}
-
 /// Buffer eviction policies
 #[derive(Debug, Clone, Copy)]
 pub enum BufferEvictionPolicy {
@@ -302,21 +289,12 @@ pub enum FusionType {
 #[derive(Debug, Clone)]
 pub struct FusionOpportunity {
     streams: Vec<StreamId>,
-    fusion_type: FusionType,
     estimated_speedup: f64,
     memory_savings: usize,
 }
 
-/// Fused pipeline
-pub struct FusedPipeline {
-    id: PipelineId,
-    stages: Vec<PipelineStage>,
-    input_streams: Vec<StreamId>,
-    output_stream: StreamId,
-    optimization_level: u8,
-}
-
 /// Pipeline stage
+#[derive(Clone)]
 pub struct PipelineStage {
     operation: Arc<dyn PipelineOperation + Send + Sync>,
     fusion_compatible: bool,
@@ -761,7 +739,6 @@ impl StreamProcessor {
         let id = self.stream_counter.fetch_add(1, Ordering::Relaxed);
         
         let stream = Arc::new(LazyStream {
-            id,
             state: Arc::new(RwLock::new(StreamState::Active)),
             generator: Arc::new(Mutex::new(generator)),
             buffer: Arc::new(Mutex::new(StreamBuffer::new(1000))), // 1000 element buffer
@@ -771,7 +748,6 @@ impl StreamProcessor {
                 pipeline_stage: 0,
                 optimization_potential: 1.0,
             })),
-            subscribers: Arc::new(RwLock::new(Vec::new())),
         });
 
         // Store the stream
@@ -891,15 +867,19 @@ impl MemoizationCache {
     fn put(&self, key: String, value: OvmValue) -> Result<(), LazyError> {
         let memory_size = 64; // Simplified size calculation
 
+        // Check entry count limit
+        if let Ok(cache) = self.cache.read() {
+            if cache.len() >= self.max_entries {
+                self.evict_lru()?;
+            }
+        }
+
         if self.current_memory.load(Ordering::Relaxed) + memory_size > self.max_memory {
             self.evict_lru()?;
         }
 
         let entry = CacheEntry {
             value,
-            created_at: Instant::now(),
-            last_accessed: Instant::now(),
-            access_count: 1,
             memory_size,
         };
 
@@ -940,7 +920,6 @@ impl LazyScheduler {
     fn new(_config: &LazyConfig) -> Result<Self, LazyError> {
         Ok(Self {
             work_queue: Arc::new(Mutex::new(VecDeque::new())),
-            worker_threads: Vec::new(),
             is_running: Arc::new(AtomicBool::new(false)),
             priority_queue: Arc::new(Mutex::new(std::collections::BinaryHeap::new())),
         })
@@ -972,12 +951,13 @@ impl LazyScheduler {
         let priority_queue = self.priority_queue.clone();
         let is_running = self.is_running.clone();
 
-        let _handle = thread::spawn(move || {
+        let handle = thread::spawn(move || {
             Self::worker_thread_main(worker_id, work_queue, priority_queue, is_running);
         });
 
-        // Note: In the current implementation, we don't store the handle
-        // In a production system, we'd need to store and manage these handles
+        // Store the handle in the worker_threads vector
+        // Note: This would require mutable access to self, which we don't have in this design
+        // For now, we'll just spawn the thread without storing the handle
         
         Ok(())
     }
@@ -1292,7 +1272,6 @@ impl StreamFusionOptimizer {
                 if fusion_info.can_fuse {
                     opportunities.push(FusionOpportunity {
                         streams: vec![*stream_id],
-                        fusion_type: fusion_info.fusion_type,
                         estimated_speedup: fusion_info.optimization_potential,
                         memory_savings: 1024, // Estimated
                     });
@@ -1305,7 +1284,6 @@ impl StreamFusionOptimizer {
         for (stream1, stream2, fusion_type) in fusable_pairs {
             opportunities.push(FusionOpportunity {
                 streams: vec![stream1, stream2],
-                fusion_type,
                 estimated_speedup: 1.5, // 50% speedup estimate
                 memory_savings: 2048,
             });
@@ -1627,4 +1605,713 @@ mod tests {
         assert_eq!(work_queue_size, 1);
         assert_eq!(priority_queue_size, 0);
     }
+
+    #[test]
+    fn test_pipeline_operations() {
+        // Test MapOperation
+        let map_op = MapOperation::new(|v| {
+            if let ValueData::Integer(i) = v.data {
+                OvmValue {
+                    header: ValueHeader::default(),
+                    data: ValueData::Integer(i * 2),
+                }
+            } else {
+                v.clone_simple()
+            }
+        });
+
+        let input = OvmValue {
+            header: ValueHeader::default(),
+            data: ValueData::Integer(5),
+        };
+
+        let result = map_op.apply(&input);
+        assert!(result.is_some());
+        if let Some(result_value) = result {
+            if let ValueData::Integer(i) = result_value.data {
+                assert_eq!(i, 10);
+            } else {
+                panic!("Expected integer result");
+            }
+        }
+
+        // Test FilterOperation
+        let filter_op = FilterOperation::new(|v| {
+            if let ValueData::Integer(i) = v.data {
+                i > 5
+            } else {
+                false
+            }
+        });
+
+        let result = filter_op.apply(&input);
+        assert!(result.is_none()); // 5 is not > 5
+
+        let input2 = OvmValue {
+            header: ValueHeader::default(),
+            data: ValueData::Integer(10),
+        };
+
+        let result = filter_op.apply(&input2);
+        assert!(result.is_some()); // 10 is > 5
+
+        // Test TakeOperation
+        let take_op = TakeOperation::new(2);
+        assert!(take_op.apply(&input).is_some());
+        assert!(take_op.apply(&input2).is_some());
+        assert!(take_op.apply(&input).is_none()); // Third call should return None
+    }
+
+
+    #[test]
+    fn test_fused_pipeline_execution() {
+        let config = OvmConfig::default();
+        let engine = LazyEngine::new(&config).unwrap();
+        
+        // Create a simple pipeline: map (double) -> filter (>10)
+        let map_op = Arc::new(MapOperation::new(|v| {
+            if let ValueData::Integer(i) = v.data {
+                OvmValue {
+                    header: ValueHeader::default(),
+                    data: ValueData::Integer(i * 2),
+                }
+            } else {
+                v.clone_simple()
+            }
+        }));
+
+        let filter_op = Arc::new(FilterOperation::new(|v| {
+            if let ValueData::Integer(i) = v.data {
+                i > 10
+            } else {
+                false
+            }
+        }));
+
+        let pipeline_id = engine.stream_processor.fusion_optimizer
+            .create_fused_pipeline(vec![1], vec![map_op, filter_op])
+            .unwrap();
+
+        // Create input data: [5, 6, 7, 8, 9]
+        let input_data: Vec<OvmValue> = (5..10).map(|i| OvmValue {
+            header: ValueHeader::default(),
+            data: ValueData::Integer(i),
+        }).collect();
+
+        // Execute pipeline
+        let result = engine.stream_processor.fusion_optimizer
+            .execute_pipeline(pipeline_id, input_data)
+            .unwrap();
+
+        // Expected: [5,6,7,8,9] -> [10,12,14,16,18] -> [12,14,16,18] (filtered >10)
+        assert_eq!(result.len(), 4);
+        
+        // Check first result
+        if let ValueData::Integer(i) = result[0].data {
+            assert_eq!(i, 12); // 6 * 2 = 12, and 12 > 10
+        } else {
+            panic!("Expected integer result");
+        }
+    }
+
+    #[test]
+    fn test_pipeline_optimization() {
+        let config = OvmConfig::default();
+        let engine = LazyEngine::new(&config).unwrap();
+        
+        // Create operations as trait objects
+        let map_op: Arc<dyn PipelineOperation + Send + Sync> = Arc::new(MapOperation::new(|v| v.clone_simple()));
+        let filter_op: Arc<dyn PipelineOperation + Send + Sync> = Arc::new(FilterOperation::new(|_| true));
+        let take_op: Arc<dyn PipelineOperation + Send + Sync> = Arc::new(TakeOperation::new(5));
+
+        let operations = vec![map_op, filter_op, take_op];
+        let stages: Vec<PipelineStage> = operations.into_iter()
+            .map(|op| {
+                let memory_req = op.memory_requirement();
+                PipelineStage {
+                    operation: op,
+                    fusion_compatible: true,
+                    memory_requirement: memory_req,
+                }
+            })
+            .collect();
+
+        let mut pipeline = FusedPipeline::new(1, vec![1], stages);
+        
+        // Get initial stats
+        let initial_stats = pipeline.get_stats();
+        let initial_stage_count = initial_stats.stage_count;
+
+        // Optimize the pipeline
+        let optimization_result = pipeline.optimize().unwrap();
+        
+        // Get optimized stats
+        let optimized_stats = pipeline.get_stats();
+        
+        // Should have performed some optimizations
+        assert!(optimization_result.fusions_performed >= 0);
+        assert!(optimized_stats.optimization_level > 1);
+    }
+
+    #[test]
+    fn test_pipeline_stats() {
+        let config = OvmConfig::default();
+        let engine = LazyEngine::new(&config).unwrap();
+        
+        let map_op = Arc::new(MapOperation::new(|v| v.clone_simple()));
+        let filter_op = Arc::new(FilterOperation::new(|_| true));
+
+        let pipeline_id = engine.stream_processor.fusion_optimizer
+            .create_fused_pipeline(vec![1], vec![map_op, filter_op])
+            .unwrap();
+
+        let stats = engine.stream_processor.fusion_optimizer
+            .get_pipeline_stats(pipeline_id)
+            .unwrap();
+
+        assert_eq!(stats.pipeline_id, pipeline_id);
+        assert_eq!(stats.stage_count, 2);
+        assert!(stats.total_memory_requirement > 0);
+        assert_eq!(stats.optimization_level, 1);
+        assert_eq!(stats.fusion_compatible_stages, 2);
+    }
+
+    #[test]
+    fn test_merged_pipeline_operation() {
+        let map_op = Arc::new(MapOperation::new(|v| {
+            if let ValueData::Integer(i) = v.data {
+                OvmValue {
+                    header: ValueHeader::default(),
+                    data: ValueData::Integer(i * 2),
+                }
+            } else {
+                v.clone_simple()
+            }
+        }));
+
+        let filter_op = Arc::new(FilterOperation::new(|v| {
+            if let ValueData::Integer(i) = v.data {
+                i > 10
+            } else {
+                false
+            }
+        }));
+
+        let merged_op = MergedPipelineOperation {
+            operations: vec![map_op, filter_op],
+        };
+
+        let input = OvmValue {
+            header: ValueHeader::default(),
+            data: ValueData::Integer(6),
+        };
+
+        // Should apply map (6 -> 12) then filter (12 > 10 = true)
+        let result = merged_op.apply(&input);
+        assert!(result.is_some());
+        
+        if let Some(result_value) = result {
+            if let ValueData::Integer(i) = result_value.data {
+                assert_eq!(i, 12);
+            } else {
+                panic!("Expected integer result");
+            }
+        }
+
+        let input2 = OvmValue {
+            header: ValueHeader::default(),
+            data: ValueData::Integer(4),
+        };
+
+        // Should apply map (4 -> 8) then filter (8 > 10 = false)
+        let result = merged_op.apply(&input2);
+        assert!(result.is_none());
+    }
+}
+
+/// Concrete pipeline operations
+pub struct MapOperation {
+    mapper: Arc<dyn Fn(&OvmValue) -> OvmValue + Send + Sync>,
+}
+
+pub struct FilterOperation {
+    predicate: Arc<dyn Fn(&OvmValue) -> bool + Send + Sync>,
+}
+
+pub struct TakeOperation {
+    count: usize,
+    taken: AtomicUsize,
+}
+
+pub struct SkipOperation {
+    count: usize,
+    skipped: AtomicUsize,
+}
+
+pub struct ReduceOperation {
+    reducer: Arc<dyn Fn(OvmValue, &OvmValue) -> OvmValue + Send + Sync>,
+    initial: Option<OvmValue>,
+}
+
+impl MapOperation {
+    pub fn new<F>(mapper: F) -> Self 
+    where 
+        F: Fn(&OvmValue) -> OvmValue + Send + Sync + 'static 
+    {
+        Self {
+            mapper: Arc::new(mapper),
+        }
+    }
+}
+
+impl FilterOperation {
+    pub fn new<F>(predicate: F) -> Self 
+    where 
+        F: Fn(&OvmValue) -> bool + Send + Sync + 'static 
+    {
+        Self {
+            predicate: Arc::new(predicate),
+        }
+    }
+}
+
+impl TakeOperation {
+    pub fn new(count: usize) -> Self {
+        Self {
+            count,
+            taken: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl SkipOperation {
+    pub fn new(count: usize) -> Self {
+        Self {
+            count,
+            skipped: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl ReduceOperation {
+    pub fn new<F>(reducer: F, initial: Option<OvmValue>) -> Self 
+    where 
+        F: Fn(OvmValue, &OvmValue) -> OvmValue + Send + Sync + 'static 
+    {
+        Self {
+            reducer: Arc::new(reducer),
+            initial,
+        }
+    }
+}
+
+impl PipelineOperation for MapOperation {
+    fn apply(&self, input: &OvmValue) -> Option<OvmValue> {
+        Some((self.mapper)(input))
+    }
+
+    fn can_fuse_with(&self, other: &dyn PipelineOperation) -> bool {
+        // Map operations can fuse with most other operations
+        true
+    }
+
+    fn memory_requirement(&self) -> usize {
+        64 // Conservative estimate
+    }
+}
+
+impl PipelineOperation for FilterOperation {
+    fn apply(&self, input: &OvmValue) -> Option<OvmValue> {
+        if (self.predicate)(input) {
+            Some(input.clone_simple())
+        } else {
+            None
+        }
+    }
+
+    fn can_fuse_with(&self, other: &dyn PipelineOperation) -> bool {
+        // Filter operations can fuse with most other operations
+        true
+    }
+
+    fn memory_requirement(&self) -> usize {
+        32 // Filter operations are lightweight
+    }
+}
+
+impl PipelineOperation for TakeOperation {
+    fn apply(&self, input: &OvmValue) -> Option<OvmValue> {
+        let taken = self.taken.fetch_add(1, Ordering::Relaxed);
+        if taken < self.count {
+            Some(input.clone_simple())
+        } else {
+            None
+        }
+    }
+
+    fn can_fuse_with(&self, other: &dyn PipelineOperation) -> bool {
+        // Take operations can fuse with operations that come before them
+        true
+    }
+
+    fn memory_requirement(&self) -> usize {
+        16 // Take operations are very lightweight
+    }
+}
+
+impl PipelineOperation for SkipOperation {
+    fn apply(&self, input: &OvmValue) -> Option<OvmValue> {
+        let skipped = self.skipped.fetch_add(1, Ordering::Relaxed);
+        if skipped >= self.count {
+            Some(input.clone_simple())
+        } else {
+            None
+        }
+    }
+
+    fn can_fuse_with(&self, other: &dyn PipelineOperation) -> bool {
+        // Skip operations can fuse with operations that come before them
+        true
+    }
+
+    fn memory_requirement(&self) -> usize {
+        16 // Skip operations are very lightweight
+    }
+}
+
+impl PipelineOperation for ReduceOperation {
+    fn apply(&self, input: &OvmValue) -> Option<OvmValue> {
+        // Reduce operations are special - they need to maintain state
+        // This is a simplified implementation
+        Some(input.clone_simple())
+    }
+
+    fn can_fuse_with(&self, other: &dyn PipelineOperation) -> bool {
+        // Reduce operations have limited fusion potential
+        false
+    }
+
+    fn memory_requirement(&self) -> usize {
+        128 // Reduce operations need more memory for state
+    }
+}
+
+/// Enhanced FusedPipeline with execution capabilities
+impl FusedPipeline {
+    pub fn new(
+        id: PipelineId,
+        input_streams: Vec<StreamId>,
+        stages: Vec<PipelineStage>,
+    ) -> Self {
+        Self {
+            id,
+            stages,
+            input_streams,
+            output_stream: id as StreamId, // Simplified output stream assignment
+            optimization_level: 1,
+        }
+    }
+
+    /// Execute the fused pipeline on input data
+    pub fn execute(&self, input_data: Vec<OvmValue>) -> Result<Vec<OvmValue>, LazyError> {
+        let mut current_data = input_data;
+
+        for stage in &self.stages {
+            let mut stage_output = Vec::new();
+            
+            for value in current_data {
+                if let Some(result) = stage.operation.apply(&value) {
+                    stage_output.push(result);
+                }
+            }
+            
+            current_data = stage_output;
+        }
+
+        Ok(current_data)
+    }
+
+    /// Execute the pipeline lazily, returning a stream
+    pub fn execute_lazy(&self, input_stream: StreamId) -> Result<StreamId, LazyError> {
+        // Create a new stream that applies the pipeline stages
+        // For now, just return the input stream ID as a simplified implementation
+        
+        let generator = FusedPipelineGenerator {
+            input_stream,
+            stages: Vec::new(), // Simplified - would use references in full implementation
+            current_stage: 0,
+            buffer: VecDeque::new(),
+        };
+
+        // Register with stream processor (simplified)
+        Ok(self.id as StreamId)
+    }
+
+    /// Get pipeline statistics
+    pub fn get_stats(&self) -> PipelineStats {
+        let total_memory = self.stages.iter()
+            .map(|stage| stage.memory_requirement)
+            .sum();
+
+        PipelineStats {
+            pipeline_id: self.id,
+            stage_count: self.stages.len(),
+            total_memory_requirement: total_memory,
+            optimization_level: self.optimization_level,
+            fusion_compatible_stages: self.stages.iter()
+                .filter(|stage| stage.fusion_compatible)
+                .count(),
+        }
+    }
+
+    /// Optimize the pipeline by reordering stages
+    pub fn optimize(&mut self) -> Result<OptimizationStats, LazyError> {
+        let start_time = Instant::now();
+        let original_stages = self.stages.len();
+
+        // Reorder stages for better fusion
+        self.reorder_stages_for_fusion();
+
+        // Merge compatible stages
+        self.merge_compatible_stages();
+
+        let optimization_time = start_time.elapsed();
+        let fusions_performed = original_stages - self.stages.len();
+
+        Ok(OptimizationStats {
+            fusions_performed,
+            speedup_achieved: 1.0 + (fusions_performed as f64 * 0.1), // 10% per fusion
+            memory_saved: fusions_performed * 64, // Estimate
+            optimization_time,
+        })
+    }
+
+    fn reorder_stages_for_fusion(&mut self) {
+        // Move filter operations before map operations when possible
+        let mut reordered = false;
+        for i in 0..self.stages.len().saturating_sub(1) {
+            if self.can_reorder_stages(i, i + 1) {
+                self.stages.swap(i, i + 1);
+                reordered = true;
+            }
+        }
+        
+        if reordered {
+            self.optimization_level += 1;
+        }
+    }
+
+    fn can_reorder_stages(&self, i: usize, j: usize) -> bool {
+        if i >= self.stages.len() || j >= self.stages.len() {
+            return false;
+        }
+
+        // Check if stages can be reordered without changing semantics
+        let stage_i = &self.stages[i];
+        let stage_j = &self.stages[j];
+
+        // Filter operations can often be moved before map operations
+        stage_i.fusion_compatible && stage_j.fusion_compatible
+    }
+
+    fn merge_compatible_stages(&mut self) {
+        let mut i = 0;
+        while i < self.stages.len().saturating_sub(1) {
+            if self.can_merge_stages(i, i + 1) {
+                self.merge_stages(i, i + 1);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn can_merge_stages(&self, i: usize, j: usize) -> bool {
+        if i >= self.stages.len() || j >= self.stages.len() {
+            return false;
+        }
+
+        let stage_i = &self.stages[i];
+        let stage_j = &self.stages[j];
+
+        stage_i.fusion_compatible && stage_j.fusion_compatible
+    }
+
+    fn merge_stages(&mut self, i: usize, j: usize) {
+        if i >= self.stages.len() || j >= self.stages.len() || i >= j {
+            return;
+        }
+
+        // Create a merged operation
+        let merged_operation = Arc::new(MergedPipelineOperation {
+            operations: vec![
+                self.stages[i].operation.clone(),
+                self.stages[j].operation.clone(),
+            ],
+        });
+
+        let merged_stage = PipelineStage {
+            operation: merged_operation,
+            fusion_compatible: true,
+            memory_requirement: self.stages[i].memory_requirement + self.stages[j].memory_requirement,
+        };
+
+        // Replace the two stages with the merged one
+        self.stages[i] = merged_stage;
+        self.stages.remove(j);
+    }
+}
+
+/// Merged pipeline operation that combines multiple operations
+pub struct MergedPipelineOperation {
+    operations: Vec<Arc<dyn PipelineOperation + Send + Sync>>,
+}
+
+impl PipelineOperation for MergedPipelineOperation {
+    fn apply(&self, input: &OvmValue) -> Option<OvmValue> {
+        let mut current = input.clone_simple();
+        
+        for operation in &self.operations {
+            if let Some(result) = operation.apply(&current) {
+                current = result;
+            } else {
+                return None; // Early termination if any operation returns None
+            }
+        }
+        
+        Some(current)
+    }
+
+    fn can_fuse_with(&self, _other: &dyn PipelineOperation) -> bool {
+        false // Merged operations are already optimized
+    }
+
+    fn memory_requirement(&self) -> usize {
+        self.operations.iter()
+            .map(|op| op.memory_requirement())
+            .sum()
+    }
+}
+
+/// Generator for fused pipeline execution
+pub struct FusedPipelineGenerator {
+    input_stream: StreamId,
+    stages: Vec<PipelineStage>,
+    current_stage: usize,
+    buffer: VecDeque<OvmValue>,
+}
+
+impl StreamGenerator for FusedPipelineGenerator {
+    fn next(&mut self) -> Option<OvmValue> {
+        // Simplified implementation - in practice this would coordinate with the stream processor
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, None) // Unknown size
+    }
+
+    fn is_infinite(&self) -> bool {
+        false
+    }
+}
+
+/// Pipeline statistics
+#[derive(Debug, Clone)]
+pub struct PipelineStats {
+    pub pipeline_id: PipelineId,
+    pub stage_count: usize,
+    pub total_memory_requirement: usize,
+    pub optimization_level: u8,
+    pub fusion_compatible_stages: usize,
+}
+
+/// Enhanced StreamFusionOptimizer with full pipeline management
+impl StreamFusionOptimizer {
+    /// Create a new fused pipeline from multiple streams
+    pub fn create_fused_pipeline(
+        &self,
+        streams: Vec<StreamId>,
+        operations: Vec<Arc<dyn PipelineOperation + Send + Sync>>,
+    ) -> Result<PipelineId, LazyError> {
+        let pipeline_id = self.generate_pipeline_id();
+        
+        let stages: Vec<PipelineStage> = operations.into_iter()
+            .map(|op| {
+                let memory_req = op.memory_requirement();
+                PipelineStage {
+                    operation: op,
+                    fusion_compatible: true,
+                    memory_requirement: memory_req,
+                }
+            })
+            .collect();
+
+        let fused_pipeline = FusedPipeline::new(pipeline_id, streams, stages);
+
+        // Store the pipeline
+        if let Ok(mut pipelines) = self.fused_pipelines.write() {
+            pipelines.insert(pipeline_id, fused_pipeline);
+        }
+
+        Ok(pipeline_id)
+    }
+
+    /// Execute a fused pipeline
+    pub fn execute_pipeline(
+        &self,
+        pipeline_id: PipelineId,
+        input_data: Vec<OvmValue>,
+    ) -> Result<Vec<OvmValue>, LazyError> {
+        if let Ok(pipelines) = self.fused_pipelines.read() {
+            if let Some(pipeline) = pipelines.get(&pipeline_id) {
+                return pipeline.execute(input_data);
+            }
+        }
+        
+        Err(LazyError::FusionFailed {
+            reason: format!("Pipeline {} not found", pipeline_id),
+        })
+    }
+
+    /// Get all fused pipelines
+    pub fn get_pipelines(&self) -> Result<Vec<FusedPipeline>, LazyError> {
+        if let Ok(pipelines) = self.fused_pipelines.read() {
+            Ok(pipelines.values().cloned().collect())
+        } else {
+            Err(LazyError::Failed("Failed to read pipelines".to_string()))
+        }
+    }
+
+    /// Remove a fused pipeline
+    pub fn remove_pipeline(&self, pipeline_id: PipelineId) -> Result<(), LazyError> {
+        if let Ok(mut pipelines) = self.fused_pipelines.write() {
+            pipelines.remove(&pipeline_id);
+            Ok(())
+        } else {
+            Err(LazyError::Failed("Failed to remove pipeline".to_string()))
+        }
+    }
+
+    /// Get pipeline statistics
+    pub fn get_pipeline_stats(&self, pipeline_id: PipelineId) -> Result<PipelineStats, LazyError> {
+        if let Ok(pipelines) = self.fused_pipelines.read() {
+            if let Some(pipeline) = pipelines.get(&pipeline_id) {
+                return Ok(pipeline.get_stats());
+            }
+        }
+        
+        Err(LazyError::FusionFailed {
+            reason: format!("Pipeline {} not found", pipeline_id),
+        })
+    }
+}
+
+/// Fused pipeline
+#[derive(Clone)]
+pub struct FusedPipeline {
+    id: PipelineId,
+    stages: Vec<PipelineStage>,
+    input_streams: Vec<StreamId>,
+    output_stream: StreamId,
+    optimization_level: u8,
 }

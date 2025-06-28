@@ -459,6 +459,11 @@ impl OlangVirtualMachine {
         })
     }
 
+    /// Get the pipeline engine reference
+    pub fn get_pipeline_engine(&self) -> &pipeline::PipelineEngine {
+        &self.pipeline_engine
+    }
+
     /// Get fusion engine statistics
     pub fn get_fusion_stats(&self) -> Result<fusion::FusionStatistics, OvmError> {
         Ok(self.fusion_engine.get_fusion_statistics())
