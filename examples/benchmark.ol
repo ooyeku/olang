@@ -1,4 +1,4 @@
-let n = range(1000000)
+let n = range(100000)
 
 let data = n |> map((x) => x * math.pow(x, 2)) |> filter((x) => x % 2 == 0) |> sum()
 
