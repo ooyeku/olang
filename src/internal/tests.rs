@@ -2,9 +2,9 @@
 mod tests {
     use crate::ast::{Function, Parameter, Value};
     use crate::internal::{
-        check_memory_pressure, create_lazy_range, create_lazy_skip, create_lazy_take,
+        check_memory_pressure, create_lazy_range,
         is_force_point, is_lazy_function, try_fuse_operations, InternalValue, LazyConfig,
-        LazyValue, ValueHandle,
+        LazyValue, ValueHandle, create_lazy_concat, create_lazy_map_filtered,
     };
     use crate::interpreter::Interpreter;
     use std::collections::HashMap;
@@ -222,15 +222,15 @@ mod tests {
     fn test_lazy_concat_list() {
         let first_list = Value::List(Arc::from(vec![Value::Integer(1), Value::Integer(2)]));
         let second_list = Value::List(Arc::from(vec![Value::Integer(3), Value::Integer(4)]));
-
+        
         let first = Arc::new(InternalValue::Eager(first_list));
         let second = Arc::new(InternalValue::Eager(second_list));
-
+        
         let lazy_concat = LazyValue::ConcatList { first, second };
-
+        
         let mut interpreter = Interpreter::new();
         let result = lazy_concat.evaluate(&mut interpreter).unwrap();
-
+        
         match result {
             Value::List(items) => {
                 assert_eq!(items.len(), 4);
@@ -375,6 +375,72 @@ mod tests {
     }
 
     #[test]
+    fn test_create_lazy_concat() {
+        let first_list = Value::List(Arc::from(vec![Value::Integer(1), Value::Integer(2)]));
+        let second_list = Value::List(Arc::from(vec![Value::Integer(3), Value::Integer(4)]));
+        
+        let first_handle = ValueHandle::new_eager(first_list);
+        let second_handle = ValueHandle::new_eager(second_list);
+        
+        let lazy_concat = create_lazy_concat(first_handle, second_handle);
+        match lazy_concat {
+            LazyValue::ConcatList { first, second } => {
+                assert!(matches!(&*first, InternalValue::Eager(_)));
+                assert!(matches!(&*second, InternalValue::Eager(_)));
+            }
+            _ => panic!("Expected LazyValue::ConcatList"),
+        }
+    }
+
+    #[test]
+    fn test_create_lazy_map_filtered() {
+        let source_list = Value::List(Arc::from(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
+        let source_handle = ValueHandle::new_eager(source_list);
+        
+        let mapper = Function {
+            name: Some("double".to_string()),
+            parameters: vec![Parameter {
+                name: "x".to_string(),
+                type_annotation: None,
+            }],
+            body: crate::ast::Expr::BinaryOp {
+                left: Box::new(crate::ast::Expr::Identifier("x".to_string())),
+                op: crate::ast::BinaryOp::Multiply,
+                right: Box::new(crate::ast::Expr::Integer(2)),
+            },
+            closure: HashMap::new(),
+        };
+        
+        let predicate = Function {
+            name: Some("is_even".to_string()),
+            parameters: vec![Parameter {
+                name: "x".to_string(),
+                type_annotation: None,
+            }],
+            body: crate::ast::Expr::BinaryOp {
+                left: Box::new(crate::ast::Expr::BinaryOp {
+                    left: Box::new(crate::ast::Expr::Identifier("x".to_string())),
+                    op: crate::ast::BinaryOp::Modulo,
+                    right: Box::new(crate::ast::Expr::Integer(2)),
+                }),
+                op: crate::ast::BinaryOp::Equal,
+                right: Box::new(crate::ast::Expr::Integer(0)),
+            },
+            closure: HashMap::new(),
+        };
+        
+        let lazy_map_filtered = create_lazy_map_filtered(source_handle, mapper, predicate);
+        match lazy_map_filtered {
+            LazyValue::MapFiltered { source, mapper, predicate } => {
+                assert!(matches!(&*source, InternalValue::Eager(_)));
+                assert_eq!(mapper.name, Some("double".to_string()));
+                assert_eq!(predicate.name, Some("is_even".to_string()));
+            }
+            _ => panic!("Expected LazyValue::MapFiltered"),
+        }
+    }
+
+    #[test]
     fn test_fusion_optimization_placeholder() {
         // Test that fusion optimization framework is in place
         // For now, it returns None but the infrastructure exists
@@ -409,5 +475,41 @@ mod tests {
 
         // Should return false for now (placeholder implementation)
         assert!(!interpreter.should_force_evaluation());
+    }
+
+    #[test]
+    fn test_fused_pipeline_creation() {
+        use crate::ast::{Function, Parameter, Value};
+        use crate::internal::{create_lazy_map, create_lazy_filter, try_fuse_operations, ValueHandle, InternalValue, LazyValue};
+        use std::sync::Arc;
+
+        // Dummy function for map
+        let map_fn = Function {
+            name: Some("map_fn".to_string()),
+            parameters: vec![Parameter { name: "x".to_string(), type_annotation: None }],
+            body: crate::ast::Expr::Identifier("x".to_string()),
+            closure: Default::default(),
+        };
+        // Dummy function for filter
+        let filter_fn = Function {
+            name: Some("filter_fn".to_string()),
+            parameters: vec![Parameter { name: "x".to_string(), type_annotation: None }],
+            body: crate::ast::Expr::Identifier("x".to_string()),
+            closure: Default::default(),
+        };
+        // Source list
+        let source = ValueHandle::new_eager(Value::List(Arc::from(vec![Value::Integer(1), Value::Integer(2)])));
+        // Create lazy map
+        let lazy_map = create_lazy_map(source.clone(), map_fn.clone());
+        // Wrap as InternalValue (clone lazy_map so it can be used below)
+        let lazy_map_iv = InternalValue::Lazy(lazy_map.clone());
+        // Now try to fuse with filter
+        let fused = try_fuse_operations(&lazy_map, "filter", Some(filter_fn.clone()));
+        assert!(fused.is_some(), "Fusion should produce a fused MapFiltered");
+        if let Some(LazyValue::MapFiltered { .. }) = fused {
+            // Success
+        } else {
+            panic!("Fusion did not produce MapFiltered");
+        }
     }
 }

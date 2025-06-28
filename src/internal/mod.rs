@@ -577,6 +577,27 @@ pub(crate) fn create_lazy_range(start: i64, end: i64, step: i64, inclusive: bool
     }
 }
 
+/// Create a lazy concatenation operation
+pub(crate) fn create_lazy_concat(first: ValueHandle, second: ValueHandle) -> LazyValue {
+    LazyValue::ConcatList {
+        first: first.get_internal(),
+        second: second.get_internal(),
+    }
+}
+
+/// Create a lazy map+filter fused operation
+pub(crate) fn create_lazy_map_filtered(
+    source: ValueHandle,
+    mapper: crate::ast::Function,
+    predicate: crate::ast::Function,
+) -> LazyValue {
+    LazyValue::MapFiltered {
+        source: source.get_internal(),
+        mapper: Arc::new(ThreadSafeFunction::from_function(&mapper)),
+        predicate: Arc::new(ThreadSafeFunction::from_function(&predicate)),
+    }
+}
+
 /// Fusion optimization - combine compatible lazy operations
 pub(crate) fn try_fuse_operations(
     lazy_val: &LazyValue,
