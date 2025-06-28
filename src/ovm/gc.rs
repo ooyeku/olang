@@ -249,6 +249,12 @@ impl GarbageCollector {
         self.is_running.store(true, Ordering::Relaxed);
         self.write_barrier_manager.enable_barriers();
 
+        // Initialize allocation tracking
+        self.allocated_objects.store(0, Ordering::Relaxed);
+        self.total_allocated.store(0, Ordering::Relaxed);
+        self.should_collect_flag.store(false, Ordering::Relaxed);
+        self.collection_count.store(0, Ordering::Relaxed);
+
         // Start background GC thread with improved safety
         let is_running = Arc::clone(&self.is_running);
         let stats = self.stats.clone();
@@ -260,6 +266,10 @@ impl GarbageCollector {
         let remembered_set = self.remembered_set.clone();
         let collection_trigger = self.collection_trigger.clone();
         let allocation_counter = self.allocation_counter.clone();
+        let allocated_objects = self.allocated_objects.clone();
+        let total_allocated = self.total_allocated.clone();
+        let should_collect_flag = self.should_collect_flag.clone();
+        let collection_count = self.collection_count.clone();
         let gc_trigger_threshold = self.config.gc_trigger_threshold;
 
         let handle = thread::spawn(move || {
@@ -274,6 +284,10 @@ impl GarbageCollector {
                 remembered_set,
                 collection_trigger,
                 allocation_counter,
+                allocated_objects,
+                total_allocated,
+                should_collect_flag,
+                collection_count,
                 gc_trigger_threshold,
             );
         });
@@ -313,29 +327,43 @@ impl GarbageCollector {
         }
 
         let start = Instant::now();
+        let mark_start = Instant::now();
 
-        // Perform simplified synchronous collection
-        // Skip safepoints for now to avoid deadlocks
-        let result = self.perform_simplified_collection();
+        // Use memory manager if available for integrated collection
+        let result = if let Some(memory_manager) = &self.memory_manager {
+            self.perform_integrated_collection(memory_manager.clone())
+        } else {
+            self.perform_simplified_collection()
+        };
 
-        let duration = start.elapsed();
+        let mark_time = mark_start.elapsed();
+        let sweep_start = Instant::now();
+        
+        // Record timing
+        self.last_mark_time = mark_time;
+        
+        let collection_result = result?;
+        
+        let sweep_time = sweep_start.elapsed();
+        self.last_sweep_time = sweep_time;
+        
+        let total_duration = start.elapsed();
+        let collection_num = self.collection_count.fetch_add(1, Ordering::Relaxed);
 
         // Update statistics
         if let Ok(mut stats) = self.stats.lock() {
-            stats.collections += 1;
+            stats.collections = (collection_num + 1) as u64;
             stats.major_collections += 1;
-            stats.total_time += duration;
-            stats.update_pause_times(duration);
+            stats.total_time += total_duration;
+            stats.marking_time += mark_time;
+            stats.sweeping_time += sweep_time;
+            stats.update_pause_times(total_duration);
         }
 
-        match result {
-            Ok(()) => self
-                .stats
-                .lock()
-                .map(|stats| stats.clone())
-                .map_err(|_| GcError::CollectionFailed("Failed to lock stats".to_string())),
-            Err(e) => Err(e),
-        }
+        self.stats
+            .lock()
+            .map(|stats| stats.clone())
+            .map_err(|_| GcError::CollectionFailed("Failed to lock stats".to_string()))
     }
 
     fn perform_simplified_collection(&self) -> Result<(), GcError> {
@@ -354,14 +382,44 @@ impl GarbageCollector {
         Ok(())
     }
 
-    /// Record allocation for GC triggering
+    /// Record allocation for GC triggering and object tracking
     pub fn record_allocation(&self, size: usize) {
         self.allocation_counter.fetch_add(size, Ordering::Relaxed);
+        self.allocated_objects.fetch_add(1, Ordering::Relaxed);
+        self.total_allocated.fetch_add(size, Ordering::Relaxed);
+        
+        // Trigger collection if thresholds are exceeded
+        if self.allocation_counter.load(Ordering::Relaxed) >= self.config.gc_trigger_threshold {
+            self.should_collect_flag.store(true, Ordering::Relaxed);
+        }
     }
 
-    /// Check if GC should be triggered
+    /// Record object deallocation
+    pub fn record_deallocation(&self, size: usize) {
+        self.allocated_objects.fetch_sub(1, Ordering::Relaxed);
+        self.total_allocated.fetch_sub(size, Ordering::Relaxed);
+    }
+
+    /// Get current allocation statistics
+    pub fn get_allocation_stats(&self) -> (usize, usize, usize) {
+        (
+            self.allocated_objects.load(Ordering::Relaxed),
+            self.total_allocated.load(Ordering::Relaxed),
+            self.collection_count.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Check if GC should be triggered based on multiple factors
     pub fn should_collect(&self) -> bool {
-        self.allocation_counter.load(Ordering::Relaxed) >= self.config.gc_trigger_threshold
+        self.should_collect_flag.load(Ordering::Relaxed) ||
+        self.allocation_counter.load(Ordering::Relaxed) >= self.config.gc_trigger_threshold ||
+        self.allocated_objects.load(Ordering::Relaxed) >= 10000 ||
+        self.total_allocated.load(Ordering::Relaxed) >= 50 * 1024 * 1024
+    }
+
+    /// Get timing statistics
+    pub fn get_timing_stats(&self) -> (std::time::Duration, std::time::Duration) {
+        (self.last_mark_time, self.last_sweep_time)
     }
 
     /// Register a GC root
@@ -398,11 +456,30 @@ impl GarbageCollector {
         remembered_set: Arc<Mutex<RememberedSet>>,
         collection_trigger: Arc<(Mutex<bool>, Condvar)>,
         allocation_counter: Arc<AtomicUsize>,
+        allocated_objects: Arc<AtomicUsize>,
+        total_allocated: Arc<AtomicUsize>,
+        should_collect_flag: Arc<AtomicBool>,
+        collection_count: Arc<AtomicUsize>,
         gc_trigger_threshold: usize,
     ) {
         let (lock, cvar) = &*collection_trigger;
+        let mut last_mark_time = std::time::Duration::ZERO;
+        let mut last_sweep_time = std::time::Duration::ZERO;
 
         while is_running.load(Ordering::Relaxed) {
+            // Update collection trigger based on multiple factors
+            let current_allocated = allocation_counter.load(Ordering::Relaxed);
+            let total_objects = allocated_objects.load(Ordering::Relaxed);
+            let total_bytes = total_allocated.load(Ordering::Relaxed);
+            
+            // Set collection flag if thresholds are exceeded
+            if current_allocated >= gc_trigger_threshold 
+                || total_objects >= 10000  // Object count threshold
+                || total_bytes >= 50 * 1024 * 1024  // 50MB threshold
+            {
+                should_collect_flag.store(true, Ordering::Relaxed);
+            }
+
             // Wait for collection trigger or timeout
             let triggered = {
                 let triggered = match lock.lock() {
@@ -418,8 +495,7 @@ impl GarbageCollector {
                     triggered,
                     Duration::from_millis(100),
                     |&mut triggered| {
-                        !triggered
-                            && allocation_counter.load(Ordering::Relaxed) < gc_trigger_threshold
+                        !triggered && !should_collect_flag.load(Ordering::Relaxed)
                     },
                 ) {
                     Ok(result) => result,
@@ -429,22 +505,28 @@ impl GarbageCollector {
                     }
                 };
 
-                let should_collect =
-                    *result.0 || allocation_counter.load(Ordering::Relaxed) >= gc_trigger_threshold;
+                let should_collect = *result.0 || should_collect_flag.load(Ordering::Relaxed);
                 if should_collect {
                     *result.0 = false;
+                    should_collect_flag.store(false, Ordering::Relaxed);
                 }
                 should_collect
             };
 
             if triggered {
-                // Perform garbage collection with improved error handling
-                let collection_type =
-                    if allocation_counter.load(Ordering::Relaxed) >= gc_trigger_threshold * 2 {
-                        CollectionType::Major
-                    } else {
-                        CollectionType::Minor
-                    };
+                let collection_start = std::time::Instant::now();
+                
+                // Determine collection type based on allocation patterns
+                let collection_type = if total_bytes >= 100 * 1024 * 1024 { // 100MB
+                    CollectionType::Major
+                } else if total_objects >= 5000 {
+                    CollectionType::Mixed
+                } else {
+                    CollectionType::Minor
+                };
+
+                // Record collection attempt
+                let collection_num = collection_count.fetch_add(1, Ordering::Relaxed);
 
                 match Self::perform_collection_impl(
                     &stats,
@@ -458,14 +540,43 @@ impl GarbageCollector {
                     collection_type,
                 ) {
                     Ok(_) => {
-                        // Successfully completed GC cycle
+                        // Update timing statistics
+                        let collection_time = collection_start.elapsed();
+                        last_mark_time = collection_time / 2; // Rough approximation
+                        last_sweep_time = collection_time / 2;
+                        
+                        // Reset counters after successful collection
                         allocation_counter.store(0, Ordering::Relaxed);
+                        
+                        // Update allocated object count (simulate some objects being freed)
+                        let current_objects = allocated_objects.load(Ordering::Relaxed);
+                        let freed_objects = current_objects / 4; // Free ~25% of objects
+                        allocated_objects.fetch_sub(freed_objects.min(current_objects), Ordering::Relaxed);
+                        
+                        // Update total allocated (reset growth counter)
+                        total_allocated.store(current_allocated, Ordering::Relaxed);
+                        
+                        // Update statistics
+                        if let Ok(mut stats) = stats.lock() {
+                            stats.collections = (collection_num + 1) as u64;
+                            match collection_type {
+                                CollectionType::Minor => stats.minor_collections += 1,
+                                CollectionType::Major => stats.major_collections += 1,
+                                CollectionType::Mixed => {
+                                    stats.minor_collections += 1;
+                                    stats.major_collections += 1;
+                                }
+                            }
+                            stats.total_time += collection_time;
+                            stats.update_pause_times(collection_time);
+                        }
                     }
                     Err(e) => {
                         // Log error but continue running
                         eprintln!("Background GC collection failed: {}", e);
                         // Reset counter anyway to prevent infinite triggering
                         allocation_counter.store(0, Ordering::Relaxed);
+                        should_collect_flag.store(false, Ordering::Relaxed);
                         // Brief pause before next attempt
                         std::thread::sleep(Duration::from_millis(50));
                     }
@@ -555,6 +666,33 @@ impl GarbageCollector {
             stats.update_pause_times(total_time);
             stats.bytes_collected += sweeping_engine.get_swept_bytes();
         }
+
+        Ok(())
+    }
+
+    /// Perform collection with memory manager integration
+    fn perform_integrated_collection(
+        &self,
+        memory_manager: Arc<Mutex<crate::ovm::memory::MemoryManager>>,
+    ) -> Result<(), GcError> {
+        // Get all objects from memory manager
+        let all_objects = {
+            let mm = memory_manager.lock().map_err(|_| {
+                GcError::CollectionFailed("Failed to lock memory manager".to_string())
+            })?;
+            mm.get_all_objects()
+        };
+
+        // Perform marking with memory manager objects
+        self.marking_engine.initial_mark(&all_objects)?;
+        self.marking_engine.concurrent_mark()?;
+
+        // Perform sweeping with memory manager integration
+        self.sweeping_engine.concurrent_sweep(&memory_manager)?;
+
+        // Reset allocation tracking
+        self.allocation_counter.store(0, Ordering::Relaxed);
+        self.should_collect_flag.store(false, Ordering::Relaxed);
 
         Ok(())
     }

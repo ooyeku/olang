@@ -3652,7 +3652,7 @@ mod tests {
 
     #[test]
     fn test_list_operations() {
-        let mut vm = BytecodeVm::new();
+        let vm = BytecodeVm::new();
 
         // Test list creation and access
         let list_value = OvmValue::from_ast(Value::List(
