@@ -243,7 +243,7 @@ impl Analyzer {
                 self.analyze_expr(try_block)?;
                 self.analyze_expr(catch_block)
             }
-            Expr::Assignment { name, value } => {
+            Expr::Assignment { name: _, value } => {
                 self.analyze_expr(value)?;
                 // TODO: Check if variable exists for assignment vs declaration
                 Ok(())

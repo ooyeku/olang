@@ -199,7 +199,7 @@ impl AsyncRuntime {
     }
 
     /// Handle Promise.all - wait for all promises to resolve
-    pub fn handle_promise_all(&mut self, promises: Vec<PromiseId>) -> (PromiseId, Value) {
+    pub fn handle_promise_all(&mut self, _promises: Vec<PromiseId>) -> (PromiseId, Value) {
         let (result_promise_id, result_promise) = self.create_promise();
 
         // For now, create a simple custom task

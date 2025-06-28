@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use wide::*;
 
 /// Main SIMD vectorization engine
+#[allow(dead_code)]
 pub struct SimdEngine {
     // Hardware capability detection
     hardware_caps: SimdCapabilities,
@@ -33,6 +34,7 @@ pub struct SimdEngine {
 }
 
 /// Hardware SIMD capabilities detection
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SimdCapabilities {
     // x86/x64 capabilities
@@ -161,6 +163,7 @@ pub struct VectorizationStats {
 }
 
 /// Automatic vectorization analyzer
+#[allow(dead_code)]
 pub struct AutoVectorizer {
     // Pattern recognition for vectorizable operations
     vectorizable_patterns: Vec<VectorizationPattern>,
@@ -207,6 +210,7 @@ pub enum DependencyType {
 }
 
 /// Cost model for vectorization decisions
+#[allow(dead_code)]
 pub struct VectorizationCostModel {
     // Hardware costs
     scalar_cost_per_operation: f64,
@@ -221,6 +225,7 @@ pub struct VectorizationCostModel {
 }
 
 /// Dependency analysis for vectorization safety
+#[allow(dead_code)]
 pub struct DependencyAnalyzer {
     // Loop dependency analysis
     loop_dependencies: Vec<LoopDependency>,
@@ -255,6 +260,7 @@ pub struct ControlDependency {
 }
 
 /// Memory alignment manager for optimal SIMD performance
+#[allow(dead_code)]
 pub struct MemoryAligner {
     // Alignment requirements for different data types
     alignment_requirements: HashMap<VectorDataType, usize>,
@@ -267,6 +273,7 @@ pub struct MemoryAligner {
 }
 
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct AlignmentStats {
     pub aligned_accesses: u64,
     pub unaligned_accesses: u64,
@@ -275,6 +282,7 @@ pub struct AlignmentStats {
 }
 
 /// Aligned memory allocator
+#[allow(dead_code)]
 pub struct AlignedAllocator {
     // Memory pools for different alignments
     memory_pools: HashMap<usize, Vec<*mut u8>>,
@@ -751,7 +759,7 @@ impl SimdEngine {
     /// Update performance statistics
     fn update_performance_stats(
         &self,
-        start_time: Instant,
+        _start_time: Instant,
         elements_processed: usize,
         vectorized: bool,
     ) {
@@ -783,6 +791,7 @@ impl SimdEngine {
 }
 
 // Supporting implementations
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct VectorizationAnalysis {
     should_vectorize: bool,

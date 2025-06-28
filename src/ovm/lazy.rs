@@ -15,6 +15,7 @@ use crate::ovm::value::{OvmValue, ValueData, ValueHeader};
 
 /// Advanced lazy evaluation engine with stream processing
 pub struct LazyEngine {
+    #[allow(dead_code)]
     config: LazyConfig,
 
     // Core lazy evaluation components
@@ -38,15 +39,20 @@ pub struct LazyEngine {
 pub struct ThunkManager {
     active_thunks: Arc<RwLock<HashMap<ThunkId, Arc<LazyThunk>>>>,
     thunk_counter: Arc<AtomicUsize>,
+    #[allow(dead_code)]
     force_queue: Arc<Mutex<VecDeque<ThunkId>>>,
+    #[allow(dead_code)]
     dependency_graph: Arc<RwLock<DependencyGraph>>,
 }
 
 /// Stream processor for infinite sequences
 pub struct StreamProcessor {
+    #[allow(dead_code)]
     active_streams: Arc<RwLock<HashMap<StreamId, Arc<LazyStream>>>>,
     stream_counter: Arc<AtomicUsize>,
+    #[allow(dead_code)]
     buffer_manager: Arc<StreamBufferManager>,
+    #[allow(dead_code)]
     fusion_optimizer: Arc<StreamFusionOptimizer>,
 }
 
@@ -70,6 +76,7 @@ pub struct LazyScheduler {
 }
 
 /// Integration with garbage collection
+#[allow(dead_code)]
 pub struct LazyGcIntegration {
     weak_refs: Arc<RwLock<HashMap<ThunkId, Weak<LazyThunk>>>>,
     cleanup_queue: Arc<Mutex<VecDeque<ThunkId>>>,
@@ -77,6 +84,7 @@ pub struct LazyGcIntegration {
 }
 
 /// Lazy thunk representing a deferred computation
+#[allow(dead_code)]
 pub struct LazyThunk {
     id: ThunkId,
     state: Arc<RwLock<ThunkState>>,
@@ -100,12 +108,16 @@ pub struct LazyStream {
 
 /// Stream buffer manager
 pub struct StreamBufferManager {
+    #[allow(dead_code)]
     buffers: Arc<RwLock<HashMap<StreamId, Arc<Mutex<StreamBuffer>>>>>,
+    #[allow(dead_code)]
     buffer_size_limit: usize,
+    #[allow(dead_code)]
     eviction_policy: BufferEvictionPolicy,
 }
 
 /// Stream fusion optimizer
+#[allow(dead_code)]
 pub struct StreamFusionOptimizer {
     fusion_opportunities: Arc<RwLock<Vec<FusionOpportunity>>>,
     fused_pipelines: Arc<RwLock<HashMap<PipelineId, FusedPipeline>>>,
@@ -113,6 +125,7 @@ pub struct StreamFusionOptimizer {
 }
 
 /// Dependency graph for thunk management
+#[allow(dead_code)]
 pub struct DependencyGraph {
     edges: HashMap<ThunkId, Vec<ThunkId>>,
     reverse_edges: HashMap<ThunkId, Vec<ThunkId>>,
@@ -491,7 +504,7 @@ impl LazyEngine {
     }
 
     /// Integrate with garbage collector
-    pub fn integrate_with_gc(&self, gc: &Arc<GarbageCollector>) {
+    pub fn integrate_with_gc(&self, _gc: &Arc<GarbageCollector>) {
         self.gc_integration.set_gc_callback(Arc::new({
             let thunk_manager = self.thunk_manager.clone();
             move |dead_thunks: &[ThunkId]| {

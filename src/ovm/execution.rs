@@ -2,7 +2,7 @@
 //!
 //! Provides tiered execution with interpreter, bytecode VM, and JIT compilation
 
-use crate::ast::{BinaryOp, Expr, FunctionDecl, Statement, UnaryOp, Value};
+use crate::ast::{Expr, FunctionDecl, Statement, Value};
 use crate::builtin::BuiltinFunctions;
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::ovm::bytecode::{BytecodeError, BytecodeVm};
@@ -222,7 +222,7 @@ impl ExecutionEngine {
             }
         };
 
-        let execution_time = start_time.elapsed();
+        let _execution_time = start_time.elapsed();
 
         // Record execution statistics for profiling
         if self.config.enable_profiling {

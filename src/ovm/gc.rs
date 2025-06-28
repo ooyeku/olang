@@ -10,9 +10,7 @@ use std::time::{Duration, Instant};
 
 use crate::ovm::config::MemoryConfig;
 use crate::ovm::value::{
-    CompiledFunctionObject, ErrorObject, FunctionObject, GcPtr, LazyListObject,
-    OptimizedValueObject, OvmValue, PromiseObject, StructObject, ThunkObject, TypeTag, ValueArray,
-    ValueData, ValueHeader,
+    GcPtr, ValueHeader, OvmValue, TypeTag, ValueArray, FunctionObject, StructObject, ThunkObject, LazyListObject, PromiseObject, ValueData,
 };
 
 /// Main garbage collector with concurrent marking and generational collection
@@ -23,6 +21,7 @@ pub struct GarbageCollector {
     stats: Arc<Mutex<GcStats>>,
 
     // Memory management integration
+    #[allow(dead_code)]
     memory_manager: Option<Arc<Mutex<crate::ovm::memory::MemoryManager>>>,
     allocated_objects: Arc<AtomicUsize>,
     total_allocated: Arc<AtomicUsize>,
@@ -49,6 +48,7 @@ pub struct GarbageCollector {
 
 /// Concurrent marking engine with work stealing
 pub struct ConcurrentMarkingEngine {
+    #[allow(dead_code)]
     work_queues: Vec<Arc<Mutex<VecDeque<GcPtr<ValueHeader>>>>>,
     worker_threads: Vec<JoinHandle<()>>,
     is_marking: Arc<AtomicBool>,
@@ -58,6 +58,7 @@ pub struct ConcurrentMarkingEngine {
 
 /// Incremental sweeping engine with pause budgets
 pub struct IncrementalSweepingEngine {
+    #[allow(dead_code)]
     sweep_position: Arc<AtomicUsize>,
     pause_budget: Duration,
     swept_bytes: Arc<AtomicUsize>,
@@ -66,6 +67,7 @@ pub struct IncrementalSweepingEngine {
 
 /// Selective compaction engine for fragmentation control
 pub struct SelectiveCompactionEngine {
+    #[allow(dead_code)]
     compaction_threshold: f64,
     regions_to_compact: Arc<Mutex<Vec<MemoryRegion>>>,
     forwarding_table: Arc<RwLock<HashMap<usize, usize>>>,
@@ -472,6 +474,7 @@ impl GarbageCollector {
         }
     }
 
+    #[allow(dead_code)]
     fn perform_collection(&self, collection_type: CollectionType) -> Result<(), GcError> {
         Self::perform_collection_impl(
             &self.stats,
@@ -493,7 +496,7 @@ impl GarbageCollector {
         compaction_engine: &Arc<SelectiveCompactionEngine>,
         safepoint_manager: &Arc<SafepointManager>,
         root_scanner: &Arc<RootScanner>,
-        remembered_set: &Arc<Mutex<RememberedSet>>,
+        _remembered_set: &Arc<Mutex<RememberedSet>>,
         memory_manager: &Option<Arc<Mutex<crate::ovm::memory::MemoryManager>>>,
         collection_type: CollectionType,
     ) -> Result<(), GcError> {
@@ -719,6 +722,7 @@ impl ConcurrentMarkingEngine {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn traverse_and_mark_references(&self, object: GcPtr<ValueHeader>) -> Result<(), GcError> {
         // Use the safer version
         self.safe_traverse_references(object)
@@ -876,6 +880,7 @@ impl ConcurrentMarkingEngine {
         Ok(references)
     }
 
+    #[allow(dead_code)]
     fn get_object_references(
         &self,
         object: GcPtr<ValueHeader>,
@@ -994,6 +999,7 @@ impl ConcurrentMarkingEngine {
         }
     }
 
+    #[allow(dead_code)]
     fn extract_gc_reference(&self, value: &OvmValue) -> Option<GcPtr<ValueHeader>> {
         // Use the safer version
         self.extract_gc_reference_safe(value)
@@ -1016,7 +1022,7 @@ impl IncrementalSweepingEngine {
         memory_manager: &Arc<Mutex<crate::ovm::memory::MemoryManager>>,
     ) -> Result<(), GcError> {
         let start = Instant::now();
-        let mut swept_objects = 0;
+        let mut _swept_objects = 0;
         let mut bytes_freed = 0;
 
         // Get all objects from memory manager
@@ -1057,7 +1063,7 @@ impl IncrementalSweepingEngine {
 
                     objects_to_free.push((obj_ptr.as_ptr() as *mut u8, object_size));
                     bytes_freed += object_size;
-                    swept_objects += 1;
+                    _swept_objects += 1;
                 } else {
                     // Object is live - clear mark for next collection and keep reference
                     header.clear_mark();
@@ -1182,7 +1188,7 @@ impl IncrementalSweepingEngine {
         &self,
         memory_manager: &Arc<Mutex<crate::ovm::memory::MemoryManager>>,
     ) -> Result<usize, GcError> {
-        let start = Instant::now();
+        let _start = Instant::now();
         let mut total_freed = 0;
 
         // Get all objects
@@ -1685,6 +1691,7 @@ impl FreeList {
     }
 }
 
+#[allow(dead_code)]
 // Helper function for pointer comparison
 fn ptr_eq(a: GcPtr<ValueHeader>, b: GcPtr<ValueHeader>) -> bool {
     a.as_ptr() == b.as_ptr()

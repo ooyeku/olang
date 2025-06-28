@@ -12,9 +12,10 @@ use std::time::{Duration, Instant};
 
 // Cranelift JIT imports for Phase 3
 use cranelift::prelude::*;
-use cranelift_codegen::ir::FuncRef;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
+
+#[allow(dead_code)]
 
 /// Main optimization engine with JIT compilation and profiling
 pub struct OptimizationEngine {
@@ -47,6 +48,7 @@ pub struct OptimizationEngine {
 
 /// Configuration for the optimization engine
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct OptimizationConfig {
     optimization_level: OptimizationLevel,
     jit_threshold: u32,
@@ -77,6 +79,7 @@ impl Default for OptimizationConfig {
 
 /// Function profile for tracking execution patterns
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct FunctionProfile {
     function_id: FunctionId,
     call_count: u32,
@@ -91,7 +94,8 @@ struct FunctionProfile {
 
 /// Compilation tiers for progressive optimization
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum CompilationTier {
+#[allow(dead_code)]
+pub enum CompilationTier {
     Interpreter,    // No compilation
     BasicJit,       // Basic JIT compilation
     OptimizedJit,   // Optimized JIT with profiling data
@@ -100,6 +104,7 @@ enum CompilationTier {
 
 /// Hot path identification for optimization
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct HotPath {
     path_id: u32,
     execution_count: u32,
@@ -109,6 +114,7 @@ struct HotPath {
 
 /// Optimization opportunities identified by profiling
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct OptimizationOpportunity {
     opportunity_type: OptimizationType,
     confidence: f64,
@@ -117,6 +123,7 @@ struct OptimizationOpportunity {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 enum OptimizationType {
     FunctionInlining,
     LoopUnrolling,
@@ -128,6 +135,7 @@ enum OptimizationType {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 enum OptimizationCost {
     Low,
     Medium,
@@ -137,6 +145,7 @@ enum OptimizationCost {
 
 /// JIT compilation request
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct CompilationRequest {
     function_id: FunctionId,
     function_name: String,
@@ -173,6 +182,7 @@ struct CraneliftJitCompiler {
 }
 
 /// Cranelift IR generation context
+#[allow(dead_code)]
 struct CodegenContext {
     pointer_type: Type,
     int_type: Type,
@@ -182,6 +192,7 @@ struct CodegenContext {
 
 /// Compiled function representation with Cranelift integration
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct CompiledFunction {
     function_id: FunctionId,
     func_ref_id: u32,           // Store ID instead of FuncRef for thread safety
@@ -204,29 +215,34 @@ pub struct CompilationStats {
 }
 
 /// Multi-pass optimizer for IR
+#[allow(dead_code)]
 struct MultiPassOptimizer {
     passes: Vec<Box<dyn OptimizationPass>>,
 }
 
 /// Performance analyzer for identifying optimization opportunities
+#[allow(dead_code)]
 struct PerformanceAnalyzer {
     execution_traces: Arc<Mutex<Vec<ExecutionTrace>>>,
     bottleneck_detector: BottleneckDetector,
 }
 
 /// Type specializer for hot functions
+#[allow(dead_code)]
 struct TypeSpecializer {
     specialized_functions: HashMap<FunctionId, Vec<SpecializedFunction>>,
     type_feedback: Arc<RwLock<HashMap<FunctionId, TypeFeedback>>>,
 }
 
 /// Pipeline optimizer for stream operations
+#[allow(dead_code)]
 struct PipelineOptimizer {
     fusion_opportunities: Vec<PipelineFusionOpportunity>,
     fusion_cache: HashMap<PipelineSignature, FusedPipeline>,
 }
 
 /// Lazy evaluation optimizer
+#[allow(dead_code)]
 struct LazyOptimizer {
     lazy_patterns: Vec<LazyOptimizationPattern>,
     force_point_analysis: ForcePointAnalysis,
@@ -234,6 +250,7 @@ struct LazyOptimizer {
 
 // Supporting types
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ExecutionTrace {
     function_id: FunctionId,
@@ -242,12 +259,14 @@ struct ExecutionTrace {
     path_taken: Vec<u32>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct BottleneckDetector {
     slow_functions: Vec<FunctionId>,
     memory_hotspots: Vec<usize>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct SpecializedFunction {
     original_id: FunctionId,
@@ -255,12 +274,14 @@ struct SpecializedFunction {
     compiled_code: Vec<u8>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct TypeFeedback {
     observed_types: HashMap<String, u32>, // parameter name -> type frequency
     type_stability: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct PipelineFusionOpportunity {
     operations: Vec<String>,
@@ -273,7 +294,7 @@ struct PipelineSignature {
     operations: Vec<String>,
     input_type: String,
 }
-
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct FusedPipeline {
     signature: PipelineSignature,
@@ -281,6 +302,7 @@ struct FusedPipeline {
     speedup_factor: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct LazyOptimizationPattern {
     pattern_name: String,
@@ -288,6 +310,7 @@ struct LazyOptimizationPattern {
     optimization: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct ForcePointAnalysis {
     force_points: HashMap<FunctionId, Vec<usize>>,
@@ -326,30 +349,35 @@ pub enum OptimizationError {
 }
 
 // Trait definitions
+#[allow(dead_code)]
 trait OptimizationPass: Send + Sync {
     fn name(&self) -> &str;
     fn run(&self, ir: &mut OvmIr) -> Result<bool, OptimizationError>;
     fn cost_model(&self) -> OptimizationCost;
 }
 
+#[allow(dead_code)]
 trait IrOptimizationPass: Send + Sync {
     fn optimize(&self, ir: &mut OvmIr) -> Result<(), OptimizationError>;
 }
 
 /// Placeholder IR for optimization
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct OvmIr {
     instructions: Vec<IrInstruction>,
     functions: HashMap<FunctionId, IrFunction>,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct IrInstruction {
     opcode: IrOpcode,
     operands: Vec<IrOperand>,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum IrOpcode {
     Load,
     Store,
@@ -361,6 +389,7 @@ enum IrOpcode {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum IrOperand {
     Register(u32),
     Immediate(i64),
@@ -368,6 +397,7 @@ enum IrOperand {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct IrFunction {
     id: FunctionId,
     parameters: Vec<IrParameter>,
@@ -375,6 +405,7 @@ struct IrFunction {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct IrParameter {
     name: String,
     type_hint: Option<String>,
@@ -382,10 +413,10 @@ struct IrParameter {
 
 // Implementation
 impl OptimizationEngine {
-    pub fn new(config: &OvmConfig) -> Result<Self, OptimizationError> {
+    pub fn new(_config: &OvmConfig) -> Result<Self, OptimizationError> {
         let optimization_config = OptimizationConfig::default();
 
-        let (sender, receiver) = mpsc::channel();
+        let (sender, _receiver) = mpsc::channel();
 
         let mut engine = Self {
             config: optimization_config,
@@ -472,7 +503,7 @@ impl OptimizationEngine {
     pub fn register_function(
         &mut self,
         func_id: FunctionId,
-        func: FunctionDecl,
+        _func: FunctionDecl,
     ) -> Result<(), OptimizationError> {
         // Create initial profile
         let profile = FunctionProfile {
@@ -1126,22 +1157,22 @@ impl CraneliftJitCompiler {
         builder.switch_to_block(arithmetic_block);
 
         // Load first two arguments for binary operation
-        let arg0_ptr = args_ptr;
+        let _arg0_ptr = args_ptr;
         let ptr_size = builder.ins().iconst(ir_context.int_type, 8); // Assuming 64-bit pointers
-        let arg1_ptr = builder.ins().iadd(args_ptr, ptr_size);
+        let _arg1_ptr = builder.ins().iadd(args_ptr, ptr_size);
 
         // For now, create a simple result (this would be expanded with actual arithmetic)
-        let arithmetic_result = builder.ins().iconst(ir_context.pointer_type, 42); // Placeholder
+        let _arithmetic_result = builder.ins().iconst(ir_context.pointer_type, 42); // Placeholder
         builder.ins().jump(merge_block, &[]);
 
         // Fallback to interpreter block
         builder.switch_to_block(fallback_block);
-        let fallback_result = builder.ins().iconst(ir_context.pointer_type, 0); // Null for interpreter fallback
+        let _fallback_result = builder.ins().iconst(ir_context.pointer_type, 0); // Null for interpreter fallback
         builder.ins().jump(merge_block, &[]);
 
         // Invalid arguments path
         builder.switch_to_block(invalid_block);
-        let error_result = builder.ins().iconst(ir_context.pointer_type, 0); // Null for error
+        let _error_result = builder.ins().iconst(ir_context.pointer_type, 0); // Null for error
         builder.ins().jump(merge_block, &[]);
 
         // Merge block - return result
@@ -1258,7 +1289,7 @@ impl CraneliftJitCompiler {
         // **Phase 3: Inlined binary arithmetic**
         // Load arguments and perform direct arithmetic operations
         let ptr_size = builder.ins().iconst(ir_context.int_type, 8);
-        let arg1_offset = builder.ins().iadd(args_ptr, ptr_size);
+        let _arg1_offset = builder.ins().iadd(args_ptr, ptr_size);
 
         // Simulate loading integer values and adding them
         let val1 = builder.ins().iconst(ir_context.int_type, 10); // Placeholder
@@ -1283,7 +1314,7 @@ impl CraneliftJitCompiler {
     /// **Phase 3: Balanced optimization for moderately hot functions**
     fn generate_balanced_optimized_ir_static(
         builder: &mut FunctionBuilder,
-        args_ptr: cranelift::prelude::Value,
+        _args_ptr: cranelift::prelude::Value,
         args_count: cranelift::prelude::Value,
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
@@ -1346,7 +1377,7 @@ impl CraneliftJitCompiler {
     /// **Phase 3: Enhanced basic IR with improved error handling**
     fn generate_enhanced_basic_ir_static(
         builder: &mut FunctionBuilder,
-        args_ptr: cranelift::prelude::Value,
+        _args_ptr: cranelift::prelude::Value,
         args_count: cranelift::prelude::Value,
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
@@ -1428,7 +1459,7 @@ impl CraneliftJitCompiler {
     /// **Phase 3: Fully specialized IR with all optimizations**
     fn generate_fully_specialized_ir_static(
         builder: &mut FunctionBuilder,
-        args_ptr: cranelift::prelude::Value,
+        _args_ptr: cranelift::prelude::Value,
         args_count: cranelift::prelude::Value,
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
@@ -1528,7 +1559,7 @@ impl CraneliftJitCompiler {
     /// **Phase 3: Function inlining specialized IR**
     fn generate_inlining_specialized_ir_static(
         builder: &mut FunctionBuilder,
-        args_ptr: cranelift::prelude::Value,
+        _args_ptr: cranelift::prelude::Value,
         args_count: cranelift::prelude::Value,
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
@@ -1550,7 +1581,7 @@ impl CraneliftJitCompiler {
         builder.switch_to_block(valid_block);
 
         // Inline arithmetic operations
-        let ptr_size = builder.ins().iconst(ir_context.int_type, 8);
+        let _ptr_size = builder.ins().iconst(ir_context.int_type, 8);
 
         // Simulate inlined addition of first two arguments
         let base_val = builder.ins().iconst(ir_context.int_type, 100);
@@ -1636,7 +1667,7 @@ impl CraneliftJitCompiler {
     pub fn has_compiled_function(&self, func_id: FunctionId) -> bool {
         self.compiled_functions.contains_key(&func_id)
     }
-
+    #[allow(dead_code)]
     /// Get compiled function metadata
     pub fn get_compiled_function(&self, func_id: FunctionId) -> Option<&CompiledFunction> {
         self.compiled_functions.get(&func_id)

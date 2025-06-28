@@ -1,8 +1,8 @@
-//! OVM Bytecode Virtual Machine
-//!
+#![allow(dead_code)]
+
 //! Register-based bytecode VM for intermediate-tier execution between interpreter and JIT
 
-use crate::ast::{BinaryOp, Expr, FunctionDecl, Statement, UnaryOp, Value};
+use crate::ast::{BinaryOp, Expr, FunctionDecl, UnaryOp, Value};
 use crate::ovm::{FunctionId, OvmValue};
 use std::collections::HashMap;
 use std::fmt;
@@ -2564,7 +2564,7 @@ impl RegisterOptimizer {
         interference_graph: &HashMap<Register, std::collections::HashSet<Register>>,
     ) -> Result<HashMap<Register, Register>, BytecodeError> {
         let mut coloring = HashMap::new();
-        let mut available_colors = (0..32).map(Register).collect::<Vec<_>>(); // 32 physical registers
+        let available_colors = (0..32).map(Register).collect::<Vec<_>>(); // 32 physical registers
 
         // Sort registers by degree (most constrained first)
         let mut registers: Vec<_> = interference_graph.keys().cloned().collect();
@@ -3207,7 +3207,7 @@ impl FunctionInliner {
     ) -> Result<Vec<InlineInfo>, BytecodeError> {
         let mut call_sites = Vec::new();
 
-        for (i, instruction) in instructions.iter().enumerate() {
+        for (_i, instruction) in instructions.iter().enumerate() {
             match instruction {
                 Instruction::Call { .. } => {
                     // Analyze call site for inlining potential
@@ -3228,8 +3228,8 @@ impl FunctionInliner {
 
     fn inline_call_site(
         &mut self,
-        mut instructions: Vec<Instruction>,
-        inline_info: &InlineInfo,
+        instructions: Vec<Instruction>,
+        _inline_info: &InlineInfo,
     ) -> Result<Vec<Instruction>, BytecodeError> {
         // Simplified inlining - would need actual function body
         // In a complete implementation, this would:
@@ -3261,7 +3261,7 @@ impl ConstantFolder {
         for instruction in instructions {
             match instruction {
                 // Track constant loads
-                Instruction::LoadConst { dst, const_idx } => {
+                Instruction::LoadConst { dst: _, const_idx: _ } => {
                     // We can't actually fold without access to the constants table here
                     // In a complete implementation, this would be passed in
                     result.push(instruction);

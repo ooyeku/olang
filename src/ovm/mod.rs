@@ -337,9 +337,9 @@ impl OlangVirtualMachine {
     /// Register a custom builtin function
     pub fn register_builtin(
         &mut self,
-        name: String,
-        arity: usize,
-        function: fn(&[OvmValue]) -> Result<OvmValue, crate::ovm::value::RuntimeError>,
+        _name: String,
+        _arity: usize,
+        _function: fn(&[OvmValue]) -> Result<OvmValue, crate::ovm::value::RuntimeError>,
     ) -> Result<(), OvmError> {
         // In a full implementation, this would register the builtin with the execution engine
         // For now, return success

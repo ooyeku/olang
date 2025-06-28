@@ -550,7 +550,7 @@ impl Repl {
                     let expr = parts[1..].join(" ");
                     match self.parser.parse(&expr) {
                         Ok(program) => {
-                            if let Some(stmt) = program.statements.first() {
+                            if let Some(_stmt) = program.statements.first() {
                                 // For now, just evaluate and show the type of the result
                                 match self.eval_line(&expr) {
                                     Ok(value) => {
@@ -1141,7 +1141,7 @@ impl ReplExt for Repl {
             .define_variable(name.to_string(), value);
     }
 
-    fn get_variable(&self, name: &str) -> Option<Value> {
+    fn get_variable(&self, _name: &str) -> Option<Value> {
         // Note: This would need &mut self to work properly, but keeping for compatibility
         None // Simplified for now
     }

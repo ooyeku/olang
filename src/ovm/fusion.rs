@@ -81,6 +81,7 @@ pub struct PatternAnalyzer {
 
 /// Multi-operation fusion optimizer
 pub struct MultiOperationFuser {
+    #[allow(dead_code)]
     cache: HashMap<Vec<PipelineOp>, FusedOperation>,
 }
 
@@ -158,6 +159,7 @@ impl AdvancedFusionEngine {
     }
 
     /// Analyze patterns for fusion opportunities
+    #[allow(dead_code)]
     fn analyze_patterns(
         &self,
         operations: &[PipelineOp],

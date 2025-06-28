@@ -501,7 +501,7 @@ impl Default for LazyConfig {
 }
 
 /// Check if memory pressure suggests forcing lazy values
-pub(crate) fn check_memory_pressure(threshold_mb: usize) -> bool {
+pub(crate) fn check_memory_pressure(_threshold_mb: usize) -> bool {
     // Simple memory pressure check - in production this would be more sophisticated
     // For now, just return false to avoid forcing unless explicitly needed
     false

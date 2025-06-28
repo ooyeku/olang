@@ -482,7 +482,7 @@ impl Interpreter {
             Expr::Async {
                 parameters,
                 body,
-                return_type,
+                return_type: _return_type,
             } => {
                 // Create async function like regular function but mark as async
                 let closure = self.environment.variables.clone();
@@ -522,7 +522,7 @@ impl Interpreter {
             Expr::Promise {
                 promise_type,
                 value,
-                delay,
+                delay: _,
             } => {
                 let evaluated_value = self.eval_expr(*value)?;
                 match promise_type {

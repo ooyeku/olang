@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::ast::{Expr, Value as AstValue};
 
@@ -778,8 +778,8 @@ impl OvmValue {
 
             AstValue::Range {
                 start,
-                end,
-                inclusive,
+                end: _,
+                inclusive: _,
             } => {
                 // For ranges, create a simple representation for now
                 // TODO: Implement proper range representation
@@ -953,7 +953,7 @@ impl OvmValue {
                 // Errors return unit for now
                 Ok(AstValue::Unit)
             }
-            ValueData::Result { ok, err } => {
+            ValueData::Result { ok: _, err: _ } => {
                 // Results return unit for now
                 Ok(AstValue::Unit)
             }

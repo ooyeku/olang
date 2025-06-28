@@ -483,6 +483,7 @@ impl OvmInterpreter {
             .retain(|name| name != builtin_name);
     }
 
+    #[allow(dead_code)]
     /// Check if an expression should use the classic interpreter (updated logic)
     fn should_use_classic_interpreter(&self, expr: &crate::ast::Expr) -> bool {
         // Use the inverse of the enhanced OVM routing logic

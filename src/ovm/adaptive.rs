@@ -31,6 +31,7 @@ pub struct AdaptiveOptimizationSystem {
     config: AdaptiveConfig,
 }
 
+#[allow(dead_code)]
 /// Continuous performance monitoring
 pub struct ContinuousPerformanceMonitor {
     // Hardware performance counters
@@ -52,6 +53,8 @@ pub struct ContinuousPerformanceMonitor {
     metrics_collector: MetricsCollector,
 }
 
+#[allow(dead_code)]
+
 /// Machine learning optimizer for optimization decisions
 pub struct MachineLearningOptimizer {
     // Decision models
@@ -70,6 +73,7 @@ pub struct MachineLearningOptimizer {
 }
 
 /// Optimization feedback loop for continuous improvement
+#[allow(dead_code)]
 pub struct OptimizationFeedbackLoop {
     // Decision tracking
     decisions: Vec<OptimizationDecision>,
@@ -84,6 +88,7 @@ pub struct OptimizationFeedbackLoop {
     retraining_scheduler: RetrainingScheduler,
 }
 
+#[allow(dead_code)]
 /// Dynamic reconfiguration engine
 pub struct DynamicReconfigurationEngine {
     // Current configuration
@@ -154,23 +159,27 @@ pub struct PerformanceSnapshot {
 }
 
 /// Machine learning models for optimization decisions
+#[allow(dead_code)]
 pub struct TierTransitionModel {
     // Simple heuristic-based model (can be replaced with actual ML)
     transition_thresholds: HashMap<String, f64>,
     historical_decisions: Vec<TierTransitionDecision>,
 }
 
+#[allow(dead_code)]
 pub struct CompilationTimingModel {
     compilation_cost_estimates: HashMap<FunctionId, Duration>,
     timing_predictions: TimingPredictor,
 }
 
+#[allow(dead_code)]
 pub struct OptimizationStrategyModel {
     strategy_effectiveness: HashMap<String, f64>,
     workload_patterns: WorkloadPatternRecognizer,
 }
 
 /// Training dataset for ML models
+#[allow(dead_code)]
 pub struct TrainingDataset {
     features: Vec<FeatureVector>,
     labels: Vec<OptimizationLabel>,
@@ -179,6 +188,7 @@ pub struct TrainingDataset {
 
 /// Model accuracy tracking
 #[derive(Debug, Default, Clone, Copy)]
+#[allow(dead_code)]
 pub struct ModelAccuracy {
     pub tier_transition_accuracy: f64,
     pub compilation_timing_accuracy: f64,
@@ -187,6 +197,7 @@ pub struct ModelAccuracy {
 }
 
 /// Feature extraction for ML models
+#[allow(dead_code)]
 pub struct FeatureExtractor {
     // Function characteristics
     function_features: FunctionFeatureExtractor,
@@ -263,28 +274,33 @@ impl Default for AdaptiveConfig {
 }
 
 /// Supporting types
+#[allow(dead_code)]
 pub struct MetricsCollector {
     collection_interval: Duration,
     last_collection: Instant,
 }
 
+#[allow(dead_code)]
 pub struct ImpactAnalyzer {
     baseline_performance: HashMap<FunctionId, f64>,
     impact_measurements: Vec<ImpactMeasurement>,
 }
 
+#[allow(dead_code)]
 pub struct RetrainingScheduler {
     last_retraining: Instant,
     retraining_interval: Duration,
     accuracy_threshold: f64,
 }
 
+#[allow(dead_code)]
 pub struct ConfigurationSnapshot {
     pub timestamp: Instant,
     pub config: OvmConfig,
     pub performance_metrics: PerformanceSnapshot,
 }
 
+#[allow(dead_code)]
 pub struct AdaptationStrategy {
     pub name: String,
     pub trigger_condition: fn(&PerformanceSnapshot) -> bool,
@@ -292,6 +308,7 @@ pub struct AdaptationStrategy {
     pub effectiveness_score: f64,
 }
 
+#[allow(dead_code)]
 pub struct EnvironmentMonitor {
     pub system_load: f64,
     pub memory_pressure: f64,
@@ -324,21 +341,25 @@ pub struct TierTransitionDecision {
     pub actual_improvement: Option<f64>,
 }
 
+#[allow(dead_code)]
 pub struct TimingPredictor {
     compilation_models: HashMap<OptimizationLevel, CompilationTimeModel>,
 }
 
+#[allow(dead_code)]
 pub struct CompilationTimeModel {
     base_time: Duration,
     complexity_factor: f64,
     size_factor: f64,
-}
+}   
 
+#[allow(dead_code)]
 pub struct WorkloadPatternRecognizer {
     patterns: Vec<WorkloadPattern>,
     current_pattern: Option<String>,
 }
 
+#[allow(dead_code)]
 pub struct WorkloadPattern {
     pub name: String,
     pub characteristics: Vec<f64>,

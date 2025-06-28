@@ -4,7 +4,6 @@
 //! and lazy evaluation integration.
 
 use std::collections::HashMap;
-use std::ptr::NonNull;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -32,6 +31,8 @@ pub struct UnifiedHeap {
     regions: RwLock<Vec<Arc<HeapRegion>>>,
 }
 
+#[allow(dead_code)]
+
 /// Heap region with bump pointer allocation
 pub struct HeapRegion {
     start: *mut u8,
@@ -51,6 +52,7 @@ pub enum Generation {
     Large,
 }
 
+#[allow(dead_code)]
 /// Tiered allocation strategy with actual implementation
 pub struct TieredAllocator {
     tlab_manager: TlabManager,
@@ -108,12 +110,14 @@ pub struct NurserySpace {
     region: Option<Arc<HeapRegion>>,
 }
 
+#[allow(dead_code)]
 pub struct YoungGeneration {
     size: usize,
     used: AtomicUsize,
     regions: RwLock<Vec<Arc<HeapRegion>>>,
 }
 
+#[allow(dead_code)]
 pub struct OldGeneration {
     size: usize,
     used: AtomicUsize,
@@ -142,6 +146,7 @@ pub struct TlabManager {
     tlab_size: usize,
 }
 
+#[allow(dead_code)]
 pub struct LockFreeAllocator {
     bump_pointer: AtomicPtr<u8>,
     limit: AtomicPtr<u8>,
@@ -165,11 +170,12 @@ impl Drop for MemoryManager {
     }
 }
 
+
 impl MemoryManager {
     pub fn new(config: &OvmConfig) -> Result<Self, MemoryError> {
         let heap = UnifiedHeap::new(&config.memory)?;
         let allocator = TieredAllocator::new(&config.memory)?;
-        let mut gc = GarbageCollector::new(&config.memory)?;
+        let gc = GarbageCollector::new(&config.memory)?;
         let stats = Arc::new(Mutex::new(MemoryStats::new()));
 
         let memory_manager = Self {
@@ -968,6 +974,7 @@ impl LockFreeAllocator {
         })
     }
 
+    #[allow(dead_code)]
     fn allocate(&self, size: usize) -> Option<*mut u8> {
         let aligned_size = (size + 7) & !7; // 8-byte alignment
 

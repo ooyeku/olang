@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[allow(dead_code)]
+
 /// Main pipeline processing engine
 pub struct PipelineEngine {
     // Configuration
@@ -33,6 +35,7 @@ pub struct PipelineEngine {
     is_running: Arc<std::sync::atomic::AtomicBool>,
 }
 
+#[allow(dead_code)]
 /// Pipeline configuration
 #[derive(Debug, Clone)]
 struct PipelineConfig {
@@ -60,6 +63,7 @@ impl Default for PipelineConfig {
 }
 
 /// Pipeline fusion optimizer
+#[allow(dead_code)]
 struct PipelineFusionOptimizer {
     // Known fusion patterns
     fusion_patterns: Vec<FusionPattern>,
@@ -72,6 +76,7 @@ struct PipelineFusionOptimizer {
 }
 
 /// Parallel processing manager
+#[allow(dead_code)]
 struct ParallelProcessor {
     // Worker thread pool
     worker_pool: Arc<ThreadPool>,
@@ -84,6 +89,7 @@ struct ParallelProcessor {
 }
 
 /// Stream processor for lazy evaluation integration
+#[allow(dead_code)]
 struct StreamProcessor {
     // Active streams
     active_streams: Arc<RwLock<HashMap<StreamId, ActiveStream>>>,
@@ -105,6 +111,7 @@ struct PipelineSignature {
 }
 
 /// Compiled pipeline representation
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CompiledPipeline {
     signature: PipelineSignature,
@@ -114,8 +121,9 @@ struct CompiledPipeline {
 }
 
 /// Pipeline operation types
+#[allow(dead_code)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-enum PipelineOp {
+pub enum PipelineOp {
     Map(String),    // Map function name/signature
     Filter(String), // Filter predicate signature
     Reduce(String), // Reduce function signature
@@ -131,6 +139,7 @@ enum PipelineOp {
 }
 
 /// Data types for pipeline optimization
+#[allow(dead_code)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 enum DataType {
     Integer,
@@ -144,6 +153,7 @@ enum DataType {
 }
 
 /// Fusion patterns for common operation combinations
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct FusionPattern {
     pattern: Vec<PipelineOp>,
@@ -153,6 +163,7 @@ struct FusionPattern {
 }
 
 /// Fused operation that combines multiple pipeline operations
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct FusedOperation {
     name: String,
@@ -162,6 +173,7 @@ struct FusedOperation {
 }
 
 /// Implementation strategies for fused operations
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum FusedImplementation {
     Sequential, // Execute operations in sequence
@@ -171,6 +183,7 @@ enum FusedImplementation {
 }
 
 /// Fusion opportunity identification
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct FusionOpportunity {
     operations: Vec<PipelineOp>,
@@ -180,6 +193,7 @@ struct FusionOpportunity {
 }
 
 /// Fusion statistics for monitoring
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 struct FusionStatistics {
     opportunities_found: u64,
@@ -189,6 +203,7 @@ struct FusionStatistics {
 }
 
 /// Pipeline executor implementations
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum PipelineExecutor {
     Sequential(SequentialExecutor),
@@ -198,12 +213,14 @@ enum PipelineExecutor {
 }
 
 /// Sequential pipeline executor
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct SequentialExecutor {
     operations: Vec<PipelineOp>,
 }
 
 /// Parallel pipeline executor
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ParallelExecutor {
     operations: Vec<PipelineOp>,
@@ -212,6 +229,7 @@ struct ParallelExecutor {
 }
 
 /// Vectorized pipeline executor
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct VectorizedExecutor {
     operations: Vec<PipelineOp>,
@@ -219,6 +237,7 @@ struct VectorizedExecutor {
 }
 
 /// Fused pipeline executor
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct FusedExecutor {
     fused_operations: Vec<FusedOperation>,
@@ -226,6 +245,7 @@ struct FusedExecutor {
 }
 
 /// Performance profile for pipelines
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct PerformanceProfile {
     average_execution_time: Duration,
@@ -236,6 +256,7 @@ struct PerformanceProfile {
 }
 
 /// Parallel task for work distribution
+#[allow(dead_code)]
 #[derive(Debug)]
 struct ParallelTask {
     task_id: u64,
@@ -246,6 +267,7 @@ struct ParallelTask {
 }
 
 /// Thread pool for parallel processing
+#[allow(dead_code)]
 struct ThreadPool {
     workers: Vec<JoinHandle<()>>,
     task_sender: std::sync::mpsc::Sender<ParallelTask>,
@@ -253,6 +275,7 @@ struct ThreadPool {
 }
 
 /// Load balancer for distributing work
+#[allow(dead_code)]
 #[derive(Debug)]
 struct LoadBalancer {
     worker_loads: Vec<f64>,
@@ -262,6 +285,7 @@ struct LoadBalancer {
 /// Stream processing types
 type StreamId = u64;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct ActiveStream {
     id: StreamId,
@@ -271,6 +295,7 @@ struct ActiveStream {
     is_infinite: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct StreamBufferManager {
     buffers: HashMap<StreamId, VecDeque<OvmValue>>,
@@ -278,12 +303,14 @@ struct StreamBufferManager {
     memory_pressure: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct StreamFusionEngine {
     fusion_opportunities: Vec<StreamFusionOpportunity>,
     active_fusions: HashMap<Vec<StreamId>, FusedStream>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct StreamFusionOpportunity {
     streams: Vec<StreamId>,
@@ -291,6 +318,7 @@ struct StreamFusionOpportunity {
     estimated_benefit: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct FusedStream {
     input_streams: Vec<StreamId>,
@@ -299,6 +327,7 @@ struct FusedStream {
 }
 
 /// Pipeline performance monitoring
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 struct PipelinePerformanceMonitor {
     pipeline_executions: u64,
@@ -330,8 +359,9 @@ pub enum PipelineError {
     CompilationFailed(String),
 }
 
+#[allow(dead_code)]
 impl PipelineEngine {
-    pub fn new(config: &OvmConfig) -> Result<Self, PipelineError> {
+    pub fn new(_config: &OvmConfig) -> Result<Self, PipelineError> {
         let pipeline_config = PipelineConfig::default();
 
         Ok(Self {
@@ -400,7 +430,7 @@ impl PipelineEngine {
     fn optimize_pipeline(
         &self,
         operations: &[PipelineOp],
-        input: &[OvmValue],
+        _input: &[OvmValue],
     ) -> Result<Vec<PipelineOp>, PipelineError> {
         let mut optimized = operations.to_vec();
 
@@ -704,7 +734,7 @@ impl ParallelProcessor {
 }
 
 impl ThreadPool {
-    fn new(worker_count: usize) -> Result<Self, PipelineError> {
+    fn new(_worker_count: usize) -> Result<Self, PipelineError> {
         let (sender, _receiver) = std::sync::mpsc::channel();
 
         Ok(Self {

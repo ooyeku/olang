@@ -21,7 +21,7 @@ impl From<OptimizationError> for JitError {
 /// Legacy JIT compiler that delegates to the advanced OVM optimization engine
 pub struct JitCompiler {
     /// Function counter for generating unique IDs
-    next_function_id: u32,
+    _next_function_id: u32,
 }
 
 impl Default for JitCompiler {
@@ -33,7 +33,7 @@ impl Default for JitCompiler {
 impl JitCompiler {
     pub fn new() -> Self {
         Self {
-            next_function_id: 0,
+            _next_function_id: 0,
         }
     }
 
@@ -106,9 +106,9 @@ impl JitCompiler {
     }
 
     /// Generate a unique function ID for JIT compilation
-    fn generate_function_id(&mut self) -> FunctionId {
+    fn _generate_function_id(&mut self) -> FunctionId {
         let id = FunctionId::new();
-        self.next_function_id += 1; // Keep for consistency but use new()
+        self._next_function_id += 1; // Keep for consistency but use new()
         id
     }
 
@@ -138,7 +138,7 @@ pub enum JitReadiness {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{BinaryOp, Value};
+    use crate::ast::BinaryOp;
 
     #[test]
     fn test_jit_compilation() {

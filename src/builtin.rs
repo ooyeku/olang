@@ -1201,7 +1201,7 @@ impl BuiltinFunctions {
             });
         }
 
-        let (list_values, should_use_parallel) = match &args[0] {
+        let (list_values, _should_use_parallel) = match &args[0] {
             Value::List(items) => (items.as_ref().to_vec(), should_parallelize(items.len())),
             Value::Range {
                 start,
