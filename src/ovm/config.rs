@@ -255,12 +255,12 @@ impl Default for MemoryConfig {
 impl Default for ExecutionConfig {
     fn default() -> Self {
         Self {
-            interpreter_threshold: 100,   // Promote to bytecode after 100 calls
-            bytecode_threshold: 1000,     // Promote to native after 1000 calls
-            native_threshold: 10000,      // Optimize native after 10000 calls
-            deoptimization_threshold: 10, // Fall back after 10 failures
+            interpreter_threshold: 10, // Lowered for faster promotion
+            bytecode_threshold: 20,   // Lowered for faster promotion
+            native_threshold: 50,     // Lowered for faster JIT
+            deoptimization_threshold: 10,
             compilation_queue_size: 1000,
-            compilation_workers: (num_cpus::get() / 2).max(1), // Half cores for compilation
+            compilation_workers: num_cpus::get().max(1), // Use all CPUs for background JIT
             tiered_compilation: true,
             profile_guided_optimization: true,
         }
@@ -426,6 +426,19 @@ impl OvmConfig {
             Ok(())
         } else {
             Err(errors)
+        }
+    }
+
+    /// Production-ready default config (used by OvmConfig::default)
+    pub fn default() -> Self {
+        Self {
+            memory: MemoryConfig::default(),
+            execution: ExecutionConfig::default(),
+            optimization: OptimizationConfig::default(),
+            lazy: LazyConfig::default(),
+            async_runtime: AsyncConfig::default(),
+            pipeline: PipelineConfig::default(),
+            debug: DebugConfig::default(),
         }
     }
 }

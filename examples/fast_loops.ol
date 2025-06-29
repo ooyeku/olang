@@ -1,6 +1,7 @@
 let data = 1..10
 
-let n = 1..100
+
+let n = 1..100000
 
 for numbers in n {
     let v = random.choice(n)
