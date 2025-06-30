@@ -156,6 +156,12 @@ fn test_raw_strings_with_quotes() {
     let parser = Parser::new();
     let mut interpreter = Interpreter::new();
 
+    // The source should contain a raw string literal with escaped quotes and
+    // newline characters. The previous version had an extra `"` before the
+    // trailing `#` which broke the Rust string literal syntax.
+    // Construct a raw string in the O language that contains escaped quotes
+    // and a newline escape sequence. The outer Rust raw string allows us to
+    // embed the double quotes without additional escaping.
     let source = r#"r"String with \"quotes\" and \n newlines""#;
     
     let program = parser.parse(source).expect("Failed to parse");
@@ -163,7 +169,9 @@ fn test_raw_strings_with_quotes() {
 
     assert_eq!(
         result,
-        olang::ast::Value::String(r"String with \"quotes\" and \n newlines".to_string().into())
+        // The expected value after evaluation is the regular string with the
+        // escaped characters interpreted by the O language runtime.
+        olang::ast::Value::String(r#"String with \"quotes\" and \n newlines"#.to_string().into())
     );
 }
 

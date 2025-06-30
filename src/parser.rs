@@ -1751,6 +1751,13 @@ impl Parser {
                 let value = &raw_value[2..raw_value.len() - 1];
                 Ok(Expr::RawString(Rc::new(value.to_string())))
             }
+            Rule::char_literal => {
+                let char_str = pair.as_str().trim_matches('\'');
+                let value = char_str.chars().next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Invalid character literal".to_string(),
+                })?;
+                Ok(Expr::String(value.to_string().into()))
+            }
             Rule::template_string => {
                 self.build_template_string(pair.into_inner())
             }
