@@ -647,7 +647,7 @@ let result = risky_operation()?;
 ### Syntax Validation Tests
 
 ```olang
-// Test file: test_syntax_validation.rap
+// Test file: test_syntax_validation.ol
 
 // Range operations
 let range_test = 1..1000 |> map((x) => x * 2) |> sum();
