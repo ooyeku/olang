@@ -194,6 +194,23 @@ pub enum Expr {
     All(Vec<Expr>),   // Promise.all([...])
     Race(Vec<Expr>),  // Promise.race([...])
     Spawn(Box<Expr>), // spawn async_expr
+
+    // New string literal variants
+    RawString(Rc<String>),
+    TemplateString {
+        parts: Vec<TemplatePart>,
+    },
+
+    // Bitwise operations
+    BitwiseOp {
+        left: Box<Expr>,
+        op: BitwiseOp,
+        right: Box<Expr>,
+    },
+
+    // Spread/rest (for future use)
+    Spread(Box<Expr>),
+    Rest(Box<Expr>),
 }
 
 /// Promise types for Promise expressions
@@ -256,6 +273,19 @@ pub enum Pattern {
     Struct {
         type_name: String,
         field_patterns: Vec<(String, Pattern)>,
+    },
+    // New pattern variants
+    Range {
+        start: Box<Pattern>,
+        end: Box<Pattern>,
+        inclusive: bool,
+    },
+    Or {
+        alternatives: Vec<Pattern>,
+    },
+    Guarded {
+        pattern: Box<Pattern>,
+        guard: Box<Expr>,
     },
 }
 
@@ -371,6 +401,16 @@ pub enum TypeAnnotation {
     // Type inference placeholders
     Inferred(String), // For type variables during inference
     Unknown,          // For unresolved types
+    // New type variants
+    Union {
+        types: Vec<Box<TypeAnnotation>>,
+    },
+    Intersection {
+        types: Vec<Box<TypeAnnotation>>,
+    },
+    Literal {
+        value: Value,
+    },
 }
 
 /// Generic type definition
@@ -666,4 +706,19 @@ impl Value {
             _ => None, // Other types are not comparable for sorting
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum TemplatePart {
+    Literal(String),
+    Interpolation(Box<Expr>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum BitwiseOp {
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
 }
