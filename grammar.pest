@@ -145,7 +145,8 @@ literal     = { float | integer | string | raw_string | template_string | boolea
 builtin_type = _{ "Int" | "Float" | "String" | "Bool" | "List" | "Tuple" }
 
 // Type annotations
-type_annotation = { union_type | intersection_type | literal_type | anonymous_struct_type | basic_type | unit_type | list_type | function_type | generic_type | result_type | promise_type | custom_type }
+type_annotation = { union_type | intersection_type | literal_type | anonymous_struct_type | generic_type | result_type | promise_type | function_type | list_type | custom_type | basic_type | unit_type }
+base_type_annotation = { basic_type | custom_type | generic_type | list_type | unit_type | literal_type }
 anonymous_struct_type = { "{" ~ struct_field_list? ~ "}" }
 basic_type = { "Int" | "Float" | "String" | "Bool" }
 unit_type = { "()" }
@@ -155,7 +156,7 @@ list_type = { "[" ~ type_annotation ~ "]" }
 function_type = { "(" ~ (type_annotation ~ ("," ~ type_annotation)*)? ~ ")" ~ "->" ~ type_annotation }
 result_type = { "Result" ~ "<" ~ type_annotation ~ "," ~ type_annotation ~ ">" }
 promise_type = { "Promise" ~ "<" ~ type_annotation ~ ("," ~ type_annotation)? ~ ">" }
-union_type = { basic_type ~ ("|" ~ basic_type)+ }
+union_type = { base_type_annotation ~ ("|" ~ base_type_annotation)+ }
 intersection_type = { basic_type ~ ("&" ~ basic_type)+ }
 literal_type = { string | integer | boolean }
 
