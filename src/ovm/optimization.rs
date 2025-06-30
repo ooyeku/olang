@@ -1177,10 +1177,6 @@ impl CraneliftJitCompiler {
         // Create blocks for valid and invalid argument paths
         let valid_block = builder.create_block();
         let invalid_block = builder.create_block();
-        let merge_block = builder.create_block();
-
-        // Add block parameter for result
-        builder.append_block_param(merge_block, ir_context.pointer_type);
 
         // Branch based on argument validity
         builder
@@ -1189,6 +1185,7 @@ impl CraneliftJitCompiler {
 
         // Valid arguments path
         builder.switch_to_block(valid_block);
+        builder.seal_block(valid_block); // Seal after switching
 
         // **Phase 3: Simple arithmetic optimization for common cases**
         // If we have exactly 2 arguments, try to do direct arithmetic
@@ -1204,6 +1201,7 @@ impl CraneliftJitCompiler {
 
         // Arithmetic optimization block
         builder.switch_to_block(arithmetic_block);
+        builder.seal_block(arithmetic_block); // Seal after switching
 
         // Load first two arguments for binary operation
         let _arg0_ptr = args_ptr;
@@ -1211,23 +1209,20 @@ impl CraneliftJitCompiler {
         let _arg1_ptr = builder.ins().iadd(args_ptr, ptr_size);
 
         // For now, create a simple result (this would be expanded with actual arithmetic)
-        let _arithmetic_result = builder.ins().iconst(ir_context.pointer_type, 42); // Placeholder
-        builder.ins().jump(merge_block, &[]);
+        let arithmetic_result = builder.ins().iconst(ir_context.pointer_type, 42); // Placeholder
+        builder.ins().return_(&[arithmetic_result]);
 
         // Fallback to interpreter block
         builder.switch_to_block(fallback_block);
-        let _fallback_result = builder.ins().iconst(ir_context.pointer_type, 0); // Null for interpreter fallback
-        builder.ins().jump(merge_block, &[]);
+        builder.seal_block(fallback_block); // Seal after switching
+        let fallback_result = builder.ins().iconst(ir_context.pointer_type, 0); // Null for interpreter fallback
+        builder.ins().return_(&[fallback_result]);
 
         // Invalid arguments path
         builder.switch_to_block(invalid_block);
-        let _error_result = builder.ins().iconst(ir_context.pointer_type, 0); // Null for error
-        builder.ins().jump(merge_block, &[]);
-
-        // Merge block - return result
-        builder.switch_to_block(merge_block);
-        let result = builder.block_params(merge_block)[0];
-        builder.ins().return_(&[result]);
+        builder.seal_block(invalid_block); // Seal after switching
+        let error_result = builder.ins().iconst(ir_context.pointer_type, 0); // Null for error
+        builder.ins().return_(&[error_result]);
 
         Ok(())
     }
@@ -1243,7 +1238,7 @@ impl CraneliftJitCompiler {
         // **Phase 3: Profile-guided optimization with hot path detection**
         
         // Load constants
-        let zero = builder.ins().iconst(ir_context.int_type, 0);
+        let _zero = builder.ins().iconst(ir_context.int_type, 0);
         let one = builder.ins().iconst(ir_context.int_type, 1);
         let two = builder.ins().iconst(ir_context.int_type, 2);
 
@@ -1264,6 +1259,7 @@ impl CraneliftJitCompiler {
 
             // Binary operation optimization
             builder.switch_to_block(binary_block);
+            builder.seal_block(binary_block); // Seal after switching
             let ptr_size = builder.ins().iconst(ir_context.int_type, 8);
             let _arg1_ptr = builder.ins().iadd(args_ptr, ptr_size);
             
@@ -1271,17 +1267,17 @@ impl CraneliftJitCompiler {
             let optimized_result = builder.ins().iconst(ir_context.pointer_type, 42);
             builder.ins().return_(&[optimized_result]);
 
-            // Unary operation optimization
+            // Unary operation optimization  
             builder.switch_to_block(unary_block);
-            let is_unary = builder.ins().icmp(IntCC::Equal, args_count, one);
-            builder.ins().brif(is_unary, unary_block, &[], fallback_block, &[]);
+            builder.seal_block(unary_block); // Seal after switching
             
-            // **Phase 3: Optimized unary operations**
+            // **Phase 3: Optimized unary operations** 
             let unary_result = builder.ins().iconst(ir_context.pointer_type, 21);
             builder.ins().return_(&[unary_result]);
 
             // Fallback to interpreter
             builder.switch_to_block(fallback_block);
+            builder.seal_block(fallback_block); // Seal after switching
             let fallback_result = builder.ins().iconst(ir_context.pointer_type, 0);
             builder.ins().return_(&[fallback_result]);
         } else {
@@ -1303,8 +1299,8 @@ impl CraneliftJitCompiler {
         // **Phase 3: Highly specialized compilation for hot functions**
         
         // Load constants
-        let zero = builder.ins().iconst(ir_context.int_type, 0);
-        let one = builder.ins().iconst(ir_context.int_type, 1);
+        let _zero = builder.ins().iconst(ir_context.int_type, 0);
+        let _one = builder.ins().iconst(ir_context.int_type, 1);
         let two = builder.ins().iconst(ir_context.int_type, 2);
 
         // **Phase 3: Type specialization based on profile data**
@@ -1323,6 +1319,7 @@ impl CraneliftJitCompiler {
 
             // Integer-Integer specialization
             builder.switch_to_block(int_int_block);
+            builder.seal_block(int_int_block); // Seal after switching
             let ptr_size = builder.ins().iconst(ir_context.int_type, 8);
             let _arg1_ptr = builder.ins().iadd(args_ptr, ptr_size);
             
@@ -1332,6 +1329,7 @@ impl CraneliftJitCompiler {
 
             // Generic fallback
             builder.switch_to_block(generic_block);
+            builder.seal_block(generic_block); // Seal after switching
             let generic_result = builder.ins().iconst(ir_context.pointer_type, 0);
             builder.ins().return_(&[generic_result]);
         } else {
@@ -1559,11 +1557,11 @@ mod tests {
             CompilationTier::BasicJit,
         );
 
-        // Should fail because we don't have a real function body to compile
-        // This is expected behavior for Phase 3 - we test the infrastructure, not full compilation
-        assert!(result.is_err());
+        // Should succeed now that we have proper Cranelift IR generation with placeholder bodies
+        // Phase 3: JIT compilation infrastructure is working with basic placeholder functions
+        assert!(result.is_ok());
 
-        println!("Phase 3: Force compilation working (correctly fails without real function body)");
+        println!("Phase 3: Force compilation working (successfully compiles placeholder function bodies)");
     }
 
     #[test]
