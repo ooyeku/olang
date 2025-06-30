@@ -6,6 +6,7 @@ use crate::ast::{
 use pest::{iterators::Pair, iterators::Pairs, Parser as PestParser};
 use pest_derive::Parser;
 use thiserror::Error;
+use std::rc::Rc;
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -1166,35 +1167,61 @@ impl Parser {
 
         match pair.as_rule() {
             Rule::integer => {
-                let value =
-                    pair.as_str()
-                        .parse::<i64>()
-                        .map_err(|_| ParseError::InvalidSyntax {
-                            message: "Invalid integer literal".to_string(),
-                        })?;
+                // Remove numeric separators
+                let s = pair.as_str().replace('_', "");
+                let value = s.parse::<i64>().map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid integer literal".to_string(),
+                })?;
                 Ok(Expr::Integer(value))
             }
             Rule::float => {
-                let value =
-                    pair.as_str()
-                        .parse::<f64>()
-                        .map_err(|_| ParseError::InvalidSyntax {
-                            message: "Invalid float literal".to_string(),
-                        })?;
+                let s = pair.as_str().replace('_', "");
+                let value = s.parse::<f64>().map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid float literal".to_string(),
+                })?;
                 Ok(Expr::Float(value))
+            }
+            Rule::binary => {
+                let s = pair.as_str().replace('_', "").replace("0b", "");
+                let value = i64::from_str_radix(&s, 2).map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid binary literal".to_string(),
+                })?;
+                Ok(Expr::Integer(value))
+            }
+            Rule::octal => {
+                let s = pair.as_str().replace('_', "").replace("0o", "");
+                let value = i64::from_str_radix(&s, 8).map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid octal literal".to_string(),
+                })?;
+                Ok(Expr::Integer(value))
+            }
+            Rule::hex => {
+                let s = pair.as_str().replace('_', "").replace("0x", "");
+                let value = i64::from_str_radix(&s, 16).map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid hex literal".to_string(),
+                })?;
+                Ok(Expr::Integer(value))
             }
             Rule::string => {
                 let raw_value = pair.as_str().trim_matches('"');
                 let value = self.process_string_escapes(raw_value)?;
                 Ok(Expr::String(value.into()))
             }
+            Rule::raw_string => {
+                let raw_value = pair.as_str();
+                // Remove r" and ending ", but do not process escapes
+                let value = &raw_value[2..raw_value.len() - 1];
+                Ok(Expr::RawString(Rc::new(value.to_string())))
+            }
+            Rule::template_string => {
+                // Placeholder: parse as a single literal for now
+                let raw_value = pair.as_str();
+                Ok(Expr::TemplateString { parts: vec![TemplatePart::Literal(raw_value.to_string())] })
+            }
             Rule::boolean => {
-                let value =
-                    pair.as_str()
-                        .parse::<bool>()
-                        .map_err(|_| ParseError::InvalidSyntax {
-                            message: "Invalid boolean literal".to_string(),
-                        })?;
+                let value = pair.as_str().parse::<bool>().map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid boolean literal".to_string(),
+                })?;
                 Ok(Expr::Boolean(value))
             }
             Rule::list => {
