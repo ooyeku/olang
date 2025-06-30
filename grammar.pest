@@ -11,9 +11,10 @@ integer     = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
 float       = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
 string      = @{ "\"" ~ string_char* ~ "\"" }
 raw_string  = @{ "r\"" ~ (!"\"" ~ ANY)* ~ "\"" }
-template_string = @{ "`" ~ template_char* ~ "`" }
+template_string = { "`" ~ template_char* ~ "`" }
 string_char = { !("\"" | "\\") ~ ANY | escape_sequence }
-template_char = { !("`" | "$") ~ ANY | template_escape | template_interpolation }
+template_char = { template_literal | template_escape | template_interpolation }
+template_literal = @{ (!("`" | "$" | "\\") ~ ANY)+ }
 
 escape_sequence = { "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "0" | "x" ~ ASCII_HEX_DIGIT{2} | "u" ~ ASCII_HEX_DIGIT{4} | "u{" ~ ASCII_HEX_DIGIT+ ~ "}") }
 template_escape = { "\\" ~ ("`" | "$" | "\\") }

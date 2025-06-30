@@ -2131,12 +2131,15 @@ impl Parser {
         for pair in pairs {
             match pair.as_rule() {
                 Rule::template_char => {
-                    let pair_str = pair.as_str(); // Get string before moving
-                    let inner = pair.into_inner().next();
-                    match inner {
-                        Some(inner_pair) => match inner_pair.as_rule() {
+                    let mut inner_pairs = pair.into_inner();
+                    
+                    if let Some(inner_pair) = inner_pairs.next() {
+                        match inner_pair.as_rule() {
+                            Rule::template_literal => {
+                                // Add literal text directly (preserves spaces)
+                                current_literal.push_str(inner_pair.as_str());
+                            }
                             Rule::template_escape => {
-                                // Process template escape sequences
                                 let escape_seq = inner_pair.as_str();
                                 match escape_seq {
                                     "\\`" => current_literal.push('`'),
@@ -2150,7 +2153,7 @@ impl Parser {
                                 }
                             }
                             Rule::template_interpolation => {
-                                // If we have accumulated literal text, add it as a literal part
+                                // Save any accumulated literal text
                                 if !current_literal.is_empty() {
                                     parts.push(TemplatePart::Literal(current_literal.clone()));
                                     current_literal.clear();
@@ -2165,19 +2168,15 @@ impl Parser {
                                 parts.push(TemplatePart::Interpolation(Box::new(expr)));
                             }
                             _ => {
-                                // Regular character
+                                // Add any other content as literal
                                 current_literal.push_str(inner_pair.as_str());
                             }
-                        },
-                        None => {
-                            // Regular character (not escaped or interpolated)
-                            current_literal.push_str(pair_str);
                         }
                     }
                 }
                 _ => {
-                    // Regular character
-                    current_literal.push_str(pair.as_str());
+                    // Skip other rules like backticks
+                    continue;
                 }
             }
         }

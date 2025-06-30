@@ -414,7 +414,14 @@ impl Interpreter {
                         crate::ast::TemplatePart::Literal(s) => result.push_str(&s),
                         crate::ast::TemplatePart::Interpolation(expr) => {
                             let val = self.eval_expr(*expr)?;
-                            result.push_str(&format!("{}", val));
+                            // For template interpolation, we want raw values without quotes
+                            match val {
+                                Value::String(s) => result.push_str(&s),
+                                Value::Integer(n) => result.push_str(&n.to_string()),
+                                Value::Float(x) => result.push_str(&x.to_string()),
+                                Value::Boolean(b) => result.push_str(&b.to_string()),
+                                other => result.push_str(&format!("{}", other)),
+                            }
                         }
                     }
                 }
