@@ -773,16 +773,36 @@ impl Interpreter {
                 Ok(true)
             }
             (Pattern::Wildcard, _) => Ok(true),
-            (Pattern::List(patterns), Value::List(values)) => {
-                if patterns.len() != values.len() {
-                    return Ok(false);
-                }
-                for (p, v) in patterns.iter().zip(values.iter()) {
-                    if !self.pattern_matches_bind(p, v, bindings)? {
+            (Pattern::List { patterns, rest }, Value::List(values)) => {
+                if let Some(rest_name) = rest {
+                    // Rest pattern: [a, b, ...rest]
+                    if patterns.len() > values.len() {
+                        return Ok(false); // Not enough values for required patterns
+                    }
+                    
+                    // Match the explicit patterns
+                    for (i, pattern) in patterns.iter().enumerate() {
+                        if !self.pattern_matches_bind(pattern, &values[i], bindings)? {
+                            return Ok(false);
+                        }
+                    }
+                    
+                    // Bind the rest of the values to the rest variable
+                    let rest_values: Vec<Value> = values[patterns.len()..].to_vec();
+                    bindings.insert(rest_name.clone(), Value::List(rest_values.into()));
+                    Ok(true)
+                } else {
+                    // No rest pattern: exact length match required
+                    if patterns.len() != values.len() {
                         return Ok(false);
                     }
+                    for (p, v) in patterns.iter().zip(values.iter()) {
+                        if !self.pattern_matches_bind(p, v, bindings)? {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
                 }
-                Ok(true)
             }
             (Pattern::Tuple(patterns), Value::Tuple(values)) => {
                 if patterns.len() != values.len() {
@@ -843,6 +863,22 @@ impl Interpreter {
                 }
                 Ok(true)
             }
+            // Anonymous struct patterns
+            (
+                Pattern::AnonymousStruct { field_patterns },
+                Value::Struct { fields, .. },
+            ) => {
+                for (field_name, pattern) in field_patterns {
+                    if let Some(field_value) = fields.get(field_name) {
+                        if !self.pattern_matches_bind(pattern, field_value, bindings)? {
+                            return Ok(false);
+                        }
+                    } else {
+                        return Ok(false); // Field not found
+                    }
+                }
+                Ok(true)
+            }
             // Range patterns
             (Pattern::Range { start, end, inclusive }, Value::Integer(n)) => {
                 let start_val = match start.as_ref() {
@@ -877,6 +913,12 @@ impl Interpreter {
                 // For guarded patterns, just check if the inner pattern matches
                 // The guard will be evaluated separately in eval_match
                 self.pattern_matches_bind(pattern, val, bindings)
+            }
+            // Rest patterns (standalone rest patterns should not appear in normal matching)
+            (Pattern::Rest(_), _) => {
+                // This should not happen in well-formed patterns as rest patterns 
+                // are only valid inside list patterns
+                Ok(false)
             }
             _ => Ok(false),
         }

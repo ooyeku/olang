@@ -263,7 +263,10 @@ pub enum Pattern {
     Literal(Value),
     Identifier(String),
     Wildcard,
-    List(Vec<Pattern>),
+    List {
+        patterns: Vec<Pattern>,
+        rest: Option<String>, // For ...rest patterns
+    },
     Tuple(Vec<Pattern>),
     // Result patterns for error handling
     Ok(Box<Pattern>),
@@ -276,6 +279,10 @@ pub enum Pattern {
     // Struct patterns
     Struct {
         type_name: String,
+        field_patterns: Vec<(String, Pattern)>,
+    },
+    // Anonymous struct patterns
+    AnonymousStruct {
         field_patterns: Vec<(String, Pattern)>,
     },
     // New pattern variants
@@ -291,6 +298,8 @@ pub enum Pattern {
         pattern: Box<Pattern>,
         guard: Box<Expr>,
     },
+    // Rest pattern for capturing remaining elements
+    Rest(String),
 }
 
 /// State of a Promise value

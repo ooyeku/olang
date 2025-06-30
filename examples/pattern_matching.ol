@@ -60,7 +60,7 @@ fn analyze_list(numbers: [Int]) -> String = {
 }
 
 // Struct patterns with guards
-type User = {
+type User = struct {
     name: String,
     age: Int,
     role: String
