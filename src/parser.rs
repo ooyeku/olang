@@ -305,7 +305,7 @@ impl Parser {
         let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing left operand in multiplicative expression".to_string(),
         })?;
-        let mut expr = self.build_pipe_expr(first_pair.into_inner())?;
+        let mut expr = self.build_bitwise_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
             if let Some(right_pair) = pairs.next() {
@@ -315,8 +315,37 @@ impl Parser {
                     "%" => BinaryOp::Modulo,
                     _ => break,
                 };
-                let right = self.build_pipe_expr(right_pair.into_inner())?;
+                let right = self.build_bitwise_expr(right_pair.into_inner())?;
                 expr = Expr::BinaryOp {
+                    left: Box::new(expr),
+                    op,
+                    right: Box::new(right),
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+
+    fn build_bitwise_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in bitwise expression".to_string(),
+        })?;
+        let mut expr = self.build_pipe_expr(first_pair.into_inner())?;
+
+        while let Some(op_pair) = pairs.next() {
+            if let Some(right_pair) = pairs.next() {
+                let op = match op_pair.as_str() {
+                    "&" => BitwiseOp::And,
+                    "|" => BitwiseOp::Or,
+                    "^" => BitwiseOp::Xor,
+                    "<<" => BitwiseOp::Shl,
+                    ">>" => BitwiseOp::Shr,
+                    _ => break,
+                };
+                let right = self.build_pipe_expr(right_pair.into_inner())?;
+                expr = Expr::BitwiseOp {
                     left: Box::new(expr),
                     op,
                     right: Box::new(right),
@@ -527,6 +556,13 @@ impl Parser {
     }
 
     fn build_primary(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        // Check for unary expressions
+        if let Some(first) = pairs.peek() {
+            if first.as_rule() == Rule::unary_op {
+                return self.build_unary_expr(pairs);
+            }
+        }
+        // Fallback to existing logic
         let pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Empty primary expression".to_string(),
         })?;
@@ -544,45 +580,34 @@ impl Parser {
             Rule::struct_literal => self.build_struct_literal(pair.into_inner()),
             Rule::literal => self.build_literal(pair.into_inner()),
             Rule::identifier => Ok(Expr::Identifier(pair.as_str().to_string())),
-            Rule::expr => self.build_expr(pair.into_inner()),
             Rule::block => self.build_block(pair.into_inner()),
+            Rule::expr => self.build_expr(pair.into_inner()),
             _ => Err(ParseError::InvalidSyntax {
                 message: format!("Invalid primary rule: {:?}", pair.as_rule()),
             }),
         }
     }
 
-    fn build_try_catch_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let try_block = self.build_block(
-            pairs
-                .next()
-                .ok_or_else(|| ParseError::InvalidSyntax {
-                    message: "Missing try block".to_string(),
-                })?
-                .into_inner(),
-        )?;
-
-        let error_var = pairs
-            .next()
-            .ok_or_else(|| ParseError::InvalidSyntax {
-                message: "Missing error variable".to_string(),
-            })?
-            .as_str()
-            .to_string();
-
-        let catch_block = self.build_block(
-            pairs
-                .next()
-                .ok_or_else(|| ParseError::InvalidSyntax {
-                    message: "Missing catch block".to_string(),
-                })?
-                .into_inner(),
-        )?;
-
-        Ok(Expr::TryCatch {
-            try_block: Box::new(try_block),
-            error_var,
-            catch_block: Box::new(catch_block),
+    fn build_unary_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let op_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing unary operator".to_string(),
+        })?;
+        let operand_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing operand for unary operator".to_string(),
+        })?;
+        let operand = self.build_primary(operand_pair.into_inner())?;
+        let op = match op_pair.as_str() {
+            "-" => UnaryOp::Negate,
+            "!" => UnaryOp::Not,
+            _ => {
+                return Err(ParseError::InvalidSyntax {
+                    message: format!("Unknown unary operator: {}", op_pair.as_str()),
+                })
+            }
+        };
+        Ok(Expr::UnaryOp {
+            op,
+            operand: Box::new(operand),
         })
     }
 
