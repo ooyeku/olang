@@ -1,7 +1,7 @@
 use crate::ast::{
-    AsyncFunctionDecl, BinaryOp, BuiltinFunction, ErrorTypeDecl, ExportDecl, Expr, Function,
-    FunctionDecl, ImportDecl, LetDecl, MatchArm, Pattern, Program, PromiseType, Statement, UnaryOp,
-    Value,
+    AsyncFunctionDecl, BinaryOp, BuiltinFunction, EnumVariantData, ErrorTypeDecl, ExportDecl, Expr,
+    Function, FunctionDecl, ImportDecl, LetDecl, MatchArm, Pattern, Program, PromiseType,
+    Statement, UnaryOp, Value,
 };
 use crate::async_runtime::AsyncRuntime;
 use crate::builtin::BuiltinFunctions;
@@ -824,7 +824,59 @@ impl Interpreter {
             }
             (Pattern::Ok(_), _) => Ok(false), // Ok pattern doesn't match non-Ok values
             (Pattern::Err(_), _) => Ok(false), // Err pattern doesn't match non-Err values
-            // Enum variant patterns
+            // Enum variant patterns - now with proper enum value handling
+            (
+                Pattern::EnumVariant {
+                    variant_name,
+                    patterns,
+                },
+                Value::Enum {
+                    variant_name: val_variant,
+                    variant_data,
+                    ..
+                },
+            ) => {
+                // Check if variant names match
+                if variant_name != val_variant {
+                    return Ok(false);
+                }
+
+                // Match based on the variant data type
+                match variant_data {
+                    EnumVariantData::Unit => {
+                        // Unit variants should have no patterns
+                        Ok(patterns.is_empty())
+                    }
+                    EnumVariantData::Tuple(values) => {
+                        // Tuple variants should match against the contained values
+                        if patterns.len() != values.len() {
+                            return Ok(false);
+                        }
+                        for (p, v) in patterns.iter().zip(values.iter()) {
+                            if !self.pattern_matches_bind(p, v, bindings)? {
+                                return Ok(false);
+                            }
+                        }
+                        Ok(true)
+                    }
+                    EnumVariantData::Struct(fields) => {
+                        // For struct variants, patterns should match field values
+                        // This is a simplified implementation - real struct matching would be more complex
+                        if patterns.len() != fields.len() {
+                            return Ok(false);
+                        }
+                        // For now, just match values in order
+                        let field_values: Vec<_> = fields.values().collect();
+                        for (p, v) in patterns.iter().zip(field_values.iter()) {
+                            if !self.pattern_matches_bind(p, *v, bindings)? {
+                                return Ok(false);
+                            }
+                        }
+                        Ok(true)
+                    }
+                }
+            }
+            // Fallback for old tuple-based enum handling (for compatibility)
             (
                 Pattern::EnumVariant {
                     variant_name: _,
@@ -832,8 +884,7 @@ impl Interpreter {
                 },
                 Value::Tuple(values),
             ) => {
-                // For now, treat enum variants as tuples
-                // TODO: Implement proper enum value type
+                // Keep backward compatibility with tuple-based enum handling
                 if patterns.len() != values.len() {
                     return Ok(false);
                 }

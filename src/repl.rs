@@ -1058,6 +1058,10 @@ impl Repl {
             Value::Unit => "unit",
             Value::Ok(_) => "result",
             Value::Err(_) => "result",
+            Value::Enum { type_name: _, .. } => {
+                // Use a static string for REPL display
+                "enum"
+            },
             Value::Promise { .. } => "promise",
         }
     }

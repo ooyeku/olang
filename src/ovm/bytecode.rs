@@ -1649,6 +1649,11 @@ impl BytecodeVm {
             Ok(Value::Unit) => "unit",
             Ok(Value::Ok(_)) => "result",
             Ok(Value::Err(_)) => "result",
+            Ok(Value::Enum { type_name: _, .. }) => {
+                // Return a static string for enum types
+                // In a real implementation, we might want to cache type names
+                "enum"
+            },
             Ok(Value::Promise { .. }) => "promise",
             Err(_) => "unknown",
         }
