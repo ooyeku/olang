@@ -2143,45 +2143,84 @@ impl Parser {
     }
 
     fn build_template_string(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut parts = Vec::new();
+        // Get the raw content between backticks
+        let raw_content = pairs
+            .into_iter()
+            .find(|p| p.as_rule() == Rule::template_raw_content)
+            .ok_or_else(|| ParseError::InvalidSyntax {
+                message: "Missing template content".to_string(),
+            })?
+            .as_str();
 
-        for pair in pairs {
-            match pair.as_rule() {
-                Rule::template_part => {
-                    for part_pair in pair.into_inner() {
-                        match part_pair.as_rule() {
-                            Rule::template_literal_text => {
-                                // Add literal text directly (preserves spaces)
-                                let text = part_pair.as_str();
-                                if !text.is_empty() {
-                                    parts.push(TemplatePart::Literal(text.to_string()));
-                                }
-                            }
-                            Rule::template_interpolation => {
-                                // Parse the interpolated expression
-                                let expr_pair = part_pair.into_inner().next().ok_or_else(|| {
-                                    ParseError::InvalidSyntax {
-                                        message: "Empty template interpolation".to_string(),
-                                    }
-                                })?;
-                                let expr = self.build_expr(expr_pair.into_inner())?;
-                                parts.push(TemplatePart::Interpolation(Box::new(expr)));
-                            }
-                            _ => {
-                                // Skip unknown rules
-                                continue;
-                            }
+        // Manually parse the template content to preserve all spaces
+        self.parse_template_content(raw_content)
+    }
+
+    fn parse_template_content(&self, content: &str) -> Result<Expr, ParseError> {
+        let mut parts = Vec::new();
+        let mut current_literal = String::new();
+        let mut chars = content.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '$' && chars.peek() == Some(&'{') {
+                // Found interpolation start
+                chars.next(); // consume '{'
+                
+                // Save any accumulated literal text
+                if !current_literal.is_empty() {
+                    parts.push(TemplatePart::Literal(current_literal.clone()));
+                    current_literal.clear();
+                }
+
+                // Extract the expression inside ${}
+                let mut expr_content = String::new();
+                let mut brace_count = 1;
+                
+                while let Some(ch) = chars.next() {
+                    if ch == '{' {
+                        brace_count += 1;
+                    } else if ch == '}' {
+                        brace_count -= 1;
+                        if brace_count == 0 {
+                            break;
                         }
                     }
+                    expr_content.push(ch);
                 }
-                _ => {
-                    // Skip other rules like backticks
-                    continue;
+
+                if brace_count > 0 {
+                    return Err(ParseError::InvalidSyntax {
+                        message: "Unclosed template interpolation".to_string(),
+                    });
                 }
+
+                // Parse the expression content
+                let expr = self.parse_expression_from_string(&expr_content)?;
+                parts.push(TemplatePart::Interpolation(Box::new(expr)));
+            } else {
+                // Regular character - add to literal
+                current_literal.push(ch);
             }
         }
 
+        // Add any remaining literal text
+        if !current_literal.is_empty() {
+            parts.push(TemplatePart::Literal(current_literal));
+        }
+
         Ok(Expr::TemplateString { parts })
+    }
+
+    fn parse_expression_from_string(&self, expr_str: &str) -> Result<Expr, ParseError> {
+        // Use Pest to parse just the expression
+        let pairs = OlangParser::parse(Rule::expr, expr_str)
+            .map_err(|e| ParseError::Pest(e))?;
+        
+        let expr_pair = pairs.into_iter().next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Empty expression in template interpolation".to_string(),
+        })?;
+        
+        self.build_expr(expr_pair.into_inner())
     }
 
     fn process_string_escapes(&self, input: &str) -> Result<String, ParseError> {
