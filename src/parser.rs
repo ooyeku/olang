@@ -1729,33 +1729,107 @@ impl Parser {
                     Some('n') => result.push('\n'),
                     Some('r') => result.push('\r'),
                     Some('t') => result.push('\t'),
-                    Some('u') => {
-                        // Unicode escape sequence \uXXXX
-                        let mut unicode_digits = String::new();
-                        for _ in 0..4 {
+                    Some('0') => result.push('\0'), // null character
+                    Some('x') => {
+                        // Hex escape sequence \xHH
+                        let mut hex_digits = String::new();
+                        for _ in 0..2 {
                             match chars.next() {
                                 Some(digit) if digit.is_ascii_hexdigit() => {
-                                    unicode_digits.push(digit)
+                                    hex_digits.push(digit)
                                 }
                                 _ => {
                                     return Err(ParseError::InvalidSyntax {
-                                        message: "Invalid unicode escape sequence".to_string(),
+                                        message: "Invalid hex escape sequence: expected 2 hex digits".to_string(),
                                     })
                                 }
                             }
                         }
-                        if let Ok(code_point) = u32::from_str_radix(&unicode_digits, 16) {
-                            if let Some(unicode_char) = char::from_u32(code_point) {
-                                result.push(unicode_char);
+                        if let Ok(byte_value) = u8::from_str_radix(&hex_digits, 16) {
+                            result.push(byte_value as char);
+                        } else {
+                            return Err(ParseError::InvalidSyntax {
+                                message: "Invalid hex escape sequence".to_string(),
+                            });
+                        }
+                    }
+                    Some('u') => {
+                        // Check for variable-length Unicode escape \u{H+}
+                        if chars.peek() == Some(&'{') {
+                            chars.next(); // consume '{'
+                            let mut unicode_digits = String::new();
+                            let mut brace_count = 1;
+                            
+                            while let Some(ch) = chars.next() {
+                                if ch == '{' {
+                                    brace_count += 1;
+                                } else if ch == '}' {
+                                    brace_count -= 1;
+                                    if brace_count == 0 {
+                                        break;
+                                    }
+                                } else if ch.is_ascii_hexdigit() {
+                                    unicode_digits.push(ch);
+                                } else {
+                                    return Err(ParseError::InvalidSyntax {
+                                        message: "Invalid character in Unicode escape sequence".to_string(),
+                                    });
+                                }
+                            }
+                            
+                            if brace_count != 0 {
+                                return Err(ParseError::InvalidSyntax {
+                                    message: "Unterminated Unicode escape sequence".to_string(),
+                                });
+                            }
+                            
+                            if unicode_digits.is_empty() {
+                                return Err(ParseError::InvalidSyntax {
+                                    message: "Empty Unicode escape sequence".to_string(),
+                                });
+                            }
+                            
+                            if let Ok(code_point) = u32::from_str_radix(&unicode_digits, 16) {
+                                if let Some(unicode_char) = char::from_u32(code_point) {
+                                    result.push(unicode_char);
+                                } else {
+                                    return Err(ParseError::InvalidSyntax {
+                                        message: "Invalid unicode code point".to_string(),
+                                    });
+                                }
                             } else {
                                 return Err(ParseError::InvalidSyntax {
-                                    message: "Invalid unicode code point".to_string(),
+                                    message: "Invalid Unicode escape sequence".to_string(),
                                 });
                             }
                         } else {
-                            return Err(ParseError::InvalidSyntax {
-                                message: "Invalid unicode escape sequence".to_string(),
-                            });
+                            // Fixed-length Unicode escape sequence \uXXXX
+                            let mut unicode_digits = String::new();
+                            for _ in 0..4 {
+                                match chars.next() {
+                                    Some(digit) if digit.is_ascii_hexdigit() => {
+                                        unicode_digits.push(digit)
+                                    }
+                                    _ => {
+                                        return Err(ParseError::InvalidSyntax {
+                                            message: "Invalid unicode escape sequence: expected 4 hex digits".to_string(),
+                                        })
+                                    }
+                                }
+                            }
+                            if let Ok(code_point) = u32::from_str_radix(&unicode_digits, 16) {
+                                if let Some(unicode_char) = char::from_u32(code_point) {
+                                    result.push(unicode_char);
+                                } else {
+                                    return Err(ParseError::InvalidSyntax {
+                                        message: "Invalid unicode code point".to_string(),
+                                    });
+                                }
+                            } else {
+                                return Err(ParseError::InvalidSyntax {
+                                    message: "Invalid unicode escape sequence".to_string(),
+                                });
+                            }
                         }
                     }
                     Some(other) => {
@@ -1775,5 +1849,49 @@ impl Parser {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_enhanced_string_escapes() {
+        let parser = Parser::new();
+        
+        // Test basic escapes
+        assert_eq!(parser.process_string_escapes("\\n\\t\\r").unwrap(), "\n\t\r");
+        assert_eq!(parser.process_string_escapes("\\\"\\\\").unwrap(), "\"\\");
+        
+        // Test null character
+        assert_eq!(parser.process_string_escapes("\\0").unwrap(), "\0");
+        
+        // Test hex escapes
+        assert_eq!(parser.process_string_escapes("\\x41").unwrap(), "A");
+        assert_eq!(parser.process_string_escapes("\\x61").unwrap(), "a");
+        assert_eq!(parser.process_string_escapes("\\x20").unwrap(), " ");
+        
+        // Test fixed-length Unicode escapes
+        assert_eq!(parser.process_string_escapes("\\u0041").unwrap(), "A");
+        assert_eq!(parser.process_string_escapes("\\u0061").unwrap(), "a");
+        assert_eq!(parser.process_string_escapes("\\u0020").unwrap(), " ");
+        
+        // Test variable-length Unicode escapes
+        assert_eq!(parser.process_string_escapes("\\u{41}").unwrap(), "A");
+        assert_eq!(parser.process_string_escapes("\\u{61}").unwrap(), "a");
+        assert_eq!(parser.process_string_escapes("\\u{20}").unwrap(), " ");
+        assert_eq!(parser.process_string_escapes("\\u{1F600}").unwrap(), "😀");
+        
+        // Test mixed escapes
+        assert_eq!(parser.process_string_escapes("Hello\\nWorld\\u{1F600}").unwrap(), "Hello\nWorld😀");
+        
+        // Test error cases
+        assert!(parser.process_string_escapes("\\x").is_err());
+        assert!(parser.process_string_escapes("\\x1").is_err());
+        assert!(parser.process_string_escapes("\\u").is_err());
+        assert!(parser.process_string_escapes("\\u{").is_err());
+        assert!(parser.process_string_escapes("\\u{}").is_err());
+        assert!(parser.process_string_escapes("\\u{invalid}").is_err());
     }
 }
