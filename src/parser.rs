@@ -579,6 +579,7 @@ impl Parser {
             Rule::if_expr => self.build_if_expr(pair.into_inner()),
             Rule::try_catch_expr => self.build_try_catch_expr(pair.into_inner()),
             Rule::struct_literal => self.build_struct_literal(pair.into_inner()),
+            Rule::anonymous_object => self.build_anonymous_object(pair.into_inner()),
             Rule::literal => self.build_literal(pair.into_inner()),
             Rule::identifier => Ok(Expr::Identifier(pair.as_str().to_string())),
             Rule::block => self.build_block(pair.into_inner()),
@@ -2014,6 +2015,23 @@ impl Parser {
         Ok(FieldValue { name, value: expr })
     }
 
+    fn build_anonymous_object(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut fields = Vec::new();
+        for pair in pairs {
+            if pair.as_rule() == Rule::field_value_list {
+                for field_pair in pair.into_inner() {
+                    if field_pair.as_rule() == Rule::field_value {
+                        fields.push(self.build_field_value(field_pair.into_inner())?);
+                    }
+                }
+            } else if pair.as_rule() == Rule::field_value {
+                fields.push(self.build_field_value(pair.into_inner())?);
+            }
+        }
+
+        Ok(Expr::AnonymousObject { fields })
+    }
+
     fn build_for_loop(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         // Expected order: identifier, expr (iterable), block (body)
         let var_name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -2135,7 +2153,7 @@ impl Parser {
                     
                     if let Some(inner_pair) = inner_pairs.next() {
                         match inner_pair.as_rule() {
-                            Rule::template_literal => {
+                            Rule::template_text => {
                                 // Add literal text directly (preserves spaces)
                                 current_literal.push_str(inner_pair.as_str());
                             }

@@ -13,8 +13,8 @@ string      = @{ "\"" ~ string_char* ~ "\"" }
 raw_string  = @{ "r\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 template_string = { "`" ~ template_char* ~ "`" }
 string_char = { !("\"" | "\\") ~ ANY | escape_sequence }
-template_char = { template_literal | template_escape | template_interpolation }
-template_literal = @{ (!("`" | "$" | "\\") ~ ANY)+ }
+template_char = { template_text | template_interpolation | template_escape }
+template_text = @{ (!("`" | "${" | "\\") ~ ANY)+ }
 
 escape_sequence = { "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "0" | "x" ~ ASCII_HEX_DIGIT{2} | "u" ~ ASCII_HEX_DIGIT{4} | "u{" ~ ASCII_HEX_DIGIT+ ~ "}") }
 template_escape = { "\\" ~ ("`" | "$" | "\\") }
@@ -96,7 +96,7 @@ try_catch_expr = { "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block }
 // Postfix operators
 postfix_op = { "?" }
 
-primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | literal | identifier | "(" ~ expr ~ ")" | block }
+primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | anonymous_object | literal | identifier | "(" ~ expr ~ ")" | block }
 
 // Lambda functions
 lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ (block | expr) }
@@ -164,6 +164,7 @@ export_decl = { "export" ~ identifier ~ "=" ~ expr }
 
 // Struct expressions
 struct_literal = { identifier ~ "{" ~ field_value_list? ~ "}" }
+anonymous_object = { "{" ~ field_value_list? ~ "}" }
 field_value_list = { field_value ~ ("," ~ field_value)* ~ ","? }
 field_value = { identifier ~ ":" ~ expr }
 

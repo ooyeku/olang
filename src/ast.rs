@@ -133,6 +133,9 @@ pub enum Expr {
 
     // Custom types
     StructLiteral(StructLiteral),
+    AnonymousObject {
+        fields: Vec<FieldValue>,
+    },
     FieldAccess {
         object: Box<Expr>,
         field: String,

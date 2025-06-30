@@ -333,6 +333,7 @@ impl Interpreter {
                 self.eval_range(start_val, end_val, inclusive)
             }
             Expr::StructLiteral(struct_literal) => self.eval_struct_literal(struct_literal),
+            Expr::AnonymousObject { fields } => self.eval_anonymous_object(fields),
             Expr::FieldAccess { object, field } => self.eval_field_access(object, field),
             Expr::ResultOk(expr) => {
                 let value = self.eval_expr(*expr)?;
@@ -1177,6 +1178,24 @@ impl Interpreter {
 
         Ok(Value::Struct {
             type_name: struct_literal.type_name,
+            fields,
+        })
+    }
+
+    fn eval_anonymous_object(
+        &mut self,
+        field_values: Vec<crate::ast::FieldValue>,
+    ) -> Result<Value, InterpreterError> {
+        let mut fields = std::collections::HashMap::new();
+
+        for field_value in field_values {
+            let value = self.eval_expr(field_value.value)?;
+            fields.insert(field_value.name, value);
+        }
+
+        // Use a generic type name for anonymous objects
+        Ok(Value::Struct {
+            type_name: "Object".to_string(),
             fields,
         })
     }
