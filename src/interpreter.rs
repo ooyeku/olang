@@ -144,13 +144,16 @@ impl Interpreter {
 
     /// Evaluate a program
     pub fn eval_program(&mut self, program: Program) -> Result<Value, InterpreterError> {
-        // Optional type checking
+        // Optional type checking with proper error propagation
         if let Some(ref mut type_checker) = self.type_checker {
             if let Err(type_errors) = type_checker.check_program(&program) {
-                // For now, just print type errors and continue
-                for error in type_errors {
-                    eprintln!("Type Error: {:?}", error);
-                }
+                // Convert type checking errors to proper InterpreterError
+                let error_messages: Vec<String> = type_errors.iter().map(|e| format!("{:?}", e)).collect();
+                let combined_message = error_messages.join("; ");
+                
+                return Err(InterpreterError::TypeError {
+                    message: format!("Type checking failed: {}", combined_message),
+                });
             }
         }
 
