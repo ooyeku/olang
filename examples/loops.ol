@@ -1,8 +1,8 @@
-let n = range(10)
+let n = range(100)
 
 let v = random.choice(n)
 
-for i in range(5) { 
+for i in range(500) { 
     let result1 = n |> map((x) => x * math.pow(x, v)) |> filter((x) => { x % 2 == 0 }) |> sum()
     println(result1)
     
