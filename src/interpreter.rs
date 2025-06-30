@@ -879,21 +879,39 @@ impl Interpreter {
                 }
                 Ok(true)
             }
-            // Range patterns
+            // Range patterns for integers
             (Pattern::Range { start, end, inclusive }, Value::Integer(n)) => {
                 let start_val = match start.as_ref() {
                     Pattern::Literal(Value::Integer(s)) => *s,
-                    _ => return Ok(false), // Range patterns only support integer literals for now
+                    _ => return Ok(false),
                 };
                 let end_val = match end.as_ref() {
                     Pattern::Literal(Value::Integer(e)) => *e,
                     _ => return Ok(false),
                 };
-                
+
                 if *inclusive {
                     Ok(*n >= start_val && *n <= end_val)
                 } else {
                     Ok(*n >= start_val && *n < end_val)
+                }
+            }
+            // Range patterns for single-character strings
+            (Pattern::Range { start, end, inclusive }, Value::String(s)) => {
+                let start_char = match start.as_ref() {
+                    Pattern::Literal(Value::String(ref sv)) => sv.chars().next().unwrap_or('\0'),
+                    _ => return Ok(false),
+                };
+                let end_char = match end.as_ref() {
+                    Pattern::Literal(Value::String(ref ev)) => ev.chars().next().unwrap_or('\0'),
+                    _ => return Ok(false),
+                };
+                let ch = s.chars().next().unwrap_or('\0');
+
+                if *inclusive {
+                    Ok(ch >= start_char && ch <= end_char)
+                } else {
+                    Ok(ch >= start_char && ch < end_char)
                 }
             }
             // Or patterns

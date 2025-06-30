@@ -10,7 +10,7 @@ identifier  = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 integer     = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
 float       = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
 string      = @{ "\"" ~ string_char* ~ "\"" }
-raw_string  = @{ "r\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+raw_string  = @{ "r\"" ~ ("\\\"" | (!"\"" ~ ANY))* ~ "\"" }
 template_string = { "`" ~ template_raw_content ~ "`" }
 template_raw_content = @{ (!"`" ~ ANY)* }
 string_char = { !("\"" | "\\") ~ ANY | escape_sequence }
@@ -139,7 +139,7 @@ block       = { "{" ~ (statement ~ ";"?)* ~ "}" }
 if_expr     = { "if" ~ expr ~ "=>" ~ (block | expr) ~ ("else" ~ "=>" ~ (block | expr))? }
 
 // Literals
-literal     = { float | integer | raw_string | template_string | string | boolean | list | tuple }
+literal     = { float | integer | char_literal | raw_string | template_string | string | boolean | list | tuple }
 
 // Built-in types (for future type system)
 builtin_type = _{ "Int" | "Float" | "String" | "Bool" | "List" | "Tuple" }
