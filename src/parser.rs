@@ -2144,40 +2144,22 @@ impl Parser {
 
     fn build_template_string(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         let mut parts = Vec::new();
-        let mut current_literal = String::new();
 
         for pair in pairs {
             match pair.as_rule() {
-                Rule::template_char => {
-                    let mut inner_pairs = pair.into_inner();
-                    
-                    if let Some(inner_pair) = inner_pairs.next() {
-                        match inner_pair.as_rule() {
-                            Rule::template_text => {
+                Rule::template_part => {
+                    for part_pair in pair.into_inner() {
+                        match part_pair.as_rule() {
+                            Rule::template_literal_text => {
                                 // Add literal text directly (preserves spaces)
-                                current_literal.push_str(inner_pair.as_str());
-                            }
-                            Rule::template_escape => {
-                                let escape_seq = inner_pair.as_str();
-                                match escape_seq {
-                                    "\\`" => current_literal.push('`'),
-                                    "\\$" => current_literal.push('$'),
-                                    "\\\\" => current_literal.push('\\'),
-                                    _ => {
-                                        return Err(ParseError::InvalidSyntax {
-                                            message: format!("Invalid template escape sequence: {}", escape_seq),
-                                        });
-                                    }
+                                let text = part_pair.as_str();
+                                if !text.is_empty() {
+                                    parts.push(TemplatePart::Literal(text.to_string()));
                                 }
                             }
                             Rule::template_interpolation => {
-                                // Save any accumulated literal text
-                                if !current_literal.is_empty() {
-                                    parts.push(TemplatePart::Literal(current_literal.clone()));
-                                    current_literal.clear();
-                                }
                                 // Parse the interpolated expression
-                                let expr_pair = inner_pair.into_inner().next().ok_or_else(|| {
+                                let expr_pair = part_pair.into_inner().next().ok_or_else(|| {
                                     ParseError::InvalidSyntax {
                                         message: "Empty template interpolation".to_string(),
                                     }
@@ -2186,8 +2168,8 @@ impl Parser {
                                 parts.push(TemplatePart::Interpolation(Box::new(expr)));
                             }
                             _ => {
-                                // Add any other content as literal
-                                current_literal.push_str(inner_pair.as_str());
+                                // Skip unknown rules
+                                continue;
                             }
                         }
                     }
@@ -2197,11 +2179,6 @@ impl Parser {
                     continue;
                 }
             }
-        }
-
-        // Add any remaining literal text
-        if !current_literal.is_empty() {
-            parts.push(TemplatePart::Literal(current_literal));
         }
 
         Ok(Expr::TemplateString { parts })
