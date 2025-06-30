@@ -2,6 +2,7 @@ use crate::ast::{
     AsyncFunctionDecl, BinaryOp, EnumVariant, ErrorTypeDecl, ExportDecl, Expr, FieldValue,
     FunctionDecl, ImportDecl, LetDecl, MatchArm, Parameter, Pattern, Program, PromiseType,
     Statement, StructField, StructLiteral, TypeAnnotation, TypeDecl, TypeDefinition,
+    BitwiseOp, UnaryOp,
 };
 use pest::{iterators::Pair, iterators::Pairs, Parser as PestParser};
 use pest_derive::Parser;
@@ -825,7 +826,7 @@ impl Parser {
                 let mut inner = pair.into_inner();
                 let mut types = Vec::new();
                 while let Some(type_pair) = inner.next() {
-                    types.push(Box::new(self.build_type_annotation(type_pair.into_inner())?));
+                    types.push(self.build_type_annotation(type_pair.into_inner())?);
                 }
                 Ok(TypeAnnotation::Union { types })
             }
@@ -833,7 +834,7 @@ impl Parser {
                 let mut inner = pair.into_inner();
                 let mut types = Vec::new();
                 while let Some(type_pair) = inner.next() {
-                    types.push(Box::new(self.build_type_annotation(type_pair.into_inner())?));
+                    types.push(self.build_type_annotation(type_pair.into_inner())?);
                 }
                 Ok(TypeAnnotation::Intersection { types })
             }
@@ -842,7 +843,7 @@ impl Parser {
                     message: "Empty literal type".to_string(),
                 })?;
                 let value = match inner.as_rule() {
-                    Rule::string => crate::ast::Value::String(inner.as_str().trim_matches('"').into()),
+                    Rule::string => crate::ast::Value::String(std::sync::Arc::new(inner.as_str().trim_matches('"').to_string())),
                     Rule::integer => {
                         let v = inner.as_str().parse::<i64>().map_err(|_| ParseError::InvalidSyntax {
                             message: "Invalid integer in literal type".to_string(),
@@ -861,7 +862,7 @@ impl Parser {
                         })
                     }
                 };
-                Ok(TypeAnnotation::Literal { value })
+                Ok(TypeAnnotation::Literal { value: Box::new(value) })
             }
             Rule::basic_type => match pair.as_str() {
                 "Int" => Ok(TypeAnnotation::Int),
@@ -1057,42 +1058,243 @@ impl Parser {
         match pair.as_rule() {
             Rule::range_pattern => {
                 let mut inner = pair.into_inner();
-                let start = self.build_pattern(inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                let start = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
                     message: "Missing start in range pattern".to_string(),
-                })?.into_inner())?;
-                let op = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
-                    message: "Missing range operator".to_string(),
                 })?;
-                let inclusive = op.as_str().contains("=");
-                let end = self.build_pattern(inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                let end = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
                     message: "Missing end in range pattern".to_string(),
-                })?.into_inner())?;
+                })?;
+                
                 Ok(Pattern::Range {
-                    start: Box::new(start),
-                    end: Box::new(end),
-                    inclusive,
+                    start: Box::new(self.build_pattern(start.into_inner())?),
+                    end: Box::new(self.build_pattern(end.into_inner())?),
+                    inclusive: true, // Simplified for now
                 })
             }
             Rule::or_pattern => {
                 let mut inner = pair.into_inner();
-                let mut alternatives = Vec::new();
-                while let Some(p) = inner.next() {
-                    alternatives.push(self.build_pattern(p.into_inner())?);
+                let first = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Empty or-pattern".to_string(),
+                })?;
+                let first_pattern = self.build_base_pattern(first)?;
+                
+                let mut alternatives = vec![first_pattern];
+                for alt_pair in inner {
+                    alternatives.push(self.build_base_pattern(alt_pair)?);
                 }
-                Ok(Pattern::Or { alternatives })
+                
+                if alternatives.len() == 1 {
+                    Ok(alternatives.into_iter().next().unwrap())
+                } else {
+                    Ok(Pattern::Or { alternatives })
+                }
             }
-            Rule::guarded_pattern => {
-                let mut inner = pair.into_inner();
-                let pattern = self.build_pattern(inner.next().ok_or_else(|| ParseError::InvalidSyntax {
-                    message: "Missing pattern in guarded pattern".to_string(),
-                })?.into_inner())?;
-                let guard = self.build_expr(inner.next().ok_or_else(|| ParseError::InvalidSyntax {
-                    message: "Missing guard expression in guarded pattern".to_string(),
-                })?.into_inner())?;
-                Ok(Pattern::Guarded {
-                    pattern: Box::new(pattern),
-                    guard: Box::new(guard),
+            Rule::result_pattern => {
+                // Handle Ok(...) and Err(...) patterns
+                let full_str = pair.as_str(); // Get string before moving
+                let inner_pairs = pair.into_inner();
+
+                // The first pair should tell us the variant
+                // We need to iterate through and find the pattern, then determine variant differently
+                let pairs_vec: Vec<_> = inner_pairs.collect();
+
+                // Let's reconstruct what we need by examining what we have
+                let mut variant = None;
+                let mut inner_pattern = None;
+
+                for p in pairs_vec.iter() {
+                    match p.as_rule() {
+                        Rule::pattern => {
+                            inner_pattern = Some(self.build_pattern(p.clone().into_inner())?);
+                        }
+                        _ => {
+                            // This might be a literal token, let's check the string
+                            let token_str = p.as_str();
+                            if token_str == "Ok" {
+                                variant = Some("Ok");
+                            } else if token_str == "Err" {
+                                variant = Some("Err");
+                            }
+                        }
+                    }
+                }
+
+                // If we didn't find variant from tokens, try the original string
+                if variant.is_none() {
+                    if full_str.starts_with("Ok(") {
+                        variant = Some("Ok");
+                    } else if full_str.starts_with("Err(") {
+                        variant = Some("Err");
+                    }
+                }
+
+                let variant = variant.ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Could not determine result pattern variant (Ok or Err)".to_string(),
+                })?;
+
+                let inner_pattern = inner_pattern.ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing inner pattern in result pattern".to_string(),
+                })?;
+
+                match variant {
+                    "Ok" => Ok(Pattern::Ok(Box::new(inner_pattern))),
+                    "Err" => Ok(Pattern::Err(Box::new(inner_pattern))),
+                    _ => unreachable!(),
+                }
+            }
+            Rule::identifier => {
+                let name = pair.as_str().to_string();
+                Ok(Pattern::Identifier(name))
+            }
+            Rule::wildcard => Ok(Pattern::Wildcard),
+            Rule::integer => {
+                let value =
+                    pair.as_str()
+                        .parse::<i64>()
+                        .map_err(|_| ParseError::InvalidSyntax {
+                            message: "Invalid integer in pattern".to_string(),
+                        })?;
+                Ok(Pattern::Literal(crate::ast::Value::Integer(value)))
+            }
+            Rule::string => {
+                let value = pair.as_str().trim_matches('"').to_string();
+                Ok(Pattern::Literal(crate::ast::Value::String(value.into())))
+            }
+            Rule::boolean => {
+                let value =
+                    pair.as_str()
+                        .parse::<bool>()
+                        .map_err(|_| ParseError::InvalidSyntax {
+                            message: "Invalid boolean in pattern".to_string(),
+                        })?;
+                Ok(Pattern::Literal(crate::ast::Value::Boolean(value)))
+            }
+            Rule::list_pattern => {
+                let mut patterns = Vec::new();
+                for p in pair.into_inner() {
+                    if p.as_rule() == Rule::pattern {
+                        patterns.push(self.build_pattern(p.into_inner())?);
+                    }
+                }
+                Ok(Pattern::List(patterns))
+            }
+            Rule::tuple_pattern => {
+                let mut patterns = Vec::new();
+                for p in pair.into_inner() {
+                    if p.as_rule() == Rule::pattern {
+                        patterns.push(self.build_pattern(p.into_inner())?);
+                    }
+                }
+                Ok(Pattern::Tuple(patterns))
+            }
+            Rule::enum_variant_pattern => {
+                let mut inner_pairs = pair.into_inner();
+                let variant_name = inner_pairs
+                    .next()
+                    .ok_or_else(|| ParseError::InvalidSyntax {
+                        message: "Missing variant name in enum pattern".to_string(),
+                    })?
+                    .as_str()
+                    .to_string();
+
+                let mut patterns = Vec::new();
+                for p in inner_pairs {
+                    if p.as_rule() == Rule::pattern {
+                        patterns.push(self.build_pattern(p.into_inner())?);
+                    }
+                }
+
+                Ok(Pattern::EnumVariant {
+                    variant_name,
+                    patterns,
                 })
+            }
+            Rule::struct_pattern => {
+                let mut inner_pairs = pair.into_inner();
+                let type_name = inner_pairs
+                    .next()
+                    .ok_or_else(|| ParseError::InvalidSyntax {
+                        message: "Missing type name in struct pattern".to_string(),
+                    })?
+                    .as_str()
+                    .to_string();
+
+                let mut field_patterns = Vec::new();
+                for field_pair in inner_pairs {
+                    if field_pair.as_rule() == Rule::struct_pattern_fields {
+                        for field_inner in field_pair.into_inner() {
+                            if field_inner.as_rule() == Rule::struct_pattern_field {
+                                let mut field_inner_pairs = field_inner.into_inner();
+                                let field_name = field_inner_pairs
+                                    .next()
+                                    .ok_or_else(|| ParseError::InvalidSyntax {
+                                        message: "Missing field name in struct pattern".to_string(),
+                                    })?
+                                    .as_str()
+                                    .to_string();
+
+                                if let Some(pattern_pair) = field_inner_pairs.next() {
+                                    // Long form: field_name: pattern
+                                    let field_pattern =
+                                        self.build_pattern(pattern_pair.into_inner())?;
+                                    field_patterns.push((field_name.clone(), field_pattern));
+                                } else {
+                                    // Shorthand: field_name (equivalent to field_name: field_name)
+                                    field_patterns.push((
+                                        field_name.clone(),
+                                        Pattern::Identifier(field_name),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Ok(Pattern::Struct {
+                    type_name,
+                    field_patterns,
+                })
+            }
+            _ => Err(ParseError::InvalidSyntax {
+                message: format!("Invalid pattern rule: {:?}", pair.as_rule()),
+            }),
+        }
+    }
+
+    fn build_base_pattern(&self, pair: Pair<Rule>) -> Result<Pattern, ParseError> {
+        match pair.as_rule() {
+            Rule::range_pattern => {
+                let mut inner = pair.into_inner();
+                let start = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing start in range pattern".to_string(),
+                })?;
+                let end = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing end in range pattern".to_string(),
+                })?;
+                
+                Ok(Pattern::Range {
+                    start: Box::new(self.build_pattern(start.into_inner())?),
+                    end: Box::new(self.build_pattern(end.into_inner())?),
+                    inclusive: true, // Simplified for now
+                })
+            }
+            Rule::or_pattern => {
+                let mut inner = pair.into_inner();
+                let first = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Empty or-pattern".to_string(),
+                })?;
+                let first_pattern = self.build_base_pattern(first)?;
+                
+                let mut alternatives = vec![first_pattern];
+                for alt_pair in inner {
+                    alternatives.push(self.build_base_pattern(alt_pair)?);
+                }
+                
+                if alternatives.len() == 1 {
+                    Ok(alternatives.into_iter().next().unwrap())
+                } else {
+                    Ok(Pattern::Or { alternatives })
+                }
             }
             Rule::result_pattern => {
                 // Handle Ok(...) and Err(...) patterns
@@ -1319,11 +1521,7 @@ impl Parser {
                 let value = &raw_value[2..raw_value.len() - 1];
                 Ok(Expr::RawString(Rc::new(value.to_string())))
             }
-            Rule::template_string => {
-                // Placeholder: parse as a single literal for now
-                let raw_value = pair.as_str();
-                Ok(Expr::TemplateString { parts: vec![TemplatePart::Literal(raw_value.to_string())] })
-            }
+
             Rule::boolean => {
                 let value = pair.as_str().parse::<bool>().map_err(|_| ParseError::InvalidSyntax {
                     message: "Invalid boolean literal".to_string(),
@@ -1686,7 +1884,7 @@ impl Parser {
                     let mut types = vec![self.build_type_annotation(pair.into_inner())?];
                     for remaining_pair in pairs {
                         if remaining_pair.as_rule() == Rule::type_annotation {
-                            types.push(Box::new(self.build_type_annotation(remaining_pair.into_inner())?));
+                            types.push(self.build_type_annotation(remaining_pair.into_inner())?);
                         }
                     }
                     Some(types)
@@ -1833,17 +2031,34 @@ impl Parser {
     }
 
     fn build_assignment(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing assignment target".to_string(),
+        let identifier = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing identifier in assignment".to_string(),
         })?;
-        let name = name_pair.as_str().to_string();
-        let value_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing assignment value".to_string(),
+        let value = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing value in assignment".to_string(),
         })?;
-        let value_expr = self.build_expr(value_pair.into_inner())?;
+
         Ok(Expr::Assignment {
-            name,
-            value: Box::new(value_expr),
+            target: identifier.as_str().to_string(),
+            value: Box::new(self.build_expr(value.into_inner())?),
+        })
+    }
+
+    fn build_try_catch_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let try_block = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing try block".to_string(),
+        })?;
+        let catch_var = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing catch variable".to_string(),
+        })?;
+        let catch_block = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing catch block".to_string(),
+        })?;
+
+        Ok(Expr::TryCatch {
+            try_block: Box::new(self.build_block(try_block.into_inner())?),
+            catch_var: catch_var.as_str().to_string(),
+            catch_block: Box::new(self.build_block(catch_block.into_inner())?),
         })
     }
 

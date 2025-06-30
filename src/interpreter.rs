@@ -356,7 +356,7 @@ impl Interpreter {
             }
             Expr::TryCatch {
                 try_block,
-                error_var,
+                catch_var,
                 catch_block,
             } => {
                 let try_result = self.eval_expr(*try_block)?;
@@ -366,7 +366,7 @@ impl Interpreter {
                         // Create new scope for catch block with error variable
                         let parent = self.environment.clone();
                         self.environment = Environment::with_parent(parent);
-                        self.environment.define(error_var, *err);
+                        self.environment.define(catch_var, *err);
 
                         let result = self.eval_expr(*catch_block);
 
@@ -395,14 +395,60 @@ impl Interpreter {
             Expr::Continue => Err(InterpreterError::RuntimeError {
                 message: "continue".to_string(),
             }),
-            Expr::Assignment { name, value } => {
+            Expr::Assignment { target, value } => {
                 let val = self.eval_expr(*value)?;
-                self.environment.set(&name, val.clone()).or_else(|_| {
+                self.environment.set(&target, val.clone()).or_else(|_| {
                     // If variable not defined, define it
-                    self.environment.define(name.clone(), val.clone());
+                    self.environment.define(target.clone(), val.clone());
                     Ok(())
                 })?;
                 Ok(val)
+            }
+            Expr::RawString(s) => {
+                Ok(Value::String(std::sync::Arc::new(s.as_str().to_string())))
+            }
+            Expr::TemplateString { parts } => {
+                let mut result = String::new();
+                for part in parts {
+                    match part {
+                        crate::ast::TemplatePart::Literal(s) => result.push_str(&s),
+                        crate::ast::TemplatePart::Interpolation(expr) => {
+                            let val = self.eval_expr(*expr)?;
+                            result.push_str(&format!("{}", val));
+                        }
+                    }
+                }
+                Ok(Value::String(result.into()))
+            }
+            Expr::BitwiseOp { left, op, right } => {
+                let left_val = self.eval_expr(*left)?;
+                let right_val = self.eval_expr(*right)?;
+                
+                match (left_val, right_val) {
+                    (Value::Integer(l), Value::Integer(r)) => {
+                        let result = match op {
+                            crate::ast::BitwiseOp::And => l & r,
+                            crate::ast::BitwiseOp::Or => l | r,
+                            crate::ast::BitwiseOp::Xor => l ^ r,
+                            crate::ast::BitwiseOp::Shl => l << r,
+                            crate::ast::BitwiseOp::Shr => l >> r,
+                        };
+                        Ok(Value::Integer(result))
+                    }
+                    _ => Err(InterpreterError::TypeError {
+                        message: "integer operands required for bitwise operation".to_string(),
+                    }),
+                }
+            }
+            Expr::Spread(expr) => {
+                // For now, just evaluate the inner expression
+                // Spread semantics would be handled at the call site
+                self.eval_expr(*expr)
+            }
+            Expr::Rest(expr) => {
+                // For now, just evaluate the inner expression
+                // Rest semantics would be handled in pattern matching
+                self.eval_expr(*expr)
             }
             Expr::Index { object, index } => {
                 let object_value = self.eval_expr(*object)?;

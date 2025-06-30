@@ -108,11 +108,10 @@ spawn_expr  = { "spawn" ~ call_expr }
 // Pattern matching
 match_expr  = { "match" ~ expr ~ "{" ~ match_arm+ ~ "}" }
 match_arm   = { pattern ~ ("if" ~ expr)? ~ "=>" ~ expr ~ (","?) }
-pattern     = { range_pattern | or_pattern | guarded_pattern | result_pattern | struct_pattern | integer | string | boolean | wildcard | list_pattern | tuple_pattern | identifier | enum_variant_pattern }
+pattern     = { or_pattern }
+or_pattern  = { base_pattern ~ ("|" ~ base_pattern)* }
+base_pattern = { range_pattern | result_pattern | struct_pattern | integer | string | boolean | wildcard | list_pattern | tuple_pattern | identifier | enum_variant_pattern }
 range_pattern = { integer ~ ".." ~ ("=" ~ integer | integer) | char_literal ~ ".." ~ char_literal }
-or_pattern = { pattern ~ ("|" ~ pattern)+ }
-guarded_pattern = { pattern ~ "if" ~ expr }
-wildcard    = { "_" }
 result_pattern = { "Ok" ~ "(" ~ pattern ~ ")" | "Err" ~ "(" ~ pattern ~ ")" }
 enum_variant_pattern = { identifier ~ ("(" ~ pattern ~ ("," ~ pattern)* ~ ")")? }
 struct_pattern = { identifier ~ "{" ~ struct_pattern_fields? ~ "}" }
@@ -120,6 +119,7 @@ struct_pattern_fields = { struct_pattern_field ~ ("," ~ struct_pattern_field)* ~
 struct_pattern_field = { (identifier ~ ":" ~ pattern) | identifier }
 list_pattern = { "[" ~ (pattern ~ ("," ~ pattern)*)? ~ "]" }
 tuple_pattern = { "(" ~ pattern ~ "," ~ pattern ~ ("," ~ pattern)* ~ ")" }
+wildcard    = { "_" }
 
 // Blocks and control flow
 block       = { "{" ~ (statement ~ ";"?)* ~ "}" }
@@ -164,4 +164,6 @@ loop_expr   = { "loop" ~ block }
 break_expr  = { "break" }
 continue_expr = { "continue" }
 
-assignment_expr = { identifier ~ "=" ~ expr } 
+assignment_expr = { identifier ~ "=" ~ expr }
+
+char_literal = @{ "'" ~ (!"'" ~ ANY) ~ "'" } 

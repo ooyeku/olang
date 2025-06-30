@@ -144,7 +144,7 @@ pub enum Expr {
     Try(Box<Expr>),
     TryCatch {
         try_block: Box<Expr>,
-        error_var: String,
+        catch_var: String,
         catch_block: Box<Expr>,
     },
 
@@ -165,7 +165,7 @@ pub enum Expr {
     Continue,
 
     Assignment {
-        name: String,
+        target: String,
         value: Box<Expr>,
     },
 
@@ -403,13 +403,13 @@ pub enum TypeAnnotation {
     Unknown,          // For unresolved types
     // New type variants
     Union {
-        types: Vec<Box<TypeAnnotation>>,
+        types: Vec<TypeAnnotation>,
     },
     Intersection {
-        types: Vec<Box<TypeAnnotation>>,
+        types: Vec<TypeAnnotation>,
     },
     Literal {
-        value: Value,
+        value: Box<Value>,
     },
 }
 
