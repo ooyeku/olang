@@ -333,6 +333,7 @@ impl Interpreter {
                 self.eval_range(start_val, end_val, inclusive)
             }
             Expr::StructLiteral(struct_literal) => self.eval_struct_literal(struct_literal),
+            Expr::AnonymousObject { fields } => self.eval_anonymous_object(fields),
             Expr::FieldAccess { object, field } => self.eval_field_access(object, field),
             Expr::ResultOk(expr) => {
                 let value = self.eval_expr(*expr)?;
@@ -356,7 +357,7 @@ impl Interpreter {
             }
             Expr::TryCatch {
                 try_block,
-                error_var,
+                catch_var,
                 catch_block,
             } => {
                 let try_result = self.eval_expr(*try_block)?;
@@ -366,7 +367,7 @@ impl Interpreter {
                         // Create new scope for catch block with error variable
                         let parent = self.environment.clone();
                         self.environment = Environment::with_parent(parent);
-                        self.environment.define(error_var, *err);
+                        self.environment.define(catch_var, *err);
 
                         let result = self.eval_expr(*catch_block);
 
@@ -395,14 +396,67 @@ impl Interpreter {
             Expr::Continue => Err(InterpreterError::RuntimeError {
                 message: "continue".to_string(),
             }),
-            Expr::Assignment { name, value } => {
+            Expr::Assignment { target, value } => {
                 let val = self.eval_expr(*value)?;
-                self.environment.set(&name, val.clone()).or_else(|_| {
+                self.environment.set(&target, val.clone()).or_else(|_| {
                     // If variable not defined, define it
-                    self.environment.define(name.clone(), val.clone());
+                    self.environment.define(target.clone(), val.clone());
                     Ok(())
                 })?;
                 Ok(val)
+            }
+            Expr::RawString(s) => {
+                Ok(Value::String(std::sync::Arc::new(s.as_str().to_string())))
+            }
+            Expr::TemplateString { parts } => {
+                let mut result = String::new();
+                for part in parts {
+                    match part {
+                        crate::ast::TemplatePart::Literal(s) => result.push_str(&s),
+                        crate::ast::TemplatePart::Interpolation(expr) => {
+                            let val = self.eval_expr(*expr)?;
+                            // For template interpolation, we want raw values without quotes
+                            match val {
+                                Value::String(s) => result.push_str(&s),
+                                Value::Integer(n) => result.push_str(&n.to_string()),
+                                Value::Float(x) => result.push_str(&x.to_string()),
+                                Value::Boolean(b) => result.push_str(&b.to_string()),
+                                other => result.push_str(&format!("{}", other)),
+                            }
+                        }
+                    }
+                }
+                Ok(Value::String(result.into()))
+            }
+            Expr::BitwiseOp { left, op, right } => {
+                let left_val = self.eval_expr(*left)?;
+                let right_val = self.eval_expr(*right)?;
+                
+                match (left_val, right_val) {
+                    (Value::Integer(l), Value::Integer(r)) => {
+                        let result = match op {
+                            crate::ast::BitwiseOp::And => l & r,
+                            crate::ast::BitwiseOp::Or => l | r,
+                            crate::ast::BitwiseOp::Xor => l ^ r,
+                            crate::ast::BitwiseOp::Shl => l << r,
+                            crate::ast::BitwiseOp::Shr => l >> r,
+                        };
+                        Ok(Value::Integer(result))
+                    }
+                    _ => Err(InterpreterError::TypeError {
+                        message: "integer operands required for bitwise operation".to_string(),
+                    }),
+                }
+            }
+            Expr::Spread(expr) => {
+                // For now, just evaluate the inner expression
+                // Spread semantics would be handled at the call site
+                self.eval_expr(*expr)
+            }
+            Expr::Rest(expr) => {
+                // For now, just evaluate the inner expression
+                // Rest semantics would be handled in pattern matching
+                self.eval_expr(*expr)
             }
             Expr::Index { object, index } => {
                 let object_value = self.eval_expr(*object)?;
@@ -663,16 +717,44 @@ impl Interpreter {
         for arm in arms {
             let mut bindings = HashMap::new();
             if self.pattern_matches_bind(&arm.pattern, &value, &mut bindings)? {
-                let parent = self.environment.clone();
-                self.environment = Environment::with_parent(parent);
-                for (k, v) in bindings {
-                    self.environment.define(k, v);
+                // Pattern matched, now check guard clause if present
+                let guard_passed = if let Some(guard_expr) = &arm.guard {
+                    // Create scope with pattern bindings for guard evaluation
+                    let parent = self.environment.clone();
+                    self.environment = Environment::with_parent(parent);
+                    for (k, v) in &bindings {
+                        self.environment.define(k.clone(), v.clone());
+                    }
+                    
+                    let guard_result = self.eval_expr(*guard_expr.clone());
+                    
+                    // Restore parent environment
+                    if let Some(parent) = self.environment.parent.take() {
+                        self.environment = *parent;
+                    }
+                    
+                    match guard_result {
+                        Ok(guard_value) => self.to_boolean(&guard_value)?,
+                        Err(_) => false, // Guard evaluation failed, treat as false
+                    }
+                } else {
+                    true // No guard clause, pattern match is sufficient
+                };
+                
+                if guard_passed {
+                    // Execute the match arm expression with pattern bindings
+                    let parent = self.environment.clone();
+                    self.environment = Environment::with_parent(parent);
+                    for (k, v) in bindings {
+                        self.environment.define(k, v);
+                    }
+                    let result = self.eval_expr(arm.expression);
+                    if let Some(parent) = self.environment.parent.take() {
+                        self.environment = *parent;
+                    }
+                    return result;
                 }
-                let result = self.eval_expr(arm.expression);
-                if let Some(parent) = self.environment.parent.take() {
-                    self.environment = *parent;
-                }
-                return result;
+                // Pattern matched but guard failed, continue to next arm
             }
         }
         Err(InterpreterError::PatternMatchFailed)
@@ -691,16 +773,36 @@ impl Interpreter {
                 Ok(true)
             }
             (Pattern::Wildcard, _) => Ok(true),
-            (Pattern::List(patterns), Value::List(values)) => {
-                if patterns.len() != values.len() {
-                    return Ok(false);
-                }
-                for (p, v) in patterns.iter().zip(values.iter()) {
-                    if !self.pattern_matches_bind(p, v, bindings)? {
+            (Pattern::List { patterns, rest }, Value::List(values)) => {
+                if let Some(rest_name) = rest {
+                    // Rest pattern: [a, b, ...rest]
+                    if patterns.len() > values.len() {
+                        return Ok(false); // Not enough values for required patterns
+                    }
+                    
+                    // Match the explicit patterns
+                    for (i, pattern) in patterns.iter().enumerate() {
+                        if !self.pattern_matches_bind(pattern, &values[i], bindings)? {
+                            return Ok(false);
+                        }
+                    }
+                    
+                    // Bind the rest of the values to the rest variable
+                    let rest_values: Vec<Value> = values[patterns.len()..].to_vec();
+                    bindings.insert(rest_name.clone(), Value::List(rest_values.into()));
+                    Ok(true)
+                } else {
+                    // No rest pattern: exact length match required
+                    if patterns.len() != values.len() {
                         return Ok(false);
                     }
+                    for (p, v) in patterns.iter().zip(values.iter()) {
+                        if !self.pattern_matches_bind(p, v, bindings)? {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
                 }
-                Ok(true)
             }
             (Pattern::Tuple(patterns), Value::Tuple(values)) => {
                 if patterns.len() != values.len() {
@@ -760,6 +862,63 @@ impl Interpreter {
                     }
                 }
                 Ok(true)
+            }
+            // Anonymous struct patterns
+            (
+                Pattern::AnonymousStruct { field_patterns },
+                Value::Struct { fields, .. },
+            ) => {
+                for (field_name, pattern) in field_patterns {
+                    if let Some(field_value) = fields.get(field_name) {
+                        if !self.pattern_matches_bind(pattern, field_value, bindings)? {
+                            return Ok(false);
+                        }
+                    } else {
+                        return Ok(false); // Field not found
+                    }
+                }
+                Ok(true)
+            }
+            // Range patterns
+            (Pattern::Range { start, end, inclusive }, Value::Integer(n)) => {
+                let start_val = match start.as_ref() {
+                    Pattern::Literal(Value::Integer(s)) => *s,
+                    _ => return Ok(false), // Range patterns only support integer literals for now
+                };
+                let end_val = match end.as_ref() {
+                    Pattern::Literal(Value::Integer(e)) => *e,
+                    _ => return Ok(false),
+                };
+                
+                if *inclusive {
+                    Ok(*n >= start_val && *n <= end_val)
+                } else {
+                    Ok(*n >= start_val && *n < end_val)
+                }
+            }
+            // Or patterns
+            (Pattern::Or { alternatives }, val) => {
+                for alt_pattern in alternatives {
+                    let mut alt_bindings = HashMap::new();
+                    if self.pattern_matches_bind(alt_pattern, val, &mut alt_bindings)? {
+                        // Merge bindings from the matching alternative
+                        bindings.extend(alt_bindings);
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            // Guarded patterns (guards are handled at a higher level)
+            (Pattern::Guarded { pattern, .. }, val) => {
+                // For guarded patterns, just check if the inner pattern matches
+                // The guard will be evaluated separately in eval_match
+                self.pattern_matches_bind(pattern, val, bindings)
+            }
+            // Rest patterns (standalone rest patterns should not appear in normal matching)
+            (Pattern::Rest(_), _) => {
+                // This should not happen in well-formed patterns as rest patterns 
+                // are only valid inside list patterns
+                Ok(false)
             }
             _ => Ok(false),
         }
@@ -1067,6 +1226,24 @@ impl Interpreter {
 
         Ok(Value::Struct {
             type_name: struct_literal.type_name,
+            fields,
+        })
+    }
+
+    fn eval_anonymous_object(
+        &mut self,
+        field_values: Vec<crate::ast::FieldValue>,
+    ) -> Result<Value, InterpreterError> {
+        let mut fields = std::collections::HashMap::new();
+
+        for field_value in field_values {
+            let value = self.eval_expr(field_value.value)?;
+            fields.insert(field_value.name, value);
+        }
+
+        // Use a generic type name for anonymous objects
+        Ok(Value::Struct {
+            type_name: "Object".to_string(),
             fields,
         })
     }

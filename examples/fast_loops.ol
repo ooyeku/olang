@@ -1,4 +1,4 @@
-let data = 1..10
+let data = 1..100
 
 
 let n = 1..100000

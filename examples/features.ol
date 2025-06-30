@@ -114,7 +114,7 @@ println("Doubled elements (first 10): {}", doubled)
 // Complex pipeline operations (SIMD + fusion opportunities)
 let complex_result = range(1, 50)
     |> map((x) => x * x)           // Square (SIMD candidate)
-    |> filter((x) => x % 2 == 0)   // Filter even numbers
+    |> filter((x) => { x % 2 == 0 })   // Filter even numbers
     |> map((x) => x / 2)           // Divide by 2 (SIMD candidate) 
     |> take(10)
 println("Complex pipeline result: {}", complex_result)
@@ -164,7 +164,7 @@ println("🚀 Test 1: Map-Filter Fusion")
 println("Original: [1,2,3,4,5,6,7,8,9,10] |> map(x -> x * 2) |> filter(x -> x > 8)")
 
 let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-let map_filter_result = numbers |> map((x) => x * 2) |> filter((x) => x > 8)
+let map_filter_result = numbers |> map((x) => x * 2) |> filter((x) => { x > 8 })
 println("Result:")
 println(map_filter_result)
 println("✨ Fusion: Map-Filter combined into single vectorized operation")
@@ -187,7 +187,7 @@ println("Original: Large dataset with map → filter → take → map chain")
 let large_dataset = range(1, 1000)
 let complex_result = large_dataset 
     |> map((x) => x * 3) 
-    |> filter((x) => x % 2 == 0) 
+    |> filter((x) => { x % 2 == 0 }) 
     |> take(10) 
     |> map((x) => x / 2)
 
@@ -200,7 +200,7 @@ println()
 println("🎯 Test 4: Filter-Map Fusion")
 println("Original: [1,2,3,4,5,6,7,8,9,10] |> filter(x -> x > 5) |> map(x -> x * x)")
 
-let filter_map_result = numbers |> filter((x) => x > 5) |> map((x) => x * x)
+let filter_map_result = numbers |> filter((x) => { x > 5 }) |> map((x) => x * x)
 println("Result:")
 println(filter_map_result)
 println("✨ Fusion: Filter-Map with cache-aware scheduling")
@@ -213,7 +213,7 @@ println("Processing 1000 elements with SIMD vectorization...")
 let large_numbers = range(1, 1000)
 let simd_result = large_numbers
     |> map((x) => x * 2.5)
-    |> filter((x) => x > 100)
+    |> filter((x) => { x > 100 })
     |> take(20)
 
 println("Result (first 20):")
@@ -229,7 +229,7 @@ let memory_test = range(1, 500)
 let memory_result = memory_test
     |> map((x) => x + 1)
     |> map((x) => x * 2)
-    |> filter((x) => x < 200)
+    |> filter((x) => { x < 200 })
     |> take(15)
 
 println("Result (first 15):")
@@ -247,19 +247,19 @@ let medium_data = range(200)
 let large_data = range(1000)
 
 println("Small dataset (50 elements):")
-let small_result = small_data |> map((x) => x * 2) |> filter((x) => x > 20) |> take(10)
+let small_result = small_data |> map((x) => x * 2) |> filter((x) => { x > 20 }) |> take(10)
 println("  Fused result:")
 println(small_result)
 println("  ✨ Fusion: 1.8x speedup with take-map optimization")
 
 println("Medium dataset (200 elements):")
-let medium_result = medium_data |> map((x) => x * 2) |> filter((x) => x > 100) |> take(15)
+let medium_result = medium_data |> map((x) => x * 2) |> filter((x) => { x > 100 }) |> take(15)
 println("  Fused result:")
 println(medium_result)
 println("  ✨ Fusion: 2.5x speedup with loop fusion")
 
 println("Large dataset (1000 elements):")
-let large_result = large_data |> map((x) => x * 2) |> filter((x) => x > 500) |> take(20)
+let large_result = large_data |> map((x) => x * 2) |> filter((x) => { x > 500 }) |> take(20)
 println("  Fused result:")
 println(large_result)
 println("  ✨ Fusion: 8x speedup with SIMD + loop fusion + cache optimization")
@@ -288,7 +288,7 @@ println("Testing fusion safety with complex dependencies...")
 let safety_data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 let safe_result = safety_data
     |> map((x) => x * 2)      // Safe to fuse
-    |> filter((x) => x > 5)   // Safe to fuse with map
+    |> filter((x) => { x > 5 })   // Safe to fuse with map
     |> take(5)              // Safe to fuse with filter
     |> map((x) => x + 1)      // Safe to fuse with take
 

@@ -7,11 +7,25 @@ COMMENT     = _{ "//" ~ (!NEWLINE ~ ANY)* }
 
 // Identifiers and literals
 identifier  = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
-integer     = @{ ("+" | "-")? ~ ASCII_DIGIT+ }
-float       = @{ ("+" | "-")? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+integer     = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
+float       = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
 string      = @{ "\"" ~ string_char* ~ "\"" }
-string_char = { !("\"" | "\\") ~ ANY | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "u" ~ ASCII_HEX_DIGIT{4}) }
+raw_string  = @{ "r\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+template_string = { "`" ~ template_raw_content ~ "`" }
+template_raw_content = @{ (!"`" ~ ANY)* }
+string_char = { !("\"" | "\\") ~ ANY | escape_sequence }
+
+escape_sequence = { "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "0" | "x" ~ ASCII_HEX_DIGIT{2} | "u" ~ ASCII_HEX_DIGIT{4} | "u{" ~ ASCII_HEX_DIGIT+ ~ "}") }
+template_escape = { "\\" ~ ("`" | "$" | "\\") }
+template_interpolation = { "${" ~ expr ~ "}" }
 boolean     = { "true" | "false" }
+char_literal = @{ "'" ~ (!"'" ~ ANY) ~ "'" }
+
+// Enhanced numeric literals
+binary      = @{ ("+" | "-")? ~ "0b" ~ ASCII_BIN_DIGIT+ ~ ("_" ~ ASCII_BIN_DIGIT+)* }
+octal       = @{ ("+" | "-")? ~ "0o" ~ ASCII_OCT_DIGIT+ ~ ("_" ~ ASCII_OCT_DIGIT+)* }
+hex         = @{ ("+" | "-")? ~ "0x" ~ ASCII_HEX_DIGIT+ ~ ("_" ~ ASCII_HEX_DIGIT+)* }
+number      = { float | binary | octal | hex | integer }
 
 // Lists and tuples
 list        = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
@@ -28,7 +42,8 @@ error_variant = { identifier ~ (":" ~ (unit_type | ("{" ~ struct_field_list ~ "}
 
 // Type declarations
 type_decl   = { "type" ~ identifier ~ type_params? ~ "=" ~ type_definition }
-type_definition = { struct_def | enum_def }
+type_definition = { union_type_def | struct_def | enum_def }
+union_type_def = { type_annotation ~ ("|" ~ type_annotation)+ }
 struct_def  = { "struct" ~ "{" ~ struct_field_list? ~ "}" }
 struct_field_list = { struct_field ~ ("," ~ struct_field)* ~ ","? }
 struct_field = { identifier ~ ":" ~ type_annotation }
@@ -51,18 +66,22 @@ expr        = { assignment_expr | for_loop | while_loop | loop_expr | break_expr
 
 add_op        = { "+" | "-" }
 mul_op        = { "*" | "/" | "%" }
+bitwise_op    = { "&" | "|" | "^" | "<<" | ">>" }
 bool_op       = { "&&" | "||" }
 comp_op       = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
 range_op      = { "..=" | ".." }
+unary_op      = { "-" | "!" }
 
 binary_expr   = { comparison_expr ~ (bool_op ~ comparison_expr)* }
 comparison_expr = { additive_expr ~ (comp_op ~ additive_expr)* }
 additive_expr = { multiplicative_expr ~ (add_op ~ multiplicative_expr)* }
-multiplicative_expr = { pipe_expr ~ (mul_op ~ pipe_expr)* }
+multiplicative_expr = { bitwise_expr ~ (mul_op ~ bitwise_expr)* }
+bitwise_expr = { pipe_expr ~ (bitwise_op ~ pipe_expr)* }
 pipe_op       = { "|>" }
 pipe_expr     = { range_expr ~ (pipe_op ~ range_expr)* }
-range_expr    = { call_expr ~ (range_op ~ call_expr)? }
-call_expr   = { primary ~ ( (" "+ ~ primary) | function_call | ("." ~ identifier) | ("[" ~ expr ~ "]") | postfix_op )* }
+range_expr    = { unary_expr ~ (range_op ~ unary_expr)? }
+unary_expr    = { unary_op* ~ call_expr }
+call_expr   = { primary ~ ( function_call | ("." ~ identifier) | ("[" ~ expr ~ "]") | postfix_op )* }
 
 // Function call with parentheses (including empty calls)
 function_call = { "(" ~ arg_list? ~ ")" }
@@ -76,7 +95,7 @@ try_catch_expr = { "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block }
 // Postfix operators
 postfix_op = { "?" }
 
-primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | literal | identifier | "(" ~ expr ~ ")" | block }
+primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | anonymous_object | literal | identifier | "(" ~ expr ~ ")" | block }
 
 // Lambda functions
 lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ (block | expr) }
@@ -96,16 +115,22 @@ spawn_expr  = { "spawn" ~ call_expr }
 
 // Pattern matching
 match_expr  = { "match" ~ expr ~ "{" ~ match_arm+ ~ "}" }
-match_arm   = { pattern ~ "=>" ~ expr ~ (","?) }
-pattern     = { result_pattern | struct_pattern | integer | string | boolean | wildcard | list_pattern | tuple_pattern | identifier | enum_variant_pattern }
-wildcard    = { "_" }
+match_arm   = { pattern ~ ("if" ~ expr)? ~ "=>" ~ expr ~ (","?) }
+pattern     = { or_pattern }
+or_pattern  = { base_pattern ~ ("|" ~ base_pattern)* }
+base_pattern = { range_pattern | result_pattern | enum_variant_pattern | struct_pattern | anonymous_struct_pattern | integer | string | boolean | wildcard | list_pattern | tuple_pattern | rest_pattern | identifier }
+range_pattern = { (integer ~ range_op ~ integer) | (char_literal ~ range_op ~ char_literal) }
 result_pattern = { "Ok" ~ "(" ~ pattern ~ ")" | "Err" ~ "(" ~ pattern ~ ")" }
 enum_variant_pattern = { identifier ~ ("(" ~ pattern ~ ("," ~ pattern)* ~ ")")? }
 struct_pattern = { identifier ~ "{" ~ struct_pattern_fields? ~ "}" }
+anonymous_struct_pattern = { "{" ~ struct_pattern_fields? ~ "}" }
 struct_pattern_fields = { struct_pattern_field ~ ("," ~ struct_pattern_field)* ~ ","? }
 struct_pattern_field = { (identifier ~ ":" ~ pattern) | identifier }
-list_pattern = { "[" ~ (pattern ~ ("," ~ pattern)*)? ~ "]" }
+rest_pattern = { "..." ~ identifier }
+list_pattern = { "[" ~ list_pattern_inner? ~ "]" }
+list_pattern_inner = { (pattern ~ ("," ~ pattern)* ~ ("," ~ rest_pattern)?) | rest_pattern }
 tuple_pattern = { "(" ~ pattern ~ "," ~ pattern ~ ("," ~ pattern)* ~ ")" }
+wildcard    = { "_" }
 
 // Blocks and control flow
 block       = { "{" ~ (statement ~ ";"?)* ~ "}" }
@@ -114,13 +139,15 @@ block       = { "{" ~ (statement ~ ";"?)* ~ "}" }
 if_expr     = { "if" ~ expr ~ "=>" ~ (block | expr) ~ ("else" ~ "=>" ~ (block | expr))? }
 
 // Literals
-literal     = { float | integer | string | boolean | list | tuple }
+literal     = { float | integer | raw_string | template_string | string | boolean | list | tuple }
 
 // Built-in types (for future type system)
 builtin_type = _{ "Int" | "Float" | "String" | "Bool" | "List" | "Tuple" }
 
 // Type annotations
-type_annotation = { basic_type | unit_type | list_type | function_type | generic_type | result_type | promise_type | custom_type }
+type_annotation = { union_type | intersection_type | literal_type | anonymous_struct_type | generic_type | result_type | promise_type | function_type | list_type | custom_type | basic_type | unit_type }
+base_type_annotation = { basic_type | custom_type | generic_type | list_type | unit_type | literal_type }
+anonymous_struct_type = { "{" ~ struct_field_list? ~ "}" }
 basic_type = { "Int" | "Float" | "String" | "Bool" }
 unit_type = { "()" }
 custom_type = { identifier }
@@ -129,6 +156,9 @@ list_type = { "[" ~ type_annotation ~ "]" }
 function_type = { "(" ~ (type_annotation ~ ("," ~ type_annotation)*)? ~ ")" ~ "->" ~ type_annotation }
 result_type = { "Result" ~ "<" ~ type_annotation ~ "," ~ type_annotation ~ ">" }
 promise_type = { "Promise" ~ "<" ~ type_annotation ~ ("," ~ type_annotation)? ~ ">" }
+union_type = { base_type_annotation ~ ("|" ~ base_type_annotation)+ }
+intersection_type = { basic_type ~ ("&" ~ basic_type)+ }
+literal_type = { string | integer | boolean }
 
 // Module statements
 import_decl = { "import" ~ (import_items ~ "from")? ~ string }
@@ -137,6 +167,7 @@ export_decl = { "export" ~ identifier ~ "=" ~ expr }
 
 // Struct expressions
 struct_literal = { identifier ~ "{" ~ field_value_list? ~ "}" }
+anonymous_object = { "{" ~ field_value_list? ~ "}" }
 field_value_list = { field_value ~ ("," ~ field_value)* ~ ","? }
 field_value = { identifier ~ ":" ~ expr }
 
@@ -147,4 +178,4 @@ loop_expr   = { "loop" ~ block }
 break_expr  = { "break" }
 continue_expr = { "continue" }
 
-assignment_expr = { identifier ~ "=" ~ expr } 
+assignment_expr = { identifier ~ "=" ~ expr }

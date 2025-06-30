@@ -2,10 +2,12 @@ use crate::ast::{
     AsyncFunctionDecl, BinaryOp, EnumVariant, ErrorTypeDecl, ExportDecl, Expr, FieldValue,
     FunctionDecl, ImportDecl, LetDecl, MatchArm, Parameter, Pattern, Program, PromiseType,
     Statement, StructField, StructLiteral, TypeAnnotation, TypeDecl, TypeDefinition,
+    BitwiseOp, UnaryOp, TemplatePart,
 };
 use pest::{iterators::Pair, iterators::Pairs, Parser as PestParser};
 use pest_derive::Parser;
 use thiserror::Error;
+use std::rc::Rc;
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -37,7 +39,7 @@ impl Parser {
     }
 
     pub fn parse(&self, input: &str) -> Result<Program, ParseError> {
-        let parsed = OlangParser::parse(Rule::program, input)?;
+        let parsed = <OlangParser as PestParser<Rule>>::parse(Rule::program, input)?;
 
         let mut statements = Vec::new();
         for pair in parsed {
@@ -219,7 +221,9 @@ impl Parser {
     }
 
     fn build_binary_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().unwrap();
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in binary expression".to_string(),
+        })?;
         let mut expr = self.build_comparison_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
@@ -243,7 +247,10 @@ impl Parser {
     }
 
     fn build_comparison_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut expr = self.build_additive_expr(pairs.next().unwrap().into_inner())?;
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in comparison expression".to_string(),
+        })?;
+        let mut expr = self.build_additive_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
             if let Some(right_pair) = pairs.next() {
@@ -270,7 +277,9 @@ impl Parser {
     }
 
     fn build_additive_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().unwrap();
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in additive expression".to_string(),
+        })?;
         let mut expr = self.build_multiplicative_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
@@ -294,7 +303,10 @@ impl Parser {
     }
 
     fn build_multiplicative_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut expr = self.build_pipe_expr(pairs.next().unwrap().into_inner())?;
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in multiplicative expression".to_string(),
+        })?;
+        let mut expr = self.build_bitwise_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
             if let Some(right_pair) = pairs.next() {
@@ -304,7 +316,7 @@ impl Parser {
                     "%" => BinaryOp::Modulo,
                     _ => break,
                 };
-                let right = self.build_pipe_expr(right_pair.into_inner())?;
+                let right = self.build_bitwise_expr(right_pair.into_inner())?;
                 expr = Expr::BinaryOp {
                     left: Box::new(expr),
                     op,
@@ -317,8 +329,40 @@ impl Parser {
         Ok(expr)
     }
 
+    fn build_bitwise_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in bitwise expression".to_string(),
+        })?;
+        let mut expr = self.build_pipe_expr(first_pair.into_inner())?;
+
+        while let Some(op_pair) = pairs.next() {
+            if let Some(right_pair) = pairs.next() {
+                let op = match op_pair.as_str() {
+                    "&" => BitwiseOp::And,
+                    "|" => BitwiseOp::Or,
+                    "^" => BitwiseOp::Xor,
+                    "<<" => BitwiseOp::Shl,
+                    ">>" => BitwiseOp::Shr,
+                    _ => break,
+                };
+                let right = self.build_pipe_expr(right_pair.into_inner())?;
+                expr = Expr::BitwiseOp {
+                    left: Box::new(expr),
+                    op,
+                    right: Box::new(right),
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+
     fn build_pipe_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut left = self.build_range_expr(pairs.next().unwrap().into_inner())?;
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in pipeline expression".to_string(),
+        })?;
+        let mut left = self.build_range_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
             if op_pair.as_rule() == Rule::pipe_op {
@@ -340,13 +384,19 @@ impl Parser {
     }
 
     fn build_range_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut left = self.build_call_expr(pairs.next().unwrap().into_inner())?;
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in range expression".to_string(),
+        })?;
+        let mut left = self.build_unary_expr(first_pair.into_inner())?;
 
         if let Some(pair) = pairs.next() {
             let op_str = pair.as_str();
             if op_str == ".." || op_str == "..=" {
                 let inclusive = op_str == "..=";
-                let right = self.build_call_expr(pairs.next().unwrap().into_inner())?;
+                let right_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing right operand in range expression".to_string(),
+                })?;
+                let right = self.build_unary_expr(right_pair.into_inner())?;
                 left = Expr::Range {
                     start: Box::new(left),
                     end: Box::new(right),
@@ -359,7 +409,10 @@ impl Parser {
     }
 
     fn build_call_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut expr = self.build_primary(pairs.next().unwrap().into_inner())?;
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing primary expression in call expression".to_string(),
+        })?;
+        let mut expr = self.build_primary(first_pair.into_inner())?;
 
         // Process all operations in sequence
         let mut pending_args = Vec::new();
@@ -382,13 +435,12 @@ impl Parser {
                                 Vec::new()
                             };
                             if args.len() == 1 {
+                                let arg = args.into_iter().next().ok_or_else(|| ParseError::InvalidSyntax {
+                                    message: format!("{} expression missing argument", name),
+                                })?;
                                 return match name.as_str() {
-                                    "Ok" => Ok(Expr::ResultOk(Box::new(
-                                        args.into_iter().next().unwrap(),
-                                    ))),
-                                    "Err" => Ok(Expr::ResultErr(Box::new(
-                                        args.into_iter().next().unwrap(),
-                                    ))),
+                                    "Ok" => Ok(Expr::ResultOk(Box::new(arg))),
+                                    "Err" => Ok(Expr::ResultErr(Box::new(arg))),
                                     _ => unreachable!(),
                                 };
                             } else {
@@ -505,6 +557,13 @@ impl Parser {
     }
 
     fn build_primary(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        // Check for unary expressions
+        if let Some(first) = pairs.peek() {
+            if first.as_rule() == Rule::unary_op {
+                return self.build_unary_expr(pairs);
+            }
+        }
+        // Fallback to existing logic
         let pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Empty primary expression".to_string(),
         })?;
@@ -520,48 +579,63 @@ impl Parser {
             Rule::if_expr => self.build_if_expr(pair.into_inner()),
             Rule::try_catch_expr => self.build_try_catch_expr(pair.into_inner()),
             Rule::struct_literal => self.build_struct_literal(pair.into_inner()),
+            Rule::anonymous_object => self.build_anonymous_object(pair.into_inner()),
             Rule::literal => self.build_literal(pair.into_inner()),
             Rule::identifier => Ok(Expr::Identifier(pair.as_str().to_string())),
-            Rule::expr => self.build_expr(pair.into_inner()),
             Rule::block => self.build_block(pair.into_inner()),
+            Rule::expr => self.build_expr(pair.into_inner()),
             _ => Err(ParseError::InvalidSyntax {
                 message: format!("Invalid primary rule: {:?}", pair.as_rule()),
             }),
         }
     }
 
-    fn build_try_catch_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let try_block = self.build_block(
-            pairs
-                .next()
-                .ok_or_else(|| ParseError::InvalidSyntax {
-                    message: "Missing try block".to_string(),
-                })?
-                .into_inner(),
-        )?;
+    fn build_unary_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut operators = Vec::new();
+        let mut call_expr_pair = None;
 
-        let error_var = pairs
-            .next()
-            .ok_or_else(|| ParseError::InvalidSyntax {
-                message: "Missing error variable".to_string(),
-            })?
-            .as_str()
-            .to_string();
+        // Collect all unary operators first
+        for pair in pairs {
+            match pair.as_rule() {
+                Rule::unary_op => {
+                    let op = match pair.as_str() {
+                        "-" => UnaryOp::Negate,
+                        "!" => UnaryOp::Not,
+                        _ => {
+                            return Err(ParseError::InvalidSyntax {
+                                message: format!("Unknown unary operator: {}", pair.as_str()),
+                            })
+                        }
+                    };
+                    operators.push(op);
+                }
+                Rule::call_expr => {
+                    call_expr_pair = Some(pair);
+                    break;
+                }
+                _ => {}
+            }
+        }
 
-        let catch_block = self.build_block(
-            pairs
-                .next()
-                .ok_or_else(|| ParseError::InvalidSyntax {
-                    message: "Missing catch block".to_string(),
-                })?
-                .into_inner(),
-        )?;
+        // Parse the base expression
+        let base_expr = if let Some(pair) = call_expr_pair {
+            self.build_call_expr(pair.into_inner())?
+        } else {
+            return Err(ParseError::InvalidSyntax {
+                message: "Missing call expression in unary expression".to_string(),
+            });
+        };
 
-        Ok(Expr::TryCatch {
-            try_block: Box::new(try_block),
-            error_var,
-            catch_block: Box::new(catch_block),
-        })
+        // Apply unary operators from right to left
+        let mut result = base_expr;
+        for op in operators.into_iter().rev() {
+            result = Expr::UnaryOp {
+                op,
+                operand: Box::new(result),
+            };
+        }
+
+        Ok(result)
     }
 
     fn build_lambda(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
@@ -569,7 +643,9 @@ impl Parser {
         let mut return_type = None;
         let mut body = None;
 
-        let first_pair = pairs.next().unwrap();
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing parameter list in lambda".to_string(),
+        })?;
         if first_pair.as_rule() == Rule::param_list {
             parameters = self.build_param_list(first_pair.into_inner())?;
         }
@@ -605,7 +681,9 @@ impl Parser {
         let mut return_type = None;
         let mut body = None;
 
-        let first_pair = pairs.next().unwrap();
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing parameter list in async expression".to_string(),
+        })?;
         if first_pair.as_rule() == Rule::param_list {
             parameters = self.build_param_list(first_pair.into_inner())?;
         }
@@ -626,7 +704,7 @@ impl Parser {
         }
 
         let body_expr = body.ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing async expression body".to_string(),
+            message: "Missing function body".to_string(),
         })?;
 
         Ok(Expr::Async {
@@ -770,6 +848,48 @@ impl Parser {
         })?;
 
         match pair.as_rule() {
+            Rule::union_type => {
+                let mut inner = pair.into_inner();
+                let mut types = Vec::new();
+                while let Some(type_pair) = inner.next() {
+                    types.push(self.build_type_annotation(type_pair.into_inner())?);
+                }
+                Ok(TypeAnnotation::Union { types })
+            }
+            Rule::intersection_type => {
+                let mut inner = pair.into_inner();
+                let mut types = Vec::new();
+                while let Some(type_pair) = inner.next() {
+                    types.push(self.build_type_annotation(type_pair.into_inner())?);
+                }
+                Ok(TypeAnnotation::Intersection { types })
+            }
+            Rule::literal_type => {
+                let inner = pair.into_inner().next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Empty literal type".to_string(),
+                })?;
+                let value = match inner.as_rule() {
+                    Rule::string => crate::ast::Value::String(std::sync::Arc::new(inner.as_str().trim_matches('"').to_string())),
+                    Rule::integer => {
+                        let v = inner.as_str().parse::<i64>().map_err(|_| ParseError::InvalidSyntax {
+                            message: "Invalid integer in literal type".to_string(),
+                        })?;
+                        crate::ast::Value::Integer(v)
+                    }
+                    Rule::boolean => {
+                        let v = inner.as_str().parse::<bool>().map_err(|_| ParseError::InvalidSyntax {
+                            message: "Invalid boolean in literal type".to_string(),
+                        })?;
+                        crate::ast::Value::Boolean(v)
+                    }
+                    _ => {
+                        return Err(ParseError::InvalidSyntax {
+                            message: format!("Invalid literal type: {:?}", inner.as_rule()),
+                        })
+                    }
+                };
+                Ok(TypeAnnotation::Literal { value: Box::new(value) })
+            }
             Rule::basic_type => match pair.as_str() {
                 "Int" => Ok(TypeAnnotation::Int),
                 "Float" => Ok(TypeAnnotation::Float),
@@ -845,7 +965,9 @@ impl Parser {
                 let mut params = Vec::new();
 
                 // The first part is either a single type annotation or a list of them in parens
-                let first = inner_pairs.next().unwrap();
+                let first = inner_pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing parameter types in function type".to_string(),
+                })?;
                 if first.as_rule() == Rule::type_annotation {
                     // Single parameter without parens (or the return type)
                     params.push(self.build_type_annotation(first.into_inner())?);
@@ -858,12 +980,14 @@ impl Parser {
                     }
                 }
 
-                let return_type =
-                    self.build_type_annotation(inner_pairs.next().unwrap().into_inner())?;
+                let return_type = inner_pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing return type in function type".to_string(),
+                })?;
+                let return_annotation = self.build_type_annotation(return_type.into_inner())?;
 
                 Ok(TypeAnnotation::Function {
                     params,
-                    return_type: Box::new(return_type),
+                    return_type: Box::new(return_annotation),
                 })
             }
             Rule::promise_type => {
@@ -888,6 +1012,17 @@ impl Parser {
                     value_type: Box::new(value_annotation),
                     error_type,
                 })
+            }
+            Rule::anonymous_struct_type => {
+                let fields = if let Some(field_list) = pair.into_inner().next() {
+                    self.build_struct_field_list(field_list.into_inner())?
+                } else {
+                    Vec::new()
+                };
+                // For anonymous struct types, we create a synthetic Custom type
+                // This is a simplified approach - in a full implementation, we might need
+                // a separate TypeAnnotation variant for anonymous structs
+                Ok(TypeAnnotation::Custom(format!("{{anonymous_struct_{}}}", fields.len())))
             }
             _ => Err(ParseError::InvalidSyntax {
                 message: format!("Invalid type annotation rule: {:?}", pair.as_rule()),
@@ -932,22 +1067,30 @@ impl Parser {
             });
         };
 
-        let expression = if let Some(pair) = pairs.next() {
+        let mut guard = None;
+        let mut expression = None;
+
+        // Check for optional guard clause and main expression
+        while let Some(pair) = pairs.next() {
             if pair.as_rule() == Rule::expr {
-                self.build_expr(pair.into_inner())?
-            } else {
-                return Err(ParseError::InvalidSyntax {
-                    message: "Missing expression in match arm".to_string(),
-                });
+                if guard.is_none() && pairs.peek().is_some() {
+                    // This is a guard expression (there's another expr following)
+                    guard = Some(Box::new(self.build_expr(pair.into_inner())?));
+                } else {
+                    // This is the main expression
+                    expression = Some(self.build_expr(pair.into_inner())?);
+                    break;
+                }
             }
-        } else {
-            return Err(ParseError::InvalidSyntax {
-                message: "Missing expression in match arm".to_string(),
-            });
-        };
+        }
+
+        let expression = expression.ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing expression in match arm".to_string(),
+        })?;
 
         Ok(MatchArm {
             pattern,
+            guard,
             expression,
         })
     }
@@ -958,6 +1101,84 @@ impl Parser {
         })?;
 
         match pair.as_rule() {
+            Rule::range_pattern => {
+                let pattern_str = pair.as_str();
+                let mut inner = pair.into_inner();
+                let start_pair = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing start in range pattern".to_string(),
+                })?;
+                let operator_pair = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing operator in range pattern".to_string(),
+                })?;
+                let end_pair = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing end in range pattern".to_string(),
+                })?;
+                
+                let inclusive = operator_pair.as_str() == "..=";
+                
+                // Handle both integer and char patterns
+                let start_pattern = match start_pair.as_rule() {
+                    Rule::integer => {
+                        let value = start_pair.as_str().parse::<i64>().map_err(|_| ParseError::InvalidSyntax {
+                            message: "Invalid integer in range pattern".to_string(),
+                        })?;
+                        Pattern::Literal(crate::ast::Value::Integer(value))
+                    }
+                    Rule::char_literal => {
+                        let char_str = start_pair.as_str().trim_matches('\'');
+                        let value = char_str.chars().next().ok_or_else(|| ParseError::InvalidSyntax {
+                            message: "Invalid character in range pattern".to_string(),
+                        })?;
+                        Pattern::Literal(crate::ast::Value::String(value.to_string().into()))
+                    }
+                    _ => return Err(ParseError::InvalidSyntax {
+                        message: format!("Invalid start type in range pattern '{}': {:?}", pattern_str, start_pair.as_rule()),
+                    })
+                };
+                
+                let end_pattern = match end_pair.as_rule() {
+                    Rule::integer => {
+                        let value = end_pair.as_str().parse::<i64>().map_err(|_| ParseError::InvalidSyntax {
+                            message: "Invalid integer in range pattern".to_string(),
+                        })?;
+                        Pattern::Literal(crate::ast::Value::Integer(value))
+                    }
+                    Rule::char_literal => {
+                        let char_str = end_pair.as_str().trim_matches('\'');
+                        let value = char_str.chars().next().ok_or_else(|| ParseError::InvalidSyntax {
+                            message: "Invalid character in range pattern".to_string(),
+                        })?;
+                        Pattern::Literal(crate::ast::Value::String(value.to_string().into()))
+                    }
+                    _ => return Err(ParseError::InvalidSyntax {
+                        message: format!("Invalid end type in range pattern '{}': {:?}", pattern_str, end_pair.as_rule()),
+                    })
+                };
+                
+                Ok(Pattern::Range {
+                    start: Box::new(start_pattern),
+                    end: Box::new(end_pattern),
+                    inclusive,
+                })
+            }
+            Rule::or_pattern => {
+                let mut inner = pair.into_inner();
+                let first = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Empty or-pattern".to_string(),
+                })?;
+                let first_pattern = self.build_base_pattern(first)?;
+                
+                let mut alternatives = vec![first_pattern];
+                for alt_pair in inner {
+                    alternatives.push(self.build_base_pattern(alt_pair)?);
+                }
+                
+                if alternatives.len() == 1 {
+                    Ok(alternatives.into_iter().next().unwrap())
+                } else {
+                    Ok(Pattern::Or { alternatives })
+                }
+            }
             Rule::result_pattern => {
                 // Handle Ok(...) and Err(...) patterns
                 let full_str = pair.as_str(); // Get string before moving
@@ -1040,12 +1261,38 @@ impl Parser {
             }
             Rule::list_pattern => {
                 let mut patterns = Vec::new();
+                let mut rest = None;
+                
                 for p in pair.into_inner() {
-                    if p.as_rule() == Rule::pattern {
-                        patterns.push(self.build_pattern(p.into_inner())?);
+                    match p.as_rule() {
+                        Rule::list_pattern_inner => {
+                            for inner_p in p.into_inner() {
+                                match inner_p.as_rule() {
+                                    Rule::pattern => {
+                                        patterns.push(self.build_pattern(inner_p.into_inner())?);
+                                    }
+                                    Rule::rest_pattern => {
+                                        let mut rest_inner = inner_p.into_inner();
+                                        if let Some(identifier) = rest_inner.next() {
+                                            rest = Some(identifier.as_str().to_string());
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                Ok(Pattern::List(patterns))
+                
+                Ok(Pattern::List { patterns, rest })
+            }
+            Rule::rest_pattern => {
+                let mut inner = pair.into_inner();
+                let identifier = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing identifier in rest pattern".to_string(),
+                })?;
+                Ok(Pattern::Rest(identifier.as_str().to_string()))
             }
             Rule::tuple_pattern => {
                 let mut patterns = Vec::new();
@@ -1130,6 +1377,327 @@ impl Parser {
         }
     }
 
+    fn build_base_pattern(&self, pair: Pair<Rule>) -> Result<Pattern, ParseError> {
+        match pair.as_rule() {
+            Rule::range_pattern => {
+                let pattern_str = pair.as_str();
+                let mut inner = pair.into_inner();
+                let start_pair = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing start in range pattern".to_string(),
+                })?;
+                let operator_pair = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing operator in range pattern".to_string(),
+                })?;
+                let end_pair = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing end in range pattern".to_string(),
+                })?;
+                
+                let inclusive = operator_pair.as_str() == "..=";
+                
+                // Handle both integer and char patterns
+                let start_pattern = match start_pair.as_rule() {
+                    Rule::integer => {
+                        let value = start_pair.as_str().parse::<i64>().map_err(|_| ParseError::InvalidSyntax {
+                            message: "Invalid integer in range pattern".to_string(),
+                        })?;
+                        Pattern::Literal(crate::ast::Value::Integer(value))
+                    }
+                    Rule::char_literal => {
+                        let char_str = start_pair.as_str().trim_matches('\'');
+                        let value = char_str.chars().next().ok_or_else(|| ParseError::InvalidSyntax {
+                            message: "Invalid character in range pattern".to_string(),
+                        })?;
+                        Pattern::Literal(crate::ast::Value::String(value.to_string().into()))
+                    }
+                    _ => return Err(ParseError::InvalidSyntax {
+                        message: format!("Invalid start type in range pattern '{}': {:?}", pattern_str, start_pair.as_rule()),
+                    })
+                };
+                
+                let end_pattern = match end_pair.as_rule() {
+                    Rule::integer => {
+                        let value = end_pair.as_str().parse::<i64>().map_err(|_| ParseError::InvalidSyntax {
+                            message: "Invalid integer in range pattern".to_string(),
+                        })?;
+                        Pattern::Literal(crate::ast::Value::Integer(value))
+                    }
+                    Rule::char_literal => {
+                        let char_str = end_pair.as_str().trim_matches('\'');
+                        let value = char_str.chars().next().ok_or_else(|| ParseError::InvalidSyntax {
+                            message: "Invalid character in range pattern".to_string(),
+                        })?;
+                        Pattern::Literal(crate::ast::Value::String(value.to_string().into()))
+                    }
+                    _ => return Err(ParseError::InvalidSyntax {
+                        message: format!("Invalid end type in range pattern '{}': {:?}", pattern_str, end_pair.as_rule()),
+                    })
+                };
+                
+                Ok(Pattern::Range {
+                    start: Box::new(start_pattern),
+                    end: Box::new(end_pattern),
+                    inclusive,
+                })
+            }
+            Rule::or_pattern => {
+                let mut inner = pair.into_inner();
+                let first = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Empty or-pattern".to_string(),
+                })?;
+                let first_pattern = self.build_base_pattern(first)?;
+                
+                let mut alternatives = vec![first_pattern];
+                for alt_pair in inner {
+                    alternatives.push(self.build_base_pattern(alt_pair)?);
+                }
+                
+                if alternatives.len() == 1 {
+                    Ok(alternatives.into_iter().next().unwrap())
+                } else {
+                    Ok(Pattern::Or { alternatives })
+                }
+            }
+            Rule::result_pattern => {
+                // Handle Ok(...) and Err(...) patterns
+                let full_str = pair.as_str(); // Get string before moving
+                let inner_pairs = pair.into_inner();
+
+                // The first pair should tell us the variant
+                // We need to iterate through and find the pattern, then determine variant differently
+                let pairs_vec: Vec<_> = inner_pairs.collect();
+
+                // Let's reconstruct what we need by examining what we have
+                let mut variant = None;
+                let mut inner_pattern = None;
+
+                for p in pairs_vec.iter() {
+                    match p.as_rule() {
+                        Rule::pattern => {
+                            inner_pattern = Some(self.build_pattern(p.clone().into_inner())?);
+                        }
+                        _ => {
+                            // This might be a literal token, let's check the string
+                            let token_str = p.as_str();
+                            if token_str == "Ok" {
+                                variant = Some("Ok");
+                            } else if token_str == "Err" {
+                                variant = Some("Err");
+                            }
+                        }
+                    }
+                }
+
+                // If we didn't find variant from tokens, try the original string
+                if variant.is_none() {
+                    if full_str.starts_with("Ok(") {
+                        variant = Some("Ok");
+                    } else if full_str.starts_with("Err(") {
+                        variant = Some("Err");
+                    }
+                }
+
+                let variant = variant.ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Could not determine result pattern variant (Ok or Err)".to_string(),
+                })?;
+
+                let inner_pattern = inner_pattern.ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing inner pattern in result pattern".to_string(),
+                })?;
+
+                match variant {
+                    "Ok" => Ok(Pattern::Ok(Box::new(inner_pattern))),
+                    "Err" => Ok(Pattern::Err(Box::new(inner_pattern))),
+                    _ => unreachable!(),
+                }
+            }
+            Rule::identifier => {
+                let name = pair.as_str().to_string();
+                Ok(Pattern::Identifier(name))
+            }
+            Rule::wildcard => Ok(Pattern::Wildcard),
+            Rule::integer => {
+                let value =
+                    pair.as_str()
+                        .parse::<i64>()
+                        .map_err(|_| ParseError::InvalidSyntax {
+                            message: "Invalid integer in pattern".to_string(),
+                        })?;
+                Ok(Pattern::Literal(crate::ast::Value::Integer(value)))
+            }
+            Rule::string => {
+                let value = pair.as_str().trim_matches('"').to_string();
+                Ok(Pattern::Literal(crate::ast::Value::String(value.into())))
+            }
+            Rule::boolean => {
+                let value =
+                    pair.as_str()
+                        .parse::<bool>()
+                        .map_err(|_| ParseError::InvalidSyntax {
+                            message: "Invalid boolean in pattern".to_string(),
+                        })?;
+                Ok(Pattern::Literal(crate::ast::Value::Boolean(value)))
+            }
+            Rule::list_pattern => {
+                let mut patterns = Vec::new();
+                let mut rest = None;
+                
+                for p in pair.into_inner() {
+                    match p.as_rule() {
+                        Rule::list_pattern_inner => {
+                            for inner_p in p.into_inner() {
+                                match inner_p.as_rule() {
+                                    Rule::pattern => {
+                                        patterns.push(self.build_pattern(inner_p.into_inner())?);
+                                    }
+                                    Rule::rest_pattern => {
+                                        let mut rest_inner = inner_p.into_inner();
+                                        if let Some(identifier) = rest_inner.next() {
+                                            rest = Some(identifier.as_str().to_string());
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                
+                Ok(Pattern::List { patterns, rest })
+            }
+            Rule::rest_pattern => {
+                let mut inner = pair.into_inner();
+                let identifier = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing identifier in rest pattern".to_string(),
+                })?;
+                Ok(Pattern::Rest(identifier.as_str().to_string()))
+            }
+            Rule::tuple_pattern => {
+                let mut patterns = Vec::new();
+                for p in pair.into_inner() {
+                    if p.as_rule() == Rule::pattern {
+                        patterns.push(self.build_pattern(p.into_inner())?);
+                    }
+                }
+                Ok(Pattern::Tuple(patterns))
+            }
+            Rule::enum_variant_pattern => {
+                let mut inner_pairs = pair.into_inner();
+                let variant_name = inner_pairs
+                    .next()
+                    .ok_or_else(|| ParseError::InvalidSyntax {
+                        message: "Missing variant name in enum pattern".to_string(),
+                    })?
+                    .as_str()
+                    .to_string();
+
+                let mut patterns = Vec::new();
+                for p in inner_pairs {
+                    if p.as_rule() == Rule::pattern {
+                        patterns.push(self.build_pattern(p.into_inner())?);
+                    }
+                }
+
+                Ok(Pattern::EnumVariant {
+                    variant_name,
+                    patterns,
+                })
+            }
+            Rule::struct_pattern => {
+                let mut inner_pairs = pair.into_inner();
+                let type_name = inner_pairs
+                    .next()
+                    .ok_or_else(|| ParseError::InvalidSyntax {
+                        message: "Missing type name in struct pattern".to_string(),
+                    })?
+                    .as_str()
+                    .to_string();
+
+                let mut field_patterns = Vec::new();
+                for field_pair in inner_pairs {
+                    if field_pair.as_rule() == Rule::struct_pattern_fields {
+                        for field_inner in field_pair.into_inner() {
+                            if field_inner.as_rule() == Rule::struct_pattern_field {
+                                let mut field_inner_pairs = field_inner.into_inner();
+                                let field_name = field_inner_pairs
+                                    .next()
+                                    .ok_or_else(|| ParseError::InvalidSyntax {
+                                        message: "Missing field name in struct pattern".to_string(),
+                                    })?
+                                    .as_str()
+                                    .to_string();
+
+                                if let Some(pattern_pair) = field_inner_pairs.next() {
+                                    // Long form: field_name: pattern
+                                    let field_pattern =
+                                        self.build_pattern(pattern_pair.into_inner())?;
+                                    field_patterns.push((field_name.clone(), field_pattern));
+                                } else {
+                                    // Shorthand: field_name (equivalent to field_name: field_name)
+                                    field_patterns.push((
+                                        field_name.clone(),
+                                        Pattern::Identifier(field_name),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Ok(Pattern::Struct {
+                    type_name,
+                    field_patterns,
+                })
+            }
+            Rule::anonymous_struct_pattern => {
+                let mut field_patterns = Vec::new();
+                for field_pair in pair.into_inner() {
+                    if field_pair.as_rule() == Rule::struct_pattern_fields {
+                        for field_inner in field_pair.into_inner() {
+                            if field_inner.as_rule() == Rule::struct_pattern_field {
+                                let mut field_inner_pairs = field_inner.into_inner();
+                                let field_name = field_inner_pairs
+                                    .next()
+                                    .ok_or_else(|| ParseError::InvalidSyntax {
+                                        message: "Missing field name in anonymous struct pattern".to_string(),
+                                    })?
+                                    .as_str()
+                                    .to_string();
+
+                                if let Some(pattern_pair) = field_inner_pairs.next() {
+                                    // Long form: field_name: pattern
+                                    let field_pattern =
+                                        self.build_pattern(pattern_pair.into_inner())?;
+                                    field_patterns.push((field_name.clone(), field_pattern));
+                                } else {
+                                    // Shorthand: field_name (equivalent to field_name: field_name)
+                                    field_patterns.push((
+                                        field_name.clone(),
+                                        Pattern::Identifier(field_name),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Ok(Pattern::AnonymousStruct {
+                    field_patterns,
+                })
+            }
+            Rule::base_pattern => {
+                // Handle base_pattern by recursing into its inner content
+                let inner = pair.into_inner().next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Empty base pattern".to_string(),
+                })?;
+                self.build_base_pattern(inner)
+            }
+            _ => Err(ParseError::InvalidSyntax {
+                message: format!("Invalid pattern rule: {:?}", pair.as_rule()),
+            }),
+        }
+    }
+
     fn build_literal(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         let pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Empty literal".to_string(),
@@ -1137,35 +1705,59 @@ impl Parser {
 
         match pair.as_rule() {
             Rule::integer => {
-                let value =
-                    pair.as_str()
-                        .parse::<i64>()
-                        .map_err(|_| ParseError::InvalidSyntax {
-                            message: "Invalid integer literal".to_string(),
-                        })?;
+                // Remove numeric separators
+                let s = pair.as_str().replace('_', "");
+                let value = s.parse::<i64>().map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid integer literal".to_string(),
+                })?;
                 Ok(Expr::Integer(value))
             }
             Rule::float => {
-                let value =
-                    pair.as_str()
-                        .parse::<f64>()
-                        .map_err(|_| ParseError::InvalidSyntax {
-                            message: "Invalid float literal".to_string(),
-                        })?;
+                let s = pair.as_str().replace('_', "");
+                let value = s.parse::<f64>().map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid float literal".to_string(),
+                })?;
                 Ok(Expr::Float(value))
+            }
+            Rule::binary => {
+                let s = pair.as_str().replace('_', "").replace("0b", "");
+                let value = i64::from_str_radix(&s, 2).map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid binary literal".to_string(),
+                })?;
+                Ok(Expr::Integer(value))
+            }
+            Rule::octal => {
+                let s = pair.as_str().replace('_', "").replace("0o", "");
+                let value = i64::from_str_radix(&s, 8).map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid octal literal".to_string(),
+                })?;
+                Ok(Expr::Integer(value))
+            }
+            Rule::hex => {
+                let s = pair.as_str().replace('_', "").replace("0x", "");
+                let value = i64::from_str_radix(&s, 16).map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid hex literal".to_string(),
+                })?;
+                Ok(Expr::Integer(value))
             }
             Rule::string => {
                 let raw_value = pair.as_str().trim_matches('"');
                 let value = self.process_string_escapes(raw_value)?;
                 Ok(Expr::String(value.into()))
             }
+            Rule::raw_string => {
+                let raw_value = pair.as_str();
+                // Remove r" and ending ", but do not process escapes
+                let value = &raw_value[2..raw_value.len() - 1];
+                Ok(Expr::RawString(Rc::new(value.to_string())))
+            }
+            Rule::template_string => {
+                self.build_template_string(pair.into_inner())
+            }
             Rule::boolean => {
-                let value =
-                    pair.as_str()
-                        .parse::<bool>()
-                        .map_err(|_| ParseError::InvalidSyntax {
-                            message: "Invalid boolean literal".to_string(),
-                        })?;
+                let value = pair.as_str().parse::<bool>().map_err(|_| ParseError::InvalidSyntax {
+                    message: "Invalid boolean literal".to_string(),
+                })?;
                 Ok(Expr::Boolean(value))
             }
             Rule::list => {
@@ -1211,7 +1803,10 @@ impl Parser {
     }
 
     fn build_if_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let condition = self.build_expr(pairs.next().unwrap().into_inner())?;
+        let condition_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing condition in if expression".to_string(),
+        })?;
+        let condition = self.build_expr(condition_pair.into_inner())?;
 
         let then_branch = if let Some(pair) = pairs.next() {
             match pair.as_rule() {
@@ -1442,6 +2037,15 @@ impl Parser {
         })?;
 
         match pair.as_rule() {
+            Rule::union_type_def => {
+                let mut types = Vec::new();
+                for type_pair in pair.into_inner() {
+                    if type_pair.as_rule() == Rule::type_annotation {
+                        types.push(self.build_type_annotation(type_pair.into_inner())?);
+                    }
+                }
+                Ok(TypeDefinition::Union { types })
+            }
             Rule::struct_def => {
                 let fields = if let Some(field_list) = pair.into_inner().next() {
                     self.build_struct_field_list(field_list.into_inner())?
@@ -1589,6 +2193,23 @@ impl Parser {
         Ok(FieldValue { name, value: expr })
     }
 
+    fn build_anonymous_object(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut fields = Vec::new();
+        for pair in pairs {
+            if pair.as_rule() == Rule::field_value_list {
+                for field_pair in pair.into_inner() {
+                    if field_pair.as_rule() == Rule::field_value {
+                        fields.push(self.build_field_value(field_pair.into_inner())?);
+                    }
+                }
+            } else if pair.as_rule() == Rule::field_value {
+                fields.push(self.build_field_value(pair.into_inner())?);
+            }
+        }
+
+        Ok(Expr::AnonymousObject { fields })
+    }
+
     fn build_for_loop(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         // Expected order: identifier, expr (iterable), block (body)
         let var_name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -1668,18 +2289,116 @@ impl Parser {
     }
 
     fn build_assignment(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing assignment target".to_string(),
+        let identifier = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing identifier in assignment".to_string(),
         })?;
-        let name = name_pair.as_str().to_string();
-        let value_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing assignment value".to_string(),
+        let value = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing value in assignment".to_string(),
         })?;
-        let value_expr = self.build_expr(value_pair.into_inner())?;
+
         Ok(Expr::Assignment {
-            name,
-            value: Box::new(value_expr),
+            target: identifier.as_str().to_string(),
+            value: Box::new(self.build_expr(value.into_inner())?),
         })
+    }
+
+    fn build_try_catch_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let try_block = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing try block".to_string(),
+        })?;
+        let catch_var = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing catch variable".to_string(),
+        })?;
+        let catch_block = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing catch block".to_string(),
+        })?;
+
+        Ok(Expr::TryCatch {
+            try_block: Box::new(self.build_block(try_block.into_inner())?),
+            catch_var: catch_var.as_str().to_string(),
+            catch_block: Box::new(self.build_block(catch_block.into_inner())?),
+        })
+    }
+
+    fn build_template_string(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        // Get the raw content between backticks
+        let raw_content = pairs
+            .into_iter()
+            .find(|p| p.as_rule() == Rule::template_raw_content)
+            .ok_or_else(|| ParseError::InvalidSyntax {
+                message: "Missing template content".to_string(),
+            })?
+            .as_str();
+
+        // Manually parse the template content to preserve all spaces
+        self.parse_template_content(raw_content)
+    }
+
+    fn parse_template_content(&self, content: &str) -> Result<Expr, ParseError> {
+        let mut parts = Vec::new();
+        let mut current_literal = String::new();
+        let mut chars = content.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '$' && chars.peek() == Some(&'{') {
+                // Found interpolation start
+                chars.next(); // consume '{'
+                
+                // Save any accumulated literal text
+                if !current_literal.is_empty() {
+                    parts.push(TemplatePart::Literal(current_literal.clone()));
+                    current_literal.clear();
+                }
+
+                // Extract the expression inside ${}
+                let mut expr_content = String::new();
+                let mut brace_count = 1;
+                
+                while let Some(ch) = chars.next() {
+                    if ch == '{' {
+                        brace_count += 1;
+                    } else if ch == '}' {
+                        brace_count -= 1;
+                        if brace_count == 0 {
+                            break;
+                        }
+                    }
+                    expr_content.push(ch);
+                }
+
+                if brace_count > 0 {
+                    return Err(ParseError::InvalidSyntax {
+                        message: "Unclosed template interpolation".to_string(),
+                    });
+                }
+
+                // Parse the expression content
+                let expr = self.parse_expression_from_string(&expr_content)?;
+                parts.push(TemplatePart::Interpolation(Box::new(expr)));
+            } else {
+                // Regular character - add to literal
+                current_literal.push(ch);
+            }
+        }
+
+        // Add any remaining literal text
+        if !current_literal.is_empty() {
+            parts.push(TemplatePart::Literal(current_literal));
+        }
+
+        Ok(Expr::TemplateString { parts })
+    }
+
+    fn parse_expression_from_string(&self, expr_str: &str) -> Result<Expr, ParseError> {
+        // Use Pest to parse just the expression
+        let pairs = OlangParser::parse(Rule::expr, expr_str)
+            .map_err(|e| ParseError::Pest(e))?;
+        
+        let expr_pair = pairs.into_iter().next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Empty expression in template interpolation".to_string(),
+        })?;
+        
+        self.build_expr(expr_pair.into_inner())
     }
 
     fn process_string_escapes(&self, input: &str) -> Result<String, ParseError> {
@@ -1697,33 +2416,107 @@ impl Parser {
                     Some('n') => result.push('\n'),
                     Some('r') => result.push('\r'),
                     Some('t') => result.push('\t'),
-                    Some('u') => {
-                        // Unicode escape sequence \uXXXX
-                        let mut unicode_digits = String::new();
-                        for _ in 0..4 {
+                    Some('0') => result.push('\0'), // null character
+                    Some('x') => {
+                        // Hex escape sequence \xHH
+                        let mut hex_digits = String::new();
+                        for _ in 0..2 {
                             match chars.next() {
                                 Some(digit) if digit.is_ascii_hexdigit() => {
-                                    unicode_digits.push(digit)
+                                    hex_digits.push(digit)
                                 }
                                 _ => {
                                     return Err(ParseError::InvalidSyntax {
-                                        message: "Invalid unicode escape sequence".to_string(),
+                                        message: "Invalid hex escape sequence: expected 2 hex digits".to_string(),
                                     })
                                 }
                             }
                         }
-                        if let Ok(code_point) = u32::from_str_radix(&unicode_digits, 16) {
-                            if let Some(unicode_char) = char::from_u32(code_point) {
-                                result.push(unicode_char);
+                        if let Ok(byte_value) = u8::from_str_radix(&hex_digits, 16) {
+                            result.push(byte_value as char);
+                        } else {
+                            return Err(ParseError::InvalidSyntax {
+                                message: "Invalid hex escape sequence".to_string(),
+                            });
+                        }
+                    }
+                    Some('u') => {
+                        // Check for variable-length Unicode escape \u{H+}
+                        if chars.peek() == Some(&'{') {
+                            chars.next(); // consume '{'
+                            let mut unicode_digits = String::new();
+                            let mut brace_count = 1;
+                            
+                            while let Some(ch) = chars.next() {
+                                if ch == '{' {
+                                    brace_count += 1;
+                                } else if ch == '}' {
+                                    brace_count -= 1;
+                                    if brace_count == 0 {
+                                        break;
+                                    }
+                                } else if ch.is_ascii_hexdigit() {
+                                    unicode_digits.push(ch);
+                                } else {
+                                    return Err(ParseError::InvalidSyntax {
+                                        message: "Invalid character in Unicode escape sequence".to_string(),
+                                    });
+                                }
+                            }
+                            
+                            if brace_count != 0 {
+                                return Err(ParseError::InvalidSyntax {
+                                    message: "Unterminated Unicode escape sequence".to_string(),
+                                });
+                            }
+                            
+                            if unicode_digits.is_empty() {
+                                return Err(ParseError::InvalidSyntax {
+                                    message: "Empty Unicode escape sequence".to_string(),
+                                });
+                            }
+                            
+                            if let Ok(code_point) = u32::from_str_radix(&unicode_digits, 16) {
+                                if let Some(unicode_char) = char::from_u32(code_point) {
+                                    result.push(unicode_char);
+                                } else {
+                                    return Err(ParseError::InvalidSyntax {
+                                        message: "Invalid unicode code point".to_string(),
+                                    });
+                                }
                             } else {
                                 return Err(ParseError::InvalidSyntax {
-                                    message: "Invalid unicode code point".to_string(),
+                                    message: "Invalid Unicode escape sequence".to_string(),
                                 });
                             }
                         } else {
-                            return Err(ParseError::InvalidSyntax {
-                                message: "Invalid unicode escape sequence".to_string(),
-                            });
+                            // Fixed-length Unicode escape sequence \uXXXX
+                            let mut unicode_digits = String::new();
+                            for _ in 0..4 {
+                                match chars.next() {
+                                    Some(digit) if digit.is_ascii_hexdigit() => {
+                                        unicode_digits.push(digit)
+                                    }
+                                    _ => {
+                                        return Err(ParseError::InvalidSyntax {
+                                            message: "Invalid unicode escape sequence: expected 4 hex digits".to_string(),
+                                        })
+                                    }
+                                }
+                            }
+                            if let Ok(code_point) = u32::from_str_radix(&unicode_digits, 16) {
+                                if let Some(unicode_char) = char::from_u32(code_point) {
+                                    result.push(unicode_char);
+                                } else {
+                                    return Err(ParseError::InvalidSyntax {
+                                        message: "Invalid unicode code point".to_string(),
+                                    });
+                                }
+                            } else {
+                                return Err(ParseError::InvalidSyntax {
+                                    message: "Invalid unicode escape sequence".to_string(),
+                                });
+                            }
                         }
                     }
                     Some(other) => {
@@ -1743,5 +2536,49 @@ impl Parser {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_enhanced_string_escapes() {
+        let parser = Parser::new();
+        
+        // Test basic escapes
+        assert_eq!(parser.process_string_escapes("\\n\\t\\r").unwrap(), "\n\t\r");
+        assert_eq!(parser.process_string_escapes("\\\"\\\\").unwrap(), "\"\\");
+        
+        // Test null character
+        assert_eq!(parser.process_string_escapes("\\0").unwrap(), "\0");
+        
+        // Test hex escapes
+        assert_eq!(parser.process_string_escapes("\\x41").unwrap(), "A");
+        assert_eq!(parser.process_string_escapes("\\x61").unwrap(), "a");
+        assert_eq!(parser.process_string_escapes("\\x20").unwrap(), " ");
+        
+        // Test fixed-length Unicode escapes
+        assert_eq!(parser.process_string_escapes("\\u0041").unwrap(), "A");
+        assert_eq!(parser.process_string_escapes("\\u0061").unwrap(), "a");
+        assert_eq!(parser.process_string_escapes("\\u0020").unwrap(), " ");
+        
+        // Test variable-length Unicode escapes
+        assert_eq!(parser.process_string_escapes("\\u{41}").unwrap(), "A");
+        assert_eq!(parser.process_string_escapes("\\u{61}").unwrap(), "a");
+        assert_eq!(parser.process_string_escapes("\\u{20}").unwrap(), " ");
+        assert_eq!(parser.process_string_escapes("\\u{1F600}").unwrap(), "😀");
+        
+        // Test mixed escapes
+        assert_eq!(parser.process_string_escapes("Hello\\nWorld\\u{1F600}").unwrap(), "Hello\nWorld😀");
+        
+        // Test error cases
+        assert!(parser.process_string_escapes("\\x").is_err());
+        assert!(parser.process_string_escapes("\\x1").is_err());
+        assert!(parser.process_string_escapes("\\u").is_err());
+        assert!(parser.process_string_escapes("\\u{").is_err());
+        assert!(parser.process_string_escapes("\\u{}").is_err());
+        assert!(parser.process_string_escapes("\\u{invalid}").is_err());
     }
 }

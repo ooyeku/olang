@@ -133,6 +133,9 @@ pub enum Expr {
 
     // Custom types
     StructLiteral(StructLiteral),
+    AnonymousObject {
+        fields: Vec<FieldValue>,
+    },
     FieldAccess {
         object: Box<Expr>,
         field: String,
@@ -144,7 +147,7 @@ pub enum Expr {
     Try(Box<Expr>),
     TryCatch {
         try_block: Box<Expr>,
-        error_var: String,
+        catch_var: String,
         catch_block: Box<Expr>,
     },
 
@@ -165,7 +168,7 @@ pub enum Expr {
     Continue,
 
     Assignment {
-        name: String,
+        target: String,
         value: Box<Expr>,
     },
 
@@ -194,6 +197,23 @@ pub enum Expr {
     All(Vec<Expr>),   // Promise.all([...])
     Race(Vec<Expr>),  // Promise.race([...])
     Spawn(Box<Expr>), // spawn async_expr
+
+    // New string literal variants
+    RawString(Rc<String>),
+    TemplateString {
+        parts: Vec<TemplatePart>,
+    },
+
+    // Bitwise operations
+    BitwiseOp {
+        left: Box<Expr>,
+        op: BitwiseOp,
+        right: Box<Expr>,
+    },
+
+    // Spread/rest (for future use)
+    Spread(Box<Expr>),
+    Rest(Box<Expr>),
 }
 
 /// Promise types for Promise expressions
@@ -233,6 +253,7 @@ pub enum UnaryOp {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Box<Expr>>,
     pub expression: Expr,
 }
 
@@ -242,7 +263,10 @@ pub enum Pattern {
     Literal(Value),
     Identifier(String),
     Wildcard,
-    List(Vec<Pattern>),
+    List {
+        patterns: Vec<Pattern>,
+        rest: Option<String>, // For ...rest patterns
+    },
     Tuple(Vec<Pattern>),
     // Result patterns for error handling
     Ok(Box<Pattern>),
@@ -257,6 +281,25 @@ pub enum Pattern {
         type_name: String,
         field_patterns: Vec<(String, Pattern)>,
     },
+    // Anonymous struct patterns
+    AnonymousStruct {
+        field_patterns: Vec<(String, Pattern)>,
+    },
+    // New pattern variants
+    Range {
+        start: Box<Pattern>,
+        end: Box<Pattern>,
+        inclusive: bool,
+    },
+    Or {
+        alternatives: Vec<Pattern>,
+    },
+    Guarded {
+        pattern: Box<Pattern>,
+        guard: Box<Expr>,
+    },
+    // Rest pattern for capturing remaining elements
+    Rest(String),
 }
 
 /// State of a Promise value
@@ -371,6 +414,16 @@ pub enum TypeAnnotation {
     // Type inference placeholders
     Inferred(String), // For type variables during inference
     Unknown,          // For unresolved types
+    // New type variants
+    Union {
+        types: Vec<TypeAnnotation>,
+    },
+    Intersection {
+        types: Vec<TypeAnnotation>,
+    },
+    Literal {
+        value: Box<Value>,
+    },
 }
 
 /// Generic type definition
@@ -465,6 +518,7 @@ pub struct TypeDecl {
 pub enum TypeDefinition {
     Struct { fields: Vec<StructField> },
     Enum { variants: Vec<EnumVariant> },
+    Union { types: Vec<TypeAnnotation> },
 }
 
 /// Struct field definition
@@ -666,4 +720,19 @@ impl Value {
             _ => None, // Other types are not comparable for sorting
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum TemplatePart {
+    Literal(String),
+    Interpolation(Box<Expr>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum BitwiseOp {
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
 }
