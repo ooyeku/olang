@@ -219,7 +219,9 @@ impl Parser {
     }
 
     fn build_binary_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().unwrap();
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in binary expression".to_string(),
+        })?;
         let mut expr = self.build_comparison_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
@@ -243,7 +245,10 @@ impl Parser {
     }
 
     fn build_comparison_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut expr = self.build_additive_expr(pairs.next().unwrap().into_inner())?;
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in comparison expression".to_string(),
+        })?;
+        let mut expr = self.build_additive_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
             if let Some(right_pair) = pairs.next() {
@@ -270,7 +275,9 @@ impl Parser {
     }
 
     fn build_additive_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().unwrap();
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in additive expression".to_string(),
+        })?;
         let mut expr = self.build_multiplicative_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
@@ -294,7 +301,10 @@ impl Parser {
     }
 
     fn build_multiplicative_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut expr = self.build_pipe_expr(pairs.next().unwrap().into_inner())?;
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in multiplicative expression".to_string(),
+        })?;
+        let mut expr = self.build_pipe_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
             if let Some(right_pair) = pairs.next() {
@@ -318,7 +328,10 @@ impl Parser {
     }
 
     fn build_pipe_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut left = self.build_range_expr(pairs.next().unwrap().into_inner())?;
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in pipeline expression".to_string(),
+        })?;
+        let mut left = self.build_range_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
             if op_pair.as_rule() == Rule::pipe_op {
@@ -340,13 +353,19 @@ impl Parser {
     }
 
     fn build_range_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut left = self.build_call_expr(pairs.next().unwrap().into_inner())?;
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in range expression".to_string(),
+        })?;
+        let mut left = self.build_call_expr(first_pair.into_inner())?;
 
         if let Some(pair) = pairs.next() {
             let op_str = pair.as_str();
             if op_str == ".." || op_str == "..=" {
                 let inclusive = op_str == "..=";
-                let right = self.build_call_expr(pairs.next().unwrap().into_inner())?;
+                let right_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing right operand in range expression".to_string(),
+                })?;
+                let right = self.build_call_expr(right_pair.into_inner())?;
                 left = Expr::Range {
                     start: Box::new(left),
                     end: Box::new(right),
@@ -359,7 +378,10 @@ impl Parser {
     }
 
     fn build_call_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut expr = self.build_primary(pairs.next().unwrap().into_inner())?;
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing primary expression in call expression".to_string(),
+        })?;
+        let mut expr = self.build_primary(first_pair.into_inner())?;
 
         // Process all operations in sequence
         let mut pending_args = Vec::new();
@@ -382,13 +404,12 @@ impl Parser {
                                 Vec::new()
                             };
                             if args.len() == 1 {
+                                let arg = args.into_iter().next().ok_or_else(|| ParseError::InvalidSyntax {
+                                    message: format!("{} expression missing argument", name),
+                                })?;
                                 return match name.as_str() {
-                                    "Ok" => Ok(Expr::ResultOk(Box::new(
-                                        args.into_iter().next().unwrap(),
-                                    ))),
-                                    "Err" => Ok(Expr::ResultErr(Box::new(
-                                        args.into_iter().next().unwrap(),
-                                    ))),
+                                    "Ok" => Ok(Expr::ResultOk(Box::new(arg))),
+                                    "Err" => Ok(Expr::ResultErr(Box::new(arg))),
                                     _ => unreachable!(),
                                 };
                             } else {
@@ -569,7 +590,9 @@ impl Parser {
         let mut return_type = None;
         let mut body = None;
 
-        let first_pair = pairs.next().unwrap();
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing parameter list in lambda".to_string(),
+        })?;
         if first_pair.as_rule() == Rule::param_list {
             parameters = self.build_param_list(first_pair.into_inner())?;
         }
@@ -605,7 +628,9 @@ impl Parser {
         let mut return_type = None;
         let mut body = None;
 
-        let first_pair = pairs.next().unwrap();
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing parameter list in async expression".to_string(),
+        })?;
         if first_pair.as_rule() == Rule::param_list {
             parameters = self.build_param_list(first_pair.into_inner())?;
         }
@@ -845,7 +870,9 @@ impl Parser {
                 let mut params = Vec::new();
 
                 // The first part is either a single type annotation or a list of them in parens
-                let first = inner_pairs.next().unwrap();
+                let first = inner_pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing parameter types in function type".to_string(),
+                })?;
                 if first.as_rule() == Rule::type_annotation {
                     // Single parameter without parens (or the return type)
                     params.push(self.build_type_annotation(first.into_inner())?);
@@ -858,12 +885,14 @@ impl Parser {
                     }
                 }
 
-                let return_type =
-                    self.build_type_annotation(inner_pairs.next().unwrap().into_inner())?;
+                let return_type = inner_pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing return type in function type".to_string(),
+                })?;
+                let return_annotation = self.build_type_annotation(return_type.into_inner())?;
 
                 Ok(TypeAnnotation::Function {
                     params,
-                    return_type: Box::new(return_type),
+                    return_type: Box::new(return_annotation),
                 })
             }
             Rule::promise_type => {
@@ -1211,7 +1240,10 @@ impl Parser {
     }
 
     fn build_if_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let condition = self.build_expr(pairs.next().unwrap().into_inner())?;
+        let condition_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing condition in if expression".to_string(),
+        })?;
+        let condition = self.build_expr(condition_pair.into_inner())?;
 
         let then_branch = if let Some(pair) = pairs.next() {
             match pair.as_rule() {
