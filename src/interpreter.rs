@@ -983,7 +983,13 @@ impl Interpreter {
             Value::String(s) => Ok(!s.is_empty()),
             Value::List(items) => Ok(!items.is_empty()),
             Value::Tuple(items) => Ok(!items.is_empty()),
-            Value::Range { start, end, .. } => Ok(start < end), // Range is truthy if non-empty
+            Value::Range { start, end, inclusive } => {
+                if *inclusive {
+                    Ok(start <= end)
+                } else {
+                    Ok(start < end)
+                }
+            }
             Value::Unit => Ok(false),
             _ => Ok(true),
         }
