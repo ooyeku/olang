@@ -399,22 +399,22 @@ pub enum OptimizationLevel {
 
 ```bash
 # Classic interpreter (default)
-otc run program.rap
+otc run program.ol
 
 # OVM with intelligent dispatch
-otc ovm program.rap
+otc ovm program.ol
 
 # OVM with specific optimization level
-otc ovm --optimization release program.rap
+otc ovm --optimization release program.ol
 
 # OVM with performance monitoring
-otc ovm --performance --stats program.rap
+otc ovm --performance --stats program.ol
 
 # OVM without fallback (pure OVM)
-otc ovm --no-fallback program.rap
+otc ovm --no-fallback program.ol
 
 # Force garbage collection after execution
-otc ovm --force-gc program.rap
+otc ovm --force-gc program.ol
 ```
 
 ### Programmatic Usage

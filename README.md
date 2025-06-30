@@ -61,13 +61,13 @@ olang> match Some(42) { Some(v) => println(v), None => println("nope") }
 Execute an Olang file:
 
 ```bash
-olang script.rap
+olang script.ol
 ```
 
 ### Batch Mode
 
 ```bash
-olang --batch script.rap
+olang --batch script.ol
 ```
 
 ### Verbose Mode

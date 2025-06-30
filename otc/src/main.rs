@@ -21,12 +21,12 @@ struct Cli {
 enum Commands {
     /// Run an Olang file
     Run {
-        /// File to run (.rap). If omitted, starts REPL in batch mode (stdin)
+        /// File to run (.ol). If omitted, starts REPL in batch mode (stdin)
         file: Option<String>,
     },
     /// Perform static analysis on an Olang file
     Check {
-        /// File to check (.rap)
+        /// File to check (.ol)
         file: Option<String>,
     },
     /// Start an interactive REPL session
