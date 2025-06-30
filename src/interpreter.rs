@@ -709,16 +709,44 @@ impl Interpreter {
         for arm in arms {
             let mut bindings = HashMap::new();
             if self.pattern_matches_bind(&arm.pattern, &value, &mut bindings)? {
-                let parent = self.environment.clone();
-                self.environment = Environment::with_parent(parent);
-                for (k, v) in bindings {
-                    self.environment.define(k, v);
+                // Pattern matched, now check guard clause if present
+                let guard_passed = if let Some(guard_expr) = &arm.guard {
+                    // Create scope with pattern bindings for guard evaluation
+                    let parent = self.environment.clone();
+                    self.environment = Environment::with_parent(parent);
+                    for (k, v) in &bindings {
+                        self.environment.define(k.clone(), v.clone());
+                    }
+                    
+                    let guard_result = self.eval_expr(*guard_expr.clone());
+                    
+                    // Restore parent environment
+                    if let Some(parent) = self.environment.parent.take() {
+                        self.environment = *parent;
+                    }
+                    
+                    match guard_result {
+                        Ok(guard_value) => self.to_boolean(&guard_value)?,
+                        Err(_) => false, // Guard evaluation failed, treat as false
+                    }
+                } else {
+                    true // No guard clause, pattern match is sufficient
+                };
+                
+                if guard_passed {
+                    // Execute the match arm expression with pattern bindings
+                    let parent = self.environment.clone();
+                    self.environment = Environment::with_parent(parent);
+                    for (k, v) in bindings {
+                        self.environment.define(k, v);
+                    }
+                    let result = self.eval_expr(arm.expression);
+                    if let Some(parent) = self.environment.parent.take() {
+                        self.environment = *parent;
+                    }
+                    return result;
                 }
-                let result = self.eval_expr(arm.expression);
-                if let Some(parent) = self.environment.parent.take() {
-                    self.environment = *parent;
-                }
-                return result;
+                // Pattern matched but guard failed, continue to next arm
             }
         }
         Err(InterpreterError::PatternMatchFailed)
@@ -806,6 +834,41 @@ impl Interpreter {
                     }
                 }
                 Ok(true)
+            }
+            // Range patterns
+            (Pattern::Range { start, end, inclusive }, Value::Integer(n)) => {
+                let start_val = match start.as_ref() {
+                    Pattern::Literal(Value::Integer(s)) => *s,
+                    _ => return Ok(false), // Range patterns only support integer literals for now
+                };
+                let end_val = match end.as_ref() {
+                    Pattern::Literal(Value::Integer(e)) => *e,
+                    _ => return Ok(false),
+                };
+                
+                if *inclusive {
+                    Ok(*n >= start_val && *n <= end_val)
+                } else {
+                    Ok(*n >= start_val && *n < end_val)
+                }
+            }
+            // Or patterns
+            (Pattern::Or { alternatives }, val) => {
+                for alt_pattern in alternatives {
+                    let mut alt_bindings = HashMap::new();
+                    if self.pattern_matches_bind(alt_pattern, val, &mut alt_bindings)? {
+                        // Merge bindings from the matching alternative
+                        bindings.extend(alt_bindings);
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            // Guarded patterns (guards are handled at a higher level)
+            (Pattern::Guarded { pattern, .. }, val) => {
+                // For guarded patterns, just check if the inner pattern matches
+                // The guard will be evaluated separately in eval_match
+                self.pattern_matches_bind(pattern, val, bindings)
             }
             _ => Ok(false),
         }

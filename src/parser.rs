@@ -2,7 +2,7 @@ use crate::ast::{
     AsyncFunctionDecl, BinaryOp, EnumVariant, ErrorTypeDecl, ExportDecl, Expr, FieldValue,
     FunctionDecl, ImportDecl, LetDecl, MatchArm, Parameter, Pattern, Program, PromiseType,
     Statement, StructField, StructLiteral, TypeAnnotation, TypeDecl, TypeDefinition,
-    BitwiseOp, UnaryOp,
+    BitwiseOp, UnaryOp, TemplatePart,
 };
 use pest::{iterators::Pair, iterators::Pairs, Parser as PestParser};
 use pest_derive::Parser;
@@ -39,7 +39,7 @@ impl Parser {
     }
 
     pub fn parse(&self, input: &str) -> Result<Program, ParseError> {
-        let parsed = OlangParser::parse(Rule::program, input)?;
+        let parsed = <OlangParser as PestParser<Rule>>::parse(Rule::program, input)?;
 
         let mut statements = Vec::new();
         for pair in parsed {
@@ -387,7 +387,7 @@ impl Parser {
         let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing left operand in range expression".to_string(),
         })?;
-        let mut left = self.build_call_expr(first_pair.into_inner())?;
+        let mut left = self.build_unary_expr(first_pair.into_inner())?;
 
         if let Some(pair) = pairs.next() {
             let op_str = pair.as_str();
@@ -396,7 +396,7 @@ impl Parser {
                 let right_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
                     message: "Missing right operand in range expression".to_string(),
                 })?;
-                let right = self.build_call_expr(right_pair.into_inner())?;
+                let right = self.build_unary_expr(right_pair.into_inner())?;
                 left = Expr::Range {
                     start: Box::new(left),
                     end: Box::new(right),
@@ -590,26 +590,51 @@ impl Parser {
     }
 
     fn build_unary_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let op_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing unary operator".to_string(),
-        })?;
-        let operand_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing operand for unary operator".to_string(),
-        })?;
-        let operand = self.build_primary(operand_pair.into_inner())?;
-        let op = match op_pair.as_str() {
-            "-" => UnaryOp::Negate,
-            "!" => UnaryOp::Not,
-            _ => {
-                return Err(ParseError::InvalidSyntax {
-                    message: format!("Unknown unary operator: {}", op_pair.as_str()),
-                })
+        let mut operators = Vec::new();
+        let mut call_expr_pair = None;
+
+        // Collect all unary operators first
+        for pair in pairs {
+            match pair.as_rule() {
+                Rule::unary_op => {
+                    let op = match pair.as_str() {
+                        "-" => UnaryOp::Negate,
+                        "!" => UnaryOp::Not,
+                        _ => {
+                            return Err(ParseError::InvalidSyntax {
+                                message: format!("Unknown unary operator: {}", pair.as_str()),
+                            })
+                        }
+                    };
+                    operators.push(op);
+                }
+                Rule::call_expr => {
+                    call_expr_pair = Some(pair);
+                    break;
+                }
+                _ => {}
             }
+        }
+
+        // Parse the base expression
+        let base_expr = if let Some(pair) = call_expr_pair {
+            self.build_call_expr(pair.into_inner())?
+        } else {
+            return Err(ParseError::InvalidSyntax {
+                message: "Missing call expression in unary expression".to_string(),
+            });
         };
-        Ok(Expr::UnaryOp {
-            op,
-            operand: Box::new(operand),
-        })
+
+        // Apply unary operators from right to left
+        let mut result = base_expr;
+        for op in operators.into_iter().rev() {
+            result = Expr::UnaryOp {
+                op,
+                operand: Box::new(result),
+            };
+        }
+
+        Ok(result)
     }
 
     fn build_lambda(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
@@ -987,6 +1012,17 @@ impl Parser {
                     error_type,
                 })
             }
+            Rule::anonymous_struct_type => {
+                let fields = if let Some(field_list) = pair.into_inner().next() {
+                    self.build_struct_field_list(field_list.into_inner())?
+                } else {
+                    Vec::new()
+                };
+                // For anonymous struct types, we create a synthetic Custom type
+                // This is a simplified approach - in a full implementation, we might need
+                // a separate TypeAnnotation variant for anonymous structs
+                Ok(TypeAnnotation::Custom(format!("{{anonymous_struct_{}}}", fields.len())))
+            }
             _ => Err(ParseError::InvalidSyntax {
                 message: format!("Invalid type annotation rule: {:?}", pair.as_rule()),
             }),
@@ -1030,22 +1066,30 @@ impl Parser {
             });
         };
 
-        let expression = if let Some(pair) = pairs.next() {
+        let mut guard = None;
+        let mut expression = None;
+
+        // Check for optional guard clause and main expression
+        while let Some(pair) = pairs.next() {
             if pair.as_rule() == Rule::expr {
-                self.build_expr(pair.into_inner())?
-            } else {
-                return Err(ParseError::InvalidSyntax {
-                    message: "Missing expression in match arm".to_string(),
-                });
+                if guard.is_none() && pairs.peek().is_some() {
+                    // This is a guard expression (there's another expr following)
+                    guard = Some(Box::new(self.build_expr(pair.into_inner())?));
+                } else {
+                    // This is the main expression
+                    expression = Some(self.build_expr(pair.into_inner())?);
+                    break;
+                }
             }
-        } else {
-            return Err(ParseError::InvalidSyntax {
-                message: "Missing expression in match arm".to_string(),
-            });
-        };
+        }
+
+        let expression = expression.ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing expression in match arm".to_string(),
+        })?;
 
         Ok(MatchArm {
             pattern,
+            guard,
             expression,
         })
     }
@@ -1462,6 +1506,13 @@ impl Parser {
                     field_patterns,
                 })
             }
+            Rule::base_pattern => {
+                // Handle base_pattern by recursing into its inner content
+                let inner = pair.into_inner().next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Empty base pattern".to_string(),
+                })?;
+                self.build_base_pattern(inner)
+            }
             _ => Err(ParseError::InvalidSyntax {
                 message: format!("Invalid pattern rule: {:?}", pair.as_rule()),
             }),
@@ -1521,7 +1572,9 @@ impl Parser {
                 let value = &raw_value[2..raw_value.len() - 1];
                 Ok(Expr::RawString(Rc::new(value.to_string())))
             }
-
+            Rule::template_string => {
+                self.build_template_string(pair.into_inner())
+            }
             Rule::boolean => {
                 let value = pair.as_str().parse::<bool>().map_err(|_| ParseError::InvalidSyntax {
                     message: "Invalid boolean literal".to_string(),
@@ -1805,6 +1858,15 @@ impl Parser {
         })?;
 
         match pair.as_rule() {
+            Rule::union_type_def => {
+                let mut types = Vec::new();
+                for type_pair in pair.into_inner() {
+                    if type_pair.as_rule() == Rule::type_annotation {
+                        types.push(self.build_type_annotation(type_pair.into_inner())?);
+                    }
+                }
+                Ok(TypeDefinition::Union { types })
+            }
             Rule::struct_def => {
                 let fields = if let Some(field_list) = pair.into_inner().next() {
                     self.build_struct_field_list(field_list.into_inner())?
@@ -2060,6 +2122,72 @@ impl Parser {
             catch_var: catch_var.as_str().to_string(),
             catch_block: Box::new(self.build_block(catch_block.into_inner())?),
         })
+    }
+
+    fn build_template_string(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut parts = Vec::new();
+        let mut current_literal = String::new();
+
+        for pair in pairs {
+            match pair.as_rule() {
+                Rule::template_char => {
+                    let pair_str = pair.as_str(); // Get string before moving
+                    let inner = pair.into_inner().next();
+                    match inner {
+                        Some(inner_pair) => match inner_pair.as_rule() {
+                            Rule::template_escape => {
+                                // Process template escape sequences
+                                let escape_seq = inner_pair.as_str();
+                                match escape_seq {
+                                    "\\`" => current_literal.push('`'),
+                                    "\\$" => current_literal.push('$'),
+                                    "\\\\" => current_literal.push('\\'),
+                                    _ => {
+                                        return Err(ParseError::InvalidSyntax {
+                                            message: format!("Invalid template escape sequence: {}", escape_seq),
+                                        });
+                                    }
+                                }
+                            }
+                            Rule::template_interpolation => {
+                                // If we have accumulated literal text, add it as a literal part
+                                if !current_literal.is_empty() {
+                                    parts.push(TemplatePart::Literal(current_literal.clone()));
+                                    current_literal.clear();
+                                }
+                                // Parse the interpolated expression
+                                let expr_pair = inner_pair.into_inner().next().ok_or_else(|| {
+                                    ParseError::InvalidSyntax {
+                                        message: "Empty template interpolation".to_string(),
+                                    }
+                                })?;
+                                let expr = self.build_expr(expr_pair.into_inner())?;
+                                parts.push(TemplatePart::Interpolation(Box::new(expr)));
+                            }
+                            _ => {
+                                // Regular character
+                                current_literal.push_str(inner_pair.as_str());
+                            }
+                        },
+                        None => {
+                            // Regular character (not escaped or interpolated)
+                            current_literal.push_str(pair_str);
+                        }
+                    }
+                }
+                _ => {
+                    // Regular character
+                    current_literal.push_str(pair.as_str());
+                }
+            }
+        }
+
+        // Add any remaining literal text
+        if !current_literal.is_empty() {
+            parts.push(TemplatePart::Literal(current_literal));
+        }
+
+        Ok(Expr::TemplateString { parts })
     }
 
     fn process_string_escapes(&self, input: &str) -> Result<String, ParseError> {

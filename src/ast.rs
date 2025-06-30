@@ -250,6 +250,7 @@ pub enum UnaryOp {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Box<Expr>>,
     pub expression: Expr,
 }
 
@@ -505,6 +506,7 @@ pub struct TypeDecl {
 pub enum TypeDefinition {
     Struct { fields: Vec<StructField> },
     Enum { variants: Vec<EnumVariant> },
+    Union { types: Vec<TypeAnnotation> },
 }
 
 /// Struct field definition
