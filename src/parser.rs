@@ -1259,6 +1259,22 @@ impl Parser {
                         })?;
                 Ok(Pattern::Literal(crate::ast::Value::Boolean(value)))
             }
+            Rule::rest_pattern => {
+                let mut inner = pair.into_inner();
+                let identifier = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing identifier in rest pattern".to_string(),
+                })?;
+                Ok(Pattern::Rest(identifier.as_str().to_string()))
+            }
+            Rule::tuple_pattern => {
+                let mut patterns = Vec::new();
+                for p in pair.into_inner() {
+                    if p.as_rule() == Rule::pattern {
+                        patterns.push(self.build_pattern(p.into_inner())?);
+                    }
+                }
+                Ok(Pattern::Tuple(patterns))
+            }
             Rule::list_pattern => {
                 let mut patterns = Vec::new();
                 let mut rest = None;
@@ -1286,22 +1302,6 @@ impl Parser {
                 }
                 
                 Ok(Pattern::List { patterns, rest })
-            }
-            Rule::rest_pattern => {
-                let mut inner = pair.into_inner();
-                let identifier = inner.next().ok_or_else(|| ParseError::InvalidSyntax {
-                    message: "Missing identifier in rest pattern".to_string(),
-                })?;
-                Ok(Pattern::Rest(identifier.as_str().to_string()))
-            }
-            Rule::tuple_pattern => {
-                let mut patterns = Vec::new();
-                for p in pair.into_inner() {
-                    if p.as_rule() == Rule::pattern {
-                        patterns.push(self.build_pattern(p.into_inner())?);
-                    }
-                }
-                Ok(Pattern::Tuple(patterns))
             }
             Rule::enum_variant_pattern => {
                 let mut inner_pairs = pair.into_inner();
@@ -1370,6 +1370,49 @@ impl Parser {
                     type_name,
                     field_patterns,
                 })
+            }
+            Rule::anonymous_struct_pattern => {
+                let mut field_patterns = Vec::new();
+                for field_pair in pair.into_inner() {
+                    if field_pair.as_rule() == Rule::struct_pattern_fields {
+                        for field_inner in field_pair.into_inner() {
+                            if field_inner.as_rule() == Rule::struct_pattern_field {
+                                let mut field_inner_pairs = field_inner.into_inner();
+                                let field_name = field_inner_pairs
+                                    .next()
+                                    .ok_or_else(|| ParseError::InvalidSyntax {
+                                        message: "Missing field name in anonymous struct pattern".to_string(),
+                                    })?
+                                    .as_str()
+                                    .to_string();
+
+                                if let Some(pattern_pair) = field_inner_pairs.next() {
+                                    // Long form: field_name: pattern
+                                    let field_pattern =
+                                        self.build_pattern(pattern_pair.into_inner())?;
+                                    field_patterns.push((field_name.clone(), field_pattern));
+                                } else {
+                                    // Shorthand: field_name (equivalent to field_name: field_name)
+                                    field_patterns.push((
+                                        field_name.clone(),
+                                        Pattern::Identifier(field_name),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Ok(Pattern::AnonymousStruct {
+                    field_patterns,
+                })
+            }
+            Rule::base_pattern => {
+                // Handle base_pattern by recursing into its inner content
+                let inner = pair.into_inner().next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Empty base pattern".to_string(),
+                })?;
+                self.build_base_pattern(inner)
             }
             _ => Err(ParseError::InvalidSyntax {
                 message: format!("Invalid pattern rule: {:?}", pair.as_rule()),
@@ -1937,8 +1980,8 @@ impl Parser {
             }
         }
 
-        let body = body.ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing function body".to_string(),
+        let body_expr = body.ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing async function body".to_string(),
         })?;
 
         Ok(AsyncFunctionDecl {
@@ -1946,7 +1989,7 @@ impl Parser {
             type_params,
             parameters,
             return_type,
-            body,
+            body: body_expr,
         })
     }
 

@@ -253,13 +253,13 @@ println(small_result)
 println("  ✨ Fusion: 1.8x speedup with take-map optimization")
 
 println("Medium dataset (200 elements):")
-let medium_result = medium_data |> map((x) => x * 2) |> filter((x) => { x > 100 }) |> take(15)
+let medium_result = medium_data |> map((x) => {x * 2}) |> filter((x) => { x > 100 }) |> take(15)
 println("  Fused result:")
 println(medium_result)
 println("  ✨ Fusion: 2.5x speedup with loop fusion")
 
 println("Large dataset (1000 elements):")
-let large_result = large_data |> map((x) => x * 2) |> filter((x) => { x > 500 }) |> take(20)
+let large_result = large_data |> map((x) => {x * 2}) |> filter((x) => { x > 500 }) |> take(20)
 println("  Fused result:")
 println(large_result)
 println("  ✨ Fusion: 8x speedup with SIMD + loop fusion + cache optimization")
@@ -272,7 +272,7 @@ println("Testing complex fusion patterns with different operation types...")
 let advanced_data = range(100)
 
 // Test reverse + map fusion
-let reverse_map = advanced_data |> take(10) |> reverse() |> map((x) => x * 10)
+let reverse_map = advanced_data |> take(10) |> reverse() |> map((x) => {x * 10})
 println("Reverse+Map:")
 println(reverse_map)
 
@@ -290,7 +290,7 @@ let safe_result = safety_data
     |> map((x) => x * 2)      // Safe to fuse
     |> filter((x) => { x > 5 })   // Safe to fuse with map
     |> take(5)              // Safe to fuse with filter
-    |> map((x) => x + 1)      // Safe to fuse with take
+    |> map((x) => { x + 1 })      // Safe to fuse with take
 
 println("Safe fusion result:")
 println(safe_result)
