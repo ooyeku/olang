@@ -214,7 +214,7 @@ impl OvmInterpreter {
                         let ovm_value = self
                             .ovm
                             .as_mut()
-                            .unwrap()
+                            .ok_or(IntegrationError::OvmNotInitialized)?
                             .execute_expression(expr)
                             .map_err(IntegrationError::OvmExecutionError)?;
                         last_value = self.convert_ovm_to_ast_value(ovm_value)?;
@@ -232,7 +232,7 @@ impl OvmInterpreter {
                         let func_id = self
                             .ovm
                             .as_mut()
-                            .unwrap()
+                            .ok_or(IntegrationError::OvmNotInitialized)?
                             .register_function(func_decl.clone())
                             .map_err(IntegrationError::OvmExecutionError)?;
 
@@ -623,7 +623,7 @@ mod tests {
         };
 
         // Should use classic interpreter when OVM not available
-        let result = interpreter.eval_program(program).unwrap();
+        let result = interpreter.eval_program(program).expect("Expected successful program evaluation");
         assert_eq!(result, Value::Integer(42));
 
         let stats = interpreter.get_stats();

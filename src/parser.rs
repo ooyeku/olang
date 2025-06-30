@@ -1174,7 +1174,11 @@ impl Parser {
                 }
                 
                 if alternatives.len() == 1 {
-                    Ok(alternatives.into_iter().next().unwrap())
+                    // Safe unwrap since we verified len() == 1
+                    alternatives.into_iter().next()
+                        .ok_or_else(|| ParseError::InvalidSyntax {
+                            message: "Internal error: expected one alternative in or-pattern".to_string(),
+                        })
                 } else {
                     Ok(Pattern::Or { alternatives })
                 }
@@ -1495,7 +1499,11 @@ impl Parser {
                 }
                 
                 if alternatives.len() == 1 {
-                    Ok(alternatives.into_iter().next().unwrap())
+                    // Safe unwrap since we verified len() == 1
+                    alternatives.into_iter().next()
+                        .ok_or_else(|| ParseError::InvalidSyntax {
+                            message: "Internal error: expected one alternative in or-pattern".to_string(),
+                        })
                 } else {
                     Ok(Pattern::Or { alternatives })
                 }

@@ -286,8 +286,15 @@ impl OvmCommand {
 
         let classic_avg =
             classic_times.iter().sum::<std::time::Duration>() / classic_times.len() as u32;
-        let classic_min = classic_times.iter().min().unwrap();
-        let classic_max = classic_times.iter().max().unwrap();
+        
+        // Safe handling of min/max without unwrap
+        let (classic_min, classic_max) = match (classic_times.iter().min(), classic_times.iter().max()) {
+            (Some(min), Some(max)) => (min, max),
+            _ => {
+                eprintln!("Error: Failed to calculate classic interpreter benchmark statistics");
+                return Err(anyhow::anyhow!("Benchmark calculation failed"));
+            }
+        };
 
         println!("Classic Interpreter:");
         println!("  Average: {}µs", classic_avg.as_micros());
@@ -304,8 +311,15 @@ impl OvmCommand {
             }
 
             let ovm_avg = ovm_times.iter().sum::<std::time::Duration>() / ovm_times.len() as u32;
-            let ovm_min = ovm_times.iter().min().unwrap();
-            let ovm_max = ovm_times.iter().max().unwrap();
+            
+            // Safe handling of min/max without unwrap
+            let (ovm_min, ovm_max) = match (ovm_times.iter().min(), ovm_times.iter().max()) {
+                (Some(min), Some(max)) => (min, max),
+                _ => {
+                    eprintln!("Error: Failed to calculate OVM benchmark statistics");
+                    return Err(anyhow::anyhow!("OVM benchmark calculation failed"));
+                }
+            };
 
             println!("OVM:");
             println!("  Average: {}µs", ovm_avg.as_micros());

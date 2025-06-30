@@ -862,13 +862,19 @@ impl Repl {
                     if !times.is_empty() {
                         let total: std::time::Duration = times.iter().sum();
                         let avg = total / times.len() as u32;
-                        let min = times.iter().min().unwrap();
-                        let max = times.iter().max().unwrap();
-
-                        println!("Benchmark results:");
-                        println!("  Average: {:.2}ms", avg.as_secs_f64() * 1000.0);
-                        println!("  Min: {:.2}ms", min.as_secs_f64() * 1000.0);
-                        println!("  Max: {:.2}ms", max.as_secs_f64() * 1000.0);
+                        
+                        // Safe handling of min/max without unwrap
+                        match (times.iter().min(), times.iter().max()) {
+                            (Some(min), Some(max)) => {
+                                println!("Benchmark results:");
+                                println!("  Average: {:.2}ms", avg.as_secs_f64() * 1000.0);
+                                println!("  Min: {:.2}ms", min.as_secs_f64() * 1000.0);
+                                println!("  Max: {:.2}ms", max.as_secs_f64() * 1000.0);
+                            }
+                            _ => {
+                                eprintln!("Error: Failed to calculate benchmark statistics");
+                            }
+                        }
                     }
                 } else {
                     println!("Usage: :benchmark <expression>");
