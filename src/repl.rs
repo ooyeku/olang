@@ -1179,6 +1179,17 @@ impl Repl {
                     println!("Usage: :examples <function_name>");
                 }
             }
+            ":module" => {
+                if parts.len() > 1 {
+                    self.handle_module_debug_command(&parts[1..])?;
+                } else {
+                    println!("Module debug commands:");
+                    println!("  :module trace         - Enable module resolution tracing");
+                    println!("  :module paths <name>  - Show search paths for module");
+                    println!("  :module list          - List loaded modules");
+                    println!("  :module config        - Show module debug configuration");
+                }
+            }
             cmd if cmd.starts_with(":!") => {
                 if let Ok(num) = cmd[2..].parse::<usize>() {
                     if num > 0 && num <= self.command_history.len() {
@@ -1777,6 +1788,140 @@ impl Repl {
         }
         
         println!();
+    }
+
+    /// Handle module debug commands for troubleshooting module resolution
+    fn handle_module_debug_command(&mut self, args: &[&str]) -> Result<(), ReplError> {
+        match args.get(0).copied() {
+            Some("trace") => {
+                self.ovm_interpreter
+                    .get_classic_interpreter()
+                    .module_debug_config
+                    .enable_resolution_tracing = true;
+                println!("✅ Module resolution tracing enabled");
+                println!("  Run import statements to see detailed resolution tracing");
+            }
+            Some("paths") => {
+                if let Some(module) = args.get(1) {
+                    self.show_module_search_paths(module);
+                } else {
+                    println!("Usage: :module paths <module_name>");
+                }
+            }
+            Some("list") => {
+                self.list_loaded_modules();
+            }
+            Some("config") => {
+                let config = &self.ovm_interpreter
+                    .get_classic_interpreter()
+                    .module_debug_config;
+                
+                println!("=== Module Debug Configuration ===");
+                println!("  Resolution tracing: {}", 
+                    if config.enable_resolution_tracing { "enabled".bright_green() } else { "disabled".bright_red() });
+                println!("  Log search paths: {}", 
+                    if config.log_search_paths { "enabled".bright_green() } else { "disabled".bright_red() });
+                println!("  Show timing: {}", 
+                    if config.show_resolution_timing { "enabled".bright_green() } else { "disabled".bright_red() });
+                println!("  Verbose errors: {}", 
+                    if config.verbose_error_messages { "enabled".bright_green() } else { "disabled".bright_red() });
+                
+                // Check environment variable
+                if std::env::var("OLANG_DEBUG_MODULES").is_ok() {
+                    println!("  Environment: OLANG_DEBUG_MODULES is set");
+                } else {
+                    println!("  Environment: OLANG_DEBUG_MODULES not set");
+                    println!("    Tip: export OLANG_DEBUG_MODULES=1 for automatic tracing");
+                }
+            }
+            _ => {
+                println!("Module debug commands:");
+                println!("  :module trace         - Enable resolution tracing");
+                println!("  :module paths <name>  - Show search paths for module");
+                println!("  :module list          - List loaded modules");
+                println!("  :module config        - Show debug configuration");
+            }
+        }
+        Ok(())
+    }
+
+    /// Show what paths would be searched for a given module
+    fn show_module_search_paths(&self, module_path: &str) {
+        use std::path::PathBuf;
+        
+        println!("🔍 Module search paths for '{}':", module_path);
+        
+        let current_dir = match std::env::current_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                println!("  ❌ Error getting current directory: {}", e);
+                return;
+            }
+        };
+        
+        let candidates = vec![
+            // Relative to current directory
+            current_dir.join(format!("{}.ol", module_path)),
+            current_dir.join(format!("{}/mod.ol", module_path)),
+            current_dir.join(format!("{}/index.ol", module_path)),
+            
+            // Relative to src directory
+            current_dir.join("src").join(format!("{}.ol", module_path)),
+            current_dir.join("src").join(format!("{}/mod.ol", module_path)),
+            current_dir.join("src").join(format!("{}/index.ol", module_path)),
+            
+            // Absolute path if it looks like one
+            PathBuf::from(format!("{}.ol", module_path)),
+        ];
+
+        for (i, candidate) in candidates.iter().enumerate() {
+            let status = if candidate.exists() { 
+                if candidate.is_file() { "✅" } else { "📁" }
+            } else { 
+                "❌" 
+            };
+            println!("  {}. {} {}", i + 1, status, candidate.display());
+        }
+        
+        // Check for stdlib module
+        let stdlib = crate::stdlib::get_stdlib();
+        if stdlib.contains_key(module_path) {
+            println!("  ✅ Available as stdlib module: {}", module_path);
+        }
+    }
+
+    /// List all currently loaded modules
+    fn list_loaded_modules(&mut self) {
+        println!("=== Loaded Modules ===");
+        
+        let env = self.ovm_interpreter.get_classic_interpreter().get_environment();
+        let stdlib = crate::stdlib::get_stdlib();
+        
+        println!("\n📚 Standard Library Modules:");
+        for module_name in stdlib.keys() {
+            if env.get(module_name).is_some() {
+                println!("  ✅ {}", module_name.bright_cyan());
+            } else {
+                println!("  ⚪ {} (available but not loaded)", module_name.bright_black());
+            }
+        }
+        
+        println!("\n📄 User Modules:");
+        let mut found_user_modules = false;
+        for (name, value) in env.get_all_variables() {
+            if !stdlib.contains_key(name as &str) {
+                if let crate::ast::Value::Struct { type_name, .. } = value {
+                    if type_name == "Module" {
+                        println!("  ✅ {}", name.bright_yellow());
+                        found_user_modules = true;
+                    }
+                }
+            }
+        }
+        
+        if !found_user_modules {
+            println!("  (no user modules loaded)");
+        }
     }
 }
 
