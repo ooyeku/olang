@@ -7,6 +7,7 @@ use crate::version::VERSION;
 use colored::*;
 use rustyline::error::ReadlineError;
 use rustyline::{history::DefaultHistory, Config, Editor};
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use thiserror::Error;
 
@@ -22,6 +23,8 @@ pub enum ReplError {
     Integration(#[from] IntegrationError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Debug error: {0}")]
+    Debug(String),
 }
 
 #[derive(Clone)]
@@ -47,6 +50,169 @@ impl Default for ReplConfig {
     }
 }
 
+/// Call frame for debugging stack traces
+#[derive(Debug, Clone)]
+pub struct CallFrame {
+    pub function_name: String,
+    pub local_variables: HashMap<String, Value>,
+    pub line_number: Option<usize>,
+    pub file_name: Option<String>,
+}
+
+impl CallFrame {
+    pub fn new(function_name: String) -> Self {
+        Self {
+            function_name,
+            local_variables: HashMap::new(),
+            line_number: None,
+            file_name: None,
+        }
+    }
+    
+    pub fn with_location(mut self, line: usize, file: Option<String>) -> Self {
+        self.line_number = Some(line);
+        self.file_name = file;
+        self
+    }
+    
+    pub fn add_variable(&mut self, name: String, value: Value) {
+        self.local_variables.insert(name, value);
+    }
+}
+
+/// Interactive debugger for enhanced REPL debugging capabilities
+#[derive(Debug, Clone)]
+pub struct InteractiveDebugger {
+    /// Variables being watched for changes
+    watched_variables: HashSet<String>,
+    
+    /// Call stack for stack traces and debugging
+    call_stack: Vec<CallFrame>,
+    
+    /// Whether step-through debugging is enabled
+    debug_mode: bool,
+    
+    /// Breakpoints set by the user
+    breakpoints: HashSet<String>,
+    
+    /// Function calls being traced
+    traced_functions: HashSet<String>,
+    
+    /// Previous variable values for change detection
+    variable_history: HashMap<String, Value>,
+    
+    /// Profiling data for performance analysis
+    profiling_data: HashMap<String, Vec<f64>>,
+}
+
+impl Default for InteractiveDebugger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl InteractiveDebugger {
+    pub fn new() -> Self {
+        Self {
+            watched_variables: HashSet::new(),
+            call_stack: Vec::new(),
+            debug_mode: false,
+            breakpoints: HashSet::new(),
+            traced_functions: HashSet::new(),
+            variable_history: HashMap::new(),
+            profiling_data: HashMap::new(),
+        }
+    }
+    
+    pub fn watch_variable(&mut self, name: String) {
+        self.watched_variables.insert(name);
+    }
+    
+    pub fn unwatch_variable(&mut self, name: &str) {
+        self.watched_variables.remove(name);
+    }
+    
+    pub fn is_watching(&self, name: &str) -> bool {
+        self.watched_variables.contains(name)
+    }
+    
+    pub fn add_breakpoint(&mut self, location: String) {
+        self.breakpoints.insert(location);
+    }
+    
+    pub fn remove_breakpoint(&mut self, location: &str) {
+        self.breakpoints.remove(location);
+    }
+    
+    pub fn trace_function(&mut self, name: String) {
+        self.traced_functions.insert(name);
+    }
+    
+    pub fn untrace_function(&mut self, name: &str) {
+        self.traced_functions.remove(name);
+    }
+    
+    pub fn push_call_frame(&mut self, frame: CallFrame) {
+        self.call_stack.push(frame);
+    }
+    
+    pub fn pop_call_frame(&mut self) -> Option<CallFrame> {
+        self.call_stack.pop()
+    }
+    
+    pub fn get_call_stack(&self) -> &[CallFrame] {
+        &self.call_stack
+    }
+    
+    pub fn update_variable_history(&mut self, name: String, value: Value) {
+        self.variable_history.insert(name, value);
+    }
+    
+    pub fn record_profiling_data(&mut self, expression: String, time_ms: f64) {
+        self.profiling_data.entry(expression).or_insert_with(Vec::new).push(time_ms);
+    }
+    
+    pub fn get_profiling_data(&self, expression: &str) -> Option<&Vec<f64>> {
+        self.profiling_data.get(expression)
+    }
+    
+    pub fn clear_profiling_data(&mut self) {
+        self.profiling_data.clear();
+    }
+    
+    pub fn check_watched_variables(&self, current_vars: &HashMap<String, Value>) -> Vec<String> {
+        let mut changes = Vec::new();
+        
+        for var_name in &self.watched_variables {
+            if let Some(current_value) = current_vars.get(var_name) {
+                if let Some(previous_value) = self.variable_history.get(var_name) {
+                    if current_value != previous_value {
+                        changes.push(format!(
+                            "Variable '{}' changed: {} -> {}",
+                            var_name.bright_yellow(),
+                            previous_value.to_string().bright_red(),
+                            current_value.to_string().bright_green()
+                        ));
+                    }
+                } else {
+                    changes.push(format!(
+                        "Variable '{}' created: {}",
+                        var_name.bright_yellow(),
+                        current_value.to_string().bright_green()
+                    ));
+                }
+            } else if self.variable_history.contains_key(var_name) {
+                changes.push(format!(
+                    "Variable '{}' removed",
+                    var_name.bright_yellow()
+                ));
+            }
+        }
+        
+        changes
+    }
+}
+
 pub struct Repl {
     editor: Editor<(), DefaultHistory>,
     ovm_interpreter: OvmInterpreter,
@@ -59,6 +225,7 @@ pub struct Repl {
     multiline_buffer: String,
     command_history: Vec<String>,
     ovm_health_check_counter: u32,
+    debugger: InteractiveDebugger,
 }
 
 impl Repl {
@@ -140,6 +307,7 @@ impl Repl {
             multiline_buffer: String::new(),
             command_history: Vec::new(),
             ovm_health_check_counter: 0,
+            debugger: InteractiveDebugger::new(),
         })
     }
 
@@ -186,7 +354,7 @@ impl Repl {
         }
 
         println!();
-        println!("Type 'help' for help, ':ovm status' for OVM details, ':env' to see environment, 'quit' to exit");
+        println!("Type 'help' for help, ':debug' for debugging commands, ':ovm status' for OVM details, ':env' to see environment, 'quit' to exit");
         println!();
 
         loop {
@@ -785,14 +953,18 @@ impl Repl {
                     match parts[1] {
                         "on" => {
                             self.config.debug_mode = true;
+                            self.debugger.debug_mode = true;
                             println!("Debug mode enabled");
                         }
                         "off" => {
                             self.config.debug_mode = false;
+                            self.debugger.debug_mode = false;
                             println!("Debug mode disabled");
                         }
                         _ => {
-                            println!("Usage: :debug [on|off]");
+                            // Step through expression evaluation
+                            let expr = parts[1..].join(" ");
+                            self.debug_evaluate_expression(&expr)?;
                         }
                     }
                 } else {
@@ -800,6 +972,85 @@ impl Repl {
                         "Debug mode: {}",
                         if self.config.debug_mode { "on" } else { "off" }
                     );
+                    self.show_debug_help();
+                }
+            }
+            ":watch" => {
+                if parts.len() > 1 {
+                    let var_name = parts[1].to_string();
+                    if self.debugger.is_watching(&var_name) {
+                        self.debugger.unwatch_variable(&var_name);
+                        println!("Stopped watching variable: {}", var_name.bright_yellow());
+                    } else {
+                        self.debugger.watch_variable(var_name.clone());
+                        println!("Now watching variable: {}", var_name.bright_yellow());
+                        
+                        // Store current value for change detection
+                        let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+                        if let Some(value) = user_vars.get(&var_name) {
+                            self.debugger.update_variable_history(var_name, (*value).clone());
+                        }
+                    }
+                } else {
+                    println!("Currently watched variables:");
+                    if self.debugger.watched_variables.is_empty() {
+                        println!("  {}", "(none)".bright_black());
+                    } else {
+                        for var in &self.debugger.watched_variables {
+                            println!("  {}", var.bright_yellow());
+                        }
+                    }
+                    println!("Usage: :watch <variable>");
+                }
+            }
+            ":inspect" => {
+                if parts.len() > 1 {
+                    let var_name = parts[1];
+                    self.inspect_variable(var_name)?;
+                } else {
+                    println!("Usage: :inspect <variable>");
+                }
+            }
+            ":trace" => {
+                if parts.len() > 1 {
+                    let func_name = parts[1].to_string();
+                    if self.debugger.traced_functions.contains(&func_name) {
+                        self.debugger.untrace_function(&func_name);
+                        println!("Stopped tracing function: {}", func_name.bright_blue());
+                    } else {
+                        self.debugger.trace_function(func_name.clone());
+                        println!("Now tracing function: {}", func_name.bright_blue());
+                    }
+                } else {
+                    println!("Currently traced functions:");
+                    if self.debugger.traced_functions.is_empty() {
+                        println!("  {}", "(none)".bright_black());
+                    } else {
+                        for func in &self.debugger.traced_functions {
+                            println!("  {}", func.bright_blue());
+                        }
+                    }
+                    println!("Usage: :trace <function>");
+                }
+            }
+            ":set" => {
+                if parts.len() > 2 {
+                    let var_name = parts[1].to_string();
+                    let value_expr = parts[2..].join(" ");
+                    self.set_variable(var_name, value_expr)?;
+                } else {
+                    println!("Usage: :set <variable> <value>");
+                }
+            }
+            ":stack" => {
+                self.show_call_stack();
+            }
+            ":profile" => {
+                if parts.len() > 1 {
+                    let expr = parts[1..].join(" ");
+                    self.profile_expression(&expr)?;
+                } else {
+                    self.show_profiling_summary();
                 }
             }
             ":config" => {
@@ -949,6 +1200,17 @@ impl Repl {
     }
 
     fn eval_line(&mut self, line: &str) -> Result<Value, ReplError> {
+        // Check for watched variables before execution
+        let watching_vars = !self.debugger.watched_variables.is_empty();
+        if watching_vars {
+            let vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+            for (name, value) in &vars {
+                if self.debugger.is_watching(name) {
+                    self.debugger.update_variable_history(name.clone(), (*value).clone());
+                }
+            }
+        }
+
         let program = self.parser.parse(line)?;
 
         if program.statements.is_empty() {
@@ -966,6 +1228,33 @@ impl Repl {
         }
 
         let result = self.ovm_interpreter.eval_program(program)?;
+
+        // Check for watched variable changes after execution
+        if watching_vars {
+            let user_vars_after = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+            
+            // Convert HashMap<String, &Value> to HashMap<String, Value> for compatibility
+            let user_vars_owned: HashMap<String, Value> = user_vars_after.iter()
+                .map(|(k, v)| (k.clone(), (*v).clone()))
+                .collect();
+            
+            let changes = self.debugger.check_watched_variables(&user_vars_owned);
+            
+            if !changes.is_empty() {
+                println!("\n{}", "Watched variable changes:".bright_yellow().bold());
+                for change in changes {
+                    println!("  {}", change);
+                }
+            }
+            
+            // Update variable history
+            for (name, value) in &user_vars_after {
+                if self.debugger.is_watching(name) {
+                    self.debugger.update_variable_history(name.clone(), (*value).clone());
+                }
+            }
+        }
+
         Ok(result)
     }
 
@@ -1131,6 +1420,352 @@ impl Repl {
         }
 
         in_string || brace_count > 0 || paren_count > 0 || bracket_count > 0
+    }
+
+    /// Enhanced debugging methods
+    fn show_debug_help(&self) {
+        println!("\n{}", "=== Interactive Debugging Commands ===".bright_cyan().bold());
+        println!("  {}  - Step through expression evaluation", ":debug <expression>".bright_blue());
+        println!("  {}     - Toggle variable watching", ":watch <variable>".bright_blue());
+        println!("  {}   - Detailed variable inspection", ":inspect <variable>".bright_blue());
+        println!("  {}     - Trace function calls", ":trace <function>".bright_blue());
+        println!("  {}      - Modify variable values", ":set <var> <value>".bright_blue());
+        println!("  {}           - Show call stack", ":stack".bright_blue());
+        println!("  {}    - Profile expression performance", ":profile <expression>".bright_blue());
+        println!("  {}       - Enable/disable debug mode", ":debug [on|off]".bright_blue());
+        println!();
+    }
+
+    fn debug_evaluate_expression(&mut self, expr: &str) -> Result<(), ReplError> {
+        println!("{}", format!("Debugging: {}", expr).bright_cyan().bold());
+        
+        // Check for watched variables before execution
+        let user_vars_before = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+        for (name, value) in &user_vars_before {
+            if self.debugger.is_watching(name) {
+                self.debugger.update_variable_history(name.clone(), (*value).clone());
+            }
+        }
+        
+        // Parse and show AST if in debug mode
+        match self.parser.parse(expr) {
+            Ok(program) => {
+                if self.debugger.debug_mode {
+                    println!("  {}: {:?}", "Parsed AST".bright_green(), program);
+                }
+                
+                // Execute with timing
+                let start = Instant::now();
+                match self.eval_line(expr) {
+                    Ok(value) => {
+                        let duration = start.elapsed();
+                        let time_ms = duration.as_secs_f64() * 1000.0;
+                        
+                        if value != Value::Unit {
+                            println!("  {}: {}", "Result".bright_green(), value);
+                        }
+                        println!("  {}: {:.2}ms", "Execution time".bright_blue(), time_ms);
+                        
+                        // Record profiling data
+                        self.debugger.record_profiling_data(expr.to_string(), time_ms);
+                        
+                        // Check for watched variable changes
+                        let user_vars_after = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+                        
+                        // Convert HashMap<String, &Value> to HashMap<String, Value> for compatibility
+                        let user_vars_owned: HashMap<String, Value> = user_vars_after.iter()
+                            .map(|(k, v)| (k.clone(), (*v).clone()))
+                            .collect();
+                        
+                        let changes = self.debugger.check_watched_variables(&user_vars_owned);
+                        
+                        if !changes.is_empty() {
+                            println!("  {}:", "Variable changes".bright_yellow().bold());
+                            for change in changes {
+                                println!("    {}", change);
+                            }
+                        }
+                        
+                        // Update variable history
+                        for (name, value) in &user_vars_after {
+                            if self.debugger.is_watching(name) {
+                                self.debugger.update_variable_history(name.clone(), (*value).clone());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let duration = start.elapsed();
+                        println!("  {}: {}", "Error".bright_red(), e);
+                        println!("  {}: {:.2}ms", "Time to error".bright_blue(), duration.as_secs_f64() * 1000.0);
+                        
+                        // Enhanced error context
+                        self.show_enhanced_error(&e);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("  {}: {}", "Parse error".bright_red(), e);
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn inspect_variable(&mut self, var_name: &str) -> Result<(), ReplError> {
+        let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+        
+        if let Some(value) = user_vars.get(var_name) {
+            println!("\n{}", format!("=== Variable Inspection: {} ===", var_name).bright_cyan().bold());
+            println!("  {}: {}", "Type".bright_yellow(), Self::get_type_name(value));
+            println!("  {}: {}", "Value".bright_green(), value);
+            
+            // Additional type-specific information
+            match value {
+                Value::String(s) => {
+                    println!("  {}: {} characters", "Length".bright_blue(), s.len());
+                    if s.contains('\n') {
+                        println!("  {}: {} lines", "Lines".bright_blue(), s.lines().count());
+                    }
+                }
+                Value::List(items) => {
+                    println!("  {}: {} items", "Length".bright_blue(), items.len());
+                    if !items.is_empty() {
+                        let first_type = Self::get_type_name(&items[0]);
+                        let all_same_type = items.iter().all(|item| Self::get_type_name(item) == first_type);
+                        if all_same_type {
+                            println!("  {}: {}", "Element type".bright_blue(), first_type);
+                        } else {
+                            println!("  {}: mixed", "Element type".bright_blue());
+                        }
+                    }
+                }
+                Value::Struct { type_name, fields } => {
+                    println!("  {}: {}", "Struct type".bright_blue(), type_name);
+                    println!("  {}: {} fields", "Field count".bright_blue(), fields.len());
+                    for (field_name, field_value) in fields {
+                        println!("    {}: {} = {}", 
+                            field_name.bright_magenta(), 
+                            Self::get_type_name(field_value),
+                            Self::format_value_preview(field_value)
+                        );
+                    }
+                }
+                Value::Function(func) => {
+                    println!("  {}: {} parameters", "Arity".bright_blue(), func.parameters.len());
+                    if !func.parameters.is_empty() {
+                        println!("  {}: {}", "Parameters".bright_blue(), 
+                            func.parameters.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ")
+                        );
+                    }
+                }
+                _ => {}
+            }
+            
+            // Show if variable is being watched
+            if self.debugger.is_watching(var_name) {
+                println!("  {}: {}", "Status".bright_green(), "Being watched".bright_green());
+            }
+            
+        } else {
+            // Check if it's a builtin function
+            let builtins = self.ovm_interpreter.get_classic_interpreter().get_builtin_functions();
+            if let Some(_builtin) = builtins.get(var_name) {
+                println!("\n{}", format!("=== Builtin Function: {} ===", var_name).bright_cyan().bold());
+                println!("  {}: builtin function", "Type".bright_yellow());
+                
+                // Show help if available
+                if self.help_system.has_function(var_name) {
+                    println!("\n{}", self.help_system.show_function_help(var_name));
+                } else {
+                    println!("  {}: No documentation available", "Help".bright_blue());
+                }
+            } else {
+                return Err(ReplError::Debug(format!("Variable '{}' not found", var_name)));
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn set_variable(&mut self, var_name: String, value_expr: String) -> Result<(), ReplError> {
+        // Parse and evaluate the value expression
+        match self.eval_line(&value_expr) {
+            Ok(value) => {
+                // Check if variable exists
+                let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+                let existed = user_vars.contains_key(&var_name);
+                
+                // Set the variable
+                self.ovm_interpreter
+                    .get_classic_interpreter()
+                    .define_variable(var_name.clone(), value.clone());
+                
+                if existed {
+                    println!("Variable '{}' updated to: {}", var_name.bright_yellow(), value);
+                } else {
+                    println!("Variable '{}' created with value: {}", var_name.bright_yellow(), value);
+                }
+                
+                // Update variable history if being watched
+                if self.debugger.is_watching(&var_name) {
+                    self.debugger.update_variable_history(var_name, value);
+                }
+            }
+            Err(e) => {
+                return Err(ReplError::Debug(format!("Failed to evaluate value expression '{}': {}", value_expr, e)));
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn show_call_stack(&self) {
+        println!("\n{}", "=== Call Stack ===".bright_cyan().bold());
+        
+        let stack = self.debugger.get_call_stack();
+        
+        if stack.is_empty() {
+            println!("  {}", "(empty - no active function calls)".bright_black());
+        } else {
+            for (i, frame) in stack.iter().enumerate().rev() {
+                let frame_num = stack.len() - i - 1;
+                println!("  #{}: {}", 
+                    frame_num.to_string().bright_white(),
+                    frame.function_name.bright_blue()
+                );
+                
+                if let Some(line) = frame.line_number {
+                    print!("      at line {}", line.to_string().bright_cyan());
+                    if let Some(file) = &frame.file_name {
+                        print!(" in {}", file.bright_green());
+                    }
+                    println!();
+                }
+                
+                if !frame.local_variables.is_empty() {
+                    println!("      local variables:");
+                    for (name, value) in &frame.local_variables {
+                        println!("        {} = {}", 
+                            name.bright_yellow(),
+                            Self::format_value_preview(value)
+                        );
+                    }
+                }
+            }
+        }
+        
+        println!();
+    }
+
+    fn profile_expression(&mut self, expr: &str) -> Result<(), ReplError> {
+        println!("{}", format!("Profiling: {}", expr).bright_cyan().bold());
+        
+        let iterations = 5;
+        let mut times = Vec::new();
+        
+        for i in 1..=iterations {
+            let start = Instant::now();
+            match self.eval_line(expr) {
+                Ok(_) => {
+                    let duration = start.elapsed();
+                    let time_ms = duration.as_secs_f64() * 1000.0;
+                    times.push(time_ms);
+                    println!("  Run {}: {:.2}ms", i, time_ms);
+                }
+                Err(e) => {
+                    println!("  Run {} failed: {}", i, e);
+                    return Ok(());
+                }
+            }
+        }
+        
+        if !times.is_empty() {
+            let sum: f64 = times.iter().sum();
+            let avg = sum / times.len() as f64;
+            let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
+            let max = times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            
+            println!("\n  {}:", "Profile Results".bright_green().bold());
+            println!("    Average: {:.2}ms", avg);
+            println!("    Min: {:.2}ms", min);
+            println!("    Max: {:.2}ms", max);
+            println!("    Total: {:.2}ms", sum);
+            
+            // Record profiling data
+            for time in times {
+                self.debugger.record_profiling_data(expr.to_string(), time);
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn show_profiling_summary(&self) {
+        println!("\n{}", "=== Profiling Summary ===".bright_cyan().bold());
+        
+        if self.debugger.profiling_data.is_empty() {
+            println!("  {}", "No profiling data available".bright_black());
+            println!("  Use :profile <expression> to collect performance data");
+        } else {
+            for (expr, times) in &self.debugger.profiling_data {
+                if !times.is_empty() {
+                    let sum: f64 = times.iter().sum();
+                    let avg = sum / times.len() as f64;
+                    let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
+                    let max = times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                    
+                    println!("\n  {}: {}", "Expression".bright_blue(), expr);
+                    println!("    Runs: {}", times.len());
+                    println!("    Average: {:.2}ms", avg);
+                    println!("    Min: {:.2}ms", min);
+                    println!("    Max: {:.2}ms", max);
+                }
+            }
+        }
+        
+        println!();
+    }
+
+    fn show_enhanced_error(&mut self, error: &ReplError) {
+        println!("\n{}", "=== Enhanced Error Context ===".bright_red().bold());
+        
+        match error {
+            ReplError::Interpreter(InterpreterError::UndefinedVariable { name }) => {
+                println!("  {}: Variable '{}' is not defined", "Error".bright_red(), name.bright_yellow());
+                
+                // Suggest similar variables
+                let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+                let mut suggestions = Vec::new();
+                
+                for var_name in user_vars.keys() {
+                    if var_name.contains(name) || name.contains(var_name) {
+                        suggestions.push(var_name);
+                    }
+                }
+                
+                if !suggestions.is_empty() {
+                    println!("  {}: Did you mean one of these?", "Suggestion".bright_blue());
+                    for suggestion in suggestions {
+                        println!("    {}", suggestion.bright_green());
+                    }
+                } else {
+                    println!("  {}: Use :env to see available variables", "Hint".bright_blue());
+                }
+            }
+            ReplError::Interpreter(InterpreterError::TypeError { message }) => {
+                println!("  {}: {}", "Type Error".bright_red(), message);
+                println!("  {}: Check the types of your values and operations", "Hint".bright_blue());
+            }
+            ReplError::Parse(parse_error) => {
+                println!("  {}: {}", "Parse Error".bright_red(), parse_error);
+                println!("  {}: Check your syntax and bracket matching", "Hint".bright_blue());
+            }
+            _ => {
+                println!("  {}: {}", "Error".bright_red(), error);
+            }
+        }
+        
+        println!();
     }
 }
 
