@@ -1560,7 +1560,9 @@ impl BytecodeVm {
                 }
 
                 let mut list_vec = list.to_vec();
-                let popped = list_vec.pop().unwrap();
+                let popped = list_vec.pop().ok_or_else(|| {
+                    BytecodeError::RuntimeError("List became empty during pop operation".to_string())
+                })?;
                 Ok((
                     OvmValue::from_ast(Value::List(list_vec.into())),
                     OvmValue::from_ast(popped),

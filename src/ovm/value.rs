@@ -1041,7 +1041,21 @@ impl ValueHeader {
 impl<T> GcPtr<T> {
     pub fn new(ptr: *mut T) -> Self {
         Self {
-            ptr: NonNull::new(ptr).unwrap(),
+            ptr: NonNull::new(ptr).expect("GcPtr::new called with null pointer"),
+            generation: 0,
+        }
+    }
+    
+    pub fn try_new(ptr: *mut T) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            ptr: NonNull::new(ptr).ok_or_else(|| RuntimeError::NullPointer)?,
+            generation: 0,
+        })
+    }
+    
+    pub fn new_unchecked(ptr: *mut T) -> Self {
+        Self {
+            ptr: unsafe { NonNull::new_unchecked(ptr) },
             generation: 0,
         }
     }
