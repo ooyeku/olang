@@ -344,8 +344,8 @@ fn test_or_patterns_with_results() {
 
     let source = r#"
         match Ok(42) {
-            Ok(_) | Some(_) => "success",
-            Err(_) | None => "failure"
+            Ok(_) | Err(_) => "result",
+            _ => "other"
         }
     "#;
     
@@ -354,7 +354,7 @@ fn test_or_patterns_with_results() {
 
     assert_eq!(
         result,
-        olang::ast::Value::String("success".to_string().into())
+        olang::ast::Value::String("result".to_string().into())
     );
 }
 
