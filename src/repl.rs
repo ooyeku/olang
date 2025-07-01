@@ -270,15 +270,26 @@ impl Repl {
             }
         }
 
-        // Create OVM configuration with auto mode (OVM DISABLED by default for stability)
+        // Create OVM configuration with auto mode (OVM ENABLED by default for performance)
         let integration_config = IntegrationConfig {
-            use_ovm_by_default: false,
-            ovm_complexity_threshold: 100,
-            auto_compile_functions: false,
+            use_ovm_by_default: true,
+            ovm_complexity_threshold: 1,
+            auto_compile_functions: true,
             enable_ovm_lazy_eval: true,
             fallback_on_error: true,
-            enable_ovm_builtins: false,
-            ovm_preferred_builtins: vec![],
+            enable_ovm_builtins: true,
+            ovm_preferred_builtins: vec![
+                "len".to_string(),
+                "typeof".to_string(),
+                "to_string".to_string(),
+                "sum".to_string(),
+                "average".to_string(),
+                "min".to_string(),
+                "max".to_string(),
+                "reverse".to_string(),
+                "sort".to_string(),
+                "contains".to_string(),
+            ],
         };
 
         let mut ovm_interpreter = OvmInterpreter::with_config(integration_config);

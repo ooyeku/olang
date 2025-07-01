@@ -19,7 +19,7 @@ pub fn execute(file_path: Option<String>, verbose: bool) -> Result<()> {
     // Use OVM interpreter with JIT compilation by default
     let integration_config = IntegrationConfig {
         use_ovm_by_default: true,
-        ovm_complexity_threshold: 5,
+        ovm_complexity_threshold: 1,
         auto_compile_functions: true,
         enable_ovm_lazy_eval: true,
         fallback_on_error: true,
@@ -46,7 +46,7 @@ pub fn execute(file_path: Option<String>, verbose: bool) -> Result<()> {
         .with_context(|| "Failed to initialize OVM")?;
 
     if verbose {
-        println!("🚀 OVM initialized with JIT compilation enabled");
+        println!("OVM initialized with JIT compilation enabled");
     }
 
     let ast = parser
@@ -62,7 +62,7 @@ pub fn execute(file_path: Option<String>, verbose: bool) -> Result<()> {
         
         // Show OVM performance statistics
         let stats = interpreter.get_stats();
-        println!("\n📊 OVM Performance Statistics:");
+        println!("\nOVM Performance Statistics:");
         println!("  Classic executions: {}", stats.classic_executions);
         println!("  OVM executions: {}", stats.ovm_executions);
         println!("  Fallback executions: {}", stats.fallback_executions);

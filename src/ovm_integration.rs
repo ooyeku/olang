@@ -56,7 +56,7 @@ impl Default for IntegrationConfig {
     fn default() -> Self {
         Self {
             use_ovm_by_default: true,
-            ovm_complexity_threshold: 10,
+            ovm_complexity_threshold: 1,
             auto_compile_functions: true,
             enable_ovm_lazy_eval: true,
             fallback_on_error: true,

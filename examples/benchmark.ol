@@ -1,4 +1,4 @@
-let n = range(1000)
+let n = range(1000000)
 
 // Note: Comparison operators in lambda expressions require block syntax: { expr } instead of expr
 let data = n |> map((val) => val * math.pow(val, 2)) |> filter((val) => { val % 2 == 0 }) |> sum()

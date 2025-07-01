@@ -84,7 +84,7 @@ impl OvmCommand {
         // Create integration configuration
         let integration_config = IntegrationConfig {
             use_ovm_by_default: matches!(execution_mode, ExecutionMode::Auto | ExecutionMode::Ovm),
-            ovm_complexity_threshold: 5,
+            ovm_complexity_threshold: 1,
             auto_compile_functions: true,
             enable_ovm_lazy_eval: self.lazy,
             fallback_on_error: !self.no_fallback,
