@@ -104,75 +104,11 @@ impl OvmCommand {
         };
 
         // Create OVM configuration
-        let ovm_config = OvmConfig {
-            optimization: olang::ovm::config::OptimizationConfig {
-                optimization_level,
-                inline_threshold: 50,
-                vectorization: true,
-                loop_unrolling: true,
-                constant_folding: true,
-                dead_code_elimination: true,
-                common_subexpression_elimination: true,
-                aggressive_optimizations: matches!(optimization_level, OptimizationLevel::Release),
-                compilation_time_budget_ms: 100,
-                adaptive_optimization: matches!(optimization_level, OptimizationLevel::Adaptive),
-            },
-            memory: olang::ovm::config::MemoryConfig {
-                heap_size: Some(self.memory_threshold * 1024 * 1024),
-                gc_trigger_threshold: (self.memory_threshold * 1024 * 1024) / 2,
-                gc_target_pause_ms: 10,
-                gc_threads: num_cpus::get(),
-                concurrent_gc: true,
-                generational_gc: true,
-                nursery_size: 8 * 1024 * 1024,
-                young_gen_size: 64 * 1024 * 1024,
-                large_object_threshold: 32 * 1024,
-                tlab_size: 256 * 1024,
-            },
-            lazy: olang::ovm::config::LazyConfig {
-                lazy_by_default: self.lazy,
-                lazy_threshold: 100,
-                force_eagerly_on_gc: true,
-                max_thunk_depth: 1000,
-                memoization_cache_size: 10000,
-                stream_buffer_size: 4096,
-                lazy_fusion: true,
-            },
-            execution: olang::ovm::config::ExecutionConfig {
-                interpreter_threshold: 100,
-                bytecode_threshold: self.jit_threshold as u32,
-                native_threshold: (self.jit_threshold * 10) as u32,
-                deoptimization_threshold: 10,
-                compilation_queue_size: 1000,
-                compilation_workers: num_cpus::get() / 2,
-                tiered_compilation: true,
-                profile_guided_optimization: true,
-            },
-            async_runtime: olang::ovm::config::AsyncConfig {
-                thread_pool_size: num_cpus::get(),
-                task_queue_size: 10000,
-                work_stealing: true,
-                task_timeout: Some(std::time::Duration::from_secs(30)),
-                compile_async_functions: true,
-            },
-            pipeline: olang::ovm::config::PipelineConfig {
-                fusion_optimization: true,
-                parallel_processing: true,
-                parallel_threshold: 1000,
-                vectorized_operations: true,
-                pipeline_buffer_size: 8192,
-                memory_efficient_pipelines: true,
-            },
-            debug: olang::ovm::config::DebugConfig {
-                verbose_logging: self.performance,
-                performance_profiling: self.performance,
-                memory_profiling: self.performance,
-                jit_logging: false,
-                gc_logging: false,
-                lazy_logging: false,
-                pipeline_logging: false,
-                metrics_interval: std::time::Duration::from_millis(100),
-            },
+        let ovm_config = match optimization_level {
+            OptimizationLevel::Debug => OvmConfig::development(),
+            OptimizationLevel::Balanced => OvmConfig::high_performance(),
+            OptimizationLevel::Release => OvmConfig::high_performance(),
+            OptimizationLevel::Adaptive => OvmConfig::high_performance(),
         };
 
         // Create interpreter with OVM integration
