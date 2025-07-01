@@ -113,7 +113,7 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
         // Use OVM interpreter with JIT compilation
         let integration_config = IntegrationConfig {
             use_ovm_by_default: true,
-            ovm_complexity_threshold: 5,
+            ovm_complexity_threshold: 1,
             auto_compile_functions: true,
             enable_ovm_lazy_eval: true,
             fallback_on_error: true,
@@ -179,7 +179,7 @@ fn start_repl(verbose: bool, no_ovm: bool) -> anyhow::Result<()> {
         // Use OVM-enhanced REPL
         let integration_config = IntegrationConfig {
             use_ovm_by_default: true,
-            ovm_complexity_threshold: 5,
+            ovm_complexity_threshold: 1,
             auto_compile_functions: true,
             enable_ovm_lazy_eval: true,
             fallback_on_error: true,

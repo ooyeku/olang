@@ -315,7 +315,7 @@ impl Default for PipelineConfig {
         Self {
             fusion_optimization: true,
             parallel_processing: true,
-            parallel_threshold: 1000, // Parallelize pipelines with > 1000 items
+            parallel_threshold: 10, // Parallelize pipelines with > 10 items
             vectorized_operations: true,
             pipeline_buffer_size: 8192,
             memory_efficient_pipelines: true,

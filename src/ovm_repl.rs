@@ -314,7 +314,9 @@ impl OvmRepl {
 
     fn clear_screen(&self) {
         print!("\x1B[2J\x1B[1;1H");
-        io::stdout().flush().unwrap();
+        if let Err(e) = io::stdout().flush() {
+            eprintln!("Warning: Failed to flush stdout: {}", e);
+        }
     }
 
     fn toggle_performance_monitoring(&mut self) {

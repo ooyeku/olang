@@ -450,10 +450,6 @@ impl OptimizationEngine {
         // **Phase 3: Single-threaded background compilation to avoid JIT memory provider threading issues**
         // Note: Multi-threading will be implemented in Phase 4 with proper thread-safe JIT infrastructure
 
-        println!(
-            "JIT background compilation system initialized (single-threaded mode for Phase 3)"
-        );
-
         Ok(())
     }
 
@@ -469,14 +465,10 @@ impl OptimizationEngine {
                 if let Ok(mut compiler) = self.jit_compiler.lock() {
                     match compiler.compile_function(request.clone()) {
                         Ok(_compiled_func) => {
-                            println!(
-                                "Successfully compiled function {:?} (tier: {:?})",
-                                request.function_id, request.target_tier
-                            );
                             processed_count += 1;
                         }
-                        Err(e) => {
-                            println!("Compilation failed for {:?}: {}", request.function_id, e);
+                        Err(_e) => {
+                            // Compilation failed - could be logged if needed
                         }
                     }
                 }
@@ -609,10 +601,6 @@ impl OptimizationEngine {
 
         if let Ok(mut queue) = self.compilation_queue.lock() {
             queue.push(request);
-            println!(
-                "Queued compilation request for function {:?} (tier: {:?})",
-                func_id, target_tier
-            );
         }
     }
 

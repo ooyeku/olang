@@ -811,6 +811,52 @@ impl OvmValue {
                 }
             }
 
+            AstValue::Enum {
+                type_name,
+                variant_name,
+                variant_data,
+            } => {
+                // For now, create a simple struct-like representation for enums
+                // In a full implementation, we would have proper enum value support
+                let mut fields = HashMap::new();
+                fields.insert("__variant".to_string(), Self::new_string(variant_name.clone()));
+
+                match variant_data {
+                    crate::ast::EnumVariantData::Unit => {
+                        // Unit variant has no additional fields
+                    }
+                    crate::ast::EnumVariantData::Tuple(values) => {
+                        // Add tuple values as indexed fields
+                        for (i, value) in values.iter().enumerate() {
+                            fields.insert(format!("_{}", i), Self::from_ast(value.clone()));
+                        }
+                    }
+                    crate::ast::EnumVariantData::Struct(struct_fields) => {
+                        // Add struct fields directly
+                        for (name, value) in struct_fields {
+                            fields.insert(name, Self::from_ast(value.clone()));
+                        }
+                    }
+                }
+
+                let struct_obj = StructObject {
+                    type_name: format!("{}::{}", type_name, variant_name),
+                    fields,
+                };
+
+                let ptr = Box::into_raw(Box::new(struct_obj));
+                let gc_ptr = GcPtr::new(ptr);
+
+                Self {
+                    header: ValueHeader::new(
+                        TypeTag::Struct,
+                        ExecutionTier::Interpreter,
+                        LazyState::Eager,
+                    ),
+                    data: ValueData::Struct(gc_ptr),
+                }
+            }
+
             AstValue::Promise {
                 state,
                 value,
@@ -995,7 +1041,21 @@ impl ValueHeader {
 impl<T> GcPtr<T> {
     pub fn new(ptr: *mut T) -> Self {
         Self {
-            ptr: NonNull::new(ptr).unwrap(),
+            ptr: NonNull::new(ptr).expect("GcPtr::new called with null pointer"),
+            generation: 0,
+        }
+    }
+    
+    pub fn try_new(ptr: *mut T) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            ptr: NonNull::new(ptr).ok_or_else(|| RuntimeError::NullPointer)?,
+            generation: 0,
+        })
+    }
+    
+    pub fn new_unchecked(ptr: *mut T) -> Self {
+        Self {
+            ptr: unsafe { NonNull::new_unchecked(ptr) },
             generation: 0,
         }
     }

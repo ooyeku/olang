@@ -310,6 +310,14 @@ pub enum PromiseState {
     Rejected,
 }
 
+/// Enum variant data for proper enum value representation
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum EnumVariantData {
+    Unit,                              // Simple variant: Red
+    Tuple(Vec<Value>),                // Tuple variant: Point(x, y)
+    Struct(HashMap<String, Value>),   // Struct variant: Person { name, age }
+}
+
 /// Runtime values
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Value {
@@ -335,6 +343,13 @@ pub enum Value {
     Ok(Box<Value>),
     Err(Box<Value>),
     Unit,
+
+    // Enum values with proper variant representation
+    Enum {
+        type_name: String,
+        variant_name: String,
+        variant_data: EnumVariantData,
+    },
 
     // Promise values for async operations
     Promise {
@@ -659,6 +674,33 @@ impl std::fmt::Display for Value {
                 }
             }
             Value::Unit => write!(f, "()"),
+            Value::Enum {
+                type_name,
+                variant_name,
+                variant_data,
+            } => match variant_data {
+                EnumVariantData::Unit => write!(f, "{}.{}", type_name, variant_name),
+                EnumVariantData::Tuple(values) => {
+                    write!(f, "{}.{}(", type_name, variant_name)?;
+                    for (i, value) in values.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", value)?;
+                    }
+                    write!(f, ")")
+                }
+                EnumVariantData::Struct(fields) => {
+                    write!(f, "{}.{} {{ ", type_name, variant_name)?;
+                    for (i, (name, value)) in fields.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}: {}", name, value)?;
+                    }
+                    write!(f, " }}")
+                }
+            },
             Value::Promise {
                 state,
                 value,
@@ -701,6 +743,7 @@ impl Value {
             Value::Ok(_) => "Result".to_string(),
             Value::Err(_) => "Result".to_string(),
             Value::Unit => "Unit".to_string(),
+            Value::Enum { type_name, .. } => type_name.clone(),
             Value::Promise { .. } => "Promise".to_string(),
         }
     }

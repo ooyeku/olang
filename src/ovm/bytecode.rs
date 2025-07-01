@@ -1560,7 +1560,9 @@ impl BytecodeVm {
                 }
 
                 let mut list_vec = list.to_vec();
-                let popped = list_vec.pop().unwrap();
+                let popped = list_vec.pop().ok_or_else(|| {
+                    BytecodeError::RuntimeError("List became empty during pop operation".to_string())
+                })?;
                 Ok((
                     OvmValue::from_ast(Value::List(list_vec.into())),
                     OvmValue::from_ast(popped),
@@ -1649,6 +1651,11 @@ impl BytecodeVm {
             Ok(Value::Unit) => "unit",
             Ok(Value::Ok(_)) => "result",
             Ok(Value::Err(_)) => "result",
+            Ok(Value::Enum { type_name: _, .. }) => {
+                // Return a static string for enum types
+                // In a real implementation, we might want to cache type names
+                "enum"
+            },
             Ok(Value::Promise { .. }) => "promise",
             Err(_) => "unknown",
         }

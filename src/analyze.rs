@@ -366,8 +366,13 @@ impl TypeInferrer {
                         }
                     }
                     if item_types.len() == 1 {
-                        let item_type = item_types.into_iter().next().unwrap();
-                        Ok(Some(format!("List[{}]", item_type)))
+                        // Safe since we verified len() == 1
+                        if let Some(item_type) = item_types.into_iter().next() {
+                            Ok(Some(format!("List[{}]", item_type)))
+                        } else {
+                            // Fallback in case of unexpected empty set
+                            Ok(Some("List[Any]".to_string()))
+                        }
                     } else {
                         Ok(Some("List[Any]".to_string()))
                     }
