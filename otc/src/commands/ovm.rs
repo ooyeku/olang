@@ -270,12 +270,12 @@ impl OvmCommand {
             println!("  Best speedup:    {:.2}x", best_speedup);
 
             if speedup > 1.0 {
-                println!("  ✓ OVM is faster");
+                println!("OVM is faster for this workload");
             } else {
-                println!("  ⚠ Classic interpreter is faster for this workload");
+                println!("Classic interpreter is faster for this workload");
             }
         } else {
-            println!("OVM: Not available");
+            println!("OVM is not available for this workload");
         }
 
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

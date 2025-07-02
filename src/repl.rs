@@ -237,7 +237,7 @@ impl Repl {
             }
         } else if verbose {
             println!(
-                "✅ Multi-threading enabled: {} CPU cores detected",
+                "Multi-threading enabled: {} CPU cores detected",
                 num_cpus::get()
             );
         }
@@ -247,7 +247,7 @@ impl Repl {
 
         if verbose {
             println!(
-                "🚀 Automatic parallelization: Lists with 10+ items will use all {} cores",
+                "Automatic parallelization: Lists with 10+ items will use all {} cores",
                 num_cpus::get()
             );
         }
@@ -330,7 +330,7 @@ impl Repl {
             let stats = self.ovm_interpreter.get_stats();
             println!(
                 "{}",
-                "🚀 OVM (Olang Virtual Machine) is running in the background".bright_green()
+                "OVM (Olang Virtual Machine) is running in the background".bright_green()
             );
             println!(
                 "{}",
@@ -360,7 +360,7 @@ impl Repl {
         } else {
             println!(
                 "{}",
-                "⚠️  OVM not available - using classic interpreter".bright_yellow()
+                "OVM not available - using classic interpreter".bright_yellow()
             );
         }
 
@@ -536,7 +536,7 @@ impl Repl {
                     if let Err(e) = self.ovm_interpreter.force_gc() {
                         eprintln!("GC failed: {}", e);
                     } else {
-                        println!("✅ Garbage collection completed successfully");
+                        println!("Garbage collection completed successfully");
                     }
                 } else {
                     println!("OVM is not available, cannot run GC.");
@@ -650,13 +650,13 @@ impl Repl {
                             if ovm_status.running {
                                 println!(
                                     "\n{}",
-                                    "✅ OVM is actively optimizing your code in the background"
+                                    "OVM is actively optimizing your code in the background"
                                         .bright_green()
                                 );
                             } else {
                                 println!(
                                     "\n{}",
-                                    "⚠️  OVM is not running - falling back to classic interpreter"
+                                    "OVM is not running - falling back to classic interpreter"
                                         .bright_yellow()
                                 );
                             }
@@ -665,11 +665,11 @@ impl Repl {
                             if let Err(e) = self.ovm_interpreter.force_gc() {
                                 eprintln!("GC failed: {}", e);
                             } else {
-                                println!("✅ Garbage collection completed successfully");
+                                println!("Garbage collection completed successfully");
                             }
                         }
                         "restart" => match self.ovm_interpreter.ensure_ovm_running() {
-                            Ok(()) => println!("✅ OVM restarted successfully"),
+                            Ok(()) => println!("OVM restarted successfully"),
                             Err(e) => eprintln!("Failed to restart OVM: {}", e),
                         },
                         _ => {
@@ -685,11 +685,11 @@ impl Repl {
                         healthy.to_string().bright_green()
                     );
                     if available && healthy {
-                        println!("{}", "✅ OVM is running in the background".bright_green());
+                        println!("{}", "OVM is running in the background".bright_green());
                     } else {
                         println!(
                             "{}",
-                            "⚠️  OVM may need attention - use ':ovm status' for details"
+                            "OVM may need attention - use ':ovm status' for details"
                                 .bright_yellow()
                         );
                     }
@@ -876,17 +876,17 @@ impl Repl {
                         }
                         "enable" => {
                             crate::parallel::set_parallel_enabled(true);
-                            println!("✅ Parallel processing enabled");
+                            println!("Parallel processing enabled");
                         }
                         "disable" => {
                             crate::parallel::set_parallel_enabled(false);
-                            println!("⚠️  Parallel processing disabled");
+                            println!("Parallel processing disabled");
                         }
                         "threshold" => {
                             if parts.len() > 2 {
                                 if let Ok(threshold) = parts[2].parse::<usize>() {
                                     crate::parallel::set_parallel_threshold(threshold);
-                                    println!("✅ Parallel threshold set to {} items", threshold);
+                                        println!("Parallel threshold set to {} items", threshold);
                                 } else {
                                     println!("Error: Invalid threshold value");
                                 }
@@ -1798,7 +1798,7 @@ impl Repl {
                     .get_classic_interpreter()
                     .module_debug_config
                     .enable_resolution_tracing = true;
-                println!("✅ Module resolution tracing enabled");
+                    println!("Module resolution tracing enabled");
                 println!("  Run import statements to see detailed resolution tracing");
             }
             Some("paths") => {
@@ -1849,12 +1849,12 @@ impl Repl {
     fn show_module_search_paths(&self, module_path: &str) {
         use std::path::PathBuf;
         
-        println!("🔍 Module search paths for '{}':", module_path);
+        println!("Module search paths for '{}':", module_path);
         
         let current_dir = match std::env::current_dir() {
             Ok(dir) => dir,
             Err(e) => {
-                println!("  ❌ Error getting current directory: {}", e);
+                println!("Error getting current directory: {}", e);
                 return;
             }
         };
@@ -1876,9 +1876,9 @@ impl Repl {
 
         for (i, candidate) in candidates.iter().enumerate() {
             let status = if candidate.exists() { 
-                if candidate.is_file() { "✅" } else { "📁" }
+                if candidate.is_file() { "" } else { "" }
             } else { 
-                "❌" 
+                "" 
             };
             println!("  {}. {} {}", i + 1, status, candidate.display());
         }
@@ -1886,7 +1886,7 @@ impl Repl {
         // Check for stdlib module
         let stdlib = crate::stdlib::get_stdlib();
         if stdlib.contains_key(module_path) {
-            println!("  ✅ Available as stdlib module: {}", module_path);
+            println!("Available as stdlib module: {}", module_path);
         }
     }
 
@@ -1897,22 +1897,22 @@ impl Repl {
         let env = self.ovm_interpreter.get_classic_interpreter().get_environment();
         let stdlib = crate::stdlib::get_stdlib();
         
-        println!("\n📚 Standard Library Modules:");
+        println!("\nStandard Library Modules:");
         for module_name in stdlib.keys() {
             if env.get(module_name).is_some() {
-                println!("  ✅ {}", module_name.bright_cyan());
+                println!("{}", module_name.bright_cyan());
             } else {
-                println!("  ⚪ {} (available but not loaded)", module_name.bright_black());
+                println!("{} (available but not loaded)", module_name.bright_black());
             }
         }
         
-        println!("\n📄 User Modules:");
+        println!("\nUser Modules:");
         let mut found_user_modules = false;
         for (name, value) in env.get_all_variables() {
             if !stdlib.contains_key(name as &str) {
                 if let crate::ast::Value::Struct { type_name, .. } = value {
                     if type_name == "Module" {
-                        println!("  ✅ {}", name.bright_yellow());
+                        println!("{}", name.bright_yellow());
                         found_user_modules = true;
                     }
                 }
