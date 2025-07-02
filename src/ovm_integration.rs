@@ -208,16 +208,26 @@ impl OvmInterpreter {
         for statement in program.statements {
             match statement {
                 crate::ast::Statement::Expression(expr) => {
-                    // Enhanced builtin routing logic
+                    // Enhanced builtin routing logic with variable environment synchronization
                     if self.should_use_ovm_for_expression(&expr) {
-                        // Use OVM for enhanced execution
-                        let ovm_value = self
-                            .ovm
-                            .as_mut()
-                            .ok_or(IntegrationError::OvmNotInitialized)?
-                            .execute_expression(expr)
-                            .map_err(IntegrationError::OvmExecutionError)?;
-                        last_value = self.convert_ovm_to_ast_value(ovm_value)?;
+                        // Before routing to OVM, ensure all variables in the expression are accessible
+                        if self.expression_needs_classic_variables(&expr) {
+                            // Fallback to classic interpreter for expressions that reference variables
+                            last_value = self
+                                .classic_interpreter
+                                .eval_statement(crate::ast::Statement::Expression(expr))
+                                .map_err(IntegrationError::ClassicInterpreterError)?;
+                            self.increment_fallback_count();
+                        } else {
+                            // Use OVM for enhanced execution
+                            let ovm_value = self
+                                .ovm
+                                .as_mut()
+                                .ok_or(IntegrationError::OvmNotInitialized)?
+                                .execute_expression(expr)
+                                .map_err(IntegrationError::OvmExecutionError)?;
+                            last_value = self.convert_ovm_to_ast_value(ovm_value)?;
+                        }
                     } else {
                         // Fallback to classic interpreter for complex builtins and pipelines
                         last_value = self
@@ -396,6 +406,11 @@ impl OvmInterpreter {
 
     /// Enhanced expression routing logic
     fn should_use_ovm_for_expression(&self, expr: &crate::ast::Expr) -> bool {
+        // First check if the expression needs classic variables - if so, don't use OVM
+        if self.expression_needs_classic_variables(expr) {
+            return false;
+        }
+
         match expr {
             // Function calls - enhanced builtin routing
             crate::ast::Expr::Call { callee, .. } => {
@@ -417,7 +432,7 @@ impl OvmInterpreter {
                 }
             }
 
-            // Pipeline expressions can benefit from OVM optimization
+            // Pipeline expressions can benefit from OVM optimization - but only if no variables
             crate::ast::Expr::Pipeline { .. } => true,
 
             // Identifiers, loops should use classic interpreter for environment consistency
@@ -543,6 +558,50 @@ impl OvmInterpreter {
                 | "force"
                 | "lazy"
         )
+    }
+
+    /// Check if an expression references variables that need classic interpreter resolution
+    fn expression_needs_classic_variables(&self, expr: &crate::ast::Expr) -> bool {
+        match expr {
+            crate::ast::Expr::Identifier(_) => true, // All identifiers need variable resolution
+            crate::ast::Expr::Call { callee, arguments } => {
+                // Check callee and arguments for variable references
+                if self.expression_needs_classic_variables(callee) {
+                    return true;
+                }
+                for arg in arguments {
+                    if self.expression_needs_classic_variables(arg) {
+                        return true;
+                    }
+                }
+                false
+            }
+            crate::ast::Expr::BinaryOp { left, right, .. } => {
+                self.expression_needs_classic_variables(left) || self.expression_needs_classic_variables(right)
+            }
+            crate::ast::Expr::UnaryOp { operand, .. } => {
+                self.expression_needs_classic_variables(operand)
+            }
+            crate::ast::Expr::List(elements) => {
+                elements.iter().any(|e| self.expression_needs_classic_variables(e))
+            }
+            crate::ast::Expr::Tuple(elements) => {
+                elements.iter().any(|e| self.expression_needs_classic_variables(e))
+            }
+            crate::ast::Expr::Index { object, index } => {
+                self.expression_needs_classic_variables(object) || self.expression_needs_classic_variables(index)
+            }
+            crate::ast::Expr::FieldAccess { object, .. } => {
+                self.expression_needs_classic_variables(object)
+            }
+            crate::ast::Expr::Pipeline { left, right } => {
+                self.expression_needs_classic_variables(left) || self.expression_needs_classic_variables(right)
+            }
+            // Literals don't need variable resolution
+            crate::ast::Expr::Integer(_) | crate::ast::Expr::Float(_) | crate::ast::Expr::String(_) | crate::ast::Expr::Boolean(_) => false,
+            // For other expressions, be conservative and assume they might need variables
+            _ => true,
+        }
     }
 }
 

@@ -9,7 +9,9 @@ use crate::internal::{check_memory_pressure, LazyConfig};
 use crate::ovm::gc::SafepointManager;
 use crate::type_checker::TypeChecker;
 use std::collections::HashMap;
+
 use std::sync::Arc;
+use std::time::Instant;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -24,6 +26,26 @@ pub enum InterpreterError {
     ArityMismatch { expected: usize, got: usize },
     #[error("Pattern match failed")]
     PatternMatchFailed,
+}
+
+/// Configuration for module resolution debugging
+#[derive(Debug, Clone)]
+pub struct ModuleDebugConfig {
+    pub enable_resolution_tracing: bool,
+    pub log_search_paths: bool,
+    pub show_resolution_timing: bool,
+    pub verbose_error_messages: bool,
+}
+
+impl Default for ModuleDebugConfig {
+    fn default() -> Self {
+        Self {
+            enable_resolution_tracing: std::env::var("OLANG_DEBUG_MODULES").is_ok(),
+            log_search_paths: true,
+            show_resolution_timing: false,
+            verbose_error_messages: true,
+        }
+    }
 }
 
 pub struct Environment {
@@ -78,6 +100,11 @@ impl Environment {
             })
         }
     }
+
+    /// Get all variables in this environment (excluding parent environments)
+    pub fn get_all_variables(&self) -> &HashMap<String, Value> {
+        &self.variables
+    }
 }
 
 /// Olang interpreter with optional type checking
@@ -88,6 +115,7 @@ pub struct Interpreter {
     async_runtime: AsyncRuntime,
     lazy_config: LazyConfig,
     safepoint_manager: Arc<SafepointManager>,
+    pub module_debug_config: ModuleDebugConfig,
 }
 
 impl Default for Interpreter {
@@ -105,6 +133,7 @@ impl Interpreter {
             async_runtime: AsyncRuntime::new(),
             lazy_config: LazyConfig::default(),
             safepoint_manager: Arc::new(SafepointManager::new()),
+            module_debug_config: ModuleDebugConfig::default(),
         };
 
         // Register built-in functions
@@ -679,6 +708,7 @@ impl Interpreter {
                     async_runtime: AsyncRuntime::new(),
                     lazy_config: self.lazy_config.clone(),
                     safepoint_manager: self.safepoint_manager.clone(),
+                    module_debug_config: self.module_debug_config.clone(),
                 };
                 new_interpreter.eval_expr(func.body)
             }
@@ -702,6 +732,7 @@ impl Interpreter {
             async_runtime: AsyncRuntime::new(),
             lazy_config: self.lazy_config.clone(),
             safepoint_manager: self.safepoint_manager.clone(),
+            module_debug_config: self.module_debug_config.clone(),
         }
     }
 
@@ -1259,12 +1290,196 @@ impl Interpreter {
     }
 
     fn eval_import_decl(&mut self, import_decl: ImportDecl) -> Result<Value, InterpreterError> {
-        // For now, just return a placeholder - full module system would require file loading
-        println!(
-            "Import: {} (items: {:?})",
-            import_decl.module_path, import_decl.items
-        );
-        Ok(Value::Unit)
+        // Enhanced module loading with file system support
+        let module_path = &import_decl.module_path;
+        
+        // Try to load from file system first
+        if let Ok(module) = self.load_module_from_file(module_path) {
+            // Handle specific imports vs wildcard
+            match &import_decl.items {
+                Some(items) => {
+                    // Import specific items: import { func1, func2 } from "module"
+                    for item in items {
+                        if let Some(value) = self.get_module_export(&module, item) {
+                            self.environment.define(item.clone(), value);
+                        } else {
+                            return Err(InterpreterError::UndefinedVariable { 
+                                name: format!("{}::{}", module_path, item) 
+                            });
+                        }
+                    }
+                }
+                None => {
+                    // Wildcard import: import * from "module"
+                    if let Value::Struct { fields, .. } = module {
+                        for (name, value) in fields {
+                            self.environment.define(name, value);
+                        }
+                    }
+                }
+            }
+            Ok(Value::Unit)
+        } else {
+            // Fallback to stdlib modules
+            if let Some(module) = self.get_stdlib_module(module_path) {
+                // Define the module in the environment
+                self.environment.define(module_path.clone(), module);
+                println!("Imported stdlib module: {}", module_path);
+                Ok(Value::Unit)
+            } else {
+                Err(InterpreterError::RuntimeError { 
+                    message: format!("Module not found: {}", module_path) 
+                })
+            }
+        }
+    }
+
+    /// Load a module from the file system
+    fn load_module_from_file(&mut self, module_path: &str) -> Result<Value, InterpreterError> {
+        use std::path::PathBuf;
+        
+        // Determine the file path
+        let file_path = self.resolve_module_path(module_path)?;
+        
+        // Read and parse the module file
+        let content = std::fs::read_to_string(&file_path)
+            .map_err(|e| InterpreterError::RuntimeError { 
+                message: format!("Failed to read module file {}: {}", file_path.display(), e) 
+            })?;
+            
+        // Parse the module
+        let parser = crate::parser::Parser::new();
+        let program = parser.parse(&content)
+            .map_err(|e| InterpreterError::RuntimeError { 
+                message: format!("Failed to parse module {}: {:?}", file_path.display(), e) 
+            })?;
+            
+        // Create a new environment for the module
+        let mut module_env = Environment::new();
+        
+        // Add stdlib modules to module environment
+        for (name, module) in crate::stdlib::get_stdlib() {
+            module_env.define(name, module);
+        }
+        
+        // Save current environment
+        let saved_env = std::mem::replace(&mut self.environment, module_env);
+        
+        // Execute the module and collect exports
+        let mut exports = std::collections::HashMap::new();
+        
+        for statement in program.statements {
+            match statement {
+                crate::ast::Statement::ExportDecl(export_decl) => {
+                    let value = self.eval_expr(export_decl.value)?;
+                    exports.insert(export_decl.name, value);
+                }
+                _ => {
+                    self.eval_statement(statement)?;
+                }
+            }
+        }
+        
+        // Restore original environment
+        self.environment = saved_env;
+        
+        // Return module as a struct with exports
+        Ok(Value::Struct {
+            type_name: "Module".to_string(),
+            fields: exports,
+        })
+    }
+    
+    /// Resolve module path to actual file path with enhanced debugging
+    fn resolve_module_path(&self, module_path: &str) -> Result<std::path::PathBuf, InterpreterError> {
+        use std::path::PathBuf;
+        
+        let debug_config = &self.module_debug_config;
+        let start_time = if debug_config.show_resolution_timing {
+            Some(Instant::now())
+        } else {
+            None
+        };
+
+        if debug_config.enable_resolution_tracing {
+            println!("🔍 Resolving module: '{}'", module_path);
+        }
+        
+        let current_dir = std::env::current_dir()
+            .map_err(|e| InterpreterError::RuntimeError { 
+                message: format!("Failed to get current directory: {}", e) 
+            })?;
+        
+        // Enhanced candidate resolution with debugging
+        let candidates = vec![
+            // Relative to current directory
+            current_dir.join(format!("{}.ol", module_path)),
+            current_dir.join(format!("{}/mod.ol", module_path)),
+            current_dir.join(format!("{}/index.ol", module_path)),
+            
+            // Relative to src directory
+            current_dir.join("src").join(format!("{}.ol", module_path)),
+            current_dir.join("src").join(format!("{}/mod.ol", module_path)),
+            current_dir.join("src").join(format!("{}/index.ol", module_path)),
+            
+            // Absolute path if it looks like one
+            PathBuf::from(format!("{}.ol", module_path)),
+        ];
+
+        if debug_config.log_search_paths {
+            println!("  📁 Search paths:");
+            for (i, candidate) in candidates.iter().enumerate() {
+                let status = if candidate.exists() { "✅" } else { "❌" };
+                println!("    {}. {} {}", i + 1, status, candidate.display());
+            }
+        }
+        
+        for candidate in &candidates {
+            if candidate.exists() && candidate.is_file() {
+                if debug_config.enable_resolution_tracing {
+                    println!("  ✅ Found: {}", candidate.display());
+                    if let Some(start) = start_time {
+                        println!("  ⏱️  Resolution time: {:?}", start.elapsed());
+                    }
+                }
+                return Ok(candidate.clone());
+            }
+        }
+
+        // Enhanced error with debug information
+        if debug_config.verbose_error_messages {
+            let search_paths: Vec<String> = candidates.iter()
+                .map(|p| p.display().to_string())
+                .collect();
+            
+            Err(InterpreterError::RuntimeError { 
+                message: format!(
+                    "Module '{}' not found.\nSearched paths:\n  - {}",
+                    module_path,
+                    search_paths.join("\n  - ")
+                )
+            })
+        } else {
+            Err(InterpreterError::RuntimeError { 
+                message: format!("Module file not found: {}", module_path) 
+            })
+        }
+    }
+    
+    /// Get an export from a loaded module
+    fn get_module_export(&self, module: &Value, export_name: &str) -> Option<Value> {
+        match module {
+            Value::Struct { fields, .. } => {
+                fields.get(export_name).cloned()
+            }
+            _ => None,
+        }
+    }
+    
+    /// Get a stdlib module by name
+    fn get_stdlib_module(&self, name: &str) -> Option<Value> {
+        let stdlib = crate::stdlib::get_stdlib();
+        stdlib.get(name).cloned()
     }
 
     fn eval_export_decl(&mut self, export_decl: ExportDecl) -> Result<Value, InterpreterError> {

@@ -1,6 +1,6 @@
 [package]
 name = "otc"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Ola Yeku <oyeku@gmail.com>"]
 description = "Olang Toolchain - Command-line tools for the Olang language"
@@ -12,4 +12,6 @@ olang = { path = ".." }
 clap = { version = "4.4", features = ["derive"] }
 anyhow = "1.0"
 miette = { version = "5.10", features = ["fancy"] }
-num_cpus = "1.16" 
+num_cpus = "1.16"
+toml = "0.8"
+serde = { version = "1.0", features = ["derive"] } 
