@@ -1,4 +1,5 @@
 use anyhow::Result;
+use crate::config::{OlangProject, ensure_project_directory};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -100,83 +101,82 @@ fn create_project_structure(
 
 /// Create project manifest file (olang.toml)
 fn create_project_manifest(name: &str, is_lib: bool, template: &ProjectTemplate) -> Result<()> {
-    let manifest_content = match template {
-        ProjectTemplate::Web => format!(r#"[project]
-name = "{}"
-version = "0.1.0"
-type = "web"
-description = "A web application built with Olang"
+    use crate::config::*;
+    use std::collections::HashMap;
 
-[dependencies]
-# Add your dependencies here
-# http = "^1.0"
-# json = "^1.0"
-
-[web]
-port = 8080
-host = "127.0.0.1"
-static_dir = "static"
-template_dir = "templates"
-
-[build]
-entry_point = "src/main.ol"
-output_dir = "dist"
-"#, name),
-        
-        ProjectTemplate::Cli => format!(r#"[project]
-name = "{}"
-version = "0.1.0"
-type = "cli"
-description = "A command-line application built with Olang"
-
-[dependencies]
-# Add your dependencies here
-# fs = "^1.0"
-# os = "^1.0"
-
-[cli]
-binary_name = "{}"
-
-[build]
-entry_point = "src/main.ol"
-output_dir = "dist"
-"#, name, name),
-        
-        ProjectTemplate::Library => format!(r#"[project]
-name = "{}"
-version = "0.1.0"
-type = "library"
-description = "A library built with Olang"
-
-[dependencies]
-# Add your dependencies here
-
-[library]
-export_modules = ["src/lib/mod.ol"]
-
-[build]
-entry_point = "src/lib/mod.ol"
-output_dir = "dist"
-"#, name),
-        
-        ProjectTemplate::Default => format!(r#"[project]
-name = "{}"
-version = "0.1.0"
-type = "{}"
-description = "An Olang project"
-
-[dependencies]
-# Add your dependencies here
-# math = "^1.0"
-# dates = "^1.0"
-
-[build]
-entry_point = "src/main.ol"
-output_dir = "dist"
-"#, name, if is_lib { "library" } else { "application" }),
+    let project_type = match template {
+        ProjectTemplate::Web => "web".to_string(),
+        ProjectTemplate::Cli => "cli".to_string(),
+        ProjectTemplate::Library => "library".to_string(),
+        ProjectTemplate::Default => if is_lib { "library" } else { "application" }.to_string(),
     };
 
-    fs::write(format!("{}/olang.toml", name), manifest_content)?;
+    let description = match template {
+        ProjectTemplate::Web => Some("A web application built with Olang".to_string()),
+        ProjectTemplate::Cli => Some("A command-line application built with Olang".to_string()),
+        ProjectTemplate::Library => Some("A library built with Olang".to_string()),
+        ProjectTemplate::Default => Some("An Olang project".to_string()),
+    };
+
+    // Create base project configuration
+    let mut project = OlangProject::new(name.to_string(), project_type);
+    project.project.description = description;
+
+    // Configure template-specific settings
+    match template {
+        ProjectTemplate::Web => {
+            project.web = Some(WebConfig {
+                port: 8080,
+                host: "127.0.0.1".to_string(),
+                static_dir: "static".to_string(),
+                template_dir: "templates".to_string(),
+                middleware: Vec::new(),
+                cors: None,
+                ssl: None,
+            });
+            // Add common web dependencies
+            project.dependencies.insert("http".to_string(), "^1.0".to_string());
+            project.dependencies.insert("json".to_string(), "^1.0".to_string());
+        },
+        
+        ProjectTemplate::Cli => {
+            project.cli = Some(CliConfig {
+                binary_name: name.to_string(),
+                description: Some(format!("Command-line tool: {}", name)),
+                subcommands: Vec::new(),
+                global_flags: Vec::new(),
+            });
+            // Add common CLI dependencies
+            project.dependencies.insert("fs".to_string(), "^1.0".to_string());
+            project.dependencies.insert("os".to_string(), "^1.0".to_string());
+        },
+        
+        ProjectTemplate::Library => {
+            project.library = Some(LibraryConfig {
+                export_modules: vec!["src/lib/mod.ol".to_string()],
+                public_api: Vec::new(),
+                documentation_modules: Vec::new(),
+            });
+            project.build.entry_point = "src/lib/mod.ol".to_string();
+        },
+        
+        ProjectTemplate::Default => {
+            // Add common dependencies for default projects
+            project.dependencies.insert("math".to_string(), "^1.0".to_string());
+            project.dependencies.insert("dates".to_string(), "^1.0".to_string());
+            
+            if is_lib {
+                project.library = Some(LibraryConfig {
+                    export_modules: vec!["src/main.ol".to_string()],
+                    public_api: Vec::new(),
+                    documentation_modules: Vec::new(),
+                });
+            }
+        },
+    }
+
+    // Save the configuration to file
+    project.save_to_file(format!("{}/olang.toml", name))?;
     Ok(())
 }
 
@@ -789,27 +789,31 @@ fn print_project_structure(name: &str) {
 
 /// Build the current project
 pub fn build_project(release: bool, verbose: bool) -> Result<()> {
-    // Check if we're in an Olang project
-    if !Path::new("olang.toml").exists() {
-        return Err(anyhow::anyhow!("Not in an Olang project directory (olang.toml not found)"));
-    }
+    // Check if we're in an Olang project and load configuration
+    ensure_project_directory()?;
+    let config = OlangProject::load_current()?;
+    
+    // Validate configuration
+    config.validate()?;
 
     if verbose {
-        println!("Building project...");
+        println!("Building project: {}", config.project.name);
+        println!("Version: {}", config.project.version);
+        println!("Type: {}", config.project.project_type);
         println!("Mode: {}", if release { "Release" } else { "Debug" });
     }
 
     // Create output directory
-    let output_dir = if release { "dist/release" } else { "dist/debug" };
-    fs::create_dir_all(output_dir)?;
+    let output_dir = if release { 
+        format!("{}/release", config.get_output_dir()) 
+    } else { 
+        format!("{}/debug", config.get_output_dir()) 
+    };
+    fs::create_dir_all(&output_dir)?;
 
-    // Read project configuration
-    let config = read_project_config()?;
+    let entry_point = config.get_entry_point();
     
-    // Determine entry point
-    let entry_point = config.build.entry_point.unwrap_or_else(|| "src/main.ol".to_string());
-    
-    if !Path::new(&entry_point).exists() {
+    if !Path::new(entry_point).exists() {
         return Err(anyhow::anyhow!("Entry point not found: {}", entry_point));
     }
 
@@ -820,7 +824,7 @@ pub fn build_project(release: bool, verbose: bool) -> Result<()> {
 
     // For now, we'll copy the source files to the output directory
     // In a future version, this would compile to bytecode or native code
-    copy_source_files(&entry_point, output_dir, verbose)?;
+    copy_source_files(entry_point, &output_dir, verbose)?;
 
     println!("✅ Build completed successfully");
     println!("📦 Output: {}/", output_dir);
@@ -830,13 +834,15 @@ pub fn build_project(release: bool, verbose: bool) -> Result<()> {
 
 /// Run project tests
 pub fn test_project(filter: Option<String>, verbose: bool) -> Result<()> {
-    // Check if we're in an Olang project
-    if !Path::new("olang.toml").exists() {
-        return Err(anyhow::anyhow!("Not in an Olang project directory (olang.toml not found)"));
-    }
+    // Check if we're in an Olang project and load configuration
+    ensure_project_directory()?;
+    let config = OlangProject::load_current()?;
+    
+    // Validate configuration
+    config.validate()?;
 
     if verbose {
-        println!("Running tests...");
+        println!("Running tests for project: {}", config.project.name);
         if let Some(ref filter) = filter {
             println!("Filter: {}", filter);
         }
@@ -887,35 +893,7 @@ pub fn test_project(filter: Option<String>, verbose: bool) -> Result<()> {
     }
 }
 
-/// Read project configuration from olang.toml
-fn read_project_config() -> Result<ProjectConfig> {
-    let content = fs::read_to_string("olang.toml")?;
-    // For now, we'll do simple parsing. In the future, use a proper TOML parser
-    Ok(ProjectConfig {
-        project: ProjectInfo {
-            name: extract_toml_value(&content, "name").unwrap_or_else(|| "project".to_string()),
-            version: extract_toml_value(&content, "version").unwrap_or_else(|| "0.1.0".to_string()),
-            project_type: extract_toml_value(&content, "type").unwrap_or_else(|| "application".to_string()),
-        },
-        build: BuildConfig {
-            entry_point: extract_toml_value(&content, "entry_point"),
-            output_dir: extract_toml_value(&content, "output_dir"),
-        },
-    })
-}
 
-/// Extract a value from TOML content (simple implementation)
-fn extract_toml_value(content: &str, key: &str) -> Option<String> {
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with(key) && line.contains('=') {
-            let value = line.split('=').nth(1)?;
-            let value = value.trim().trim_matches('"');
-            return Some(value.to_string());
-        }
-    }
-    None
-}
 
 /// Copy source files to output directory
 fn copy_source_files(entry_point: &str, output_dir: &str, verbose: bool) -> Result<()> {
@@ -1026,22 +1004,4 @@ fn run_test_file(test_file: &Path) -> Result<()> {
     }
 }
 
-/// Project configuration structures
-#[derive(Debug)]
-struct ProjectConfig {
-    project: ProjectInfo,
-    build: BuildConfig,
-}
-
-#[derive(Debug)]
-struct ProjectInfo {
-    name: String,
-    version: String,
-    project_type: String,
-}
-
-#[derive(Debug)]
-struct BuildConfig {
-    entry_point: Option<String>,
-    output_dir: Option<String>,
-} 
+ 

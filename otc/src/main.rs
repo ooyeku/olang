@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::process;
 
 mod commands;
+mod config;
 mod utils;
 
 #[derive(Parser)]
