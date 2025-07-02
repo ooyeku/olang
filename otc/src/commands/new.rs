@@ -42,10 +42,10 @@ pub fn execute(name: String, is_lib: bool, template: String, verbose: bool) -> R
     // Create project structure
     create_project_structure(&name, is_lib, &template, verbose)?;
     
-    println!("✅ Created new Olang project: {}", name);
-    println!("📁 Project structure:");
+    println!("Created new Olang project: {}", name);
+    println!("Project structure:");
     print_project_structure(&name);
-    println!("\n🚀 Get started:");
+    println!("\nGet started:");
     println!("   cd {}", name);
     println!("   otc run main.ol");
     
@@ -512,7 +512,7 @@ println("Running library tests...")
 test_fibonacci()
 test_string_utils()
 test_collection_utils()
-println("✅ All tests passed!")
+println("All tests passed!")
 "#,
         _ => r#"// Project Tests
 import { utilities } from "../src/modules/utils"
@@ -546,7 +546,7 @@ let test_helpers = () => {
 println("Running project tests...")
 test_utilities()
 test_helpers()
-println("✅ All tests passed!")
+println("All tests passed!")
 "#,
     };
 
@@ -826,8 +826,8 @@ pub fn build_project(release: bool, verbose: bool) -> Result<()> {
     // In a future version, this would compile to bytecode or native code
     copy_source_files(entry_point, &output_dir, verbose)?;
 
-    println!("✅ Build completed successfully");
-    println!("📦 Output: {}/", output_dir);
+    println!("Build completed successfully");
+    println!("Output: {}/", output_dir);
 
     Ok(())
 }
@@ -869,11 +869,11 @@ pub fn test_project(filter: Option<String>, verbose: bool) -> Result<()> {
 
         match run_test_file(&test_file) {
             Ok(_) => {
-                println!("✅ {}", test_file.display());
+                println!("{}", test_file.display());
                 passed += 1;
             }
             Err(e) => {
-                println!("❌ {}: {}", test_file.display(), e);
+                println!("{}: {}", test_file.display(), e);
                 failed += 1;
             }
         }
@@ -888,7 +888,7 @@ pub fn test_project(filter: Option<String>, verbose: bool) -> Result<()> {
     if failed > 0 {
         Err(anyhow::anyhow!("{} test(s) failed", failed))
     } else {
-        println!("🎉 All tests passed!");
+        println!("All tests passed!");
         Ok(())
     }
 }
