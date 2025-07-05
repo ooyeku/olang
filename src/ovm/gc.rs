@@ -573,7 +573,7 @@ impl GarbageCollector {
                     }
                     Err(e) => {
                         // Log error but continue running
-                        crate::log_error!("ovm_gc", "Background GC collection failed: {}", e);
+                        crate::log::get_logger().error("ovm_gc", &format!("Background GC collection failed: {}", e));
                         // Reset counter anyway to prevent infinite triggering
                         allocation_counter.store(0, Ordering::Relaxed);
                         should_collect_flag.store(false, Ordering::Relaxed);
@@ -1493,21 +1493,18 @@ impl SafepointManager {
             self.safepoint_requested.store(false, Ordering::Relaxed);
 
             // Log debugging information
-            crate::log_error!("ovm_gc", "SAFEPOINT TIMEOUT DEBUG INFO:");
-            crate::log_error!(
+            crate::log::get_logger().error("ovm_gc", "SAFEPOINT TIMEOUT DEBUG INFO:");
+            crate::log::get_logger().error(
                 "ovm_gc",
-                "   Total threads registered: {}",
-                self.total_threads.load(Ordering::Relaxed)
+                &format!("   Total threads registered: {}", self.total_threads.load(Ordering::Relaxed))
             );
-            crate::log_error!(
+            crate::log::get_logger().error(
                 "ovm_gc",
-                "   Threads at safepoint: {}",
-                self.threads_at_safepoint.load(Ordering::Relaxed)
+                &format!("   Threads at safepoint: {}", self.threads_at_safepoint.load(Ordering::Relaxed))
             );
-            crate::log_error!(
+            crate::log::get_logger().error(
                 "ovm_gc",
-                "   Safepoint requested: {}",
-                self.safepoint_requested.load(Ordering::Relaxed)
+                &format!("   Safepoint requested: {}", self.safepoint_requested.load(Ordering::Relaxed))
             );
 
             return Err(GcError::SafepointTimeout);
@@ -1935,7 +1932,7 @@ mod tests {
                 for j in 0..5 {
                     thread::sleep(Duration::from_millis(20));
                     if let Err(e) = manager_clone.safepoint_poll() {
-                        crate::log_error!("ovm_gc", "Thread {} iteration {} safepoint poll failed: {}", i, j, e);
+                        crate::log::get_logger().error("ovm_gc", &format!("Thread {} iteration {} safepoint poll failed: {}", i, j, e));
                     }
                 }
 

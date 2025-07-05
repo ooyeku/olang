@@ -110,7 +110,7 @@ impl OvmRepl {
                     self.evaluate_input(input);
                 }
                 Err(error) => {
-                    crate::log_error!("ovm_repl", "Error reading input: {}", error);
+                    crate::log::get_logger().error("ovm_repl", &format!("Error reading input: {}", error));
                     break;
                 }
             }
@@ -123,7 +123,7 @@ impl OvmRepl {
     /// Set execution mode
     pub fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode;
-                    crate::log_info!("ovm_repl", "Execution mode set to: {:?}", mode);
+                    crate::log::get_logger().info("ovm_repl", &format!("Execution mode set to: {:?}", mode));
     }
 
     /// Enable/disable performance monitoring
@@ -315,7 +315,7 @@ impl OvmRepl {
     fn clear_screen(&self) {
         print!("\x1B[2J\x1B[1;1H");
         if let Err(e) = io::stdout().flush() {
-            crate::log_warn!("ovm_repl", "Failed to flush stdout: {}", e);
+            crate::log::get_logger().warn("ovm_repl", &format!("Failed to flush stdout: {}", e));
         }
     }
 

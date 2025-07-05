@@ -158,7 +158,7 @@ impl OvmInterpreter {
         match self.initialize_ovm(OvmConfig::default()) {
             Ok(()) => Ok(()),
             Err(e) => {
-                crate::log_error!("ovm_integration", "OVM initialization failed: {}", e);
+                crate::log::get_logger().error("ovm_integration", &format!("OVM initialization failed: {}", e));
                 Err(e)
             }
         }

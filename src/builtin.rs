@@ -924,7 +924,7 @@ impl BuiltinFunctions {
                     // For large ranges, this could be made lazy in the future
                     // For now, still generate eagerly but with a warning for very large ranges
                     if end > 100000 {
-                        crate::log_warn!("builtin", "Generating very large range ({}), consider using lazy evaluation", end);
+                        crate::log::get_logger().warn("builtin", &format!("Generating very large range ({}), consider using lazy evaluation", end));
                     }
                     let mut result = Vec::new();
                     for i in 0..end {

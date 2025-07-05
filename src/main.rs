@@ -2,6 +2,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::process;
 
+use olang::log::{init_logger, Logger};
 use olang::ovm_integration::{IntegrationConfig, OvmInterpreter};
 use olang::ovm::OvmConfig;
 use olang::parallel::{initialize_parallelization, set_parallel_threshold};
@@ -40,17 +41,19 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
+    
+    // Initialize logger
+    let logger = init_logger();
 
     // Initialize parallelization early for optimal performance
     if let Err(e) = initialize_parallelization(None) {
         if cli.verbose {
-            crate::log_warn!("main", "Failed to initialize parallel processing: {}", e);
+            logger.warn("main", &format!("Failed to initialize parallel processing: {}", e));
         }
     } else if cli.verbose {
-        crate::log_info!(
+        logger.info(
             "main",
-            "Multi-threading enabled: {} CPU cores detected, using aggressive parallelization",
-            num_cpus::get()
+            &format!("Multi-threading enabled: {} CPU cores detected, using aggressive parallelization", num_cpus::get())
         );
     }
 
@@ -59,10 +62,9 @@ fn main() {
     set_parallel_threshold(10);
 
     if cli.verbose {
-        crate::log_info!(
+        logger.info(
             "main",
-            "Automatic parallelization: Lists with 10+ items will use all {} cores",
-            num_cpus::get()
+            &format!("Automatic parallelization: Lists with 10+ items will use all {} cores", num_cpus::get())
         );
     }
 
@@ -78,20 +80,20 @@ fn main() {
 
     if let Some(file_path) = cli.file {
         // Execute file in batch mode
-        if let Err(e) = execute_file(&file_path, cli.verbose, cli.no_ovm, cli.ovm_stats) {
-            crate::log_error!("main", "Error executing file: {}", e);
+        if let Err(e) = execute_file(&file_path, cli.verbose, cli.no_ovm, cli.ovm_stats, logger) {
+            logger.error("main", &format!("Error executing file: {}", e));
             process::exit(1);
         }
     } else {
         // Start REPL
-        if let Err(e) = start_repl(cli.verbose, cli.no_ovm) {
-            crate::log_error!("main", "REPL error: {}", e);
+        if let Err(e) = start_repl(cli.verbose, cli.no_ovm, logger) {
+            logger.error("main", &format!("REPL error: {}", e));
             process::exit(1);
         }
     }
 }
 
-fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: bool) -> anyhow::Result<()> {
+fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: bool, logger: &Logger) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file_path)?;
     let parser = OlangParser::new();
     
@@ -102,12 +104,12 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
             Ok(ast) => {
                 let result = interpreter.eval_program(ast)?;
                 if verbose {
-                    crate::log_info!("main", "Result: {:?}", result);
+                    logger.info("main", &format!("Result: {:?}", result));
                 }
                 Ok(())
             }
             Err(e) => {
-                crate::log_error!("main", "Parse error: {}", e);
+                logger.error("main", &format!("Parse error: {}", e));
                 Err(anyhow::anyhow!("Parse failed"))
             }
         }
@@ -141,38 +143,38 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
         interpreter.initialize_ovm(ovm_config)?;
 
         if verbose {
-            crate::log_info!("main", "OVM initialized with JIT compilation enabled");
+            logger.info("main", "OVM initialized with JIT compilation enabled");
         }
 
         match parser.parse(&source) {
             Ok(ast) => {
                 let result = interpreter.eval_program(ast)?;
                 if verbose {
-                    crate::log_info!("main", "Result: {:?}", result);
+                    logger.info("main", &format!("Result: {:?}", result));
                 }
                 
                 if ovm_stats {
                     let stats = interpreter.get_stats();
-                    crate::log_info!("main", "OVM Performance Statistics:");
-                    crate::log_info!("main", "  Classic executions: {}", stats.classic_executions);
-                    crate::log_info!("main", "  OVM executions: {}", stats.ovm_executions);
-                    crate::log_info!("main", "  Fallback executions: {}", stats.fallback_executions);
-                    crate::log_info!("main", "  Compilations: {}", stats.compilation_count);
-                    crate::log_info!("main", "  Average classic time: {:.2}ms", stats.average_classic_time_ms);
-                    crate::log_info!("main", "  Average OVM time: {:.2}ms", stats.average_ovm_time_ms)
+                    logger.info("main", "OVM Performance Statistics:");
+                    logger.info("main", &format!("  Classic executions: {}", stats.classic_executions));
+                    logger.info("main", &format!("  OVM executions: {}", stats.ovm_executions));
+                    logger.info("main", &format!("  Fallback executions: {}", stats.fallback_executions));
+                    logger.info("main", &format!("  Compilations: {}", stats.compilation_count));
+                    logger.info("main", &format!("  Average classic time: {:.2}ms", stats.average_classic_time_ms));
+                    logger.info("main", &format!("  Average OVM time: {:.2}ms", stats.average_ovm_time_ms));
                 }
                 
                 Ok(())
             }
             Err(e) => {
-                crate::log_error!("main", "Parse error: {}", e);
+                logger.error("main", &format!("Parse error: {}", e));
                 Err(anyhow::anyhow!("Parse failed"))
             }
         }
     }
 }
 
-fn start_repl(verbose: bool, no_ovm: bool) -> anyhow::Result<()> {
+fn start_repl(verbose: bool, no_ovm: bool, logger: &Logger) -> anyhow::Result<()> {
     if no_ovm {
         // Use classic REPL
         let mut repl = Repl::new(verbose)?;
@@ -207,7 +209,7 @@ fn start_repl(verbose: bool, no_ovm: bool) -> anyhow::Result<()> {
         interpreter.initialize_ovm(ovm_config)?;
 
         if verbose {
-            crate::log_info!("main", "OVM REPL initialized with JIT compilation enabled");
+            logger.info("main", "OVM REPL initialized with JIT compilation enabled");
         }
 
         // For now, use classic REPL but with OVM interpreter

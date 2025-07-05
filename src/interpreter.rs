@@ -1351,7 +1351,7 @@ impl Interpreter {
             if let Some(module) = self.get_stdlib_module(module_path) {
                 // Define the module in the environment
                 self.environment.define(module_path.clone(), module);
-                crate::log_debug!("interpreter", "Imported stdlib module: {}", module_path);
+                crate::log::get_logger().debug("interpreter", &format!("Imported stdlib module: {}", module_path));
                 Ok(Value::Unit)
             } else {
                 Err(InterpreterError::RuntimeError { 
@@ -1429,7 +1429,7 @@ impl Interpreter {
         };
 
         if debug_config.enable_resolution_tracing {
-            crate::log_debug!("interpreter", "Resolving module: '{}'", module_path);
+            crate::log::get_logger().debug("interpreter", &format!("Resolving module: '{}'", module_path));
         }
         
         let current_dir = std::env::current_dir()
@@ -1454,19 +1454,19 @@ impl Interpreter {
         ];
 
         if debug_config.log_search_paths {
-            crate::log_trace!("interpreter", "Module search paths:");
+            crate::log::get_logger().trace("interpreter", "Module search paths:");
             for (i, candidate) in candidates.iter().enumerate() {
                 let status = if candidate.exists() { "exists" } else { "missing" };
-                crate::log_trace!("interpreter", "  {}. {} {}", i + 1, status, candidate.display());
+                crate::log::get_logger().trace("interpreter", &format!("  {}. {} {}", i + 1, status, candidate.display()));
             }
         }
         
         for candidate in &candidates {
             if candidate.exists() && candidate.is_file() {
                 if debug_config.enable_resolution_tracing {
-                    crate::log_debug!("interpreter", "Found module file: {}", candidate.display());
+                    crate::log::get_logger().debug("interpreter", &format!("Found module file: {}", candidate.display()));
                     if let Some(start) = start_time {
-                        crate::log_trace!("interpreter", "Module resolution time: {:?}", start.elapsed());
+                        crate::log::get_logger().trace("interpreter", &format!("Module resolution time: {:?}", start.elapsed()));
                     }
                 }
                 return Ok(candidate.clone());
@@ -1514,7 +1514,7 @@ impl Interpreter {
         let value = self.eval_expr(export_decl.value)?;
         self.environment
             .define(export_decl.name.clone(), value.clone());
-        crate::log_debug!("interpreter", "Export: {} = {:?}", export_decl.name, value);
+        crate::log::get_logger().debug("interpreter", &format!("Export: {} = {:?}", export_decl.name, value));
         Ok(value)
     }
 
