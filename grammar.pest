@@ -87,7 +87,10 @@ call_expr   = { primary ~ ( function_call | ("." ~ identifier) | ("[" ~ expr ~ "
 function_call = { "(" ~ arg_list? ~ ")" }
 
 // Function call arguments (different from tuple literals)
-arg_list    = { expr ~ ("," ~ expr)* }
+arg_list = { argument ~ ("," ~ argument)* }
+argument = { named_arg | positional_arg }
+positional_arg = { expr }
+named_arg = { identifier ~ ":" ~ expr }
 
 // Try-catch expressions
 try_catch_expr = { "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block }

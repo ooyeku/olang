@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::time::Duration;
 
-use crate::ast::{Expr, FunctionDecl};
+use crate::ast::{Argument, Expr, FunctionDecl};
 
 // Core OVM modules
 pub mod adaptive; // Adaptive optimization system
@@ -415,7 +415,13 @@ impl OlangVirtualMachine {
                     // Functions that often appear in chains
                     if matches!(name.as_str(), "map" | "filter" | "take" | "skip") {
                         // Check if arguments contain other fusable operations
-                        arguments.iter().any(|arg| self.contains_fusable_operations(arg))
+                        arguments.iter().any(|arg| {
+                            let arg_expr = match arg {
+                                Argument::Positional(expr) => expr,
+                                Argument::Named { value, .. } => value,
+                            };
+                            self.contains_fusable_operations(arg_expr)
+                        })
                     } else {
                         false
                     }

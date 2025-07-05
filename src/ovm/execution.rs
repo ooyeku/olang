@@ -2,7 +2,7 @@
 //!
 //! Provides tiered execution with interpreter, bytecode VM, and JIT compilation
 
-use crate::ast::{Expr, FunctionDecl, Statement, Value};
+use crate::ast::{Argument, Expr, FunctionDecl, Statement, Value};
 use crate::builtin::BuiltinFunctions;
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::ovm::bytecode::{BytecodeError, BytecodeVm};
@@ -240,7 +240,11 @@ impl ExecutionEngine {
                     if self.is_builtin_function(name) {
                         // Convert arguments to OVM values
                         let mut ovm_args = Vec::new();
-                        for arg_expr in arguments {
+                        for arg in arguments {
+                            let arg_expr = match arg {
+                                Argument::Positional(expr) => expr,
+                                Argument::Named { value, .. } => value,
+                            };
                             // For now, we'll evaluate arguments using the interpreter
                             // In a full implementation, we'd recursively evaluate them in OVM
                             if let Ok(ast_value) = self.evaluate_expr_to_ast(arg_expr) {

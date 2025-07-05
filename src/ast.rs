@@ -80,7 +80,7 @@ pub enum Expr {
     Identifier(String),
     Call {
         callee: Box<Expr>,
-        arguments: Vec<Expr>,
+        arguments: Vec<Argument>,
     },
 
     // Functions
@@ -215,6 +215,16 @@ pub enum Expr {
     // Spread/rest (for future use)
     Spread(Box<Expr>),
     Rest(Box<Expr>),
+}
+
+/// Argument types for function calls
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Argument {
+    Positional(Expr),
+    Named {
+        name: String,
+        value: Expr,
+    },
 }
 
 /// Promise types for Promise expressions

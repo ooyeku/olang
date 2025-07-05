@@ -1,5 +1,5 @@
 use crate::ast::{
-    AsyncFunctionDecl, BinaryOp, BuiltinFunction, EnumVariantData, ErrorTypeDecl, ExportDecl, Expr,
+    Argument, AsyncFunctionDecl, BinaryOp, BuiltinFunction, EnumVariantData, ErrorTypeDecl, ExportDecl, Expr,
     Function, FunctionDecl, ImportDecl, LetDecl, MatchArm, Pattern, Program, PromiseType,
     Statement, UnaryOp, Value,
 };
@@ -278,7 +278,16 @@ impl Interpreter {
                 let mut arg_values = Vec::new();
 
                 for arg in arguments {
-                    arg_values.push(self.eval_expr(arg)?);
+                    match arg {
+                        Argument::Positional(expr) => {
+                            arg_values.push(self.eval_expr(expr)?);
+                        }
+                        Argument::Named { name: _, value } => {
+                            // For now, treat named arguments as positional
+                            // TODO: Implement proper named argument resolution
+                            arg_values.push(self.eval_expr(value)?);
+                        }
+                    }
                 }
 
                 self.call_function(callee_value, arg_values)
@@ -301,7 +310,16 @@ impl Interpreter {
                     Expr::Call { callee, arguments } => {
                         let mut new_args = vec![left_value];
                         for arg in arguments {
-                            new_args.push(self.eval_expr(arg)?);
+                            match arg {
+                                Argument::Positional(expr) => {
+                                    new_args.push(self.eval_expr(expr)?);
+                                }
+                                Argument::Named { name: _, value } => {
+                                    // For now, treat named arguments as positional
+                                    // TODO: Implement proper named argument resolution in pipelines
+                                    new_args.push(self.eval_expr(value)?);
+                                }
+                            }
                         }
                         let callee_value = self.eval_expr(*callee)?;
                         self.call_function(callee_value, new_args)

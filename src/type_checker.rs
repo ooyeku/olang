@@ -1,5 +1,5 @@
 use crate::ast::{
-    BinaryOp, Expr, FunctionDecl, GenericTypeDefinition, LetDecl, Program, Statement,
+    Argument, BinaryOp, Expr, FunctionDecl, GenericTypeDefinition, LetDecl, Program, Statement,
     TypeAnnotation, TypeContext, TypeDecl, TypeError, UnaryOp,
 };
 use std::collections::HashMap;
@@ -294,7 +294,17 @@ impl TypeChecker {
                 self.infer_unary_op_type(op, &operand_type)
             }
 
-            Expr::Call { callee, arguments } => self.infer_call_type(callee, arguments),
+            Expr::Call { callee, arguments } => {
+                // Convert arguments to expressions for type checking
+                let arg_exprs: Vec<Expr> = arguments
+                    .iter()
+                    .map(|arg| match arg {
+                        Argument::Positional(expr) => expr.clone(),
+                        Argument::Named { value, .. } => value.clone(),
+                    })
+                    .collect();
+                self.infer_call_type(callee, &arg_exprs)
+            }
 
             Expr::Lambda {
                 parameters,

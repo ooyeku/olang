@@ -3,7 +3,7 @@
 //! Provides seamless integration between the main interpreter with the Olang interpreter
 //! and the Olang Virtual Machine (OVM) for enhanced performance.
 
-use crate::ast::{FunctionDecl, Program, Value};
+use crate::ast::{Argument, FunctionDecl, Program, Value};
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::ovm::{FunctionId, OlangVirtualMachine, OvmConfig, OvmError, OvmValue};
 use std::collections::HashMap;
@@ -570,7 +570,11 @@ impl OvmInterpreter {
                     return true;
                 }
                 for arg in arguments {
-                    if self.expression_needs_classic_variables(arg) {
+                    let arg_expr = match arg {
+                        Argument::Positional(expr) => expr,
+                        Argument::Named { value, .. } => value,
+                    };
+                    if self.expression_needs_classic_variables(arg_expr) {
                         return true;
                     }
                 }
@@ -749,9 +753,9 @@ mod tests {
         // Test OVM-preferred builtin call routes to OVM
         let len_call = Expr::Call {
             callee: Box::new(Expr::Identifier("len".to_string())),
-            arguments: vec![Expr::List(std::rc::Rc::from(
+            arguments: vec![Argument::Positional(Expr::List(std::rc::Rc::from(
                 [Expr::Integer(1), Expr::Integer(2)] as [Expr; 2],
-            ))],
+            )))],
         };
         assert!(interpreter.should_use_ovm_for_expression(&len_call));
 
@@ -759,10 +763,10 @@ mod tests {
         let map_call = Expr::Call {
             callee: Box::new(Expr::Identifier("map".to_string())),
             arguments: vec![
-                Expr::List(std::rc::Rc::from(
+                Argument::Positional(Expr::List(std::rc::Rc::from(
                     [Expr::Integer(1), Expr::Integer(2)] as [Expr; 2]
-                )),
-                Expr::Lambda {
+                ))),
+                Argument::Positional(Expr::Lambda {
                     parameters: vec![crate::ast::Parameter {
                         name: "x".to_string(),
                         type_annotation: None,
@@ -774,7 +778,7 @@ mod tests {
                         right: Box::new(Expr::Integer(1)),
                     }),
                     return_type: None,
-                },
+                }),
             ],
         };
         assert!(!interpreter.should_use_ovm_for_expression(&map_call));

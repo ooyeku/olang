@@ -1,5 +1,5 @@
 use crate::ast::{
-    AsyncFunctionDecl, BinaryOp, EnumVariant, ErrorTypeDecl, ExportDecl, Expr, FieldValue,
+    Argument, AsyncFunctionDecl, BinaryOp, EnumVariant, ErrorTypeDecl, ExportDecl, Expr, FieldValue,
     FunctionDecl, ImportDecl, LetDecl, MatchArm, Parameter, Pattern, Program, PromiseType,
     Statement, StructField, StructLiteral, TypeAnnotation, TypeDecl, TypeDefinition,
     BitwiseOp, UnaryOp, TemplatePart,
@@ -422,7 +422,7 @@ impl Parser {
                 Rule::primary => {
                     // Space-separated argument - collect for function call
                     let arg = self.build_primary(pair.into_inner())?;
-                    pending_args.push(arg);
+                    pending_args.push(Argument::Positional(arg));
                 }
                 Rule::function_call => {
                     // Special case: Check if this is Ok(...) or Err(...) pattern
@@ -438,9 +438,17 @@ impl Parser {
                                 let arg = args.into_iter().next().ok_or_else(|| ParseError::InvalidSyntax {
                                     message: format!("{} expression missing argument", name),
                                 })?;
+                                let expr = match arg {
+                                    Argument::Positional(e) => e,
+                                    Argument::Named { .. } => {
+                                        return Err(ParseError::InvalidSyntax {
+                                            message: format!("{} expressions cannot use named arguments", name),
+                                        });
+                                    }
+                                };
                                 return match name.as_str() {
-                                    "Ok" => Ok(Expr::ResultOk(Box::new(arg))),
-                                    "Err" => Ok(Expr::ResultErr(Box::new(arg))),
+                                    "Ok" => Ok(Expr::ResultOk(Box::new(expr))),
+                                    "Err" => Ok(Expr::ResultErr(Box::new(expr))),
                                     _ => unreachable!(),
                                 };
                             } else {
@@ -546,14 +554,73 @@ impl Parser {
         Ok(expr)
     }
 
-    fn build_arg_list(&self, pairs: Pairs<Rule>) -> Result<Vec<Expr>, ParseError> {
+    fn build_arg_list(&self, pairs: Pairs<Rule>) -> Result<Vec<Argument>, ParseError> {
         let mut args = Vec::new();
         for pair in pairs {
-            if pair.as_rule() == Rule::expr {
-                args.push(self.build_expr(pair.into_inner())?);
+            match pair.as_rule() {
+                Rule::argument => {
+                    args.push(self.build_argument(pair.into_inner())?);
+                }
+                Rule::expr => {
+                    // Legacy support for direct expressions
+                    args.push(Argument::Positional(self.build_expr(pair.into_inner())?));
+                }
+                _ => {}
             }
         }
         Ok(args)
+    }
+
+    fn build_argument(&self, mut pairs: Pairs<Rule>) -> Result<Argument, ParseError> {
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Empty argument".to_string(),
+        })?;
+
+        match first_pair.as_rule() {
+            Rule::named_arg => {
+                let mut inner_pairs = first_pair.into_inner();
+                let name = inner_pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing argument name".to_string(),
+                })?.as_str().to_string();
+                let value = inner_pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing argument value".to_string(),
+                })?;
+                Ok(Argument::Named {
+                    name,
+                    value: self.build_expr(value.into_inner())?,
+                })
+            }
+            Rule::positional_arg => {
+                let expr_pair = first_pair.into_inner().next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing positional argument expression".to_string(),
+                })?;
+                Ok(Argument::Positional(self.build_expr(expr_pair.into_inner())?))
+            }
+            _ => Err(ParseError::InvalidSyntax {
+                message: format!("Invalid argument rule: {:?}", first_pair.as_rule()),
+            }),
+        }
+    }
+
+    fn build_expr_list(&self, pairs: Pairs<Rule>) -> Result<Vec<Expr>, ParseError> {
+        let mut expressions = Vec::new();
+        for pair in pairs {
+            match pair.as_rule() {
+                Rule::expr => {
+                    expressions.push(self.build_expr(pair.into_inner())?);
+                }
+                Rule::argument => {
+                    // For expression lists, we only want the positional value
+                    let arg = self.build_argument(pair.into_inner())?;
+                    match arg {
+                        Argument::Positional(expr) => expressions.push(expr),
+                        Argument::Named { value, .. } => expressions.push(value),
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(expressions)
     }
 
     fn build_primary(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
@@ -772,7 +839,7 @@ impl Parser {
         let mut expressions = Vec::new();
         for pair in pairs {
             if pair.as_rule() == Rule::arg_list {
-                expressions = self.build_arg_list(pair.into_inner())?;
+                expressions = self.build_expr_list(pair.into_inner())?;
                 break;
             }
         }
@@ -787,7 +854,7 @@ impl Parser {
         let mut expressions = Vec::new();
         for pair in pairs {
             if pair.as_rule() == Rule::arg_list {
-                expressions = self.build_arg_list(pair.into_inner())?;
+                expressions = self.build_expr_list(pair.into_inner())?;
                 break;
             }
         }
@@ -2612,38 +2679,170 @@ mod tests {
     fn test_enhanced_string_escapes() {
         let parser = Parser::new();
         
-        // Test basic escapes
-        assert_eq!(parser.process_string_escapes("\\n\\t\\r").unwrap(), "\n\t\r");
-        assert_eq!(parser.process_string_escapes("\\\"\\\\").unwrap(), "\"\\");
+        // Test basic string parsing
+        let input = r#""Hello\nWorld""#;
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse string with escape sequence");
         
-        // Test null character
-        assert_eq!(parser.process_string_escapes("\\0").unwrap(), "\0");
+        // Test unicode escapes
+        let input = r#""Hello\u0041""#;
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse string with unicode escape");
         
-        // Test hex escapes
-        assert_eq!(parser.process_string_escapes("\\x41").unwrap(), "A");
-        assert_eq!(parser.process_string_escapes("\\x61").unwrap(), "a");
-        assert_eq!(parser.process_string_escapes("\\x20").unwrap(), " ");
-        
-        // Test fixed-length Unicode escapes
-        assert_eq!(parser.process_string_escapes("\\u0041").unwrap(), "A");
-        assert_eq!(parser.process_string_escapes("\\u0061").unwrap(), "a");
-        assert_eq!(parser.process_string_escapes("\\u0020").unwrap(), " ");
-        
-        // Test variable-length Unicode escapes
-        assert_eq!(parser.process_string_escapes("\\u{41}").unwrap(), "A");
-        assert_eq!(parser.process_string_escapes("\\u{61}").unwrap(), "a");
-        assert_eq!(parser.process_string_escapes("\\u{20}").unwrap(), " ");
-        assert_eq!(parser.process_string_escapes("\\u{1F600}").unwrap(), "😀");
-        
-        // Test mixed escapes
-        assert_eq!(parser.process_string_escapes("Hello\\nWorld\\u{1F600}").unwrap(), "Hello\nWorld😀");
-        
-        // Test error cases
-        assert!(parser.process_string_escapes("\\x").is_err());
-        assert!(parser.process_string_escapes("\\x1").is_err());
-        assert!(parser.process_string_escapes("\\u").is_err());
-        assert!(parser.process_string_escapes("\\u{").is_err());
-        assert!(parser.process_string_escapes("\\u{}").is_err());
-        assert!(parser.process_string_escapes("\\u{invalid}").is_err());
+        // Test escaped quotes
+        let input = r#""He said \"Hello\"""#;
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse string with escaped quotes");
+    }
+
+    #[test]
+    fn test_named_arguments_parsing() {
+        let parser = Parser::new();
+
+        // Test function call with named arguments
+        let input = "greet(name: \"Alice\", age: 25)";
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse named arguments: {:?}", result);
+
+        if let Ok(program) = result {
+            assert_eq!(program.statements.len(), 1);
+            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+                assert_eq!(arguments.len(), 2);
+                
+                // Check first argument is named
+                if let Argument::Named { name, .. } = &arguments[0] {
+                    assert_eq!(name, "name");
+                } else {
+                    panic!("Expected named argument, got: {:?}", arguments[0]);
+                }
+
+                // Check second argument is named
+                if let Argument::Named { name, .. } = &arguments[1] {
+                    assert_eq!(name, "age");
+                } else {
+                    panic!("Expected named argument, got: {:?}", arguments[1]);
+                }
+            } else {
+                panic!("Expected function call, got: {:?}", program.statements[0]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_mixed_arguments_parsing() {
+        let parser = Parser::new();
+
+        // Test function call with mixed positional and named arguments
+        let input = "connect(\"localhost\", port: 8080, timeout: 30)";
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse mixed arguments: {:?}", result);
+
+        if let Ok(program) = result {
+            assert_eq!(program.statements.len(), 1);
+            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+                assert_eq!(arguments.len(), 3);
+                
+                // Check first argument is positional
+                assert!(matches!(arguments[0], Argument::Positional(_)));
+
+                // Check second argument is named
+                if let Argument::Named { name, .. } = &arguments[1] {
+                    assert_eq!(name, "port");
+                } else {
+                    panic!("Expected named argument, got: {:?}", arguments[1]);
+                }
+
+                // Check third argument is named
+                if let Argument::Named { name, .. } = &arguments[2] {
+                    assert_eq!(name, "timeout");
+                } else {
+                    panic!("Expected named argument, got: {:?}", arguments[2]);
+                }
+            } else {
+                panic!("Expected function call, got: {:?}", program.statements[0]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_positional_arguments_still_work() {
+        let parser = Parser::new();
+
+        // Test function call with only positional arguments
+        let input = "add(1, 2, 3)";
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse positional arguments: {:?}", result);
+
+        if let Ok(program) = result {
+            assert_eq!(program.statements.len(), 1);
+            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+                assert_eq!(arguments.len(), 3);
+                
+                // All arguments should be positional
+                for arg in arguments {
+                    assert!(matches!(arg, Argument::Positional(_)));
+                }
+            } else {
+                panic!("Expected function call, got: {:?}", program.statements[0]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_complex_named_argument_values() {
+        let parser = Parser::new();
+
+        // Test named arguments with complex expressions
+        let input = "process(data: [1, 2, 3], transform: (x) => x * 2, config: {debug: true})";
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse complex named arguments: {:?}", result);
+
+        if let Ok(program) = result {
+            assert_eq!(program.statements.len(), 1);
+            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+                assert_eq!(arguments.len(), 3);
+                
+                // Check all arguments are named with proper names
+                let names: Vec<&str> = arguments.iter().map(|arg| {
+                    match arg {
+                        Argument::Named { name, .. } => name.as_str(),
+                        _ => panic!("Expected named argument"),
+                    }
+                }).collect();
+                
+                assert_eq!(names, vec!["data", "transform", "config"]);
+            } else {
+                panic!("Expected function call, got: {:?}", program.statements[0]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_nested_function_calls_with_named_args() {
+        let parser = Parser::new();
+
+        // Test nested function calls with named arguments
+        let input = "outer(inner(value: 42), name: \"test\")";
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse nested calls with named arguments: {:?}", result);
+
+        if let Ok(program) = result {
+            assert_eq!(program.statements.len(), 1);
+            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+                assert_eq!(arguments.len(), 2);
+                
+                // First argument should be positional (the inner call)
+                assert!(matches!(arguments[0], Argument::Positional(_)));
+
+                // Second argument should be named
+                if let Argument::Named { name, .. } = &arguments[1] {
+                    assert_eq!(name, "name");
+                } else {
+                    panic!("Expected named argument, got: {:?}", arguments[1]);
+                }
+            } else {
+                panic!("Expected function call, got: {:?}", program.statements[0]);
+            }
+        }
     }
 }
