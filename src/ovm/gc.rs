@@ -573,7 +573,7 @@ impl GarbageCollector {
                     }
                     Err(e) => {
                         // Log error but continue running
-                        eprintln!("Background GC collection failed: {}", e);
+                        crate::log_error!("ovm_gc", "Background GC collection failed: {}", e);
                         // Reset counter anyway to prevent infinite triggering
                         allocation_counter.store(0, Ordering::Relaxed);
                         should_collect_flag.store(false, Ordering::Relaxed);
@@ -1493,16 +1493,19 @@ impl SafepointManager {
             self.safepoint_requested.store(false, Ordering::Relaxed);
 
             // Log debugging information
-            eprintln!("🚨 SAFEPOINT TIMEOUT DEBUG INFO:");
-            eprintln!(
+            crate::log_error!("ovm_gc", "SAFEPOINT TIMEOUT DEBUG INFO:");
+            crate::log_error!(
+                "ovm_gc",
                 "   Total threads registered: {}",
                 self.total_threads.load(Ordering::Relaxed)
             );
-            eprintln!(
+            crate::log_error!(
+                "ovm_gc",
                 "   Threads at safepoint: {}",
                 self.threads_at_safepoint.load(Ordering::Relaxed)
             );
-            eprintln!(
+            crate::log_error!(
+                "ovm_gc",
                 "   Safepoint requested: {}",
                 self.safepoint_requested.load(Ordering::Relaxed)
             );
@@ -1932,7 +1935,7 @@ mod tests {
                 for j in 0..5 {
                     thread::sleep(Duration::from_millis(20));
                     if let Err(e) = manager_clone.safepoint_poll() {
-                        eprintln!("Thread {} iteration {} safepoint poll failed: {}", i, j, e);
+                        crate::log_error!("ovm_gc", "Thread {} iteration {} safepoint poll failed: {}", i, j, e);
                     }
                 }
 

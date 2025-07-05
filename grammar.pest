@@ -56,7 +56,7 @@ function_decl = { "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ (
 async_function_decl = { "async" ~ "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ expr }
 type_params  = { "<" ~ identifier ~ ("," ~ identifier)* ~ ">" }
 param_list   = { parameter ~ ("," ~ parameter)* }
-parameter    = { identifier ~ (":" ~ type_annotation)? }
+parameter    = { identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
 
 // Variable declarations
 let_decl    = { "let" ~ identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }

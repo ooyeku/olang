@@ -158,7 +158,7 @@ impl OvmInterpreter {
         match self.initialize_ovm(OvmConfig::default()) {
             Ok(()) => Ok(()),
             Err(e) => {
-                eprintln!("OVM initialization failed: {}", e);
+                crate::log_error!("ovm_integration", "OVM initialization failed: {}", e);
                 Err(e)
             }
         }
@@ -766,6 +766,7 @@ mod tests {
                     parameters: vec![crate::ast::Parameter {
                         name: "x".to_string(),
                         type_annotation: None,
+                        default_value: None,
                     }],
                     body: Box::new(Expr::BinaryOp {
                         left: Box::new(Expr::Identifier("x".to_string())),

@@ -678,7 +678,21 @@ impl Interpreter {
     ) -> Result<Value, InterpreterError> {
         match callee {
             Value::Function(func) => {
-                if func.parameters.len() != arguments.len() {
+                // Count required parameters (those without default values)
+                let required_params = func.parameters.iter()
+                    .filter(|p| p.default_value.is_none())
+                    .count();
+                
+                // Check if we have enough arguments for required parameters
+                if arguments.len() < required_params {
+                    return Err(InterpreterError::ArityMismatch {
+                        expected: required_params,
+                        got: arguments.len(),
+                    });
+                }
+                
+                // Check if we have too many arguments
+                if arguments.len() > func.parameters.len() {
                     return Err(InterpreterError::ArityMismatch {
                         expected: func.parameters.len(),
                         got: arguments.len(),
@@ -696,9 +710,22 @@ impl Interpreter {
                     new_env.define(name.clone(), Value::Function(func.clone()));
                 }
 
-                // Add parameters to environment
-                for (param, arg) in func.parameters.iter().zip(arguments.iter()) {
-                    new_env.define(param.name.clone(), arg.clone());
+                // Add parameters to environment, using defaults for missing arguments
+                for (i, param) in func.parameters.iter().enumerate() {
+                    let value = if i < arguments.len() {
+                        // Use provided argument
+                        arguments[i].clone()
+                    } else if let Some(default_expr) = &param.default_value {
+                        // Use default value - evaluate it in the current environment
+                        self.eval_expr(default_expr.clone())?
+                    } else {
+                        // This should not happen due to our arity check above
+                        return Err(InterpreterError::RuntimeError {
+                            message: format!("Missing argument for parameter {}", param.name),
+                        });
+                    };
+                    
+                    new_env.define(param.name.clone(), value);
                 }
 
                 let mut new_interpreter = Interpreter {
@@ -1324,7 +1351,7 @@ impl Interpreter {
             if let Some(module) = self.get_stdlib_module(module_path) {
                 // Define the module in the environment
                 self.environment.define(module_path.clone(), module);
-                println!("Imported stdlib module: {}", module_path);
+                crate::log_debug!("interpreter", "Imported stdlib module: {}", module_path);
                 Ok(Value::Unit)
             } else {
                 Err(InterpreterError::RuntimeError { 
@@ -1402,7 +1429,7 @@ impl Interpreter {
         };
 
         if debug_config.enable_resolution_tracing {
-            println!("🔍 Resolving module: '{}'", module_path);
+            crate::log_debug!("interpreter", "Resolving module: '{}'", module_path);
         }
         
         let current_dir = std::env::current_dir()
@@ -1427,19 +1454,19 @@ impl Interpreter {
         ];
 
         if debug_config.log_search_paths {
-            println!("  📁 Search paths:");
+            crate::log_trace!("interpreter", "Module search paths:");
             for (i, candidate) in candidates.iter().enumerate() {
-                let status = if candidate.exists() { "✅" } else { "❌" };
-                println!("    {}. {} {}", i + 1, status, candidate.display());
+                let status = if candidate.exists() { "exists" } else { "missing" };
+                crate::log_trace!("interpreter", "  {}. {} {}", i + 1, status, candidate.display());
             }
         }
         
         for candidate in &candidates {
             if candidate.exists() && candidate.is_file() {
                 if debug_config.enable_resolution_tracing {
-                    println!("  ✅ Found: {}", candidate.display());
+                    crate::log_debug!("interpreter", "Found module file: {}", candidate.display());
                     if let Some(start) = start_time {
-                        println!("  ⏱️  Resolution time: {:?}", start.elapsed());
+                        crate::log_trace!("interpreter", "Module resolution time: {:?}", start.elapsed());
                     }
                 }
                 return Ok(candidate.clone());
@@ -1487,7 +1514,7 @@ impl Interpreter {
         let value = self.eval_expr(export_decl.value)?;
         self.environment
             .define(export_decl.name.clone(), value.clone());
-        println!("Export: {} = {:?}", export_decl.name, value);
+        crate::log_debug!("interpreter", "Export: {} = {:?}", export_decl.name, value);
         Ok(value)
     }
 

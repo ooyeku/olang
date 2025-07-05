@@ -57,11 +57,12 @@ pub struct AsyncFunctionDecl {
     pub body: Expr,
 }
 
-/// Function parameter with optional type annotation
+/// Function parameter with optional type annotation and default value
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Parameter {
     pub name: String,
     pub type_annotation: Option<TypeAnnotation>,
+    pub default_value: Option<Expr>,
 }
 
 /// Expression types supported by Olang

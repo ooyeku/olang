@@ -472,3 +472,190 @@ fn test_type_annotations_comprehensive() {
 
     assert_eq!(result, olang::ast::Value::Integer(52));
 }
+
+// =============================================================================
+// DEFAULT PARAMETER TESTS
+// =============================================================================
+
+#[test]
+fn test_default_parameters_single_default() {
+    let parser = Parser::new();
+    let mut interpreter = Interpreter::new();
+
+    let source = r#"
+        fn greet(name = "World") = "Hello, " + name;
+        greet()
+    "#;
+    let program = parser.parse(source).expect("Failed to parse");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
+    assert_eq!(
+        result,
+        olang::ast::Value::String("Hello, World".to_string().into())
+    );
+}
+
+#[test]
+fn test_default_parameters_override_default() {
+    let parser = Parser::new();
+    let mut interpreter = Interpreter::new();
+
+    let source = r#"
+        fn greet(name = "World") = "Hello, " + name;
+        greet("Alice")
+    "#;
+    let program = parser.parse(source).expect("Failed to parse");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
+    assert_eq!(
+        result,
+        olang::ast::Value::String("Hello, Alice".to_string().into())
+    );
+}
+
+#[test]
+fn test_default_parameters_mixed_required_and_default() {
+    let parser = Parser::new();
+    let mut interpreter = Interpreter::new();
+
+    let source = r#"
+        fn multiply(a, b = 2) = a * b;
+        multiply(5)
+    "#;
+    let program = parser.parse(source).expect("Failed to parse");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
+    assert_eq!(result, olang::ast::Value::Integer(10));
+}
+
+#[test]
+fn test_default_parameters_mixed_with_override() {
+    let parser = Parser::new();
+    let mut interpreter = Interpreter::new();
+
+    let source = r#"
+        fn multiply(a, b = 2) = a * b;
+        multiply(5, 3)
+    "#;
+    let program = parser.parse(source).expect("Failed to parse");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
+    assert_eq!(result, olang::ast::Value::Integer(15));
+}
+
+#[test]
+fn test_default_parameters_multiple_defaults() {
+    let parser = Parser::new();
+    let mut interpreter = Interpreter::new();
+
+    let source = r#"
+        fn create_person(name = "Unknown", age = 0) = name + " is " + age + " years old";
+        create_person()
+    "#;
+    let program = parser.parse(source).expect("Failed to parse");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
+    assert_eq!(
+        result,
+        olang::ast::Value::String("Unknown is 0 years old".to_string().into())
+    );
+}
+
+#[test]
+fn test_default_parameters_partial_override() {
+    let parser = Parser::new();
+    let mut interpreter = Interpreter::new();
+
+    let source = r#"
+        fn create_person(name = "Unknown", age = 0) = name + " is " + age + " years old";
+        create_person("Alice")
+    "#;
+    let program = parser.parse(source).expect("Failed to parse");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
+    assert_eq!(
+        result,
+        olang::ast::Value::String("Alice is 0 years old".to_string().into())
+    );
+}
+
+#[test]
+fn test_default_parameters_with_type_annotations() {
+    let parser = Parser::new();
+    let mut interpreter = Interpreter::new();
+
+    let source = r#"
+        fn add(a: Int, b: Int = 10) = a + b;
+        add(5)
+    "#;
+    let program = parser.parse(source).expect("Failed to parse");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
+    assert_eq!(result, olang::ast::Value::Integer(15));
+}
+
+#[test]
+fn test_default_parameters_expression_as_default() {
+    let parser = Parser::new();
+    let mut interpreter = Interpreter::new();
+
+    let source = r#"
+        fn power(base, exponent = 2) = if exponent == 0 => 1 else => base * power(base, exponent - 1);
+        power(3)
+    "#;
+    let program = parser.parse(source).expect("Failed to parse");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
+    assert_eq!(result, olang::ast::Value::Integer(9)); // 3^2 = 9
+}
+
+#[test]
+fn test_default_parameters_lambda_functions() {
+    let parser = Parser::new();
+    let mut interpreter = Interpreter::new();
+
+    let source = r#"
+        let multiply = (x, y = 2) => x * y;
+        multiply(4)
+    "#;
+    let program = parser.parse(source).expect("Failed to parse");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
+    assert_eq!(result, olang::ast::Value::Integer(8));
+}
+
+#[test]
+fn test_default_parameters_error_too_many_args() {
+    let parser = Parser::new();
+    let mut interpreter = Interpreter::new();
+
+    let source = r#"
+        fn greet(name = "World") = "Hello, " + name;
+        greet("Alice", "Bob")
+    "#;
+    let program = parser.parse(source).expect("Failed to parse");
+    let result = interpreter.eval_program(program);
+
+    assert!(result.is_err());
+    if let Err(e) = result {
+        assert!(e.to_string().contains("ArityMismatch") || e.to_string().contains("Arity mismatch"));
+    }
+}

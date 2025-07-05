@@ -128,6 +128,7 @@ mod tests {
             parameters: vec![Parameter {
                 name: "x".to_string(),
                 type_annotation: None,
+                default_value: None,
             }],
             body: crate::ast::Expr::BinaryOp {
                 left: Box::new(crate::ast::Expr::Identifier("x".to_string())),
@@ -173,6 +174,7 @@ mod tests {
             parameters: vec![Parameter {
                 name: "x".to_string(),
                 type_annotation: None,
+                default_value: None,
             }],
             body: crate::ast::Expr::BinaryOp {
                 left: Box::new(crate::ast::Expr::BinaryOp {
@@ -402,6 +404,7 @@ mod tests {
             parameters: vec![Parameter {
                 name: "x".to_string(),
                 type_annotation: None,
+                default_value: None,
             }],
             body: crate::ast::Expr::BinaryOp {
                 left: Box::new(crate::ast::Expr::Identifier("x".to_string())),
@@ -416,6 +419,7 @@ mod tests {
             parameters: vec![Parameter {
                 name: "x".to_string(),
                 type_annotation: None,
+                default_value: None,
             }],
             body: crate::ast::Expr::BinaryOp {
                 left: Box::new(crate::ast::Expr::BinaryOp {
@@ -486,14 +490,14 @@ mod tests {
         // Dummy function for map
         let map_fn = Function {
             name: Some("map_fn".to_string()),
-            parameters: vec![Parameter { name: "x".to_string(), type_annotation: None }],
+            parameters: vec![Parameter { name: "x".to_string(), type_annotation: None, default_value: None }],
             body: crate::ast::Expr::Identifier("x".to_string()),
             closure: Default::default(),
         };
         // Dummy function for filter
         let filter_fn = Function {
             name: Some("filter_fn".to_string()),
-            parameters: vec![Parameter { name: "x".to_string(), type_annotation: None }],
+            parameters: vec![Parameter { name: "x".to_string(), type_annotation: None, default_value: None }],
             body: crate::ast::Expr::Identifier("x".to_string()),
             closure: Default::default(),
         };

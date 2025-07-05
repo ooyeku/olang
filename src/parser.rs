@@ -826,19 +826,26 @@ impl Parser {
             .as_str()
             .to_string();
 
-        let type_annotation = if let Some(pair) = pairs.next() {
-            if pair.as_rule() == Rule::type_annotation {
-                Some(self.build_type_annotation(pair.into_inner())?)
-            } else {
-                None
+        let mut type_annotation = None;
+        let mut default_value = None;
+
+        // Parse optional type annotation and default value
+        while let Some(pair) = pairs.next() {
+            match pair.as_rule() {
+                Rule::type_annotation => {
+                    type_annotation = Some(self.build_type_annotation(pair.into_inner())?);
+                }
+                Rule::expr => {
+                    default_value = Some(self.build_expr(pair.into_inner())?);
+                }
+                _ => {}
             }
-        } else {
-            None
-        };
+        }
 
         Ok(Parameter {
             name,
             type_annotation,
+            default_value,
         })
     }
 

@@ -10,6 +10,7 @@ pub mod builtin;
 pub mod help;
 pub mod interpreter;
 pub mod jit;
+pub mod log;
 pub mod ovm; // Olang Virtual Machine
 pub mod ovm_integration; // OVM Integration Layer
 pub mod ovm_repl; // Enhanced REPL with OVM support

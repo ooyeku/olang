@@ -3619,10 +3619,12 @@ mod tests {
                 Parameter {
                     name: "a".to_string(),
                     type_annotation: Some(TypeAnnotation::Int),
+                    default_value: None,
                 },
                 Parameter {
                     name: "b".to_string(),
                     type_annotation: Some(TypeAnnotation::Int),
+                    default_value: None,
                 },
             ],
             return_type: Some(TypeAnnotation::Int),
