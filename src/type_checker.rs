@@ -197,8 +197,8 @@ impl TypeChecker {
 
                 // Add function to context
                 let func_type = TypeAnnotation::Function {
-                    params: param_types,
-                    return_type: Box::new(return_type),
+                    params: param_types.clone(),
+                    return_type: Box::new(return_type.clone()),
                 };
 
                 self.context
@@ -206,6 +206,47 @@ impl TypeChecker {
                     .insert(async_func_decl.name.clone(), func_type.clone());
 
                 // TODO: Type check the async function body
+                // Create a new type checker context for the async function body
+                let mut async_checker = self.clone();
+                
+                // Add type parameters to scope for generic async functions
+                for type_param in &async_func_decl.type_params {
+                    async_checker.context.type_parameters.push(type_param.clone());
+                    async_checker.context.type_vars.insert(
+                        type_param.clone(),
+                        TypeAnnotation::TypeVariable(type_param.clone()),
+                    );
+                }
+                
+                // Add parameters to function body scope
+                for (param, param_type) in async_func_decl.parameters.iter().zip(param_types.iter()) {
+                    async_checker.context.variables.insert(param.name.clone(), param_type.clone());
+                }
+                
+                // Type check the async function body
+                let body_type = async_checker.infer_type(&async_func_decl.body)?;
+                
+                // For async functions, the body type should be compatible with the value type of the Promise
+                // Extract the expected value type from the Promise return type
+                let expected_body_type = match &return_type {
+                    TypeAnnotation::Promise { value_type, .. } => {
+                        *value_type.clone()
+                    }
+                    _ => {
+                        // If return type is not a Promise, assume Unknown
+                        TypeAnnotation::Unknown
+                    }
+                };
+                
+                // Check body type compatibility (if not unknown)
+                if expected_body_type != TypeAnnotation::Unknown {
+                    async_checker.check_type_compatibility(
+                        &expected_body_type,
+                        &body_type,
+                        &format!("async function '{}' body", async_func_decl.name),
+                    )?;
+                }
+                
                 Ok(func_type)
             }
         }

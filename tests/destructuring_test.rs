@@ -1,4 +1,5 @@
-use olang::{Interpreter, InterpreterError, Parser};
+use olang::{Interpreter, Parser};
+use olang::interpreter::InterpreterError;
 
 #[test]
 fn test_simple_tuple_destructuring() {

@@ -1,4 +1,4 @@
-use crate::ast::{Expr, MatchArm, Pattern, Program, Statement};
+use crate::ast::{Expr, MatchArm, Pattern, Program, Statement, Argument, TemplatePart};
 use crate::builtin::BuiltinFunctions;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -231,8 +231,28 @@ impl Analyzer {
                 self.analyze_expr(end)?;
                 Ok(())
             }
-            Expr::StructLiteral(_) => {
-                // TODO: Implement struct literal analysis
+            Expr::StructLiteral(struct_lit) => {
+                // Analyze all field expressions in the struct literal
+                for field in &struct_lit.fields {
+                    self.analyze_expr(&field.value)?;
+                }
+                
+                // Check for duplicate field names
+                let mut field_names = HashSet::new();
+                for field in &struct_lit.fields {
+                    if !field_names.insert(&field.name) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: field.name.clone(),
+                        });
+                    }
+                }
+                
+                // In a full implementation, we would also:
+                // - Check if the struct type exists
+                // - Check if all required fields are present
+                // - Check if any extra fields are provided
+                // - Validate field types against the struct definition
+                
                 Ok(())
             }
             Expr::FieldAccess { object, .. } => {
@@ -250,9 +270,43 @@ impl Analyzer {
                 self.analyze_expr(try_block)?;
                 self.analyze_expr(catch_block)
             }
-            Expr::Assignment { target: _, value } => {
+            Expr::Assignment { target, value } => {
+                // Analyze the value expression first
                 self.analyze_expr(value)?;
-                // TODO: Check if variable exists for assignment vs declaration
+                
+                // Check if the target variable exists in any scope
+                let mut variable_exists = false;
+                for scope in self.scopes.iter().rev() {
+                    if scope.contains(target) {
+                        variable_exists = true;
+                        break;
+                    }
+                }
+                
+                if !variable_exists {
+                    // Variable doesn't exist - this is an assignment to an undefined variable
+                    // In some languages this would be an error, but in Olang it might be
+                    // allowed to create variables through assignment
+                    // For now, we'll add it to the current scope
+                    self.scopes[self.current_scope].insert(target.clone());
+                    
+                    // Also add to variables map for tracking
+                    self.variables.insert(
+                        target.clone(),
+                        VariableInfo {
+                            name: target.clone(),
+                            scope: self.current_scope,
+                            is_mutable: true, // Variables created through assignment are mutable
+                            usage_count: 1,   // Count the assignment as a use
+                        },
+                    );
+                } else {
+                    // Variable exists - update usage count
+                    if let Some(var_info) = self.variables.get_mut(target) {
+                        var_info.usage_count += 1;
+                    }
+                }
+                
                 Ok(())
             }
             Expr::Index { object, index } => {
@@ -272,11 +326,29 @@ impl Analyzer {
         let mut patterns = Vec::new();
         for arm in arms {
             patterns.push(&arm.pattern);
+            
+            // Enter a new scope for pattern variables
+            self.enter_scope();
+            
+            // Extract and bind pattern variables
+            let pattern_variables = self.extract_pattern_variables(&arm.pattern);
+            for var_name in pattern_variables {
+                self.scopes[self.current_scope].insert(var_name);
+            }
+            
+            // Analyze the arm expression
             self.analyze_expr(&arm.expression)?;
+            
+            // Exit the scope
+            self.exit_scope();
         }
 
-        // TODO: Implement pattern exhaustiveness checking
-        // For now, just check that we have at least one arm
+        // Check pattern exhaustiveness
+        let pattern_refs: Vec<Pattern> = patterns.iter().map(|p| (*p).clone()).collect();
+        if !self.check_pattern_exhaustiveness(&pattern_refs)? {
+            return Err(AnalysisError::NonExhaustivePatternMatch);
+        }
+
         Ok(())
     }
 
@@ -403,10 +475,252 @@ impl Analyzer {
         Ok(!patterns.is_empty())
     }
 
-    pub fn detect_dead_code(&mut self, _program: &Program) -> Vec<usize> {
-        // TODO: Implement dead code detection
-        // This would track which statements are reachable
-        Vec::new()
+    pub fn detect_dead_code(&mut self, program: &Program) -> Vec<usize> {
+        let mut reachable = HashSet::new();
+        
+        // All top-level statements are initially reachable
+        for (index, statement) in program.statements.iter().enumerate() {
+            reachable.insert(index);
+            self.mark_statement_reachable(statement, &mut reachable);
+        }
+        
+        // Find unreachable statements
+        let mut dead_code = Vec::new();
+        for (index, _) in program.statements.iter().enumerate() {
+            if !reachable.contains(&index) {
+                dead_code.push(index);
+            }
+        }
+        
+        dead_code
+    }
+
+    /// Mark a statement and its contained expressions as reachable
+    fn mark_statement_reachable(&mut self, statement: &Statement, reachable: &mut HashSet<usize>) {
+        match statement {
+            Statement::Expression(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Statement::LetDecl(let_decl) => {
+                if let Some(value) = &let_decl.value {
+                    self.mark_expression_reachable(value, reachable);
+                }
+            }
+            Statement::FunctionDecl(func_decl) => {
+                self.mark_expression_reachable(&func_decl.body, reachable);
+            }
+            Statement::AsyncFunctionDecl(async_func_decl) => {
+                self.mark_expression_reachable(&async_func_decl.body, reachable);
+            }
+            Statement::ExportDecl(export_decl) => {
+                self.mark_expression_reachable(&export_decl.value, reachable);
+            }
+            Statement::TypeDecl(_) | Statement::ErrorTypeDecl(_) | Statement::ImportDecl(_) => {
+                // These don't contain expressions that can be unreachable
+            }
+        }
+    }
+
+    /// Mark an expression and its sub-expressions as reachable
+    fn mark_expression_reachable(&mut self, expr: &Expr, reachable: &mut HashSet<usize>) {
+        match expr {
+            Expr::Block(statements) => {
+                let mut statements_reachable = true;
+                for statement in statements {
+                    if statements_reachable {
+                        self.mark_statement_reachable(statement, reachable);
+                    }
+                    
+                    // Check if this statement makes subsequent statements unreachable
+                    if self.is_terminating_statement(statement) {
+                        statements_reachable = false;
+                    }
+                }
+            }
+            Expr::If { condition, then_branch, else_branch } => {
+                self.mark_expression_reachable(condition, reachable);
+                self.mark_expression_reachable(then_branch, reachable);
+                if let Some(else_branch) = else_branch {
+                    self.mark_expression_reachable(else_branch, reachable);
+                }
+            }
+            Expr::Match { value, arms } => {
+                self.mark_expression_reachable(value, reachable);
+                for arm in arms {
+                    self.mark_expression_reachable(&arm.expression, reachable);
+                }
+            }
+            Expr::Lambda { body, .. } => {
+                self.mark_expression_reachable(body, reachable);
+            }
+            Expr::Call { callee, arguments } => {
+                self.mark_expression_reachable(callee, reachable);
+                for arg in arguments {
+                    match arg {
+                        Argument::Positional(expr) => self.mark_expression_reachable(expr, reachable),
+                        Argument::Named { value, .. } => self.mark_expression_reachable(value, reachable),
+                    }
+                }
+            }
+            Expr::Pipeline { left, right } => {
+                self.mark_expression_reachable(left, reachable);
+                self.mark_expression_reachable(right, reachable);
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.mark_expression_reachable(left, reachable);
+                self.mark_expression_reachable(right, reachable);
+            }
+            Expr::UnaryOp { operand, .. } => {
+                self.mark_expression_reachable(operand, reachable);
+            }
+            Expr::List(items) => {
+                for item in items.iter() {
+                    self.mark_expression_reachable(item, reachable);
+                }
+            }
+            Expr::Tuple(items) => {
+                for item in items.iter() {
+                    self.mark_expression_reachable(item, reachable);
+                }
+            }
+            Expr::MapLiteral { entries } => {
+                for entry in entries {
+                    self.mark_expression_reachable(&entry.key, reachable);
+                    self.mark_expression_reachable(&entry.value, reachable);
+                }
+            }
+            Expr::Index { object, index } => {
+                self.mark_expression_reachable(object, reachable);
+                self.mark_expression_reachable(index, reachable);
+            }
+            Expr::FieldAccess { object, .. } => {
+                self.mark_expression_reachable(object, reachable);
+            }
+            Expr::Assignment { value, .. } => {
+                self.mark_expression_reachable(value, reachable);
+            }
+            Expr::TryCatch { try_block, catch_block, .. } => {
+                self.mark_expression_reachable(try_block, reachable);
+                self.mark_expression_reachable(catch_block, reachable);
+            }
+            Expr::Try(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::ResultOk(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::ResultErr(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::ForLoop { iterable, body, .. } => {
+                self.mark_expression_reachable(iterable, reachable);
+                self.mark_expression_reachable(body, reachable);
+            }
+            Expr::WhileLoop { condition, body } => {
+                self.mark_expression_reachable(condition, reachable);
+                self.mark_expression_reachable(body, reachable);
+            }
+            Expr::Loop { body } => {
+                self.mark_expression_reachable(body, reachable);
+            }
+            Expr::Range { start, end, .. } => {
+                self.mark_expression_reachable(start, reachable);
+                self.mark_expression_reachable(end, reachable);
+            }
+            Expr::StructLiteral(struct_lit) => {
+                for field in &struct_lit.fields {
+                    self.mark_expression_reachable(&field.value, reachable);
+                }
+            }
+            Expr::AnonymousObject { fields } => {
+                for field in fields {
+                    self.mark_expression_reachable(&field.value, reachable);
+                }
+            }
+            Expr::Async { body, .. } => {
+                self.mark_expression_reachable(body, reachable);
+            }
+            Expr::Await { expression } => {
+                self.mark_expression_reachable(expression, reachable);
+            }
+            Expr::Promise { value, delay, .. } => {
+                self.mark_expression_reachable(value, reachable);
+                if let Some(delay) = delay {
+                    self.mark_expression_reachable(delay, reachable);
+                }
+            }
+            Expr::All(promises) => {
+                for promise in promises {
+                    self.mark_expression_reachable(promise, reachable);
+                }
+            }
+            Expr::Race(promises) => {
+                for promise in promises {
+                    self.mark_expression_reachable(promise, reachable);
+                }
+            }
+            Expr::Spawn(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::Spread(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::Rest(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::TemplateString { parts } => {
+                for part in parts {
+                    if let TemplatePart::Interpolation(expr) = part {
+                        self.mark_expression_reachable(expr, reachable);
+                    }
+                }
+            }
+            Expr::BitwiseOp { left, right, .. } => {
+                self.mark_expression_reachable(left, reachable);
+                self.mark_expression_reachable(right, reachable);
+            }
+            // Terminal expressions that don't contain other expressions
+            Expr::Integer(_) | Expr::Float(_) | Expr::String(_) | Expr::Boolean(_) |
+            Expr::RawString(_) | Expr::Identifier(_) | Expr::Break | Expr::Continue => {
+                // These don't contain sub-expressions
+            }
+        }
+    }
+
+    /// Check if a statement is terminating (makes subsequent statements unreachable)
+    fn is_terminating_statement(&self, statement: &Statement) -> bool {
+        match statement {
+            Statement::Expression(expr) => self.is_terminating_expression(expr),
+            _ => false,
+        }
+    }
+
+    /// Check if an expression is terminating (doesn't return control flow)
+    fn is_terminating_expression(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Break | Expr::Continue => true,
+            Expr::Block(statements) => {
+                // A block is terminating if its last statement is terminating
+                if let Some(last_stmt) = statements.last() {
+                    self.is_terminating_statement(last_stmt)
+                } else {
+                    false
+                }
+            }
+            Expr::If { then_branch, else_branch, .. } => {
+                // If is terminating if both branches are terminating
+                if let Some(else_branch) = else_branch {
+                    self.is_terminating_expression(then_branch) && self.is_terminating_expression(else_branch)
+                } else {
+                    false
+                }
+            }
+            Expr::Match { arms, .. } => {
+                // Match is terminating if all arms are terminating
+                arms.iter().all(|arm| self.is_terminating_expression(&arm.expression))
+            }
+            _ => false,
+        }
     }
 }
 
@@ -488,7 +802,7 @@ impl TypeInferrer {
 
 // Dead code detection
 pub struct DeadCodeDetector {
-    _reachable: HashSet<usize>,
+    reachable: HashSet<usize>,
 }
 
 impl Default for DeadCodeDetector {
@@ -500,13 +814,170 @@ impl Default for DeadCodeDetector {
 impl DeadCodeDetector {
     pub fn new() -> Self {
         Self {
-            _reachable: HashSet::new(),
+            reachable: HashSet::new(),
         }
     }
 
-    pub fn detect_dead_code(&mut self, _program: &Program) -> Vec<usize> {
-        // TODO: Implement dead code detection
-        // This would track which statements are reachable
-        Vec::new()
+    pub fn detect_dead_code(&mut self, program: &Program) -> Vec<usize> {
+        self.reachable.clear();
+        
+        // All top-level statements are initially reachable
+        for (index, statement) in program.statements.iter().enumerate() {
+            self.reachable.insert(index);
+            self.mark_statement_reachable(statement);
+        }
+        
+        // Find unreachable statements
+        let mut dead_code = Vec::new();
+        for (index, _) in program.statements.iter().enumerate() {
+            if !self.reachable.contains(&index) {
+                dead_code.push(index);
+            }
+        }
+        
+        dead_code
+    }
+
+    /// Mark a statement and its contained expressions as reachable
+    fn mark_statement_reachable(&mut self, statement: &Statement) {
+        match statement {
+            Statement::Expression(expr) => {
+                self.mark_expression_reachable(expr);
+            }
+            Statement::LetDecl(let_decl) => {
+                if let Some(value) = &let_decl.value {
+                    self.mark_expression_reachable(value);
+                }
+            }
+            Statement::FunctionDecl(func_decl) => {
+                self.mark_expression_reachable(&func_decl.body);
+            }
+            Statement::AsyncFunctionDecl(async_func_decl) => {
+                self.mark_expression_reachable(&async_func_decl.body);
+            }
+            Statement::ExportDecl(export_decl) => {
+                self.mark_expression_reachable(&export_decl.value);
+            }
+            Statement::TypeDecl(_) | Statement::ErrorTypeDecl(_) | Statement::ImportDecl(_) => {
+                // These don't contain expressions that can be unreachable
+            }
+        }
+    }
+
+    /// Mark an expression and its sub-expressions as reachable
+    fn mark_expression_reachable(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Block(statements) => {
+                let mut statements_reachable = true;
+                for statement in statements {
+                    if statements_reachable {
+                        self.mark_statement_reachable(statement);
+                    }
+                    
+                    // Check if this statement makes subsequent statements unreachable
+                    if self.is_terminating_statement(statement) {
+                        statements_reachable = false;
+                    }
+                }
+            }
+            Expr::If { condition, then_branch, else_branch } => {
+                self.mark_expression_reachable(condition);
+                self.mark_expression_reachable(then_branch);
+                if let Some(else_branch) = else_branch {
+                    self.mark_expression_reachable(else_branch);
+                }
+            }
+            Expr::Match { value, arms } => {
+                self.mark_expression_reachable(value);
+                for arm in arms {
+                    self.mark_expression_reachable(&arm.expression);
+                }
+            }
+            Expr::Lambda { body, .. } => {
+                self.mark_expression_reachable(body);
+            }
+            Expr::Call { callee, arguments } => {
+                self.mark_expression_reachable(callee);
+                for arg in arguments {
+                    match arg {
+                        Argument::Positional(expr) => self.mark_expression_reachable(expr),
+                        Argument::Named { value, .. } => self.mark_expression_reachable(value),
+                    }
+                }
+            }
+            Expr::Pipeline { left, right } => {
+                self.mark_expression_reachable(left);
+                self.mark_expression_reachable(right);
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.mark_expression_reachable(left);
+                self.mark_expression_reachable(right);
+            }
+            Expr::UnaryOp { operand, .. } => {
+                self.mark_expression_reachable(operand);
+            }
+            Expr::List(items) => {
+                for item in items.iter() {
+                    self.mark_expression_reachable(item);
+                }
+            }
+            Expr::Tuple(items) => {
+                for item in items.iter() {
+                    self.mark_expression_reachable(item);
+                }
+            }
+            Expr::MapLiteral { entries } => {
+                for entry in entries {
+                    self.mark_expression_reachable(&entry.key);
+                    self.mark_expression_reachable(&entry.value);
+                }
+            }
+            Expr::StructLiteral(struct_lit) => {
+                for field in &struct_lit.fields {
+                    self.mark_expression_reachable(&field.value);
+                }
+            }
+            // Add other expression types as needed
+            _ => {
+                // For now, just mark as reachable without recursing
+                // In a full implementation, we'd handle all expression types
+            }
+        }
+    }
+
+    /// Check if a statement is terminating (makes subsequent statements unreachable)
+    fn is_terminating_statement(&self, statement: &Statement) -> bool {
+        match statement {
+            Statement::Expression(expr) => self.is_terminating_expression(expr),
+            _ => false,
+        }
+    }
+
+    /// Check if an expression is terminating (doesn't return control flow)
+    fn is_terminating_expression(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Break | Expr::Continue => true,
+            Expr::Block(statements) => {
+                // A block is terminating if its last statement is terminating
+                if let Some(last_stmt) = statements.last() {
+                    self.is_terminating_statement(last_stmt)
+                } else {
+                    false
+                }
+            }
+            Expr::If { then_branch, else_branch, .. } => {
+                // If is terminating if both branches are terminating
+                if let Some(else_branch) = else_branch {
+                    self.is_terminating_expression(then_branch) && self.is_terminating_expression(else_branch)
+                } else {
+                    false
+                }
+            }
+            Expr::Match { arms, .. } => {
+                // Match is terminating if all arms are terminating
+                arms.iter().all(|arm| self.is_terminating_expression(&arm.expression))
+            }
+            _ => false,
+        }
     }
 }
