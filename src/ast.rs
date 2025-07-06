@@ -458,6 +458,11 @@ pub enum TypeAnnotation {
     Literal {
         value: Box<Value>,
     },
+    Range {
+        start: Box<TypeAnnotation>,
+        end: Box<TypeAnnotation>,
+        inclusive: bool,
+    },
 }
 
 /// Generic type definition
@@ -522,6 +527,24 @@ pub enum TypeError {
     },
     CannotInfer {
         expression: String,
+    },
+    /// Enhanced error for constraint violations
+    ConstraintViolation {
+        type_name: String,
+        constraint: String,
+        location: String,
+    },
+    /// Enhanced error for union type mismatches
+    UnionMismatch {
+        expected_types: Vec<TypeAnnotation>,
+        found: TypeAnnotation,
+        location: String,
+    },
+    /// Enhanced error for intersection type issues
+    IntersectionMismatch {
+        required_types: Vec<TypeAnnotation>,
+        found: TypeAnnotation,
+        location: String,
     },
 }
 

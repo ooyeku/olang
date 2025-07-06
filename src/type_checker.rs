@@ -1,12 +1,23 @@
 use crate::ast::{
     Argument, BinaryOp, Expr, FunctionDecl, GenericTypeDefinition, LetDecl, Pattern, Program, Statement,
-    TypeAnnotation, TypeContext, TypeDecl, TypeError, UnaryOp,
+    TypeAnnotation, TypeContext, TypeDecl, TypeError, UnaryOp, Value,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-/// Type checker for Olang
+/// Built-in type classes for constraints
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeClass {
+    Numeric,     // Int, Float
+    Comparable,  // Int, Float, String, Bool
+    Iterable,    // List, String, Range
+    Equatable,   // All types except functions
+    Hashable,    // Types that can be used as map keys
+}
+
+/// Type checker for Olang with enhanced type checking
 pub struct TypeChecker {
     context: TypeContext,
+    type_classes: HashMap<String, Vec<TypeClass>>,
 }
 
 impl Default for TypeChecker {
@@ -26,47 +37,63 @@ impl TypeChecker {
             type_parameters: Vec::new(),
         };
 
-        // Add built-in function types
+        // Add built-in function types with improved signatures
         context.functions.insert(
             "println".to_string(),
             TypeAnnotation::Function {
-                params: vec![], // Variadic
-                return_type: Box::new(TypeAnnotation::Unknown),
+                params: vec![], // Variadic - accepts any number of arguments
+                return_type: Box::new(TypeAnnotation::Unit),
             },
         );
+        
         context.functions.insert(
             "len".to_string(),
             TypeAnnotation::Function {
-                params: vec![TypeAnnotation::List(Box::new(TypeAnnotation::Unknown))],
+                params: vec![TypeAnnotation::Union {
+                    types: vec![
+                        TypeAnnotation::List(Box::new(TypeAnnotation::TypeVariable("T".to_string()))),
+                        TypeAnnotation::String,
+                        TypeAnnotation::Map {
+                            key_type: Box::new(TypeAnnotation::TypeVariable("K".to_string())),
+                            value_type: Box::new(TypeAnnotation::TypeVariable("V".to_string())),
+                        },
+                    ],
+                }],
                 return_type: Box::new(TypeAnnotation::Int),
             },
         );
+        
         context.functions.insert(
             "map".to_string(),
             TypeAnnotation::Function {
                 params: vec![
-                    TypeAnnotation::List(Box::new(TypeAnnotation::Unknown)),
+                    TypeAnnotation::List(Box::new(TypeAnnotation::TypeVariable("T".to_string()))),
                     TypeAnnotation::Function {
-                        params: vec![TypeAnnotation::Unknown],
-                        return_type: Box::new(TypeAnnotation::Unknown),
+                        params: vec![TypeAnnotation::TypeVariable("T".to_string())],
+                        return_type: Box::new(TypeAnnotation::TypeVariable("U".to_string())),
                     },
                 ],
-                return_type: Box::new(TypeAnnotation::List(Box::new(TypeAnnotation::Unknown))),
+                return_type: Box::new(TypeAnnotation::List(Box::new(TypeAnnotation::TypeVariable("U".to_string())))),
             },
         );
 
-        // Map functions
+        // Enhanced map functions with better type signatures
         context.functions.insert(
             "map_get".to_string(),
             TypeAnnotation::Function {
                 params: vec![
                     TypeAnnotation::Map {
-                        key_type: Box::new(TypeAnnotation::Unknown),
-                        value_type: Box::new(TypeAnnotation::Unknown),
+                        key_type: Box::new(TypeAnnotation::String),
+                        value_type: Box::new(TypeAnnotation::TypeVariable("T".to_string())),
                     },
-                    TypeAnnotation::Unknown, // Key type
+                    TypeAnnotation::String,
                 ],
-                return_type: Box::new(TypeAnnotation::Unknown), // Value type
+                return_type: Box::new(TypeAnnotation::Union {
+                    types: vec![
+                        TypeAnnotation::TypeVariable("T".to_string()),
+                        TypeAnnotation::Unit,
+                    ],
+                }),
             },
         );
 
@@ -75,15 +102,15 @@ impl TypeChecker {
             TypeAnnotation::Function {
                 params: vec![
                     TypeAnnotation::Map {
-                        key_type: Box::new(TypeAnnotation::Unknown),
-                        value_type: Box::new(TypeAnnotation::Unknown),
+                        key_type: Box::new(TypeAnnotation::String),
+                        value_type: Box::new(TypeAnnotation::TypeVariable("T".to_string())),
                     },
-                    TypeAnnotation::Unknown, // Key type
-                    TypeAnnotation::Unknown, // Value type
+                    TypeAnnotation::String,
+                    TypeAnnotation::TypeVariable("T".to_string()),
                 ],
                 return_type: Box::new(TypeAnnotation::Map {
-                    key_type: Box::new(TypeAnnotation::Unknown),
-                    value_type: Box::new(TypeAnnotation::Unknown),
+                    key_type: Box::new(TypeAnnotation::String),
+                    value_type: Box::new(TypeAnnotation::TypeVariable("T".to_string())),
                 }),
             },
         );
@@ -93,10 +120,10 @@ impl TypeChecker {
             TypeAnnotation::Function {
                 params: vec![
                     TypeAnnotation::Map {
-                        key_type: Box::new(TypeAnnotation::Unknown),
-                        value_type: Box::new(TypeAnnotation::Unknown),
+                        key_type: Box::new(TypeAnnotation::String),
+                        value_type: Box::new(TypeAnnotation::TypeVariable("T".to_string())),
                     },
-                    TypeAnnotation::Unknown, // Key type
+                    TypeAnnotation::String,
                 ],
                 return_type: Box::new(TypeAnnotation::Bool),
             },
@@ -106,8 +133,8 @@ impl TypeChecker {
             "map_keys".to_string(),
             TypeAnnotation::Function {
                 params: vec![TypeAnnotation::Map {
-                    key_type: Box::new(TypeAnnotation::Unknown),
-                    value_type: Box::new(TypeAnnotation::Unknown),
+                    key_type: Box::new(TypeAnnotation::String),
+                    value_type: Box::new(TypeAnnotation::TypeVariable("T".to_string())),
                 }],
                 return_type: Box::new(TypeAnnotation::List(Box::new(TypeAnnotation::String))),
             },
@@ -117,10 +144,10 @@ impl TypeChecker {
             "map_values".to_string(),
             TypeAnnotation::Function {
                 params: vec![TypeAnnotation::Map {
-                    key_type: Box::new(TypeAnnotation::Unknown),
-                    value_type: Box::new(TypeAnnotation::Unknown),
+                    key_type: Box::new(TypeAnnotation::String),
+                    value_type: Box::new(TypeAnnotation::TypeVariable("T".to_string())),
                 }],
-                return_type: Box::new(TypeAnnotation::List(Box::new(TypeAnnotation::Unknown))),
+                return_type: Box::new(TypeAnnotation::List(Box::new(TypeAnnotation::TypeVariable("T".to_string())))),
             },
         );
 
@@ -128,14 +155,57 @@ impl TypeChecker {
             "map_len".to_string(),
             TypeAnnotation::Function {
                 params: vec![TypeAnnotation::Map {
-                    key_type: Box::new(TypeAnnotation::Unknown),
-                    value_type: Box::new(TypeAnnotation::Unknown),
+                    key_type: Box::new(TypeAnnotation::String),
+                    value_type: Box::new(TypeAnnotation::TypeVariable("T".to_string())),
                 }],
                 return_type: Box::new(TypeAnnotation::Int),
             },
         );
 
-        Self { context }
+        // Initialize type classes
+        let mut type_classes = HashMap::new();
+        
+        // Numeric types
+        type_classes.insert("Int".to_string(), vec![
+            TypeClass::Numeric,
+            TypeClass::Comparable,
+            TypeClass::Equatable,
+            TypeClass::Hashable,
+        ]);
+        type_classes.insert("Float".to_string(), vec![
+            TypeClass::Numeric,
+            TypeClass::Comparable,
+            TypeClass::Equatable,
+            TypeClass::Hashable,
+        ]);
+        
+        // String types
+        type_classes.insert("String".to_string(), vec![
+            TypeClass::Comparable,
+            TypeClass::Equatable,
+            TypeClass::Hashable,
+            TypeClass::Iterable,
+        ]);
+        
+        // Boolean types
+        type_classes.insert("Bool".to_string(), vec![
+            TypeClass::Comparable,
+            TypeClass::Equatable,
+            TypeClass::Hashable,
+        ]);
+        
+        // List types
+        type_classes.insert("List".to_string(), vec![
+            TypeClass::Iterable,
+            TypeClass::Equatable,
+        ]);
+
+        Self { context, type_classes }
+    }
+
+    /// Get the type context for inspection (mainly for testing)
+    pub fn get_context(&self) -> &TypeContext {
+        &self.context
     }
 
     /// Type check a complete program
@@ -543,17 +613,8 @@ impl TypeChecker {
             Expr::Boolean(_) => Ok(TypeAnnotation::Bool),
 
             Expr::List(items) => {
-                if items.is_empty() {
-                    Ok(TypeAnnotation::List(Box::new(TypeAnnotation::Unknown)))
-                } else {
-                    let first_type = self.infer_type(&items[0])?;
-                    // Check all items have the same type
-                    for item in items.iter().skip(1) {
-                        let item_type = self.infer_type(item)?;
-                        self.check_type_compatibility(&first_type, &item_type, "list element")?;
-                    }
-                    Ok(TypeAnnotation::List(Box::new(first_type)))
-                }
+                // Use enhanced list literal type inference
+                self.infer_list_literal_type(items)
             }
 
             Expr::Tuple(items) => {
@@ -567,40 +628,20 @@ impl TypeChecker {
             }
 
             Expr::MapLiteral { entries } => {
-                if entries.is_empty() {
-                    // Empty map - use unknown key/value types
-                    Ok(TypeAnnotation::Map {
-                        key_type: Box::new(TypeAnnotation::Unknown),
-                        value_type: Box::new(TypeAnnotation::Unknown),
-                    })
-                } else {
-                    // Infer key and value types from first entry
-                    let first_entry = &entries[0];
-                    let key_type = self.infer_type(&first_entry.key)?;
-                    let value_type = self.infer_type(&first_entry.value)?;
-
-                    // Check all entries have compatible types
-                    for entry in entries.iter().skip(1) {
-                        let entry_key_type = self.infer_type(&entry.key)?;
-                        let entry_value_type = self.infer_type(&entry.value)?;
-                        
-                        self.check_type_compatibility(&key_type, &entry_key_type, "map key")?;
-                        self.check_type_compatibility(&value_type, &entry_value_type, "map value")?;
-                    }
-
-                    Ok(TypeAnnotation::Map {
-                        key_type: Box::new(key_type),
-                        value_type: Box::new(value_type),
-                    })
-                }
+                // Use enhanced map literal type inference
+                self.infer_map_literal_type(entries)
             }
 
-            Expr::Identifier(name) => self
-                .context
-                .variables
-                .get(name)
-                .cloned()
-                .ok_or_else(|| TypeError::UnknownVariable { name: name.clone() }),
+            Expr::Identifier(name) => {
+                // First try variables, then functions
+                if let Some(var_type) = self.context.variables.get(name) {
+                    Ok(var_type.clone())
+                } else if let Some(func_type) = self.context.functions.get(name) {
+                    Ok(func_type.clone())
+                } else {
+                    Err(TypeError::UnknownVariable { name: name.clone() })
+                }
+            },
 
             Expr::BinaryOp { left, op, right } => {
                 let left_type = self.infer_type(left)?;
@@ -836,7 +877,7 @@ impl TypeChecker {
     }
 
     /// Check if two types are compatible
-    fn check_type_compatibility(
+    pub fn check_type_compatibility(
         &self,
         expected: &TypeAnnotation,
         found: &TypeAnnotation,
@@ -845,16 +886,12 @@ impl TypeChecker {
         if self.types_compatible(expected, found) {
             Ok(())
         } else {
-            Err(TypeError::TypeMismatch {
-                expected: expected.clone(),
-                found: found.clone(),
-                location: location.to_string(),
-            })
+            Err(self.create_enhanced_error(expected, found, location))
         }
     }
 
     /// Check if two types are compatible (including Unknown)
-    fn types_compatible(&self, a: &TypeAnnotation, b: &TypeAnnotation) -> bool {
+    pub fn types_compatible(&self, a: &TypeAnnotation, b: &TypeAnnotation) -> bool {
         match (a, b) {
             (TypeAnnotation::Unknown, _) | (_, TypeAnnotation::Unknown) => true,
             (TypeAnnotation::Int, TypeAnnotation::Int) => true,
@@ -905,6 +942,33 @@ impl TypeChecker {
                         .zip(args2.iter())
                         .all(|(a, b)| self.types_compatible(a, b))
             }
+            // Union types - a is compatible with union if it's compatible with any member
+            (a, TypeAnnotation::Union { types }) => {
+                types.iter().any(|union_type| self.types_compatible(a, union_type))
+            }
+            (TypeAnnotation::Union { types }, b) => {
+                types.iter().any(|union_type| self.types_compatible(union_type, b))
+            }
+            // Intersection types - a is compatible with intersection if it's compatible with all members
+            (a, TypeAnnotation::Intersection { types }) => {
+                types.iter().all(|intersection_type| self.types_compatible(a, intersection_type))
+            }
+            (TypeAnnotation::Intersection { types }, b) => {
+                types.iter().all(|intersection_type| self.types_compatible(intersection_type, b))
+            }
+            // Literal types
+            (TypeAnnotation::Literal { value: val1 }, TypeAnnotation::Literal { value: val2 }) => {
+                self.values_equal(val1, val2)
+            }
+            // Literal types are compatible with their base types
+            (TypeAnnotation::Literal { value }, type_ann) => {
+                let base_type = self.value_to_type(value);
+                self.types_compatible(&base_type, type_ann)
+            }
+            (type_ann, TypeAnnotation::Literal { value }) => {
+                let base_type = self.value_to_type(value);
+                self.types_compatible(type_ann, &base_type)
+            }
             // Type variables
             (TypeAnnotation::TypeVariable(name), _) => {
                 // Check if the type variable has a constraint
@@ -939,9 +1003,37 @@ impl TypeChecker {
             }
             // Custom types
             (TypeAnnotation::Custom(name1), TypeAnnotation::Custom(name2)) => name1 == name2,
-            // Allow numeric coercion
+            // Result types
+            (
+                TypeAnnotation::Result { ok_type: ok1, err_type: err1 },
+                TypeAnnotation::Result { ok_type: ok2, err_type: err2 },
+            ) => {
+                self.types_compatible(ok1, ok2) && self.types_compatible(err1, err2)
+            }
+            // Promise types
+            (
+                TypeAnnotation::Promise { value_type: val1, error_type: err1 },
+                TypeAnnotation::Promise { value_type: val2, error_type: err2 },
+            ) => {
+                self.types_compatible(val1, val2) && match (err1, err2) {
+                    (Some(e1), Some(e2)) => self.types_compatible(e1, e2),
+                    (None, None) => true,
+                    _ => false,
+                }
+            }
+            // Function types
+            (
+                TypeAnnotation::Function { params: p1, return_type: r1 },
+                TypeAnnotation::Function { params: p2, return_type: r2 },
+            ) => {
+                p1.len() == p2.len()
+                    && p1.iter().zip(p2.iter()).all(|(a, b)| self.types_compatible(a, b))
+                    && self.types_compatible(r1, r2)
+            }
+            // Allow numeric coercion only for basic arithmetic operations
+            // For strict type checking in complex types, we don't allow coercion
             (TypeAnnotation::Int, TypeAnnotation::Float)
-            | (TypeAnnotation::Float, TypeAnnotation::Int) => true,
+            | (TypeAnnotation::Float, TypeAnnotation::Int) => false,
             _ => false,
         }
     }
@@ -978,12 +1070,271 @@ impl TypeChecker {
             }),
         }
     }
+
+    /// Check if two values are equal for literal type comparison
+    fn values_equal(&self, val1: &Value, val2: &Value) -> bool {
+        match (val1, val2) {
+            (Value::Integer(i1), Value::Integer(i2)) => i1 == i2,
+            (Value::Float(f1), Value::Float(f2)) => (f1 - f2).abs() < f64::EPSILON,
+            (Value::String(s1), Value::String(s2)) => s1 == s2,
+            (Value::Boolean(b1), Value::Boolean(b2)) => b1 == b2,
+            (Value::Unit, Value::Unit) => true,
+            _ => false,
+        }
+    }
+
+    /// Convert a value to its corresponding type
+    fn value_to_type(&self, value: &Value) -> TypeAnnotation {
+        match value {
+            Value::Integer(_) => TypeAnnotation::Int,
+            Value::Float(_) => TypeAnnotation::Float,
+            Value::String(_) => TypeAnnotation::String,
+            Value::Boolean(_) => TypeAnnotation::Bool,
+            Value::Unit => TypeAnnotation::Unit,
+            Value::List(values) => {
+                if values.is_empty() {
+                    TypeAnnotation::List(Box::new(TypeAnnotation::Unknown))
+                } else {
+                    let first_type = self.value_to_type(&values[0]);
+                    TypeAnnotation::List(Box::new(first_type))
+                }
+            }
+            Value::Tuple(values) => {
+                let types: Vec<TypeAnnotation> = values.iter().map(|v| self.value_to_type(v)).collect();
+                TypeAnnotation::Tuple(types)
+            }
+            Value::Map(_) => TypeAnnotation::Map {
+                key_type: Box::new(TypeAnnotation::String),
+                value_type: Box::new(TypeAnnotation::Unknown),
+            },
+            Value::Struct { type_name, .. } => TypeAnnotation::Custom(type_name.clone()),
+            Value::Function(_) => TypeAnnotation::Function {
+                params: vec![],
+                return_type: Box::new(TypeAnnotation::Unknown),
+            },
+            Value::Ok(inner) => TypeAnnotation::Result {
+                ok_type: Box::new(self.value_to_type(inner)),
+                err_type: Box::new(TypeAnnotation::Unknown),
+            },
+            Value::Err(inner) => TypeAnnotation::Result {
+                ok_type: Box::new(TypeAnnotation::Unknown),
+                err_type: Box::new(self.value_to_type(inner)),
+            },
+            _ => TypeAnnotation::Unknown,
+        }
+    }
+
+    /// Check if a type satisfies a type constraint
+    pub fn check_type_constraint(&self, type_ann: &TypeAnnotation, constraint: &TypeClass) -> bool {
+        match type_ann {
+            TypeAnnotation::Int => matches!(constraint, 
+                TypeClass::Numeric | TypeClass::Comparable | TypeClass::Equatable | TypeClass::Hashable),
+            TypeAnnotation::Float => matches!(constraint, 
+                TypeClass::Numeric | TypeClass::Comparable | TypeClass::Equatable | TypeClass::Hashable),
+            TypeAnnotation::String => matches!(constraint, 
+                TypeClass::Comparable | TypeClass::Equatable | TypeClass::Hashable | TypeClass::Iterable),
+            TypeAnnotation::Bool => matches!(constraint, 
+                TypeClass::Comparable | TypeClass::Equatable | TypeClass::Hashable),
+            TypeAnnotation::List(_) => matches!(constraint, 
+                TypeClass::Iterable | TypeClass::Equatable),
+            TypeAnnotation::Map { .. } => matches!(constraint, TypeClass::Equatable),
+            TypeAnnotation::Range { .. } => matches!(constraint, TypeClass::Iterable),
+            TypeAnnotation::Union { types } => {
+                types.iter().all(|t| self.check_type_constraint(t, constraint))
+            }
+            TypeAnnotation::Intersection { types } => {
+                types.iter().any(|t| self.check_type_constraint(t, constraint))
+            }
+            TypeAnnotation::TypeVariable(name) => {
+                if let Some(types) = self.type_classes.get(name) {
+                    types.contains(constraint)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Create a union type from multiple types, simplifying if possible
+    pub fn create_union_type(&self, types: Vec<TypeAnnotation>) -> TypeAnnotation {
+        if types.is_empty() {
+            return TypeAnnotation::Unknown;
+        }
+        
+        if types.len() == 1 {
+            return types[0].clone();
+        }
+        
+        // Remove duplicates and simplify
+        let mut unique_types = Vec::new();
+        let mut seen = HashSet::new();
+        
+        for type_ann in types {
+            let type_str = format!("{:?}", type_ann);
+            if !seen.contains(&type_str) {
+                seen.insert(type_str);
+                unique_types.push(type_ann);
+            }
+        }
+        
+        if unique_types.len() == 1 {
+            unique_types[0].clone()
+        } else {
+            TypeAnnotation::Union { types: unique_types }
+        }
+    }
+
+    /// Create an intersection type from multiple types, simplifying if possible
+    pub fn create_intersection_type(&self, types: Vec<TypeAnnotation>) -> TypeAnnotation {
+        if types.is_empty() {
+            return TypeAnnotation::Unknown;
+        }
+        
+        if types.len() == 1 {
+            return types[0].clone();
+        }
+        
+        // Remove duplicates and simplify
+        let mut unique_types = Vec::new();
+        let mut seen = HashSet::new();
+        
+        for type_ann in types {
+            let type_str = format!("{:?}", type_ann);
+            if !seen.contains(&type_str) {
+                seen.insert(type_str);
+                unique_types.push(type_ann);
+            }
+        }
+        
+        if unique_types.len() == 1 {
+            unique_types[0].clone()
+        } else {
+            TypeAnnotation::Intersection { types: unique_types }
+        }
+    }
+
+    /// Generate better error messages with suggestions
+    fn create_enhanced_error(&self, expected: &TypeAnnotation, found: &TypeAnnotation, location: &str) -> TypeError {
+        let suggestion = self.suggest_type_fix(expected, found);
+        
+        TypeError::TypeMismatch {
+            expected: expected.clone(),
+            found: found.clone(),
+            location: if suggestion.is_empty() {
+                location.to_string()
+            } else {
+                format!("{} (suggestion: {})", location, suggestion)
+            },
+        }
+    }
+
+    /// Suggest fixes for common type errors
+    fn suggest_type_fix(&self, expected: &TypeAnnotation, found: &TypeAnnotation) -> String {
+        match (expected, found) {
+            (TypeAnnotation::Int, TypeAnnotation::Float) => {
+                "try using an integer literal or cast to int".to_string()
+            }
+            (TypeAnnotation::Float, TypeAnnotation::Int) => {
+                "try using a float literal or cast to float".to_string()
+            }
+            (TypeAnnotation::String, TypeAnnotation::Int) => {
+                "try using string interpolation or .to_string()".to_string()
+            }
+            (TypeAnnotation::List(_), TypeAnnotation::Tuple(_)) => {
+                "try using list syntax [a, b, c] instead of tuple syntax (a, b, c)".to_string()
+            }
+            (TypeAnnotation::Tuple(_), TypeAnnotation::List(_)) => {
+                "try using tuple syntax (a, b, c) instead of list syntax [a, b, c]".to_string()
+            }
+            (TypeAnnotation::Function { .. }, _) => {
+                "try calling the function with ()".to_string()
+            }
+            (TypeAnnotation::Union { types }, found_type) => {
+                let compatible_types: Vec<String> = types.iter()
+                    .filter(|t| self.types_compatible(t, found_type))
+                    .map(|t| format!("{:?}", t))
+                    .collect();
+                if !compatible_types.is_empty() {
+                    format!("found type is compatible with: {}", compatible_types.join(", "))
+                } else {
+                    format!("expected one of: {}", 
+                        types.iter().map(|t| format!("{:?}", t)).collect::<Vec<_>>().join(", "))
+                }
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Enhanced type inference for map literals
+    fn infer_map_literal_type(&mut self, entries: &[crate::ast::MapEntry]) -> Result<TypeAnnotation, TypeError> {
+        if entries.is_empty() {
+            return Ok(TypeAnnotation::Map {
+                key_type: Box::new(TypeAnnotation::String),
+                value_type: Box::new(TypeAnnotation::Unknown),
+            });
+        }
+
+        let mut value_types = Vec::new();
+        
+        for entry in entries {
+            let key_type = self.infer_type(&entry.key)?;
+            let value_type = self.infer_type(&entry.value)?;
+            
+            // Check that key is hashable
+            if !self.check_type_constraint(&key_type, &TypeClass::Hashable) {
+                return Err(TypeError::InvalidOperation {
+                    op: "map key".to_string(),
+                    left_type: key_type,
+                    right_type: None,
+                });
+            }
+            
+            value_types.push(value_type);
+        }
+
+        // Create union type for values if they're different
+        let value_type = if value_types.len() == 1 {
+            value_types[0].clone()
+        } else {
+            self.create_union_type(value_types)
+        };
+
+        Ok(TypeAnnotation::Map {
+            key_type: Box::new(TypeAnnotation::String),
+            value_type: Box::new(value_type),
+        })
+    }
+
+    /// Enhanced type inference for list literals
+    fn infer_list_literal_type(&mut self, elements: &[Expr]) -> Result<TypeAnnotation, TypeError> {
+        if elements.is_empty() {
+            return Ok(TypeAnnotation::List(Box::new(TypeAnnotation::Unknown)));
+        }
+
+        let mut element_types = Vec::new();
+        
+        for element in elements {
+            let element_type = self.infer_type(element)?;
+            element_types.push(element_type);
+        }
+
+        // Create union type for elements if they're different
+        let element_type = if element_types.len() == 1 {
+            element_types[0].clone()
+        } else {
+            self.create_union_type(element_types)
+        };
+
+        Ok(TypeAnnotation::List(Box::new(element_type)))
+    }
 }
 
 impl Clone for TypeChecker {
     fn clone(&self) -> Self {
         Self {
             context: self.context.clone(),
+            type_classes: self.type_classes.clone(),
         }
     }
 }
