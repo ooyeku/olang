@@ -379,18 +379,19 @@ impl LazyValue {
             Value::List(items) => {
                 let mut results = Vec::new();
                 for item in items.iter() {
-                    // First apply the predicate
-                    let pred_result = interpreter.call_function(
-                        Value::Function((**predicate).to_function()),
+                    // First apply the mapper
+                    let mapped_result = interpreter.call_function(
+                        Value::Function((**mapper).to_function()),
                         vec![item.clone()],
                     )?;
 
+                    // Then apply the predicate to the mapped result
+                    let pred_result = interpreter.call_function(
+                        Value::Function((**predicate).to_function()),
+                        vec![mapped_result.clone()],
+                    )?;
+
                     if let Value::Boolean(true) = pred_result {
-                        // Then apply the mapper
-                        let mapped_result = interpreter.call_function(
-                            Value::Function((**mapper).to_function()),
-                            vec![item.clone()],
-                        )?;
                         results.push(mapped_result);
                     }
                 }
@@ -401,21 +402,22 @@ impl LazyValue {
                 end,
                 inclusive,
             } => {
-                // Convert range to vector, filter, then map
+                // Convert range to vector, map, then filter
                 let end_val = if inclusive { end + 1 } else { end };
                 let mut results = Vec::new();
                 for i in start..end_val {
                     let item = Value::Integer(i);
-                    // First apply the predicate
+                    // First apply the mapper
+                    let mapped_result = interpreter
+                        .call_function(Value::Function((**mapper).to_function()), vec![item])?;
+
+                    // Then apply the predicate to the mapped result
                     let pred_result = interpreter.call_function(
                         Value::Function((**predicate).to_function()),
-                        vec![item.clone()],
+                        vec![mapped_result.clone()],
                     )?;
 
                     if let Value::Boolean(true) = pred_result {
-                        // Then apply the mapper
-                        let mapped_result = interpreter
-                            .call_function(Value::Function((**mapper).to_function()), vec![item])?;
                         results.push(mapped_result);
                     }
                 }

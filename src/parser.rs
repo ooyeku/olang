@@ -1062,6 +1062,25 @@ impl Parser {
                 let inner_annotation = self.build_type_annotation(inner_type.into_inner())?;
                 Ok(TypeAnnotation::List(Box::new(inner_annotation)))
             }
+            Rule::tuple_type => {
+                let mut inner_pairs = pair.into_inner();
+                let mut types = Vec::new();
+                
+                // Parse all type annotations in the tuple
+                for type_pair in inner_pairs {
+                    if type_pair.as_rule() == Rule::type_annotation {
+                        types.push(self.build_type_annotation(type_pair.into_inner())?);
+                    }
+                }
+                
+                if types.len() < 2 {
+                    return Err(ParseError::InvalidSyntax {
+                        message: "Tuple type must have at least 2 elements".to_string(),
+                    });
+                }
+                
+                Ok(TypeAnnotation::Tuple(types))
+            }
             Rule::function_type => {
                 let mut inner_pairs = pair.into_inner();
                 let mut params = Vec::new();
@@ -1894,9 +1913,17 @@ impl Parser {
                 Ok(Expr::Integer(value))
             }
             Rule::string => {
-                let raw_value = pair.as_str().trim_matches('"');
-                let value = self.process_string_escapes(raw_value)?;
-                Ok(Expr::String(value.into()))
+                let full_str = pair.as_str();
+                // Extract content between quotes, handling edge cases
+                if full_str.len() >= 2 && full_str.starts_with('"') && full_str.ends_with('"') {
+                    let raw_value = &full_str[1..full_str.len()-1];
+                    let value = self.process_string_escapes(raw_value)?;
+                    Ok(Expr::String(value.into()))
+                } else {
+                    Err(ParseError::InvalidSyntax {
+                        message: "Malformed string literal".to_string(),
+                    })
+                }
             }
             Rule::raw_string => {
                 let raw_value = pair.as_str();
@@ -2741,17 +2768,17 @@ mod tests {
         // Test basic string parsing
         let input = r#""Hello\nWorld""#;
         let result = parser.parse(input);
-        assert!(result.is_ok(), "Failed to parse string with escape sequence");
+        assert!(result.is_ok(), "Failed to parse string with escape sequence: {:?}", result);
         
         // Test unicode escapes
         let input = r#""Hello\u0041""#;
         let result = parser.parse(input);
-        assert!(result.is_ok(), "Failed to parse string with unicode escape");
+        assert!(result.is_ok(), "Failed to parse string with unicode escape: {:?}", result);
         
         // Test escaped quotes
         let input = r#""He said \"Hello\"""#;
         let result = parser.parse(input);
-        assert!(result.is_ok(), "Failed to parse string with escaped quotes");
+        assert!(result.is_ok(), "Failed to parse string with escaped quotes: {:?}", result);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::ast::{Expr, MatchArm, Pattern, Program, Statement, Argument, TemplatePart};
+use crate::ast::{Expr, MatchArm, Pattern, Program, Statement, Argument, TemplatePart, Value};
 use crate::builtin::BuiltinFunctions;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -11,6 +11,8 @@ pub enum AnalysisError {
     DuplicateVariable { name: String },
     #[error("Non-exhaustive pattern match")]
     NonExhaustivePatternMatch,
+    #[error("Non-exhaustive pattern match: missing patterns {missing_patterns:?}")]
+    NonExhaustivePatternMatchWithMissing { missing_patterns: Vec<String> },
     #[error("Unreachable code")]
     UnreachableCode,
     #[error("Type error: {message}")]
@@ -346,7 +348,13 @@ impl Analyzer {
         // Check pattern exhaustiveness
         let pattern_refs: Vec<Pattern> = patterns.iter().map(|p| (*p).clone()).collect();
         if !self.check_pattern_exhaustiveness(&pattern_refs)? {
-            return Err(AnalysisError::NonExhaustivePatternMatch);
+            // Get missing patterns for better error messages
+            let missing_patterns = self.get_missing_patterns(&pattern_refs);
+            if !missing_patterns.is_empty() {
+                return Err(AnalysisError::NonExhaustivePatternMatchWithMissing { missing_patterns });
+            } else {
+                return Err(AnalysisError::NonExhaustivePatternMatch);
+            }
         }
 
         Ok(())
@@ -470,9 +478,235 @@ impl Analyzer {
         &self,
         patterns: &[Pattern],
     ) -> Result<bool, AnalysisError> {
-        // TODO: Implement proper pattern exhaustiveness checking
-        // For now, just return true if we have at least one pattern
-        Ok(!patterns.is_empty())
+        // Empty patterns are never exhaustive
+        if patterns.is_empty() {
+            return Ok(false);
+        }
+
+        // Check for catch-all patterns (wildcards and variables)
+        if self.has_catch_all_pattern(patterns) {
+            return Ok(true);
+        }
+
+        // Analyze patterns based on their structure
+        let pattern_analysis = self.analyze_pattern_structure(patterns)?;
+        
+        // Check exhaustiveness based on pattern analysis
+        match pattern_analysis {
+            PatternAnalysis::Boolean(has_true, has_false) => {
+                Ok(has_true && has_false)
+            }
+            PatternAnalysis::Result(has_ok, has_err) => {
+                Ok(has_ok && has_err)
+            }
+            PatternAnalysis::Literals(literal_values) => {
+                // For literals, we can't determine exhaustiveness without type information
+                // This is a limitation - in a full implementation, we'd need type context
+                Ok(false)
+            }
+            PatternAnalysis::Mixed => {
+                // Mixed patterns without catch-all are not exhaustive
+                Ok(false)
+            }
+            PatternAnalysis::Enum(variants) => {
+                // For enum exhaustiveness, we'd need type information about all possible variants
+                // For now, return false - this would be enhanced with type context
+                Ok(false)
+            }
+            PatternAnalysis::Tuple(arity) => {
+                // Tuple patterns are exhaustive if all positions are exhaustive
+                // This is a simplified check - full implementation would be recursive
+                Ok(false)
+            }
+            PatternAnalysis::List => {
+                // List patterns are complex to check exhaustively
+                // Would need to consider all possible list lengths
+                Ok(false)
+            }
+        }
+    }
+
+    /// Check if patterns contain a catch-all pattern (wildcard or variable)
+    fn has_catch_all_pattern(&self, patterns: &[Pattern]) -> bool {
+        for pattern in patterns {
+            if self.is_catch_all_pattern(pattern) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a single pattern is catch-all (matches everything)
+    fn is_catch_all_pattern(&self, pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Wildcard => true,
+            Pattern::Identifier(_) => true, // Variables match everything
+            Pattern::Or { alternatives } => {
+                // Or pattern is catch-all if any alternative is catch-all
+                alternatives.iter().any(|alt| self.is_catch_all_pattern(alt))
+            }
+            Pattern::Guarded { pattern, .. } => {
+                // Guarded patterns are not catch-all (guard might fail)
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Analyze the structure of patterns to determine exhaustiveness strategy
+    fn analyze_pattern_structure(&self, patterns: &[Pattern]) -> Result<PatternAnalysis, AnalysisError> {
+        let mut has_boolean = false;
+        let mut has_true = false;
+        let mut has_false = false;
+        let mut has_result = false;
+        let mut has_ok = false;
+        let mut has_err = false;
+        let mut literal_values = Vec::new();
+        let mut enum_variants = std::collections::HashSet::new();
+        let mut tuple_arities = std::collections::HashSet::new();
+        let mut has_list = false;
+
+        for pattern in patterns {
+            match pattern {
+                Pattern::Literal(value) => {
+                    match value {
+                        Value::Boolean(true) => {
+                            has_boolean = true;
+                            has_true = true;
+                        }
+                        Value::Boolean(false) => {
+                            has_boolean = true;
+                            has_false = true;
+                        }
+                        _ => {
+                            literal_values.push(value.clone());
+                        }
+                    }
+                }
+                Pattern::Ok(_) => {
+                    has_result = true;
+                    has_ok = true;
+                }
+                Pattern::Err(_) => {
+                    has_result = true;
+                    has_err = true;
+                }
+                Pattern::EnumVariant { variant_name, .. } => {
+                    enum_variants.insert(variant_name.clone());
+                }
+                Pattern::Tuple(sub_patterns) => {
+                    tuple_arities.insert(sub_patterns.len());
+                }
+                Pattern::List { .. } => {
+                    has_list = true;
+                }
+                Pattern::Or { alternatives } => {
+                    // Recursively analyze or pattern alternatives
+                    let sub_analysis = self.analyze_pattern_structure(alternatives)?;
+                    match sub_analysis {
+                        PatternAnalysis::Boolean(sub_true, sub_false) => {
+                            has_boolean = true;
+                            has_true = has_true || sub_true;
+                            has_false = has_false || sub_false;
+                        }
+                        PatternAnalysis::Result(sub_ok, sub_err) => {
+                            has_result = true;
+                            has_ok = has_ok || sub_ok;
+                            has_err = has_err || sub_err;
+                        }
+                        PatternAnalysis::Literals(sub_literals) => {
+                            literal_values.extend(sub_literals);
+                        }
+                        PatternAnalysis::Enum(sub_variants) => {
+                            enum_variants.extend(sub_variants);
+                        }
+                        PatternAnalysis::Tuple(sub_arity) => {
+                            tuple_arities.insert(sub_arity);
+                        }
+                        PatternAnalysis::List => {
+                            has_list = true;
+                        }
+                        _ => {}
+                    }
+                }
+                Pattern::Guarded { pattern, .. } => {
+                    // Analyze the inner pattern, but guards make exhaustiveness more complex
+                    let inner_analysis = self.analyze_pattern_structure(&[pattern.as_ref().clone()])?;
+                    // For now, treat guarded patterns as non-exhaustive
+                    // Full implementation would need guard analysis
+                }
+                _ => {
+                    // Other patterns like Range, Struct, etc.
+                    // For now, consider them as mixed patterns
+                }
+            }
+        }
+
+        // Determine the primary pattern type
+        if has_boolean && !has_result && literal_values.is_empty() && enum_variants.is_empty() {
+            Ok(PatternAnalysis::Boolean(has_true, has_false))
+        } else if has_result && !has_boolean && literal_values.is_empty() && enum_variants.is_empty() {
+            Ok(PatternAnalysis::Result(has_ok, has_err))
+        } else if !literal_values.is_empty() && !has_boolean && !has_result && enum_variants.is_empty() {
+            Ok(PatternAnalysis::Literals(literal_values))
+        } else if !enum_variants.is_empty() && !has_boolean && !has_result && literal_values.is_empty() {
+            Ok(PatternAnalysis::Enum(enum_variants))
+        } else if tuple_arities.len() == 1 && !has_boolean && !has_result && literal_values.is_empty() && enum_variants.is_empty() {
+            Ok(PatternAnalysis::Tuple(tuple_arities.into_iter().next().unwrap()))
+        } else if has_list && !has_boolean && !has_result && literal_values.is_empty() && enum_variants.is_empty() {
+            Ok(PatternAnalysis::List)
+        } else {
+            Ok(PatternAnalysis::Mixed)
+        }
+    }
+
+    /// Get missing patterns for better error messages
+    pub fn get_missing_patterns(&self, patterns: &[Pattern]) -> Vec<String> {
+        let mut missing = Vec::new();
+        
+        // Check for catch-all patterns first
+        if self.has_catch_all_pattern(patterns) {
+            return missing; // No missing patterns if there's a catch-all
+        }
+
+        // Analyze pattern structure to find missing patterns
+        if let Ok(analysis) = self.analyze_pattern_structure(patterns) {
+            match analysis {
+                PatternAnalysis::Boolean(has_true, has_false) => {
+                    if !has_true {
+                        missing.push("true".to_string());
+                    }
+                    if !has_false {
+                        missing.push("false".to_string());
+                    }
+                }
+                PatternAnalysis::Result(has_ok, has_err) => {
+                    if !has_ok {
+                        missing.push("Ok(_)".to_string());
+                    }
+                    if !has_err {
+                        missing.push("Err(_)".to_string());
+                    }
+                }
+                PatternAnalysis::Literals(_) => {
+                    missing.push("_ (wildcard pattern)".to_string());
+                }
+                PatternAnalysis::Enum(_) => {
+                    missing.push("_ (wildcard pattern or other enum variants)".to_string());
+                }
+                PatternAnalysis::Tuple(_) => {
+                    missing.push("_ (wildcard pattern)".to_string());
+                }
+                PatternAnalysis::List => {
+                    missing.push("_ (wildcard pattern)".to_string());
+                }
+                PatternAnalysis::Mixed => {
+                    missing.push("_ (wildcard pattern)".to_string());
+                }
+            }
+        }
+
+        missing
     }
 
     pub fn detect_dead_code(&mut self, program: &Program) -> Vec<usize> {
@@ -980,4 +1214,23 @@ impl DeadCodeDetector {
             _ => false,
         }
     }
+}
+
+/// Analysis result for different pattern types
+#[derive(Debug, Clone)]
+enum PatternAnalysis {
+    /// Boolean patterns (true/false coverage)
+    Boolean(bool, bool), // (has_true, has_false)
+    /// Result patterns (Ok/Err coverage)
+    Result(bool, bool), // (has_ok, has_err)
+    /// Literal patterns
+    Literals(Vec<Value>),
+    /// Enum patterns
+    Enum(std::collections::HashSet<String>),
+    /// Tuple patterns with fixed arity
+    Tuple(usize),
+    /// List patterns
+    List,
+    /// Mixed pattern types
+    Mixed,
 }

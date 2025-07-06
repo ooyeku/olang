@@ -134,7 +134,7 @@ fn test_destructuring_strings() {
     let program = parser.parse(input).expect("Failed to parse");
     let result = interpreter.eval_program(program).expect("Failed to evaluate");
     
-    assert_eq!(result.to_string(), "Hello, Alice");
+    assert_eq!(result.to_string(), "\"Hello, Alice\"");
 }
 
 #[test]

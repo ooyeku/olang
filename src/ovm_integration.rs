@@ -563,7 +563,10 @@ impl OvmInterpreter {
     /// Check if an expression references variables that need classic interpreter resolution
     fn expression_needs_classic_variables(&self, expr: &crate::ast::Expr) -> bool {
         match expr {
-            crate::ast::Expr::Identifier(_) => true, // All identifiers need variable resolution
+            crate::ast::Expr::Identifier(name) => {
+                // Builtin functions don't need variable resolution
+                !self.is_builtin_function(name)
+            }
             crate::ast::Expr::Call { callee, arguments } => {
                 // Check callee and arguments for variable references
                 if self.expression_needs_classic_variables(callee) {
