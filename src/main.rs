@@ -1,13 +1,16 @@
 use clap::Parser;
 use std::path::PathBuf;
 use std::process;
+use colored::*;
 
-use olang::log::{init_logger, Logger};
-use olang::ovm_integration::{IntegrationConfig, OvmInterpreter};
-use olang::ovm::OvmConfig;
-use olang::parallel::{initialize_parallelization, set_parallel_threshold};
-use olang::parser::Parser as OlangParser;
-use olang::repl::Repl;
+use olang::{
+    log::{init_logger, Logger},
+    ovm_integration::{IntegrationConfig, OvmInterpreter},
+    parallel::{initialize_parallelization, set_parallel_threshold},
+    parser::{Parser as OlangParser, ErrorSuggestion, SuggestionSeverity},
+    repl::Repl,
+    OvmConfig,
+};
 
 #[derive(Parser)]
 #[command(name = "olang")]
@@ -93,6 +96,241 @@ fn main() {
     }
 }
 
+/// Enhanced error display for file execution
+fn show_file_parse_error(error: &olang::parser::ParseError, file_path: &PathBuf, source: &str) {
+    println!("\n{}", "═══ Parse Error ═══".bright_red().bold());
+    println!("  {}: {}", "File".bright_blue().bold(), file_path.display().to_string().bright_white());
+    
+    match error {
+        olang::parser::ParseError::InvalidSyntaxWithPosition { message, line, column, snippet } => {
+            println!("  {}: {}", "Error".bright_red().bold(), message.bright_white());
+            println!("  {}: Line {}, Column {}", "Location".bright_yellow().bold(), 
+                line.to_string().bright_cyan(), column.to_string().bright_cyan());
+            
+            if !snippet.trim().is_empty() {
+                println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                show_highlighted_snippet(snippet);
+            }
+        }
+        olang::parser::ParseError::UnexpectedTokenWithPosition { token, line, column, snippet } => {
+            println!("  {}: Unexpected token '{}'", "Error".bright_red().bold(), token.bright_yellow().bold());
+            println!("  {}: Line {}, Column {}", "Location".bright_yellow().bold(), 
+                line.to_string().bright_cyan(), column.to_string().bright_cyan());
+            
+            if !snippet.trim().is_empty() {
+                println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                show_highlighted_snippet(snippet);
+            }
+        }
+        _ => {
+            println!("  {}: {}", "Error".bright_red().bold(), error);
+        }
+    }
+    
+    // Get suggestions
+    let parser = OlangParser::new();
+    let suggestions = parser.get_suggestions(error, source);
+    
+    if !suggestions.is_empty() {
+        println!("\n  {}", "💡 Suggestions:".bright_cyan().bold());
+        for suggestion in suggestions {
+            show_suggestion(&suggestion);
+        }
+    }
+    
+    // Show help topics
+    println!("\n  {}", "📚 Help:".bright_cyan().bold());
+    println!("    • Type {} for syntax help", "olang -h".bright_cyan());
+    println!("    • Use {} for interactive mode with better error messages", "olang".bright_cyan());
+    println!();
+}
+
+fn show_highlighted_snippet(snippet: &str) {
+    let lines: Vec<&str> = snippet.lines().collect();
+    
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        
+        // Check if this line contains a caret pointer
+        if line.contains("^") {
+            // This is the error pointer line - highlight it specially
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() >= 2 {
+                let line_num = parts[0].trim();
+                let pointer = parts[1];
+                println!("    {}{}│{}{}", 
+                    line_num.bright_black(),
+                    " ".repeat(4 - line_num.len().min(4)),
+                    " ",
+                    pointer.bright_red().bold()
+                );
+            }
+        } else {
+            // Regular code line - apply basic syntax highlighting
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() >= 2 {
+                let line_num = parts[0].trim();
+                let code = parts[1];
+                
+                // Basic syntax highlighting
+                let highlighted_code = apply_basic_highlighting(code);
+                
+                println!("    {}{}│ {}", 
+                    line_num.bright_blue(),
+                    " ".repeat(4 - line_num.len().min(4)),
+                    highlighted_code
+                );
+            }
+        }
+    }
+}
+
+fn apply_basic_highlighting(code: &str) -> String {
+    let mut result = String::new();
+    let mut chars = code.chars().peekable();
+    let mut current_word = String::new();
+    
+    while let Some(ch) = chars.next() {
+        match ch {
+            // String literals
+            '"' => {
+                if !current_word.is_empty() {
+                    result.push_str(&highlight_word(&current_word));
+                    current_word.clear();
+                }
+                result.push_str(&format!("{}", "\"".bright_green()));
+                
+                // Consume the string content
+                while let Some(str_ch) = chars.next() {
+                    if str_ch == '"' {
+                        result.push_str(&format!("{}", str_ch.to_string().bright_green()));
+                        break;
+                    } else if str_ch == '\\' {
+                        result.push_str(&format!("{}", str_ch.to_string().bright_green()));
+                        if let Some(escaped) = chars.next() {
+                            result.push_str(&format!("{}", escaped.to_string().bright_green()));
+                        }
+                    } else {
+                        result.push_str(&format!("{}", str_ch.to_string().bright_green()));
+                    }
+                }
+            }
+            // Numbers
+            c if c.is_ascii_digit() => {
+                current_word.push(c);
+                
+                // Look ahead to consume the full number
+                while let Some(&next_ch) = chars.peek() {
+                    if next_ch.is_ascii_digit() || next_ch == '.' || next_ch == '_' {
+                        current_word.push(chars.next().unwrap());
+                    } else {
+                        break;
+                    }
+                }
+                
+                result.push_str(&format!("{}", current_word.bright_magenta()));
+                current_word.clear();
+            }
+            // Identifiers and keywords
+            c if c.is_alphabetic() || c == '_' => {
+                current_word.push(c);
+            }
+            // Operators and punctuation
+            '=' | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '!' | '&' | '|' => {
+                if !current_word.is_empty() {
+                    result.push_str(&highlight_word(&current_word));
+                    current_word.clear();
+                }
+                
+                // Look ahead for compound operators
+                let mut op = ch.to_string();
+                if let Some(&next_ch) = chars.peek() {
+                    if (ch == '=' && next_ch == '=') ||
+                       (ch == '!' && next_ch == '=') ||
+                       (ch == '<' && next_ch == '=') ||
+                       (ch == '>' && next_ch == '=') ||
+                       (ch == '&' && next_ch == '&') ||
+                       (ch == '|' && next_ch == '|') {
+                        op.push(chars.next().unwrap());
+                    }
+                }
+                result.push_str(&format!("{}", op.bright_yellow()));
+            }
+            // Brackets and parentheses
+            '(' | ')' | '[' | ']' | '{' | '}' => {
+                if !current_word.is_empty() {
+                    result.push_str(&highlight_word(&current_word));
+                    current_word.clear();
+                }
+                result.push_str(&format!("{}", ch.to_string().bright_cyan()));
+            }
+            // Other characters
+            _ => {
+                if !current_word.is_empty() {
+                    result.push_str(&highlight_word(&current_word));
+                    current_word.clear();
+                }
+                result.push(ch);
+            }
+        }
+    }
+    
+    // Handle any remaining word
+    if !current_word.is_empty() {
+        result.push_str(&highlight_word(&current_word));
+    }
+    
+    result
+}
+
+fn highlight_word(word: &str) -> String {
+    match word {
+        // Keywords
+        "let" | "fn" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" |
+        "true" | "false" | "import" | "export" | "type" | "async" | "await" | "try" | "catch" => {
+            format!("{}", word.bright_blue().bold())
+        }
+        // Built-in functions
+        "println" | "print" | "to_string" | "to_int" | "to_float" => {
+            format!("{}", word.bright_green())
+        }
+        // Types
+        "String" | "Int" | "Float" | "Bool" | "List" | "Map" => {
+            format!("{}", word.bright_yellow())
+        }
+        // Default
+        _ => word.to_string(),
+    }
+}
+
+fn show_suggestion(suggestion: &ErrorSuggestion) {
+    let severity_icon = match suggestion.severity {
+        SuggestionSeverity::Error => "❌",
+        SuggestionSeverity::Warning => "⚠️",
+        SuggestionSeverity::Hint => "💡",
+        SuggestionSeverity::Info => "ℹ️",
+    };
+    
+    let severity_color = match suggestion.severity {
+        SuggestionSeverity::Error => "red",
+        SuggestionSeverity::Warning => "yellow",
+        SuggestionSeverity::Hint => "cyan",
+        SuggestionSeverity::Info => "blue",
+    };
+    
+    println!("    {} {}", severity_icon, suggestion.message.color(severity_color).bold());
+    
+    if let Some(fix) = &suggestion.fix {
+        println!("      {}: {}", "Fix".bright_green().bold(), fix);
+    }
+    
+    if let Some(help) = &suggestion.help {
+        println!("      {}: {}", "Help".bright_blue().bold(), help);
+    }
+}
+
 fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: bool, logger: &Logger) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file_path)?;
     let parser = OlangParser::new();
@@ -109,65 +347,51 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
                 Ok(())
             }
             Err(e) => {
-                logger.error("main", &format!("Parse error: {}", e));
+                show_file_parse_error(&e, file_path, &source);
                 Err(anyhow::anyhow!("Parse failed"))
             }
         }
     } else {
-        // Use OVM interpreter with JIT compilation
-        let integration_config = IntegrationConfig {
-            use_ovm_by_default: true,
-            ovm_complexity_threshold: 1,
-            auto_compile_functions: true,
-            enable_ovm_lazy_eval: true,
-            fallback_on_error: true,
-            enable_ovm_builtins: true,
-            ovm_preferred_builtins: vec![
-                "len".to_string(),
-                "typeof".to_string(),
-                "to_string".to_string(),
-                "sum".to_string(),
-                "average".to_string(),
-                "min".to_string(),
-                "max".to_string(),
-                "reverse".to_string(),
-                "sort".to_string(),
-                "contains".to_string(),
-            ],
-        };
-
-        let mut interpreter = OvmInterpreter::with_config(integration_config);
+        // Use OVM integration
+        let config = IntegrationConfig::default();
+        let mut ovm_interpreter = OvmInterpreter::with_config(config);
         
-        // Initialize OVM with default configuration
-        let ovm_config = OvmConfig::default();
-        interpreter.initialize_ovm(ovm_config)?;
-
-        if verbose {
-            logger.info("main", "OVM initialized with JIT compilation enabled");
+        // Initialize OVM
+        if let Err(e) = ovm_interpreter.initialize_ovm_default() {
+            if verbose {
+                logger.warn("main", &format!("OVM initialization failed, falling back to classic: {}", e));
+            }
         }
-
+        
         match parser.parse(&source) {
             Ok(ast) => {
-                let result = interpreter.eval_program(ast)?;
-                if verbose {
-                    logger.info("main", &format!("Result: {:?}", result));
+                match ovm_interpreter.eval_program(ast) {
+                    Ok(result) => {
+                        if verbose {
+                            logger.info("main", &format!("Execution result: {:?}", result));
+                        }
+                        
+                        if ovm_stats {
+                            let stats = ovm_interpreter.get_stats();
+                            logger.info("main", "OVM Performance Statistics:");
+                            logger.info("main", &format!("  Classic executions: {}", stats.classic_executions));
+                            logger.info("main", &format!("  OVM executions: {}", stats.ovm_executions));
+                            logger.info("main", &format!("  Fallback executions: {}", stats.fallback_executions));
+                            logger.info("main", &format!("  Compilations: {}", stats.compilation_count));
+                            logger.info("main", &format!("  Average classic time: {:.2}ms", stats.average_classic_time_ms));
+                            logger.info("main", &format!("  Average OVM time: {:.2}ms", stats.average_ovm_time_ms));
+                        }
+                        
+                        Ok(())
+                    }
+                    Err(e) => {
+                        logger.error("main", &format!("Execution error: {}", e));
+                        Err(anyhow::anyhow!("Execution failed"))
+                    }
                 }
-                
-                if ovm_stats {
-                    let stats = interpreter.get_stats();
-                    logger.info("main", "OVM Performance Statistics:");
-                    logger.info("main", &format!("  Classic executions: {}", stats.classic_executions));
-                    logger.info("main", &format!("  OVM executions: {}", stats.ovm_executions));
-                    logger.info("main", &format!("  Fallback executions: {}", stats.fallback_executions));
-                    logger.info("main", &format!("  Compilations: {}", stats.compilation_count));
-                    logger.info("main", &format!("  Average classic time: {:.2}ms", stats.average_classic_time_ms));
-                    logger.info("main", &format!("  Average OVM time: {:.2}ms", stats.average_ovm_time_ms));
-                }
-                
-                Ok(())
             }
             Err(e) => {
-                logger.error("main", &format!("Parse error: {}", e));
+                show_file_parse_error(&e, file_path, &source);
                 Err(anyhow::anyhow!("Parse failed"))
             }
         }

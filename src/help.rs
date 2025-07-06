@@ -55,6 +55,9 @@ impl HelpSystem {
     fn initialize_documentation(&mut self) {
         // REPL Commands Documentation
         self.add_repl_commands();
+        
+        // Error Help Topics
+        self.add_error_help_topics();
 
         // I/O Functions
         self.add_function(FunctionDoc {
@@ -3930,6 +3933,111 @@ For function-specific syntax, use: {}help <function_name>{}",
                 "base64.encode_no_pad".to_string(),
                 "base64.decode".to_string(),
             ],
+        });
+    }
+    
+    /// Add error-specific help topics to the help system
+    fn add_error_help_topics(&mut self) {
+        // Syntax Errors
+        self.add_function(FunctionDoc {
+            name: "error.syntax".to_string(),
+            description: "Help with common syntax errors and fixes".to_string(),
+            syntax: "help error.syntax".to_string(),
+            parameters: vec!["No parameters - displays syntax error help".to_string()],
+            return_type: "Help Display".to_string(),
+            examples: vec![
+                "Unclosed brackets: Check that all (, [, { have matching closing brackets".to_string(),
+                "Unclosed strings: Make sure all \" quotes are properly closed".to_string(),
+                "Invalid function syntax: Use fn name(params) = expression or fn name(params) { block }".to_string(),
+                "Missing operators: Use == for comparison, = only in let declarations".to_string(),
+            ],
+            category: "Errors".to_string(),
+            see_also: vec!["error.types".to_string(), "error.runtime".to_string()],
+        });
+
+        // Type Errors
+        self.add_function(FunctionDoc {
+            name: "error.types".to_string(),
+            description: "Help with type errors and type conversion".to_string(),
+            syntax: "help error.types".to_string(),
+            parameters: vec!["No parameters - displays type error help".to_string()],
+            return_type: "Help Display".to_string(),
+            examples: vec![
+                "Type mismatch: Use to_int(), to_float(), to_string() for conversion".to_string(),
+                "Division by zero: Check denominators before division operations".to_string(),
+                "Invalid operations: Ensure operands are compatible types (number + number, string + string)".to_string(),
+                "Pattern matching: Use Ok(value) and Err(error) for Result types".to_string(),
+            ],
+            category: "Errors".to_string(),
+            see_also: vec!["to_int".to_string(), "to_float".to_string(), "to_string".to_string()],
+        });
+
+        // Runtime Errors
+        self.add_function(FunctionDoc {
+            name: "error.runtime".to_string(),
+            description: "Help with runtime errors and debugging".to_string(),
+            syntax: "help error.runtime".to_string(),
+            parameters: vec!["No parameters - displays runtime error help".to_string()],
+            return_type: "Help Display".to_string(),
+            examples: vec![
+                "Undefined variable: Use :env to see available variables".to_string(),
+                "Break/continue outside loop: These can only be used inside for/while loops".to_string(),
+                "Pattern match failed: Ensure patterns match the value structure".to_string(),
+                "Function arity mismatch: Check function signature and argument count".to_string(),
+            ],
+            category: "Errors".to_string(),
+            see_also: vec![":env".to_string(), ":debug".to_string(), ":type".to_string()],
+        });
+
+        // Common Fixes
+        self.add_function(FunctionDoc {
+            name: "error.fixes".to_string(),
+            description: "Common error fixes and best practices".to_string(),
+            syntax: "help error.fixes".to_string(),
+            parameters: vec!["No parameters - displays common fixes".to_string()],
+            return_type: "Help Display".to_string(),
+            examples: vec![
+                "Bracket matching: Use an editor with syntax highlighting".to_string(),
+                "Type checking: Use :type <expression> to check types".to_string(),
+                "Variable inspection: Use :inspect <variable> to examine values".to_string(),
+                "Debug mode: Use :debug on to get more detailed error information".to_string(),
+            ],
+            category: "Errors".to_string(),
+            see_also: vec![":type".to_string(), ":inspect".to_string(), ":debug".to_string()],
+        });
+
+        // Language Differences
+        self.add_function(FunctionDoc {
+            name: "error.differences".to_string(),
+            description: "Common mistakes when coming from other languages".to_string(),
+            syntax: "help error.differences".to_string(),
+            parameters: vec!["No parameters - displays language difference help".to_string()],
+            return_type: "Help Display".to_string(),
+            examples: vec![
+                "JavaScript: Use println() instead of console.log()".to_string(),
+                "Python: Use println() instead of print(), no colons for blocks".to_string(),
+                "C/Java: No semicolons needed, use = only in let declarations".to_string(),
+                "Rust: Functions use = for expression bodies, {} for block bodies".to_string(),
+            ],
+            category: "Errors".to_string(),
+            see_also: vec!["println".to_string(), "error.syntax".to_string()],
+        });
+
+        // Variable Scope
+        self.add_function(FunctionDoc {
+            name: "error.scope".to_string(),
+            description: "Help with variable scope and binding errors".to_string(),
+            syntax: "help error.scope".to_string(),
+            parameters: vec!["No parameters - displays scope help".to_string()],
+            return_type: "Help Display".to_string(),
+            examples: vec![
+                "Variable not in scope: Define variables with let before using them".to_string(),
+                "Shadowing: Inner scopes can redefine variables from outer scopes".to_string(),
+                "Function scope: Parameters are only available inside the function body".to_string(),
+                "Pattern matching scope: Variables in patterns create new bindings".to_string(),
+            ],
+            category: "Errors".to_string(),
+            see_also: vec!["let".to_string(), ":env".to_string()],
         });
     }
 }

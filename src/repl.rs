@@ -2,7 +2,7 @@ use crate::ast::Value;
 use crate::help::HelpSystem;
 use crate::interpreter::InterpreterError;
 use crate::ovm_integration::{IntegrationConfig, IntegrationError, OvmInterpreter};
-use crate::parser::{ParseError, Parser};
+use crate::parser::{ErrorSuggestion, ParseError, Parser, SuggestionSeverity};
 use crate::version::VERSION;
 use colored::*;
 use rustyline::error::ReadlineError;
@@ -421,10 +421,7 @@ impl Repl {
                             }
                         }
                         Err(e) => {
-                            eprintln!("Error: {}", e);
-                            if self.verbose {
-                                eprintln!("Debug: {:?}", e);
-                            }
+                            self.show_enhanced_error(&e);
                         }
                     }
                     let _ = self.ovm_interpreter.force_gc();
@@ -484,10 +481,7 @@ impl Repl {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error: {}", e);
-                    if self.verbose || self.config.debug_mode {
-                        eprintln!("Debug: {:?}", e);
-                    }
+                    self.show_enhanced_error(&e);
                 }
             }
             let _ = self.ovm_interpreter.force_gc();
@@ -1750,46 +1744,318 @@ impl Repl {
     }
 
     fn show_enhanced_error(&mut self, error: &ReplError) {
-        println!("\n{}", "=== Enhanced Error Context ===".bright_red().bold());
+        println!("\n{}", "═══ Error Details ═══".bright_red().bold());
         
         match error {
-            ReplError::Interpreter(InterpreterError::UndefinedVariable { name }) => {
-                println!("  {}: Variable '{}' is not defined", "Error".bright_red(), name.bright_yellow());
-                
-                // Suggest similar variables
-                let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
-                let mut suggestions = Vec::new();
-                
-                for var_name in user_vars.keys() {
-                    if var_name.contains(name) || name.contains(var_name) {
-                        suggestions.push(var_name);
-                    }
-                }
-                
-                if !suggestions.is_empty() {
-                    println!("  {}: Did you mean one of these?", "Suggestion".bright_blue());
-                    for suggestion in suggestions {
-                        println!("    {}", suggestion.bright_green());
-                    }
-                } else {
-                    println!("  {}: Use :env to see available variables", "Hint".bright_blue());
-                }
-            }
-            ReplError::Interpreter(InterpreterError::TypeError { message }) => {
-                println!("  {}: {}", "Type Error".bright_red(), message);
-                println!("  {}: Check the types of your values and operations", "Hint".bright_blue());
-            }
             ReplError::Parse(parse_error) => {
-                println!("  {}: {}", "Parse Error".bright_red(), parse_error);
-                println!("  {}: Check your syntax and bracket matching", "Hint".bright_blue());
+                self.show_parse_error(parse_error);
             }
-            _ => {
-                println!("  {}: {}", "Error".bright_red(), error);
+            ReplError::Interpreter(interpreter_error) => {
+                self.show_interpreter_error(interpreter_error);
+            }
+            ReplError::Integration(integration_error) => {
+                println!("  {}: {}", "Integration Error".bright_red(), integration_error);
+            }
+            ReplError::Readline(readline_error) => {
+                println!("  {}: {}", "Input Error".bright_red(), readline_error);
+            }
+            ReplError::Io(io_error) => {
+                println!("  {}: {}", "IO Error".bright_red(), io_error);
+            }
+            ReplError::Debug(debug_error) => {
+                println!("  {}: {}", "Debug Error".bright_red(), debug_error);
             }
         }
         
         println!();
     }
+    
+    fn show_parse_error(&mut self, parse_error: &ParseError) {
+        // Display the main error message with enhanced formatting
+        match parse_error {
+            ParseError::InvalidSyntaxWithPosition { message, line, column, snippet } => {
+                println!("  {}: {}", "Parse Error".bright_red().bold(), message.bright_white());
+                println!("\n  {}", "📍 Location:".bright_yellow().bold());
+                println!("    Line {}, Column {}", line.to_string().bright_cyan(), column.to_string().bright_cyan());
+                
+                // Show the formatted code snippet with highlighting
+                if !snippet.trim().is_empty() {
+                    println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                    self.show_highlighted_snippet(snippet);
+                }
+            }
+            ParseError::UnexpectedTokenWithPosition { token, line, column, snippet } => {
+                println!("  {}: Unexpected token '{}'", 
+                    "Parse Error".bright_red().bold(), 
+                    token.bright_yellow().bold()
+                );
+     
+                println!("    Line {}, Column {}", line.to_string().bright_cyan(), column.to_string().bright_cyan());
+                
+                if !snippet.trim().is_empty() {
+                    println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                    self.show_highlighted_snippet(snippet);
+                }
+            }
+            _ => {
+                println!("  {}: {}", "Parse Error".bright_red().bold(), parse_error);
+            }
+        }
+        
+        // Get the last command for context
+        let empty_string = String::new();
+        let last_command = self.command_history.last().unwrap_or(&empty_string).clone();
+        
+        // Get suggestions from the parser
+        let suggestions = self.parser.get_suggestions(parse_error, &last_command);
+        
+        if !suggestions.is_empty() {
+            println!("\n  {}", "Suggestions:".bright_cyan().bold());
+            for suggestion in suggestions {
+                self.show_suggestion(&suggestion);
+            }
+        }
+        
+        // Show related help if available
+        self.show_contextual_help(parse_error, &last_command);
+    }
+    
+    fn show_highlighted_snippet(&self, snippet: &str) {
+        // Parse and display the snippet with syntax highlighting
+        let lines: Vec<&str> = snippet.lines().collect();
+        
+        for line in lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+            
+            // Check if this line contains a caret pointer
+            if line.contains("^") {
+                // This is the error pointer line - highlight it specially
+                let parts: Vec<&str> = line.split('|').collect();
+                if parts.len() >= 2 {
+                    let line_num = parts[0].trim();
+                    let pointer = parts[1];
+                    println!("    {}{}│{}{}", 
+                        line_num.bright_black(),
+                        " ".repeat(4 - line_num.len().min(4)),
+                        " ",
+                        pointer.bright_red().bold()
+                    );
+                }
+            } else {
+                // Regular code line - apply basic syntax highlighting
+                let parts: Vec<&str> = line.split('|').collect();
+                if parts.len() >= 2 {
+                    let line_num = parts[0].trim();
+                    let code = parts[1];
+                    
+                    // Basic syntax highlighting
+                    let highlighted_code = self.apply_basic_highlighting(code);
+                    
+                    println!("    {}{}│ {}", 
+                        line_num.bright_blue(),
+                        " ".repeat(4 - line_num.len().min(4)),
+                        highlighted_code
+                    );
+                }
+            }
+        }
+    }
+    
+    fn apply_basic_highlighting(&self, code: &str) -> String {
+        let mut result = String::new();
+        let mut chars = code.chars().peekable();
+        let mut current_word = String::new();
+        
+        while let Some(ch) = chars.next() {
+            match ch {
+                // String literals
+                '"' => {
+                    if !current_word.is_empty() {
+                        result.push_str(&self.highlight_word(&current_word));
+                        current_word.clear();
+                    }
+                    result.push_str(&format!("{}", "\"".bright_green()));
+                    
+                    // Consume the string content
+                    while let Some(str_ch) = chars.next() {
+                        if str_ch == '"' {
+                            result.push_str(&format!("{}", str_ch.to_string().bright_green()));
+                            break;
+                        } else if str_ch == '\\' {
+                            result.push_str(&format!("{}", str_ch.to_string().bright_green()));
+                            if let Some(escaped) = chars.next() {
+                                result.push_str(&format!("{}", escaped.to_string().bright_green()));
+                            }
+                        } else {
+                            result.push_str(&format!("{}", str_ch.to_string().bright_green()));
+                        }
+                    }
+                }
+                // Numbers
+                c if c.is_ascii_digit() => {
+                    current_word.push(c);
+                    
+                    // Look ahead to consume the full number
+                    while let Some(&next_ch) = chars.peek() {
+                        if next_ch.is_ascii_digit() || next_ch == '.' || next_ch == '_' {
+                            current_word.push(chars.next().unwrap());
+                        } else {
+                            break;
+                        }
+                    }
+                    result.push_str(&format!("{}", current_word.bright_magenta()));
+                    current_word.clear();
+                }
+                // Identifiers and keywords
+                c if c.is_alphabetic() || c == '_' => {
+                    current_word.push(c);
+                }
+                // Operators and punctuation
+                '=' | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '!' | '&' | '|' => {
+                    if !current_word.is_empty() {
+                        result.push_str(&self.highlight_word(&current_word));
+                        current_word.clear();
+                    }
+                    
+                    // Look ahead for compound operators
+                    let mut op = ch.to_string();
+                    if let Some(&next_ch) = chars.peek() {
+                        if (ch == '=' && next_ch == '=') ||
+                           (ch == '!' && next_ch == '=') ||
+                           (ch == '<' && next_ch == '=') ||
+                           (ch == '>' && next_ch == '=') ||
+                           (ch == '&' && next_ch == '&') ||
+                           (ch == '|' && next_ch == '|') {
+                            op.push(chars.next().unwrap());
+                        }
+                    }
+                    result.push_str(&format!("{}", op.bright_yellow()));
+                }
+                // Brackets and parentheses
+                '(' | ')' | '[' | ']' | '{' | '}' => {
+                    if !current_word.is_empty() {
+                        result.push_str(&self.highlight_word(&current_word));
+                        current_word.clear();
+                    }
+                    result.push_str(&format!("{}", ch.to_string().bright_cyan()));
+                }
+                // Other characters
+                _ => {
+                    if !current_word.is_empty() {
+                        result.push_str(&self.highlight_word(&current_word));
+                        current_word.clear();
+                    }
+                    result.push(ch);
+                }
+            }
+        }
+        
+        // Handle any remaining word
+        if !current_word.is_empty() {
+            result.push_str(&self.highlight_word(&current_word));
+        }
+        
+        result
+    }
+    
+    fn highlight_word(&self, word: &str) -> String {
+        match word {
+            // Keywords
+            "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" |
+            "true" | "false" | "async" | "await" | "try" | "catch" | "import" | "export" | "type" => {
+                format!("{}", word.bright_blue().bold())
+            }
+            // Types
+            "Int" | "Float" | "String" | "Bool" | "List" | "Map" | "Unit" | "Result" | "Ok" | "Err" => {
+                format!("{}", word.bright_magenta())
+            }
+            // Built-in functions (common ones)
+            "println" | "print" | "map" | "filter" | "reduce" | "range" | "len" | "head" | "tail" => {
+                format!("{}", word.bright_cyan())
+            }
+            _ => word.to_string(),
+        }
+    }
+    
+    fn show_contextual_help(&mut self, parse_error: &ParseError, input: &str) {
+        // Extract keywords from the error and input to suggest relevant help
+        let error_msg = format!("{:?}", parse_error);
+        let mut help_topics = HashSet::new();
+        
+        // Suggest error-specific help topics
+        if error_msg.contains("InvalidSyntax") || error_msg.contains("UnexpectedToken") {
+            help_topics.insert("error.syntax");
+        }
+        
+        // Check for specific syntax issues
+        if error_msg.contains("bracket") || error_msg.contains("parenthesis") || error_msg.contains("brace") {
+            help_topics.insert("error.syntax");
+        }
+        
+        if error_msg.contains("quote") || error_msg.contains("string") {
+            help_topics.insert("error.syntax");
+        }
+        
+        // Check for function-related errors
+        if error_msg.contains("fn") || input.contains("fn") {
+            help_topics.insert("functions");
+            help_topics.insert("error.syntax");
+        }
+        
+        // Check for let-related errors
+        if error_msg.contains("let") || input.contains("let") {
+            help_topics.insert("variables");
+            help_topics.insert("error.scope");
+        }
+        
+        // Check for match-related errors
+        if error_msg.contains("match") || input.contains("match") {
+            help_topics.insert("pattern_matching");
+            help_topics.insert("error.types");
+        }
+        
+        // Check for type-related errors
+        if error_msg.contains("type") || input.contains(": ") {
+            help_topics.insert("types");
+            help_topics.insert("error.types");
+        }
+        
+        // Check for common language migration issues
+        if input.contains("console.log") || input.contains("printf") || input.contains(";") {
+            help_topics.insert("error.differences");
+        }
+        
+        // Check for assignment/comparison confusion
+        if input.contains("=") && !input.contains("==") && !input.contains("let") {
+            help_topics.insert("error.syntax");
+            help_topics.insert("error.differences");
+        }
+        
+        if !help_topics.is_empty() {
+            println!("\n  {}", "📚 Related Help Topics:".bright_cyan().bold());
+            let has_error_topics = help_topics.iter().any(|t| t.starts_with("error."));
+            
+            for topic in &help_topics {
+                if self.help_system.has_function(topic) || self.help_system.has_category(topic) {
+                    println!("    • Type {} for help on {}", 
+                        format!("help {}", topic).bright_cyan(),
+                        topic.replace("error.", "").replace("_", " ").bright_white()
+                    );
+                }
+            }
+            
+            // Always suggest the general error help
+            if has_error_topics {
+                println!("    • Type {} for comprehensive error guidance", 
+                    "help error.fixes".bright_cyan()
+                );
+            }
+        }
+    }
+    
+
 
     /// Handle module debug commands for troubleshooting module resolution
     fn handle_module_debug_command(&mut self, args: &[&str]) -> Result<(), ReplError> {
@@ -1922,6 +2188,151 @@ impl Repl {
         
         if !found_user_modules {
             println!("  (no user modules loaded)");
+        }
+    }
+
+    fn show_interpreter_error(&mut self, interpreter_error: &InterpreterError) {
+        match interpreter_error {
+            InterpreterError::UndefinedVariable { name } => {
+                println!("  {}: Variable '{}' is not defined", 
+                    "Undefined Variable".bright_red().bold(), 
+                    name.bright_yellow()
+                );
+                
+                // Suggest similar variables
+                let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+                let mut suggestions = Vec::new();
+                
+                for var_name in user_vars.keys() {
+                    if Self::is_similar_name(name, var_name) {
+                        suggestions.push(var_name.clone());
+                    }
+                }
+                
+                if !suggestions.is_empty() {
+                    println!("\n  {}", "Did you mean:".bright_cyan().bold());
+                    for suggestion in suggestions {
+                        println!("    • {}", suggestion.bright_green());
+                    }
+                } else {
+                    println!("\n  {}: Use {} to see available variables", 
+                        "Hint".bright_blue().bold(), 
+                        ":env".bright_cyan()
+                    );
+                }
+            }
+            InterpreterError::TypeError { message } => {
+                println!("  {}: {}", "Type Error".bright_red().bold(), message);
+                
+                // Type-specific suggestions
+                if message.contains("division by zero") {
+                    println!("\n  {}: Check that denominators are not zero before division", 
+                        "Hint".bright_blue().bold());
+                } else if message.contains("cannot convert") {
+                    println!("\n  {}: Use type conversion functions like {} or {}", 
+                        "Hint".bright_blue().bold(),
+                        "to_int()".bright_cyan(),
+                        "to_float()".bright_cyan()
+                    );
+                } else if message.contains("invalid binary operation") {
+                    println!("\n  {}: Check that operands are compatible types", 
+                        "Hint".bright_blue().bold());
+                    println!("    • Numbers: {} with {}", "42".bright_green(), "3.14".bright_green());
+                    println!("    • Strings: {} with {}", "\"hello\"".bright_green(), "\"world\"".bright_green());
+                    println!("    • Booleans: {} with {}", "true".bright_green(), "false".bright_green());
+                }
+            }
+            InterpreterError::RuntimeError { message } => {
+                println!("  {}: {}", "Runtime Error".bright_red().bold(), message);
+                
+                // Runtime-specific suggestions
+                if message.contains("break") {
+                    println!("\n  {}: {} can only be used inside loops", 
+                        "Hint".bright_blue().bold(),
+                        "break".bright_cyan()
+                    );
+                } else if message.contains("continue") {
+                    println!("\n  {}: {} can only be used inside loops", 
+                        "Hint".bright_blue().bold(),
+                        "continue".bright_cyan()
+                    );
+                }
+            }
+            InterpreterError::ArityMismatch { expected, got } => {
+                println!("  {}: Expected {} arguments, got {}", 
+                    "Arity Mismatch".bright_red().bold(), 
+                    expected.to_string().bright_cyan(),
+                    got.to_string().bright_yellow()
+                );
+                
+                println!("\n  {}: Check the function signature and provide the correct number of arguments", 
+                    "Hint".bright_blue().bold());
+            }
+            InterpreterError::PatternMatchFailed => {
+                println!("  {}: Pattern matching failed", 
+                    "Pattern Match Error".bright_red().bold());
+                
+                println!("\n  {}: Ensure the pattern matches the structure of the value", 
+                    "Hint".bright_blue().bold());
+                println!("    • Use {} to match any value", "_".bright_cyan());
+                println!("    • Use {} or {} for Result types", "Ok(value)".bright_cyan(), "Err(error)".bright_cyan());
+            }
+        }
+    }
+    
+    fn is_similar_name(target: &str, candidate: &str) -> bool {
+        // Simple similarity check - could be enhanced with edit distance
+        if target.len() < 3 || candidate.len() < 3 {
+            return false;
+        }
+        
+        // Check if one contains the other
+        if target.contains(candidate) || candidate.contains(target) {
+            return true;
+        }
+        
+        // Check for common prefixes/suffixes
+        let target_lower = target.to_lowercase();
+        let candidate_lower = candidate.to_lowercase();
+        
+        // Check for similar starts
+        if target_lower.starts_with(&candidate_lower[..2]) || 
+           candidate_lower.starts_with(&target_lower[..2]) {
+            return true;
+        }
+        
+        // Check for similar endings
+        if target_lower.ends_with(&candidate_lower[candidate_lower.len()-2..]) || 
+           candidate_lower.ends_with(&target_lower[target_lower.len()-2..]) {
+            return true;
+        }
+        
+        false
+    }
+    
+    fn show_suggestion(&self, suggestion: &ErrorSuggestion) {
+        let severity_icon = match suggestion.severity {
+            SuggestionSeverity::Error => "ERROR",
+            SuggestionSeverity::Warning => "WARNING",
+            SuggestionSeverity::Hint => "HINT",
+            SuggestionSeverity::Info => "INFO",
+        };
+        
+        let severity_color = match suggestion.severity {
+            SuggestionSeverity::Error => "red",
+            SuggestionSeverity::Warning => "yellow",
+            SuggestionSeverity::Hint => "cyan",
+            SuggestionSeverity::Info => "blue",
+        };
+        
+        println!("    {} {}", severity_icon, suggestion.message.color(severity_color).bold());
+        
+        if let Some(fix) = &suggestion.fix {
+            println!("      {}: {}", "Fix".bright_green().bold(), fix);
+        }
+        
+        if let Some(help) = &suggestion.help {
+            println!("      {}: {}", "Help".bright_blue().bold(), help);
         }
     }
 }
