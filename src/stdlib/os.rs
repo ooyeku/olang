@@ -535,24 +535,33 @@ mod tests {
     // Helper function to assert Ok result and extract inner value
     fn assert_ok(result: &Value) -> &Value {
         match result {
-            Value::Ok(inner) => inner.as_ref(),
-            _ => panic!("Expected Ok result, got: {:?}", result),
+            Value::Ok(inner) => inner,
+            _ => {
+                assert!(false, "Expected Ok result, got: {:?}", result);
+                unreachable!()
+            }
         }
     }
 
     // Helper function to assert Err result and extract error message
     fn assert_err(result: &Value) -> &Value {
         match result {
-            Value::Err(inner) => inner.as_ref(),
-            _ => panic!("Expected Err result, got: {:?}", result),
+            Value::Err(inner) => inner,
+            _ => {
+                assert!(false, "Expected Err result, got: {:?}", result);
+                unreachable!()
+            }
         }
     }
 
     // Helper function to extract string from Value
     fn extract_string(value: &Value) -> &str {
         match value {
-            Value::String(s) => s.as_ref(),
-            _ => panic!("Expected string value, got: {:?}", value),
+            Value::String(s) => s,
+            _ => {
+                assert!(false, "Expected string value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
@@ -560,7 +569,10 @@ mod tests {
     fn extract_bool(value: &Value) -> bool {
         match value {
             Value::Boolean(b) => *b,
-            _ => panic!("Expected boolean value, got: {:?}", value),
+            _ => {
+                assert!(false, "Expected boolean value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
@@ -568,15 +580,21 @@ mod tests {
     fn extract_int(value: &Value) -> i64 {
         match value {
             Value::Integer(i) => *i,
-            _ => panic!("Expected integer value, got: {:?}", value),
+            _ => {
+                assert!(false, "Expected integer value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
     // Helper function to extract list from Value
     fn extract_list(value: &Value) -> &[Value] {
         match value {
-            Value::List(list) => list.as_ref(),
-            _ => panic!("Expected list value, got: {:?}", value),
+            Value::List(items) => items,
+            _ => {
+                assert!(false, "Expected list value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
@@ -584,7 +602,10 @@ mod tests {
     fn extract_struct_fields(value: &Value) -> &HashMap<String, Value> {
         match value {
             Value::Struct { fields, .. } => fields,
-            _ => panic!("Expected struct value, got: {:?}", value),
+            _ => {
+                assert!(false, "Expected struct value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
@@ -629,11 +650,11 @@ mod tests {
                     assert_eq!(builtin.name, format!("os.{}", func_name));
                     assert_eq!(builtin.arity, expected_arity);
                 } else {
-                    panic!("Expected builtin function for {}", func_name);
+                    assert!(false, "Expected builtin function for {}, got: {:?}", func_name, fields[func_name]);
                 }
             }
         } else {
-            panic!("Expected struct for os module");
+            assert!(false, "Expected struct for os module, got: {:?}", module);
         }
     }
 
@@ -731,7 +752,7 @@ mod tests {
         for (key, value) in fields {
             match value {
                 Value::String(_) => {} // Expected
-                _ => panic!(
+                _ => assert!(false, 
                     "All env values should be strings, but {} has type {:?}",
                     key, value
                 ),
@@ -805,7 +826,7 @@ mod tests {
         if let Value::String(first_arg) = &args_list[0] {
             assert!(!first_arg.is_empty(), "First argument should not be empty");
         } else {
-            panic!("First argument should be a string");
+            assert!(false, "First argument should be a string, got: {:?}", args_list[0]);
         }
 
         // Test exe_path
@@ -903,11 +924,11 @@ mod tests {
             let result = call_os_function(func_name, vec![string_val("extra")]);
             match result {
                 Ok(Value::Err(_)) => {} // Expected error
-                Ok(other) => panic!(
+                Ok(other) => assert!(false,
                     "Expected error for {} with extra arg, got: {:?}",
                     func_name, other
                 ),
-                Err(e) => panic!("Unexpected error for {}: {}", func_name, e),
+                Err(e) => assert!(false, "Unexpected error for {}: {}", func_name, e),
             }
         }
 
@@ -1044,7 +1065,7 @@ mod tests {
                 os_type, "windows",
                 "Windows family should have windows OS type"
             ),
-            _ => panic!("Unknown OS family: {}", family),
+            _ => assert!(false, "Unknown OS family: {}", family),
         }
     }
 
@@ -1063,7 +1084,7 @@ mod tests {
                 "Unix systems should use / as path separator"
             ),
             "windows" => assert_eq!(separator, "\\", "Windows should use \\ as path separator"),
-            _ => panic!("Unknown OS family for path separator test: {}", family),
+            _ => assert!(false, "Unknown OS family for path separator test: {}", family),
         }
     }
 }

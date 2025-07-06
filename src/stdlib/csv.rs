@@ -749,24 +749,33 @@ mod tests {
     // Helper to assert Result<T, E> success
     fn assert_ok(result: &Value) -> &Value {
         match result {
-            Value::Ok(inner) => inner.as_ref(),
-            _ => panic!("Expected Ok result, got: {:?}", result),
+            Value::Ok(inner) => inner,
+            _ => {
+                assert!(false, "Expected Ok result, got: {:?}", result);
+                unreachable!()
+            }
         }
     }
 
     // Helper to assert Result<T, E> error
     fn assert_err(result: &Value) -> &Value {
         match result {
-            Value::Err(inner) => inner.as_ref(),
-            _ => panic!("Expected Err result, got: {:?}", result),
+            Value::Err(inner) => inner,
+            _ => {
+                assert!(false, "Expected Err result, got: {:?}", result);
+                unreachable!()
+            }
         }
     }
 
     // Helper to extract string from Value::String
     fn extract_string(value: &Value) -> &str {
         match value {
-            Value::String(s) => s.as_ref(),
-            _ => panic!("Expected string value, got: {:?}", value),
+            Value::String(s) => s,
+            _ => {
+                assert!(false, "Expected string value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
@@ -774,15 +783,21 @@ mod tests {
     fn extract_int(value: &Value) -> i64 {
         match value {
             Value::Integer(i) => *i,
-            _ => panic!("Expected integer value, got: {:?}", value),
+            _ => {
+                assert!(false, "Expected integer value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
     // Helper to extract list from Value::List
     fn extract_list(value: &Value) -> &[Value] {
         match value {
-            Value::List(list) => list.as_ref(),
-            _ => panic!("Expected list value, got: {:?}", value),
+            Value::List(list) => list,
+            _ => {
+                assert!(false, "Expected list value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
@@ -825,11 +840,11 @@ mod tests {
                 if let Value::Builtin(builtin) = &fields[func_name] {
                     assert_eq!(builtin.name, format!("csv.{}", func_name));
                 } else {
-                    panic!("Expected builtin function for {}", func_name);
+                    assert!(false, "Expected builtin function for {}, got: {:?}", func_name, fields[func_name]);
                 }
             }
         } else {
-            panic!("Expected struct for csv module");
+            assert!(false, "Expected struct for csv module, got: {:?}", module);
         }
     }
 
@@ -882,7 +897,7 @@ mod tests {
             assert_eq!(extract_string(fields.get("name").unwrap()), "Alice");
             assert_eq!(extract_string(fields.get("age").unwrap()), "30");
         } else {
-            panic!("Expected struct for CSV row");
+            assert!(false, "Expected struct for CSV row, got: {:?}", result);
         }
 
         // Test with empty CSV - should return empty list, not error

@@ -207,7 +207,7 @@ fn test_list_creation() {
             assert_eq!(items[1], olang::ast::Value::Integer(2));
             assert_eq!(items[2], olang::ast::Value::Integer(3));
         }
-        _ => panic!("Expected list result"),
+        _ => assert!(false, "Expected list result, got: {:?}", result),
     }
 }
 
@@ -232,7 +232,7 @@ fn test_tuple_creation() {
             );
             assert_eq!(items[2], olang::ast::Value::Boolean(true));
         }
-        _ => panic!("Expected tuple result"),
+        _ => assert!(false, "Expected tuple result, got: {:?}", result),
     }
 }
 
@@ -278,7 +278,7 @@ fn test_error_handling_result_creation() {
         olang::ast::Value::Ok(inner) => {
             assert_eq!(*inner, olang::ast::Value::Integer(42));
         }
-        _ => panic!("Expected Ok result, got: {:?}", result),
+        _ => assert!(false, "Expected Ok result, got: {:?}", result),
     }
 
     // Test Err creation
@@ -295,7 +295,7 @@ fn test_error_handling_result_creation() {
                 olang::ast::Value::String("something went wrong".to_string().into())
             );
         }
-        _ => panic!("Expected Err result, got: {:?}", result),
+        _ => assert!(false, "Expected Err result, got: {:?}", result),
     }
 }
 
