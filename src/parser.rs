@@ -1,6 +1,6 @@
 use crate::ast::{
     Argument, AsyncFunctionDecl, BinaryOp, EnumVariant, ErrorTypeDecl, ExportDecl, Expr, FieldValue,
-    FunctionDecl, ImportDecl, LetDecl, MatchArm, Parameter, Pattern, Program, PromiseType,
+    FunctionDecl, ImportDecl, LetDecl, MapEntry, MatchArm, Parameter, Pattern, Program, PromiseType,
     Statement, StructField, StructLiteral, TypeAnnotation, TypeDecl, TypeDefinition,
     BitwiseOp, UnaryOp, TemplatePart,
 };
@@ -647,6 +647,7 @@ impl Parser {
             Rule::try_catch_expr => self.build_try_catch_expr(pair.into_inner()),
             Rule::struct_literal => self.build_struct_literal(pair.into_inner()),
             Rule::anonymous_object => self.build_anonymous_object(pair.into_inner()),
+            Rule::map_literal => self.build_map_literal(pair.into_inner()),
             Rule::literal => self.build_literal(pair.into_inner()),
             Rule::identifier => Ok(Expr::Identifier(pair.as_str().to_string())),
             Rule::block => self.build_block(pair.into_inner()),
@@ -969,9 +970,36 @@ impl Parser {
                 "Float" => Ok(TypeAnnotation::Float),
                 "String" => Ok(TypeAnnotation::String),
                 "Bool" => Ok(TypeAnnotation::Bool),
+                "Map" => Ok(TypeAnnotation::Custom("Map".to_string())), // Fallback for standalone Map
                 _ => Err(ParseError::InvalidSyntax {
                     message: format!("Unknown basic type: {}", pair.as_str()),
                 }),
+            },
+            Rule::map_type => {
+                let mut inner_pairs = pair.into_inner();
+                // Skip "Map" literal
+                inner_pairs.next();
+                
+                // Get the key type
+                let key_type = inner_pairs
+                    .next()
+                    .ok_or_else(|| ParseError::InvalidSyntax {
+                        message: "Missing key type for Map".to_string(),
+                    })?;
+                let key_annotation = self.build_type_annotation(key_type.into_inner())?;
+
+                // Get the value type
+                let value_type = inner_pairs
+                    .next()
+                    .ok_or_else(|| ParseError::InvalidSyntax {
+                        message: "Missing value type for Map".to_string(),
+                    })?;
+                let value_annotation = self.build_type_annotation(value_type.into_inner())?;
+
+                Ok(TypeAnnotation::Map {
+                    key_type: Box::new(key_annotation),
+                    value_type: Box::new(value_annotation),
+                })
             },
             Rule::unit_type => Ok(TypeAnnotation::Unit),
             Rule::custom_type => Ok(TypeAnnotation::Custom(pair.as_str().to_string())),
@@ -2340,6 +2368,37 @@ impl Parser {
         }
 
         Ok(Expr::AnonymousObject { fields })
+    }
+
+    fn build_map_literal(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut entries = Vec::new();
+        for pair in pairs {
+            if pair.as_rule() == Rule::map_entry_list {
+                for entry_pair in pair.into_inner() {
+                    if entry_pair.as_rule() == Rule::map_entry {
+                        entries.push(self.build_map_entry(entry_pair.into_inner())?);
+                    }
+                }
+            } else if pair.as_rule() == Rule::map_entry {
+                entries.push(self.build_map_entry(pair.into_inner())?);
+            }
+        }
+
+        Ok(Expr::MapLiteral { entries })
+    }
+
+    fn build_map_entry(&self, mut pairs: Pairs<Rule>) -> Result<MapEntry, ParseError> {
+        let key = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing key in map entry".to_string(),
+        })?;
+        let value = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing value in map entry".to_string(),
+        })?;
+
+        Ok(MapEntry {
+            key: self.build_expr(key.into_inner())?,
+            value: self.build_expr(value.into_inner())?,
+        })
     }
 
     fn build_for_loop(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {

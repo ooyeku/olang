@@ -55,6 +55,86 @@ impl TypeChecker {
             },
         );
 
+        // Map functions
+        context.functions.insert(
+            "map_get".to_string(),
+            TypeAnnotation::Function {
+                params: vec![
+                    TypeAnnotation::Map {
+                        key_type: Box::new(TypeAnnotation::Unknown),
+                        value_type: Box::new(TypeAnnotation::Unknown),
+                    },
+                    TypeAnnotation::Unknown, // Key type
+                ],
+                return_type: Box::new(TypeAnnotation::Unknown), // Value type
+            },
+        );
+
+        context.functions.insert(
+            "map_set".to_string(),
+            TypeAnnotation::Function {
+                params: vec![
+                    TypeAnnotation::Map {
+                        key_type: Box::new(TypeAnnotation::Unknown),
+                        value_type: Box::new(TypeAnnotation::Unknown),
+                    },
+                    TypeAnnotation::Unknown, // Key type
+                    TypeAnnotation::Unknown, // Value type
+                ],
+                return_type: Box::new(TypeAnnotation::Map {
+                    key_type: Box::new(TypeAnnotation::Unknown),
+                    value_type: Box::new(TypeAnnotation::Unknown),
+                }),
+            },
+        );
+
+        context.functions.insert(
+            "map_has_key".to_string(),
+            TypeAnnotation::Function {
+                params: vec![
+                    TypeAnnotation::Map {
+                        key_type: Box::new(TypeAnnotation::Unknown),
+                        value_type: Box::new(TypeAnnotation::Unknown),
+                    },
+                    TypeAnnotation::Unknown, // Key type
+                ],
+                return_type: Box::new(TypeAnnotation::Bool),
+            },
+        );
+
+        context.functions.insert(
+            "map_keys".to_string(),
+            TypeAnnotation::Function {
+                params: vec![TypeAnnotation::Map {
+                    key_type: Box::new(TypeAnnotation::Unknown),
+                    value_type: Box::new(TypeAnnotation::Unknown),
+                }],
+                return_type: Box::new(TypeAnnotation::List(Box::new(TypeAnnotation::String))),
+            },
+        );
+
+        context.functions.insert(
+            "map_values".to_string(),
+            TypeAnnotation::Function {
+                params: vec![TypeAnnotation::Map {
+                    key_type: Box::new(TypeAnnotation::Unknown),
+                    value_type: Box::new(TypeAnnotation::Unknown),
+                }],
+                return_type: Box::new(TypeAnnotation::List(Box::new(TypeAnnotation::Unknown))),
+            },
+        );
+
+        context.functions.insert(
+            "map_len".to_string(),
+            TypeAnnotation::Function {
+                params: vec![TypeAnnotation::Map {
+                    key_type: Box::new(TypeAnnotation::Unknown),
+                    value_type: Box::new(TypeAnnotation::Unknown),
+                }],
+                return_type: Box::new(TypeAnnotation::Int),
+            },
+        );
+
         Self { context }
     }
 
@@ -273,6 +353,35 @@ impl TypeChecker {
                     let types: Result<Vec<_>, _> =
                         items.iter().map(|item| self.infer_type(item)).collect();
                     Ok(TypeAnnotation::Tuple(types?))
+                }
+            }
+
+            Expr::MapLiteral { entries } => {
+                if entries.is_empty() {
+                    // Empty map - use unknown key/value types
+                    Ok(TypeAnnotation::Map {
+                        key_type: Box::new(TypeAnnotation::Unknown),
+                        value_type: Box::new(TypeAnnotation::Unknown),
+                    })
+                } else {
+                    // Infer key and value types from first entry
+                    let first_entry = &entries[0];
+                    let key_type = self.infer_type(&first_entry.key)?;
+                    let value_type = self.infer_type(&first_entry.value)?;
+
+                    // Check all entries have compatible types
+                    for entry in entries.iter().skip(1) {
+                        let entry_key_type = self.infer_type(&entry.key)?;
+                        let entry_value_type = self.infer_type(&entry.value)?;
+                        
+                        self.check_type_compatibility(&key_type, &entry_key_type, "map key")?;
+                        self.check_type_compatibility(&value_type, &entry_value_type, "map value")?;
+                    }
+
+                    Ok(TypeAnnotation::Map {
+                        key_type: Box::new(key_type),
+                        value_type: Box::new(value_type),
+                    })
                 }
             }
 
@@ -545,6 +654,18 @@ impl TypeChecker {
             (TypeAnnotation::Unit, TypeAnnotation::Unit) => true,
             (TypeAnnotation::List(a_inner), TypeAnnotation::List(b_inner)) => {
                 self.types_compatible(a_inner, b_inner)
+            }
+            (
+                TypeAnnotation::Map {
+                    key_type: a_key,
+                    value_type: a_value,
+                },
+                TypeAnnotation::Map {
+                    key_type: b_key,
+                    value_type: b_value,
+                },
+            ) => {
+                self.types_compatible(a_key, b_key) && self.types_compatible(a_value, b_value)
             }
             (TypeAnnotation::Tuple(a_types), TypeAnnotation::Tuple(b_types)) => {
                 a_types.len() == b_types.len()

@@ -1657,6 +1657,7 @@ impl BytecodeVm {
                 "enum"
             },
             Ok(Value::Promise { .. }) => "promise",
+            Ok(Value::Map(_)) => "map",
             Err(_) => "unknown",
         }
     }

@@ -1,6 +1,6 @@
 use crate::ast::{
     Argument, AsyncFunctionDecl, BinaryOp, BuiltinFunction, EnumVariantData, ErrorTypeDecl, ExportDecl, Expr,
-    Function, FunctionDecl, ImportDecl, LetDecl, MatchArm, Pattern, Program, PromiseType,
+    Function, FunctionDecl, ImportDecl, LetDecl, MapEntry, MatchArm, Pattern, Program, PromiseType,
     Statement, UnaryOp, Value,
 };
 use crate::async_runtime::AsyncRuntime;
@@ -384,6 +384,7 @@ impl Interpreter {
             }
             Expr::StructLiteral(struct_literal) => self.eval_struct_literal(struct_literal),
             Expr::AnonymousObject { fields } => self.eval_anonymous_object(fields),
+            Expr::MapLiteral { entries } => self.eval_map_literal(entries),
             Expr::FieldAccess { object, field } => self.eval_field_access(object, field),
             Expr::ResultOk(expr) => {
                 let value = self.eval_expr(*expr)?;
@@ -1381,8 +1382,6 @@ impl Interpreter {
 
     /// Load a module from the file system
     fn load_module_from_file(&mut self, module_path: &str) -> Result<Value, InterpreterError> {
-        use std::path::PathBuf;
-        
         // Determine the file path
         let file_path = self.resolve_module_path(module_path)?;
         
@@ -1578,6 +1577,36 @@ impl Interpreter {
             type_name: "Object".to_string(),
             fields,
         })
+    }
+
+    fn eval_map_literal(
+        &mut self,
+        entries: Vec<crate::ast::MapEntry>,
+    ) -> Result<Value, InterpreterError> {
+        let mut map = std::collections::HashMap::new();
+
+        for entry in entries {
+            let key = self.eval_expr(entry.key)?;
+            let value = self.eval_expr(entry.value)?;
+
+            // Convert key to string (maps in Olang use string keys)
+            let key_str = match key {
+                Value::String(s) => s.as_ref().clone(),
+                Value::Integer(i) => i.to_string(),
+                Value::Float(f) => f.to_string(),
+                Value::Boolean(b) => b.to_string(),
+                _ => {
+                    return Err(InterpreterError::TypeError {
+                        message: "Map keys must be strings, integers, floats, or booleans"
+                            .to_string(),
+                    })
+                }
+            };
+
+            map.insert(key_str, value);
+        }
+
+        Ok(Value::Map(std::sync::Arc::new(map)))
     }
 
     fn eval_field_access(

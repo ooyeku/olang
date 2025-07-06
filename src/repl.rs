@@ -1380,6 +1380,7 @@ impl Repl {
                 "enum"
             },
             Value::Promise { .. } => "promise",
+            Value::Map(_) => "map",
         }
     }
 

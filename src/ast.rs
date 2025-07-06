@@ -137,6 +137,9 @@ pub enum Expr {
     AnonymousObject {
         fields: Vec<FieldValue>,
     },
+    MapLiteral {
+        entries: Vec<MapEntry>,
+    },
     FieldAccess {
         object: Box<Expr>,
         field: String,
@@ -337,6 +340,7 @@ pub enum Value {
     String(Arc<String>),
     Boolean(bool),
     List(Arc<[Value]>),
+    Map(Arc<HashMap<String, Value>>),
     Tuple(Arc<Vec<Value>>),
     Function(Function),
     Builtin(BuiltinFunction),
@@ -408,6 +412,10 @@ pub enum TypeAnnotation {
     Bool,
     Unit, // () type
     List(Box<TypeAnnotation>),
+    Map {
+        key_type: Box<TypeAnnotation>,
+        value_type: Box<TypeAnnotation>,
+    },
     Tuple(Vec<TypeAnnotation>),
     Function {
         params: Vec<TypeAnnotation>,
@@ -575,6 +583,13 @@ pub struct FieldValue {
     pub value: Expr,
 }
 
+/// Map entry for map literals
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MapEntry {
+    pub key: Expr,
+    pub value: Expr,
+}
+
 impl Default for Program {
     fn default() -> Self {
         Self::new()
@@ -640,6 +655,17 @@ impl std::fmt::Display for Value {
                     write!(f, "{}", item)?;
                 }
                 write!(f, "]")
+            }
+            Value::Map(map_rc) => {
+                let map = map_rc.as_ref();
+                write!(f, "#{{")?;
+                for (i, (key, value)) in map.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "\"{}\": {}", key, value)?;
+                }
+                write!(f, "}}")
             }
             Value::Tuple(items_rc) => {
                 let items = items_rc.as_ref();
@@ -746,6 +772,7 @@ impl Value {
             Value::String(_) => "String".to_string(),
             Value::Boolean(_) => "Bool".to_string(),
             Value::List(_) => "List".to_string(),
+            Value::Map(_) => "Map".to_string(),
             Value::Tuple(_) => "Tuple".to_string(),
             Value::Function(_) => "Function".to_string(),
             Value::Builtin(_) => "Builtin".to_string(),

@@ -324,6 +324,79 @@ impl BuiltinFunctions {
             },
         );
 
+        // Map functions
+        functions.insert(
+            "map_get".to_string(),
+            BuiltinFunction {
+                name: "map_get".to_string(),
+                arity: 2,
+            },
+        );
+
+        functions.insert(
+            "map_set".to_string(),
+            BuiltinFunction {
+                name: "map_set".to_string(),
+                arity: 3,
+            },
+        );
+
+        functions.insert(
+            "map_has_key".to_string(),
+            BuiltinFunction {
+                name: "map_has_key".to_string(),
+                arity: 2,
+            },
+        );
+
+        functions.insert(
+            "map_keys".to_string(),
+            BuiltinFunction {
+                name: "map_keys".to_string(),
+                arity: 1,
+            },
+        );
+
+        functions.insert(
+            "map_values".to_string(),
+            BuiltinFunction {
+                name: "map_values".to_string(),
+                arity: 1,
+            },
+        );
+
+        functions.insert(
+            "map_remove".to_string(),
+            BuiltinFunction {
+                name: "map_remove".to_string(),
+                arity: 2,
+            },
+        );
+
+        functions.insert(
+            "map_len".to_string(),
+            BuiltinFunction {
+                name: "map_len".to_string(),
+                arity: 1,
+            },
+        );
+
+        functions.insert(
+            "map_clear".to_string(),
+            BuiltinFunction {
+                name: "map_clear".to_string(),
+                arity: 1,
+            },
+        );
+
+        functions.insert(
+            "map_merge".to_string(),
+            BuiltinFunction {
+                name: "map_merge".to_string(),
+                arity: 2,
+            },
+        );
+
         Self { functions }
     }
 
@@ -517,6 +590,15 @@ impl BuiltinFunctions {
             "lazy" => builtins.make_lazy(arguments, interpreter),
             "concat" => builtins.concat_lazy(arguments, interpreter),
             "map_filtered" => builtins.map_filtered(arguments, interpreter),
+            "map_get" => builtins.map_get(arguments),
+            "map_set" => builtins.map_set(arguments),
+            "map_has_key" => builtins.map_has_key(arguments),
+            "map_keys" => builtins.map_keys(arguments),
+            "map_values" => builtins.map_values(arguments),
+            "map_remove" => builtins.map_remove(arguments),
+            "map_len" => builtins.map_len(arguments),
+            "map_clear" => builtins.map_clear(arguments),
+            "map_merge" => builtins.map_merge(arguments),
             _ => Err(InterpreterError::RuntimeError {
                 message: format!("Unknown builtin function: {}", name),
             }),
@@ -1996,6 +2078,265 @@ impl BuiltinFunctions {
             }
             Ok(Value::List(result.into()))
         }
+    }
+
+    fn map_get(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let map = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_get: first argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let key = match &args[1] {
+            Value::String(s) => s.as_ref(),
+            Value::Integer(i) => &i.to_string(),
+            Value::Float(f) => &f.to_string(),
+            Value::Boolean(b) => &b.to_string(),
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_get: key must be string, integer, float, or boolean".to_string(),
+                })
+            }
+        };
+
+        Ok(map.get(key).cloned().unwrap_or(Value::Unit))
+    }
+
+    fn map_set(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 3 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 3,
+                got: args.len(),
+            });
+        }
+
+        let map_ref = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_set: first argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let key = match &args[1] {
+            Value::String(s) => s.as_ref().clone(),
+            Value::Integer(i) => i.to_string(),
+            Value::Float(f) => f.to_string(),
+            Value::Boolean(b) => b.to_string(),
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_set: key must be string, integer, float, or boolean".to_string(),
+                })
+            }
+        };
+
+        let value = args[2].clone();
+
+        // Create a new map with the updated value
+        let mut new_map = (**map_ref).clone();
+        new_map.insert(key, value);
+
+        Ok(Value::Map(std::sync::Arc::new(new_map)))
+    }
+
+    fn map_has_key(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let map = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_has_key: first argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let key = match &args[1] {
+            Value::String(s) => s.as_ref(),
+            Value::Integer(i) => &i.to_string(),
+            Value::Float(f) => &f.to_string(),
+            Value::Boolean(b) => &b.to_string(),
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_has_key: key must be string, integer, float, or boolean".to_string(),
+                })
+            }
+        };
+
+        Ok(Value::Boolean(map.contains_key(key)))
+    }
+
+    fn map_keys(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+
+        let map = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_keys: argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let keys: Vec<Value> = map
+            .keys()
+            .map(|k| Value::String(std::sync::Arc::new(k.clone())))
+            .collect();
+
+        Ok(Value::List(std::sync::Arc::from(keys)))
+    }
+
+    fn map_values(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+
+        let map = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_values: argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let values: Vec<Value> = map.values().cloned().collect();
+
+        Ok(Value::List(std::sync::Arc::from(values)))
+    }
+
+    fn map_remove(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let map_ref = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_remove: first argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let key = match &args[1] {
+            Value::String(s) => s.as_ref(),
+            Value::Integer(i) => &i.to_string(),
+            Value::Float(f) => &f.to_string(),
+            Value::Boolean(b) => &b.to_string(),
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_remove: key must be string, integer, float, or boolean".to_string(),
+                })
+            }
+        };
+
+        // Create a new map without the specified key
+        let mut new_map = (**map_ref).clone();
+        new_map.remove(key);
+
+        Ok(Value::Map(std::sync::Arc::new(new_map)))
+    }
+
+    fn map_len(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+
+        let map = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_len: argument must be a map".to_string(),
+                })
+            }
+        };
+
+        Ok(Value::Integer(map.len() as i64))
+    }
+
+    fn map_clear(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+
+        match &args[0] {
+            Value::Map(_) => {
+                // Return an empty map
+                Ok(Value::Map(std::sync::Arc::new(std::collections::HashMap::new())))
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: "map_clear: argument must be a map".to_string(),
+            }),
+        }
+    }
+
+    fn map_merge(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let map1 = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_merge: first argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let map2 = match &args[1] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_merge: second argument must be a map".to_string(),
+                })
+            }
+        };
+
+        // Create a new map that merges both maps (map2 values overwrite map1 values)
+        let mut new_map = (**map1).clone();
+        for (key, value) in map2.iter() {
+            new_map.insert(key.clone(), value.clone());
+        }
+
+        Ok(Value::Map(std::sync::Arc::new(new_map)))
     }
 }
 
