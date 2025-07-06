@@ -2277,6 +2277,13 @@ impl Repl {
                 println!("    • Use {} to match any value", "_".bright_cyan());
                 println!("    • Use {} or {} for Result types", "Ok(value)".bright_cyan(), "Err(error)".bright_cyan());
             }
+            _ => {
+                // Handle all other error types (lazy evaluation errors, etc.)
+                println!("  {}: {}", "Error".bright_red().bold(), interpreter_error);
+                
+                println!("\n  {}: This appears to be a system-level error", 
+                    "Hint".bright_blue().bold());
+            }
         }
     }
     

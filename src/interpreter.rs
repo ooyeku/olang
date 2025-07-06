@@ -11,7 +11,7 @@ use crate::type_checker::TypeChecker;
 use std::collections::HashMap;
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -26,6 +26,26 @@ pub enum InterpreterError {
     ArityMismatch { expected: usize, got: usize },
     #[error("Pattern match failed")]
     PatternMatchFailed,
+    
+    // Enhanced lazy evaluation error types
+    #[error("Lazy evaluation error: {message}")]
+    LazyEvaluationError { message: String },
+    #[error("Lazy evaluation timeout: operation exceeded {timeout_ms}ms")]
+    LazyEvaluationTimeout { timeout_ms: u64 },
+    #[error("Circular dependency detected in lazy evaluation: {cycle}")]
+    CircularDependency { cycle: String },
+    #[error("Memory limit exceeded during lazy evaluation: {current_mb}MB > {limit_mb}MB")]
+    MemoryLimitExceeded { current_mb: usize, limit_mb: usize },
+    #[error("Thread safety violation in lazy evaluation: {details}")]
+    ThreadSafetyViolation { details: String },
+    #[error("Lazy evaluation recovery failed: {original_error}")]
+    RecoveryFailed { original_error: String },
+    #[error("Force evaluation failed: {reason}")]
+    ForceEvaluationFailed { reason: String },
+    #[error("Lazy thunk corrupted: {thunk_id}")]
+    ThunkCorrupted { thunk_id: String },
+    #[error("Lazy evaluation chain too deep: {depth} > {max_depth}")]
+    EvaluationChainTooDeep { depth: usize, max_depth: usize },
 }
 
 /// Configuration for module resolution debugging
