@@ -165,13 +165,13 @@ impl Parser {
     }
 
     fn build_let_decl(&self, mut pairs: Pairs<Rule>) -> Result<LetDecl, ParseError> {
-        let name = pairs
+        let pattern_pair = pairs
             .next()
             .ok_or_else(|| ParseError::InvalidSyntax {
-                message: "Missing identifier in let declaration".to_string(),
-            })?
-            .as_str()
-            .to_string();
+                message: "Missing pattern in let declaration".to_string(),
+            })?;
+        
+        let pattern = self.build_pattern(pattern_pair.into_inner())?;
 
         let mut type_annotation = None;
         let mut value = None;
@@ -189,7 +189,7 @@ impl Parser {
         }
 
         Ok(LetDecl {
-            name,
+            pattern,
             type_annotation,
             value,
         })

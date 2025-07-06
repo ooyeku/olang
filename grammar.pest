@@ -59,7 +59,7 @@ param_list   = { parameter ~ ("," ~ parameter)* }
 parameter    = { identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
 
 // Variable declarations
-let_decl    = { "let" ~ identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
+let_decl    = { "let" ~ pattern ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
 
 // Expression hierarchy (with proper operator precedence)
 expr        = { assignment_expr | for_loop | while_loop | loop_expr | break_expr | continue_expr | binary_expr }

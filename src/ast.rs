@@ -32,7 +32,7 @@ pub struct ErrorTypeDecl {
 /// Variable declaration with optional type annotation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LetDecl {
-    pub name: String,
+    pub pattern: Pattern,
     pub type_annotation: Option<TypeAnnotation>,
     pub value: Option<Expr>,
 }

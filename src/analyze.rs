@@ -79,15 +79,22 @@ impl Analyzer {
                     self.analyze_expr(value)?;
                 }
 
-                // Check for duplicate variable in current scope
-                if self.scopes[self.current_scope].contains(&let_decl.name) {
-                    return Err(AnalysisError::DuplicateVariable {
-                        name: let_decl.name.clone(),
-                    });
+                // Extract variable names from the pattern
+                let pattern_variables = self.extract_pattern_variables(&let_decl.pattern);
+                
+                // Check for duplicate variables in current scope
+                for var_name in &pattern_variables {
+                    if self.scopes[self.current_scope].contains(var_name) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: var_name.clone(),
+                        });
+                    }
                 }
 
-                // Add variable to current scope
-                self.scopes[self.current_scope].insert(let_decl.name.clone());
+                // Add all variables from the pattern to current scope
+                for var_name in pattern_variables {
+                    self.scopes[self.current_scope].insert(var_name);
+                }
                 Ok(())
             }
             Statement::FunctionDecl(func_decl) => {
@@ -299,6 +306,78 @@ impl Analyzer {
         if self.current_scope > 0 {
             self.scopes.pop();
             self.current_scope -= 1;
+        }
+    }
+
+    /// Extract all variable names from a pattern
+    fn extract_pattern_variables(&self, pattern: &Pattern) -> Vec<String> {
+        let mut variables = Vec::new();
+        self.collect_pattern_variables(pattern, &mut variables);
+        variables
+    }
+
+    /// Recursively collect variable names from a pattern
+    fn collect_pattern_variables(&self, pattern: &Pattern, variables: &mut Vec<String>) {
+        match pattern {
+            Pattern::Identifier(name) => {
+                variables.push(name.clone());
+            }
+            Pattern::Wildcard => {
+                // No variables to collect
+            }
+            Pattern::Tuple(patterns) => {
+                for pattern in patterns {
+                    self.collect_pattern_variables(pattern, variables);
+                }
+            }
+            Pattern::List { patterns, rest } => {
+                for pattern in patterns {
+                    self.collect_pattern_variables(pattern, variables);
+                }
+                if let Some(rest_name) = rest {
+                    variables.push(rest_name.clone());
+                }
+            }
+            Pattern::Struct { field_patterns, .. } => {
+                for (_, field_pattern) in field_patterns {
+                    self.collect_pattern_variables(field_pattern, variables);
+                }
+            }
+            Pattern::AnonymousStruct { field_patterns } => {
+                for (_, field_pattern) in field_patterns {
+                    self.collect_pattern_variables(field_pattern, variables);
+                }
+            }
+            Pattern::Or { alternatives } => {
+                // For or patterns, collect variables from all alternatives
+                // Note: In practice, all alternatives should bind the same variables
+                for alternative in alternatives {
+                    self.collect_pattern_variables(alternative, variables);
+                }
+            }
+            Pattern::Ok(inner_pattern) => {
+                self.collect_pattern_variables(inner_pattern, variables);
+            }
+            Pattern::Err(inner_pattern) => {
+                self.collect_pattern_variables(inner_pattern, variables);
+            }
+            Pattern::Literal(_) => {
+                // No variables to collect
+            }
+            Pattern::Range { .. } => {
+                // No variables to collect
+            }
+            Pattern::EnumVariant { patterns, .. } => {
+                for pattern in patterns {
+                    self.collect_pattern_variables(pattern, variables);
+                }
+            }
+            Pattern::Guarded { pattern, .. } => {
+                self.collect_pattern_variables(pattern, variables);
+            }
+            Pattern::Rest(name) => {
+                variables.push(name.clone());
+            }
         }
     }
 

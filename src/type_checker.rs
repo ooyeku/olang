@@ -1,5 +1,5 @@
 use crate::ast::{
-    Argument, BinaryOp, Expr, FunctionDecl, GenericTypeDefinition, LetDecl, Program, Statement,
+    Argument, BinaryOp, Expr, FunctionDecl, GenericTypeDefinition, LetDecl, Pattern, Program, Statement,
     TypeAnnotation, TypeContext, TypeDecl, TypeError, UnaryOp,
 };
 use std::collections::HashMap;
@@ -240,17 +240,186 @@ impl TypeChecker {
         let final_type = if let Some(annotation) = &let_decl.type_annotation {
             // Check that the annotation matches the inferred type
             if let_decl.value.is_some() {
-                self.check_type_compatibility(annotation, &inferred_type, &let_decl.name)?;
+                self.check_type_compatibility(annotation, &inferred_type, "let declaration")?;
             }
             annotation.clone()
         } else {
             inferred_type
         };
 
-        self.context
-            .variables
-            .insert(let_decl.name.clone(), final_type.clone());
+        // Extract variable bindings from the pattern and bind them to appropriate types
+        self.bind_pattern_variables(&let_decl.pattern, &final_type)?;
+
         Ok(final_type)
+    }
+
+    /// Bind variables from a pattern to their appropriate types
+    fn bind_pattern_variables(&mut self, pattern: &Pattern, value_type: &TypeAnnotation) -> Result<(), TypeError> {
+        match pattern {
+            Pattern::Identifier(name) => {
+                // Simple identifier pattern - bind the variable to the value type
+                self.context.variables.insert(name.clone(), value_type.clone());
+                Ok(())
+            }
+            Pattern::Wildcard => {
+                // Wildcard pattern - no variables to bind
+                Ok(())
+            }
+            Pattern::Tuple(patterns) => {
+                // Tuple pattern - extract types from tuple type
+                match value_type {
+                    TypeAnnotation::Tuple(types) => {
+                        if patterns.len() != types.len() {
+                            return Err(TypeError::TypeMismatch {
+                                expected: TypeAnnotation::Tuple(types.clone()),
+                                found: TypeAnnotation::Tuple(vec![TypeAnnotation::Unknown; patterns.len()]),
+                                location: "tuple pattern".to_string(),
+                            });
+                        }
+                        for (pattern, pattern_type) in patterns.iter().zip(types.iter()) {
+                            self.bind_pattern_variables(pattern, pattern_type)?;
+                        }
+                        Ok(())
+                    }
+                    TypeAnnotation::Unknown => {
+                        // If type is unknown, bind all pattern variables to unknown
+                        for pattern in patterns {
+                            self.bind_pattern_variables(pattern, &TypeAnnotation::Unknown)?;
+                        }
+                        Ok(())
+                    }
+                    _ => Err(TypeError::TypeMismatch {
+                        expected: TypeAnnotation::Tuple(vec![TypeAnnotation::Unknown; patterns.len()]),
+                        found: value_type.clone(),
+                        location: "tuple pattern".to_string(),
+                    }),
+                }
+            }
+            Pattern::List { patterns, rest } => {
+                // List pattern - extract element type from list type
+                match value_type {
+                    TypeAnnotation::List(element_type) => {
+                        for pattern in patterns {
+                            self.bind_pattern_variables(pattern, element_type)?;
+                        }
+                        // If there's a rest pattern, bind it to the full list type
+                        if let Some(ref rest_name) = rest {
+                            self.context.variables.insert(rest_name.clone(), value_type.clone());
+                        }
+                        Ok(())
+                    }
+                    TypeAnnotation::Unknown => {
+                        // If type is unknown, bind all pattern variables to unknown
+                        for pattern in patterns {
+                            self.bind_pattern_variables(pattern, &TypeAnnotation::Unknown)?;
+                        }
+                        if let Some(ref rest_name) = rest {
+                            self.context.variables.insert(rest_name.clone(), TypeAnnotation::Unknown);
+                        }
+                        Ok(())
+                    }
+                    _ => Err(TypeError::TypeMismatch {
+                        expected: TypeAnnotation::List(Box::new(TypeAnnotation::Unknown)),
+                        found: value_type.clone(),
+                        location: "list pattern".to_string(),
+                    }),
+                }
+            }
+            Pattern::Struct { type_name, field_patterns } => {
+                // Struct pattern - for now, bind all fields to unknown
+                // TODO: Implement proper struct type checking
+                for (_, field_pattern) in field_patterns {
+                    self.bind_pattern_variables(field_pattern, &TypeAnnotation::Unknown)?;
+                }
+                Ok(())
+            }
+            Pattern::AnonymousStruct { field_patterns } => {
+                // Anonymous struct pattern - bind all fields to unknown
+                // TODO: Implement proper anonymous struct type checking
+                for (_, field_pattern) in field_patterns {
+                    self.bind_pattern_variables(field_pattern, &TypeAnnotation::Unknown)?;
+                }
+                Ok(())
+            }
+            Pattern::Or { alternatives } => {
+                // Or pattern - all alternatives should bind the same variables
+                // For now, just use the first alternative
+                if let Some(first_alt) = alternatives.first() {
+                    self.bind_pattern_variables(first_alt, value_type)?;
+                }
+                Ok(())
+            }
+            Pattern::Ok(inner_pattern) => {
+                // Ok pattern - extract the ok type from Result type
+                match value_type {
+                    TypeAnnotation::Result { ok_type, .. } => {
+                        self.bind_pattern_variables(inner_pattern, ok_type)?;
+                    }
+                    TypeAnnotation::Unknown => {
+                        self.bind_pattern_variables(inner_pattern, &TypeAnnotation::Unknown)?;
+                    }
+                    _ => {
+                        return Err(TypeError::TypeMismatch {
+                            expected: TypeAnnotation::Result {
+                                ok_type: Box::new(TypeAnnotation::Unknown),
+                                err_type: Box::new(TypeAnnotation::Unknown),
+                            },
+                            found: value_type.clone(),
+                            location: "Ok pattern".to_string(),
+                        });
+                    }
+                }
+                Ok(())
+            }
+            Pattern::Err(inner_pattern) => {
+                // Err pattern - extract the error type from Result type
+                match value_type {
+                    TypeAnnotation::Result { err_type, .. } => {
+                        self.bind_pattern_variables(inner_pattern, err_type)?;
+                    }
+                    TypeAnnotation::Unknown => {
+                        self.bind_pattern_variables(inner_pattern, &TypeAnnotation::Unknown)?;
+                    }
+                    _ => {
+                        return Err(TypeError::TypeMismatch {
+                            expected: TypeAnnotation::Result {
+                                ok_type: Box::new(TypeAnnotation::Unknown),
+                                err_type: Box::new(TypeAnnotation::Unknown),
+                            },
+                            found: value_type.clone(),
+                            location: "Err pattern".to_string(),
+                        });
+                    }
+                }
+                Ok(())
+            }
+            Pattern::Literal(_) => {
+                // Literal pattern - no variables to bind
+                Ok(())
+            }
+            Pattern::Range { .. } => {
+                // Range pattern - no variables to bind
+                Ok(())
+            }
+            Pattern::EnumVariant { patterns, .. } => {
+                // Enum variant pattern - bind all inner patterns to unknown for now
+                // TODO: Implement proper enum type checking
+                for pattern in patterns {
+                    self.bind_pattern_variables(pattern, &TypeAnnotation::Unknown)?;
+                }
+                Ok(())
+            }
+            Pattern::Guarded { pattern, .. } => {
+                // Guarded pattern - bind variables from the inner pattern
+                self.bind_pattern_variables(pattern, value_type)?;
+                Ok(())
+            }
+            Pattern::Rest(name) => {
+                // Rest pattern - bind to the value type
+                self.context.variables.insert(name.clone(), value_type.clone());
+                Ok(())
+            }
+        }
     }
 
     /// Type check a function declaration

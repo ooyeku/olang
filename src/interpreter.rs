@@ -227,7 +227,17 @@ impl Interpreter {
             Value::Unit
         };
 
-        self.environment.define(let_decl.name, value.clone());
+        // Use pattern matching to bind variables from the pattern
+        let mut bindings = HashMap::new();
+        if !self.pattern_matches_bind(&let_decl.pattern, &value, &mut bindings)? {
+            return Err(InterpreterError::PatternMatchFailed);
+        }
+
+        // Bind all variables from the pattern
+        for (var_name, var_value) in bindings {
+            self.environment.define(var_name, var_value);
+        }
+
         Ok(value)
     }
 
