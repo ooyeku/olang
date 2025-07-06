@@ -586,6 +586,9 @@ impl HelpSystem {
         // === Base64 Functions (stdlib) ===
         self.add_base64_functions();
 
+        // === Result Type Functions ===
+        self.add_result_functions();
+
         // Build category index
         self.build_category_index();
     }
@@ -3933,6 +3936,162 @@ For function-specific syntax, use: {}help <function_name>{}",
                 "base64.encode_no_pad".to_string(),
                 "base64.decode".to_string(),
             ],
+        });
+    }
+
+    /// Add Result type utility functions documentation
+    fn add_result_functions(&mut self) {
+        self.add_function(FunctionDoc {
+            name: "unwrap".to_string(),
+            description: "Extract the value from a Result type, panicking if it's an error".to_string(),
+            syntax: "unwrap(result)".to_string(),
+            parameters: vec!["result: Result<T, E> - The Result value to unwrap".to_string()],
+            return_type: "T".to_string(),
+            examples: vec![
+                "unwrap(Ok(42))  // Returns 42".to_string(),
+                "unwrap(fs.read_file(\"config.txt\"))  // Returns file content or panics".to_string(),
+                "unwrap(Err(\"failure\"))  // Panics with error message".to_string(),
+            ],
+            category: "Result".to_string(),
+            see_also: vec!["unwrap_or".to_string(), "is_ok".to_string(), "is_err".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "unwrap_or".to_string(),
+            description: "Extract the value from a Result, returning a default value if it's an error".to_string(),
+            syntax: "unwrap_or(result, default)".to_string(),
+            parameters: vec![
+                "result: Result<T, E> - The Result value to unwrap".to_string(),
+                "default: T - The default value to return if result is an error".to_string(),
+            ],
+            return_type: "T".to_string(),
+            examples: vec![
+                "unwrap_or(Ok(42), 0)  // Returns 42".to_string(),
+                "unwrap_or(Err(\"failed\"), 0)  // Returns 0".to_string(),
+                "fs.read_file(\"config.txt\") |> unwrap_or(\"default config\")".to_string(),
+            ],
+            category: "Result".to_string(),
+            see_also: vec!["unwrap".to_string(), "unwrap_or_else".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "unwrap_or_else".to_string(),
+            description: "Extract the value from a Result, calling a function to compute a default if it's an error".to_string(),
+            syntax: "unwrap_or_else(result, function)".to_string(),
+            parameters: vec![
+                "result: Result<T, E> - The Result value to unwrap".to_string(),
+                "function: (E) -> T - Function to call with the error to compute default".to_string(),
+            ],
+            return_type: "T".to_string(),
+            examples: vec![
+                "unwrap_or_else(Ok(42), (err) => 0)  // Returns 42".to_string(),
+                "unwrap_or_else(Err(\"failed\"), (err) => len(err))  // Returns length of error message".to_string(),
+                "fs.read_file(\"config.txt\") |> unwrap_or_else((err) => \"Error: \" + err)".to_string(),
+            ],
+            category: "Result".to_string(),
+            see_also: vec!["unwrap_or".to_string(), "result_map".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "is_ok".to_string(),
+            description: "Check if a Result value is Ok (contains a success value)".to_string(),
+            syntax: "is_ok(result)".to_string(),
+            parameters: vec!["result: Result<T, E> - The Result value to check".to_string()],
+            return_type: "Bool".to_string(),
+            examples: vec![
+                "is_ok(Ok(42))  // Returns true".to_string(),
+                "is_ok(Err(\"failed\"))  // Returns false".to_string(),
+                "fs.read_file(\"config.txt\") |> is_ok  // Check if file read succeeded".to_string(),
+            ],
+            category: "Result".to_string(),
+            see_also: vec!["is_err".to_string(), "unwrap".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "is_err".to_string(),
+            description: "Check if a Result value is Err (contains an error)".to_string(),
+            syntax: "is_err(result)".to_string(),
+            parameters: vec!["result: Result<T, E> - The Result value to check".to_string()],
+            return_type: "Bool".to_string(),
+            examples: vec![
+                "is_err(Ok(42))  // Returns false".to_string(),
+                "is_err(Err(\"failed\"))  // Returns true".to_string(),
+                "fs.read_file(\"config.txt\") |> is_err  // Check if file read failed".to_string(),
+            ],
+            category: "Result".to_string(),
+            see_also: vec!["is_ok".to_string(), "unwrap".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "result_map".to_string(),
+            description: "Transform the Ok value of a Result using a function, leaving Err values unchanged".to_string(),
+            syntax: "result_map(result, function)".to_string(),
+            parameters: vec![
+                "result: Result<T, E> - The Result value to transform".to_string(),
+                "function: (T) -> U - Function to apply to the Ok value".to_string(),
+            ],
+            return_type: "Result<U, E>".to_string(),
+            examples: vec![
+                "result_map(Ok(42), (x) => x * 2)  // Returns Ok(84)".to_string(),
+                "result_map(Err(\"failed\"), (x) => x * 2)  // Returns Err(\"failed\")".to_string(),
+                "fs.read_file(\"numbers.txt\") |> result_map((content) => len(content))".to_string(),
+            ],
+            category: "Result".to_string(),
+            see_also: vec!["result_map_err".to_string(), "result_and_then".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "result_map_err".to_string(),
+            description: "Transform the Err value of a Result using a function, leaving Ok values unchanged".to_string(),
+            syntax: "result_map_err(result, function)".to_string(),
+            parameters: vec![
+                "result: Result<T, E> - The Result value to transform".to_string(),
+                "function: (E) -> F - Function to apply to the Err value".to_string(),
+            ],
+            return_type: "Result<T, F>".to_string(),
+            examples: vec![
+                "result_map_err(Ok(42), (err) => \"Error: \" + err)  // Returns Ok(42)".to_string(),
+                "result_map_err(Err(\"failed\"), (err) => \"Error: \" + err)  // Returns Err(\"Error: failed\")".to_string(),
+                "fs.read_file(\"config.txt\") |> result_map_err((err) => \"Config error: \" + err)".to_string(),
+            ],
+            category: "Result".to_string(),
+            see_also: vec!["result_map".to_string(), "result_or_else".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "result_and_then".to_string(),
+            description: "Chain Result-returning operations, short-circuiting on the first error".to_string(),
+            syntax: "result_and_then(result, function)".to_string(),
+            parameters: vec![
+                "result: Result<T, E> - The Result value to process".to_string(),
+                "function: (T) -> Result<U, E> - Function that returns another Result".to_string(),
+            ],
+            return_type: "Result<U, E>".to_string(),
+            examples: vec![
+                "result_and_then(Ok(42), (x) => Ok(x * 2))  // Returns Ok(84)".to_string(),
+                "result_and_then(Err(\"failed\"), (x) => Ok(x * 2))  // Returns Err(\"failed\")".to_string(),
+                "fs.read_file(\"config.txt\") |> result_and_then((content) => json.parse(content))".to_string(),
+            ],
+            category: "Result".to_string(),
+            see_also: vec!["result_map".to_string(), "result_or_else".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "result_or_else".to_string(),
+            description: "Handle errors by calling a function that returns a Result".to_string(),
+            syntax: "result_or_else(result, function)".to_string(),
+            parameters: vec![
+                "result: Result<T, E> - The Result value to process".to_string(),
+                "function: (E) -> Result<T, F> - Function to handle errors".to_string(),
+            ],
+            return_type: "Result<T, F>".to_string(),
+            examples: vec![
+                "result_or_else(Ok(42), (err) => Ok(0))  // Returns Ok(42)".to_string(),
+                "result_or_else(Err(\"failed\"), (err) => Ok(0))  // Returns Ok(0)".to_string(),
+                "fs.read_file(\"config.txt\") |> result_or_else((err) => fs.read_file(\"default.txt\"))".to_string(),
+            ],
+            category: "Result".to_string(),
+            see_also: vec!["result_and_then".to_string(), "unwrap_or_else".to_string()],
         });
     }
     
