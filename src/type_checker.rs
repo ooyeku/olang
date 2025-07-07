@@ -275,7 +275,7 @@ impl TypeChecker {
                     .functions
                     .insert(async_func_decl.name.clone(), func_type.clone());
 
-                // TODO: Type check the async function body
+                // Type check the async function body with parameters in scope
                 // Create a new type checker context for the async function body
                 let mut async_checker = self.clone();
                 
@@ -437,20 +437,76 @@ impl TypeChecker {
                 }
             }
             Pattern::Struct { type_name, field_patterns } => {
-                // Struct pattern - for now, bind all fields to unknown
-                // TODO: Implement proper struct type checking
-                for (_, field_pattern) in field_patterns {
-                    self.bind_pattern_variables(field_pattern, &TypeAnnotation::Unknown)?;
+                // Enhanced struct pattern type checking
+                match value_type {
+                    TypeAnnotation::Custom(struct_type_name) if struct_type_name == type_name => {
+                        // Type names match - bind field patterns to appropriate types
+                        for (field_name, field_pattern) in field_patterns {
+                            // For now, bind to unknown since we don't have struct field type info
+                            // In full implementation, would look up field types from type definitions
+                            self.bind_pattern_variables(field_pattern, &TypeAnnotation::Unknown)?;
+                        }
+                        Ok(())
+                    }
+                    TypeAnnotation::Custom(_) => {
+                        // Type name mismatch
+                        Err(TypeError::TypeMismatch {
+                            expected: TypeAnnotation::Custom(type_name.clone()),
+                            found: value_type.clone(),
+                            location: "struct pattern".to_string(),
+                        })
+                    }
+                    TypeAnnotation::Unknown => {
+                        // If type is unknown, bind all field patterns to unknown
+                        for (_, field_pattern) in field_patterns {
+                            self.bind_pattern_variables(field_pattern, &TypeAnnotation::Unknown)?;
+                        }
+                        Ok(())
+                    }
+                    _ => {
+                        Err(TypeError::TypeMismatch {
+                            expected: TypeAnnotation::Custom(type_name.clone()),
+                            found: value_type.clone(),
+                            location: "struct pattern".to_string(),
+                        })
+                    }
                 }
-                Ok(())
             }
             Pattern::AnonymousStruct { field_patterns } => {
-                // Anonymous struct pattern - bind all fields to unknown
-                // TODO: Implement proper anonymous struct type checking
-                for (_, field_pattern) in field_patterns {
-                    self.bind_pattern_variables(field_pattern, &TypeAnnotation::Unknown)?;
+                // Enhanced anonymous struct pattern type checking
+                match value_type {
+                    TypeAnnotation::Map { value_type: map_value_type, .. } => {
+                        // Anonymous struct pattern against map - bind fields to map value type
+                        for (_, field_pattern) in field_patterns {
+                            self.bind_pattern_variables(field_pattern, map_value_type)?;
+                        }
+                        Ok(())
+                    }
+                    TypeAnnotation::Custom(_) => {
+                        // Anonymous struct pattern against custom type - bind to unknown
+                        for (_, field_pattern) in field_patterns {
+                            self.bind_pattern_variables(field_pattern, &TypeAnnotation::Unknown)?;
+                        }
+                        Ok(())
+                    }
+                    TypeAnnotation::Unknown => {
+                        // If type is unknown, bind all field patterns to unknown
+                        for (_, field_pattern) in field_patterns {
+                            self.bind_pattern_variables(field_pattern, &TypeAnnotation::Unknown)?;
+                        }
+                        Ok(())
+                    }
+                    _ => {
+                        Err(TypeError::TypeMismatch {
+                            expected: TypeAnnotation::Map {
+                                key_type: Box::new(TypeAnnotation::String),
+                                value_type: Box::new(TypeAnnotation::Unknown),
+                            },
+                            found: value_type.clone(),
+                            location: "anonymous struct pattern".to_string(),
+                        })
+                    }
                 }
-                Ok(())
             }
             Pattern::Or { alternatives } => {
                 // Or pattern - all alternatives should bind the same variables
@@ -512,13 +568,40 @@ impl TypeChecker {
                 // Range pattern - no variables to bind
                 Ok(())
             }
-            Pattern::EnumVariant { patterns, .. } => {
-                // Enum variant pattern - bind all inner patterns to unknown for now
-                // TODO: Implement proper enum type checking
-                for pattern in patterns {
-                    self.bind_pattern_variables(pattern, &TypeAnnotation::Unknown)?;
+            Pattern::EnumVariant { patterns, variant_name } => {
+                // Enhanced enum variant pattern type checking
+                match value_type {
+                    TypeAnnotation::Custom(enum_type_name) => {
+                        // For enum types, bind inner patterns to unknown for now
+                        // In full implementation, would look up variant types from enum definition
+                        for pattern in patterns {
+                            self.bind_pattern_variables(pattern, &TypeAnnotation::Unknown)?;
+                        }
+                        Ok(())
+                    }
+                    TypeAnnotation::Union { types } => {
+                        // Union types might contain enum variants
+                        // For now, bind all inner patterns to unknown
+                        for pattern in patterns {
+                            self.bind_pattern_variables(pattern, &TypeAnnotation::Unknown)?;
+                        }
+                        Ok(())
+                    }
+                    TypeAnnotation::Unknown => {
+                        // If type is unknown, bind all patterns to unknown
+                        for pattern in patterns {
+                            self.bind_pattern_variables(pattern, &TypeAnnotation::Unknown)?;
+                        }
+                        Ok(())
+                    }
+                    _ => {
+                        // For non-enum types, this might be an error, but for now be permissive
+                        for pattern in patterns {
+                            self.bind_pattern_variables(pattern, &TypeAnnotation::Unknown)?;
+                        }
+                        Ok(())
+                    }
                 }
-                Ok(())
             }
             Pattern::Guarded { pattern, .. } => {
                 // Guarded pattern - bind variables from the inner pattern
@@ -740,6 +823,56 @@ impl TypeChecker {
             }
 
             Expr::Index { object, index } => self.infer_index_type(object, index),
+
+            // Struct and object literals
+            Expr::StructLiteral(struct_literal) => {
+                // Enhanced struct literal type checking
+                self.infer_struct_literal_type(struct_literal)
+            }
+
+            Expr::AnonymousObject { fields } => {
+                // Enhanced anonymous object type checking
+                self.infer_anonymous_object_type(fields)
+            }
+
+            // Result types
+            Expr::ResultOk(expr) => {
+                let inner_type = self.infer_type(expr)?;
+                Ok(TypeAnnotation::Result {
+                    ok_type: Box::new(inner_type),
+                    err_type: Box::new(TypeAnnotation::Unknown),
+                })
+            }
+
+            Expr::ResultErr(expr) => {
+                let inner_type = self.infer_type(expr)?;
+                Ok(TypeAnnotation::Result {
+                    ok_type: Box::new(TypeAnnotation::Unknown),
+                    err_type: Box::new(inner_type),
+                })
+            }
+
+            // Range expressions
+            Expr::Range { start, end, .. } => {
+                let start_type = self.infer_type(start)?;
+                let end_type = self.infer_type(end)?;
+                
+                // Ensure both start and end are integers
+                self.check_type_compatibility(&TypeAnnotation::Int, &start_type, "range start")?;
+                self.check_type_compatibility(&TypeAnnotation::Int, &end_type, "range end")?;
+                
+                Ok(TypeAnnotation::Range {
+                    start: Box::new(start_type),
+                    end: Box::new(end_type),
+                    inclusive: true, // Default to inclusive
+                })
+            }
+
+            // Field access
+            Expr::FieldAccess { object, field } => {
+                let object_type = self.infer_type(object)?;
+                self.infer_field_access_type(&object_type, field)
+            }
 
             _ => Ok(TypeAnnotation::Unknown), // For other expressions not yet implemented
         }
@@ -1328,6 +1461,69 @@ impl TypeChecker {
 
         Ok(TypeAnnotation::List(Box::new(element_type)))
     }
+
+    /// Enhanced type inference for struct literals
+    fn infer_struct_literal_type(&mut self, struct_literal: &crate::ast::StructLiteral) -> Result<TypeAnnotation, TypeError> {
+        let mut field_types = Vec::new();
+        
+        for field in &struct_literal.fields {
+            let field_type = self.infer_type(&field.value)?;
+            field_types.push((field.name.clone(), field_type));
+        }
+
+        let field_types: Vec<(String, TypeAnnotation)> = field_types;
+        let field_types_str = field_types.iter()
+            .map(|(name, type_ann)| format!("{}: {:?}", name, type_ann))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        Ok(TypeAnnotation::Custom(format!("{{ {} }}", field_types_str)))
+    }
+
+    /// Enhanced type inference for anonymous objects
+    fn infer_anonymous_object_type(&mut self, fields: &[crate::ast::FieldValue]) -> Result<TypeAnnotation, TypeError> {
+        let mut field_types = Vec::new();
+        
+        for field in fields {
+            let field_type = self.infer_type(&field.value)?;
+            field_types.push((field.name.clone(), field_type));
+        }
+
+        let field_types: Vec<(String, TypeAnnotation)> = field_types;
+        let field_types_str = field_types.iter()
+            .map(|(name, type_ann)| format!("{}: {:?}", name, type_ann))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        Ok(TypeAnnotation::Custom(format!("{{ {} }}", field_types_str)))
+    }
+
+    /// Infer type for field access
+    fn infer_field_access_type(&mut self, object_type: &TypeAnnotation, field: &str) -> Result<TypeAnnotation, TypeError> {
+        match object_type {
+            TypeAnnotation::Map { key_type, value_type } => {
+                if **key_type == TypeAnnotation::String {
+                    Ok((**value_type).clone())
+                } else {
+                    Err(TypeError::InvalidOperation {
+                        op: "field access on non-string key map".to_string(),
+                        left_type: object_type.clone(),
+                        right_type: None,
+                    })
+                }
+            }
+            TypeAnnotation::Custom(type_name) => {
+                // For custom types, we would need to look up the type definition
+                // For now, return Unknown type
+                Ok(TypeAnnotation::Unknown)
+            }
+            _ => Err(TypeError::InvalidOperation {
+                op: "field access".to_string(),
+                left_type: object_type.clone(),
+                right_type: None,
+            }),
+        }
+    }
 }
 
 impl Clone for TypeChecker {
@@ -1354,6 +1550,293 @@ impl TypeContext {
             next_type_var: 0,
             generic_types: HashMap::new(),
             type_parameters: Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_struct_literal_type_inference() {
+        let mut type_checker = TypeChecker::new();
+        
+        // Create a struct literal: { name: "Alice", age: 30 }
+        let struct_literal = StructLiteral {
+            type_name: "Person".to_string(),
+            fields: vec![
+                FieldValue {
+                    name: "name".to_string(),
+                    value: Expr::String("Alice".to_string().into()),
+                },
+                FieldValue {
+                    name: "age".to_string(),
+                    value: Expr::Integer(30),
+                },
+            ],
+        };
+        
+        let result = type_checker.infer_struct_literal_type(&struct_literal);
+        assert!(result.is_ok());
+        
+        let inferred_type = result.unwrap();
+        match inferred_type {
+            TypeAnnotation::Custom(type_name) => {
+                assert!(type_name.contains("name: String"));
+                assert!(type_name.contains("age: Int"));
+            }
+            _ => panic!("Expected custom type annotation"),
+        }
+    }
+
+    #[test]
+    fn test_anonymous_object_type_inference() {
+        let mut type_checker = TypeChecker::new();
+        
+        // Create anonymous object fields: { x: 10, y: 20.5 }
+        let fields = vec![
+            FieldValue {
+                name: "x".to_string(),
+                value: Expr::Integer(10),
+            },
+            FieldValue {
+                name: "y".to_string(),
+                value: Expr::Float(20.5),
+            },
+        ];
+        
+        let result = type_checker.infer_anonymous_object_type(&fields);
+        assert!(result.is_ok());
+        
+        let inferred_type = result.unwrap();
+        match inferred_type {
+            TypeAnnotation::Custom(type_name) => {
+                assert!(type_name.contains("x: Int"));
+                assert!(type_name.contains("y: Float"));
+            }
+            _ => panic!("Expected custom type annotation"),
+        }
+    }
+
+    #[test]
+    fn test_field_access_type_inference() {
+        let mut type_checker = TypeChecker::new();
+        
+        // Test field access on map type
+        let map_type = TypeAnnotation::Map {
+            key_type: Box::new(TypeAnnotation::String),
+            value_type: Box::new(TypeAnnotation::Int),
+        };
+        
+        let result = type_checker.infer_field_access_type(&map_type, "field");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), TypeAnnotation::Int);
+        
+        // Test field access on custom type
+        let custom_type = TypeAnnotation::Custom("MyStruct".to_string());
+        let result = type_checker.infer_field_access_type(&custom_type, "field");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), TypeAnnotation::Unknown);
+        
+        // Test field access on unsupported type
+        let int_type = TypeAnnotation::Int;
+        let result = type_checker.infer_field_access_type(&int_type, "field");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_enhanced_pattern_matching_struct() {
+        let mut type_checker = TypeChecker::new();
+        
+        // Test struct pattern matching
+        let struct_pattern = Pattern::Struct {
+            type_name: "Person".to_string(),
+            field_patterns: vec![
+                ("name".to_string(), Pattern::Identifier("n".to_string())),
+                ("age".to_string(), Pattern::Identifier("a".to_string())),
+            ],
+        };
+        
+        let custom_type = TypeAnnotation::Custom("Person".to_string());
+        let result = type_checker.bind_pattern_variables(&struct_pattern, &custom_type);
+        assert!(result.is_ok());
+        
+        // Check that variables were bound
+        assert!(type_checker.context.variables.contains_key("n"));
+        assert!(type_checker.context.variables.contains_key("a"));
+        
+        // Test type mismatch
+        let wrong_type = TypeAnnotation::Custom("Animal".to_string());
+        let result = type_checker.bind_pattern_variables(&struct_pattern, &wrong_type);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_enhanced_pattern_matching_anonymous_struct() {
+        let mut type_checker = TypeChecker::new();
+        
+        // Test anonymous struct pattern matching
+        let anonymous_pattern = Pattern::AnonymousStruct {
+            field_patterns: vec![
+                ("x".to_string(), Pattern::Identifier("x_val".to_string())),
+                ("y".to_string(), Pattern::Identifier("y_val".to_string())),
+            ],
+        };
+        
+        let map_type = TypeAnnotation::Map {
+            key_type: Box::new(TypeAnnotation::String),
+            value_type: Box::new(TypeAnnotation::Int),
+        };
+        
+        let result = type_checker.bind_pattern_variables(&anonymous_pattern, &map_type);
+        assert!(result.is_ok());
+        
+        // Check that variables were bound with correct types
+        assert!(type_checker.context.variables.contains_key("x_val"));
+        assert!(type_checker.context.variables.contains_key("y_val"));
+        assert_eq!(type_checker.context.variables.get("x_val"), Some(&TypeAnnotation::Int));
+        assert_eq!(type_checker.context.variables.get("y_val"), Some(&TypeAnnotation::Int));
+    }
+
+    #[test]
+    fn test_enhanced_pattern_matching_enum() {
+        let mut type_checker = TypeChecker::new();
+        
+        // Test enum variant pattern matching
+        let enum_pattern = Pattern::EnumVariant {
+            variant_name: "Some".to_string(),
+            patterns: vec![Pattern::Identifier("value".to_string())],
+        };
+        
+        let option_type = TypeAnnotation::Custom("Option".to_string());
+        let result = type_checker.bind_pattern_variables(&enum_pattern, &option_type);
+        assert!(result.is_ok());
+        
+        // Check that variable was bound
+        assert!(type_checker.context.variables.contains_key("value"));
+        
+        // Test with union type
+        let union_type = TypeAnnotation::Union {
+            types: vec![TypeAnnotation::Int, TypeAnnotation::String],
+        };
+        let result = type_checker.bind_pattern_variables(&enum_pattern, &union_type);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_result_type_inference() {
+        let mut type_checker = TypeChecker::new();
+        
+        // Test Result Ok type inference
+        let ok_expr = Expr::ResultOk(Box::new(Expr::Integer(42)));
+        let result = type_checker.infer_type(&ok_expr);
+        assert!(result.is_ok());
+        
+        match result.unwrap() {
+            TypeAnnotation::Result { ok_type, err_type } => {
+                assert_eq!(*ok_type, TypeAnnotation::Int);
+                assert_eq!(*err_type, TypeAnnotation::Unknown);
+            }
+            _ => panic!("Expected Result type annotation"),
+        }
+        
+        // Test Result Err type inference
+        let err_expr = Expr::ResultErr(Box::new(Expr::String("error".to_string().into())));
+        let result = type_checker.infer_type(&err_expr);
+        assert!(result.is_ok());
+        
+        match result.unwrap() {
+            TypeAnnotation::Result { ok_type, err_type } => {
+                assert_eq!(*ok_type, TypeAnnotation::Unknown);
+                assert_eq!(*err_type, TypeAnnotation::String);
+            }
+            _ => panic!("Expected Result type annotation"),
+        }
+    }
+
+    #[test]
+    fn test_range_type_inference() {
+        let mut type_checker = TypeChecker::new();
+        
+        // Test range type inference
+        let range_expr = Expr::Range {
+            start: Box::new(Expr::Integer(1)),
+            end: Box::new(Expr::Integer(10)),
+            inclusive: true,
+        };
+        
+        let result = type_checker.infer_type(&range_expr);
+        assert!(result.is_ok());
+        
+        match result.unwrap() {
+            TypeAnnotation::Range { start, end, inclusive } => {
+                assert_eq!(*start, TypeAnnotation::Int);
+                assert_eq!(*end, TypeAnnotation::Int);
+                assert_eq!(inclusive, true);
+            }
+            _ => panic!("Expected Range type annotation"),
+        }
+    }
+
+    #[test]
+    fn test_field_access_expression_type_inference() {
+        let mut type_checker = TypeChecker::new();
+        
+        // Test field access on map
+        let field_access = Expr::FieldAccess {
+            object: Box::new(Expr::Identifier("map_var".to_string())),
+            field: "key".to_string(),
+        };
+        
+        // Set up map variable
+        type_checker.context.variables.insert(
+            "map_var".to_string(),
+            TypeAnnotation::Map {
+                key_type: Box::new(TypeAnnotation::String),
+                value_type: Box::new(TypeAnnotation::Float),
+            },
+        );
+        
+        let result = type_checker.infer_type(&field_access);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), TypeAnnotation::Float);
+    }
+
+    #[test]
+    fn test_complex_nested_expressions() {
+        let mut type_checker = TypeChecker::new();
+        
+        // Test nested struct literal with field access
+        let nested_expr = Expr::StructLiteral(StructLiteral {
+            type_name: "Point".to_string(),
+            fields: vec![
+                FieldValue {
+                    name: "x".to_string(),
+                    value: Expr::BinaryOp {
+                        left: Box::new(Expr::Integer(10)),
+                        op: BinaryOp::Add,
+                        right: Box::new(Expr::Integer(5)),
+                    },
+                },
+                FieldValue {
+                    name: "y".to_string(),
+                    value: Expr::Float(3.14),
+                },
+            ],
+        });
+        
+        let result = type_checker.infer_type(&nested_expr);
+        assert!(result.is_ok());
+        
+        match result.unwrap() {
+            TypeAnnotation::Custom(type_name) => {
+                assert!(type_name.contains("x: Int"));
+                assert!(type_name.contains("y: Float"));
+            }
+            _ => panic!("Expected custom type annotation"),
         }
     }
 }
