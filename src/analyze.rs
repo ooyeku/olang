@@ -1,4 +1,4 @@
-use crate::ast::{Expr, MatchArm, Pattern, Program, Statement, Argument, TemplatePart, Value};
+use crate::ast::{Expr, MatchArm, Pattern, Program, Statement, Argument, TemplatePart, Value, ImportDecl};
 use crate::builtin::BuiltinFunctions;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -119,9 +119,9 @@ impl Analyzer {
                 // TODO: Implement error type declaration analysis
                 Ok(())
             }
-            Statement::ImportDecl(_) => {
-                // TODO: Implement import analysis
-                Ok(())
+            Statement::ImportDecl(import_decl) => {
+                // Implement import analysis
+                self.analyze_import_decl(import_decl)
             }
             Statement::ExportDecl(export_decl) => {
                 // Analyze the export value
@@ -955,6 +955,89 @@ impl Analyzer {
             }
             _ => false,
         }
+    }
+
+    /// Analyze import declarations for module dependencies and validation
+    fn analyze_import_decl(&mut self, import_decl: &ImportDecl) -> Result<(), AnalysisError> {
+        // Check for valid module path format
+        if import_decl.module_path.is_empty() {
+            return Err(AnalysisError::TypeError {
+                message: "Empty module path in import declaration".to_string(),
+            });
+        }
+        
+        // Check for relative path traversal (security concern)
+        if import_decl.module_path.contains("..") {
+            return Err(AnalysisError::TypeError {
+                message: "Path traversal not allowed in module imports".to_string(),
+            });
+        }
+        
+        // Track imported symbols in current scope
+        match &import_decl.items {
+            Some(items) => {
+                // Specific imports: import { func1, func2 } from "module"
+                for item in items {
+                    if item.is_empty() {
+                        return Err(AnalysisError::TypeError {
+                            message: "Empty import item name".to_string(),
+                        });
+                    }
+                    
+                    // Check for duplicate imports in same scope
+                    if self.scopes[self.current_scope].contains(item) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: item.clone(),
+                        });
+                    }
+                    
+                    // Add imported symbol to current scope
+                    self.scopes[self.current_scope].insert(item.clone());
+                    
+                    // Track in variables map
+                    self.variables.insert(
+                        item.clone(),
+                        VariableInfo {
+                            name: item.clone(),
+                            scope: self.current_scope,
+                            is_mutable: false, // Imported symbols are typically immutable
+                            usage_count: 0,    // Will be incremented when used
+                        },
+                    );
+                }
+            }
+            None => {
+                // Wildcard import: import * from "module"
+                // We can't validate specific symbols without loading the module
+                // But we can check for conflicts if we know the module exports
+                
+                // For now, we'll just mark that a wildcard import happened
+                // In a full implementation, we would:
+                // 1. Load the module to get its exports
+                // 2. Check for conflicts with existing symbols
+                // 3. Add all exported symbols to the current scope
+                
+                // Add a special marker to track wildcard imports
+                let wildcard_marker = format!("__wildcard_import_{}", import_decl.module_path);
+                self.variables.insert(
+                    wildcard_marker.clone(),
+                    VariableInfo {
+                        name: wildcard_marker,
+                        scope: self.current_scope,
+                        is_mutable: false,
+                        usage_count: 0,
+                    },
+                );
+            }
+        }
+        
+        // Additional validation could include:
+        // - Checking if the module exists (requires file system access)
+        // - Validating that imported symbols exist in the target module
+        // - Detecting circular dependencies (requires global dependency tracking)
+        // - Checking for unused imports
+        
+        Ok(())
     }
 }
 
