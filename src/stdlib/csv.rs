@@ -74,7 +74,7 @@ pub fn create_csv_module() -> Value {
     module.insert("add_row".to_string(), create_builtin_function("add_row", 2));
     module.insert(
         "add_column".to_string(),
-        create_builtin_function("add_column", 2),
+        create_builtin_function("add_column", 3),
     );
     module.insert(
         "set_cell".to_string(),
@@ -100,14 +100,14 @@ pub fn create_csv_module() -> Value {
     );
     module.insert(
         "sort_by_column".to_string(),
-        create_builtin_function("sort_by_column", 2),
+        create_builtin_function("sort_by_column", 3),
     );
 
     // Conversion operations
-    module.insert("to_json".to_string(), create_builtin_function("to_json", 1));
+    module.insert("to_json".to_string(), create_builtin_function("to_json", 2));
     module.insert(
         "from_json".to_string(),
-        create_builtin_function("from_json", 1),
+        create_builtin_function("from_json", 2),
     );
 
     Value::Struct {
@@ -667,52 +667,565 @@ fn csv_column_count(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
 }
 
 /// Placeholder implementations for remaining functions
-fn csv_add_row(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    Ok(Value::Err(Box::new(Value::String(Arc::new(
-        "add_row: Not yet implemented".to_string(),
-    )))))
+/// Add a new row to CSV data
+/// Usage: csv.add_row(csv_data, row_data) -> Result<CSV, Error>
+fn csv_add_row(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "add_row expects 2 arguments, got {}",
+            args.len()
+        ))))));
+    }
+
+    let csv_data = match &args[0] {
+        Value::List(rows) => rows,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "add_row: first argument must be CSV data (list of lists)".to_string(),
+            )))))
+        }
+    };
+
+    let new_row = match &args[1] {
+        Value::List(row) => row.clone(),
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "add_row: second argument must be a list (row data)".to_string(),
+            )))))
+        }
+    };
+
+    let mut new_csv: Vec<Value> = csv_data.iter().cloned().collect();
+    new_csv.push(Value::List(new_row));
+
+    Ok(Value::Ok(Box::new(Value::List(new_csv.into()))))
 }
 
-fn csv_add_column(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    Ok(Value::Err(Box::new(Value::String(Arc::new(
-        "add_column: Not yet implemented".to_string(),
-    )))))
+/// Add a new column to CSV data
+/// Usage: csv.add_column(csv_data, column_data, header) -> Result<CSV, Error>
+fn csv_add_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 3 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "add_column expects 3 arguments, got {}",
+            args.len()
+        ))))));
+    }
+
+    let csv_data = match &args[0] {
+        Value::List(rows) => rows,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "add_column: first argument must be CSV data (list of lists)".to_string(),
+            )))))
+        }
+    };
+
+    let column_data = match &args[1] {
+        Value::List(column) => column,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "add_column: second argument must be a list (column data)".to_string(),
+            )))))
+        }
+    };
+
+    let header = match &args[2] {
+        Value::String(s) => s.as_ref(),
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "add_column: third argument must be a string (header)".to_string(),
+            )))))
+        }
+    };
+
+    if csv_data.len() != column_data.len() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(
+            "add_column: column data length must match CSV row count".to_string(),
+        )))));
+    }
+
+    let mut new_csv = Vec::new();
+    for (i, row) in csv_data.iter().enumerate() {
+        let mut new_row: Vec<Value> = match row {
+            Value::List(row_data) => row_data.iter().cloned().collect(),
+            _ => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    "add_column: invalid CSV data structure".to_string(),
+                )))))
+            }
+        };
+        
+        if i == 0 {
+            // Add header to first row
+            new_row.push(Value::String(Arc::new(header.to_string())));
+        } else {
+            // Add column value to data rows (skip column_data[0], use i for indexing)
+            if i < column_data.len() {
+                // Skip the first element in column_data (which is a placeholder)
+                new_row.push(column_data[i].clone());
+            } else {
+                new_row.push(Value::String(Arc::new("".to_string())));
+            }
+        }
+        new_csv.push(Value::List(new_row.into()));
+    }
+
+    Ok(Value::Ok(Box::new(Value::List(new_csv.into()))))
 }
 
-fn csv_set_cell(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    Ok(Value::Err(Box::new(Value::String(Arc::new(
-        "set_cell: Not yet implemented".to_string(),
-    )))))
+/// Set a specific cell value in CSV data
+/// Usage: csv.set_cell(csv_data, row_index, column_index, value) -> Result<CSV, Error>
+fn csv_set_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 4 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "set_cell expects 4 arguments, got {}",
+            args.len()
+        ))))));
+    }
+
+    let csv_data = match &args[0] {
+        Value::List(rows) => rows,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "set_cell: first argument must be CSV data (list of lists)".to_string(),
+            )))))
+        }
+    };
+
+    let row_index = match &args[1] {
+        Value::Integer(i) => *i as usize,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "set_cell: second argument must be an integer (row index)".to_string(),
+            )))))
+        }
+    };
+
+    let column_index = match &args[2] {
+        Value::Integer(i) => *i as usize,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "set_cell: third argument must be an integer (column index)".to_string(),
+            )))))
+        }
+    };
+
+    if row_index >= csv_data.len() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "set_cell: row index {} out of bounds (max: {})",
+            row_index,
+            csv_data.len() - 1
+        ))))));
+    }
+
+    let row = match &csv_data[row_index] {
+        Value::List(row_data) => row_data,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "set_cell: invalid CSV data structure".to_string(),
+            )))))
+        }
+    };
+
+    if column_index >= row.len() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "set_cell: column index {} out of bounds (max: {})",
+            column_index,
+            row.len() - 1
+        ))))));
+    }
+
+    let mut new_csv: Vec<Value> = csv_data.iter().cloned().collect();
+    let mut new_row: Vec<Value> = row.iter().cloned().collect();
+    new_row[column_index] = args[3].clone();
+    new_csv[row_index] = Value::List(new_row.into());
+
+    Ok(Value::Ok(Box::new(Value::List(new_csv.into()))))
 }
 
-fn csv_set_headers(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    Ok(Value::Err(Box::new(Value::String(Arc::new(
-        "set_headers: Not yet implemented".to_string(),
-    )))))
+/// Set or replace headers for CSV data
+/// Usage: csv.set_headers(csv_data, headers) -> Result<CSV, Error>
+fn csv_set_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "set_headers expects 2 arguments, got {}",
+            args.len()
+        ))))));
+    }
+
+    let csv_data = match &args[0] {
+        Value::List(rows) => rows,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "set_headers: first argument must be CSV data (list of lists)".to_string(),
+            )))))
+        }
+    };
+
+    let headers = match &args[1] {
+        Value::List(header_list) => header_list,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "set_headers: second argument must be a list of strings (headers)".to_string(),
+            )))))
+        }
+    };
+
+    if csv_data.is_empty() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(
+            "set_headers: CSV data cannot be empty".to_string(),
+        )))));
+    }
+
+    let mut new_csv: Vec<Value> = csv_data.iter().cloned().collect();
+    
+    // Replace first row with headers
+    let header_values: Vec<Value> = headers.iter().map(|h| {
+        match h {
+            Value::String(s) => Value::String(s.clone()),
+            _ => Value::String(Arc::new("".to_string())),
+        }
+    }).collect();
+    
+    new_csv[0] = Value::List(header_values.into());
+
+    Ok(Value::Ok(Box::new(Value::List(new_csv.into()))))
 }
 
-fn csv_filter_rows(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    Ok(Value::Err(Box::new(Value::String(Arc::new(
-        "filter_rows: Not yet implemented".to_string(),
-    )))))
+/// Filter CSV rows based on criteria
+/// Usage: csv.filter_rows(csv_data, column_index, predicate_function) -> Result<CSV, Error>
+fn csv_filter_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 3 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "filter_rows expects 3 arguments, got {}",
+            args.len()
+        ))))));
+    }
+
+    let csv_data = match &args[0] {
+        Value::List(rows) => rows,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "filter_rows: first argument must be CSV data (list of lists)".to_string(),
+            )))))
+        }
+    };
+
+    let column_index = match &args[1] {
+        Value::Integer(i) => *i as usize,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "filter_rows: second argument must be an integer (column index)".to_string(),
+            )))))
+        }
+    };
+
+    // For now, we'll implement a simple string-based filter
+    // In a full implementation, this would support function predicates
+    let filter_value = match &args[2] {
+        Value::String(s) => s.as_ref(),
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "filter_rows: third argument must be a string (filter value)".to_string(),
+            )))))
+        }
+    };
+
+    let mut filtered_rows = Vec::new();
+    
+    // Always preserve the header row (first row)
+    if !csv_data.is_empty() {
+        filtered_rows.push(csv_data[0].clone());
+    }
+    
+    // Filter data rows (starting from row 1)
+    for row in csv_data.iter().skip(1) {
+        let row_data = match row {
+            Value::List(row_values) => row_values,
+            _ => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    "filter_rows: invalid CSV data structure".to_string(),
+                )))))
+            }
+        };
+
+        if column_index < row_data.len() {
+            let cell_value = match &row_data[column_index] {
+                Value::String(s) => s.as_ref(),
+                _ => continue, // Skip rows with non-string values in filter column
+            };
+
+            if cell_value == filter_value {
+                filtered_rows.push(Value::List(row_data.clone()));
+            }
+        }
+    }
+
+    Ok(Value::Ok(Box::new(Value::List(filtered_rows.into()))))
 }
 
-fn csv_sort_by_column(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    Ok(Value::Err(Box::new(Value::String(Arc::new(
-        "sort_by_column: Not yet implemented".to_string(),
-    )))))
+/// Sort CSV data by a specific column
+/// Usage: csv.sort_by_column(csv_data, column_index, ascending) -> Result<CSV, Error>
+fn csv_sort_by_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 3 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "sort_by_column expects 3 arguments, got {}",
+            args.len()
+        ))))));
+    }
+
+    let csv_data = match &args[0] {
+        Value::List(rows) => rows,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "sort_by_column: first argument must be CSV data (list of lists)".to_string(),
+            )))))
+        }
+    };
+
+    let column_index = match &args[1] {
+        Value::Integer(i) => *i as usize,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "sort_by_column: second argument must be an integer (column index)".to_string(),
+            )))))
+        }
+    };
+
+    let ascending = match &args[2] {
+        Value::Boolean(b) => *b,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "sort_by_column: third argument must be a boolean (ascending)".to_string(),
+            )))))
+        }
+    };
+
+    if csv_data.is_empty() {
+        return Ok(Value::Ok(Box::new(Value::List(Arc::new([])))));
+    }
+
+    let mut sorted_rows: Vec<Value> = csv_data.iter().skip(1).cloned().collect();
+    
+    sorted_rows.sort_by(|a, b| {
+        let a_row = match a {
+            Value::List(row_data) => row_data,
+            _ => return std::cmp::Ordering::Equal,
+        };
+        
+        let b_row = match b {
+            Value::List(row_data) => row_data,
+            _ => return std::cmp::Ordering::Equal,
+        };
+
+        if column_index >= a_row.len() || column_index >= b_row.len() {
+            return std::cmp::Ordering::Equal;
+        }
+
+        let a_val = &a_row[column_index];
+        let b_val = &b_row[column_index];
+
+        let comparison = match (a_val, b_val) {
+            (Value::String(a_str), Value::String(b_str)) => a_str.cmp(b_str),
+            (Value::Integer(a_int), Value::Integer(b_int)) => a_int.cmp(b_int),
+            (Value::Float(a_float), Value::Float(b_float)) => a_float.partial_cmp(b_float).unwrap_or(std::cmp::Ordering::Equal),
+            _ => std::cmp::Ordering::Equal,
+        };
+
+        if ascending {
+            comparison
+        } else {
+            comparison.reverse()
+        }
+    });
+
+    // Add header back to the beginning
+    let mut result_rows = Vec::new();
+    result_rows.push(csv_data[0].clone()); // Header row
+    result_rows.extend(sorted_rows);
+
+    Ok(Value::Ok(Box::new(Value::List(result_rows.into()))))
 }
 
-fn csv_to_json(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    Ok(Value::Err(Box::new(Value::String(Arc::new(
-        "to_json: Not yet implemented".to_string(),
-    )))))
+/// Convert CSV data to JSON format
+/// Usage: csv.to_json(csv_data, include_headers) -> Result<String, Error>
+fn csv_to_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "to_json expects 2 arguments, got {}",
+            args.len()
+        ))))));
+    }
+
+    let csv_data = match &args[0] {
+        Value::List(rows) => rows,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "to_json: first argument must be CSV data (list of lists)".to_string(),
+            )))))
+        }
+    };
+
+    let include_headers = match &args[1] {
+        Value::Boolean(b) => *b,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "to_json: second argument must be a boolean (include_headers)".to_string(),
+            )))))
+        }
+    };
+
+    if csv_data.is_empty() {
+        return Ok(Value::Ok(Box::new(Value::String(Arc::new("[]".to_string())))));
+    }
+
+    let mut json_objects = Vec::new();
+    let headers = if include_headers && !csv_data.is_empty() {
+        match &csv_data[0] {
+            Value::List(header_row) => header_row.iter().map(|h| {
+                match h {
+                    Value::String(s) => s.as_ref(),
+                    _ => "",
+                }
+            }).collect::<Vec<&str>>(),
+            _ => return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "to_json: invalid CSV data structure".to_string(),
+            ))))),
+        }
+    } else {
+        Vec::new()
+    };
+
+    let start_row = if include_headers && !csv_data.is_empty() { 1 } else { 0 };
+    
+    for row in &csv_data[start_row..] {
+        let row_data = match row {
+            Value::List(row_values) => row_values,
+            _ => continue,
+        };
+
+        let mut obj = String::new();
+        obj.push('{');
+
+        for (i, cell) in row_data.iter().enumerate() {
+            if i > 0 {
+                obj.push(',');
+            }
+
+            let key = if i < headers.len() {
+                format!("\"{}\"", headers[i])
+            } else {
+                format!("\"column_{}\"", i)
+            };
+
+            let value = match cell {
+                Value::String(s) => format!("\"{}\"", s.replace("\"", "\\\"")),
+                Value::Integer(i) => i.to_string(),
+                Value::Float(f) => f.to_string(),
+                Value::Boolean(b) => b.to_string(),
+                _ => "\"\"".to_string(),
+            };
+
+            obj.push_str(&format!("{}:{}", key, value));
+        }
+
+        obj.push('}');
+        json_objects.push(obj);
+    }
+
+    let json_array = format!("[{}]", json_objects.join(","));
+    Ok(Value::Ok(Box::new(Value::String(Arc::new(json_array)))))
 }
 
-fn csv_from_json(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    Ok(Value::Err(Box::new(Value::String(Arc::new(
-        "from_json: Not yet implemented".to_string(),
-    )))))
+/// Convert JSON data to CSV format
+/// Usage: csv.from_json(json_data, headers) -> Result<CSV, Error>
+fn csv_from_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "from_json expects 2 arguments, got {}",
+            args.len()
+        ))))));
+    }
+
+    let json_data = match &args[0] {
+        Value::String(s) => s.as_ref(),
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "from_json: first argument must be a string (JSON data)".to_string(),
+            )))))
+        }
+    };
+
+    let headers = match &args[1] {
+        Value::List(header_list) => header_list,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "from_json: second argument must be a list of strings (headers)".to_string(),
+            )))))
+        }
+    };
+
+    // Simple JSON parsing for array of objects
+    // This is a basic implementation - in production, use a proper JSON parser
+    let json_str = json_data.trim();
+    if !json_str.starts_with('[') || !json_str.ends_with(']') {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(
+            "from_json: JSON data must be an array".to_string(),
+        )))));
+    }
+
+    let content = &json_str[1..json_str.len()-1];
+    if content.trim().is_empty() {
+        // Empty array - return CSV with headers only
+        let header_row: Vec<Value> = headers.iter().map(|h| {
+            match h {
+                Value::String(s) => Value::String(s.clone()),
+                _ => Value::String(Arc::new("".to_string())),
+            }
+        }).collect();
+        
+        return Ok(Value::Ok(Box::new(Value::List(vec![Value::List(header_row.into())].into()))));
+    }
+
+    let mut csv_rows = Vec::new();
+    
+    // Add header row
+    let header_row: Vec<Value> = headers.iter().map(|h| {
+        match h {
+            Value::String(s) => Value::String(s.clone()),
+            _ => Value::String(Arc::new("".to_string())),
+        }
+    }).collect();
+    csv_rows.push(Value::List(header_row.into()));
+
+    // Parse objects (simplified - assumes simple key-value pairs)
+    let objects = content.split("},{");
+    for obj_str in objects {
+        let clean_obj = obj_str.trim_matches('{').trim_matches('}');
+        let mut row = vec![Value::String(Arc::new("".to_string())); headers.len()];
+        
+        let pairs = clean_obj.split(',');
+        for pair in pairs {
+            let parts: Vec<&str> = pair.split(':').collect();
+            if parts.len() == 2 {
+                let key = parts[0].trim().trim_matches('"');
+                let value = parts[1].trim().trim_matches('"');
+                
+                if let Some(index) = headers.iter().position(|h| {
+                    match h {
+                        Value::String(s) => s.as_ref() == key,
+                        _ => false,
+                    }
+                }) {
+                    row[index] = Value::String(Arc::new(value.to_string()));
+                }
+            }
+        }
+        
+        csv_rows.push(Value::List(row.into()));
+    }
+
+    Ok(Value::Ok(Box::new(Value::List(csv_rows.into()))))
 }
 
 #[cfg(test)]
@@ -1188,24 +1701,266 @@ mod tests {
     }
 
     #[test]
-    fn test_unimplemented_functions() {
-        // Test that unimplemented functions return appropriate errors
-        let placeholder_functions = vec![
-            "add_row",
-            "add_column",
-            "set_cell",
-            "set_headers",
-            "filter_rows",
-            "sort_by_column",
-            "to_json",
-            "from_json",
-        ];
+    fn test_csv_add_row() {
+        // Test successful row addition
+        let csv_data = list_val(vec![
+            list_val(vec![string_val("name"), string_val("age")]),
+            list_val(vec![string_val("Alice"), string_val("30")]),
+        ]);
+        
+        let new_row = list_val(vec![string_val("Bob"), string_val("25")]);
+        let result = csv_add_row(vec![csv_data.clone(), new_row]).unwrap();
+        let result_csv = assert_ok(&result);
+        let rows = extract_list(result_csv);
+        
+        assert_eq!(rows.len(), 3);
+        let last_row = extract_list(&rows[2]);
+        assert_eq!(extract_string(&last_row[0]), "Bob");
+        assert_eq!(extract_string(&last_row[1]), "25");
 
-        for func_name in placeholder_functions {
-            let result = call_csv_function(func_name, vec![]).unwrap();
-            let error = assert_err(&result);
-            let error_msg = extract_string(error);
-            assert!(error_msg.contains("Not yet implemented"));
-        }
+        // Test error conditions
+        let result = csv_add_row(vec![string_val("not csv")]).unwrap();
+        assert_err(&result);
+        
+        let result = csv_add_row(vec![csv_data, string_val("not a row")]).unwrap();
+        assert_err(&result);
+    }
+
+    #[test]
+    fn test_csv_add_column() {
+        // Test successful column addition
+        let csv_data = list_val(vec![
+            list_val(vec![string_val("name"), string_val("age")]),
+            list_val(vec![string_val("Alice"), string_val("30")]),
+            list_val(vec![string_val("Bob"), string_val("25")]),
+        ]);
+        
+        let column_data = list_val(vec![string_val("city"), string_val("NYC"), string_val("LA")]);
+        let header = string_val("location");
+        
+        let result = csv_add_column(vec![csv_data.clone(), column_data, header.clone()]).unwrap();
+        let result_csv = assert_ok(&result);
+        let rows = extract_list(result_csv);
+        
+        assert_eq!(rows.len(), 3);
+        
+        // Check header row
+        let header_row = extract_list(&rows[0]);
+        assert_eq!(header_row.len(), 3);
+        assert_eq!(extract_string(&header_row[2]), "location");
+        
+        // Check data rows
+        let first_data_row = extract_list(&rows[1]);
+        assert_eq!(first_data_row.len(), 3);
+        assert_eq!(extract_string(&first_data_row[2]), "NYC");
+
+        // Test error conditions
+        let result = csv_add_column(vec![string_val("not csv")]).unwrap();
+        assert_err(&result);
+        
+        let wrong_length_column = list_val(vec![string_val("city")]);
+        let result = csv_add_column(vec![csv_data, wrong_length_column, header]).unwrap();
+        assert_err(&result);
+    }
+
+    #[test]
+    fn test_csv_set_cell() {
+        // Test successful cell setting
+        let csv_data = list_val(vec![
+            list_val(vec![string_val("name"), string_val("age")]),
+            list_val(vec![string_val("Alice"), string_val("30")]),
+        ]);
+        
+        let result = csv_set_cell(vec![csv_data.clone(), int_val(1), int_val(1), string_val("31")]).unwrap();
+        let result_csv = assert_ok(&result);
+        let rows = extract_list(result_csv);
+        
+        let modified_row = extract_list(&rows[1]);
+        assert_eq!(extract_string(&modified_row[1]), "31");
+
+        // Test error conditions
+        let result = csv_set_cell(vec![csv_data.clone(), int_val(10), int_val(0), string_val("test")]).unwrap();
+        assert_err(&result); // Row index out of bounds
+        
+        let result = csv_set_cell(vec![csv_data, int_val(0), int_val(10), string_val("test")]).unwrap();
+        assert_err(&result); // Column index out of bounds
+    }
+
+    #[test]
+    fn test_csv_set_headers() {
+        // Test successful header setting
+        let csv_data = list_val(vec![
+            list_val(vec![string_val("old1"), string_val("old2")]),
+            list_val(vec![string_val("Alice"), string_val("30")]),
+        ]);
+        
+        let new_headers = list_val(vec![string_val("name"), string_val("age")]);
+        let result = csv_set_headers(vec![csv_data, new_headers.clone()]).unwrap();
+        let result_csv = assert_ok(&result);
+        let rows = extract_list(result_csv);
+        
+        let header_row = extract_list(&rows[0]);
+        assert_eq!(extract_string(&header_row[0]), "name");
+        assert_eq!(extract_string(&header_row[1]), "age");
+
+        // Test error conditions
+        let empty_csv = list_val(vec![]);
+        let result = csv_set_headers(vec![empty_csv, new_headers]).unwrap();
+        assert_err(&result);
+    }
+
+    #[test]
+    fn test_csv_filter_rows() {
+        // Test successful row filtering
+        let csv_data = list_val(vec![
+            list_val(vec![string_val("name"), string_val("age")]),
+            list_val(vec![string_val("Alice"), string_val("30")]),
+            list_val(vec![string_val("Bob"), string_val("25")]),
+            list_val(vec![string_val("Charlie"), string_val("30")]),
+        ]);
+        
+        let result = csv_filter_rows(vec![csv_data.clone(), int_val(1), string_val("30")]).unwrap();
+        let filtered_csv = assert_ok(&result);
+        let rows = extract_list(filtered_csv);
+        
+        assert_eq!(rows.len(), 3); // Header + 2 matching rows
+        let first_match = extract_list(&rows[1]);
+        assert_eq!(extract_string(&first_match[0]), "Alice");
+        let second_match = extract_list(&rows[2]);
+        assert_eq!(extract_string(&second_match[0]), "Charlie");
+
+        // Test error conditions
+        let result = csv_filter_rows(vec![csv_data, int_val(10), string_val("30")]).unwrap();
+        let filtered_csv = assert_ok(&result);
+        let rows = extract_list(filtered_csv);
+        assert_eq!(rows.len(), 1); // Only header row
+    }
+
+    #[test]
+    fn test_csv_sort_by_column() {
+        // Test successful column sorting
+        let csv_data = list_val(vec![
+            list_val(vec![string_val("name"), string_val("age")]),
+            list_val(vec![string_val("Charlie"), string_val("25")]),
+            list_val(vec![string_val("Alice"), string_val("30")]),
+            list_val(vec![string_val("Bob"), string_val("20")]),
+        ]);
+        
+        // Sort by age ascending
+        let result = csv_sort_by_column(vec![csv_data.clone(), int_val(1), bool_val(true)]).unwrap();
+        let sorted_csv = assert_ok(&result);
+        let rows = extract_list(sorted_csv);
+        
+        // Check that ages are in ascending order
+        let first_data_row = extract_list(&rows[1]);
+        assert_eq!(extract_string(&first_data_row[1]), "20"); // Bob
+        let second_data_row = extract_list(&rows[2]);
+        assert_eq!(extract_string(&second_data_row[1]), "25"); // Charlie
+        let third_data_row = extract_list(&rows[3]);
+        assert_eq!(extract_string(&third_data_row[1]), "30"); // Alice
+
+        // Sort by age descending
+        let result = csv_sort_by_column(vec![csv_data, int_val(1), bool_val(false)]).unwrap();
+        let sorted_csv = assert_ok(&result);
+        let rows = extract_list(sorted_csv);
+        
+        // Check that ages are in descending order
+        let first_data_row = extract_list(&rows[1]);
+        assert_eq!(extract_string(&first_data_row[1]), "30"); // Alice
+    }
+
+    #[test]
+    fn test_csv_to_json() {
+        // Test successful JSON conversion
+        let csv_data = list_val(vec![
+            list_val(vec![string_val("name"), string_val("age")]),
+            list_val(vec![string_val("Alice"), string_val("30")]),
+            list_val(vec![string_val("Bob"), string_val("25")]),
+        ]);
+        
+        // Convert with headers
+        let result = csv_to_json(vec![csv_data.clone(), bool_val(true)]).unwrap();
+        let json_str = extract_string(assert_ok(&result));
+        
+        assert!(json_str.contains("\"name\":\"Alice\""));
+        assert!(json_str.contains("\"age\":\"30\""));
+        assert!(json_str.contains("\"name\":\"Bob\""));
+        assert!(json_str.contains("\"age\":\"25\""));
+
+        // Convert without headers
+        let result = csv_to_json(vec![csv_data, bool_val(false)]).unwrap();
+        let json_str = extract_string(assert_ok(&result));
+        
+        assert!(json_str.contains("\"column_0\":\"name\""));
+        assert!(json_str.contains("\"column_1\":\"age\""));
+
+        // Test empty CSV
+        let empty_csv = list_val(vec![]);
+        let result = csv_to_json(vec![empty_csv, bool_val(true)]).unwrap();
+        let json_str = extract_string(assert_ok(&result));
+        assert_eq!(json_str, "[]");
+    }
+
+    #[test]
+    fn test_csv_from_json() {
+        // Test successful JSON to CSV conversion
+        let json_data = string_val(r#"[{"name":"Alice","age":"30"},{"name":"Bob","age":"25"}]"#);
+        let headers = list_val(vec![string_val("name"), string_val("age")]);
+        
+        let result = csv_from_json(vec![json_data, headers.clone()]).unwrap();
+        let csv_data = assert_ok(&result);
+        let rows = extract_list(csv_data);
+        
+        assert_eq!(rows.len(), 3); // Headers + 2 data rows
+        
+        let header_row = extract_list(&rows[0]);
+        assert_eq!(extract_string(&header_row[0]), "name");
+        assert_eq!(extract_string(&header_row[1]), "age");
+        
+        let first_data_row = extract_list(&rows[1]);
+        assert_eq!(extract_string(&first_data_row[0]), "Alice");
+        assert_eq!(extract_string(&first_data_row[1]), "30");
+
+        // Test empty JSON array
+        let empty_json = string_val("[]");
+        let result = csv_from_json(vec![empty_json, headers.clone()]).unwrap();
+        let csv_data = assert_ok(&result);
+        let rows = extract_list(csv_data);
+        assert_eq!(rows.len(), 1); // Only header row
+
+        // Test error conditions
+        let invalid_json = string_val("not json");
+        let result = csv_from_json(vec![invalid_json, headers]).unwrap();
+        assert_err(&result);
+    }
+
+    #[test]
+    fn test_csv_new_functions_integration() {
+        // Test integration of all new functions
+        let csv_data = list_val(vec![
+            list_val(vec![string_val("name"), string_val("age")]),
+            list_val(vec![string_val("Alice"), string_val("30")]),
+            list_val(vec![string_val("Bob"), string_val("25")]),
+        ]);
+        
+        // Add a new column
+        let column_data = list_val(vec![string_val("city"), string_val("NYC"), string_val("LA")]);
+        let result = csv_add_column(vec![csv_data, column_data, string_val("location")]).unwrap();
+        let csv_with_column = assert_ok(&result);
+        
+        // Filter rows
+        let result = csv_filter_rows(vec![csv_with_column.clone(), int_val(2), string_val("NYC")]).unwrap();
+        let filtered_csv = assert_ok(&result);
+        
+        // Sort by age
+        let result = csv_sort_by_column(vec![filtered_csv.clone(), int_val(1), bool_val(true)]).unwrap();
+        let sorted_csv = assert_ok(&result);
+        
+        // Convert to JSON
+        let result = csv_to_json(vec![sorted_csv.clone(), bool_val(true)]).unwrap();
+        let json_str = extract_string(assert_ok(&result));
+        
+        assert!(json_str.contains("\"name\":\"Alice\""));
+        assert!(json_str.contains("\"location\":\"NYC\""));
     }
 }

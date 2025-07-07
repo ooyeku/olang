@@ -32,6 +32,9 @@ sha1 = "0.10"
 hmac = "0.12"
 bcrypt = "0.15"
 hex = "0.4"
+aes-gcm = "0.10"
+rsa = "0.9"
+argon2 = "0.5"
 
 # REPL and CLI
 rustyline = "13.0"

@@ -3794,6 +3794,189 @@ For function-specific syntax, use: {}help <function_name>{}",
             category: "Crypto".to_string(),
             see_also: vec!["crypto.verify_password".to_string()],
         });
+
+        // Advanced encryption/decryption
+        self.add_function(FunctionDoc {
+            name: "crypto.encrypt_aes".to_string(),
+            description: "Encrypt data using AES-256-GCM with authenticated encryption".to_string(),
+            syntax: "crypto.encrypt_aes(data, key, nonce)".to_string(),
+            parameters: vec![
+                "data: String - The data to encrypt".to_string(),
+                "key: String - 32-byte key as hex string (64 characters)".to_string(),
+                "nonce: String - 12-byte nonce as hex string (24 characters)".to_string(),
+            ],
+            return_type: "Result<String, Error>".to_string(),
+            examples: vec![
+                "let key = crypto.random_hex(32); let nonce = crypto.random_hex(12)".to_string(),
+                "crypto.encrypt_aes(\"secret message\", key, nonce)  // Ok(\"encrypted_hex\")".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.decrypt_aes".to_string(), "crypto.random_hex".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.decrypt_aes".to_string(),
+            description: "Decrypt data using AES-256-GCM with authentication".to_string(),
+            syntax: "crypto.decrypt_aes(ciphertext, key, nonce, tag)".to_string(),
+            parameters: vec![
+                "ciphertext: String - Encrypted data as hex string".to_string(),
+                "key: String - 32-byte key as hex string (64 characters)".to_string(),
+                "nonce: String - 12-byte nonce as hex string (24 characters)".to_string(),
+                "tag: String - Authentication tag as hex string".to_string(),
+            ],
+            return_type: "Result<String, Error>".to_string(),
+            examples: vec![
+                "crypto.decrypt_aes(encrypted_data, key, nonce, tag)  // Ok(\"original message\")".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.encrypt_aes".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.encrypt_rsa".to_string(),
+            description: "Encrypt data using RSA public key encryption".to_string(),
+            syntax: "crypto.encrypt_rsa(data, public_key)".to_string(),
+            parameters: vec![
+                "data: String - The data to encrypt".to_string(),
+                "public_key: String - RSA public key in PEM format".to_string(),
+            ],
+            return_type: "Result<String, Error>".to_string(),
+            examples: vec![
+                "crypto.encrypt_rsa(\"secret\", public_key_pem)  // Ok(\"base64_encrypted\")".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.decrypt_rsa".to_string(), "crypto.generate_key_pair".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.decrypt_rsa".to_string(),
+            description: "Decrypt data using RSA private key".to_string(),
+            syntax: "crypto.decrypt_rsa(encrypted_data, private_key)".to_string(),
+            parameters: vec![
+                "encrypted_data: String - Base64 encoded encrypted data".to_string(),
+                "private_key: String - RSA private key in PEM format".to_string(),
+            ],
+            return_type: "Result<String, Error>".to_string(),
+            examples: vec![
+                "crypto.decrypt_rsa(encrypted_data, private_key_pem)  // Ok(\"original data\")".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.encrypt_rsa".to_string()],
+        });
+
+        // Key management
+        self.add_function(FunctionDoc {
+            name: "crypto.derive_key".to_string(),
+            description: "Derive a cryptographic key from a password using Argon2".to_string(),
+            syntax: "crypto.derive_key(password, salt, key_length)".to_string(),
+            parameters: vec![
+                "password: String - The password to derive key from".to_string(),
+                "salt: String - Salt in base64 format".to_string(),
+                "key_length: Int - Length of key to derive (max 64 bytes)".to_string(),
+            ],
+            return_type: "Result<String, Error>".to_string(),
+            examples: vec![
+                "let salt = base64.encode(crypto.random_hex(16))".to_string(),
+                "crypto.derive_key(\"mypassword\", salt, 32)  // Ok(\"derived_key_hex\")".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.random_hex".to_string(), "base64.encode".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.generate_key_pair".to_string(),
+            description: "Generate a new RSA key pair (2048-bit)".to_string(),
+            syntax: "crypto.generate_key_pair()".to_string(),
+            parameters: vec![],
+            return_type: "Result<{private_key: String, public_key: String}, Error>".to_string(),
+            examples: vec![
+                "let key_pair = crypto.generate_key_pair()".to_string(),
+                "let private_key = key_pair.private_key; let public_key = key_pair.public_key".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.export_public_key".to_string(), "crypto.import_public_key".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.export_public_key".to_string(),
+            description: "Extract public key from a key pair struct".to_string(),
+            syntax: "crypto.export_public_key(key_pair)".to_string(),
+            parameters: vec![
+                "key_pair: {private_key: String, public_key: String} - Key pair struct".to_string(),
+            ],
+            return_type: "Result<String, Error>".to_string(),
+            examples: vec![
+                "let public_key = crypto.export_public_key(key_pair)  // Ok(\"-----BEGIN PUBLIC KEY-----\")".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.generate_key_pair".to_string(), "crypto.import_public_key".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.import_public_key".to_string(),
+            description: "Import a public key from PEM format".to_string(),
+            syntax: "crypto.import_public_key(pem_string)".to_string(),
+            parameters: vec![
+                "pem_string: String - Public key in PEM format".to_string(),
+            ],
+            return_type: "Result<{pem: String}, Error>".to_string(),
+            examples: vec![
+                "let public_key = crypto.import_public_key(pem_string)  // Ok({pem: \"...\"})".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.export_public_key".to_string()],
+        });
+
+        // Digital signatures
+        self.add_function(FunctionDoc {
+            name: "crypto.sign_data".to_string(),
+            description: "Sign data using RSA private key with SHA-256".to_string(),
+            syntax: "crypto.sign_data(data, private_key)".to_string(),
+            parameters: vec![
+                "data: String - The data to sign".to_string(),
+                "private_key: String - RSA private key in PEM format".to_string(),
+            ],
+            return_type: "Result<String, Error>".to_string(),
+            examples: vec![
+                "crypto.sign_data(\"important message\", private_key)  // Ok(\"base64_signature\")".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.verify_signature".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.verify_signature".to_string(),
+            description: "Verify a digital signature using RSA public key".to_string(),
+            syntax: "crypto.verify_signature(data, signature, public_key)".to_string(),
+            parameters: vec![
+                "data: String - The original data that was signed".to_string(),
+                "signature: String - Base64 encoded signature".to_string(),
+                "public_key: String - RSA public key in PEM format".to_string(),
+            ],
+            return_type: "Result<Bool, Error>".to_string(),
+            examples: vec![
+                "crypto.verify_signature(\"message\", signature, public_key)  // Ok(true) or Ok(false)".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.sign_data".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.create_certificate_signing_request".to_string(),
+            description: "Create a certificate signing request (CSR) for SSL/TLS certificates".to_string(),
+            syntax: "crypto.create_certificate_signing_request(common_name, private_key)".to_string(),
+            parameters: vec![
+                "common_name: String - The domain name for the certificate".to_string(),
+                "private_key: String - RSA private key in PEM format".to_string(),
+            ],
+            return_type: "Result<String, Error>".to_string(),
+            examples: vec![
+                "crypto.create_certificate_signing_request(\"example.com\", private_key)".to_string(),
+                "// Returns PEM-formatted CSR".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.generate_key_pair".to_string()],
+        });
     }
 
     /// Add Base64 module functions to the help system
