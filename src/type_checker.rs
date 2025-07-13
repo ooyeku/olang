@@ -1035,6 +1035,13 @@ impl TypeChecker {
             (TypeAnnotation::List(a_inner), TypeAnnotation::List(b_inner)) => {
                 self.types_compatible(a_inner, b_inner)
             }
+            // Range types
+            (
+                TypeAnnotation::Range { start: start1, end: end1, inclusive: _ },
+                TypeAnnotation::Range { start: start2, end: end2, inclusive: _ },
+            ) => {
+                self.types_compatible(start1, start2) && self.types_compatible(end1, end2)
+            }
             (
                 TypeAnnotation::Map {
                     key_type: a_key,
@@ -1074,6 +1081,12 @@ impl TypeChecker {
                         .iter()
                         .zip(args2.iter())
                         .all(|(a, b)| self.types_compatible(a, b))
+            }
+            // Union types - two union types are compatible if they have the same set of types
+            (TypeAnnotation::Union { types: types1 }, TypeAnnotation::Union { types: types2 }) => {
+                types1.len() == types2.len() && 
+                types1.iter().all(|t1| types2.iter().any(|t2| self.types_compatible(t1, t2))) &&
+                types2.iter().all(|t2| types1.iter().any(|t1| self.types_compatible(t1, t2)))
             }
             // Union types - a is compatible with union if it's compatible with any member
             (a, TypeAnnotation::Union { types }) => {
