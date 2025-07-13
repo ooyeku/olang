@@ -1,6 +1,5 @@
-use olang::analyze::{Analyzer, AnalysisError};
+use olang::analyze::Analyzer;
 use olang::ast::{Pattern, Value};
-use std::sync::Arc;
 
 #[test]
 fn test_empty_patterns_not_exhaustive() {

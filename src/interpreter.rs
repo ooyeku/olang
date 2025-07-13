@@ -2357,7 +2357,7 @@ impl ModuleDependencyTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{ImportDecl, ExportDecl, Expr};
+    use crate::ast::ImportDecl;
     
     #[test]
     fn test_module_cache_creation_and_retrieval() {

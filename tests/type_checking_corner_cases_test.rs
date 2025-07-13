@@ -7,7 +7,7 @@ use olang::type_checker::{TypeChecker, TypeClass};
 
 #[test]
 fn test_complex_union_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test nested union types
     let inner_union = TypeAnnotation::Union {
@@ -32,7 +32,7 @@ fn test_complex_union_type_compatibility() {
 
 #[test]
 fn test_intersection_type_edge_cases() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test intersection with same type
     let same_type_intersection = TypeAnnotation::Intersection {
@@ -54,7 +54,7 @@ fn test_intersection_type_edge_cases() {
 
 #[test]
 fn test_literal_type_edge_cases() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test literal type with actual value
     let literal_42 = TypeAnnotation::Literal {
@@ -77,7 +77,7 @@ fn test_literal_type_edge_cases() {
 
 #[test]
 fn test_generic_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test generic list types
     let list_int = TypeAnnotation::Generic {
@@ -110,7 +110,7 @@ fn test_generic_type_compatibility() {
 
 #[test]
 fn test_type_variable_constraints() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test unconstrained type variable
     let type_var = TypeAnnotation::TypeVariable("T".to_string());
@@ -121,7 +121,7 @@ fn test_type_variable_constraints() {
     assert!(type_checker.types_compatible(&TypeAnnotation::Int, &type_var));
     
     // Test constrained type variable (simulated by using separate type checker)
-    let mut constrained_checker = TypeChecker::new();
+    let constrained_checker = TypeChecker::new();
     
     // Should be compatible with any type for unconstrained variable
     assert!(constrained_checker.types_compatible(&type_var, &TypeAnnotation::Int));
@@ -130,7 +130,7 @@ fn test_type_variable_constraints() {
 
 #[test]
 fn test_function_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test function types with same signature
     let func1 = TypeAnnotation::Function {
@@ -158,7 +158,7 @@ fn test_function_type_compatibility() {
 
 #[test]
 fn test_recursive_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test list of lists
     let list_of_lists = TypeAnnotation::List(Box::new(TypeAnnotation::List(Box::new(TypeAnnotation::Int))));
@@ -182,7 +182,7 @@ fn test_recursive_type_compatibility() {
 
 #[test]
 fn test_result_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test Result types
     let result_int_string = TypeAnnotation::Result {
@@ -210,7 +210,7 @@ fn test_result_type_compatibility() {
 
 #[test]
 fn test_promise_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test Promise types
     let promise_int = TypeAnnotation::Promise {
@@ -238,7 +238,7 @@ fn test_promise_type_compatibility() {
 
 #[test]
 fn test_custom_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test custom types
     let custom_user = TypeAnnotation::Custom("User".to_string());
@@ -345,7 +345,7 @@ fn test_intersection_type_creation_and_simplification() {
 
 #[test]
 fn test_complex_nested_types() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test deeply nested type structure
     let complex_type = TypeAnnotation::Function {
@@ -476,7 +476,7 @@ fn test_map_type_inference_edge_cases() {
 
 #[test]
 fn test_range_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test range types
     let int_range = TypeAnnotation::Range {

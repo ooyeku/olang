@@ -1571,7 +1571,7 @@ impl TypeContext {
 mod tests {
     use super::*;
     use crate::ast::*;
-    use std::collections::HashMap;
+    
 
     #[test]
     fn test_struct_literal_type_inference() {

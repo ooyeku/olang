@@ -2,9 +2,9 @@
 mod tests {
     use crate::ast::{Function, Parameter, Value};
     use crate::internal::{
-    check_memory_pressure, create_lazy_range,
-    is_force_point, is_lazy_function, try_fuse_operations, InternalValue, LazyConfig,
-    LazyValue, ValueHandle, create_lazy_concat, create_lazy_map_filtered,
+    check_memory_pressure,
+    is_force_point, is_lazy_function, InternalValue, LazyConfig,
+    LazyValue, ValueHandle,
     LazyEvaluationContext, MemoryStrategy, TimeoutStrategy, LockManager,
     get_estimated_memory_usage, get_lazy_evaluation_memory_usage,
 };
@@ -561,7 +561,7 @@ use std::sync::{Arc, Mutex};
     #[test]
     fn test_fused_pipeline_creation() {
         use crate::ast::{Function, Parameter, Value};
-        use crate::internal::{create_lazy_map, create_lazy_filter, try_fuse_operations, ValueHandle, InternalValue, LazyValue};
+        use crate::internal::{create_lazy_map, try_fuse_operations, ValueHandle, InternalValue, LazyValue};
         use std::sync::Arc;
 
         // Dummy function for map
@@ -601,7 +601,7 @@ use std::sync::{Arc, Mutex};
         config.timeout_strategy = TimeoutStrategy::Fixed(10); // Use fixed timeout to ensure it's used
         config.enable_recovery = false; // Disable recovery for this test
         
-        let mut context = LazyEvaluationContext::new(config);
+        let context = LazyEvaluationContext::new(config);
         
         // Sleep to exceed timeout
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -840,7 +840,7 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_range_overflow_protection() {
-        let mut config = LazyConfig::default();
+        let config = LazyConfig::default();
         let mut context = LazyEvaluationContext::new(config);
         
         // Test overflow protection

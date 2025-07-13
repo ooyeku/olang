@@ -13,7 +13,6 @@ use olang::{
 };
 
 use proptest::prelude::*;
-use quickcheck::TestResult;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -811,7 +810,7 @@ mod additional_property_tests {
 #[cfg(test)]
 mod proptest_tests {
     use super::*;
-    use proptest::prelude::*;
+    
 
     proptest! {
         #[test]

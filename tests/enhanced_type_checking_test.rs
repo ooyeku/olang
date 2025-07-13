@@ -4,7 +4,7 @@ use olang::type_checker::{TypeChecker, TypeClass};
 
 #[test]
 fn test_union_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test union type creation
     let union_type = TypeAnnotation::Union {
@@ -23,7 +23,7 @@ fn test_union_type_compatibility() {
 
 #[test]
 fn test_intersection_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test intersection type creation (theoretical example)
     let intersection_type = TypeAnnotation::Intersection {
@@ -135,7 +135,7 @@ fn test_type_constraint_checking() {
 #[test]
 fn test_enhanced_error_messages() {
     let parser = Parser::new();
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test type mismatch with suggestion
     let result = type_checker.check_type_compatibility(
@@ -158,7 +158,7 @@ fn test_enhanced_error_messages() {
 
 #[test]
 fn test_literal_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     // Test literal type compatibility
     let literal_type = TypeAnnotation::Literal {
@@ -175,7 +175,7 @@ fn test_literal_type_compatibility() {
 
 #[test]
 fn test_result_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     let result_type1 = TypeAnnotation::Result {
         ok_type: Box::new(TypeAnnotation::Int),
@@ -201,7 +201,7 @@ fn test_result_type_compatibility() {
 
 #[test]
 fn test_promise_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     let promise_type1 = TypeAnnotation::Promise {
         value_type: Box::new(TypeAnnotation::Int),
@@ -227,7 +227,7 @@ fn test_promise_type_compatibility() {
 
 #[test]
 fn test_function_type_compatibility() {
-    let mut type_checker = TypeChecker::new();
+    let type_checker = TypeChecker::new();
     
     let func_type1 = TypeAnnotation::Function {
         params: vec![TypeAnnotation::Int, TypeAnnotation::String],
