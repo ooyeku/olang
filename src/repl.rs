@@ -1,13 +1,14 @@
 use crate::ast::Value;
-use crate::help::HelpSystem;
+use crate::help::{HelpSystem, HelpContext, SearchFilters, Colors};
 use crate::interpreter::InterpreterError;
 use crate::ovm_integration::{IntegrationConfig, IntegrationError, OvmInterpreter};
-use crate::parser::{ParseError, Parser};
+use crate::parser::{ErrorSuggestion, ParseError, Parser, SuggestionSeverity};
 use crate::version::VERSION;
 use colored::*;
 use rustyline::error::ReadlineError;
 use rustyline::{history::DefaultHistory, Config, Editor};
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::time::Instant;
 use thiserror::Error;
 
@@ -237,7 +238,7 @@ impl Repl {
             }
         } else if verbose {
             println!(
-                "✅ Multi-threading enabled: {} CPU cores detected",
+                "Multi-threading enabled: {} CPU cores detected",
                 num_cpus::get()
             );
         }
@@ -247,7 +248,7 @@ impl Repl {
 
         if verbose {
             println!(
-                "🚀 Automatic parallelization: Lists with 10+ items will use all {} cores",
+                "Automatic parallelization: Lists with 10+ items will use all {} cores",
                 num_cpus::get()
             );
         }
@@ -330,7 +331,7 @@ impl Repl {
             let stats = self.ovm_interpreter.get_stats();
             println!(
                 "{}",
-                "🚀 OVM (Olang Virtual Machine) is running in the background".bright_green()
+                "OVM (Olang Virtual Machine) is running in the background".bright_green()
             );
             println!(
                 "{}",
@@ -360,7 +361,7 @@ impl Repl {
         } else {
             println!(
                 "{}",
-                "⚠️  OVM not available - using classic interpreter".bright_yellow()
+                "OVM not available - using classic interpreter".bright_yellow()
             );
         }
 
@@ -421,10 +422,7 @@ impl Repl {
                             }
                         }
                         Err(e) => {
-                            eprintln!("Error: {}", e);
-                            if self.verbose {
-                                eprintln!("Debug: {:?}", e);
-                            }
+                            self.show_enhanced_error(&e);
                         }
                     }
                     let _ = self.ovm_interpreter.force_gc();
@@ -484,10 +482,7 @@ impl Repl {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error: {}", e);
-                    if self.verbose || self.config.debug_mode {
-                        eprintln!("Debug: {:?}", e);
-                    }
+                    self.show_enhanced_error(&e);
                 }
             }
             let _ = self.ovm_interpreter.force_gc();
@@ -515,13 +510,46 @@ impl Repl {
                         "list" => println!("{}", self.help_system.list_functions()),
                         "examples" => println!("{}", self.help_system.show_examples()),
                         "syntax" => println!("{}", self.help_system.show_syntax()),
+                        "tutorials" => println!("{}", self.help_system.format_tutorial_list()),
+                        "tutorial" => {
+                            if parts.len() > 2 {
+                                let tutorial_name = parts[2];
+                                if let Some(tutorial) = self.help_system.get_tutorial(tutorial_name) {
+                                    println!("{}", self.help_system.format_tutorial(tutorial));
+                                } else {
+                                    println!("Tutorial '{}' not found. Use 'help tutorials' to see available tutorials.", tutorial_name);
+                                }
+                            } else {
+                                println!("{}", self.help_system.format_tutorial_list());
+                            }
+                        }
+                        "search" => {
+                            if parts.len() > 2 {
+                                let query = parts[2..].join(" ");
+                                let results = self.help_system.search(&query, None);
+                                println!("{}", self.help_system.format_search_results(&results));
+                            } else {
+                                println!("Usage: help search <query>");
+                                println!("Example: help search \"list functions\"");
+                            }
+                        }
+                        "contextual" => {
+                            let context = self.build_help_context();
+                            println!("{}", self.help_system.format_contextual_help(&context));
+                        }
                         _ => {
                             if self.help_system.has_function(topic) {
                                 println!("{}", self.help_system.show_function_help(topic));
                             } else if self.help_system.has_category(topic) {
                                 println!("{}", self.help_system.show_category(topic));
                             } else {
-                                println!("{}", self.help_system.show_function_help(topic));
+                                // Try advanced search if direct lookup fails
+                                let results = self.help_system.search(topic, None);
+                                if !results.is_empty() {
+                                    println!("{}", self.help_system.format_search_results(&results));
+                                } else {
+                                    println!("No help found for '{}'. Try 'help search {}' for advanced search.", topic, topic);
+                                }
                             }
                         }
                     }
@@ -536,7 +564,7 @@ impl Repl {
                     if let Err(e) = self.ovm_interpreter.force_gc() {
                         eprintln!("GC failed: {}", e);
                     } else {
-                        println!("✅ Garbage collection completed successfully");
+                        println!("Garbage collection completed successfully");
                     }
                 } else {
                     println!("OVM is not available, cannot run GC.");
@@ -650,13 +678,13 @@ impl Repl {
                             if ovm_status.running {
                                 println!(
                                     "\n{}",
-                                    "✅ OVM is actively optimizing your code in the background"
+                                    "OVM is actively optimizing your code in the background"
                                         .bright_green()
                                 );
                             } else {
                                 println!(
                                     "\n{}",
-                                    "⚠️  OVM is not running - falling back to classic interpreter"
+                                    "OVM is not running - falling back to classic interpreter"
                                         .bright_yellow()
                                 );
                             }
@@ -665,11 +693,11 @@ impl Repl {
                             if let Err(e) = self.ovm_interpreter.force_gc() {
                                 eprintln!("GC failed: {}", e);
                             } else {
-                                println!("✅ Garbage collection completed successfully");
+                                println!("Garbage collection completed successfully");
                             }
                         }
                         "restart" => match self.ovm_interpreter.ensure_ovm_running() {
-                            Ok(()) => println!("✅ OVM restarted successfully"),
+                            Ok(()) => println!("OVM restarted successfully"),
                             Err(e) => eprintln!("Failed to restart OVM: {}", e),
                         },
                         _ => {
@@ -685,11 +713,11 @@ impl Repl {
                         healthy.to_string().bright_green()
                     );
                     if available && healthy {
-                        println!("{}", "✅ OVM is running in the background".bright_green());
+                        println!("{}", "OVM is running in the background".bright_green());
                     } else {
                         println!(
                             "{}",
-                            "⚠️  OVM may need attention - use ':ovm status' for details"
+                            "OVM may need attention - use ':ovm status' for details"
                                 .bright_yellow()
                         );
                     }
@@ -876,17 +904,17 @@ impl Repl {
                         }
                         "enable" => {
                             crate::parallel::set_parallel_enabled(true);
-                            println!("✅ Parallel processing enabled");
+                            println!("Parallel processing enabled");
                         }
                         "disable" => {
                             crate::parallel::set_parallel_enabled(false);
-                            println!("⚠️  Parallel processing disabled");
+                            println!("Parallel processing disabled");
                         }
                         "threshold" => {
                             if parts.len() > 2 {
                                 if let Ok(threshold) = parts[2].parse::<usize>() {
                                     crate::parallel::set_parallel_threshold(threshold);
-                                    println!("✅ Parallel threshold set to {} items", threshold);
+                                        println!("Parallel threshold set to {} items", threshold);
                                 } else {
                                     println!("Error: Invalid threshold value");
                                 }
@@ -1144,51 +1172,145 @@ impl Repl {
             }
             ":search" => {
                 if parts.len() > 1 {
-                    let query = parts[1];
-                    println!("Searching for functions matching '{}':", query);
-
-                    let builtins = self
-                        .ovm_interpreter
-                        .get_classic_interpreter()
-                        .get_builtin_functions();
-                    let mut found = false;
-
-                    for name in builtins.keys() {
-                        if name.contains(query) && self.help_system.has_function(name) {
-                            println!("  {} - Built-in function", name.bright_blue());
-                            found = true;
+                    let query = parts[1..].join(" ");
+                    
+                    // Parse advanced search options
+                    let mut filters = SearchFilters::default();
+                    let mut search_query = query.clone();
+                    
+                    // Check for category filter
+                    if query.contains("category:") {
+                        if let Some(category_part) = query.split("category:").nth(1) {
+                            let category = category_part.split_whitespace().next().unwrap_or("");
+                            filters.category = Some(category.to_string());
+                            search_query = query.replace(&format!("category:{}", category), "").trim().to_string();
                         }
                     }
-
-                    if !found {
-                        println!("  No functions found matching '{}'", query);
+                    
+                    // Check for return type filter
+                    if query.contains("returns:") {
+                        if let Some(return_part) = query.split("returns:").nth(1) {
+                            let return_type = return_part.split_whitespace().next().unwrap_or("");
+                            filters.return_type = Some(return_type.to_string());
+                            search_query = query.replace(&format!("returns:{}", return_type), "").trim().to_string();
+                        }
+                    }
+                    
+                    // Check for max results filter
+                    if query.contains("limit:") {
+                        if let Some(limit_part) = query.split("limit:").nth(1) {
+                            if let Ok(limit) = limit_part.split_whitespace().next().unwrap_or("").parse::<usize>() {
+                                filters.max_results = limit;
+                                search_query = query.replace(&format!("limit:{}", limit), "").trim().to_string();
+                            }
+                        }
+                    }
+                    
+                    let results = self.help_system.search(&search_query, Some(filters));
+                    println!("{}", self.help_system.format_search_results(&results));
+                    
+                    // Show search tips
+                    if results.is_empty() {
+                        println!("\n{}Search Tips:{}", Colors::CYAN, Colors::RESET);
+                        println!("  • Try broader terms: 'list' instead of 'list_operations'");
+                        println!("  • Use category filters: 'category:List map'");
+                        println!("  • Use return type filters: 'returns:List filter'");
+                        println!("  • Use fuzzy search: 'lst' will match 'list' functions");
+                        println!("  • Search in descriptions: 'transform' finds map, filter, etc.");
+                        
+                        // Show suggestions based on partial input
+                        let suggestions = self.help_system.get_suggestions(&search_query);
+                        if !suggestions.is_empty() {
+                            println!("\n{}Did you mean:{}", Colors::YELLOW, Colors::RESET);
+                            for suggestion in suggestions.iter().take(5) {
+                                println!("  • {}", suggestion);
+                            }
+                        }
                     }
                 } else {
-                    println!("Usage: :search <query>");
+                    println!("Usage: :search <query> [filters]");
+                    println!("\n{}Advanced Search Options:{}", Colors::CYAN, Colors::RESET);
+                    println!("  {}category:<name>{} - Filter by category", Colors::BLUE, Colors::RESET);
+                    println!("  {}returns:<type>{} - Filter by return type", Colors::BLUE, Colors::RESET);
+                    println!("  {}limit:<num>{} - Limit number of results", Colors::BLUE, Colors::RESET);
+                    println!("\n{}Examples:{}", Colors::GREEN, Colors::RESET);
+                    println!("  :search map category:List");
+                    println!("  :search returns:Bool");
+                    println!("  :search transform limit:5");
+                    println!("  :search \"file operations\"");
                 }
             }
-            ":examples" => {
+            ":tutorial" => {
                 if parts.len() > 1 {
-                    let function_name = parts[1];
-                    if self.help_system.has_function(function_name) {
-                        println!("{}", self.help_system.show_function_help(function_name));
+                    let tutorial_name = parts[1];
+                    if let Some(tutorial) = self.help_system.get_tutorial(tutorial_name) {
+                        println!("{}", self.help_system.format_tutorial(tutorial));
+                        
+                        // Offer interactive mode
+                        println!("\n{}Interactive Mode:{}", Colors::CYAN, Colors::RESET);
+                        println!("  Would you like to try the tutorial interactively?");
+                        println!("  Use ':tutorial run {}' to start interactive mode", tutorial_name);
                     } else {
-                        println!("No examples found for function: {}", function_name);
+                        println!("Tutorial '{}' not found.", tutorial_name);
+                        println!("{}", self.help_system.format_tutorial_list());
                     }
                 } else {
-                    println!("Usage: :examples <function_name>");
+                    println!("{}", self.help_system.format_tutorial_list());
                 }
             }
-            ":module" => {
-                if parts.len() > 1 {
-                    self.handle_module_debug_command(&parts[1..])?;
-                } else {
-                    println!("Module debug commands:");
-                    println!("  :module trace         - Enable module resolution tracing");
-                    println!("  :module paths <name>  - Show search paths for module");
-                    println!("  :module list          - List loaded modules");
-                    println!("  :module config        - Show module debug configuration");
-                }
+                         ":tutorial_run" => {
+                 if parts.len() > 1 {
+                     let tutorial_name = parts[1];
+                     if let Some(tutorial) = self.help_system.get_tutorial(tutorial_name).cloned() {
+                         self.run_interactive_tutorial(&tutorial)?;
+                     } else {
+                         println!("Tutorial '{}' not found.", tutorial_name);
+                     }
+                 } else {
+                     println!("Usage: :tutorial_run <tutorial_name>");
+                 }
+             }
+            ":contextual_help" => {
+                let context = self.build_help_context();
+                println!("{}", self.help_system.format_contextual_help(&context));
+            }
+            ":help_advanced" => {
+                println!("\n{}=== Advanced Help Features ==={}", Colors::BOLD, Colors::RESET);
+                println!("\n{}Advanced Search:{}", Colors::CYAN, Colors::RESET);
+                println!("  {}:search <query>{} - Fuzzy search with relevance scoring", Colors::BLUE, Colors::RESET);
+                println!("  {}help search <query>{} - Same as :search", Colors::BLUE, Colors::RESET);
+                println!("  {}category:<name>{} - Filter by category", Colors::GREEN, Colors::RESET);
+                println!("  {}returns:<type>{} - Filter by return type", Colors::GREEN, Colors::RESET);
+                println!("  {}limit:<num>{} - Limit results", Colors::GREEN, Colors::RESET);
+                
+                println!("\n{}Interactive Tutorials:{}", Colors::CYAN, Colors::RESET);
+                println!("  {}help tutorials{} - List all available tutorials", Colors::BLUE, Colors::RESET);
+                println!("  {}help tutorial <name>{} - View specific tutorial", Colors::BLUE, Colors::RESET);
+                println!("  {}:tutorial <name>{} - View tutorial with interactive options", Colors::BLUE, Colors::RESET);
+                println!("  {}:tutorial_run <name>{} - Start interactive tutorial mode", Colors::BLUE, Colors::RESET);
+                
+                println!("\n{}Context-Sensitive Help:{}", Colors::CYAN, Colors::RESET);
+                println!("  {}:contextual_help{} - Get suggestions based on recent activity", Colors::BLUE, Colors::RESET);
+                println!("  {}help contextual{} - Same as :contextual_help", Colors::BLUE, Colors::RESET);
+                println!("  Automatic suggestions based on:");
+                println!("    • Recent commands and patterns");
+                println!("    • Last error messages");
+                println!("    • Current variables and types");
+                println!("    • Working category context");
+                
+                println!("\n{}Enhanced Examples:{}", Colors::CYAN, Colors::RESET);
+                println!("  {}:examples <function>{} - Interactive examples with execution", Colors::BLUE, Colors::RESET);
+                println!("  {}help examples{} - Comprehensive example gallery", Colors::BLUE, Colors::RESET);
+                println!("  All examples are runnable and include explanations");
+                
+                println!("\n{}Search Result Types:{}", Colors::CYAN, Colors::RESET);
+                println!("  Exact name matches (highest priority)");
+                println!("  Fuzzy name matches");
+                println!("  Description matches");
+                println!("  Category matches");
+                println!("  Example matches");
+                println!("  Parameter matches");
+                println!("  Signature matches");
             }
             cmd if cmd.starts_with(":!") => {
                 if let Ok(num) = cmd[2..].parse::<usize>() {
@@ -1380,6 +1502,7 @@ impl Repl {
                 "enum"
             },
             Value::Promise { .. } => "promise",
+            Value::Map(_) => "map",
         }
     }
 
@@ -1749,46 +1872,318 @@ impl Repl {
     }
 
     fn show_enhanced_error(&mut self, error: &ReplError) {
-        println!("\n{}", "=== Enhanced Error Context ===".bright_red().bold());
+        println!("\n{}", "═══ Error Details ═══".bright_red().bold());
         
         match error {
-            ReplError::Interpreter(InterpreterError::UndefinedVariable { name }) => {
-                println!("  {}: Variable '{}' is not defined", "Error".bright_red(), name.bright_yellow());
-                
-                // Suggest similar variables
-                let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
-                let mut suggestions = Vec::new();
-                
-                for var_name in user_vars.keys() {
-                    if var_name.contains(name) || name.contains(var_name) {
-                        suggestions.push(var_name);
-                    }
-                }
-                
-                if !suggestions.is_empty() {
-                    println!("  {}: Did you mean one of these?", "Suggestion".bright_blue());
-                    for suggestion in suggestions {
-                        println!("    {}", suggestion.bright_green());
-                    }
-                } else {
-                    println!("  {}: Use :env to see available variables", "Hint".bright_blue());
-                }
-            }
-            ReplError::Interpreter(InterpreterError::TypeError { message }) => {
-                println!("  {}: {}", "Type Error".bright_red(), message);
-                println!("  {}: Check the types of your values and operations", "Hint".bright_blue());
-            }
             ReplError::Parse(parse_error) => {
-                println!("  {}: {}", "Parse Error".bright_red(), parse_error);
-                println!("  {}: Check your syntax and bracket matching", "Hint".bright_blue());
+                self.show_parse_error(parse_error);
             }
-            _ => {
-                println!("  {}: {}", "Error".bright_red(), error);
+            ReplError::Interpreter(interpreter_error) => {
+                self.show_interpreter_error(interpreter_error);
+            }
+            ReplError::Integration(integration_error) => {
+                println!("  {}: {}", "Integration Error".bright_red(), integration_error);
+            }
+            ReplError::Readline(readline_error) => {
+                println!("  {}: {}", "Input Error".bright_red(), readline_error);
+            }
+            ReplError::Io(io_error) => {
+                println!("  {}: {}", "IO Error".bright_red(), io_error);
+            }
+            ReplError::Debug(debug_error) => {
+                println!("  {}: {}", "Debug Error".bright_red(), debug_error);
             }
         }
         
         println!();
     }
+    
+    fn show_parse_error(&mut self, parse_error: &ParseError) {
+        // Display the main error message with enhanced formatting
+        match parse_error {
+            ParseError::InvalidSyntaxWithPosition { message, line, column, snippet } => {
+                println!("  {}: {}", "Parse Error".bright_red().bold(), message.bright_white());
+                println!("\n  {}", "📍 Location:".bright_yellow().bold());
+                println!("    Line {}, Column {}", line.to_string().bright_cyan(), column.to_string().bright_cyan());
+                
+                // Show the formatted code snippet with highlighting
+                if !snippet.trim().is_empty() {
+                    println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                    self.show_highlighted_snippet(snippet);
+                }
+            }
+            ParseError::UnexpectedTokenWithPosition { token, line, column, snippet } => {
+                println!("  {}: Unexpected token '{}'", 
+                    "Parse Error".bright_red().bold(), 
+                    token.bright_yellow().bold()
+                );
+     
+                println!("    Line {}, Column {}", line.to_string().bright_cyan(), column.to_string().bright_cyan());
+                
+                if !snippet.trim().is_empty() {
+                    println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                    self.show_highlighted_snippet(snippet);
+                }
+            }
+            _ => {
+                println!("  {}: {}", "Parse Error".bright_red().bold(), parse_error);
+            }
+        }
+        
+        // Get the last command for context
+        let empty_string = String::new();
+        let last_command = self.command_history.last().unwrap_or(&empty_string).clone();
+        
+        // Get suggestions from the parser
+        let suggestions = self.parser.get_suggestions(parse_error, &last_command);
+        
+        if !suggestions.is_empty() {
+            println!("\n  {}", "Suggestions:".bright_cyan().bold());
+            for suggestion in suggestions {
+                self.show_suggestion(&suggestion);
+            }
+        }
+        
+        // Show related help if available
+        self.show_contextual_help(parse_error, &last_command);
+    }
+    
+    fn show_highlighted_snippet(&self, snippet: &str) {
+        // Parse and display the snippet with syntax highlighting
+        let lines: Vec<&str> = snippet.lines().collect();
+        
+        for line in lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+            
+            // Check if this line contains a caret pointer
+            if line.contains("^") {
+                // This is the error pointer line - highlight it specially
+                let parts: Vec<&str> = line.split('|').collect();
+                if parts.len() >= 2 {
+                    let line_num = parts[0].trim();
+                    let pointer = parts[1];
+                    println!("    {}{}│{}{}", 
+                        line_num.bright_black(),
+                        " ".repeat(4 - line_num.len().min(4)),
+                        " ",
+                        pointer.bright_red().bold()
+                    );
+                }
+            } else {
+                // Regular code line - apply basic syntax highlighting
+                let parts: Vec<&str> = line.split('|').collect();
+                if parts.len() >= 2 {
+                    let line_num = parts[0].trim();
+                    let code = parts[1];
+                    
+                    // Basic syntax highlighting
+                    let highlighted_code = self.apply_basic_highlighting(code);
+                    
+                    println!("    {}{}│ {}", 
+                        line_num.bright_blue(),
+                        " ".repeat(4 - line_num.len().min(4)),
+                        highlighted_code
+                    );
+                }
+            }
+        }
+    }
+    
+    fn apply_basic_highlighting(&self, code: &str) -> String {
+        let mut result = String::new();
+        let mut chars = code.chars().peekable();
+        let mut current_word = String::new();
+        
+        while let Some(ch) = chars.next() {
+            match ch {
+                // String literals
+                '"' => {
+                    if !current_word.is_empty() {
+                        result.push_str(&self.highlight_word(&current_word));
+                        current_word.clear();
+                    }
+                    result.push_str(&format!("{}", "\"".bright_green()));
+                    
+                    // Consume the string content
+                    while let Some(str_ch) = chars.next() {
+                        if str_ch == '"' {
+                            result.push_str(&format!("{}", str_ch.to_string().bright_green()));
+                            break;
+                        } else if str_ch == '\\' {
+                            result.push_str(&format!("{}", str_ch.to_string().bright_green()));
+                            if let Some(escaped) = chars.next() {
+                                result.push_str(&format!("{}", escaped.to_string().bright_green()));
+                            }
+                        } else {
+                            result.push_str(&format!("{}", str_ch.to_string().bright_green()));
+                        }
+                    }
+                }
+                // Numbers
+                c if c.is_ascii_digit() => {
+                    current_word.push(c);
+                    
+                    // Look ahead to consume the full number
+                    while let Some(&next_ch) = chars.peek() {
+                        if next_ch.is_ascii_digit() || next_ch == '.' || next_ch == '_' {
+                            current_word.push(chars.next().unwrap());
+                        } else {
+                            break;
+                        }
+                    }
+                    result.push_str(&format!("{}", current_word.bright_magenta()));
+                    current_word.clear();
+                }
+                // Identifiers and keywords
+                c if c.is_alphabetic() || c == '_' => {
+                    current_word.push(c);
+                }
+                // Operators and punctuation
+                '=' | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '!' | '&' | '|' => {
+                    if !current_word.is_empty() {
+                        result.push_str(&self.highlight_word(&current_word));
+                        current_word.clear();
+                    }
+                    
+                    // Look ahead for compound operators
+                    let mut op = ch.to_string();
+                    if let Some(&next_ch) = chars.peek() {
+                        if (ch == '=' && next_ch == '=') ||
+                           (ch == '!' && next_ch == '=') ||
+                           (ch == '<' && next_ch == '=') ||
+                           (ch == '>' && next_ch == '=') ||
+                           (ch == '&' && next_ch == '&') ||
+                           (ch == '|' && next_ch == '|') {
+                            op.push(chars.next().unwrap());
+                        }
+                    }
+                    result.push_str(&format!("{}", op.bright_yellow()));
+                }
+                // Brackets and parentheses
+                '(' | ')' | '[' | ']' | '{' | '}' => {
+                    if !current_word.is_empty() {
+                        result.push_str(&self.highlight_word(&current_word));
+                        current_word.clear();
+                    }
+                    result.push_str(&format!("{}", ch.to_string().bright_cyan()));
+                }
+                // Other characters
+                _ => {
+                    if !current_word.is_empty() {
+                        result.push_str(&self.highlight_word(&current_word));
+                        current_word.clear();
+                    }
+                    result.push(ch);
+                }
+            }
+        }
+        
+        // Handle any remaining word
+        if !current_word.is_empty() {
+            result.push_str(&self.highlight_word(&current_word));
+        }
+        
+        result
+    }
+    
+    fn highlight_word(&self, word: &str) -> String {
+        match word {
+            // Keywords
+            "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" |
+            "true" | "false" | "async" | "await" | "try" | "catch" | "import" | "export" | "type" => {
+                format!("{}", word.bright_blue().bold())
+            }
+            // Types
+            "Int" | "Float" | "String" | "Bool" | "List" | "Map" | "Unit" | "Result" | "Ok" | "Err" => {
+                format!("{}", word.bright_magenta())
+            }
+            // Built-in functions (common ones)
+            "println" | "print" | "map" | "filter" | "reduce" | "range" | "len" | "head" | "tail" => {
+                format!("{}", word.bright_cyan())
+            }
+            _ => word.to_string(),
+        }
+    }
+    
+    fn show_contextual_help(&mut self, parse_error: &ParseError, input: &str) {
+        // Extract keywords from the error and input to suggest relevant help
+        let error_msg = format!("{:?}", parse_error);
+        let mut help_topics = HashSet::new();
+        
+        // Suggest error-specific help topics
+        if error_msg.contains("InvalidSyntax") || error_msg.contains("UnexpectedToken") {
+            help_topics.insert("error.syntax");
+        }
+        
+        // Check for specific syntax issues
+        if error_msg.contains("bracket") || error_msg.contains("parenthesis") || error_msg.contains("brace") {
+            help_topics.insert("error.syntax");
+        }
+        
+        if error_msg.contains("quote") || error_msg.contains("string") {
+            help_topics.insert("error.syntax");
+        }
+        
+        // Check for function-related errors
+        if error_msg.contains("fn") || input.contains("fn") {
+            help_topics.insert("functions");
+            help_topics.insert("error.syntax");
+        }
+        
+        // Check for let-related errors
+        if error_msg.contains("let") || input.contains("let") {
+            help_topics.insert("variables");
+            help_topics.insert("error.scope");
+        }
+        
+        // Check for match-related errors
+        if error_msg.contains("match") || input.contains("match") {
+            help_topics.insert("pattern_matching");
+            help_topics.insert("error.types");
+        }
+        
+        // Check for type-related errors
+        if error_msg.contains("type") || input.contains(": ") {
+            help_topics.insert("types");
+            help_topics.insert("error.types");
+        }
+        
+        // Check for common language migration issues
+        if input.contains("console.log") || input.contains("printf") || input.contains(";") {
+            help_topics.insert("error.differences");
+        }
+        
+        // Check for assignment/comparison confusion
+        if input.contains("=") && !input.contains("==") && !input.contains("let") {
+            help_topics.insert("error.syntax");
+            help_topics.insert("error.differences");
+        }
+        
+        if !help_topics.is_empty() {
+            println!("\n  {}", "Related Help Topics:".bright_cyan().bold());
+            let has_error_topics = help_topics.iter().any(|t| t.starts_with("error."));
+            
+            for topic in &help_topics {
+                if self.help_system.has_function(topic) || self.help_system.has_category(topic) {
+                    println!("    • Type {} for help on {}", 
+                        format!("help {}", topic).bright_cyan(),
+                        topic.replace("error.", "").replace("_", " ").bright_white()
+                    );
+                }
+            }
+            
+            // Always suggest the general error help
+            if has_error_topics {
+                println!("    • Type {} for comprehensive error guidance", 
+                    "help error.fixes".bright_cyan()
+                );
+            }
+        }
+    }
+    
+
 
     /// Handle module debug commands for troubleshooting module resolution
     fn handle_module_debug_command(&mut self, args: &[&str]) -> Result<(), ReplError> {
@@ -1798,7 +2193,7 @@ impl Repl {
                     .get_classic_interpreter()
                     .module_debug_config
                     .enable_resolution_tracing = true;
-                println!("✅ Module resolution tracing enabled");
+                    println!("Module resolution tracing enabled");
                 println!("  Run import statements to see detailed resolution tracing");
             }
             Some("paths") => {
@@ -1849,12 +2244,12 @@ impl Repl {
     fn show_module_search_paths(&self, module_path: &str) {
         use std::path::PathBuf;
         
-        println!("🔍 Module search paths for '{}':", module_path);
+        println!("Module search paths for '{}':", module_path);
         
         let current_dir = match std::env::current_dir() {
             Ok(dir) => dir,
             Err(e) => {
-                println!("  ❌ Error getting current directory: {}", e);
+                println!("Error getting current directory: {}", e);
                 return;
             }
         };
@@ -1876,9 +2271,9 @@ impl Repl {
 
         for (i, candidate) in candidates.iter().enumerate() {
             let status = if candidate.exists() { 
-                if candidate.is_file() { "✅" } else { "📁" }
+                if candidate.is_file() { "" } else { "" }
             } else { 
-                "❌" 
+                "" 
             };
             println!("  {}. {} {}", i + 1, status, candidate.display());
         }
@@ -1886,7 +2281,7 @@ impl Repl {
         // Check for stdlib module
         let stdlib = crate::stdlib::get_stdlib();
         if stdlib.contains_key(module_path) {
-            println!("  ✅ Available as stdlib module: {}", module_path);
+            println!("Available as stdlib module: {}", module_path);
         }
     }
 
@@ -1897,22 +2292,22 @@ impl Repl {
         let env = self.ovm_interpreter.get_classic_interpreter().get_environment();
         let stdlib = crate::stdlib::get_stdlib();
         
-        println!("\n📚 Standard Library Modules:");
+        println!("\nStandard Library Modules:");
         for module_name in stdlib.keys() {
             if env.get(module_name).is_some() {
-                println!("  ✅ {}", module_name.bright_cyan());
+                println!("{}", module_name.bright_cyan());
             } else {
-                println!("  ⚪ {} (available but not loaded)", module_name.bright_black());
+                println!("{} (available but not loaded)", module_name.bright_black());
             }
         }
         
-        println!("\n📄 User Modules:");
+        println!("\nUser Modules:");
         let mut found_user_modules = false;
         for (name, value) in env.get_all_variables() {
             if !stdlib.contains_key(name as &str) {
                 if let crate::ast::Value::Struct { type_name, .. } = value {
                     if type_name == "Module" {
-                        println!("  ✅ {}", name.bright_yellow());
+                        println!("{}", name.bright_yellow());
                         found_user_modules = true;
                     }
                 }
@@ -1921,6 +2316,378 @@ impl Repl {
         
         if !found_user_modules {
             println!("  (no user modules loaded)");
+        }
+    }
+
+    fn show_interpreter_error(&mut self, interpreter_error: &InterpreterError) {
+        match interpreter_error {
+            InterpreterError::UndefinedVariable { name } => {
+                println!("  {}: Variable '{}' is not defined", 
+                    "Undefined Variable".bright_red().bold(), 
+                    name.bright_yellow()
+                );
+                
+                // Suggest similar variables
+                let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+                let mut suggestions = Vec::new();
+                
+                for var_name in user_vars.keys() {
+                    if Self::is_similar_name(name, var_name) {
+                        suggestions.push(var_name.clone());
+                    }
+                }
+                
+                if !suggestions.is_empty() {
+                    println!("\n  {}", "Did you mean:".bright_cyan().bold());
+                    for suggestion in suggestions {
+                        println!("    • {}", suggestion.bright_green());
+                    }
+                } else {
+                    println!("\n  {}: Use {} to see available variables", 
+                        "Hint".bright_blue().bold(), 
+                        ":env".bright_cyan()
+                    );
+                }
+            }
+            InterpreterError::TypeError { message } => {
+                println!("  {}: {}", "Type Error".bright_red().bold(), message);
+                
+                // Type-specific suggestions
+                if message.contains("division by zero") {
+                    println!("\n  {}: Check that denominators are not zero before division", 
+                        "Hint".bright_blue().bold());
+                } else if message.contains("cannot convert") {
+                    println!("\n  {}: Use type conversion functions like {} or {}", 
+                        "Hint".bright_blue().bold(),
+                        "to_int()".bright_cyan(),
+                        "to_float()".bright_cyan()
+                    );
+                } else if message.contains("invalid binary operation") {
+                    println!("\n  {}: Check that operands are compatible types", 
+                        "Hint".bright_blue().bold());
+                    println!("    • Numbers: {} with {}", "42".bright_green(), "3.14".bright_green());
+                    println!("    • Strings: {} with {}", "\"hello\"".bright_green(), "\"world\"".bright_green());
+                    println!("    • Booleans: {} with {}", "true".bright_green(), "false".bright_green());
+                }
+            }
+            InterpreterError::RuntimeError { message } => {
+                println!("  {}: {}", "Runtime Error".bright_red().bold(), message);
+                
+                // Runtime-specific suggestions
+                if message.contains("break") {
+                    println!("\n  {}: {} can only be used inside loops", 
+                        "Hint".bright_blue().bold(),
+                        "break".bright_cyan()
+                    );
+                } else if message.contains("continue") {
+                    println!("\n  {}: {} can only be used inside loops", 
+                        "Hint".bright_blue().bold(),
+                        "continue".bright_cyan()
+                    );
+                }
+            }
+            InterpreterError::ArityMismatch { expected, got } => {
+                println!("  {}: Expected {} arguments, got {}", 
+                    "Arity Mismatch".bright_red().bold(), 
+                    expected.to_string().bright_cyan(),
+                    got.to_string().bright_yellow()
+                );
+                
+                println!("\n  {}: Check the function signature and provide the correct number of arguments", 
+                    "Hint".bright_blue().bold());
+            }
+            InterpreterError::PatternMatchFailed => {
+                println!("  {}: Pattern matching failed", 
+                    "Pattern Match Error".bright_red().bold());
+                
+                println!("\n  {}: Ensure the pattern matches the structure of the value", 
+                    "Hint".bright_blue().bold());
+                println!("    • Use {} to match any value", "_".bright_cyan());
+                println!("    • Use {} or {} for Result types", "Ok(value)".bright_cyan(), "Err(error)".bright_cyan());
+            }
+            _ => {
+                // Handle all other error types (lazy evaluation errors, etc.)
+                println!("  {}: {}", "Error".bright_red().bold(), interpreter_error);
+                
+                println!("\n  {}: This appears to be a system-level error", 
+                    "Hint".bright_blue().bold());
+            }
+        }
+    }
+    
+    fn is_similar_name(target: &str, candidate: &str) -> bool {
+        // Simple similarity check - could be enhanced with edit distance
+        if target.len() < 3 || candidate.len() < 3 {
+            return false;
+        }
+        
+        // Check if one contains the other
+        if target.contains(candidate) || candidate.contains(target) {
+            return true;
+        }
+        
+        // Check for common prefixes/suffixes
+        let target_lower = target.to_lowercase();
+        let candidate_lower = candidate.to_lowercase();
+        
+        // Check for similar starts
+        if target_lower.starts_with(&candidate_lower[..2]) || 
+           candidate_lower.starts_with(&target_lower[..2]) {
+            return true;
+        }
+        
+        // Check for similar endings
+        if target_lower.ends_with(&candidate_lower[candidate_lower.len()-2..]) || 
+           candidate_lower.ends_with(&target_lower[target_lower.len()-2..]) {
+            return true;
+        }
+        
+        false
+    }
+    
+    fn show_suggestion(&self, suggestion: &ErrorSuggestion) {
+        let severity_icon = match suggestion.severity {
+            SuggestionSeverity::Error => "ERROR",
+            SuggestionSeverity::Warning => "WARNING",
+            SuggestionSeverity::Hint => "HINT",
+            SuggestionSeverity::Info => "INFO",
+        };
+        
+        let severity_color = match suggestion.severity {
+            SuggestionSeverity::Error => "red",
+            SuggestionSeverity::Warning => "yellow",
+            SuggestionSeverity::Hint => "cyan",
+            SuggestionSeverity::Info => "blue",
+        };
+        
+        println!("    {} {}", severity_icon, suggestion.message.color(severity_color).bold());
+        
+        if let Some(fix) = &suggestion.fix {
+            println!("      {}: {}", "Fix".bright_green().bold(), fix);
+        }
+        
+        if let Some(help) = &suggestion.help {
+            println!("      {}: {}", "Help".bright_blue().bold(), help);
+        }
+    }
+    
+    /// Build help context from current REPL state
+    fn build_help_context(&mut self) -> HelpContext {
+        let recent_commands = self.command_history.iter()
+            .rev()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>();
+        
+        let current_variables = self.ovm_interpreter
+            .get_classic_interpreter()
+            .get_user_variables()
+            .keys()
+            .cloned()
+            .collect();
+        
+        // Get last error from debug state if available
+        let last_error = None; // TODO: Implement error tracking
+        
+        // Determine working category from recent commands
+        let current_working_category = self.determine_working_category(&recent_commands);
+        
+        HelpContext {
+            recent_commands,
+            current_variables,
+            last_error,
+            current_working_category,
+        }
+    }
+    
+    /// Determine the current working category based on recent commands
+    fn determine_working_category(&self, recent_commands: &[String]) -> Option<String> {
+        for command in recent_commands {
+            if command.contains("map") || command.contains("filter") || command.contains("reduce") {
+                return Some("List".to_string());
+            }
+            if command.contains("fs.") {
+                return Some("File System".to_string());
+            }
+            if command.contains("http.") {
+                return Some("HTTP".to_string());
+            }
+            if command.contains("math.") {
+                return Some("Math".to_string());
+            }
+            if command.contains("json.") {
+                return Some("JSON".to_string());
+            }
+            if command.contains("random.") {
+                return Some("Random".to_string());
+            }
+        }
+        None
+    }
+    
+    /// Run an interactive tutorial
+    fn run_interactive_tutorial(&mut self, tutorial: &crate::help::Tutorial) -> Result<(), ReplError> {
+        println!("\n{}Starting Interactive Tutorial: {}{}", Colors::BOLD, tutorial.name, Colors::RESET);
+        println!("{}", tutorial.description);
+        println!("{}Difficulty: {} | Estimated Time: {}{}", Colors::DIM, tutorial.difficulty, tutorial.estimated_time, Colors::RESET);
+        println!();
+        
+        for (i, step) in tutorial.steps.iter().enumerate() {
+            println!("{}=== Step {}/{}: {} ==={}", Colors::CYAN, i + 1, tutorial.steps.len(), step.title, Colors::RESET);
+            println!("{}", step.description);
+            println!();
+            
+            // Show the code to try
+            println!("{}📝 Code to try:{}", Colors::MAGENTA, Colors::RESET);
+            println!("{}{}{}", Colors::BLUE, step.code, Colors::RESET);
+            println!();
+            
+            // Show expected output
+                            println!("{}Expected output:{}", Colors::GREEN, Colors::RESET);
+            println!("{}{}{}", Colors::GREEN, step.expected_output, Colors::RESET);
+            println!();
+            
+            // Interactive prompt
+            println!("{}Options:{}", Colors::YELLOW, Colors::RESET);
+            println!("  {}r{} - Run the code automatically", Colors::BLUE, Colors::RESET);
+            println!("  {}t{} - Try it yourself (enter your own code)", Colors::BLUE, Colors::RESET);
+            println!("  {}e{} - Show explanation", Colors::BLUE, Colors::RESET);
+            println!("  {}h{} - Show hints", Colors::BLUE, Colors::RESET);
+            println!("  {}n{} - Next step", Colors::BLUE, Colors::RESET);
+            println!("  {}q{} - Quit tutorial", Colors::BLUE, Colors::RESET);
+            
+            loop {
+                print!("{}Tutorial> {}", Colors::CYAN, Colors::RESET);
+                std::io::stdout().flush().unwrap();
+                
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).unwrap();
+                let input = input.trim();
+                
+                match input {
+                    "r" => {
+                        // Run the tutorial code
+                        println!("{}Running tutorial code...{}", Colors::YELLOW, Colors::RESET);
+                        match self.eval_line(&step.code) {
+                            Ok(value) => {
+                                if value != Value::Unit {
+                                    println!("{}", value);
+                                }
+                                println!("{}Code executed successfully!{}", Colors::GREEN, Colors::RESET);
+                            }
+                            Err(e) => {
+                                println!("{}❌ Error executing code:{}", Colors::RED, Colors::RESET);
+                                println!("{}", e);
+                            }
+                        }
+                        break;
+                    }
+                    "t" => {
+                        println!("{}Enter your code (press Enter twice to execute):{}", Colors::YELLOW, Colors::RESET);
+                        let mut user_code = String::new();
+                        loop {
+                            let mut line = String::new();
+                            std::io::stdin().read_line(&mut line).unwrap();
+                            if line.trim().is_empty() {
+                                break;
+                            }
+                            user_code.push_str(&line);
+                        }
+                        
+                        if !user_code.trim().is_empty() {
+                            match self.eval_line(&user_code) {
+                                Ok(value) => {
+                                    if value != Value::Unit {
+                                        println!("{}", value);
+                                    }
+                                    println!("{}Great job!{}", Colors::GREEN, Colors::RESET);
+                                }
+                                Err(e) => {
+                                    println!("{}Error:{}", Colors::RED, Colors::RESET);
+                                    println!("{}", e);
+                                    println!("{} Try again or use 'r' to run the tutorial code{}", Colors::YELLOW, Colors::RESET);
+                                    continue;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    "e" => {
+                        println!("{}📖 Explanation:{}", Colors::YELLOW, Colors::RESET);
+                        println!("{}", step.explanation);
+                        println!();
+                    }
+                    "h" => {
+                        if !step.hints.is_empty() {
+                            println!("{}Hints:{}", Colors::CYAN, Colors::RESET);
+                            for hint in &step.hints {
+                                println!("  • {}", hint);
+                            }
+                        } else {
+                            println!("{}No hints available for this step.{}", Colors::DIM, Colors::RESET);
+                        }
+                        println!();
+                    }
+                    "n" => {
+                        println!("{}Moving to next step...{}", Colors::CYAN, Colors::RESET);
+                        break;
+                    }
+                    "q" => {
+                        println!("{}Exiting tutorial. Progress saved.{}", Colors::YELLOW, Colors::RESET);
+                        return Ok(());
+                    }
+                    _ => {
+                        println!("{}Invalid option. Use r/t/e/h/n/q{}", Colors::RED, Colors::RESET);
+                    }
+                }
+            }
+            
+            println!();
+        }
+        
+        // Tutorial completion
+        println!("{}Congratulations! You've completed the '{}' tutorial!{}", Colors::GREEN, tutorial.name, Colors::RESET);
+        println!("{}You've learned:{}", Colors::YELLOW, Colors::RESET);
+        for step in &tutorial.steps {
+            println!("  {}", step.title);
+        }
+        
+        // Suggest next steps
+        if !tutorial.prerequisites.is_empty() {
+            println!("\n{}Consider these related tutorials:{}", Colors::CYAN, Colors::RESET);
+            let all_tutorials = self.help_system.get_tutorials();
+            for other_tutorial in all_tutorials {
+                if other_tutorial.prerequisites.contains(&tutorial.name) {
+                    println!("  • {} ({})", other_tutorial.name, other_tutorial.difficulty);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Enhanced suggestions with auto-completion
+    fn show_enhanced_contextual_help(&mut self, parse_error: &ParseError, input: &str) {
+        // ... existing contextual help code ...
+        
+        // Add fuzzy search suggestions
+        let search_results = self.help_system.search(input, Some(SearchFilters {
+            max_results: 3,
+            min_relevance: 0.3,
+            ..Default::default()
+        }));
+        
+        if !search_results.is_empty() {
+            println!("\n  {}", "Related Functions:".bright_cyan().bold());
+            for result in search_results {
+                println!("    • {} - {}", 
+                    result.function_doc.name.bright_blue(),
+                    result.function_doc.description.bright_white()
+                );
+            }
         }
     }
 }

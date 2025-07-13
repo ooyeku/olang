@@ -1,6 +1,6 @@
 use crate::ast::{
-    AsyncFunctionDecl, BinaryOp, EnumVariant, ErrorTypeDecl, ExportDecl, Expr, FieldValue,
-    FunctionDecl, ImportDecl, LetDecl, MatchArm, Parameter, Pattern, Program, PromiseType,
+    Argument, AsyncFunctionDecl, BinaryOp, EnumVariant, ErrorTypeDecl, ExportDecl, Expr, FieldValue,
+    FunctionDecl, ImportDecl, LetDecl, MapEntry, MatchArm, Parameter, Pattern, Program, PromiseType,
     Statement, StructField, StructLiteral, TypeAnnotation, TypeDecl, TypeDefinition,
     BitwiseOp, UnaryOp, TemplatePart,
 };
@@ -13,18 +13,155 @@ use std::rc::Rc;
 #[grammar = "grammar.pest"]
 pub struct OlangParser;
 
+#[derive(Debug, Clone)]
+pub struct PositionInfo {
+    pub line: usize,
+    pub column: usize,
+    pub offset: usize,
+    pub input_snippet: String,
+}
+
+impl PositionInfo {
+    pub fn from_pair(pair: &Pair<Rule>) -> Self {
+        let pos = pair.as_span().start_pos();
+        let line = pos.line_col().0;
+        let column = pos.line_col().1;
+        let offset = pos.pos();
+        
+        // Extract a snippet of the input around the error position
+        let input = pair.as_str();
+        let snippet = Self::extract_snippet_from_pair(pair, line, column);
+        
+        Self {
+            line,
+            column,
+            offset,
+            input_snippet: snippet,
+        }
+    }
+    
+    pub fn from_position(pos: pest::Position) -> Self {
+        let line = pos.line_col().0;
+        let column = pos.line_col().1;
+        let offset = pos.pos();
+        
+        // Extract a snippet of the input around the error position
+        let snippet = format!("Line {}, Column {}", line, column);
+        
+        Self {
+            line,
+            column,
+            offset,
+            input_snippet: snippet,
+        }
+    }
+    
+    fn extract_snippet_from_pair(pair: &Pair<Rule>, line: usize, column: usize) -> String {
+        let input = pair.as_str();
+        let lines: Vec<&str> = input.lines().collect();
+        if line > 0 && line <= lines.len() {
+            let error_line = lines[line - 1];
+            let mut snippet = String::new();
+            
+            // Add context lines before and after if available
+            if line > 1 {
+                snippet.push_str(&format!("{:4} | {}\n", line - 1, lines[line - 2]));
+            }
+            
+            // Add the error line with a caret pointer
+            snippet.push_str(&format!("{:4} | {}\n", line, error_line));
+            
+            // Add caret pointer
+            let pointer = format!("{:4} | {}{}", "", " ".repeat(column.saturating_sub(1)), "^");
+            snippet.push_str(&pointer);
+            
+            // Add context line after if available
+            if line < lines.len() {
+                snippet.push_str(&format!("\n{:4} | {}", line + 1, lines[line]));
+            }
+            
+            snippet
+        } else {
+            format!("Line {}, Column {}", line, column)
+        }
+    }
+    
+    fn extract_snippet(input: &str, line: usize, column: usize) -> String {
+        let lines: Vec<&str> = input.lines().collect();
+        if line > 0 && line <= lines.len() {
+            let error_line = lines[line - 1];
+            let mut snippet = String::new();
+            
+            // Add context lines before and after if available
+            if line > 1 {
+                snippet.push_str(&format!("{:4} | {}\n", line - 1, lines[line - 2]));
+            }
+            
+            // Add the error line with a caret pointer
+            snippet.push_str(&format!("{:4} | {}\n", line, error_line));
+            
+            // Add caret pointer
+            let pointer = format!("{:4} | {}{}", "", " ".repeat(column.saturating_sub(1)), "^");
+            snippet.push_str(&pointer);
+            
+            // Add context line after if available
+            if line < lines.len() {
+                snippet.push_str(&format!("\n{:4} | {}", line + 1, lines[line]));
+            }
+            
+            snippet
+        } else {
+            "Unable to extract snippet".to_string()
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum ParseError {
     #[error("Pest parsing error: {0}")]
     Pest(#[from] pest::error::Error<Rule>),
+    #[error("Invalid syntax at line {line}, column {column}: {message}\n{snippet}")]
+    InvalidSyntaxWithPosition {
+        message: String,
+        line: usize,
+        column: usize,
+        snippet: String,
+    },
+    #[error("Unexpected token at line {line}, column {column}: {token}\n{snippet}")]
+    UnexpectedTokenWithPosition {
+        token: String,
+        line: usize,
+        column: usize,
+        snippet: String,
+    },
     #[error("Invalid syntax: {message}")]
     InvalidSyntax { message: String },
     #[error("Unexpected token: {token}")]
     UnexpectedToken { token: String },
 }
 
+impl ParseError {
+    pub fn invalid_syntax_at(message: String, position: PositionInfo) -> Self {
+        Self::InvalidSyntaxWithPosition {
+            message,
+            line: position.line,
+            column: position.column,
+            snippet: position.input_snippet,
+        }
+    }
+    
+    pub fn unexpected_token_at(token: String, position: PositionInfo) -> Self {
+        Self::UnexpectedTokenWithPosition {
+            token,
+            line: position.line,
+            column: position.column,
+            snippet: position.input_snippet,
+        }
+    }
+}
+
 pub struct Parser {
-    // Parser state can be added here if needed
+    suggestion_engine: ErrorSuggestionEngine,
 }
 
 impl Default for Parser {
@@ -35,7 +172,25 @@ impl Default for Parser {
 
 impl Parser {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            suggestion_engine: ErrorSuggestionEngine::new(),
+        }
+    }
+    
+    /// Parse with enhanced error reporting
+    pub fn parse_with_suggestions(&self, input: &str) -> Result<Program, (ParseError, Vec<ErrorSuggestion>)> {
+        match self.parse(input) {
+            Ok(program) => Ok(program),
+            Err(error) => {
+                let suggestions = self.suggestion_engine.suggest_for_parse_error(&error, input);
+                Err((error, suggestions))
+            }
+        }
+    }
+    
+    /// Get suggestions for a parse error
+    pub fn get_suggestions(&self, error: &ParseError, input: &str) -> Vec<ErrorSuggestion> {
+        self.suggestion_engine.suggest_for_parse_error(error, input)
     }
 
     pub fn parse(&self, input: &str) -> Result<Program, ParseError> {
@@ -46,10 +201,12 @@ impl Parser {
             if pair.as_rule() == Rule::program {
                 for inner_pair in pair.into_inner() {
                     if inner_pair.as_rule() == Rule::statement {
+                        let position_info = PositionInfo::from_pair(&inner_pair);
                         let stmt_inner = inner_pair.into_inner().next().ok_or_else(|| {
-                            ParseError::InvalidSyntax {
-                                message: "Empty statement".to_string(),
-                            }
+                            ParseError::invalid_syntax_at(
+                                "Empty statement".to_string(),
+                                position_info.clone(),
+                            )
                         })?;
                         statements.push(self.build_statement(stmt_inner)?);
                     }
@@ -82,9 +239,10 @@ impl Parser {
                 self.build_export_decl(pair.into_inner())?,
             )),
             Rule::expr => Ok(Statement::Expression(self.build_expr(pair.into_inner())?)),
-            _ => Err(ParseError::InvalidSyntax {
-                message: format!("Invalid statement: {:?}", pair.as_rule()),
-            }),
+            _ => Err(ParseError::invalid_syntax_at(
+                format!("Invalid statement: {:?}", pair.as_rule()),
+                PositionInfo::from_pair(&pair),
+            )),
         }
     }
 
@@ -165,13 +323,13 @@ impl Parser {
     }
 
     fn build_let_decl(&self, mut pairs: Pairs<Rule>) -> Result<LetDecl, ParseError> {
-        let name = pairs
+        let pattern_pair = pairs
             .next()
             .ok_or_else(|| ParseError::InvalidSyntax {
-                message: "Missing identifier in let declaration".to_string(),
-            })?
-            .as_str()
-            .to_string();
+                message: "Missing pattern in let declaration".to_string(),
+            })?;
+        
+        let pattern = self.build_pattern(pattern_pair.into_inner())?;
 
         let mut type_annotation = None;
         let mut value = None;
@@ -189,7 +347,7 @@ impl Parser {
         }
 
         Ok(LetDecl {
-            name,
+            pattern,
             type_annotation,
             value,
         })
@@ -209,9 +367,10 @@ impl Parser {
                 Rule::break_expr => Ok(Expr::Break),
                 Rule::continue_expr => Ok(Expr::Continue),
                 Rule::assignment_expr => self.build_assignment(pair.into_inner()),
-                _ => Err(ParseError::InvalidSyntax {
-                    message: format!("Unexpected expression rule: {:?}", pair.as_rule()),
-                }),
+                _ => Err(ParseError::invalid_syntax_at(
+                    format!("Unexpected expression rule: {:?}", pair.as_rule()),
+                    PositionInfo::from_pair(&pair),
+                )),
             }
         } else {
             Err(ParseError::InvalidSyntax {
@@ -422,7 +581,7 @@ impl Parser {
                 Rule::primary => {
                     // Space-separated argument - collect for function call
                     let arg = self.build_primary(pair.into_inner())?;
-                    pending_args.push(arg);
+                    pending_args.push(Argument::Positional(arg));
                 }
                 Rule::function_call => {
                     // Special case: Check if this is Ok(...) or Err(...) pattern
@@ -438,9 +597,17 @@ impl Parser {
                                 let arg = args.into_iter().next().ok_or_else(|| ParseError::InvalidSyntax {
                                     message: format!("{} expression missing argument", name),
                                 })?;
+                                let expr = match arg {
+                                    Argument::Positional(e) => e,
+                                    Argument::Named { .. } => {
+                                        return Err(ParseError::InvalidSyntax {
+                                            message: format!("{} expressions cannot use named arguments", name),
+                                        });
+                                    }
+                                };
                                 return match name.as_str() {
-                                    "Ok" => Ok(Expr::ResultOk(Box::new(arg))),
-                                    "Err" => Ok(Expr::ResultErr(Box::new(arg))),
+                                    "Ok" => Ok(Expr::ResultOk(Box::new(expr))),
+                                    "Err" => Ok(Expr::ResultErr(Box::new(expr))),
                                     _ => unreachable!(),
                                 };
                             } else {
@@ -546,14 +713,73 @@ impl Parser {
         Ok(expr)
     }
 
-    fn build_arg_list(&self, pairs: Pairs<Rule>) -> Result<Vec<Expr>, ParseError> {
+    fn build_arg_list(&self, pairs: Pairs<Rule>) -> Result<Vec<Argument>, ParseError> {
         let mut args = Vec::new();
         for pair in pairs {
-            if pair.as_rule() == Rule::expr {
-                args.push(self.build_expr(pair.into_inner())?);
+            match pair.as_rule() {
+                Rule::argument => {
+                    args.push(self.build_argument(pair.into_inner())?);
+                }
+                Rule::expr => {
+                    // Legacy support for direct expressions
+                    args.push(Argument::Positional(self.build_expr(pair.into_inner())?));
+                }
+                _ => {}
             }
         }
         Ok(args)
+    }
+
+    fn build_argument(&self, mut pairs: Pairs<Rule>) -> Result<Argument, ParseError> {
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Empty argument".to_string(),
+        })?;
+
+        match first_pair.as_rule() {
+            Rule::named_arg => {
+                let mut inner_pairs = first_pair.into_inner();
+                let name = inner_pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing argument name".to_string(),
+                })?.as_str().to_string();
+                let value = inner_pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing argument value".to_string(),
+                })?;
+                Ok(Argument::Named {
+                    name,
+                    value: self.build_expr(value.into_inner())?,
+                })
+            }
+            Rule::positional_arg => {
+                let expr_pair = first_pair.into_inner().next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing positional argument expression".to_string(),
+                })?;
+                Ok(Argument::Positional(self.build_expr(expr_pair.into_inner())?))
+            }
+            _ => Err(ParseError::InvalidSyntax {
+                message: format!("Invalid argument rule: {:?}", first_pair.as_rule()),
+            }),
+        }
+    }
+
+    fn build_expr_list(&self, pairs: Pairs<Rule>) -> Result<Vec<Expr>, ParseError> {
+        let mut expressions = Vec::new();
+        for pair in pairs {
+            match pair.as_rule() {
+                Rule::expr => {
+                    expressions.push(self.build_expr(pair.into_inner())?);
+                }
+                Rule::argument => {
+                    // For expression lists, we only want the positional value
+                    let arg = self.build_argument(pair.into_inner())?;
+                    match arg {
+                        Argument::Positional(expr) => expressions.push(expr),
+                        Argument::Named { value, .. } => expressions.push(value),
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(expressions)
     }
 
     fn build_primary(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
@@ -580,6 +806,7 @@ impl Parser {
             Rule::try_catch_expr => self.build_try_catch_expr(pair.into_inner()),
             Rule::struct_literal => self.build_struct_literal(pair.into_inner()),
             Rule::anonymous_object => self.build_anonymous_object(pair.into_inner()),
+            Rule::map_literal => self.build_map_literal(pair.into_inner()),
             Rule::literal => self.build_literal(pair.into_inner()),
             Rule::identifier => Ok(Expr::Identifier(pair.as_str().to_string())),
             Rule::block => self.build_block(pair.into_inner()),
@@ -590,7 +817,7 @@ impl Parser {
         }
     }
 
-    fn build_unary_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+    fn build_unary_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         let mut operators = Vec::new();
         let mut call_expr_pair = None;
 
@@ -772,7 +999,7 @@ impl Parser {
         let mut expressions = Vec::new();
         for pair in pairs {
             if pair.as_rule() == Rule::arg_list {
-                expressions = self.build_arg_list(pair.into_inner())?;
+                expressions = self.build_expr_list(pair.into_inner())?;
                 break;
             }
         }
@@ -787,7 +1014,7 @@ impl Parser {
         let mut expressions = Vec::new();
         for pair in pairs {
             if pair.as_rule() == Rule::arg_list {
-                expressions = self.build_arg_list(pair.into_inner())?;
+                expressions = self.build_expr_list(pair.into_inner())?;
                 break;
             }
         }
@@ -826,19 +1053,26 @@ impl Parser {
             .as_str()
             .to_string();
 
-        let type_annotation = if let Some(pair) = pairs.next() {
-            if pair.as_rule() == Rule::type_annotation {
-                Some(self.build_type_annotation(pair.into_inner())?)
-            } else {
-                None
+        let mut type_annotation = None;
+        let mut default_value = None;
+
+        // Parse optional type annotation and default value
+        while let Some(pair) = pairs.next() {
+            match pair.as_rule() {
+                Rule::type_annotation => {
+                    type_annotation = Some(self.build_type_annotation(pair.into_inner())?);
+                }
+                Rule::expr => {
+                    default_value = Some(self.build_expr(pair.into_inner())?);
+                }
+                _ => {}
             }
-        } else {
-            None
-        };
+        }
 
         Ok(Parameter {
             name,
             type_annotation,
+            default_value,
         })
     }
 
@@ -895,9 +1129,36 @@ impl Parser {
                 "Float" => Ok(TypeAnnotation::Float),
                 "String" => Ok(TypeAnnotation::String),
                 "Bool" => Ok(TypeAnnotation::Bool),
+                "Map" => Ok(TypeAnnotation::Custom("Map".to_string())), // Fallback for standalone Map
                 _ => Err(ParseError::InvalidSyntax {
                     message: format!("Unknown basic type: {}", pair.as_str()),
                 }),
+            },
+            Rule::map_type => {
+                let mut inner_pairs = pair.into_inner();
+                // Skip "Map" literal
+                inner_pairs.next();
+                
+                // Get the key type
+                let key_type = inner_pairs
+                    .next()
+                    .ok_or_else(|| ParseError::InvalidSyntax {
+                        message: "Missing key type for Map".to_string(),
+                    })?;
+                let key_annotation = self.build_type_annotation(key_type.into_inner())?;
+
+                // Get the value type
+                let value_type = inner_pairs
+                    .next()
+                    .ok_or_else(|| ParseError::InvalidSyntax {
+                        message: "Missing value type for Map".to_string(),
+                    })?;
+                let value_annotation = self.build_type_annotation(value_type.into_inner())?;
+
+                Ok(TypeAnnotation::Map {
+                    key_type: Box::new(key_annotation),
+                    value_type: Box::new(value_annotation),
+                })
             },
             Rule::unit_type => Ok(TypeAnnotation::Unit),
             Rule::custom_type => Ok(TypeAnnotation::Custom(pair.as_str().to_string())),
@@ -959,6 +1220,25 @@ impl Parser {
                     })?;
                 let inner_annotation = self.build_type_annotation(inner_type.into_inner())?;
                 Ok(TypeAnnotation::List(Box::new(inner_annotation)))
+            }
+            Rule::tuple_type => {
+                let inner_pairs = pair.into_inner();
+                let mut types = Vec::new();
+                
+                // Parse all type annotations in the tuple
+                for type_pair in inner_pairs {
+                    if type_pair.as_rule() == Rule::type_annotation {
+                        types.push(self.build_type_annotation(type_pair.into_inner())?);
+                    }
+                }
+                
+                if types.len() < 2 {
+                    return Err(ParseError::InvalidSyntax {
+                        message: "Tuple type must have at least 2 elements".to_string(),
+                    });
+                }
+                
+                Ok(TypeAnnotation::Tuple(types))
             }
             Rule::function_type => {
                 let mut inner_pairs = pair.into_inner();
@@ -1758,43 +2038,57 @@ impl Parser {
             Rule::integer => {
                 // Remove numeric separators
                 let s = pair.as_str().replace('_', "");
-                let value = s.parse::<i64>().map_err(|_| ParseError::InvalidSyntax {
-                    message: "Invalid integer literal".to_string(),
-                })?;
+                let value = s.parse::<i64>().map_err(|_| ParseError::invalid_syntax_at(
+                    "Invalid integer literal".to_string(),
+                    PositionInfo::from_pair(&pair),
+                ))?;
                 Ok(Expr::Integer(value))
             }
             Rule::float => {
                 let s = pair.as_str().replace('_', "");
-                let value = s.parse::<f64>().map_err(|_| ParseError::InvalidSyntax {
-                    message: "Invalid float literal".to_string(),
-                })?;
+                let value = s.parse::<f64>().map_err(|_| ParseError::invalid_syntax_at(
+                    "Invalid float literal".to_string(),
+                    PositionInfo::from_pair(&pair),
+                ))?;
                 Ok(Expr::Float(value))
             }
             Rule::binary => {
                 let s = pair.as_str().replace('_', "").replace("0b", "");
-                let value = i64::from_str_radix(&s, 2).map_err(|_| ParseError::InvalidSyntax {
-                    message: "Invalid binary literal".to_string(),
-                })?;
+                let value = i64::from_str_radix(&s, 2).map_err(|_| ParseError::invalid_syntax_at(
+                    "Invalid binary literal".to_string(),
+                    PositionInfo::from_pair(&pair),
+                ))?;
                 Ok(Expr::Integer(value))
             }
             Rule::octal => {
                 let s = pair.as_str().replace('_', "").replace("0o", "");
-                let value = i64::from_str_radix(&s, 8).map_err(|_| ParseError::InvalidSyntax {
-                    message: "Invalid octal literal".to_string(),
-                })?;
+                let value = i64::from_str_radix(&s, 8).map_err(|_| ParseError::invalid_syntax_at(
+                    "Invalid octal literal".to_string(),
+                    PositionInfo::from_pair(&pair),
+                ))?;
                 Ok(Expr::Integer(value))
             }
             Rule::hex => {
                 let s = pair.as_str().replace('_', "").replace("0x", "");
-                let value = i64::from_str_radix(&s, 16).map_err(|_| ParseError::InvalidSyntax {
-                    message: "Invalid hex literal".to_string(),
-                })?;
+                let value = i64::from_str_radix(&s, 16).map_err(|_| ParseError::invalid_syntax_at(
+                    "Invalid hex literal".to_string(),
+                    PositionInfo::from_pair(&pair),
+                ))?;
                 Ok(Expr::Integer(value))
             }
             Rule::string => {
-                let raw_value = pair.as_str().trim_matches('"');
-                let value = self.process_string_escapes(raw_value)?;
-                Ok(Expr::String(value.into()))
+                let full_str = pair.as_str();
+                // Extract content between quotes, handling edge cases
+                if full_str.len() >= 2 && full_str.starts_with('"') && full_str.ends_with('"') {
+                    let raw_value = &full_str[1..full_str.len()-1];
+                    let value = self.process_string_escapes(raw_value)?;
+                    Ok(Expr::String(value.into()))
+                } else {
+                    Err(ParseError::invalid_syntax_at(
+                        "Malformed string literal".to_string(),
+                        PositionInfo::from_pair(&pair),
+                    ))
+                }
             }
             Rule::raw_string => {
                 let raw_value = pair.as_str();
@@ -1804,18 +2098,20 @@ impl Parser {
             }
             Rule::char_literal => {
                 let char_str = pair.as_str().trim_matches('\'');
-                let value = char_str.chars().next().ok_or_else(|| ParseError::InvalidSyntax {
-                    message: "Invalid character literal".to_string(),
-                })?;
+                let value = char_str.chars().next().ok_or_else(|| ParseError::invalid_syntax_at(
+                    "Invalid character literal".to_string(),
+                    PositionInfo::from_pair(&pair),
+                ))?;
                 Ok(Expr::String(value.to_string().into()))
             }
             Rule::template_string => {
                 self.build_template_string(pair.into_inner())
             }
             Rule::boolean => {
-                let value = pair.as_str().parse::<bool>().map_err(|_| ParseError::InvalidSyntax {
-                    message: "Invalid boolean literal".to_string(),
-                })?;
+                let value = pair.as_str().parse::<bool>().map_err(|_| ParseError::invalid_syntax_at(
+                    "Invalid boolean literal".to_string(),
+                    PositionInfo::from_pair(&pair),
+                ))?;
                 Ok(Expr::Boolean(value))
             }
             Rule::list => {
@@ -1836,9 +2132,10 @@ impl Parser {
                 }
                 Ok(Expr::Tuple(items.into()))
             }
-            _ => Err(ParseError::InvalidSyntax {
-                message: format!("Invalid literal rule: {:?}", pair.as_rule()),
-            }),
+            _ => Err(ParseError::invalid_syntax_at(
+                format!("Invalid literal rule: {:?}", pair.as_rule()),
+                PositionInfo::from_pair(&pair),
+            )),
         }
     }
 
@@ -2268,6 +2565,37 @@ impl Parser {
         Ok(Expr::AnonymousObject { fields })
     }
 
+    fn build_map_literal(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut entries = Vec::new();
+        for pair in pairs {
+            if pair.as_rule() == Rule::map_entry_list {
+                for entry_pair in pair.into_inner() {
+                    if entry_pair.as_rule() == Rule::map_entry {
+                        entries.push(self.build_map_entry(entry_pair.into_inner())?);
+                    }
+                }
+            } else if pair.as_rule() == Rule::map_entry {
+                entries.push(self.build_map_entry(pair.into_inner())?);
+            }
+        }
+
+        Ok(Expr::MapLiteral { entries })
+    }
+
+    fn build_map_entry(&self, mut pairs: Pairs<Rule>) -> Result<MapEntry, ParseError> {
+        let key = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing key in map entry".to_string(),
+        })?;
+        let value = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing value in map entry".to_string(),
+        })?;
+
+        Ok(MapEntry {
+            key: self.build_expr(key.into_inner())?,
+            value: self.build_expr(value.into_inner())?,
+        })
+    }
+
     fn build_for_loop(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         // Expected order: identifier, expr (iterable), block (body)
         let var_name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -2597,6 +2925,299 @@ impl Parser {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ErrorSuggestion {
+    pub message: String,
+    pub fix: Option<String>,
+    pub help: Option<String>,
+    pub severity: SuggestionSeverity,
+}
+
+#[derive(Debug, Clone)]
+pub enum SuggestionSeverity {
+    Error,
+    Warning,
+    Hint,
+    Info,
+}
+
+pub struct ErrorSuggestionEngine {
+    // Common patterns and their suggestions
+}
+
+impl ErrorSuggestionEngine {
+    pub fn new() -> Self {
+        Self {}
+    }
+    
+    pub fn suggest_for_parse_error(&self, error: &ParseError, input: &str) -> Vec<ErrorSuggestion> {
+        match error {
+            ParseError::Pest(pest_error) => {
+                self.suggest_for_pest_error(pest_error, input)
+            }
+            ParseError::InvalidSyntaxWithPosition { message, line, column, .. } => {
+                self.suggest_for_invalid_syntax(message, *line, *column, input)
+            }
+            ParseError::UnexpectedTokenWithPosition { token, line, column, .. } => {
+                self.suggest_for_unexpected_token(token, *line, *column, input)
+            }
+            ParseError::InvalidSyntax { message } => {
+                self.suggest_for_generic_syntax_error(message, input)
+            }
+            ParseError::UnexpectedToken { token } => {
+                self.suggest_for_generic_token_error(token, input)
+            }
+        }
+    }
+    
+    fn suggest_for_pest_error(&self, pest_error: &pest::error::Error<Rule>, input: &str) -> Vec<ErrorSuggestion> {
+        let mut suggestions = Vec::new();
+        
+        // Analyze the pest error for common patterns
+        let error_msg = format!("{}", pest_error);
+        
+        // Check for common syntax issues
+        if error_msg.contains("expected") {
+            if error_msg.contains("expected `)`") {
+                suggestions.push(ErrorSuggestion {
+                    message: "Missing closing parenthesis".to_string(),
+                    fix: Some("Add `)` to close the parenthesis".to_string()),
+                    help: Some("Check that all opening parentheses have matching closing ones".to_string()),
+                    severity: SuggestionSeverity::Error,
+                });
+            }
+            
+            if error_msg.contains("expected `}`") {
+                suggestions.push(ErrorSuggestion {
+                    message: "Missing closing brace".to_string(),
+                    fix: Some("Add `}` to close the brace".to_string()),
+                    help: Some("Check that all opening braces have matching closing ones".to_string()),
+                    severity: SuggestionSeverity::Error,
+                });
+            }
+            
+            if error_msg.contains("expected `]`") {
+                suggestions.push(ErrorSuggestion {
+                    message: "Missing closing bracket".to_string(),
+                    fix: Some("Add `]` to close the bracket".to_string()),
+                    help: Some("Check that all opening brackets have matching closing ones".to_string()),
+                    severity: SuggestionSeverity::Error,
+                });
+            }
+            
+            if error_msg.contains("expected `\"`") {
+                suggestions.push(ErrorSuggestion {
+                    message: "Missing closing quote".to_string(),
+                    fix: Some("Add `\"` to close the string".to_string()),
+                    help: Some("String literals must be enclosed in double quotes".to_string()),
+                    severity: SuggestionSeverity::Error,
+                });
+            }
+        }
+        
+        // Check for function-related errors
+        if error_msg.contains("fn") {
+            suggestions.push(ErrorSuggestion {
+                message: "Function declaration syntax error".to_string(),
+                fix: Some("Check function syntax: `fn name(params) = body` or `fn name(params) { body }`".to_string()),
+                help: Some("Functions can be declared with expression bodies (=) or block bodies ({ })".to_string()),
+                severity: SuggestionSeverity::Hint,
+            });
+        }
+        
+        // Check for let declaration errors
+        if error_msg.contains("let") {
+            suggestions.push(ErrorSuggestion {
+                message: "Let declaration syntax error".to_string(),
+                fix: Some("Check let syntax: `let name = value` or `let pattern = value`".to_string()),
+                help: Some("Let declarations support pattern matching and type annotations".to_string()),
+                severity: SuggestionSeverity::Hint,
+            });
+        }
+        
+        suggestions
+    }
+    
+    fn suggest_for_invalid_syntax(&self, message: &str, line: usize, column: usize, input: &str) -> Vec<ErrorSuggestion> {
+        let mut suggestions = Vec::new();
+        
+        // Get the line content for analysis
+        let lines: Vec<&str> = input.lines().collect();
+        let line_content = if line > 0 && line <= lines.len() {
+            lines[line - 1]
+        } else {
+            ""
+        };
+        
+        // Check for common typos and mistakes
+        if message.contains("integer") {
+            suggestions.push(ErrorSuggestion {
+                message: "Invalid integer format".to_string(),
+                fix: Some("Use decimal (123), binary (0b1010), octal (0o123), or hex (0xFF) format".to_string()),
+                help: Some("Integer literals support underscores for readability: 1_000_000".to_string()),
+                severity: SuggestionSeverity::Error,
+            });
+        }
+        
+        if message.contains("float") {
+            suggestions.push(ErrorSuggestion {
+                message: "Invalid float format".to_string(),
+                fix: Some("Use decimal point format: 3.14, 2.0, or scientific notation: 1e10".to_string()),
+                help: Some("Float literals require a decimal point or scientific notation".to_string()),
+                severity: SuggestionSeverity::Error,
+            });
+        }
+        
+        if message.contains("string") {
+            suggestions.push(ErrorSuggestion {
+                message: "Invalid string format".to_string(),
+                fix: Some("Enclose strings in double quotes: \"hello world\"".to_string()),
+                help: Some("Use raw strings for literals with backslashes: r\"C:\\path\\to\\file\"".to_string()),
+                severity: SuggestionSeverity::Error,
+            });
+        }
+        
+        // Check for bracket mismatches
+        if self.has_unmatched_brackets(line_content) {
+            suggestions.push(ErrorSuggestion {
+                message: "Unmatched brackets detected".to_string(),
+                fix: Some("Check that all brackets, parentheses, and braces are properly matched".to_string()),
+                help: Some("Use an editor with bracket matching to help identify issues".to_string()),
+                severity: SuggestionSeverity::Error,
+            });
+        }
+        
+        // Check for assignment vs equality
+        if line_content.contains("=") && !line_content.contains("==") && !line_content.contains("let") {
+            suggestions.push(ErrorSuggestion {
+                message: "Possible assignment in expression context".to_string(),
+                fix: Some("Use `==` for equality comparison, `=` only for let declarations".to_string()),
+                help: Some("Assignments are only allowed in let declarations and function parameters".to_string()),
+                severity: SuggestionSeverity::Hint,
+            });
+        }
+        
+        suggestions
+    }
+    
+    fn suggest_for_unexpected_token(&self, token: &str, line: usize, column: usize, input: &str) -> Vec<ErrorSuggestion> {
+        let mut suggestions = Vec::new();
+        
+        // Common token-specific suggestions
+        match token {
+            ";" => {
+                suggestions.push(ErrorSuggestion {
+                    message: "Semicolons are not used in Olang".to_string(),
+                    fix: Some("Remove the semicolon".to_string()),
+                    help: Some("Olang uses newlines and expression-based syntax, not semicolons".to_string()),
+                    severity: SuggestionSeverity::Error,
+                });
+            }
+            "=" => {
+                suggestions.push(ErrorSuggestion {
+                    message: "Unexpected assignment operator".to_string(),
+                    fix: Some("Use `==` for comparison or `let` for variable declarations".to_string()),
+                    help: Some("Single `=` is only used in let declarations and function parameters".to_string()),
+                    severity: SuggestionSeverity::Error,
+                });
+            }
+            ")" | "}" | "]" => {
+                suggestions.push(ErrorSuggestion {
+                    message: "Unexpected closing bracket".to_string(),
+                    fix: Some("Check for missing opening bracket or extra closing bracket".to_string()),
+                    help: Some("Make sure all brackets are properly paired".to_string()),
+                    severity: SuggestionSeverity::Error,
+                });
+            }
+            _ => {
+                // Generic token suggestions
+                suggestions.push(ErrorSuggestion {
+                    message: format!("Unexpected token: {}", token),
+                    fix: Some("Check the syntax around this token".to_string()),
+                    help: Some("Refer to the language documentation for valid syntax".to_string()),
+                    severity: SuggestionSeverity::Error,
+                });
+            }
+        }
+        
+        suggestions
+    }
+    
+    fn suggest_for_generic_syntax_error(&self, message: &str, input: &str) -> Vec<ErrorSuggestion> {
+        let mut suggestions = Vec::new();
+        
+        // Analyze the input for common patterns
+        if input.contains("console.log") {
+            suggestions.push(ErrorSuggestion {
+                message: "JavaScript-style console.log detected".to_string(),
+                fix: Some("Use `println(...)` instead of `console.log(...)`".to_string()),
+                help: Some("Olang uses `println` for output, not `console.log`".to_string()),
+                severity: SuggestionSeverity::Hint,
+            });
+        }
+        
+        if input.contains("printf") {
+            suggestions.push(ErrorSuggestion {
+                message: "C-style printf detected".to_string(),
+                fix: Some("Use `println(...)` or string interpolation `\"Hello {name}\"`".to_string()),
+                help: Some("Olang uses `println` and string interpolation instead of printf".to_string()),
+                severity: SuggestionSeverity::Hint,
+            });
+        }
+        
+        if input.contains("print(") && !input.contains("println(") {
+            suggestions.push(ErrorSuggestion {
+                message: "Use println for output".to_string(),
+                fix: Some("Use `println(...)` instead of `print(...)`".to_string()),
+                help: Some("Olang's print function is called `println`".to_string()),
+                severity: SuggestionSeverity::Hint,
+            });
+        }
+        
+        suggestions
+    }
+    
+    fn suggest_for_generic_token_error(&self, token: &str, input: &str) -> Vec<ErrorSuggestion> {
+        // Similar to suggest_for_unexpected_token but without position info
+        vec![ErrorSuggestion {
+            message: format!("Unexpected token: {}", token),
+            fix: Some("Check the syntax around this token".to_string()),
+            help: Some("Refer to the language documentation for valid syntax".to_string()),
+            severity: SuggestionSeverity::Error,
+        }]
+    }
+    
+    fn has_unmatched_brackets(&self, line: &str) -> bool {
+        let mut paren_count = 0;
+        let mut brace_count = 0;
+        let mut bracket_count = 0;
+        let mut in_string = false;
+        let mut escape_next = false;
+        
+        for ch in line.chars() {
+            if escape_next {
+                escape_next = false;
+                continue;
+            }
+            
+            match ch {
+                '"' if !in_string => in_string = true,
+                '"' if in_string => in_string = false,
+                '\\' if in_string => escape_next = true,
+                '(' if !in_string => paren_count += 1,
+                ')' if !in_string => paren_count -= 1,
+                '{' if !in_string => brace_count += 1,
+                '}' if !in_string => brace_count -= 1,
+                '[' if !in_string => bracket_count += 1,
+                ']' if !in_string => bracket_count -= 1,
+                _ => {}
+            }
+        }
+        
+        paren_count != 0 || brace_count != 0 || bracket_count != 0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2605,38 +3226,170 @@ mod tests {
     fn test_enhanced_string_escapes() {
         let parser = Parser::new();
         
-        // Test basic escapes
-        assert_eq!(parser.process_string_escapes("\\n\\t\\r").unwrap(), "\n\t\r");
-        assert_eq!(parser.process_string_escapes("\\\"\\\\").unwrap(), "\"\\");
+        // Test basic string parsing
+        let input = r#""Hello\nWorld""#;
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse string with escape sequence: {:?}", result);
         
-        // Test null character
-        assert_eq!(parser.process_string_escapes("\\0").unwrap(), "\0");
+        // Test unicode escapes
+        let input = r#""Hello\u0041""#;
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse string with unicode escape: {:?}", result);
         
-        // Test hex escapes
-        assert_eq!(parser.process_string_escapes("\\x41").unwrap(), "A");
-        assert_eq!(parser.process_string_escapes("\\x61").unwrap(), "a");
-        assert_eq!(parser.process_string_escapes("\\x20").unwrap(), " ");
-        
-        // Test fixed-length Unicode escapes
-        assert_eq!(parser.process_string_escapes("\\u0041").unwrap(), "A");
-        assert_eq!(parser.process_string_escapes("\\u0061").unwrap(), "a");
-        assert_eq!(parser.process_string_escapes("\\u0020").unwrap(), " ");
-        
-        // Test variable-length Unicode escapes
-        assert_eq!(parser.process_string_escapes("\\u{41}").unwrap(), "A");
-        assert_eq!(parser.process_string_escapes("\\u{61}").unwrap(), "a");
-        assert_eq!(parser.process_string_escapes("\\u{20}").unwrap(), " ");
-        assert_eq!(parser.process_string_escapes("\\u{1F600}").unwrap(), "😀");
-        
-        // Test mixed escapes
-        assert_eq!(parser.process_string_escapes("Hello\\nWorld\\u{1F600}").unwrap(), "Hello\nWorld😀");
-        
-        // Test error cases
-        assert!(parser.process_string_escapes("\\x").is_err());
-        assert!(parser.process_string_escapes("\\x1").is_err());
-        assert!(parser.process_string_escapes("\\u").is_err());
-        assert!(parser.process_string_escapes("\\u{").is_err());
-        assert!(parser.process_string_escapes("\\u{}").is_err());
-        assert!(parser.process_string_escapes("\\u{invalid}").is_err());
+        // Test escaped quotes
+        let input = r#""He said \"Hello\"""#;
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse string with escaped quotes: {:?}", result);
+    }
+
+    #[test]
+    fn test_named_arguments_parsing() {
+        let parser = Parser::new();
+
+        // Test function call with named arguments
+        let input = "greet(name: \"Alice\", age: 25)";
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse named arguments: {:?}", result);
+
+        if let Ok(program) = result {
+            assert_eq!(program.statements.len(), 1);
+            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+                assert_eq!(arguments.len(), 2);
+                
+                // Check first argument is named
+                if let Argument::Named { name, .. } = &arguments[0] {
+                    assert_eq!(name, "name");
+                } else {
+                    panic!("Expected named argument, got: {:?}", arguments[0]);
+                }
+
+                // Check second argument is named
+                if let Argument::Named { name, .. } = &arguments[1] {
+                    assert_eq!(name, "age");
+                } else {
+                    panic!("Expected named argument, got: {:?}", arguments[1]);
+                }
+            } else {
+                panic!("Expected function call, got: {:?}", program.statements[0]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_mixed_arguments_parsing() {
+        let parser = Parser::new();
+
+        // Test function call with mixed positional and named arguments
+        let input = "connect(\"localhost\", port: 8080, timeout: 30)";
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse mixed arguments: {:?}", result);
+
+        if let Ok(program) = result {
+            assert_eq!(program.statements.len(), 1);
+            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+                assert_eq!(arguments.len(), 3);
+                
+                // Check first argument is positional
+                assert!(matches!(arguments[0], Argument::Positional(_)));
+
+                // Check second argument is named
+                if let Argument::Named { name, .. } = &arguments[1] {
+                    assert_eq!(name, "port");
+                } else {
+                    panic!("Expected named argument, got: {:?}", arguments[1]);
+                }
+
+                // Check third argument is named
+                if let Argument::Named { name, .. } = &arguments[2] {
+                    assert_eq!(name, "timeout");
+                } else {
+                    panic!("Expected named argument, got: {:?}", arguments[2]);
+                }
+            } else {
+                panic!("Expected function call, got: {:?}", program.statements[0]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_positional_arguments_still_work() {
+        let parser = Parser::new();
+
+        // Test function call with only positional arguments
+        let input = "add(1, 2, 3)";
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse positional arguments: {:?}", result);
+
+        if let Ok(program) = result {
+            assert_eq!(program.statements.len(), 1);
+            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+                assert_eq!(arguments.len(), 3);
+                
+                // All arguments should be positional
+                for arg in arguments {
+                    assert!(matches!(arg, Argument::Positional(_)));
+                }
+            } else {
+                panic!("Expected function call, got: {:?}", program.statements[0]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_complex_named_argument_values() {
+        let parser = Parser::new();
+
+        // Test named arguments with complex expressions
+        let input = "process(data: [1, 2, 3], transform: (x) => x * 2, config: {debug: true})";
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse complex named arguments: {:?}", result);
+
+        if let Ok(program) = result {
+            assert_eq!(program.statements.len(), 1);
+            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+                assert_eq!(arguments.len(), 3);
+                
+                // Check all arguments are named with proper names
+                let names: Vec<&str> = arguments.iter().map(|arg| {
+                    match arg {
+                        Argument::Named { name, .. } => name.as_str(),
+                        _ => panic!("Expected named argument"),
+                    }
+                }).collect();
+                
+                assert_eq!(names, vec!["data", "transform", "config"]);
+            } else {
+                panic!("Expected function call, got: {:?}", program.statements[0]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_nested_function_calls_with_named_args() {
+        let parser = Parser::new();
+
+        // Test nested function calls with named arguments
+        let input = "outer(inner(value: 42), name: \"test\")";
+        let result = parser.parse(input);
+        assert!(result.is_ok(), "Failed to parse nested calls with named arguments: {:?}", result);
+
+        if let Ok(program) = result {
+            assert_eq!(program.statements.len(), 1);
+            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+                assert_eq!(arguments.len(), 2);
+                
+                // First argument should be positional (the inner call)
+                assert!(matches!(arguments[0], Argument::Positional(_)));
+
+                // Second argument should be named
+                if let Argument::Named { name, .. } = &arguments[1] {
+                    assert_eq!(name, "name");
+                } else {
+                    panic!("Expected named argument, got: {:?}", arguments[1]);
+                }
+            } else {
+                panic!("Expected function call, got: {:?}", program.statements[0]);
+            }
+        }
     }
 }

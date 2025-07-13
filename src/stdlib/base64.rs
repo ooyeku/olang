@@ -314,24 +314,33 @@ mod tests {
     // Helper function to assert Ok result and extract inner value
     fn assert_ok(result: &Value) -> &Value {
         match result {
-            Value::Ok(inner) => inner.as_ref(),
-            _ => panic!("Expected Ok result, got: {:?}", result),
+            Value::Ok(inner) => inner,
+            _ => {
+                assert!(false, "Expected Ok result, got: {:?}", result);
+                unreachable!()
+            }
         }
     }
 
     // Helper function to assert Err result and extract error message
     fn assert_err(result: &Value) -> &Value {
         match result {
-            Value::Err(inner) => inner.as_ref(),
-            _ => panic!("Expected Err result, got: {:?}", result),
+            Value::Err(inner) => inner,
+            _ => {
+                assert!(false, "Expected Err result, got: {:?}", result);
+                unreachable!()
+            }
         }
     }
 
     // Helper function to extract string from Value
     fn extract_string(value: &Value) -> &str {
         match value {
-            Value::String(s) => s.as_ref(),
-            _ => panic!("Expected string value, got: {:?}", value),
+            Value::String(s) => s,
+            _ => {
+                assert!(false, "Expected string value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
@@ -339,7 +348,10 @@ mod tests {
     fn extract_bool(value: &Value) -> bool {
         match value {
             Value::Boolean(b) => *b,
-            _ => panic!("Expected boolean value, got: {:?}", value),
+            _ => {
+                assert!(false, "Expected boolean value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
@@ -373,11 +385,11 @@ mod tests {
                     assert_eq!(builtin.name, format!("base64.{}", func_name));
                     assert_eq!(builtin.arity, 1); // All base64 functions take 1 argument
                 } else {
-                    panic!("Expected builtin function for {}", func_name);
+                    assert!(false, "Expected builtin function for {}, got: {:?}", func_name, fields[func_name]);
                 }
             }
         } else {
-            panic!("Expected struct for base64 module");
+            assert!(false, "Expected struct for base64 module, got: {:?}", module);
         }
     }
 

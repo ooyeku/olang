@@ -366,16 +366,53 @@ mod tests {
     fn assert_ok_result(result: &Value) -> &Value {
         match result {
             Value::Ok(inner) => inner,
-            Value::Err(err) => panic!("Expected Ok, got Err: {:?}", err),
-            other => panic!("Expected Result, got: {:?}", other),
+            Value::Err(err) => {
+                assert!(false, "Expected Ok, got Err: {:?}", err);
+                unreachable!()
+            }
+            other => {
+                assert!(false, "Expected Result, got: {:?}", other);
+                unreachable!()
+            }
         }
     }
 
     fn assert_err_result(result: &Value) -> &Value {
         match result {
             Value::Err(inner) => inner,
-            Value::Ok(val) => panic!("Expected Err, got Ok: {:?}", val),
-            other => panic!("Expected Result, got: {:?}", other),
+            Value::Ok(val) => {
+                assert!(false, "Expected Err, got Ok: {:?}", val);
+                unreachable!()
+            }
+            other => {
+                assert!(false, "Expected Result, got: {:?}", other);
+                unreachable!()
+            }
+        }
+    }
+
+    // Helper function to assert string values
+    fn assert_string_value(value: &Value, expected_content: &str) {
+        match value {
+            Value::String(msg) => {
+                assert!(msg.contains(expected_content), 
+                    "Expected string to contain '{}', but got: {}", expected_content, msg);
+            }
+            other => {
+                assert!(false, "Expected string value, got: {:?}", other);
+            }
+        }
+    }
+
+    // Helper function to assert struct modules
+    fn assert_struct_module(module: &Value) {
+        match module {
+            Value::Struct { type_name, fields: _ } => {
+                assert_eq!(type_name, "Module", "Expected Module struct type");
+            }
+            other => {
+                assert!(false, "Expected struct module, got: {:?}", other);
+            }
         }
     }
 
@@ -410,7 +447,7 @@ mod tests {
 
             assert_eq!(fields.len(), expected_functions.len());
         } else {
-            panic!("Expected struct module, got: {:?}", module);
+            assert!(false, "Expected struct module, got: {:?}", module);
         }
     }
 
@@ -429,7 +466,7 @@ mod tests {
             assert!(msg.contains("Assertion failed"));
             assert!(msg.contains("expected 42 but got 24"));
         } else {
-            panic!("Expected string error message");
+            assert!(false, "Expected string error message, got: {:?}", error);
         }
     }
 
@@ -448,7 +485,7 @@ mod tests {
             assert!(msg.contains("Assertion failed"));
             assert!(msg.contains("not equal"));
         } else {
-            panic!("Expected string error message");
+            assert!(false, "Expected string error message, got: {:?}", error);
         }
     }
 
@@ -466,7 +503,7 @@ mod tests {
         if let Value::String(msg) = error {
             assert!(msg.contains("expected true but got false"));
         } else {
-            panic!("Expected string error message");
+            assert!(false, "Expected string error message, got: {:?}", error);
         }
     }
 
@@ -484,7 +521,7 @@ mod tests {
         if let Value::String(msg) = error {
             assert!(msg.contains("expected false but got true"));
         } else {
-            panic!("Expected string error message");
+            assert!(false, "Expected string error message, got: {:?}", error);
         }
     }
 
@@ -504,7 +541,7 @@ mod tests {
         if let Value::String(msg) = error {
             assert!(msg.contains("expected Ok but got Err"));
         } else {
-            panic!("Expected string error message");
+            assert!(false, "Expected string error message, got: {:?}", error);
         }
     }
 
@@ -524,7 +561,7 @@ mod tests {
         if let Value::String(msg) = error {
             assert!(msg.contains("expected Err but got Ok"));
         } else {
-            panic!("Expected string error message");
+            assert!(false, "Expected string error message, got: {:?}", error);
         }
     }
 
@@ -536,7 +573,7 @@ mod tests {
         if let Value::String(msg) = error {
             assert!(msg.contains("Test failed: Custom failure message"));
         } else {
-            panic!("Expected string error message");
+            assert!(false, "Expected string error message, got: {:?}", error);
         }
     }
 
@@ -552,7 +589,7 @@ mod tests {
         if let Value::String(msg) = success_msg {
             assert!(msg.contains("Test 'my_test' passed"));
         } else {
-            panic!("Expected string success message");
+            assert!(false, "Expected string success message, got: {:?}", success_msg);
         }
     }
 

@@ -324,6 +324,136 @@ impl BuiltinFunctions {
             },
         );
 
+        // Map functions
+        functions.insert(
+            "map_get".to_string(),
+            BuiltinFunction {
+                name: "map_get".to_string(),
+                arity: 2,
+            },
+        );
+
+        functions.insert(
+            "map_set".to_string(),
+            BuiltinFunction {
+                name: "map_set".to_string(),
+                arity: 3,
+            },
+        );
+
+        functions.insert(
+            "map_has_key".to_string(),
+            BuiltinFunction {
+                name: "map_has_key".to_string(),
+                arity: 2,
+            },
+        );
+
+        functions.insert(
+            "map_keys".to_string(),
+            BuiltinFunction {
+                name: "map_keys".to_string(),
+                arity: 1,
+            },
+        );
+
+        functions.insert(
+            "map_values".to_string(),
+            BuiltinFunction {
+                name: "map_values".to_string(),
+                arity: 1,
+            },
+        );
+
+        functions.insert(
+            "map_remove".to_string(),
+            BuiltinFunction {
+                name: "map_remove".to_string(),
+                arity: 2,
+            },
+        );
+
+        functions.insert(
+            "map_len".to_string(),
+            BuiltinFunction {
+                name: "map_len".to_string(),
+                arity: 1,
+            },
+        );
+
+        functions.insert(
+            "map_clear".to_string(),
+            BuiltinFunction {
+                name: "map_clear".to_string(),
+                arity: 1,
+            },
+        );
+
+        functions.insert(
+            "map_merge".to_string(),
+            BuiltinFunction {
+                name: "map_merge".to_string(),
+                arity: 2,
+            },
+        );
+
+        // Result type utility functions
+        functions.insert(
+            "unwrap".to_string(),
+            BuiltinFunction {
+                name: "unwrap".to_string(),
+                arity: 1,
+            },
+        );
+
+        functions.insert(
+            "unwrap_or".to_string(),
+            BuiltinFunction {
+                name: "unwrap_or".to_string(),
+                arity: 2,
+            },
+        );
+
+        functions.insert(
+            "unwrap_or_else".to_string(),
+            BuiltinFunction {
+                name: "unwrap_or_else".to_string(),
+                arity: 2,
+            },
+        );
+
+        functions.insert(
+            "is_ok".to_string(),
+            BuiltinFunction {
+                name: "is_ok".to_string(),
+                arity: 1,
+            },
+        );
+
+        functions.insert(
+            "is_err".to_string(),
+            BuiltinFunction {
+                name: "is_err".to_string(),
+                arity: 1,
+            },
+        );
+
+        functions.insert(
+            "result_map".to_string(),
+            BuiltinFunction {
+                name: "result_map".to_string(),
+                arity: 2,
+            },
+        );
+
+        functions.insert(
+            "result_map_err".to_string(),
+            BuiltinFunction {
+                name: "result_map_err".to_string(),
+                arity: 2,
+            },
+        );
+
         Self { functions }
     }
 
@@ -517,6 +647,22 @@ impl BuiltinFunctions {
             "lazy" => builtins.make_lazy(arguments, interpreter),
             "concat" => builtins.concat_lazy(arguments, interpreter),
             "map_filtered" => builtins.map_filtered(arguments, interpreter),
+            "map_get" => builtins.map_get(arguments),
+            "map_set" => builtins.map_set(arguments),
+            "map_has_key" => builtins.map_has_key(arguments),
+            "map_keys" => builtins.map_keys(arguments),
+            "map_values" => builtins.map_values(arguments),
+            "map_remove" => builtins.map_remove(arguments),
+            "map_len" => builtins.map_len(arguments),
+            "map_clear" => builtins.map_clear(arguments),
+            "map_merge" => builtins.map_merge(arguments),
+            "unwrap" => builtins.unwrap_result(arguments),
+            "unwrap_or" => builtins.unwrap_or(arguments),
+            "unwrap_or_else" => builtins.unwrap_or_else(arguments, interpreter),
+            "is_ok" => builtins.is_ok(arguments),
+            "is_err" => builtins.is_err(arguments),
+            "result_map" => builtins.result_map(arguments, interpreter),
+            "result_map_err" => builtins.result_map_err(arguments, interpreter),
             _ => Err(InterpreterError::RuntimeError {
                 message: format!("Unknown builtin function: {}", name),
             }),
@@ -924,7 +1070,7 @@ impl BuiltinFunctions {
                     // For large ranges, this could be made lazy in the future
                     // For now, still generate eagerly but with a warning for very large ranges
                     if end > 100000 {
-                        eprintln!("Warning: generating very large range ({}), consider using lazy evaluation", end);
+                        crate::log::get_logger().warn("builtin", &format!("Generating very large range ({}), consider using lazy evaluation", end));
                     }
                     let mut result = Vec::new();
                     for i in 0..end {
@@ -1993,6 +2139,498 @@ impl BuiltinFunctions {
                     let func_res = interpreter.call_function(function.clone(), vec![item.clone()]);
                     result.push(func_res?);
                 }
+            }
+            Ok(Value::List(result.into()))
+        }
+    }
+
+    fn map_get(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let map = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_get: first argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let key = match &args[1] {
+            Value::String(s) => s.as_ref(),
+            Value::Integer(i) => &i.to_string(),
+            Value::Float(f) => &f.to_string(),
+            Value::Boolean(b) => &b.to_string(),
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_get: key must be string, integer, float, or boolean".to_string(),
+                })
+            }
+        };
+
+        Ok(map.get(key).cloned().unwrap_or(Value::Unit))
+    }
+
+    fn map_set(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 3 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 3,
+                got: args.len(),
+            });
+        }
+
+        let map_ref = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_set: first argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let key = match &args[1] {
+            Value::String(s) => s.as_ref().clone(),
+            Value::Integer(i) => i.to_string(),
+            Value::Float(f) => f.to_string(),
+            Value::Boolean(b) => b.to_string(),
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_set: key must be string, integer, float, or boolean".to_string(),
+                })
+            }
+        };
+
+        let value = args[2].clone();
+
+        // Create a new map with the updated value
+        let mut new_map = (**map_ref).clone();
+        new_map.insert(key, value);
+
+        Ok(Value::Map(std::sync::Arc::new(new_map)))
+    }
+
+    fn map_has_key(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let map = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_has_key: first argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let key = match &args[1] {
+            Value::String(s) => s.as_ref(),
+            Value::Integer(i) => &i.to_string(),
+            Value::Float(f) => &f.to_string(),
+            Value::Boolean(b) => &b.to_string(),
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_has_key: key must be string, integer, float, or boolean".to_string(),
+                })
+            }
+        };
+
+        Ok(Value::Boolean(map.contains_key(key)))
+    }
+
+    fn map_keys(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+
+        let map = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_keys: argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let keys: Vec<Value> = map
+            .keys()
+            .map(|k| Value::String(std::sync::Arc::new(k.clone())))
+            .collect();
+
+        Ok(Value::List(std::sync::Arc::from(keys)))
+    }
+
+    fn map_values(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+
+        let map = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_values: argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let values: Vec<Value> = map.values().cloned().collect();
+
+        Ok(Value::List(std::sync::Arc::from(values)))
+    }
+
+    fn map_remove(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let map_ref = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_remove: first argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let key = match &args[1] {
+            Value::String(s) => s.as_ref(),
+            Value::Integer(i) => &i.to_string(),
+            Value::Float(f) => &f.to_string(),
+            Value::Boolean(b) => &b.to_string(),
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_remove: key must be string, integer, float, or boolean".to_string(),
+                })
+            }
+        };
+
+        // Create a new map without the specified key
+        let mut new_map = (**map_ref).clone();
+        new_map.remove(key);
+
+        Ok(Value::Map(std::sync::Arc::new(new_map)))
+    }
+
+    fn map_len(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+
+        let map = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_len: argument must be a map".to_string(),
+                })
+            }
+        };
+
+        Ok(Value::Integer(map.len() as i64))
+    }
+
+    fn map_clear(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+
+        match &args[0] {
+            Value::Map(_) => {
+                // Return an empty map
+                Ok(Value::Map(std::sync::Arc::new(std::collections::HashMap::new())))
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: "map_clear: argument must be a map".to_string(),
+            }),
+        }
+    }
+
+    fn map_merge(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let map1 = match &args[0] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_merge: first argument must be a map".to_string(),
+                })
+            }
+        };
+
+        let map2 = match &args[1] {
+            Value::Map(map) => map,
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_merge: second argument must be a map".to_string(),
+                })
+            }
+        };
+
+        // Create a new map that merges both maps (map2 values overwrite map1 values)
+        let mut new_map = (**map1).clone();
+        for (key, value) in map2.iter() {
+            new_map.insert(key.clone(), value.clone());
+        }
+
+        Ok(Value::Map(std::sync::Arc::new(new_map)))
+    }
+
+    // Result type utility functions
+
+    /// Unwrap a Result value, panicking on Err
+    /// Usage: unwrap(result) -> T
+    fn unwrap_result(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+
+        match &args[0] {
+            Value::Ok(inner) => Ok(*inner.clone()),
+            Value::Err(err) => Err(InterpreterError::RuntimeError {
+                message: format!("Unwrap failed on error: {}", err),
+            }),
+            _ => Err(InterpreterError::TypeError {
+                message: "unwrap: argument must be a Result type (Ok or Err)".to_string(),
+            }),
+        }
+    }
+
+    /// Unwrap a Result value with a default value for Err
+    /// Usage: unwrap_or(result, default_value) -> T
+    fn unwrap_or(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        match &args[0] {
+            Value::Ok(inner) => Ok(*inner.clone()),
+            Value::Err(_) => Ok(args[1].clone()),
+            _ => Err(InterpreterError::TypeError {
+                message: "unwrap_or: first argument must be a Result type (Ok or Err)".to_string(),
+            }),
+        }
+    }
+
+    /// Unwrap a Result value with a function to handle Err
+    /// Usage: unwrap_or_else(result, error_handler_fn) -> T
+    fn unwrap_or_else(
+        &self,
+        args: Vec<Value>,
+        interpreter: &mut crate::interpreter::Interpreter,
+    ) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        match &args[0] {
+            Value::Ok(inner) => Ok(*inner.clone()),
+            Value::Err(err) => {
+                let handler = &args[1];
+                interpreter.call_function(handler.clone(), vec![*err.clone()])
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: "unwrap_or_else: first argument must be a Result type (Ok or Err)".to_string(),
+            }),
+        }
+    }
+
+    /// Check if a Result is Ok
+    /// Usage: is_ok(result) -> Bool
+    fn is_ok(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+
+        match &args[0] {
+            Value::Ok(_) => Ok(Value::Boolean(true)),
+            Value::Err(_) => Ok(Value::Boolean(false)),
+            _ => Err(InterpreterError::TypeError {
+                message: "is_ok: argument must be a Result type (Ok or Err)".to_string(),
+            }),
+        }
+    }
+
+    /// Check if a Result is Err
+    /// Usage: is_err(result) -> Bool
+    fn is_err(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+
+        match &args[0] {
+            Value::Ok(_) => Ok(Value::Boolean(false)),
+            Value::Err(_) => Ok(Value::Boolean(true)),
+            _ => Err(InterpreterError::TypeError {
+                message: "is_err: argument must be a Result type (Ok or Err)".to_string(),
+            }),
+        }
+    }
+
+    /// Map a function over the Ok value of a Result
+    /// Usage: result_map(result, fn) -> Result<U, E>
+    fn result_map(
+        &self,
+        args: Vec<Value>,
+        interpreter: &mut crate::interpreter::Interpreter,
+    ) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let function = &args[1];
+
+        match &args[0] {
+            Value::Ok(inner) => {
+                let mapped_value = interpreter.call_function(function.clone(), vec![*inner.clone()])?;
+                Ok(Value::Ok(Box::new(mapped_value)))
+            }
+            Value::Err(err) => Ok(Value::Err(err.clone())),
+            _ => Err(InterpreterError::TypeError {
+                message: "result_map: first argument must be a Result type (Ok or Err)".to_string(),
+            }),
+        }
+    }
+
+    /// Map a function over the Err value of a Result
+    /// Usage: result_map_err(result, fn) -> Result<T, F>
+    fn result_map_err(
+        &self,
+        args: Vec<Value>,
+        interpreter: &mut crate::interpreter::Interpreter,
+    ) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let function = &args[1];
+
+        match &args[0] {
+            Value::Ok(inner) => Ok(Value::Ok(inner.clone())),
+            Value::Err(err) => {
+                let mapped_error = interpreter.call_function(function.clone(), vec![*err.clone()])?;
+                Ok(Value::Err(Box::new(mapped_error)))
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: "result_map_err: first argument must be a Result type (Ok or Err)".to_string(),
+            }),
+        }
+    }
+
+    fn map_list(
+        &self,
+        args: Vec<Value>,
+        interpreter: &mut crate::interpreter::Interpreter,
+    ) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let list = &args[0];
+        let function = &args[1];
+
+        let config = interpreter.get_lazy_config().clone();
+        let list_values = match list {
+            Value::List(items) => items.clone(),
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map: first argument must be a list".to_string(),
+                });
+            }
+        };
+
+        // Enhanced timeout handling for lazy evaluation
+        if config.lazy_by_default && list_values.len() > config.lazy_threshold {
+            if let Value::Function(func) = function {
+                let source_handle = crate::internal::utils::value_to_handle(list.clone(), &config);
+                let mut lazy_val = crate::internal::create_lazy_map(source_handle.clone(), func.clone());
+                
+                // Fusion logic: if the source is already a lazy value, try to fuse
+                if config.fusion_enabled {
+                    if let crate::internal::InternalValue::Lazy(ref prev_lazy) = *source_handle.get_internal() {
+                        if let Some(fused) = crate::internal::try_fuse_operations(prev_lazy, "map", Some(func.clone())) {
+                            lazy_val = fused;
+                        }
+                    }
+                }
+                
+                let lazy_handle = crate::internal::ValueHandle::new_lazy(lazy_val);
+                
+                // Use enhanced timeout-aware evaluation
+                let mut context = crate::internal::LazyEvaluationContext::new(config);
+                return lazy_handle.get_with_context(interpreter, &mut context);
+            }
+        }
+
+        // Fall back to eager evaluation
+        if should_parallelize(list_values.len()) {
+            // PARALLEL VERSION - Now that Value implements Send + Sync!
+            let results: Result<Vec<_>, _> = list_values
+                .par_iter()
+                .map(|item| interpreter.call_function_safe(function.clone(), vec![item.clone()]))
+                .collect();
+
+            match results {
+                Ok(values) => Ok(Value::List(values.into())),
+                Err(e) => Err(e),
+            }
+        } else {
+            // SEQUENTIAL VERSION (for small lists)
+            let mut result = Vec::new();
+            for item in list_values.iter() {
+                let value = interpreter.call_function(function.clone(), vec![item.clone()])?;
+                result.push(value);
             }
             Ok(Value::List(result.into()))
         }

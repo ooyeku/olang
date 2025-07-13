@@ -260,48 +260,69 @@ fn append_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 /// Check if a file or directory exists
-/// Usage: fs.exists("/path/to/file") -> Bool
+/// Usage: fs.exists("/path/to/file") -> Result<Bool, Error>
 fn exists(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(format!("exists expects 1 argument, got {}", args.len()).into());
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "exists expects 1 argument, got {}",
+            args.len()
+        ))))));
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
-        _ => return Err("exists: path must be a string".into()),
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "exists: path must be a string".to_string(),
+            )))))
+        }
     };
 
-    Ok(Value::Boolean(Path::new(path_str).exists()))
+    Ok(Value::Ok(Box::new(Value::Boolean(Path::new(path_str).exists()))))
 }
 
 /// Check if path is a file
-/// Usage: fs.is_file("/path/to/file") -> Bool
+/// Usage: fs.is_file("/path/to/file") -> Result<Bool, Error>
 fn is_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(format!("is_file expects 1 argument, got {}", args.len()).into());
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "is_file expects 1 argument, got {}",
+            args.len()
+        ))))));
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
-        _ => return Err("is_file: path must be a string".into()),
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "is_file: path must be a string".to_string(),
+            )))))
+        }
     };
 
-    Ok(Value::Boolean(Path::new(path_str).is_file()))
+    Ok(Value::Ok(Box::new(Value::Boolean(Path::new(path_str).is_file()))))
 }
 
 /// Check if path is a directory
-/// Usage: fs.is_dir("/path/to/dir") -> Bool
+/// Usage: fs.is_dir("/path/to/dir") -> Result<Bool, Error>
 fn is_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(format!("is_dir expects 1 argument, got {}", args.len()).into());
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "is_dir expects 1 argument, got {}",
+            args.len()
+        ))))));
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
-        _ => return Err("is_dir: path must be a string".into()),
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "is_dir: path must be a string".to_string(),
+            )))))
+        }
     };
 
-    Ok(Value::Boolean(Path::new(path_str).is_dir()))
+    Ok(Value::Ok(Box::new(Value::Boolean(Path::new(path_str).is_dir()))))
 }
 
 /// List directory contents
@@ -659,24 +680,33 @@ mod tests {
     // Helper to assert Result<T, E> success
     fn assert_ok(result: &Value) -> &Value {
         match result {
-            Value::Ok(inner) => inner.as_ref(),
-            _ => panic!("Expected Ok result, got: {:?}", result),
+            Value::Ok(inner) => inner,
+            _ => {
+                assert!(false, "Expected Ok result, got: {:?}", result);
+                unreachable!()
+            }
         }
     }
 
     // Helper to assert Result<T, E> error
     fn assert_err(result: &Value) -> &Value {
         match result {
-            Value::Err(inner) => inner.as_ref(),
-            _ => panic!("Expected Err result, got: {:?}", result),
+            Value::Err(inner) => inner,
+            _ => {
+                assert!(false, "Expected Err result, got: {:?}", result);
+                unreachable!()
+            }
         }
     }
 
     // Helper to extract string from Value::String
     fn extract_string(value: &Value) -> &str {
         match value {
-            Value::String(s) => s.as_ref(),
-            _ => panic!("Expected string value, got: {:?}", value),
+            Value::String(s) => s,
+            _ => {
+                assert!(false, "Expected string value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
@@ -684,15 +714,28 @@ mod tests {
     fn extract_int(value: &Value) -> i64 {
         match value {
             Value::Integer(i) => *i,
-            _ => panic!("Expected integer value, got: {:?}", value),
+            _ => {
+                assert!(false, "Expected integer value, got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
-    // Helper to extract boolean from Value::Boolean
+    // Helper to extract boolean from Value::Boolean or Ok(Boolean)
     fn extract_bool(value: &Value) -> bool {
         match value {
             Value::Boolean(b) => *b,
-            _ => panic!("Expected boolean value, got: {:?}", value),
+            Value::Ok(inner) => match inner.as_ref() {
+                Value::Boolean(b) => *b,
+                _ => {
+                    assert!(false, "Expected Ok(Boolean), got: Ok({:?})", inner);
+                    unreachable!()
+                }
+            },
+            _ => {
+                assert!(false, "Expected boolean value or Ok(Boolean), got: {:?}", value);
+                unreachable!()
+            }
         }
     }
 
@@ -737,7 +780,7 @@ mod tests {
                 }
             }
         } else {
-            panic!("Expected struct for fs module");
+            assert!(false, "Expected struct for fs module, got: {:?}", module);
         }
     }
 
@@ -857,9 +900,9 @@ mod tests {
         ));
 
         // Test error conditions
-        assert!(exists(vec![int_val(42)]).is_err());
-        assert!(is_file(vec![]).is_err());
-        assert!(is_dir(vec![string_val("a"), string_val("b")]).is_err());
+        assert_err(&exists(vec![int_val(42)]).unwrap());
+        assert_err(&is_file(vec![]).unwrap());
+        assert_err(&is_dir(vec![string_val("a"), string_val("b")]).unwrap());
     }
 
     #[test]
@@ -944,7 +987,7 @@ mod tests {
 
             assert_eq!(names, vec!["file1.txt", "file2.txt", "subdir"]);
         } else {
-            panic!("Expected list result");
+            assert!(false, "Expected list result, got: {:?}", file_list);
         }
 
         // Test error conditions
@@ -1083,7 +1126,7 @@ mod tests {
             assert!(!extract_bool(&fields["is_dir"]));
             // readonly can be true or false depending on platform
         } else {
-            panic!("Expected FileInfo struct");
+            assert!(false, "Expected FileInfo struct, got: {:?}", info_value);
         }
 
         // Test with directory
@@ -1097,7 +1140,7 @@ mod tests {
             assert!(!extract_bool(&fields["is_file"]));
             assert!(extract_bool(&fields["is_dir"]));
         } else {
-            panic!("Expected FileInfo struct");
+            assert!(false, "Expected FileInfo struct, got: {:?}", info_value);
         }
 
         // Test error conditions

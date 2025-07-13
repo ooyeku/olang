@@ -1,6 +1,6 @@
 [package]
 name = "olang"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2021"
 authors = ["Ola Yeku <oyeku@gmail.com>"]
 description = "A minimal, expressive language with first-class functions, pipelines, and pattern matching"
@@ -32,6 +32,9 @@ sha1 = "0.10"
 hmac = "0.12"
 bcrypt = "0.15"
 hex = "0.4"
+aes-gcm = "0.10"
+rsa = "0.9"
+argon2 = "0.5"
 
 # REPL and CLI
 rustyline = "13.0"
@@ -101,6 +104,13 @@ num-traits = "0.2"          # Numeric trait abstractions for vectorization
 criterion = "0.5"
 proptest = "1.3"
 tempfile = "3.8"
+
+# Fuzzing and stress testing dependencies
+arbitrary = "1.3"         # Generate arbitrary data for fuzzing
+fake = "2.9"              # Generate fake data for testing
+quickcheck = "1.0"        # Property-based testing
+lazy_static = "1.4"       # Static variables for test infrastructure
+rand_chacha = "0.3"       # Deterministic random number generation
 
 [profile.release]
 opt-level = 3

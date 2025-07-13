@@ -887,6 +887,32 @@ impl OvmValue {
                     data: ValueData::Promise(gc_ptr),
                 }
             }
+
+            AstValue::Map(map) => {
+                // Convert HashMap<String, Value> to OVM representation
+                // For now, create a simple struct-like representation
+                let mut fields = HashMap::new();
+                for (key, value) in map.iter() {
+                    fields.insert(key.clone(), Self::from_ast(value.clone()));
+                }
+
+                let struct_obj = StructObject {
+                    type_name: "Map".to_string(),
+                    fields,
+                };
+
+                let ptr = Box::into_raw(Box::new(struct_obj));
+                let gc_ptr = GcPtr::new(ptr);
+
+                Self {
+                    header: ValueHeader::new(
+                        TypeTag::Struct,
+                        ExecutionTier::Interpreter,
+                        LazyState::Eager,
+                    ),
+                    data: ValueData::Struct(gc_ptr),
+                }
+            }
         }
     }
 

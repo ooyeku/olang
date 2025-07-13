@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Statement};
+use crate::ast::{Argument, Expr, Statement};
 use crate::ovm::optimization::OptimizationError;
 use crate::ovm::FunctionId;
 use thiserror::Error;
@@ -94,7 +94,14 @@ impl JitCompiler {
                 );
                 self.compile_expression(callee)?;
                 for arg in arguments {
-                    self.compile_expression(arg)?;
+                    match arg {
+                        Argument::Positional(expr) => {
+                            self.compile_expression(expr)?;
+                        }
+                        Argument::Named { value, .. } => {
+                            self.compile_expression(value)?;
+                        }
+                    }
                 }
                 Ok(())
             }

@@ -56,10 +56,10 @@ function_decl = { "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ (
 async_function_decl = { "async" ~ "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ expr }
 type_params  = { "<" ~ identifier ~ ("," ~ identifier)* ~ ">" }
 param_list   = { parameter ~ ("," ~ parameter)* }
-parameter    = { identifier ~ (":" ~ type_annotation)? }
+parameter    = { identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
 
 // Variable declarations
-let_decl    = { "let" ~ identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
+let_decl    = { "let" ~ pattern ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
 
 // Expression hierarchy (with proper operator precedence)
 expr        = { assignment_expr | for_loop | while_loop | loop_expr | break_expr | continue_expr | binary_expr }
@@ -87,7 +87,10 @@ call_expr   = { primary ~ ( function_call | ("." ~ identifier) | ("[" ~ expr ~ "
 function_call = { "(" ~ arg_list? ~ ")" }
 
 // Function call arguments (different from tuple literals)
-arg_list    = { expr ~ ("," ~ expr)* }
+arg_list = { argument ~ ("," ~ argument)* }
+argument = { named_arg | positional_arg }
+positional_arg = { expr }
+named_arg = { identifier ~ ":" ~ expr }
 
 // Try-catch expressions
 try_catch_expr = { "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block }
@@ -95,7 +98,7 @@ try_catch_expr = { "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block }
 // Postfix operators
 postfix_op = { "?" }
 
-primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | anonymous_object | literal | identifier | "(" ~ expr ~ ")" | block }
+primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | anonymous_object | map_literal | literal | identifier | "(" ~ expr ~ ")" | block }
 
 // Lambda functions
 lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ (block | expr) }
@@ -145,14 +148,16 @@ literal     = { float | integer | char_literal | raw_string | template_string | 
 builtin_type = _{ "Int" | "Float" | "String" | "Bool" | "List" | "Tuple" }
 
 // Type annotations
-type_annotation = { union_type | intersection_type | literal_type | anonymous_struct_type | generic_type | result_type | promise_type | function_type | list_type | custom_type | basic_type | unit_type }
-base_type_annotation = { basic_type | custom_type | generic_type | list_type | unit_type | literal_type }
+type_annotation = { union_type | intersection_type | literal_type | anonymous_struct_type | generic_type | result_type | promise_type | function_type | tuple_type | list_type | map_type | custom_type | basic_type | unit_type }
+base_type_annotation = { basic_type | custom_type | generic_type | list_type | map_type | tuple_type | unit_type | literal_type }
 anonymous_struct_type = { "{" ~ struct_field_list? ~ "}" }
-basic_type = { "Int" | "Float" | "String" | "Bool" }
+basic_type = { "Int" | "Float" | "String" | "Bool" | "Map" }
 unit_type = { "()" }
 custom_type = { identifier }
 generic_type = { identifier ~ "<" ~ type_annotation ~ ("," ~ type_annotation)* ~ ">" }
 list_type = { "[" ~ type_annotation ~ "]" }
+map_type = { "Map" ~ "<" ~ type_annotation ~ "," ~ type_annotation ~ ">" }
+tuple_type = { "(" ~ type_annotation ~ "," ~ type_annotation ~ ("," ~ type_annotation)* ~ ")" }
 function_type = { "(" ~ (type_annotation ~ ("," ~ type_annotation)*)? ~ ")" ~ "->" ~ type_annotation }
 result_type = { "Result" ~ "<" ~ type_annotation ~ "," ~ type_annotation ~ ">" }
 promise_type = { "Promise" ~ "<" ~ type_annotation ~ ("," ~ type_annotation)? ~ ">" }
@@ -170,6 +175,11 @@ struct_literal = { identifier ~ "{" ~ field_value_list? ~ "}" }
 anonymous_object = { "{" ~ field_value_list? ~ "}" }
 field_value_list = { field_value ~ ("," ~ field_value)* ~ ","? }
 field_value = { identifier ~ ":" ~ expr }
+
+// Map literals
+map_literal = { "#{" ~ map_entry_list? ~ "}" }
+map_entry_list = { map_entry ~ ("," ~ map_entry)* ~ ","? }
+map_entry = { expr ~ ":" ~ expr }
 
 // Loop constructs
 for_loop    = { "for" ~ identifier ~ "in" ~ expr ~ block }

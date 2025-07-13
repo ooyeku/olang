@@ -31,8 +31,6 @@ pub struct UnifiedHeap {
     regions: RwLock<Vec<Arc<HeapRegion>>>,
 }
 
-#[allow(dead_code)]
-
 /// Heap region with bump pointer allocation
 pub struct HeapRegion {
     start: *mut u8,
@@ -52,11 +50,9 @@ pub enum Generation {
     Large,
 }
 
-#[allow(dead_code)]
-/// Tiered allocation strategy with actual implementation
+/// Optimized allocation strategy focusing on the most effective allocators
 pub struct TieredAllocator {
     tlab_manager: TlabManager,
-    lockfree_allocator: LockFreeAllocator,
     global_allocator: GlobalAllocator,
     region_allocator: RegionAllocator,
 }
@@ -110,14 +106,13 @@ pub struct NurserySpace {
     region: Option<Arc<HeapRegion>>,
 }
 
-#[allow(dead_code)]
+/// Simplified generation spaces for better memory efficiency
 pub struct YoungGeneration {
     size: usize,
     used: AtomicUsize,
     regions: RwLock<Vec<Arc<HeapRegion>>>,
 }
 
-#[allow(dead_code)]
 pub struct OldGeneration {
     size: usize,
     used: AtomicUsize,
@@ -146,11 +141,7 @@ pub struct TlabManager {
     tlab_size: usize,
 }
 
-#[allow(dead_code)]
-pub struct LockFreeAllocator {
-    bump_pointer: AtomicPtr<u8>,
-    limit: AtomicPtr<u8>,
-}
+// LockFreeAllocator removed - not providing significant benefit over TLAB + Global strategy
 
 pub struct GlobalAllocator {
     heap_lock: Mutex<()>,
@@ -212,19 +203,15 @@ impl MemoryManager {
         // Record allocation for GC triggering
         self.gc.record_allocation(size);
 
-        // Try fast allocation paths with safety checks
+        // Optimized allocation path: try TLAB first (fastest), then region allocator
         if let Some(ptr) = self.allocator.try_tlab_allocate(size) {
-            if !ptr.is_null() {
-                self.update_stats_allocated(size);
-                return Ok(ptr);
-            }
+            self.update_stats_allocated(size);
+            return Ok(ptr);
         }
 
         if let Some(ptr) = self.allocator.try_region_allocate(size) {
-            if !ptr.is_null() {
-                self.update_stats_allocated(size);
-                return Ok(ptr);
-            }
+            self.update_stats_allocated(size);
+            return Ok(ptr);
         }
 
         // Slow path with retry logic
@@ -535,7 +522,6 @@ impl TieredAllocator {
     fn new(config: &MemoryConfig) -> Result<Self, MemoryError> {
         Ok(Self {
             tlab_manager: TlabManager::new(config)?,
-            lockfree_allocator: LockFreeAllocator::new(config)?,
             global_allocator: GlobalAllocator::new(config)?,
             region_allocator: RegionAllocator::new(1024 * 1024), // 1MB regions
         })
@@ -966,45 +952,7 @@ impl Drop for ThreadLocalBuffer {
     }
 }
 
-impl LockFreeAllocator {
-    fn new(_config: &MemoryConfig) -> Result<Self, MemoryError> {
-        Ok(Self {
-            bump_pointer: AtomicPtr::new(std::ptr::null_mut()),
-            limit: AtomicPtr::new(std::ptr::null_mut()),
-        })
-    }
-
-    #[allow(dead_code)]
-    fn allocate(&self, size: usize) -> Option<*mut u8> {
-        let aligned_size = (size + 7) & !7; // 8-byte alignment
-
-        loop {
-            let current = self.bump_pointer.load(Ordering::Relaxed);
-            let limit = self.limit.load(Ordering::Relaxed);
-
-            if current.is_null() || limit.is_null() {
-                return None;
-            }
-
-            unsafe {
-                let new_ptr = current.add(aligned_size);
-                if new_ptr <= limit {
-                    match self.bump_pointer.compare_exchange_weak(
-                        current,
-                        new_ptr,
-                        Ordering::Relaxed,
-                        Ordering::Relaxed,
-                    ) {
-                        Ok(_) => return Some(current),
-                        Err(_) => continue,
-                    }
-                } else {
-                    return None;
-                }
-            }
-        }
-    }
-}
+// LockFreeAllocator implementation removed - consolidated into TLAB + Global strategy
 
 impl GlobalAllocator {
     fn new(_config: &MemoryConfig) -> Result<Self, MemoryError> {

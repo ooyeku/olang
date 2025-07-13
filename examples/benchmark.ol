@@ -1,4 +1,4 @@
-let start = dates.timestamp(dates.now())
+
 let n = range(10000)
 
 // Note: Comparison operators in lambda expressions require block syntax: { expr } instead of expr
@@ -21,6 +21,3 @@ for i in r |> map((val) => val * val) {
     let advaned_comp = i |> math.pow(z) |> math.sqrt() |> math.sqrt() |> math.sin() |> math.cos() |> math.round()
 
 }
-
-let end = dates.timestamp(dates.now())
-println(`time: ${end - start}`)

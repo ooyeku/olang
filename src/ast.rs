@@ -32,7 +32,7 @@ pub struct ErrorTypeDecl {
 /// Variable declaration with optional type annotation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LetDecl {
-    pub name: String,
+    pub pattern: Pattern,
     pub type_annotation: Option<TypeAnnotation>,
     pub value: Option<Expr>,
 }
@@ -57,11 +57,12 @@ pub struct AsyncFunctionDecl {
     pub body: Expr,
 }
 
-/// Function parameter with optional type annotation
+/// Function parameter with optional type annotation and default value
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Parameter {
     pub name: String,
     pub type_annotation: Option<TypeAnnotation>,
+    pub default_value: Option<Expr>,
 }
 
 /// Expression types supported by Olang
@@ -79,7 +80,7 @@ pub enum Expr {
     Identifier(String),
     Call {
         callee: Box<Expr>,
-        arguments: Vec<Expr>,
+        arguments: Vec<Argument>,
     },
 
     // Functions
@@ -135,6 +136,9 @@ pub enum Expr {
     StructLiteral(StructLiteral),
     AnonymousObject {
         fields: Vec<FieldValue>,
+    },
+    MapLiteral {
+        entries: Vec<MapEntry>,
     },
     FieldAccess {
         object: Box<Expr>,
@@ -214,6 +218,16 @@ pub enum Expr {
     // Spread/rest (for future use)
     Spread(Box<Expr>),
     Rest(Box<Expr>),
+}
+
+/// Argument types for function calls
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Argument {
+    Positional(Expr),
+    Named {
+        name: String,
+        value: Expr,
+    },
 }
 
 /// Promise types for Promise expressions
@@ -326,6 +340,7 @@ pub enum Value {
     String(Arc<String>),
     Boolean(bool),
     List(Arc<[Value]>),
+    Map(Arc<HashMap<String, Value>>),
     Tuple(Arc<Vec<Value>>),
     Function(Function),
     Builtin(BuiltinFunction),
@@ -397,6 +412,10 @@ pub enum TypeAnnotation {
     Bool,
     Unit, // () type
     List(Box<TypeAnnotation>),
+    Map {
+        key_type: Box<TypeAnnotation>,
+        value_type: Box<TypeAnnotation>,
+    },
     Tuple(Vec<TypeAnnotation>),
     Function {
         params: Vec<TypeAnnotation>,
@@ -438,6 +457,11 @@ pub enum TypeAnnotation {
     },
     Literal {
         value: Box<Value>,
+    },
+    Range {
+        start: Box<TypeAnnotation>,
+        end: Box<TypeAnnotation>,
+        inclusive: bool,
     },
 }
 
@@ -504,6 +528,24 @@ pub enum TypeError {
     CannotInfer {
         expression: String,
     },
+    /// Enhanced error for constraint violations
+    ConstraintViolation {
+        type_name: String,
+        constraint: String,
+        location: String,
+    },
+    /// Enhanced error for union type mismatches
+    UnionMismatch {
+        expected_types: Vec<TypeAnnotation>,
+        found: TypeAnnotation,
+        location: String,
+    },
+    /// Enhanced error for intersection type issues
+    IntersectionMismatch {
+        required_types: Vec<TypeAnnotation>,
+        found: TypeAnnotation,
+        location: String,
+    },
 }
 
 /// Module import statement
@@ -561,6 +603,13 @@ pub struct StructLiteral {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FieldValue {
     pub name: String,
+    pub value: Expr,
+}
+
+/// Map entry for map literals
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MapEntry {
+    pub key: Expr,
     pub value: Expr,
 }
 
@@ -629,6 +678,17 @@ impl std::fmt::Display for Value {
                     write!(f, "{}", item)?;
                 }
                 write!(f, "]")
+            }
+            Value::Map(map_rc) => {
+                let map = map_rc.as_ref();
+                write!(f, "#{{")?;
+                for (i, (key, value)) in map.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "\"{}\": {}", key, value)?;
+                }
+                write!(f, "}}")
             }
             Value::Tuple(items_rc) => {
                 let items = items_rc.as_ref();
@@ -735,6 +795,7 @@ impl Value {
             Value::String(_) => "String".to_string(),
             Value::Boolean(_) => "Bool".to_string(),
             Value::List(_) => "List".to_string(),
+            Value::Map(_) => "Map".to_string(),
             Value::Tuple(_) => "Tuple".to_string(),
             Value::Function(_) => "Function".to_string(),
             Value::Builtin(_) => "Builtin".to_string(),

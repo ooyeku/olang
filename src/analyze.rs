@@ -1,4 +1,4 @@
-use crate::ast::{Expr, MatchArm, Pattern, Program, Statement};
+use crate::ast::{Expr, MatchArm, Pattern, Program, Statement, Argument, TemplatePart, Value, ImportDecl};
 use crate::builtin::BuiltinFunctions;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -11,6 +11,8 @@ pub enum AnalysisError {
     DuplicateVariable { name: String },
     #[error("Non-exhaustive pattern match")]
     NonExhaustivePatternMatch,
+    #[error("Non-exhaustive pattern match: missing patterns {missing_patterns:?}")]
+    NonExhaustivePatternMatchWithMissing { missing_patterns: Vec<String> },
     #[error("Unreachable code")]
     UnreachableCode,
     #[error("Type error: {message}")]
@@ -79,15 +81,22 @@ impl Analyzer {
                     self.analyze_expr(value)?;
                 }
 
-                // Check for duplicate variable in current scope
-                if self.scopes[self.current_scope].contains(&let_decl.name) {
-                    return Err(AnalysisError::DuplicateVariable {
-                        name: let_decl.name.clone(),
-                    });
+                // Extract variable names from the pattern
+                let pattern_variables = self.extract_pattern_variables(&let_decl.pattern);
+                
+                // Check for duplicate variables in current scope
+                for var_name in &pattern_variables {
+                    if self.scopes[self.current_scope].contains(var_name) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: var_name.clone(),
+                        });
+                    }
                 }
 
-                // Add variable to current scope
-                self.scopes[self.current_scope].insert(let_decl.name.clone());
+                // Add all variables from the pattern to current scope
+                for var_name in pattern_variables {
+                    self.scopes[self.current_scope].insert(var_name);
+                }
                 Ok(())
             }
             Statement::FunctionDecl(func_decl) => {
@@ -110,9 +119,9 @@ impl Analyzer {
                 // TODO: Implement error type declaration analysis
                 Ok(())
             }
-            Statement::ImportDecl(_) => {
-                // TODO: Implement import analysis
-                Ok(())
+            Statement::ImportDecl(import_decl) => {
+                // Implement import analysis
+                self.analyze_import_decl(import_decl)
             }
             Statement::ExportDecl(export_decl) => {
                 // Analyze the export value
@@ -224,8 +233,28 @@ impl Analyzer {
                 self.analyze_expr(end)?;
                 Ok(())
             }
-            Expr::StructLiteral(_) => {
-                // TODO: Implement struct literal analysis
+            Expr::StructLiteral(struct_lit) => {
+                // Analyze all field expressions in the struct literal
+                for field in &struct_lit.fields {
+                    self.analyze_expr(&field.value)?;
+                }
+                
+                // Check for duplicate field names
+                let mut field_names = HashSet::new();
+                for field in &struct_lit.fields {
+                    if !field_names.insert(&field.name) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: field.name.clone(),
+                        });
+                    }
+                }
+                
+                // In a full implementation, we would also:
+                // - Check if the struct type exists
+                // - Check if all required fields are present
+                // - Check if any extra fields are provided
+                // - Validate field types against the struct definition
+                
                 Ok(())
             }
             Expr::FieldAccess { object, .. } => {
@@ -243,9 +272,43 @@ impl Analyzer {
                 self.analyze_expr(try_block)?;
                 self.analyze_expr(catch_block)
             }
-            Expr::Assignment { target: _, value } => {
+            Expr::Assignment { target, value } => {
+                // Analyze the value expression first
                 self.analyze_expr(value)?;
-                // TODO: Check if variable exists for assignment vs declaration
+                
+                // Check if the target variable exists in any scope
+                let mut variable_exists = false;
+                for scope in self.scopes.iter().rev() {
+                    if scope.contains(target) {
+                        variable_exists = true;
+                        break;
+                    }
+                }
+                
+                if !variable_exists {
+                    // Variable doesn't exist - this is an assignment to an undefined variable
+                    // In some languages this would be an error, but in Olang it might be
+                    // allowed to create variables through assignment
+                    // For now, we'll add it to the current scope
+                    self.scopes[self.current_scope].insert(target.clone());
+                    
+                    // Also add to variables map for tracking
+                    self.variables.insert(
+                        target.clone(),
+                        VariableInfo {
+                            name: target.clone(),
+                            scope: self.current_scope,
+                            is_mutable: true, // Variables created through assignment are mutable
+                            usage_count: 1,   // Count the assignment as a use
+                        },
+                    );
+                } else {
+                    // Variable exists - update usage count
+                    if let Some(var_info) = self.variables.get_mut(target) {
+                        var_info.usage_count += 1;
+                    }
+                }
+                
                 Ok(())
             }
             Expr::Index { object, index } => {
@@ -265,11 +328,35 @@ impl Analyzer {
         let mut patterns = Vec::new();
         for arm in arms {
             patterns.push(&arm.pattern);
+            
+            // Enter a new scope for pattern variables
+            self.enter_scope();
+            
+            // Extract and bind pattern variables
+            let pattern_variables = self.extract_pattern_variables(&arm.pattern);
+            for var_name in pattern_variables {
+                self.scopes[self.current_scope].insert(var_name);
+            }
+            
+            // Analyze the arm expression
             self.analyze_expr(&arm.expression)?;
+            
+            // Exit the scope
+            self.exit_scope();
         }
 
-        // TODO: Implement pattern exhaustiveness checking
-        // For now, just check that we have at least one arm
+        // Check pattern exhaustiveness
+        let pattern_refs: Vec<Pattern> = patterns.iter().map(|p| (*p).clone()).collect();
+        if !self.check_pattern_exhaustiveness(&pattern_refs)? {
+            // Get missing patterns for better error messages
+            let missing_patterns = self.get_missing_patterns(&pattern_refs);
+            if !missing_patterns.is_empty() {
+                return Err(AnalysisError::NonExhaustivePatternMatchWithMissing { missing_patterns });
+            } else {
+                return Err(AnalysisError::NonExhaustivePatternMatch);
+            }
+        }
+
         Ok(())
     }
 
@@ -302,6 +389,78 @@ impl Analyzer {
         }
     }
 
+    /// Extract all variable names from a pattern
+    fn extract_pattern_variables(&self, pattern: &Pattern) -> Vec<String> {
+        let mut variables = Vec::new();
+        self.collect_pattern_variables(pattern, &mut variables);
+        variables
+    }
+
+    /// Recursively collect variable names from a pattern
+    fn collect_pattern_variables(&self, pattern: &Pattern, variables: &mut Vec<String>) {
+        match pattern {
+            Pattern::Identifier(name) => {
+                variables.push(name.clone());
+            }
+            Pattern::Wildcard => {
+                // No variables to collect
+            }
+            Pattern::Tuple(patterns) => {
+                for pattern in patterns {
+                    self.collect_pattern_variables(pattern, variables);
+                }
+            }
+            Pattern::List { patterns, rest } => {
+                for pattern in patterns {
+                    self.collect_pattern_variables(pattern, variables);
+                }
+                if let Some(rest_name) = rest {
+                    variables.push(rest_name.clone());
+                }
+            }
+            Pattern::Struct { field_patterns, .. } => {
+                for (_, field_pattern) in field_patterns {
+                    self.collect_pattern_variables(field_pattern, variables);
+                }
+            }
+            Pattern::AnonymousStruct { field_patterns } => {
+                for (_, field_pattern) in field_patterns {
+                    self.collect_pattern_variables(field_pattern, variables);
+                }
+            }
+            Pattern::Or { alternatives } => {
+                // For or patterns, collect variables from all alternatives
+                // Note: In practice, all alternatives should bind the same variables
+                for alternative in alternatives {
+                    self.collect_pattern_variables(alternative, variables);
+                }
+            }
+            Pattern::Ok(inner_pattern) => {
+                self.collect_pattern_variables(inner_pattern, variables);
+            }
+            Pattern::Err(inner_pattern) => {
+                self.collect_pattern_variables(inner_pattern, variables);
+            }
+            Pattern::Literal(_) => {
+                // No variables to collect
+            }
+            Pattern::Range { .. } => {
+                // No variables to collect
+            }
+            Pattern::EnumVariant { patterns, .. } => {
+                for pattern in patterns {
+                    self.collect_pattern_variables(pattern, variables);
+                }
+            }
+            Pattern::Guarded { pattern, .. } => {
+                self.collect_pattern_variables(pattern, variables);
+            }
+            Pattern::Rest(name) => {
+                variables.push(name.clone());
+            }
+        }
+    }
+
     pub fn get_unused_variables(&self) -> Vec<&String> {
         self.variables
             .iter()
@@ -319,15 +478,566 @@ impl Analyzer {
         &self,
         patterns: &[Pattern],
     ) -> Result<bool, AnalysisError> {
-        // TODO: Implement proper pattern exhaustiveness checking
-        // For now, just return true if we have at least one pattern
-        Ok(!patterns.is_empty())
+        // Empty patterns are never exhaustive
+        if patterns.is_empty() {
+            return Ok(false);
+        }
+
+        // Check for catch-all patterns (wildcards and variables)
+        if self.has_catch_all_pattern(patterns) {
+            return Ok(true);
+        }
+
+        // Analyze patterns based on their structure
+        let pattern_analysis = self.analyze_pattern_structure(patterns)?;
+        
+        // Check exhaustiveness based on pattern analysis
+        match pattern_analysis {
+            PatternAnalysis::Boolean(has_true, has_false) => {
+                Ok(has_true && has_false)
+            }
+            PatternAnalysis::Result(has_ok, has_err) => {
+                Ok(has_ok && has_err)
+            }
+            PatternAnalysis::Literals(literal_values) => {
+                // For literals, we can't determine exhaustiveness without type information
+                // This is a limitation - in a full implementation, we'd need type context
+                Ok(false)
+            }
+            PatternAnalysis::Mixed => {
+                // Mixed patterns without catch-all are not exhaustive
+                Ok(false)
+            }
+            PatternAnalysis::Enum(variants) => {
+                // For enum exhaustiveness, we'd need type information about all possible variants
+                // For now, return false - this would be enhanced with type context
+                Ok(false)
+            }
+            PatternAnalysis::Tuple(arity) => {
+                // Tuple patterns are exhaustive if all positions are exhaustive
+                // This is a simplified check - full implementation would be recursive
+                Ok(false)
+            }
+            PatternAnalysis::List => {
+                // List patterns are complex to check exhaustively
+                // Would need to consider all possible list lengths
+                Ok(false)
+            }
+        }
     }
 
-    pub fn detect_dead_code(&mut self, _program: &Program) -> Vec<usize> {
-        // TODO: Implement dead code detection
-        // This would track which statements are reachable
-        Vec::new()
+    /// Check if patterns contain a catch-all pattern (wildcard or variable)
+    fn has_catch_all_pattern(&self, patterns: &[Pattern]) -> bool {
+        for pattern in patterns {
+            if self.is_catch_all_pattern(pattern) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a single pattern is catch-all (matches everything)
+    fn is_catch_all_pattern(&self, pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Wildcard => true,
+            Pattern::Identifier(_) => true, // Variables match everything
+            Pattern::Or { alternatives } => {
+                // Or pattern is catch-all if any alternative is catch-all
+                alternatives.iter().any(|alt| self.is_catch_all_pattern(alt))
+            }
+            Pattern::Guarded {  .. } => {
+                // Guarded patterns are not catch-all (guard might fail)
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Analyze the structure of patterns to determine exhaustiveness strategy
+    fn analyze_pattern_structure(&self, patterns: &[Pattern]) -> Result<PatternAnalysis, AnalysisError> {
+        let mut has_boolean = false;
+        let mut has_true = false;
+        let mut has_false = false;
+        let mut has_result = false;
+        let mut has_ok = false;
+        let mut has_err = false;
+        let mut literal_values = Vec::new();
+        let mut enum_variants = std::collections::HashSet::new();
+        let mut tuple_arities = std::collections::HashSet::new();
+        let mut has_list = false;
+
+        for pattern in patterns {
+            match pattern {
+                Pattern::Literal(value) => {
+                    match value {
+                        Value::Boolean(true) => {
+                            has_boolean = true;
+                            has_true = true;
+                        }
+                        Value::Boolean(false) => {
+                            has_boolean = true;
+                            has_false = true;
+                        }
+                        _ => {
+                            literal_values.push(value.clone());
+                        }
+                    }
+                }
+                Pattern::Ok(_) => {
+                    has_result = true;
+                    has_ok = true;
+                }
+                Pattern::Err(_) => {
+                    has_result = true;
+                    has_err = true;
+                }
+                Pattern::EnumVariant { variant_name, .. } => {
+                    enum_variants.insert(variant_name.clone());
+                }
+                Pattern::Tuple(sub_patterns) => {
+                    tuple_arities.insert(sub_patterns.len());
+                }
+                Pattern::List { .. } => {
+                    has_list = true;
+                }
+                Pattern::Or { alternatives } => {
+                    // Recursively analyze or pattern alternatives
+                    let sub_analysis = self.analyze_pattern_structure(alternatives)?;
+                    match sub_analysis {
+                        PatternAnalysis::Boolean(sub_true, sub_false) => {
+                            has_boolean = true;
+                            has_true = has_true || sub_true;
+                            has_false = has_false || sub_false;
+                        }
+                        PatternAnalysis::Result(sub_ok, sub_err) => {
+                            has_result = true;
+                            has_ok = has_ok || sub_ok;
+                            has_err = has_err || sub_err;
+                        }
+                        PatternAnalysis::Literals(sub_literals) => {
+                            literal_values.extend(sub_literals);
+                        }
+                        PatternAnalysis::Enum(sub_variants) => {
+                            enum_variants.extend(sub_variants);
+                        }
+                        PatternAnalysis::Tuple(sub_arity) => {
+                            tuple_arities.insert(sub_arity);
+                        }
+                        PatternAnalysis::List => {
+                            has_list = true;
+                        }
+                        _ => {}
+                    }
+                }
+                Pattern::Guarded { pattern, .. } => {
+                    // Analyze the inner pattern, but guards make exhaustiveness more complex
+                    let inner_analysis = self.analyze_pattern_structure(&[pattern.as_ref().clone()])?;
+                    // For now, treat guarded patterns as non-exhaustive
+                    // Full implementation would need guard analysis
+                }
+                _ => {
+                    // Other patterns like Range, Struct, etc.
+                    // For now, consider them as mixed patterns
+                }
+            }
+        }
+
+        // Determine the primary pattern type
+        if has_boolean && !has_result && literal_values.is_empty() && enum_variants.is_empty() {
+            Ok(PatternAnalysis::Boolean(has_true, has_false))
+        } else if has_result && !has_boolean && literal_values.is_empty() && enum_variants.is_empty() {
+            Ok(PatternAnalysis::Result(has_ok, has_err))
+        } else if !literal_values.is_empty() && !has_boolean && !has_result && enum_variants.is_empty() {
+            Ok(PatternAnalysis::Literals(literal_values))
+        } else if !enum_variants.is_empty() && !has_boolean && !has_result && literal_values.is_empty() {
+            Ok(PatternAnalysis::Enum(enum_variants))
+        } else if tuple_arities.len() == 1 && !has_boolean && !has_result && literal_values.is_empty() && enum_variants.is_empty() {
+            Ok(PatternAnalysis::Tuple(tuple_arities.into_iter().next().unwrap()))
+        } else if has_list && !has_boolean && !has_result && literal_values.is_empty() && enum_variants.is_empty() {
+            Ok(PatternAnalysis::List)
+        } else {
+            Ok(PatternAnalysis::Mixed)
+        }
+    }
+
+    /// Get missing patterns for better error messages
+    pub fn get_missing_patterns(&self, patterns: &[Pattern]) -> Vec<String> {
+        let mut missing = Vec::new();
+        
+        // Check for catch-all patterns first
+        if self.has_catch_all_pattern(patterns) {
+            return missing; // No missing patterns if there's a catch-all
+        }
+
+        // Analyze pattern structure to find missing patterns
+        if let Ok(analysis) = self.analyze_pattern_structure(patterns) {
+            match analysis {
+                PatternAnalysis::Boolean(has_true, has_false) => {
+                    if !has_true {
+                        missing.push("true".to_string());
+                    }
+                    if !has_false {
+                        missing.push("false".to_string());
+                    }
+                }
+                PatternAnalysis::Result(has_ok, has_err) => {
+                    if !has_ok {
+                        missing.push("Ok(_)".to_string());
+                    }
+                    if !has_err {
+                        missing.push("Err(_)".to_string());
+                    }
+                }
+                PatternAnalysis::Literals(_) => {
+                    missing.push("_ (wildcard pattern)".to_string());
+                }
+                PatternAnalysis::Enum(_) => {
+                    missing.push("_ (wildcard pattern or other enum variants)".to_string());
+                }
+                PatternAnalysis::Tuple(_) => {
+                    missing.push("_ (wildcard pattern)".to_string());
+                }
+                PatternAnalysis::List => {
+                    missing.push("_ (wildcard pattern)".to_string());
+                }
+                PatternAnalysis::Mixed => {
+                    missing.push("_ (wildcard pattern)".to_string());
+                }
+            }
+        }
+
+        missing
+    }
+
+    pub fn detect_dead_code(&mut self, program: &Program) -> Vec<usize> {
+        let mut reachable = HashSet::new();
+        
+        // All top-level statements are initially reachable
+        for (index, statement) in program.statements.iter().enumerate() {
+            reachable.insert(index);
+            self.mark_statement_reachable(statement, &mut reachable);
+        }
+        
+        // Find unreachable statements
+        let mut dead_code = Vec::new();
+        for (index, _) in program.statements.iter().enumerate() {
+            if !reachable.contains(&index) {
+                dead_code.push(index);
+            }
+        }
+        
+        dead_code
+    }
+
+    /// Mark a statement and its contained expressions as reachable
+    fn mark_statement_reachable(&mut self, statement: &Statement, reachable: &mut HashSet<usize>) {
+        match statement {
+            Statement::Expression(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Statement::LetDecl(let_decl) => {
+                if let Some(value) = &let_decl.value {
+                    self.mark_expression_reachable(value, reachable);
+                }
+            }
+            Statement::FunctionDecl(func_decl) => {
+                self.mark_expression_reachable(&func_decl.body, reachable);
+            }
+            Statement::AsyncFunctionDecl(async_func_decl) => {
+                self.mark_expression_reachable(&async_func_decl.body, reachable);
+            }
+            Statement::ExportDecl(export_decl) => {
+                self.mark_expression_reachable(&export_decl.value, reachable);
+            }
+            Statement::TypeDecl(_) | Statement::ErrorTypeDecl(_) | Statement::ImportDecl(_) => {
+                // These don't contain expressions that can be unreachable
+            }
+        }
+    }
+
+    /// Mark an expression and its sub-expressions as reachable
+    fn mark_expression_reachable(&mut self, expr: &Expr, reachable: &mut HashSet<usize>) {
+        match expr {
+            Expr::Block(statements) => {
+                let mut statements_reachable = true;
+                for statement in statements {
+                    if statements_reachable {
+                        self.mark_statement_reachable(statement, reachable);
+                    }
+                    
+                    // Check if this statement makes subsequent statements unreachable
+                    if self.is_terminating_statement(statement) {
+                        statements_reachable = false;
+                    }
+                }
+            }
+            Expr::If { condition, then_branch, else_branch } => {
+                self.mark_expression_reachable(condition, reachable);
+                self.mark_expression_reachable(then_branch, reachable);
+                if let Some(else_branch) = else_branch {
+                    self.mark_expression_reachable(else_branch, reachable);
+                }
+            }
+            Expr::Match { value, arms } => {
+                self.mark_expression_reachable(value, reachable);
+                for arm in arms {
+                    self.mark_expression_reachable(&arm.expression, reachable);
+                }
+            }
+            Expr::Lambda { body, .. } => {
+                self.mark_expression_reachable(body, reachable);
+            }
+            Expr::Call { callee, arguments } => {
+                self.mark_expression_reachable(callee, reachable);
+                for arg in arguments {
+                    match arg {
+                        Argument::Positional(expr) => self.mark_expression_reachable(expr, reachable),
+                        Argument::Named { value, .. } => self.mark_expression_reachable(value, reachable),
+                    }
+                }
+            }
+            Expr::Pipeline { left, right } => {
+                self.mark_expression_reachable(left, reachable);
+                self.mark_expression_reachable(right, reachable);
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.mark_expression_reachable(left, reachable);
+                self.mark_expression_reachable(right, reachable);
+            }
+            Expr::UnaryOp { operand, .. } => {
+                self.mark_expression_reachable(operand, reachable);
+            }
+            Expr::List(items) => {
+                for item in items.iter() {
+                    self.mark_expression_reachable(item, reachable);
+                }
+            }
+            Expr::Tuple(items) => {
+                for item in items.iter() {
+                    self.mark_expression_reachable(item, reachable);
+                }
+            }
+            Expr::MapLiteral { entries } => {
+                for entry in entries {
+                    self.mark_expression_reachable(&entry.key, reachable);
+                    self.mark_expression_reachable(&entry.value, reachable);
+                }
+            }
+            Expr::Index { object, index } => {
+                self.mark_expression_reachable(object, reachable);
+                self.mark_expression_reachable(index, reachable);
+            }
+            Expr::FieldAccess { object, .. } => {
+                self.mark_expression_reachable(object, reachable);
+            }
+            Expr::Assignment { value, .. } => {
+                self.mark_expression_reachable(value, reachable);
+            }
+            Expr::TryCatch { try_block, catch_block, .. } => {
+                self.mark_expression_reachable(try_block, reachable);
+                self.mark_expression_reachable(catch_block, reachable);
+            }
+            Expr::Try(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::ResultOk(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::ResultErr(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::ForLoop { iterable, body, .. } => {
+                self.mark_expression_reachable(iterable, reachable);
+                self.mark_expression_reachable(body, reachable);
+            }
+            Expr::WhileLoop { condition, body } => {
+                self.mark_expression_reachable(condition, reachable);
+                self.mark_expression_reachable(body, reachable);
+            }
+            Expr::Loop { body } => {
+                self.mark_expression_reachable(body, reachable);
+            }
+            Expr::Range { start, end, .. } => {
+                self.mark_expression_reachable(start, reachable);
+                self.mark_expression_reachable(end, reachable);
+            }
+            Expr::StructLiteral(struct_lit) => {
+                for field in &struct_lit.fields {
+                    self.mark_expression_reachable(&field.value, reachable);
+                }
+            }
+            Expr::AnonymousObject { fields } => {
+                for field in fields {
+                    self.mark_expression_reachable(&field.value, reachable);
+                }
+            }
+            Expr::Async { body, .. } => {
+                self.mark_expression_reachable(body, reachable);
+            }
+            Expr::Await { expression } => {
+                self.mark_expression_reachable(expression, reachable);
+            }
+            Expr::Promise { value, delay, .. } => {
+                self.mark_expression_reachable(value, reachable);
+                if let Some(delay) = delay {
+                    self.mark_expression_reachable(delay, reachable);
+                }
+            }
+            Expr::All(promises) => {
+                for promise in promises {
+                    self.mark_expression_reachable(promise, reachable);
+                }
+            }
+            Expr::Race(promises) => {
+                for promise in promises {
+                    self.mark_expression_reachable(promise, reachable);
+                }
+            }
+            Expr::Spawn(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::Spread(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::Rest(expr) => {
+                self.mark_expression_reachable(expr, reachable);
+            }
+            Expr::TemplateString { parts } => {
+                for part in parts {
+                    if let TemplatePart::Interpolation(expr) = part {
+                        self.mark_expression_reachable(expr, reachable);
+                    }
+                }
+            }
+            Expr::BitwiseOp { left, right, .. } => {
+                self.mark_expression_reachable(left, reachable);
+                self.mark_expression_reachable(right, reachable);
+            }
+            // Terminal expressions that don't contain other expressions
+            Expr::Integer(_) | Expr::Float(_) | Expr::String(_) | Expr::Boolean(_) |
+            Expr::RawString(_) | Expr::Identifier(_) | Expr::Break | Expr::Continue => {
+                // These don't contain sub-expressions
+            }
+        }
+    }
+
+    /// Check if a statement is terminating (makes subsequent statements unreachable)
+    fn is_terminating_statement(&self, statement: &Statement) -> bool {
+        match statement {
+            Statement::Expression(expr) => self.is_terminating_expression(expr),
+            _ => false,
+        }
+    }
+
+    /// Check if an expression is terminating (doesn't return control flow)
+    fn is_terminating_expression(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Break | Expr::Continue => true,
+            Expr::Block(statements) => {
+                // A block is terminating if its last statement is terminating
+                if let Some(last_stmt) = statements.last() {
+                    self.is_terminating_statement(last_stmt)
+                } else {
+                    false
+                }
+            }
+            Expr::If { then_branch, else_branch, .. } => {
+                // If is terminating if both branches are terminating
+                if let Some(else_branch) = else_branch {
+                    self.is_terminating_expression(then_branch) && self.is_terminating_expression(else_branch)
+                } else {
+                    false
+                }
+            }
+            Expr::Match { arms, .. } => {
+                // Match is terminating if all arms are terminating
+                arms.iter().all(|arm| self.is_terminating_expression(&arm.expression))
+            }
+            _ => false,
+        }
+    }
+
+    /// Analyze import declarations for module dependencies and validation
+    fn analyze_import_decl(&mut self, import_decl: &ImportDecl) -> Result<(), AnalysisError> {
+        // Check for valid module path format
+        if import_decl.module_path.is_empty() {
+            return Err(AnalysisError::TypeError {
+                message: "Empty module path in import declaration".to_string(),
+            });
+        }
+        
+        // Check for relative path traversal (security concern)
+        if import_decl.module_path.contains("..") {
+            return Err(AnalysisError::TypeError {
+                message: "Path traversal not allowed in module imports".to_string(),
+            });
+        }
+        
+        // Track imported symbols in current scope
+        match &import_decl.items {
+            Some(items) => {
+                // Specific imports: import { func1, func2 } from "module"
+                for item in items {
+                    if item.is_empty() {
+                        return Err(AnalysisError::TypeError {
+                            message: "Empty import item name".to_string(),
+                        });
+                    }
+                    
+                    // Check for duplicate imports in same scope
+                    if self.scopes[self.current_scope].contains(item) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: item.clone(),
+                        });
+                    }
+                    
+                    // Add imported symbol to current scope
+                    self.scopes[self.current_scope].insert(item.clone());
+                    
+                    // Track in variables map
+                    self.variables.insert(
+                        item.clone(),
+                        VariableInfo {
+                            name: item.clone(),
+                            scope: self.current_scope,
+                            is_mutable: false, // Imported symbols are typically immutable
+                            usage_count: 0,    // Will be incremented when used
+                        },
+                    );
+                }
+            }
+            None => {
+                // Wildcard import: import * from "module"
+                // We can't validate specific symbols without loading the module
+                // But we can check for conflicts if we know the module exports
+                
+                // For now, we'll just mark that a wildcard import happened
+                // In a full implementation, we would:
+                // 1. Load the module to get its exports
+                // 2. Check for conflicts with existing symbols
+                // 3. Add all exported symbols to the current scope
+                
+                // Add a special marker to track wildcard imports
+                let wildcard_marker = format!("__wildcard_import_{}", import_decl.module_path);
+                self.variables.insert(
+                    wildcard_marker.clone(),
+                    VariableInfo {
+                        name: wildcard_marker,
+                        scope: self.current_scope,
+                        is_mutable: false,
+                        usage_count: 0,
+                    },
+                );
+            }
+        }
+        
+        // Additional validation could include:
+        // - Checking if the module exists (requires file system access)
+        // - Validating that imported symbols exist in the target module
+        // - Detecting circular dependencies (requires global dependency tracking)
+        // - Checking for unused imports
+        
+        Ok(())
     }
 }
 
@@ -409,7 +1119,7 @@ impl TypeInferrer {
 
 // Dead code detection
 pub struct DeadCodeDetector {
-    _reachable: HashSet<usize>,
+    reachable: HashSet<usize>,
 }
 
 impl Default for DeadCodeDetector {
@@ -421,13 +1131,189 @@ impl Default for DeadCodeDetector {
 impl DeadCodeDetector {
     pub fn new() -> Self {
         Self {
-            _reachable: HashSet::new(),
+            reachable: HashSet::new(),
         }
     }
 
-    pub fn detect_dead_code(&mut self, _program: &Program) -> Vec<usize> {
-        // TODO: Implement dead code detection
-        // This would track which statements are reachable
-        Vec::new()
+    pub fn detect_dead_code(&mut self, program: &Program) -> Vec<usize> {
+        self.reachable.clear();
+        
+        // All top-level statements are initially reachable
+        for (index, statement) in program.statements.iter().enumerate() {
+            self.reachable.insert(index);
+            self.mark_statement_reachable(statement);
+        }
+        
+        // Find unreachable statements
+        let mut dead_code = Vec::new();
+        for (index, _) in program.statements.iter().enumerate() {
+            if !self.reachable.contains(&index) {
+                dead_code.push(index);
+            }
+        }
+        
+        dead_code
     }
+
+    /// Mark a statement and its contained expressions as reachable
+    fn mark_statement_reachable(&mut self, statement: &Statement) {
+        match statement {
+            Statement::Expression(expr) => {
+                self.mark_expression_reachable(expr);
+            }
+            Statement::LetDecl(let_decl) => {
+                if let Some(value) = &let_decl.value {
+                    self.mark_expression_reachable(value);
+                }
+            }
+            Statement::FunctionDecl(func_decl) => {
+                self.mark_expression_reachable(&func_decl.body);
+            }
+            Statement::AsyncFunctionDecl(async_func_decl) => {
+                self.mark_expression_reachable(&async_func_decl.body);
+            }
+            Statement::ExportDecl(export_decl) => {
+                self.mark_expression_reachable(&export_decl.value);
+            }
+            Statement::TypeDecl(_) | Statement::ErrorTypeDecl(_) | Statement::ImportDecl(_) => {
+                // These don't contain expressions that can be unreachable
+            }
+        }
+    }
+
+    /// Mark an expression and its sub-expressions as reachable
+    fn mark_expression_reachable(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Block(statements) => {
+                let mut statements_reachable = true;
+                for statement in statements {
+                    if statements_reachable {
+                        self.mark_statement_reachable(statement);
+                    }
+                    
+                    // Check if this statement makes subsequent statements unreachable
+                    if self.is_terminating_statement(statement) {
+                        statements_reachable = false;
+                    }
+                }
+            }
+            Expr::If { condition, then_branch, else_branch } => {
+                self.mark_expression_reachable(condition);
+                self.mark_expression_reachable(then_branch);
+                if let Some(else_branch) = else_branch {
+                    self.mark_expression_reachable(else_branch);
+                }
+            }
+            Expr::Match { value, arms } => {
+                self.mark_expression_reachable(value);
+                for arm in arms {
+                    self.mark_expression_reachable(&arm.expression);
+                }
+            }
+            Expr::Lambda { body, .. } => {
+                self.mark_expression_reachable(body);
+            }
+            Expr::Call { callee, arguments } => {
+                self.mark_expression_reachable(callee);
+                for arg in arguments {
+                    match arg {
+                        Argument::Positional(expr) => self.mark_expression_reachable(expr),
+                        Argument::Named { value, .. } => self.mark_expression_reachable(value),
+                    }
+                }
+            }
+            Expr::Pipeline { left, right } => {
+                self.mark_expression_reachable(left);
+                self.mark_expression_reachable(right);
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.mark_expression_reachable(left);
+                self.mark_expression_reachable(right);
+            }
+            Expr::UnaryOp { operand, .. } => {
+                self.mark_expression_reachable(operand);
+            }
+            Expr::List(items) => {
+                for item in items.iter() {
+                    self.mark_expression_reachable(item);
+                }
+            }
+            Expr::Tuple(items) => {
+                for item in items.iter() {
+                    self.mark_expression_reachable(item);
+                }
+            }
+            Expr::MapLiteral { entries } => {
+                for entry in entries {
+                    self.mark_expression_reachable(&entry.key);
+                    self.mark_expression_reachable(&entry.value);
+                }
+            }
+            Expr::StructLiteral(struct_lit) => {
+                for field in &struct_lit.fields {
+                    self.mark_expression_reachable(&field.value);
+                }
+            }
+            // Add other expression types as needed
+            _ => {
+                // For now, just mark as reachable without recursing
+                // In a full implementation, we'd handle all expression types
+            }
+        }
+    }
+
+    /// Check if a statement is terminating (makes subsequent statements unreachable)
+    fn is_terminating_statement(&self, statement: &Statement) -> bool {
+        match statement {
+            Statement::Expression(expr) => self.is_terminating_expression(expr),
+            _ => false,
+        }
+    }
+
+    /// Check if an expression is terminating (doesn't return control flow)
+    fn is_terminating_expression(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Break | Expr::Continue => true,
+            Expr::Block(statements) => {
+                // A block is terminating if its last statement is terminating
+                if let Some(last_stmt) = statements.last() {
+                    self.is_terminating_statement(last_stmt)
+                } else {
+                    false
+                }
+            }
+            Expr::If { then_branch, else_branch, .. } => {
+                // If is terminating if both branches are terminating
+                if let Some(else_branch) = else_branch {
+                    self.is_terminating_expression(then_branch) && self.is_terminating_expression(else_branch)
+                } else {
+                    false
+                }
+            }
+            Expr::Match { arms, .. } => {
+                // Match is terminating if all arms are terminating
+                arms.iter().all(|arm| self.is_terminating_expression(&arm.expression))
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Analysis result for different pattern types
+#[derive(Debug, Clone)]
+enum PatternAnalysis {
+    /// Boolean patterns (true/false coverage)
+    Boolean(bool, bool), // (has_true, has_false)
+    /// Result patterns (Ok/Err coverage)
+    Result(bool, bool), // (has_ok, has_err)
+    /// Literal patterns
+    Literals(Vec<Value>),
+    /// Enum patterns
+    Enum(std::collections::HashSet<String>),
+    /// Tuple patterns with fixed arity
+    Tuple(usize),
+    /// List patterns
+    List,
+    /// Mixed pattern types
+    Mixed,
 }

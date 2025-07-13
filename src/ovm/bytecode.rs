@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Register-based bytecode VM for intermediate-tier execution between interpreter and JIT
 
 use crate::ast::{BinaryOp, Expr, FunctionDecl, UnaryOp, Value};
@@ -1657,6 +1655,7 @@ impl BytecodeVm {
                 "enum"
             },
             Ok(Value::Promise { .. }) => "promise",
+            Ok(Value::Map(_)) => "map",
             Err(_) => "unknown",
         }
     }
@@ -3006,232 +3005,9 @@ impl ControlFlowOptimizer {
 // Add new optimization passes for Phase 2
 
 /// Loop optimization pass
-pub struct LoopOptimizer {
-    loop_info: HashMap<usize, LoopInfo>,
-    dominance_tree: DominanceTree,
-}
+// Loop optimization removed - not currently used in main execution path
 
-#[derive(Debug, Clone)]
-struct LoopInfo {
-    header: usize,
-    body: Vec<usize>,
-    exit_blocks: Vec<usize>,
-    depth: u32,
-    trip_count: Option<u32>,
-}
-
-#[derive(Debug, Clone)]
-struct DominanceTree {
-    dominators: HashMap<usize, Vec<usize>>,
-    immediate_dominators: HashMap<usize, usize>,
-}
-
-impl LoopOptimizer {
-    pub fn new() -> Self {
-        Self {
-            loop_info: HashMap::new(),
-            dominance_tree: DominanceTree {
-                dominators: HashMap::new(),
-                immediate_dominators: HashMap::new(),
-            },
-        }
-    }
-
-    pub fn optimize_loops(
-        &mut self,
-        instructions: Vec<Instruction>,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        // Phase 2: Loop optimization including unrolling and invariant code motion
-        let loops = self.identify_loops(&instructions)?;
-        let mut optimized = instructions;
-
-        for loop_info in loops {
-            if let Some(trip_count) = loop_info.trip_count {
-                if trip_count <= 8 && trip_count > 1 {
-                    // Apply loop unrolling for small loops
-                    optimized = self.unroll_loop(optimized, &loop_info)?;
-                }
-            }
-
-            // Apply loop invariant code motion
-            optimized = self.move_loop_invariants(optimized, &loop_info)?;
-        }
-
-        Ok(optimized)
-    }
-
-    fn identify_loops(
-        &mut self,
-        instructions: &[Instruction],
-    ) -> Result<Vec<LoopInfo>, BytecodeError> {
-        // Simplified loop detection - look for backward jumps
-        let mut loops = Vec::new();
-
-        for (i, instruction) in instructions.iter().enumerate() {
-            match instruction {
-                Instruction::JumpIfTrue { target, .. }
-                | Instruction::JumpIfFalse { target, .. } => {
-                    let target_addr = target.0 as usize;
-                    if target_addr < i {
-                        // Backward jump - potential loop
-                        loops.push(LoopInfo {
-                            header: target_addr,
-                            body: (target_addr..=i).collect(),
-                            exit_blocks: vec![i + 1],
-                            depth: 1,
-                            trip_count: None, // Would need more analysis
-                        });
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        Ok(loops)
-    }
-
-    fn unroll_loop(
-        &mut self,
-        mut instructions: Vec<Instruction>,
-        loop_info: &LoopInfo,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        if let Some(trip_count) = loop_info.trip_count {
-            // Simple loop unrolling - duplicate loop body
-            let loop_body: Vec<_> = instructions
-                [loop_info.header..=*loop_info.body.last().unwrap_or(&loop_info.header)]
-                .to_vec();
-
-            // Replace loop with unrolled version
-            let mut unrolled = Vec::new();
-            for _ in 0..trip_count {
-                unrolled.extend(loop_body.iter().cloned());
-            }
-
-            // Replace original loop
-            instructions.splice(
-                loop_info.header..=*loop_info.body.last().unwrap_or(&loop_info.header),
-                unrolled,
-            );
-        }
-
-        Ok(instructions)
-    }
-
-    fn move_loop_invariants(
-        &mut self,
-        instructions: Vec<Instruction>,
-        _loop_info: &LoopInfo,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        // Simplified loop invariant code motion
-        // In a complete implementation, this would:
-        // 1. Analyze which computations are loop-invariant
-        // 2. Move them outside the loop
-        // 3. Update register usage accordingly
-
-        Ok(instructions) // For now, return as-is
-    }
-}
-
-/// Function inlining optimization
-pub struct FunctionInliner {
-    inline_candidates: HashMap<FunctionId, InlineInfo>,
-    call_graph: CallGraph,
-    inlining_budget: usize,
-}
-
-#[derive(Debug, Clone)]
-struct InlineInfo {
-    function_id: FunctionId,
-    size: usize,
-    call_frequency: u32,
-    benefit_score: f64,
-    can_inline: bool,
-}
-
-#[derive(Debug, Clone)]
-struct CallGraph {
-    edges: HashMap<FunctionId, Vec<FunctionId>>,
-    call_counts: HashMap<(FunctionId, FunctionId), u32>,
-}
-
-impl FunctionInliner {
-    pub fn new() -> Self {
-        Self {
-            inline_candidates: HashMap::new(),
-            call_graph: CallGraph {
-                edges: HashMap::new(),
-                call_counts: HashMap::new(),
-            },
-            inlining_budget: 1000, // Maximum instructions to add through inlining
-        }
-    }
-
-    pub fn inline_functions(
-        &mut self,
-        instructions: Vec<Instruction>,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        // Phase 2: Intelligent function inlining based on call frequency and size
-        let call_sites = self.identify_call_sites(&instructions)?;
-        let mut optimized = instructions;
-
-        // Sort call sites by benefit score
-        let mut sorted_calls = call_sites;
-        sorted_calls.sort_by(|a, b| {
-            b.benefit_score
-                .partial_cmp(&a.benefit_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        for call_site in sorted_calls {
-            if self.inlining_budget > 0 && call_site.can_inline {
-                optimized = self.inline_call_site(optimized, &call_site)?;
-                self.inlining_budget = self.inlining_budget.saturating_sub(call_site.size);
-            }
-        }
-
-        Ok(optimized)
-    }
-
-    fn identify_call_sites(
-        &mut self,
-        instructions: &[Instruction],
-    ) -> Result<Vec<InlineInfo>, BytecodeError> {
-        let mut call_sites = Vec::new();
-
-        for (_i, instruction) in instructions.iter().enumerate() {
-            match instruction {
-                Instruction::Call { .. } => {
-                    // Analyze call site for inlining potential
-                    call_sites.push(InlineInfo {
-                        function_id: FunctionId::new(), // Would need actual function ID
-                        size: 50,                       // Estimated size
-                        call_frequency: 1,
-                        benefit_score: 1.0,
-                        can_inline: true,
-                    });
-                }
-                _ => {}
-            }
-        }
-
-        Ok(call_sites)
-    }
-
-    fn inline_call_site(
-        &mut self,
-        instructions: Vec<Instruction>,
-        _inline_info: &InlineInfo,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        // Simplified inlining - would need actual function body
-        // In a complete implementation, this would:
-        // 1. Get the function body to inline
-        // 2. Rename registers to avoid conflicts
-        // 3. Replace call instruction with inlined body
-        // 4. Handle parameter passing and return values
-
-        Ok(instructions) // For now, return as-is
-    }
-}
+// Function inlining optimization removed - not currently used in main execution path
 
 // Phase 2: Enhanced Optimization Pass Implementations
 
@@ -3619,10 +3395,12 @@ mod tests {
                 Parameter {
                     name: "a".to_string(),
                     type_annotation: Some(TypeAnnotation::Int),
+                    default_value: None,
                 },
                 Parameter {
                     name: "b".to_string(),
                     type_annotation: Some(TypeAnnotation::Int),
+                    default_value: None,
                 },
             ],
             return_type: Some(TypeAnnotation::Int),

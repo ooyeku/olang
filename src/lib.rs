@@ -10,6 +10,7 @@ pub mod builtin;
 pub mod help;
 pub mod interpreter;
 pub mod jit;
+pub mod log;
 pub mod ovm; // Olang Virtual Machine
 pub mod ovm_integration; // OVM Integration Layer
 pub mod ovm_repl; // Enhanced REPL with OVM support
@@ -31,6 +32,7 @@ pub use ovm_integration::{ExecutionStats, IntegrationConfig, OvmInterpreter};
 pub use ovm_repl::{ExecutionMode, OvmRepl};
 pub use parser::Parser;
 pub use repl::Repl;
+pub use type_checker::{TypeChecker, TypeClass};
 
 // Make the version constant easily accessible (e.g., crate::VERSION)
 pub use version::VERSION;
