@@ -16,6 +16,82 @@ impl Colors {
     pub const DIM: &'static str = "\x1b[2m";
 }
 
+/// Search result with relevance scoring
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub function_doc: FunctionDoc,
+    pub relevance_score: f64,
+    pub match_type: MatchType,
+    pub matched_text: String,
+}
+
+/// Type of match found during search
+#[derive(Debug, Clone)]
+pub enum MatchType {
+    ExactName,
+    FuzzyName,
+    Description,
+    Category,
+    Example,
+    Parameter,
+    Signature,
+}
+
+/// Search filters for advanced search
+#[derive(Debug, Clone)]
+pub struct SearchFilters {
+    pub category: Option<String>,
+    pub return_type: Option<String>,
+    pub min_relevance: f64,
+    pub max_results: usize,
+    pub include_examples: bool,
+    pub include_repl_commands: bool,
+}
+
+impl Default for SearchFilters {
+    fn default() -> Self {
+        Self {
+            category: None,
+            return_type: None,
+            min_relevance: 0.1,
+            max_results: 20,
+            include_examples: true,
+            include_repl_commands: true,
+        }
+    }
+}
+
+/// Tutorial step for interactive learning
+#[derive(Debug, Clone)]
+pub struct TutorialStep {
+    pub title: String,
+    pub description: String,
+    pub code: String,
+    pub expected_output: String,
+    pub explanation: String,
+    pub hints: Vec<String>,
+}
+
+/// Interactive tutorial definition
+#[derive(Debug, Clone)]
+pub struct Tutorial {
+    pub name: String,
+    pub description: String,
+    pub difficulty: String,
+    pub estimated_time: String,
+    pub prerequisites: Vec<String>,
+    pub steps: Vec<TutorialStep>,
+}
+
+/// Context information for help suggestions
+#[derive(Debug, Clone)]
+pub struct HelpContext {
+    pub recent_commands: Vec<String>,
+    pub current_variables: Vec<String>,
+    pub last_error: Option<String>,
+    pub current_working_category: Option<String>,
+}
+
 /// Function documentation
 #[derive(Debug, Clone)]
 pub struct FunctionDoc {
@@ -33,6 +109,7 @@ pub struct FunctionDoc {
 pub struct HelpSystem {
     functions: HashMap<String, FunctionDoc>,
     categories: HashMap<String, Vec<String>>,
+    tutorials: HashMap<String, Tutorial>,
 }
 
 impl Default for HelpSystem {
@@ -46,9 +123,764 @@ impl HelpSystem {
         let mut help_system = Self {
             functions: HashMap::new(),
             categories: HashMap::new(),
+            tutorials: HashMap::new(),
         };
         help_system.initialize_documentation();
+        help_system.initialize_tutorials();
         help_system
+    }
+
+    /// Advanced search with fuzzy matching and filters
+    pub fn search(&self, query: &str, filters: Option<SearchFilters>) -> Vec<SearchResult> {
+        let filters = filters.unwrap_or_default();
+        let mut results = Vec::new();
+        
+        for (_, function) in &self.functions {
+            // Skip REPL commands if not included
+            if !filters.include_repl_commands && function.name.starts_with(':') {
+                continue;
+            }
+            
+            // Category filter
+            if let Some(ref category) = filters.category {
+                if !function.category.to_lowercase().contains(&category.to_lowercase()) {
+                    continue;
+                }
+            }
+            
+            // Return type filter
+            if let Some(ref return_type) = filters.return_type {
+                if !function.return_type.to_lowercase().contains(&return_type.to_lowercase()) {
+                    continue;
+                }
+            }
+            
+            // Calculate relevance score
+            let relevance = self.calculate_relevance(query, function);
+            
+            if relevance >= filters.min_relevance {
+                let (match_type, matched_text) = self.determine_match_type(query, function);
+                results.push(SearchResult {
+                    function_doc: function.clone(),
+                    relevance_score: relevance,
+                    match_type,
+                    matched_text,
+                });
+            }
+        }
+        
+        // Sort by relevance score (descending)
+        results.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Limit results
+        results.truncate(filters.max_results);
+        
+        results
+    }
+    
+    /// Calculate relevance score for search query
+    fn calculate_relevance(&self, query: &str, function: &FunctionDoc) -> f64 {
+        let query_lower = query.to_lowercase();
+        let mut score = 0.0;
+        
+        // Exact name match (highest priority)
+        if function.name.to_lowercase() == query_lower {
+            score += 100.0;
+        }
+        // Name contains query
+        else if function.name.to_lowercase().contains(&query_lower) {
+            score += 80.0;
+        }
+        // Fuzzy name match
+        else {
+            score += self.fuzzy_match_score(&query_lower, &function.name.to_lowercase()) * 60.0;
+        }
+        
+        // Description match
+        if function.description.to_lowercase().contains(&query_lower) {
+            score += 40.0;
+        }
+        
+        // Category match
+        if function.category.to_lowercase().contains(&query_lower) {
+            score += 30.0;
+        }
+        
+        // Example match
+        for example in &function.examples {
+            if example.to_lowercase().contains(&query_lower) {
+                score += 20.0;
+                break;
+            }
+        }
+        
+        // Parameter match
+        for param in &function.parameters {
+            if param.to_lowercase().contains(&query_lower) {
+                score += 15.0;
+                break;
+            }
+        }
+        
+        // Return type match
+        if function.return_type.to_lowercase().contains(&query_lower) {
+            score += 10.0;
+        }
+        
+        // See also match
+        for see_also in &function.see_also {
+            if see_also.to_lowercase().contains(&query_lower) {
+                score += 5.0;
+                break;
+            }
+        }
+        
+        // Normalize score (0-1 range)
+        score / 100.0
+    }
+    
+
+    
+    /// Determine the type of match found
+    fn determine_match_type(&self, query: &str, function: &FunctionDoc) -> (MatchType, String) {
+        let query_lower = query.to_lowercase();
+        
+        if function.name.to_lowercase() == query_lower {
+            (MatchType::ExactName, function.name.clone())
+        } else if function.name.to_lowercase().contains(&query_lower) {
+            (MatchType::FuzzyName, function.name.clone())
+        } else if function.description.to_lowercase().contains(&query_lower) {
+            (MatchType::Description, function.description.clone())
+        } else if function.category.to_lowercase().contains(&query_lower) {
+            (MatchType::Category, function.category.clone())
+        } else if function.return_type.to_lowercase().contains(&query_lower) {
+            (MatchType::Signature, function.return_type.clone())
+        } else {
+            for example in &function.examples {
+                if example.to_lowercase().contains(&query_lower) {
+                    return (MatchType::Example, example.clone());
+                }
+            }
+            for param in &function.parameters {
+                if param.to_lowercase().contains(&query_lower) {
+                    return (MatchType::Parameter, param.clone());
+                }
+            }
+            (MatchType::FuzzyName, function.name.clone())
+        }
+    }
+    
+    /// Format search results for display
+    pub fn format_search_results(&self, results: &[SearchResult]) -> String {
+        if results.is_empty() {
+            return format!("{}No functions found matching your search.{}", Colors::YELLOW, Colors::RESET);
+        }
+        
+        let mut output = format!(
+            "{}=== Search Results ({} found) ==={}\n\n",
+            Colors::BOLD,
+            results.len(),
+            Colors::RESET
+        );
+        
+        for (i, result) in results.iter().enumerate() {
+            let match_icon = match result.match_type {
+                MatchType::ExactName => "🎯",
+                MatchType::FuzzyName => "🔍",
+                MatchType::Description => "📝",
+                MatchType::Category => "📁",
+                MatchType::Example => "💡",
+                MatchType::Parameter => "🔧",
+                MatchType::Signature => "📋",
+            };
+            
+            output.push_str(&format!(
+                "{}{}. {}{} {}{}{} {}({}){}\n",
+                Colors::DIM,
+                i + 1,
+                match_icon,
+                Colors::RESET,
+                Colors::BLUE,
+                result.function_doc.name,
+                Colors::RESET,
+                Colors::DIM,
+                result.function_doc.category,
+                Colors::RESET
+            ));
+            
+            output.push_str(&format!(
+                "   {}{}{}\n",
+                Colors::GREEN,
+                result.function_doc.description,
+                Colors::RESET
+            ));
+            
+            // Show match context
+            match result.match_type {
+                MatchType::Description => {
+                    output.push_str(&format!(
+                        "   {}Match:{} {}\n",
+                        Colors::YELLOW,
+                        Colors::RESET,
+                        result.matched_text
+                    ));
+                }
+                MatchType::Example => {
+                    output.push_str(&format!(
+                        "   {}Example:{} {}{}{}\n",
+                        Colors::YELLOW,
+                        Colors::RESET,
+                        Colors::CYAN,
+                        result.matched_text,
+                        Colors::RESET
+                    ));
+                }
+                _ => {}
+            }
+            
+            output.push_str(&format!(
+                "   {}Syntax:{} {}{}{}\n",
+                Colors::MAGENTA,
+                Colors::RESET,
+                Colors::CYAN,
+                result.function_doc.syntax,
+                Colors::RESET
+            ));
+            
+            output.push('\n');
+        }
+        
+        output.push_str(&format!(
+            "{}💡 Tip: Use 'help <function>' for detailed documentation{}\n",
+            Colors::DIM,
+            Colors::RESET
+        ));
+        
+        output
+    }
+    
+    /// Search with category filter
+    pub fn search_in_category(&self, query: &str, category: &str) -> Vec<SearchResult> {
+        let filters = SearchFilters {
+            category: Some(category.to_string()),
+            ..Default::default()
+        };
+        self.search(query, Some(filters))
+    }
+    
+    /// Search by return type
+    pub fn search_by_return_type(&self, return_type: &str) -> Vec<SearchResult> {
+        let filters = SearchFilters {
+            return_type: Some(return_type.to_string()),
+            ..Default::default()
+        };
+        self.search(return_type, Some(filters))
+    }
+    
+    /// Get suggestions based on partial input
+
+
+    /// Initialize interactive tutorials
+    fn initialize_tutorials(&mut self) {
+        self.add_tutorial(Tutorial {
+            name: "basic_operations".to_string(),
+            description: "Learn basic Olang operations and syntax".to_string(),
+            difficulty: "Beginner".to_string(),
+            estimated_time: "5 minutes".to_string(),
+            prerequisites: vec![],
+            steps: vec![
+                TutorialStep {
+                    title: "Basic Arithmetic".to_string(),
+                    description: "Let's start with simple arithmetic operations".to_string(),
+                    code: "2 + 3 * 4".to_string(),
+                    expected_output: "14".to_string(),
+                    explanation: "Olang follows standard operator precedence: multiplication before addition".to_string(),
+                    hints: vec!["Use parentheses to change precedence: (2 + 3) * 4".to_string()],
+                },
+                TutorialStep {
+                    title: "Variables".to_string(),
+                    description: "Creating and using variables".to_string(),
+                    code: "let name = \"Alice\"\nlet age = 25\nprintln(name + \" is \" + age + \" years old\")".to_string(),
+                    expected_output: "Alice is 25 years old".to_string(),
+                    explanation: "Variables are created with 'let' and can be reassigned".to_string(),
+                    hints: vec!["Use to_string() to convert numbers to strings if needed".to_string()],
+                },
+                TutorialStep {
+                    title: "Functions".to_string(),
+                    description: "Defining and calling functions".to_string(),
+                    code: "fn greet(name) = \"Hello, \" + name + \"!\"\ngreet(\"World\")".to_string(),
+                    expected_output: "Hello, World!".to_string(),
+                    explanation: "Functions are defined with 'fn' and can have parameters".to_string(),
+                    hints: vec!["Use => for multi-line functions: fn name() => { ... }".to_string()],
+                },
+            ],
+        });
+        
+        self.add_tutorial(Tutorial {
+            name: "list_operations".to_string(),
+            description: "Master list operations and functional programming".to_string(),
+            difficulty: "Intermediate".to_string(),
+            estimated_time: "10 minutes".to_string(),
+            prerequisites: vec!["basic_operations".to_string()],
+            steps: vec![
+                TutorialStep {
+                    title: "Creating Lists".to_string(),
+                    description: "Different ways to create lists".to_string(),
+                    code: "let numbers = [1, 2, 3, 4, 5]\nlet range_list = range(5)\nlet empty_list = []".to_string(),
+                    expected_output: "[1, 2, 3, 4, 5]\n[0, 1, 2, 3, 4]\n[]".to_string(),
+                    explanation: "Lists can be created with literals, ranges, or empty".to_string(),
+                    hints: vec!["Use 1..5 for range syntax".to_string()],
+                },
+                TutorialStep {
+                    title: "Map Function".to_string(),
+                    description: "Transform lists with map".to_string(),
+                    code: "let numbers = [1, 2, 3, 4, 5]\nmap(numbers, (x) => x * 2)".to_string(),
+                    expected_output: "[2, 4, 6, 8, 10]".to_string(),
+                    explanation: "Map applies a function to each element".to_string(),
+                    hints: vec!["Use pipeline syntax: numbers |> map((x) => x * 2)".to_string()],
+                },
+                TutorialStep {
+                    title: "Filter Function".to_string(),
+                    description: "Filter lists based on conditions".to_string(),
+                    code: "let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\nfilter(numbers, (x) => x % 2 == 0)".to_string(),
+                    expected_output: "[2, 4, 6, 8, 10]".to_string(),
+                    explanation: "Filter keeps only elements that satisfy the condition".to_string(),
+                    hints: vec!["Use > 5 to filter numbers greater than 5".to_string()],
+                },
+                TutorialStep {
+                    title: "Pipeline Operations".to_string(),
+                    description: "Chain operations with pipelines".to_string(),
+                    code: "range(10) |> map((x) => x * x) |> filter((x) => x > 10)".to_string(),
+                    expected_output: "[16, 25, 36, 49, 64, 81]".to_string(),
+                    explanation: "Pipelines allow chaining operations left-to-right".to_string(),
+                    hints: vec!["Add |> reduce(0, (a, b) => a + b) to sum the results".to_string()],
+                },
+            ],
+        });
+        
+        self.add_tutorial(Tutorial {
+            name: "file_handling".to_string(),
+            description: "Working with files and directories".to_string(),
+            difficulty: "Intermediate".to_string(),
+            estimated_time: "8 minutes".to_string(),
+            prerequisites: vec!["basic_operations".to_string()],
+            steps: vec![
+                TutorialStep {
+                    title: "Check File Existence".to_string(),
+                    description: "Check if a file exists before working with it".to_string(),
+                    code: "fs.exists(\"README.md\")".to_string(),
+                    expected_output: "true".to_string(),
+                    explanation: "Always check file existence to avoid errors".to_string(),
+                    hints: vec!["Use fs.is_file() to check if it's specifically a file".to_string()],
+                },
+                TutorialStep {
+                    title: "Read File Content".to_string(),
+                    description: "Read content from a file".to_string(),
+                    code: "match fs.read_file(\"README.md\") {\n  Ok(content) => println(\"File size: \" + length(content)),\n  Err(error) => println(\"Error: \" + error)\n}".to_string(),
+                    expected_output: "File size: 1234".to_string(),
+                    explanation: "File operations return Result types for error handling".to_string(),
+                    hints: vec!["Use fs.read_file() for text files".to_string()],
+                },
+                TutorialStep {
+                    title: "List Directory".to_string(),
+                    description: "List files and directories".to_string(),
+                    code: "match fs.list_dir(\".\") {\n  Ok(files) => println(\"Files: \" + length(files)),\n  Err(error) => println(\"Error: \" + error)\n}".to_string(),
+                    expected_output: "Files: 15".to_string(),
+                    explanation: "Directory operations also return Result types".to_string(),
+                    hints: vec!["Use filter to find specific file types".to_string()],
+                },
+            ],
+        });
+        
+        self.add_tutorial(Tutorial {
+            name: "web_requests".to_string(),
+            description: "Making HTTP requests and handling responses".to_string(),
+            difficulty: "Advanced".to_string(),
+            estimated_time: "12 minutes".to_string(),
+            prerequisites: vec!["basic_operations".to_string(), "file_handling".to_string()],
+            steps: vec![
+                TutorialStep {
+                    title: "Simple GET Request".to_string(),
+                    description: "Make a basic HTTP GET request".to_string(),
+                    code: "match http.get(\"https://httpbin.org/get\") {\n  Ok(response) => println(\"Status: \" + response.status),\n  Err(error) => println(\"Error: \" + error)\n}".to_string(),
+                    expected_output: "Status: 200".to_string(),
+                    explanation: "HTTP requests return Result types with response objects".to_string(),
+                    hints: vec!["Access response.body for the response content".to_string()],
+                },
+                TutorialStep {
+                    title: "JSON Response Handling".to_string(),
+                    description: "Parse JSON responses from APIs".to_string(),
+                    code: "match http.get(\"https://api.github.com/users/octocat\") {\n  Ok(response) => match json.parse(response.body) {\n    Ok(user) => println(\"User: \" + user.login),\n    Err(e) => println(\"JSON Error: \" + e)\n  },\n  Err(e) => println(\"HTTP Error: \" + e)\n}".to_string(),
+                    expected_output: "User: octocat".to_string(),
+                    explanation: "Chain HTTP requests with JSON parsing for API data".to_string(),
+                    hints: vec!["Use json.get() for accessing nested JSON properties".to_string()],
+                },
+                TutorialStep {
+                    title: "POST Request with Data".to_string(),
+                    description: "Send data with POST requests".to_string(),
+                    code: "let data = json.stringify({\"name\": \"test\", \"email\": \"test@example.com\"})\nmatch http.post(\"https://httpbin.org/post\", data) {\n  Ok(response) => println(\"Created: \" + response.status),\n  Err(error) => println(\"Error: \" + error)\n}".to_string(),
+                    expected_output: "Created: 200".to_string(),
+                    explanation: "POST requests can send JSON data to APIs".to_string(),
+                    hints: vec!["Use http.put() for updates, http.delete() for deletions".to_string()],
+                },
+            ],
+        });
+    }
+    
+    /// Add a tutorial to the system
+    fn add_tutorial(&mut self, tutorial: Tutorial) {
+        self.tutorials.insert(tutorial.name.clone(), tutorial);
+    }
+    
+    /// Get available tutorials
+    pub fn get_tutorials(&self) -> Vec<&Tutorial> {
+        self.tutorials.values().collect()
+    }
+    
+    /// Get specific tutorial
+    pub fn get_tutorial(&self, name: &str) -> Option<&Tutorial> {
+        self.tutorials.get(name)
+    }
+    
+    /// Format tutorial list for display
+    pub fn format_tutorial_list(&self) -> String {
+        let mut output = format!(
+            "{}=== Interactive Tutorials ==={}\n\n",
+            Colors::BOLD,
+            Colors::RESET
+        );
+        
+        let mut tutorials: Vec<_> = self.tutorials.values().collect();
+        tutorials.sort_by(|a, b| {
+            let order = ["Beginner", "Intermediate", "Advanced"];
+            let a_idx = order.iter().position(|&x| x == a.difficulty).unwrap_or(999);
+            let b_idx = order.iter().position(|&x| x == b.difficulty).unwrap_or(999);
+            a_idx.cmp(&b_idx)
+        });
+        
+        for tutorial in tutorials {
+            let difficulty_color = match tutorial.difficulty.as_str() {
+                "Beginner" => Colors::GREEN,
+                "Intermediate" => Colors::YELLOW,
+                "Advanced" => Colors::RED,
+                _ => Colors::BLUE,
+            };
+            
+            output.push_str(&format!(
+                "{}📚 {}{} {}({}{}{}){}\n",
+                Colors::BLUE,
+                tutorial.name,
+                Colors::RESET,
+                difficulty_color,
+                Colors::BOLD,
+                tutorial.difficulty,
+                Colors::RESET,
+                Colors::RESET
+            ));
+            
+            output.push_str(&format!(
+                "   {}{}{}\n",
+                Colors::DIM,
+                tutorial.description,
+                Colors::RESET
+            ));
+            
+            output.push_str(&format!(
+                "   {}⏱️ {} • 📋 {} steps{}\n",
+                Colors::DIM,
+                tutorial.estimated_time,
+                tutorial.steps.len(),
+                Colors::RESET
+            ));
+            
+            if !tutorial.prerequisites.is_empty() {
+                output.push_str(&format!(
+                    "   {}Prerequisites: {}{}\n",
+                    Colors::DIM,
+                    tutorial.prerequisites.join(", "),
+                    Colors::RESET
+                ));
+            }
+            
+            output.push('\n');
+        }
+        
+        output.push_str(&format!(
+            "{}💡 Start a tutorial: help tutorial <name>{}\n",
+            Colors::DIM,
+            Colors::RESET
+        ));
+        
+        output
+    }
+    
+    /// Format tutorial for display
+    pub fn format_tutorial(&self, tutorial: &Tutorial) -> String {
+        let mut output = format!(
+            "{}=== Tutorial: {} ==={}\n\n",
+            Colors::BOLD,
+            tutorial.name,
+            Colors::RESET
+        );
+        
+        output.push_str(&format!(
+            "{}{}{}\n",
+            Colors::GREEN,
+            tutorial.description,
+            Colors::RESET
+        ));
+        
+        output.push_str(&format!(
+            "{}Difficulty:{} {}\n",
+            Colors::YELLOW,
+            Colors::RESET,
+            tutorial.difficulty
+        ));
+        
+        output.push_str(&format!(
+            "{}Estimated Time:{} {}\n",
+            Colors::YELLOW,
+            Colors::RESET,
+            tutorial.estimated_time
+        ));
+        
+        if !tutorial.prerequisites.is_empty() {
+            output.push_str(&format!(
+                "{}Prerequisites:{} {}\n",
+                Colors::YELLOW,
+                Colors::RESET,
+                tutorial.prerequisites.join(", ")
+            ));
+        }
+        
+        output.push_str("\n");
+        
+        for (i, step) in tutorial.steps.iter().enumerate() {
+            output.push_str(&format!(
+                "{}Step {}: {}{}\n",
+                Colors::CYAN,
+                i + 1,
+                step.title,
+                Colors::RESET
+            ));
+            
+            output.push_str(&format!(
+                "{}{}{}\n\n",
+                Colors::DIM,
+                step.description,
+                Colors::RESET
+            ));
+            
+            output.push_str(&format!(
+                "{}Code to try:{}\n",
+                Colors::MAGENTA,
+                Colors::RESET
+            ));
+            
+            output.push_str(&format!(
+                "{}{}\n{}\n\n",
+                Colors::BLUE,
+                step.code,
+                Colors::RESET
+            ));
+            
+            output.push_str(&format!(
+                "{}Expected Output:{}\n",
+                Colors::GREEN,
+                Colors::RESET
+            ));
+            
+            output.push_str(&format!(
+                "{}{}\n{}\n\n",
+                Colors::GREEN,
+                step.expected_output,
+                Colors::RESET
+            ));
+            
+            output.push_str(&format!(
+                "{}Explanation:{}\n",
+                Colors::YELLOW,
+                Colors::RESET
+            ));
+            
+            output.push_str(&format!(
+                "{}{}{}\n\n",
+                Colors::DIM,
+                step.explanation,
+                Colors::RESET
+            ));
+            
+            if !step.hints.is_empty() {
+                output.push_str(&format!(
+                    "{}💡 Hints:{}\n",
+                    Colors::CYAN,
+                    Colors::RESET
+                ));
+                
+                for hint in &step.hints {
+                    output.push_str(&format!(
+                        "   • {}{}{}\n",
+                        Colors::DIM,
+                        hint,
+                        Colors::RESET
+                    ));
+                }
+                output.push('\n');
+            }
+            
+            output.push_str("---\n\n");
+        }
+        
+        output.push_str(&format!(
+            "{}🎉 Congratulations! You've completed the {} tutorial!{}\n",
+            Colors::GREEN,
+            tutorial.name,
+            Colors::RESET
+        ));
+        
+        output
+    }
+    
+    /// Context-sensitive help suggestions
+    pub fn get_contextual_help(&self, context: &HelpContext) -> Vec<String> {
+        let mut suggestions = Vec::new();
+        
+        // Analyze recent commands for patterns
+        for command in &context.recent_commands {
+            if command.contains("map") || command.contains("filter") || command.contains("reduce") {
+                suggestions.push("Tutorial: list_operations - Learn advanced list processing".to_string());
+                suggestions.push("help pipeline - Learn about pipeline operations".to_string());
+                break;
+            }
+        }
+        
+        // Check for file operations
+        for command in &context.recent_commands {
+            if command.contains("fs.") {
+                suggestions.push("Tutorial: file_handling - Master file operations".to_string());
+                suggestions.push("help fs - File system functions".to_string());
+                break;
+            }
+        }
+        
+        // Check for HTTP operations
+        for command in &context.recent_commands {
+            if command.contains("http.") {
+                suggestions.push("Tutorial: web_requests - HTTP and API interactions".to_string());
+                suggestions.push("help http - HTTP client functions".to_string());
+                break;
+            }
+        }
+        
+        // Error-based suggestions
+        if let Some(ref error) = context.last_error {
+            if error.contains("ParseError") || error.contains("syntax") {
+                suggestions.push("help error.syntax - Common syntax errors and fixes".to_string());
+            }
+            if error.contains("TypeError") || error.contains("type") {
+                suggestions.push("help error.types - Type errors and conversions".to_string());
+            }
+            if error.contains("undefined") || error.contains("not found") {
+                suggestions.push("help error.runtime - Runtime error debugging".to_string());
+            }
+        }
+        
+        // Variable-based suggestions
+        if !context.current_variables.is_empty() {
+            let has_lists = context.current_variables.iter().any(|v| v.contains("list") || v.contains("array"));
+            if has_lists {
+                suggestions.push("help list - List manipulation functions".to_string());
+            }
+        }
+        
+        // Working category suggestions
+        if let Some(ref category) = context.current_working_category {
+            if category == "List" {
+                suggestions.push("help map - Transform lists with functions".to_string());
+                suggestions.push("help filter - Filter lists by conditions".to_string());
+                suggestions.push("help reduce - Reduce lists to single values".to_string());
+            }
+        }
+        
+        // Always include general suggestions
+        if suggestions.is_empty() {
+            suggestions.push("Tutorial: basic_operations - Learn Olang fundamentals".to_string());
+            suggestions.push("help examples - See practical examples".to_string());
+            suggestions.push("help syntax - Language syntax reference".to_string());
+        }
+        
+        suggestions
+    }
+    
+    /// Format contextual help for display
+    pub fn format_contextual_help(&self, context: &HelpContext) -> String {
+        let suggestions = self.get_contextual_help(context);
+        
+        let mut output = format!(
+            "{}=== Contextual Help Suggestions ==={}\n\n",
+            Colors::BOLD,
+            Colors::RESET
+        );
+        
+        output.push_str(&format!(
+            "{}Based on your recent activity:{}\n\n",
+            Colors::GREEN,
+            Colors::RESET
+        ));
+        
+        for (i, suggestion) in suggestions.iter().enumerate() {
+            output.push_str(&format!(
+                "{}{}. {}{}{}\n",
+                Colors::BLUE,
+                i + 1,
+                Colors::RESET,
+                suggestion,
+                Colors::RESET
+            ));
+        }
+        
+        output.push('\n');
+        
+        if !context.recent_commands.is_empty() {
+            output.push_str(&format!(
+                "{}Recent Commands:{}\n",
+                Colors::YELLOW,
+                Colors::RESET
+            ));
+            
+            for command in context.recent_commands.iter().take(3) {
+                output.push_str(&format!(
+                    "  • {}{}{}\n",
+                    Colors::DIM,
+                    command,
+                    Colors::RESET
+                ));
+            }
+            output.push('\n');
+        }
+        
+        if let Some(ref error) = context.last_error {
+            output.push_str(&format!(
+                "{}Last Error:{}\n",
+                Colors::RED,
+                Colors::RESET
+            ));
+            
+            output.push_str(&format!(
+                "  {}{}{}\n\n",
+                Colors::DIM,
+                error,
+                Colors::RESET
+            ));
+        }
+        
+        output.push_str(&format!(
+            "{}💡 Type 'help <topic>' for detailed information{}\n",
+            Colors::DIM,
+            Colors::RESET
+        ));
+        
+        output
     }
 
     /// Initialize all function documentation
@@ -2380,13 +3212,7 @@ Type '{}help list{}' to see all functions organized by category.
     }
 
     /// Show detailed help for a specific function
-    pub fn show_function_help(&self, function_name: &str) -> String {
-        if let Some(func) = self.functions.get(function_name) {
-            self.format_function_documentation(func)
-        } else {
-            format!("Function '{}' not found.", function_name)
-        }
-    }
+
 
     /// Format detailed documentation for a function
     fn format_function_documentation(&self, func: &FunctionDoc) -> String {
@@ -2444,69 +3270,7 @@ Type '{}help list{}' to see all functions organized by category.
         output
     }
 
-    /// Show functions in a specific category
-    pub fn show_category(&self, category: &str) -> String {
-        if let Some(functions) = self.categories.get(category) {
-            let mut output = format!(
-                "{}=== {} Functions ==={}\n\n",
-                Colors::BOLD,
-                category,
-                Colors::RESET
-            );
 
-            let mut sorted_functions = functions.clone();
-            sorted_functions.sort();
-
-            for func_name in sorted_functions {
-                if let Some(func) = self.functions.get(&func_name) {
-                    output.push_str(&format!("{}{}{}\n", Colors::BLUE, func_name, Colors::RESET));
-                    output.push_str(&format!(
-                        "  {}{}{}\n",
-                        Colors::DIM,
-                        func.description,
-                        Colors::RESET
-                    ));
-                    output.push_str(&format!(
-                        "  Syntax: {}{}{}\n",
-                        Colors::GREEN,
-                        func.syntax,
-                        Colors::RESET
-                    ));
-
-                    if !func.examples.is_empty() {
-                        output.push_str(&format!(
-                            "  Example: {}{}{}\n",
-                            Colors::YELLOW,
-                            func.examples[0],
-                            Colors::RESET
-                        ));
-                    }
-                    output.push('\n');
-                }
-            }
-
-            output.push_str(&format!(
-                "{}Total: {} functions in {} category{}\n",
-                Colors::DIM,
-                functions.len(),
-                category,
-                Colors::RESET
-            ));
-            output.push_str("Type 'help <function>' for detailed documentation.");
-
-            output
-        } else {
-            format!(
-                "Category '{}' not found. Available categories: {}",
-                category,
-                self.categories
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        }
-    }
 
     /// Show practical examples  
     pub fn show_examples(&self) -> String {
@@ -2656,14 +3420,7 @@ For function-specific syntax, use: {}help <function_name>{}",
     }
 
     /// Check if a function exists
-    pub fn has_function(&self, name: &str) -> bool {
-        self.functions.contains_key(name)
-    }
 
-    /// Check if a category exists
-    pub fn has_category(&self, name: &str) -> bool {
-        self.categories.contains_key(name)
-    }
 
     /// Add CSV functions to the help system  
     fn add_csv_functions(&mut self) {
@@ -4381,6 +5138,269 @@ For function-specific syntax, use: {}help <function_name>{}",
             category: "Errors".to_string(),
             see_also: vec!["let".to_string(), ":env".to_string()],
         });
+    }
+
+    /// Enhanced fuzzy matching with Levenshtein distance
+    fn levenshtein_distance(&self, a: &str, b: &str) -> usize {
+        let a_chars: Vec<char> = a.chars().collect();
+        let b_chars: Vec<char> = b.chars().collect();
+        let a_len = a_chars.len();
+        let b_len = b_chars.len();
+        
+        if a_len == 0 { return b_len; }
+        if b_len == 0 { return a_len; }
+        
+        let mut matrix = vec![vec![0; b_len + 1]; a_len + 1];
+        
+        // Initialize first row and column
+        for i in 0..=a_len {
+            matrix[i][0] = i;
+        }
+        for j in 0..=b_len {
+            matrix[0][j] = j;
+        }
+        
+        // Fill the matrix
+        for i in 1..=a_len {
+            for j in 1..=b_len {
+                let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+                matrix[i][j] = std::cmp::min(
+                    std::cmp::min(
+                        matrix[i - 1][j] + 1,      // deletion
+                        matrix[i][j - 1] + 1       // insertion
+                    ),
+                    matrix[i - 1][j - 1] + cost    // substitution
+                );
+            }
+        }
+        
+        matrix[a_len][b_len]
+    }
+
+    /// Calculate similarity score between two strings (0.0 = no match, 1.0 = perfect match)
+    fn similarity_score(&self, query: &str, target: &str) -> f64 {
+        let query_lower = query.to_lowercase();
+        let target_lower = target.to_lowercase();
+        
+        // Exact match
+        if query_lower == target_lower {
+            return 1.0;
+        }
+        
+        // Starts with match (high score)
+        if target_lower.starts_with(&query_lower) {
+            return 0.9;
+        }
+        
+        // Contains match (medium score)
+        if target_lower.contains(&query_lower) {
+            return 0.7;
+        }
+        
+        // Levenshtein distance based similarity
+        let distance = self.levenshtein_distance(&query_lower, &target_lower);
+        let max_len = std::cmp::max(query.len(), target.len());
+        
+        if max_len == 0 {
+            return 0.0;
+        }
+        
+        let similarity = 1.0 - (distance as f64 / max_len as f64);
+        
+        // Only consider it a match if similarity is above threshold
+        if similarity > 0.6 {
+            similarity * 0.5 // Scale down fuzzy matches
+        } else {
+            0.0
+        }
+    }
+
+    /// Find function by name with case-insensitive and fuzzy matching
+    pub fn find_function_by_name(&self, name: &str) -> Option<&FunctionDoc> {
+        let name_lower = name.to_lowercase();
+        
+        // First try exact case-insensitive match
+        for (func_name, func_doc) in &self.functions {
+            if func_name.to_lowercase() == name_lower {
+                return Some(func_doc);
+            }
+        }
+        
+        // Then try fuzzy matching
+        let mut best_match: Option<&FunctionDoc> = None;
+        let mut best_score = 0.0;
+        
+        for (func_name, func_doc) in &self.functions {
+            let score = self.similarity_score(name, func_name);
+            if score > best_score && score > 0.6 {
+                best_score = score;
+                best_match = Some(func_doc);
+            }
+        }
+        
+        best_match
+    }
+
+    /// Find category by name with case-insensitive and fuzzy matching
+    pub fn find_category_by_name(&self, name: &str) -> Option<String> {
+        let name_lower = name.to_lowercase();
+        
+        // First try exact case-insensitive match
+        for category_name in self.categories.keys() {
+            if category_name.to_lowercase() == name_lower {
+                return Some(category_name.clone());
+            }
+        }
+        
+        // Then try fuzzy matching
+        let mut best_match: Option<String> = None;
+        let mut best_score = 0.0;
+        
+        for category_name in self.categories.keys() {
+            let score = self.similarity_score(name, category_name);
+            if score > best_score && score > 0.6 {
+                best_score = score;
+                best_match = Some(category_name.clone());
+            }
+        }
+        
+        best_match
+    }
+
+    /// Enhanced suggestions with fuzzy matching
+    pub fn get_suggestions(&self, partial_input: &str) -> Vec<String> {
+        let mut suggestions = Vec::new();
+        let partial_lower = partial_input.to_lowercase();
+        
+        // Collect function name suggestions with scores
+        let mut function_suggestions: Vec<(String, f64)> = Vec::new();
+        for function_name in self.functions.keys() {
+            let score = self.similarity_score(partial_input, function_name);
+            if score > 0.3 {
+                function_suggestions.push((function_name.clone(), score));
+            }
+        }
+        
+        // Collect category suggestions with scores
+        let mut category_suggestions: Vec<(String, f64)> = Vec::new();
+        for category in self.categories.keys() {
+            let score = self.similarity_score(partial_input, category);
+            if score > 0.3 {
+                category_suggestions.push((category.clone(), score));
+            }
+        }
+        
+        // Sort all suggestions by score (highest first)
+        function_suggestions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        category_suggestions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Add function suggestions
+        for (name, _score) in function_suggestions.iter().take(8) {
+            suggestions.push(name.clone());
+        }
+        
+        // Add category suggestions
+        for (name, _score) in category_suggestions.iter().take(4) {
+            suggestions.push(format!("category:{}", name));
+        }
+        
+        suggestions.truncate(10); // Limit to top 10 suggestions
+        suggestions
+    }
+
+    /// Enhanced case-insensitive function lookup
+    pub fn has_function(&self, name: &str) -> bool {
+        self.find_function_by_name(name).is_some()
+    }
+
+    /// Enhanced case-insensitive category lookup
+    pub fn has_category(&self, name: &str) -> bool {
+        self.find_category_by_name(name).is_some()
+    }
+
+    /// Enhanced case-insensitive function help with fuzzy matching
+    pub fn show_function_help(&self, function_name: &str) -> String {
+        if let Some(func) = self.find_function_by_name(function_name) {
+            self.format_function_documentation(func)
+        } else {
+            // Try to suggest similar functions
+            let suggestions = self.get_suggestions(function_name)
+                .into_iter()
+                .filter(|s| !s.starts_with("category:"))
+                .take(3)
+                .collect::<Vec<_>>();
+            
+            if suggestions.is_empty() {
+                format!("Function '{}' not found.", function_name)
+            } else {
+                format!(
+                    "Function '{}' not found. Did you mean:\n{}",
+                    function_name,
+                    suggestions.iter()
+                        .map(|s| format!("  • {}", s))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            }
+        }
+    }
+
+    /// Enhanced case-insensitive category display
+    pub fn show_category(&self, category: &str) -> String {
+        if let Some(actual_category) = self.find_category_by_name(category) {
+            let mut output = format!(
+                "{}=== {} Functions ==={}\n\n",
+                Colors::BOLD, actual_category, Colors::RESET
+            );
+            
+            if let Some(functions) = self.categories.get(&actual_category) {
+                // Sort functions within category
+                let mut sorted_functions = functions.clone();
+                sorted_functions.sort();
+                
+                for func_name in sorted_functions {
+                    if let Some(func) = self.functions.get(&func_name) {
+                        output.push_str(&format!(
+                            "{}{}{}  {}\n",
+                            Colors::BLUE, func.name, Colors::RESET, func.description
+                        ));
+                    }
+                }
+                
+                output.push_str(&format!(
+                    "\n{}Use 'help <function_name>' for detailed documentation{}\n",
+                    Colors::DIM, Colors::RESET
+                ));
+            }
+            
+            output
+        } else {
+            // Try to suggest similar categories
+            let suggestions = self.get_suggestions(category)
+                .into_iter()
+                .filter(|s| s.starts_with("category:"))
+                .map(|s| s.strip_prefix("category:").unwrap_or(&s).to_string())
+                .take(3)
+                .collect::<Vec<_>>();
+            
+            if suggestions.is_empty() {
+                format!("Category '{}' not found.", category)
+            } else {
+                format!(
+                    "Category '{}' not found. Did you mean:\n{}",
+                    category,
+                    suggestions.iter()
+                        .map(|s| format!("  • {}", s))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            }
+        }
+    }
+
+    /// Enhanced fuzzy matching score (improved version)
+    fn fuzzy_match_score(&self, query: &str, target: &str) -> f64 {
+        self.similarity_score(query, target)
     }
 }
 
