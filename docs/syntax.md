@@ -2,24 +2,26 @@
 
 ## Overview
 
-This document describes the complete syntax of the Olang programming language based on the grammar specification and identifies implementation gaps where the interpreter doesn't properly support defined syntax.
+This document describes the complete syntax of the Olang programming language based on the grammar specification and current implementation status as of v0.16.
 
 ## Table of Contents
 
 1. [Literals](#literals)
 2. [Identifiers and Variables](#identifiers-and-variables)
 3. [Lists and Tuples](#lists-and-tuples)
-4. [Ranges](#ranges)
-5. [Functions](#functions)
-6. [Control Flow](#control-flow)
-7. [Pattern Matching](#pattern-matching)
-8. [Operators](#operators)
-9. [Type System](#type-system)
-10. [Async/Await](#asyncawait)
-11. [Loops](#loops)
-12. [Module System](#module-system)
-13. [Error Handling](#error-handling)
-14. [Implementation Gaps](#implementation-gaps)
+4. [Maps](#maps)
+5. [Ranges](#ranges)
+6. [Functions](#functions)
+7. [Control Flow](#control-flow)
+8. [Pattern Matching](#pattern-matching)
+9. [Operators](#operators)
+10. [Type System](#type-system)
+11. [Async/Await](#asyncawait)
+12. [Loops](#loops)
+13. [Module System](#module-system)
+14. [Error Handling](#error-handling)
+15. [Help System](#help-system)
+16. [Implementation Status](#implementation-status)
 
 ## Literals
 
@@ -49,6 +51,16 @@ false
 // Tuples
 (1, 2)         // Tuple with two elements
 (1, "hello", true)  // Mixed type tuple
+
+// Maps (NEW in v0.16)
+#{}                    // Empty map
+#{"key": "value"}      // String key-value map
+#{1: "one", 2: "two"}  // Integer key map
+#{                     // Multi-line map
+    "name": "Alice",
+    "age": 30,
+    "active": true
+}
 
 // Unit
 ()            // Unit type (represented as empty tuple syntax)
@@ -86,6 +98,33 @@ let uninitialized;
 let with_type: String;
 ```
 
+### Destructuring Let Declarations (NEW in v0.16)
+
+```olang
+// Tuple destructuring
+let (x, y) = (1, 2);
+let (first, second, third) = (10, 20, 30);
+
+// List destructuring
+let [head, tail] = [1, 2, 3, 4, 5];
+let [first, second, ...rest] = [1, 2, 3, 4, 5];
+
+// Nested destructuring
+let ((a, b), c) = ((1, 2), 3);
+let [first, [nested_a, nested_b]] = [10, [20, 30]];
+
+// Wildcard patterns
+let (x, _) = (42, "ignored");
+let [first, _, third] = [1, 2, 3];
+
+// Pattern matching with literals
+let (x, 2) = (42, 2);  // Matches when second element is 2
+
+// Struct destructuring
+let Point { x, y } = some_point;
+let User { name, age, .. } = user_data;  // Ignore remaining fields
+```
+
 ### Variable Assignment
 
 ```olang
@@ -104,13 +143,13 @@ let numbers = [1, 2, 3, 4, 5];
 let words = ["hello", "world"];
 
 // List indexing
-let first = numbers[0];    // ✅ SUPPORTED
-let second = words[1];     // ✅ SUPPORTED
+let first = numbers[0];    // SUPPORTED
+let second = words[1];     // SUPPORTED
 
 // List functions (built-in)
-let doubled = numbers |> map((x) => x * 2);     // ✅ SUPPORTED
-let evens = numbers |> filter((x) => x % 2 == 0); // ✅ SUPPORTED
-let total = numbers |> sum();                   // ✅ SUPPORTED
+let doubled = numbers |> map((x) => x * 2);     // SUPPORTED
+let evens = numbers |> filter((x) => x % 2 == 0); // SUPPORTED
+let total = numbers |> sum();                   // SUPPORTED
 ```
 
 ### Tuple Operations
@@ -121,8 +160,65 @@ let point = (10, 20);
 let person = ("Alice", 30, true);
 
 // Tuple indexing
-let x = point[0];     // ✅ SUPPORTED
-let y = point[1];     // ✅ SUPPORTED
+let x = point[0];     // SUPPORTED
+let y = point[1];     // SUPPORTED
+```
+
+## Maps (NEW in v0.16)
+
+### Map Creation
+
+```olang
+// Empty map
+let empty_map = #{};
+
+// String key maps
+let scores = #{
+    "Alice": 95,
+    "Bob": 87,
+    "Charlie": 92
+};
+
+// Mixed key types (converted to strings)
+let mixed_map = #{
+    "string_key": "value",
+    42: "number_key",      // Converted to "42"
+    true: "boolean_key"    // Converted to "true"
+};
+
+// Nested maps
+let nested = #{
+    "user": #{
+        "name": "Alice",
+        "settings": #{
+            "theme": "dark",
+            "notifications": true
+        }
+    }
+};
+```
+
+### Map Operations
+
+```olang
+// Map access and manipulation
+let score = map_get(scores, "Alice");         // Get value -> 95
+let updated = map_set(scores, "David", 88);   // Returns new map
+let exists = map_has_key(scores, "Bob");      // Check existence -> true
+let all_keys = map_keys(scores);              // Get keys -> ["Alice", "Bob", "Charlie"]
+let all_values = map_values(scores);          // Get values -> [95, 87, 92]
+let size = map_len(scores);                   // Get size -> 3
+let removed = map_remove(scores, "Bob");      // Returns map without key
+let cleared = map_clear(scores);              // Returns empty map
+let merged = map_merge(scores, other_map);    // Merge maps (right overwrites left)
+```
+
+### Map Type Annotations
+
+```olang
+// Map type annotations
+let user_ages: Map<String, Int> = #{"Alice": 25, "Bob": 30};
+let config: Map<String, String> = #{"theme": "dark", "lang": "en"};
 ```
 
 ## Ranges
@@ -140,15 +236,11 @@ let range2 = 1..=10;       // [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 let start = 5;
 let end = 15;
 let dynamic_range = start..end;
+
+// Range operations
+let doubled = (1..10) |> map((x) => x * 2);  // SUPPORTED
+let evens = (1..20) |> filter((x) => x % 2 == 0);  // SUPPORTED
 ```
-
-### 🚨 IMPLEMENTATION GAP: Range Integration Issues
-
-The grammar supports ranges, and the interpreter creates `Value::Range` objects, but there are integration issues:
-
-1. **Pipeline Issue**: Ranges work with builtin functions but fail with lazy evaluation
-2. **Error**: "Cannot map over non-list value" from internal lazy system
-3. **Root Cause**: `internal/mod.rs` doesn't handle `Value::Range` in lazy evaluation
 
 ## Functions
 
@@ -164,6 +256,67 @@ fn multiply(x: Int, y: Int) -> Int = x * y;
 // Function with multiple parameters
 fn greet(name: String, age: Int) -> String = 
     "Hello " + name + ", you are " + to_string(age);
+```
+
+### Default Parameter Values (NEW in v0.16)
+
+```olang
+// Function with default values
+fn greet(name: String = "World") = "Hello, " + name;
+
+// Multiple default parameters
+fn connect(host: String = "localhost", port: Int = 8080, timeout: Int = 30) = {
+    "Connecting to " + host + ":" + to_string(port) + " (timeout: " + to_string(timeout) + "s)"
+};
+
+// Mixed required and default parameters
+fn create_user(name: String, email: String, role: String = "user", active: Bool = true) = {
+    User { name, email, role, active }
+};
+
+// Function calls with defaults
+let result1 = greet();                    // Uses default: "Hello, World"
+let result2 = greet("Alice");             // "Hello, Alice"
+let result3 = connect();                  // Uses all defaults
+let result4 = connect("example.com");     // Custom host, default port/timeout
+let result5 = connect("example.com", 9000); // Custom host and port
+```
+
+### Named Arguments in Function Calls (NEW in v0.16)
+
+```olang
+// Function with named arguments
+fn process_data(filename: String, format: String = "json", compress: Bool = false, timeout: Int = 60) = {
+    // Implementation
+};
+
+// Named argument calls
+let result1 = process_data("data.txt", format: "csv", compress: true);
+let result2 = process_data("data.txt", timeout: 120, format: "xml");
+let result3 = process_data(filename: "data.txt", compress: true);
+
+// Database connection example
+fn connect_db(host: String, port: Int = 5432, username: String, password: String, database: String = "mydb") = {
+    // Implementation
+};
+
+let conn = connect_db(
+    host: "localhost",
+    username: "admin",
+    password: "secret",
+    database: "production"
+);
+
+// Mixed positional and named arguments
+fn send_email(to: String, subject: String, body: String, priority: String = "normal", html: Bool = false) = {
+    // Implementation
+};
+
+let email_result = send_email("user@example.com", "Important Update", 
+    "This is the message body", 
+    priority: "high", 
+    html: true
+);
 ```
 
 ### Lambda Functions
@@ -220,10 +373,6 @@ let category = if score >= 90 => {
     if score >= 70 => "Good" else => "Needs improvement"
 };
 ```
-
-### 🚨 IMPLEMENTATION GAP: If Expression Issues
-
-The grammar supports if expressions but there may be parsing issues with the `=>` syntax.
 
 ## Pattern Matching
 
@@ -324,6 +473,11 @@ let processed = input
     |> filter((name) => len(name) > 5)
     |> sort()
     |> join(", ");
+
+// Map operations in pipelines (NEW in v0.16)
+let user_names = users
+    |> map((user) => map_get(user, "name"))
+    |> filter((name) => len(name) > 3);
 ```
 
 ## Type System
@@ -340,6 +494,7 @@ let active: Bool = true;
 // Container types
 let numbers: [Int] = [1, 2, 3];
 let coords: (Float, Float) = (10.5, 20.3);
+let user_data: Map<String, String> = #{"name": "Alice", "role": "admin"};  // NEW in v0.16
 
 // Function types
 let calculator: (Int, Int) -> Int = (a, b) => a + b;
@@ -543,133 +698,155 @@ let result = try {
 let result = risky_operation()?;
 ```
 
-## Implementation Gaps
+## Help System (NEW in v0.16)
 
-### 🚨 Critical Issues
-
-1. **Range Pipeline Integration**
-   - **Grammar**: ✅ Supports `1..10` and `1..=10`
-   - **AST**: ✅ Has `Value::Range` type
-   - **Interpreter**: ✅ Creates ranges correctly
-   - **Builtin Functions**: ✅ `map`, `filter` handle ranges
-   - **❌ Issue**: Lazy evaluation system doesn't handle ranges
-   - **Error**: "Cannot map over non-list value" from `internal/mod.rs:270`
-
-2. **Lambda Syntax in Pipelines**
-   - **Grammar**: ✅ Supports `(x) => expr` syntax
-   - **❌ Issue**: Parser may not handle lambda arguments correctly in pipelines
-   - **Symptom**: `large_range |> map((x) => x * x)` fails
-
-3. **Zero-Argument Function Calls**
-   - **Grammar**: ✅ Supports `function_call = { "(" ~ arg_list? ~ ")" }`
-   - **❌ Issue**: Parser might not handle `()` calls correctly
-   - **Memory**: [[memory:5151249837983706124]] mentions this was fixed
-
-### 🚨 Identified Syntax Gaps
-
-1. **If Expression Syntax**
-   - **Grammar**: Uses `=>` syntax: `if condition => then_expr else => else_expr`
-   - **❌ Issue**: May not be parsing correctly
-
-2. **Block Expressions**
-   - **Grammar**: ✅ Supports `{ statements }`
-   - **❌ Issue**: Block return values may not work correctly
-
-3. **Struct Literal Syntax**
-   - **Grammar**: ✅ Supports `TypeName { field: value }`
-   - **❌ Issue**: May not be parsing field assignments correctly
-
-4. **Generic Type Syntax**
-   - **Grammar**: ✅ Supports `List<T>`, `Result<T, E>`
-   - **❌ Issue**: Type checker may not handle generics
-
-5. **Pattern Matching Completeness**
-   - **Grammar**: ✅ Supports comprehensive patterns
-   - **❌ Issue**: Some pattern types may not be implemented
-
-6. **Async Syntax**
-   - **Grammar**: ✅ Supports `async fn`, `await expr`
-   - **❌ Issue**: Parser integration may be incomplete
-
-7. **Loop Syntax**
-   - **Grammar**: ✅ Supports `for`, `while`, `loop`
-   - **❌ Issue**: Loop variable scoping may be incorrect
-
-8. **Module System**
-   - **Grammar**: ✅ Supports `import`/`export`
-   - **❌ Issue**: Module resolution not implemented
-
-9. **Error Handling**
-   - **Grammar**: ✅ Supports `try`/`catch`, `?` operator
-   - **❌ Issue**: Error propagation may not work
-
-10. **Type Annotations**
-    - **Grammar**: ✅ Supports comprehensive type syntax
-    - **❌ Issue**: Type checker may not validate all cases
-
-### 🔧 Immediate Fixes Needed
-
-1. **Fix Range Lazy Evaluation**
-   ```rust
-   // In src/internal/mod.rs, update evaluate_mapped_list
-   match source_value {
-       Value::List(items) => { /* existing code */ }
-       Value::Range { start, end, inclusive } => {
-           // Convert range to vector and map
-           let end_val = if inclusive { end + 1 } else { end };
-           let mut results = Vec::new();
-           for i in start..end_val {
-               let result = interpreter.call_function(
-                   Value::Function((**mapper).to_function()),
-                   vec![Value::Integer(i)],
-               )?;
-               results.push(result);
-           }
-           Ok(Value::List(Arc::from(results)))
-       }
-       _ => Err(InterpreterError::TypeError {
-           message: "Cannot map over non-list value".to_string(),
-       }),
-   }
-   ```
-
-2. **Fix Lambda Parsing**
-   - Check parser handling of lambda expressions in pipeline contexts
-
-3. **Fix If Expression Parsing**
-   - Verify `=>` syntax parsing in conditional expressions
-
-4. **Add Missing Builtin Functions**
-   - Implement missing functions referenced in grammar
-
-## Testing Strategy
-
-### Syntax Validation Tests
+### Enhanced Help Commands
 
 ```olang
-// Test file: test_syntax_validation.ol
+// Basic help
+:help                    // Show general help
+:help println           // Show function help
+:help list               // Show category help
 
-// Range operations
-let range_test = 1..1000 |> map((x) => x * 2) |> sum();
+// Advanced search with fuzzy matching
+:help "print"           // Fuzzy search for print-related functions
+:help "http"            // Find HTTP-related functions
+:help "json"            // Find JSON operations
 
-// Lambda syntax
-let lambda_test = [1, 2, 3] |> map((x) => x + 1) |> filter((x) => x > 2);
+// Interactive tutorials
+:tutorial               // List available tutorials
+:tutorial_run basic     // Run basic tutorial
+:tutorial_run lists     // Run list operations tutorial
+:tutorial_run http      // Run HTTP client tutorial
 
-// If expressions
-let if_test = if true => "yes" else => "no";
-
-// Pattern matching
-let pattern_test = match [1, 2, 3] {
-    [] => "empty",
-    [x] => "single",
-    _ => "multiple"
-};
-
-// Async operations
-async fn test_async() = {
-    let result = await Promise.resolve(42);
-    result * 2
-};
+// Context-sensitive help
+:help_context          // Get help based on current context
+:help_suggest          // Get suggestions for common operations
 ```
 
-This comprehensive syntax documentation reveals that while Olang has an extensive and well-designed grammar, there are several critical implementation gaps that prevent many syntactic features from working correctly. The most pressing issue is the range pipeline integration problem that's causing the errors you're seeing. 
+### Help System Features
+
+1. **Fuzzy Search**: Case-insensitive search with similarity matching
+2. **Categorized Help**: Functions organized by category (fs, http, math, etc.)
+3. **Interactive Tutorials**: Step-by-step guided learning
+4. **Context-Sensitive Suggestions**: Help based on current REPL state
+5. **Enhanced Examples**: Runnable code examples with explanations
+6. **Search Filters**: Filter by category, function type, or description
+
+## Implementation Status
+
+### Completed Features (v0.16)
+
+1. **Core Language Features**
+   - Default Parameter Values in Function Declarations
+   - Named Arguments in Function Calls
+   - Destructuring in Let Declarations
+   - Map Literals and Operations
+
+2. **Bug Fixes**
+   - Debug Output Cleanup
+   - Panic-Heavy Test Code Refactoring
+   - Unimplemented Analysis Features
+
+3. **Type System Improvements**
+   - Enhanced Type Checking
+   - Union and Intersection Types
+   - Pattern Matching Exhaustiveness
+
+4. **Error Handling**
+   - Error Context Enhancement
+   - Result Type Standardization
+
+5. **Performance Optimizations**
+   - OVM Memory Management
+   - Lazy Evaluation Edge Cases
+
+6. **Standard Library**
+   - Complete Stdlib Implementation (10 modules)
+   - CSV Module (18 functions)
+   - Crypto Module (23 functions)
+   - All stdlib modules fully tested
+
+7. **Language Features**
+   - Complete AST Features
+   - Enhanced Pattern Matching
+   - Async/Await Support
+
+8. **Testing and Quality**
+   - Test Coverage Gaps Filled
+   - Fuzzing and Stress Testing
+   - Property-Based Testing
+
+9. **Developer Experience**
+   - Better REPL Error Messages
+   - Enhanced Help System
+   - Interactive Tutorials
+
+### In Progress Features
+
+1. **Module System Improvements**
+   - Module resolution cleanup
+   - Module caching system
+   - Import/export error handling
+
+2. **Advanced Type System**
+   - Generic type constraints
+   - Type inference improvements
+   - Complex type validation
+
+### Known Limitations
+
+1. **Module System**
+   - Module resolution has verbose debug output
+   - No module caching implemented
+   - Import/export needs better error handling
+
+2. **Advanced Type Features**
+   - Generic type constraints partially implemented
+   - Some complex type scenarios not fully supported
+
+3. **Performance**
+   - Large recursive operations may cause stack overflow
+   - Some OVM optimizations still being refined
+
+### Testing Strategy
+
+#### Core Feature Testing
+
+```olang
+// Test file: test_v0_16_features.ol
+
+// Default parameters
+fn test_defaults(name: String = "World", count: Int = 1) = 
+    "Hello " + name + " x" + to_string(count);
+
+// Named arguments
+let result = test_defaults(count: 5, name: "Alice");
+
+// Destructuring
+let (x, y) = (10, 20);
+let [first, ...rest] = [1, 2, 3, 4, 5];
+
+// Map operations
+let scores = #{"Alice": 95, "Bob": 87};
+let alice_score = map_get(scores, "Alice");
+let updated_scores = map_set(scores, "Charlie", 92);
+
+// Pipeline with ranges
+let processed = (1..100) 
+    |> filter((x) => x % 2 == 0)
+    |> map((x) => x * x)
+    |> sum();
+```
+
+#### Help System Testing
+
+```olang
+// REPL commands for testing help system
+:help map_get                    // Function help
+:help "json"                     // Fuzzy search
+:tutorial_run basic             // Interactive tutorial
+:help_context                   // Context-sensitive help
+```
+
+This comprehensive syntax documentation reflects the current state of Olang v0.16, including all completed features and known limitations. The language has evolved significantly with the addition of maps, default parameters, named arguments, destructuring, and an enhanced help system, making it more powerful and user-friendly for developers. 
