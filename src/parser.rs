@@ -817,7 +817,7 @@ impl Parser {
         }
     }
 
-    fn build_unary_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+    fn build_unary_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         let mut operators = Vec::new();
         let mut call_expr_pair = None;
 
@@ -1222,7 +1222,7 @@ impl Parser {
                 Ok(TypeAnnotation::List(Box::new(inner_annotation)))
             }
             Rule::tuple_type => {
-                let mut inner_pairs = pair.into_inner();
+                let inner_pairs = pair.into_inner();
                 let mut types = Vec::new();
                 
                 // Parse all type annotations in the tuple

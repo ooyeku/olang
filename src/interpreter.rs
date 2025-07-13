@@ -1,6 +1,6 @@
 use crate::ast::{
     Argument, AsyncFunctionDecl, BinaryOp, BuiltinFunction, EnumVariantData, ErrorTypeDecl, ExportDecl, Expr,
-    Function, FunctionDecl, ImportDecl, LetDecl, MapEntry, MatchArm, Pattern, Program, PromiseType,
+    Function, FunctionDecl, ImportDecl, LetDecl, MatchArm, Pattern, Program, PromiseType,
     Statement, UnaryOp, Value,
 };
 use crate::async_runtime::AsyncRuntime;
@@ -8,11 +8,10 @@ use crate::builtin::BuiltinFunctions;
 use crate::internal::{check_memory_pressure, LazyConfig};
 use crate::ovm::gc::SafepointManager;
 use crate::type_checker::TypeChecker;
-use crate::log;
 use std::collections::HashMap;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use thiserror::Error;
 use std::collections::HashSet;
 
@@ -342,7 +341,7 @@ impl Interpreter {
                         let callee_value = self.eval_expr(*callee)?;
                         
                         // Resolve arguments excluding the piped value
-                        let mut pipeline_arguments = arguments;
+                        let pipeline_arguments = arguments;
                         let additional_args = self.resolve_arguments(&callee_value, pipeline_arguments)?;
                         
                         // Prepend the piped value as the first argument

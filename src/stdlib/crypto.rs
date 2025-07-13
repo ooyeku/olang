@@ -11,10 +11,9 @@ use std::sync::Arc;
 use aes_gcm::{Aes256Gcm, Nonce, KeyInit};
 use aes_gcm::aead::Aead;
 use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::{EncodePublicKey, DecodePublicKey, DecodePrivateKey, EncodePrivateKey, LineEnding}};
-use rsa::{Pkcs1v15Encrypt, Pkcs1v15Sign};
-use rsa::signature::{RandomizedSigner, Verifier};
+use rsa::Pkcs1v15Encrypt;
 use argon2::Argon2;
-use argon2::password_hash::{SaltString, PasswordHasher, PasswordHash, PasswordVerifier, rand_core::OsRng};
+use argon2::password_hash::SaltString;
 use base64::{Engine as _, engine::general_purpose};
 
 /// Error types for Crypto operations

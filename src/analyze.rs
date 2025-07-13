@@ -545,7 +545,7 @@ impl Analyzer {
                 // Or pattern is catch-all if any alternative is catch-all
                 alternatives.iter().any(|alt| self.is_catch_all_pattern(alt))
             }
-            Pattern::Guarded { pattern, .. } => {
+            Pattern::Guarded {  .. } => {
                 // Guarded patterns are not catch-all (guard might fail)
                 false
             }

@@ -321,7 +321,7 @@ impl ValueHandle {
 
     /// Clear cached value to free memory
     pub fn clear_cache(&self) -> Result<(), InterpreterError> {
-        if let Ok(mut guard) = self.inner.try_lock() {
+        if let Ok(guard) = self.inner.try_lock() {
             match &*guard {
                 InternalValue::Eager(_) => {
                     // Convert back to lazy if possible
