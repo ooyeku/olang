@@ -1903,12 +1903,12 @@ impl Repl {
         match parse_error {
             ParseError::InvalidSyntaxWithPosition { message, line, column, snippet } => {
                 println!("  {}: {}", "Parse Error".bright_red().bold(), message.bright_white());
-                println!("\n  {}", "📍 Location:".bright_yellow().bold());
+                println!("\n  {}", "Location:".bright_yellow().bold());
                 println!("    Line {}, Column {}", line.to_string().bright_cyan(), column.to_string().bright_cyan());
                 
                 // Show the formatted code snippet with highlighting
                 if !snippet.trim().is_empty() {
-                    println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                    println!("\n  {}", "Code Context:".bright_blue().bold());
                     self.show_highlighted_snippet(snippet);
                 }
             }
@@ -1921,7 +1921,7 @@ impl Repl {
                 println!("    Line {}, Column {}", line.to_string().bright_cyan(), column.to_string().bright_cyan());
                 
                 if !snippet.trim().is_empty() {
-                    println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                    println!("\n  {}", "Code Context:".bright_blue().bold());
                     self.show_highlighted_snippet(snippet);
                 }
             }
@@ -2541,7 +2541,7 @@ impl Repl {
             println!();
             
             // Show the code to try
-            println!("{}📝 Code to try:{}", Colors::MAGENTA, Colors::RESET);
+            println!("{}Code to try:{}", Colors::MAGENTA, Colors::RESET);
             println!("{}{}{}", Colors::BLUE, step.code, Colors::RESET);
             println!();
             
@@ -2579,7 +2579,7 @@ impl Repl {
                                 println!("{}Code executed successfully!{}", Colors::GREEN, Colors::RESET);
                             }
                             Err(e) => {
-                                println!("{}❌ Error executing code:{}", Colors::RED, Colors::RESET);
+                                println!("{}ERROR executing code:{}", Colors::RED, Colors::RESET);
                                 println!("{}", e);
                             }
                         }

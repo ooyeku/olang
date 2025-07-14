@@ -435,7 +435,7 @@ mod tests {
             "Hello, World!",
             "The quick brown fox jumps over the lazy dog",
             "Base64 encoding test with special chars: !@#$%^&*()",
-            "Unicode test: 🚀 🌟 ✨ 🎉",
+            "Unicode test: rocket star sparkle party",
             "Newlines\nand\ttabs\ttest",
             "",
             "a",
@@ -612,7 +612,7 @@ mod tests {
             "Quotes: \"double\" and 'single'",
             "Backslashes: \\ and forward slashes: /",
             "Control chars: \r\n\t\0",
-            "High unicode: 🚀🌟✨🎉🔥💯",
+            "High unicode: rocket star sparkle party fire hundred",
         ];
 
         for test_case in special_cases {

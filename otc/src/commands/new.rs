@@ -192,7 +192,7 @@ import { router } from "src/routes/mod"
 let server = Server.new()
 server.use_router(router)
 
-println("🚀 Starting web server on http://localhost:8080")
+println("Starting web server on http://localhost:8080")
 server.listen(8080)
 "#;
             fs::write(format!("{}/src/main.ol", name), main_content)?;
@@ -582,16 +582,16 @@ curl http://localhost:8080
 
 ```
 {}/
-├── src/
-│   ├── main.ol           # Application entry point
-│   ├── server.ol         # HTTP server implementation
-│   └── routes/
-│       ├── mod.ol        # Route definitions
-│       └── handlers.ol   # Route handlers
-├── static/               # Static assets
-├── templates/            # HTML templates
-├── tests/                # Test files
-└── olang.toml           # Project configuration
++-- src/
+|   +-- main.ol           # Application entry point
+|   +-- server.ol         # HTTP server implementation
+|   +-- routes/
+|       +-- mod.ol        # Route definitions
+|       +-- handlers.ol   # Route handlers
++-- static/               # Static assets
++-- templates/            # HTML templates
++-- tests/                # Test files
++-- olang.toml           # Project configuration
 ```
 
 ## Configuration
@@ -638,13 +638,13 @@ otc run src/main.ol --help
 
 ```
 {}/
-├── src/
-│   ├── main.ol           # CLI entry point
-│   ├── commands/
-│   │   └── mod.ol        # Command parsing
-│   └── utils/            # Utility functions
-├── tests/                # Test files
-└── olang.toml           # Project configuration
++-- src/
+|   +-- main.ol           # CLI entry point
+|   +-- commands/
+|   |   +-- mod.ol        # Command parsing
+|   +-- utils/            # Utility functions
++-- tests/                # Test files
++-- olang.toml           # Project configuration
 ```
 "#, name, name, name, name, name),
 
@@ -695,15 +695,15 @@ let unique_items = unique([1, 2, 2, 3])
 
 ```
 {}/
-├── src/
-│   └── lib/
-│       ├── mod.ol        # Main library exports
-│       ├── math.ol       # Math utilities
-│       ├── strings.ol    # String utilities
-│       └── collections.ol # Collection utilities
-├── examples/             # Usage examples
-├── tests/                # Test files
-└── olang.toml           # Project configuration
++-- src/
+|   +-- lib/
+|       +-- mod.ol        # Main library exports
+|       +-- math.ol       # Math utilities
+|       +-- strings.ol    # String utilities
+|       +-- collections.ol # Collection utilities
++-- examples/             # Usage examples
++-- tests/                # Test files
++-- olang.toml           # Project configuration
 ```
 "#, name, name, name, name),
 
@@ -725,13 +725,13 @@ otc run tests/main_test.ol
 
 ```
 {}/
-├── src/
-│   ├── main.ol           # Application entry point
-│   └── modules/
-│       ├── utils.ol      # Utility functions
-│       └── helpers.ol    # Helper functions
-├── tests/                # Test files
-└── olang.toml           # Project configuration
++-- src/
+|   +-- main.ol           # Application entry point
+|   +-- modules/
+|       +-- utils.ol      # Utility functions
+|       +-- helpers.ol    # Helper functions
++-- tests/                # Test files
++-- olang.toml           # Project configuration
 ```
 
 ## Development
@@ -778,13 +778,13 @@ Thumbs.db
 /// Print the project structure
 fn print_project_structure(name: &str) {
     println!("   {}/", name);
-    println!("   ├── src/");
-    println!("   │   ├── main.ol");
-    println!("   │   └── modules/");
-    println!("   ├── tests/");
-    println!("   ├── olang.toml");
-    println!("   ├── README.md");
-    println!("   └── .gitignore");
+    println!("   +-- src/");
+    println!("   |   +-- main.ol");
+    println!("   |   +-- modules/");
+    println!("   +-- tests/");
+    println!("   +-- olang.toml");
+    println!("   +-- README.md");
+    println!("   +-- .gitignore");
 }
 
 /// Build the current project

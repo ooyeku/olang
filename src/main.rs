@@ -108,7 +108,7 @@ fn show_file_parse_error(error: &olang::parser::ParseError, file_path: &PathBuf,
                 line.to_string().bright_cyan(), column.to_string().bright_cyan());
             
             if !snippet.trim().is_empty() {
-                println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                println!("\n  {}", "Code Context:".bright_blue().bold());
                 show_highlighted_snippet(snippet);
             }
         }
@@ -118,7 +118,7 @@ fn show_file_parse_error(error: &olang::parser::ParseError, file_path: &PathBuf,
                 line.to_string().bright_cyan(), column.to_string().bright_cyan());
             
             if !snippet.trim().is_empty() {
-                println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                println!("\n  {}", "Code Context:".bright_blue().bold());
                 show_highlighted_snippet(snippet);
             }
         }
@@ -132,14 +132,14 @@ fn show_file_parse_error(error: &olang::parser::ParseError, file_path: &PathBuf,
     let suggestions = parser.get_suggestions(error, source);
     
     if !suggestions.is_empty() {
-        println!("\n  {}", "💡 Suggestions:".bright_cyan().bold());
+        println!("\n  {}", "Suggestions:".bright_cyan().bold());
         for suggestion in suggestions {
             show_suggestion(&suggestion);
         }
     }
     
     // Show help topics
-    println!("\n  {}", "📚 Help:".bright_cyan().bold());
+    println!("\n  {}", "Help:".bright_cyan().bold());
     println!("    • Type {} for syntax help", "olang -h".bright_cyan());
     println!("    • Use {} for interactive mode with better error messages", "olang".bright_cyan());
     println!();
@@ -307,10 +307,10 @@ fn highlight_word(word: &str) -> String {
 
 fn show_suggestion(suggestion: &ErrorSuggestion) {
     let severity_icon = match suggestion.severity {
-        SuggestionSeverity::Error => "❌",
-        SuggestionSeverity::Warning => "⚠️",
-        SuggestionSeverity::Hint => "💡",
-        SuggestionSeverity::Info => "ℹ️",
+        SuggestionSeverity::Error => "ERROR",
+        SuggestionSeverity::Warning => "WARNING",
+        SuggestionSeverity::Hint => "HINT",
+        SuggestionSeverity::Info => "INFO",
     };
     
     let severity_color = match suggestion.severity {

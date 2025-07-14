@@ -285,13 +285,13 @@ impl HelpSystem {
         
         for (i, result) in results.iter().enumerate() {
             let match_icon = match result.match_type {
-                MatchType::ExactName => "🎯",
-                MatchType::FuzzyName => "🔍",
-                MatchType::Description => "📝",
-                MatchType::Category => "📁",
-                MatchType::Example => "💡",
-                MatchType::Parameter => "🔧",
-                MatchType::Signature => "📋",
+                MatchType::ExactName => "EXACT",
+                MatchType::FuzzyName => "FUZZY",
+                MatchType::Description => "DESC",
+                MatchType::Category => "CAT",
+                MatchType::Example => "EX",
+                MatchType::Parameter => "PARAM",
+                MatchType::Signature => "SIG",
             };
             
             output.push_str(&format!(
@@ -351,7 +351,7 @@ impl HelpSystem {
         }
         
         output.push_str(&format!(
-            "{}💡 Tip: Use 'help <function>' for detailed documentation{}\n",
+            "{}TIP: Use 'help <function>' for detailed documentation{}\n",
             Colors::DIM,
             Colors::RESET
         ));
@@ -567,7 +567,7 @@ impl HelpSystem {
             };
             
             output.push_str(&format!(
-                "{}📚 {}{} {}({}{}{}){}\n",
+                "{}TUTORIAL: {}{} {}({}{}{}){}\n",
                 Colors::BLUE,
                 tutorial.name,
                 Colors::RESET,
@@ -586,7 +586,7 @@ impl HelpSystem {
             ));
             
             output.push_str(&format!(
-                "   {}⏱️ {} • 📋 {} steps{}\n",
+                "   {}TIME: {} • {} steps{}\n",
                 Colors::DIM,
                 tutorial.estimated_time,
                 tutorial.steps.len(),
@@ -606,7 +606,7 @@ impl HelpSystem {
         }
         
         output.push_str(&format!(
-            "{}💡 Start a tutorial: help tutorial <name>{}\n",
+            "{}TIP: Start a tutorial: help tutorial <name>{}\n",
             Colors::DIM,
             Colors::RESET
         ));
@@ -712,7 +712,7 @@ impl HelpSystem {
             
             if !step.hints.is_empty() {
                 output.push_str(&format!(
-                    "{}💡 Hints:{}\n",
+                    "{}HINTS:{}\n",
                     Colors::CYAN,
                     Colors::RESET
                 ));
@@ -732,7 +732,7 @@ impl HelpSystem {
         }
         
         output.push_str(&format!(
-            "{}🎉 Congratulations! You've completed the {} tutorial!{}\n",
+            "{}CONGRATULATIONS! You've completed the {} tutorial!{}\n",
             Colors::GREEN,
             tutorial.name,
             Colors::RESET
@@ -875,7 +875,7 @@ impl HelpSystem {
         }
         
         output.push_str(&format!(
-            "{}💡 Type 'help <topic>' for detailed information{}\n",
+            "{}TIP: Type 'help <topic>' for detailed information{}\n",
             Colors::DIM,
             Colors::RESET
         ));
