@@ -441,7 +441,7 @@ impl TypeChecker {
                 match value_type {
                     TypeAnnotation::Custom(struct_type_name) if struct_type_name == type_name => {
                         // Type names match - bind field patterns to appropriate types
-                        for (field_name, field_pattern) in field_patterns {
+                        for (_field_name, field_pattern) in field_patterns {
                             // For now, bind to unknown since we don't have struct field type info
                             // In full implementation, would look up field types from type definitions
                             self.bind_pattern_variables(field_pattern, &TypeAnnotation::Unknown)?;
@@ -572,14 +572,71 @@ impl TypeChecker {
                 // Enhanced enum variant pattern type checking
                 match value_type {
                     TypeAnnotation::Custom(enum_type_name) => {
-                        // For enum types, bind inner patterns to unknown for now
-                        // In full implementation, would look up variant types from enum definition
-                        for pattern in patterns {
-                            self.bind_pattern_variables(pattern, &TypeAnnotation::Unknown)?;
+                        // Look up the enum type definition
+                        if let Some(type_def) = self.context.generic_types.get(enum_type_name) {
+                            match &type_def.definition {
+                                crate::ast::TypeDefinition::Enum { variants } => {
+                                    // Find the variant by name
+                                    if let Some(variant) = variants.iter().find(|v| v.name == *variant_name) {
+                                        // Check if the variant has data and if patterns match
+                                        match (&variant.data, patterns.len()) {
+                                            (None, 0) => {
+                                                // Unit variant with no patterns - OK
+                                                Ok(())
+                                            }
+                                            (None, _) => {
+                                                // Unit variant with patterns - error
+                                                Err(TypeError::InvalidOperation {
+                                                    op: format!("variant '{}' is a unit variant but patterns were provided", variant_name),
+                                                    left_type: value_type.clone(),
+                                                    right_type: None,
+                                                })
+                                            }
+                                            (Some(variant_types), pattern_count) => {
+                                                // Tuple variant - check pattern count matches
+                                                if variant_types.len() != pattern_count {
+                                                    return Err(TypeError::ArityMismatch {
+                                                        expected: variant_types.len(),
+                                                        found: pattern_count,
+                                                        function: format!("enum variant '{}'", variant_name),
+                                                    });
+                                                }
+                                                
+                                                // Clone variant types to avoid borrow checker issues
+                                                let variant_types = variant_types.clone();
+                                                
+                                                // Bind each pattern to its corresponding variant type
+                                                for (pattern, variant_type) in patterns.iter().zip(variant_types.iter()) {
+                                                    self.bind_pattern_variables(pattern, variant_type)?;
+                                                }
+                                                Ok(())
+                                            }
+                                        }
+                                    } else {
+                                        Err(TypeError::InvalidOperation {
+                                            op: format!("variant '{}' not found in enum '{}'", variant_name, enum_type_name),
+                                            left_type: value_type.clone(),
+                                            right_type: None,
+                                        })
+                                    }
+                                }
+                                _ => {
+                                    Err(TypeError::InvalidOperation {
+                                        op: format!("type '{}' is not an enum", enum_type_name),
+                                        left_type: value_type.clone(),
+                                        right_type: None,
+                                    })
+                                }
+                            }
+                        } else {
+                            // Enum type not found - fall back to unknown
+                            for pattern in patterns {
+                                self.bind_pattern_variables(pattern, &TypeAnnotation::Unknown)?;
+                            }
+                            Ok(())
                         }
-                        Ok(())
                     }
-                    TypeAnnotation::Union { types } => {
+                    TypeAnnotation::Union { types: _ } => {
                         // Union types might contain enum variants
                         // For now, bind all inner patterns to unknown
                         for pattern in patterns {
@@ -1477,20 +1534,73 @@ impl TypeChecker {
 
     /// Enhanced type inference for struct literals
     fn infer_struct_literal_type(&mut self, struct_literal: &crate::ast::StructLiteral) -> Result<TypeAnnotation, TypeError> {
-        let mut field_types = Vec::new();
+        let type_name = &struct_literal.type_name;
         
-        for field in &struct_literal.fields {
-            let field_type = self.infer_type(&field.value)?;
-            field_types.push((field.name.clone(), field_type));
+        // Look up the struct type definition
+        if let Some(type_def) = self.context.generic_types.get(type_name) {
+            match &type_def.definition {
+                crate::ast::TypeDefinition::Struct { fields: struct_fields } => {
+                    // Check that all required fields are present
+                    for struct_field in struct_fields {
+                        if !struct_literal.fields.iter().any(|f| f.name == struct_field.name) {
+                            return Err(TypeError::InvalidOperation {
+                                op: format!("missing field '{}' in struct literal for type '{}'", struct_field.name, type_name),
+                                left_type: TypeAnnotation::Unknown,
+                                right_type: None,
+                            });
+                        }
+                    }
+                    
+                    // Clone struct fields to avoid borrow checker issues
+                    let struct_fields = struct_fields.clone();
+                    
+                    // Check that provided fields exist and have correct types
+                    for field in &struct_literal.fields {
+                        if let Some(struct_field) = struct_fields.iter().find(|f| f.name == field.name) {
+                            let field_type = self.infer_type(&field.value)?;
+                            if !self.types_compatible(&field_type, &struct_field.field_type) {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: struct_field.field_type.clone(),
+                                    found: field_type,
+                                    location: format!("field '{}' in struct '{}'", field.name, type_name),
+                                });
+                            }
+                        } else {
+                            return Err(TypeError::InvalidOperation {
+                                op: format!("unknown field '{}' in struct literal for type '{}'", field.name, type_name),
+                                left_type: TypeAnnotation::Unknown,
+                                right_type: None,
+                            });
+                        }
+                    }
+                    
+                    // All validation passed, return the custom type
+                    Ok(TypeAnnotation::Custom(type_name.clone()))
+                }
+                _ => {
+                    Err(TypeError::InvalidOperation {
+                        op: format!("type '{}' is not a struct", type_name),
+                        left_type: TypeAnnotation::Unknown,
+                        right_type: None,
+                    })
+                }
+            }
+        } else {
+            // If type not found, fall back to creating a representation for anonymous struct
+            let mut field_types = Vec::new();
+            
+            for field in &struct_literal.fields {
+                let field_type = self.infer_type(&field.value)?;
+                field_types.push((field.name.clone(), field_type));
+            }
+
+            let field_types_str = field_types.iter()
+                .map(|(name, type_ann)| format!("{}: {:?}", name, type_ann))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            Ok(TypeAnnotation::Custom(format!("{{ {} }}", field_types_str)))
         }
-
-        let field_types: Vec<(String, TypeAnnotation)> = field_types;
-        let field_types_str = field_types.iter()
-            .map(|(name, type_ann)| format!("{}: {:?}", name, type_ann))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        Ok(TypeAnnotation::Custom(format!("{{ {} }}", field_types_str)))
     }
 
     /// Enhanced type inference for anonymous objects
@@ -1526,9 +1636,50 @@ impl TypeChecker {
                 }
             }
             TypeAnnotation::Custom(type_name) => {
-                // For custom types, we would need to look up the type definition
-                // For now, return Unknown type
-                Ok(TypeAnnotation::Unknown)
+                // Look up the custom type definition in our context
+                if let Some(type_def) = self.context.generic_types.get(type_name) {
+                    match &type_def.definition {
+                        crate::ast::TypeDefinition::Struct { fields } => {
+                            // Search for the field in the struct
+                            for struct_field in fields {
+                                if struct_field.name == field {
+                                    return Ok(struct_field.field_type.clone());
+                                }
+                            }
+                            // Field not found in struct
+                            Err(TypeError::InvalidOperation {
+                                op: format!("field '{}' not found in struct '{}'", field, type_name),
+                                left_type: object_type.clone(),
+                                right_type: None,
+                            })
+                        }
+                        crate::ast::TypeDefinition::Enum { variants: _ } => {
+                            // For enums, field access typically doesn't make sense
+                            // unless it's a method call or associated constant
+                            Err(TypeError::InvalidOperation {
+                                op: format!("field access on enum type '{}' is not supported", type_name),
+                                left_type: object_type.clone(),
+                                right_type: None,
+                            })
+                        }
+                        crate::ast::TypeDefinition::Union { types: _ } => {
+                            // For union types, field access is complex and depends on the specific variant
+                            // For now, we'll return an error as this requires more sophisticated handling
+                            Err(TypeError::InvalidOperation {
+                                op: format!("field access on union type '{}' is not supported", type_name),
+                                left_type: object_type.clone(),
+                                right_type: None,
+                            })
+                        }
+                    }
+                } else {
+                    // Custom type not found in context
+                    Err(TypeError::InvalidOperation {
+                        op: format!("unknown custom type '{}'", type_name),
+                        left_type: object_type.clone(),
+                        right_type: None,
+                    })
+                }
             }
             _ => Err(TypeError::InvalidOperation {
                 op: "field access".to_string(),
@@ -1648,11 +1799,10 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), TypeAnnotation::Int);
         
-        // Test field access on custom type
+        // Test field access on unknown custom type should return error
         let custom_type = TypeAnnotation::Custom("MyStruct".to_string());
         let result = type_checker.infer_field_access_type(&custom_type, "field");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), TypeAnnotation::Unknown);
+        assert!(result.is_err());
         
         // Test field access on unsupported type
         let int_type = TypeAnnotation::Int;
