@@ -464,7 +464,7 @@ impl ExecutionEngine {
                     match readiness {
                         crate::ovm::optimization::CompilationReadiness::HighPriority => {
                             // Force JIT compilation
-                            if let Some(func_decl) = self.functions.get(&func_id) {
+                            if let Some(_func_decl) = self.functions.get(&func_id) {
                                 let _ = optimization_engine.force_compile_function(
                                     func_id,
                                     format!("func_{}", func_id.0),
@@ -481,7 +481,7 @@ impl ExecutionEngine {
                         }
                         crate::ovm::optimization::CompilationReadiness::Medium => {
                             // Queue for background compilation
-                            if let Some(func_decl) = self.functions.get(&func_id) {
+                            if let Some(_func_decl) = self.functions.get(&func_id) {
                                 let _ = optimization_engine.compile_function_with_body(
                                     func_id,
                                     format!("func_{}", func_id.0),

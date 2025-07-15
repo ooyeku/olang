@@ -102,7 +102,6 @@ fn create_project_structure(
 /// Create project manifest file (olang.toml)
 fn create_project_manifest(name: &str, is_lib: bool, template: &ProjectTemplate) -> Result<()> {
     use crate::config::*;
-    use std::collections::HashMap;
 
     let project_type = match template {
         ProjectTemplate::Web => "web".to_string(),

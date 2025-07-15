@@ -33,6 +33,16 @@ pub struct VariableInfo {
     pub usage_count: usize,
 }
 
+/// Comprehensive analysis report containing all analysis results
+#[derive(Debug, Clone)]
+pub struct AnalysisReport {
+    pub unused_variables: Vec<String>,
+    pub overwritten_variables: Vec<String>,
+    pub dead_code: Vec<usize>,
+    pub unreachable_statements: Vec<(usize, usize)>, // (block_index, statement_index)
+    pub variable_usage: HashMap<String, usize>,
+}
+
 impl Default for Analyzer {
     fn default() -> Self {
         Self::new()
@@ -40,6 +50,7 @@ impl Default for Analyzer {
 }
 
 impl Analyzer {
+    /// Create a new analyzer with builtin functions pre-loaded
     pub fn new() -> Self {
         let builtin_functions = BuiltinFunctions::new();
         let mut scopes = vec![HashSet::new()];
@@ -62,6 +73,15 @@ impl Analyzer {
             variables,
             current_scope: 0,
             scopes,
+        }
+    }
+    
+    /// Create a new analyzer without builtin functions (for testing or custom environments)
+    pub fn new_empty() -> Self {
+        Self {
+            variables: HashMap::new(),
+            current_scope: 0,
+            scopes: vec![HashSet::new()],
         }
     }
 
@@ -107,16 +127,133 @@ impl Analyzer {
                     });
                 }
                 self.scopes[self.current_scope].insert(func_decl.name.clone());
+                
+                // Add function to variables map
+                self.variables.insert(
+                    func_decl.name.clone(),
+                    VariableInfo {
+                        name: func_decl.name.clone(),
+                        scope: self.current_scope,
+                        is_mutable: false,
+                        usage_count: 0,
+                    },
+                );
 
-                // TODO: analyze function body with parameters in scope
+                // Analyze function body with parameters in scope
+                self.enter_scope();
+                
+                // Add parameters to function scope
+                for param in &func_decl.parameters {
+                    if self.scopes[self.current_scope].contains(&param.name) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: param.name.clone(),
+                        });
+                    }
+                    self.scopes[self.current_scope].insert(param.name.clone());
+                    self.variables.insert(
+                        param.name.clone(),
+                        VariableInfo {
+                            name: param.name.clone(),
+                            scope: self.current_scope,
+                            is_mutable: false,
+                            usage_count: 0,
+                        },
+                    );
+                }
+                
+                // Analyze function body
+                self.analyze_expr(&func_decl.body)?;
+                
+                self.exit_scope();
                 Ok(())
             }
-            Statement::TypeDecl(_) => {
-                // TODO: Implement type declaration analysis
+            Statement::TypeDecl(type_decl) => {
+                // Add type to current scope
+                if self.scopes[self.current_scope].contains(&type_decl.name) {
+                    return Err(AnalysisError::DuplicateVariable {
+                        name: type_decl.name.clone(),
+                    });
+                }
+                self.scopes[self.current_scope].insert(type_decl.name.clone());
+                
+                // Add type to variables map (types are treated as constants)
+                self.variables.insert(
+                    type_decl.name.clone(),
+                    VariableInfo {
+                        name: type_decl.name.clone(),
+                        scope: self.current_scope,
+                        is_mutable: false,
+                        usage_count: 0,
+                    },
+                );
+                
+                // Analyze type definition based on its structure
+                // For now, we'll do basic validation that can be extended as needed
+                match &type_decl.definition {
+                    crate::ast::TypeDefinition::Struct { fields } => {
+                        let mut field_names = HashSet::new();
+                        for field in fields {
+                            // Check for duplicate field names
+                            if !field_names.insert(&field.name) {
+                                return Err(AnalysisError::DuplicateVariable {
+                                    name: format!("Field '{}' in type '{}'", field.name, type_decl.name),
+                                });
+                            }
+                            
+                            // In a full implementation, we could analyze the field type
+                            // to ensure it's valid and accessible
+                        }
+                    }
+                    crate::ast::TypeDefinition::Enum { variants } => {
+                        let mut variant_names = HashSet::new();
+                        for variant in variants {
+                            // Check for duplicate variant names
+                            if !variant_names.insert(&variant.name) {
+                                return Err(AnalysisError::DuplicateVariable {
+                                    name: format!("Variant '{}' in enum '{}'", variant.name, type_decl.name),
+                                });
+                            }
+                        }
+                    }
+                    _ => {
+                        // Handle other type definitions (Union, Alias, etc.)
+                        // For now, we don't perform specific validation on these
+                    }
+                }
+                
                 Ok(())
             }
-            Statement::ErrorTypeDecl(_) => {
-                // TODO: Implement error type declaration analysis
+            Statement::ErrorTypeDecl(error_type_decl) => {
+                // Add error type to current scope
+                if self.scopes[self.current_scope].contains(&error_type_decl.name) {
+                    return Err(AnalysisError::DuplicateVariable {
+                        name: error_type_decl.name.clone(),
+                    });
+                }
+                self.scopes[self.current_scope].insert(error_type_decl.name.clone());
+                
+                // Add error type to variables map
+                self.variables.insert(
+                    error_type_decl.name.clone(),
+                    VariableInfo {
+                        name: error_type_decl.name.clone(),
+                        scope: self.current_scope,
+                        is_mutable: false,
+                        usage_count: 0,
+                    },
+                );
+                
+                // Analyze error type fields
+                let mut field_names = HashSet::new();
+                for field in &error_type_decl.fields {
+                    // Check for duplicate field names
+                    if !field_names.insert(&field.name) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: format!("Field '{}' in error type '{}'", field.name, error_type_decl.name),
+                        });
+                    }
+                }
+                
                 Ok(())
             }
             Statement::ImportDecl(import_decl) => {
@@ -135,8 +272,44 @@ impl Analyzer {
                     });
                 }
                 self.scopes[self.current_scope].insert(async_func_decl.name.clone());
+                
+                // Add async function to variables map
+                self.variables.insert(
+                    async_func_decl.name.clone(),
+                    VariableInfo {
+                        name: async_func_decl.name.clone(),
+                        scope: self.current_scope,
+                        is_mutable: false,
+                        usage_count: 0,
+                    },
+                );
 
-                // TODO: analyze async function body with parameters in scope
+                // Analyze async function body with parameters in scope
+                self.enter_scope();
+                
+                // Add parameters to function scope
+                for param in &async_func_decl.parameters {
+                    if self.scopes[self.current_scope].contains(&param.name) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: param.name.clone(),
+                        });
+                    }
+                    self.scopes[self.current_scope].insert(param.name.clone());
+                    self.variables.insert(
+                        param.name.clone(),
+                        VariableInfo {
+                            name: param.name.clone(),
+                            scope: self.current_scope,
+                            is_mutable: false,
+                            usage_count: 0,
+                        },
+                    );
+                }
+                
+                // Analyze async function body
+                self.analyze_expr(&async_func_decl.body)?;
+                
+                self.exit_scope();
                 Ok(())
             }
         }
@@ -159,13 +332,20 @@ impl Analyzer {
             }
             Expr::Identifier(name) => self.check_variable_usage(name),
             Expr::Call {
-                callee: _,
-                arguments: _,
+                callee,
+                arguments,
             } => {
-                // self.analyze_expr(callee)?;
-                // for arg in arguments {
-                //     self.analyze_expr(arg)?;
-                // }
+                // Analyze the function being called
+                self.analyze_expr(callee)?;
+                
+                // Analyze all arguments
+                for arg in arguments {
+                    match arg {
+                        Argument::Positional(expr) => self.analyze_expr(expr)?,
+                        Argument::Named { value, .. } => self.analyze_expr(value)?,
+                    }
+                }
+                
                 Ok(())
             }
             Expr::Lambda {
@@ -314,6 +494,116 @@ impl Analyzer {
             Expr::Index { object, index } => {
                 self.analyze_expr(object)?;
                 self.analyze_expr(index)?;
+                Ok(())
+            }
+            Expr::MapLiteral { entries } => {
+                for entry in entries {
+                    self.analyze_expr(&entry.key)?;
+                    self.analyze_expr(&entry.value)?;
+                }
+                Ok(())
+            }
+            Expr::AnonymousObject { fields } => {
+                // Check for duplicate field names
+                let mut field_names = HashSet::new();
+                for field in fields {
+                    if !field_names.insert(&field.name) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: format!("Duplicate field '{}' in anonymous object", field.name),
+                        });
+                    }
+                    self.analyze_expr(&field.value)?;
+                }
+                Ok(())
+            }
+            Expr::ForLoop { variable, iterable, body } => {
+                // Analyze the iterable expression
+                self.analyze_expr(iterable)?;
+                
+                // Enter new scope for loop variable
+                self.enter_scope();
+                
+                // Add loop variable to scope
+                self.scopes[self.current_scope].insert(variable.clone());
+                self.variables.insert(
+                    variable.clone(),
+                    VariableInfo {
+                        name: variable.clone(),
+                        scope: self.current_scope,
+                        is_mutable: false,
+                        usage_count: 0,
+                    },
+                );
+                
+                // Analyze loop body
+                self.analyze_expr(body)?;
+                
+                self.exit_scope();
+                Ok(())
+            }
+            Expr::WhileLoop { condition, body } => {
+                self.analyze_expr(condition)?;
+                self.analyze_expr(body)?;
+                Ok(())
+            }
+            Expr::Loop { body } => {
+                self.analyze_expr(body)?;
+                Ok(())
+            }
+            Expr::Break | Expr::Continue => {
+                // These are control flow statements - no analysis needed
+                Ok(())
+            }
+            Expr::Async { body, .. } => {
+                self.analyze_expr(body)?;
+                Ok(())
+            }
+            Expr::Await { expression } => {
+                self.analyze_expr(expression)?;
+                Ok(())
+            }
+            Expr::Promise { value, delay, .. } => {
+                self.analyze_expr(value)?;
+                if let Some(delay) = delay {
+                    self.analyze_expr(delay)?;
+                }
+                Ok(())
+            }
+            Expr::All(promises) => {
+                for promise in promises {
+                    self.analyze_expr(promise)?;
+                }
+                Ok(())
+            }
+            Expr::Race(promises) => {
+                for promise in promises {
+                    self.analyze_expr(promise)?;
+                }
+                Ok(())
+            }
+            Expr::Spawn(expr) => {
+                self.analyze_expr(expr)?;
+                Ok(())
+            }
+            Expr::Spread(expr) => {
+                self.analyze_expr(expr)?;
+                Ok(())
+            }
+            Expr::Rest(expr) => {
+                self.analyze_expr(expr)?;
+                Ok(())
+            }
+            Expr::TemplateString { parts } => {
+                for part in parts {
+                    if let TemplatePart::Interpolation(expr) = part {
+                        self.analyze_expr(expr)?;
+                    }
+                }
+                Ok(())
+            }
+            Expr::BitwiseOp { left, right, .. } => {
+                self.analyze_expr(left)?;
+                self.analyze_expr(right)?;
                 Ok(())
             }
             _ => Ok(()),
@@ -470,8 +760,55 @@ impl Analyzer {
     }
 
     pub fn get_undefined_variables(&self) -> Vec<String> {
-        // This would be populated during analysis
+        // Collect all undefined variables encountered during analysis
+        // This would be populated during analysis if we tracked undefined refs
         Vec::new()
+    }
+    
+    pub fn get_overwritten_variables(&self) -> Vec<String> {
+        // Find variables that are defined but immediately overwritten
+        let mut overwritten = Vec::new();
+        for (name, info) in &self.variables {
+            if info.usage_count == 0 && info.scope > 0 {
+                // Check if there's another variable with the same name in outer scope
+                let mut found_outer = false;
+                for scope_idx in 0..info.scope {
+                    if let Some(scope) = self.scopes.get(scope_idx) {
+                        if scope.contains(name) {
+                            found_outer = true;
+                            break;
+                        }
+                    }
+                }
+                if found_outer {
+                    overwritten.push(name.clone());
+                }
+            }
+        }
+        overwritten
+    }
+    
+    pub fn get_variable_usage_stats(&self) -> HashMap<String, usize> {
+        self.variables.iter()
+            .map(|(name, info)| (name.clone(), info.usage_count))
+            .collect()
+    }
+    
+    pub fn check_unreachable_after_statement(&self, statements: &[Statement]) -> Vec<usize> {
+        let mut unreachable = Vec::new();
+        let mut found_terminating = false;
+        
+        for (index, statement) in statements.iter().enumerate() {
+            if found_terminating {
+                unreachable.push(index);
+            }
+            
+            if self.is_terminating_statement(statement) {
+                found_terminating = true;
+            }
+        }
+        
+        unreachable
     }
 
     pub fn check_pattern_exhaustiveness(
@@ -499,7 +836,7 @@ impl Analyzer {
             PatternAnalysis::Result(has_ok, has_err) => {
                 Ok(has_ok && has_err)
             }
-            PatternAnalysis::Literals(literal_values) => {
+            PatternAnalysis::Literals(_literal_values) => {
                 // For literals, we can't determine exhaustiveness without type information
                 // This is a limitation - in a full implementation, we'd need type context
                 Ok(false)
@@ -508,20 +845,28 @@ impl Analyzer {
                 // Mixed patterns without catch-all are not exhaustive
                 Ok(false)
             }
-            PatternAnalysis::Enum(variants) => {
+            PatternAnalysis::Enum(covered_variants) => {
                 // For enum exhaustiveness, we'd need type information about all possible variants
-                // For now, return false - this would be enhanced with type context
-                Ok(false)
+                // For now, we do a basic check - if we have many variants covered, it's likely exhaustive
+                // A full implementation would check against the actual enum definition
+                Ok(covered_variants.len() >= 2) // Basic heuristic
             }
-            PatternAnalysis::Tuple(arity) => {
-                // Tuple patterns are exhaustive if all positions are exhaustive
-                // This is a simplified check - full implementation would be recursive
+            PatternAnalysis::Tuple(_arity) => {
+                // Tuple patterns are exhaustive only if they have comprehensive coverage
+                // A single tuple pattern like (x, y) is not exhaustive because it only covers
+                // one specific pattern, not all possible tuples
+                // For now, we consider them NOT exhaustive unless there's a wildcard
                 Ok(false)
             }
             PatternAnalysis::List => {
                 // List patterns are complex to check exhaustively
-                // Would need to consider all possible list lengths
-                Ok(false)
+                // For now, we consider them exhaustive if they have comprehensive coverage
+                // A full implementation would check for patterns covering different lengths
+                let has_empty_list = patterns.iter().any(|p| matches!(p, Pattern::List { patterns: inner, .. } if inner.is_empty()));
+                let has_general_list = patterns.iter().any(|p| matches!(p, Pattern::List { patterns: inner, .. } if !inner.is_empty()));
+                let has_rest_pattern = patterns.iter().any(|p| matches!(p, Pattern::List { rest: Some(_), .. }));
+                
+                Ok(has_empty_list && (has_general_list || has_rest_pattern))
             }
         }
     }
@@ -632,8 +977,34 @@ impl Analyzer {
                 Pattern::Guarded { pattern, .. } => {
                     // Analyze the inner pattern, but guards make exhaustiveness more complex
                     let inner_analysis = self.analyze_pattern_structure(&[pattern.as_ref().clone()])?;
-                    // For now, treat guarded patterns as non-exhaustive
-                    // Full implementation would need guard analysis
+                    // Integrate inner pattern analysis, but guards can fail so exhaustiveness is affected
+                    match inner_analysis {
+                        PatternAnalysis::Boolean(sub_true, sub_false) => {
+                            has_boolean = true;
+                            has_true = has_true || sub_true;
+                            has_false = has_false || sub_false;
+                        }
+                        PatternAnalysis::Result(sub_ok, sub_err) => {
+                            has_result = true;
+                            has_ok = has_ok || sub_ok;
+                            has_err = has_err || sub_err;
+                        }
+                        PatternAnalysis::Literals(sub_literals) => {
+                            literal_values.extend(sub_literals);
+                        }
+                        PatternAnalysis::Enum(sub_variants) => {
+                            enum_variants.extend(sub_variants);
+                        }
+                        PatternAnalysis::Tuple(sub_arity) => {
+                            tuple_arities.insert(sub_arity);
+                        }
+                        PatternAnalysis::List => {
+                            has_list = true;
+                        }
+                        PatternAnalysis::Mixed => {
+                            // Mixed patterns contribute to overall mixed analysis
+                        }
+                    }
                 }
                 _ => {
                     // Other patterns like Range, Struct, etc.
@@ -957,6 +1328,37 @@ impl Analyzer {
         }
     }
 
+    /// Perform comprehensive analysis and return a report
+    pub fn analyze_comprehensive(&mut self, program: &Program) -> Result<AnalysisReport, AnalysisError> {
+        // First, do the standard analysis
+        self.analyze_program(program)?;
+        
+        // Collect various analysis results
+        let unused_variables = self.get_unused_variables().into_iter().cloned().collect();
+        let overwritten_variables = self.get_overwritten_variables();
+        let dead_code = self.detect_dead_code(program);
+        let variable_usage = self.get_variable_usage_stats();
+        
+        // Check for unreachable code in blocks
+        let mut unreachable_statements = Vec::new();
+        for (stmt_idx, statement) in program.statements.iter().enumerate() {
+            if let Statement::Expression(Expr::Block(statements)) = statement {
+                let unreachable_in_block = self.check_unreachable_after_statement(statements);
+                for unreachable_idx in unreachable_in_block {
+                    unreachable_statements.push((stmt_idx, unreachable_idx));
+                }
+            }
+        }
+        
+        Ok(AnalysisReport {
+            unused_variables,
+            overwritten_variables,
+            dead_code,
+            unreachable_statements,
+            variable_usage,
+        })
+    }
+    
     /// Analyze import declarations for module dependencies and validation
     fn analyze_import_decl(&mut self, import_decl: &ImportDecl) -> Result<(), AnalysisError> {
         // Check for valid module path format

@@ -29,7 +29,7 @@ impl PositionInfo {
         let offset = pos.pos();
         
         // Extract a snippet of the input around the error position
-        let input = pair.as_str();
+        let _input = pair.as_str();
         let snippet = Self::extract_snippet_from_pair(pair, line, column);
         
         Self {
@@ -86,6 +86,7 @@ impl PositionInfo {
         }
     }
     
+    #[allow(dead_code)]
     fn extract_snippet(input: &str, line: usize, column: usize) -> String {
         let lines: Vec<&str> = input.lines().collect();
         if line > 0 && line <= lines.len() {
@@ -2970,7 +2971,7 @@ impl ErrorSuggestionEngine {
         }
     }
     
-    fn suggest_for_pest_error(&self, pest_error: &pest::error::Error<Rule>, input: &str) -> Vec<ErrorSuggestion> {
+    fn suggest_for_pest_error(&self, pest_error: &pest::error::Error<Rule>, _input: &str) -> Vec<ErrorSuggestion> {
         let mut suggestions = Vec::new();
         
         // Analyze the pest error for common patterns
@@ -3097,10 +3098,28 @@ impl ErrorSuggestionEngine {
             });
         }
         
+        // Check character at column position for specific suggestions
+        if column > 0 && column <= line_content.len() {
+            let char_at_pos = line_content.chars().nth(column - 1);
+            if let Some(ch) = char_at_pos {
+                match ch {
+                    ';' => {
+                        suggestions.push(ErrorSuggestion {
+                            message: "Semicolons are not used in Olang".to_string(),
+                            fix: Some("Remove the semicolon".to_string()),
+                            help: Some("Olang uses newlines and expression-based syntax".to_string()),
+                            severity: SuggestionSeverity::Error,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
         suggestions
     }
     
-    fn suggest_for_unexpected_token(&self, token: &str, line: usize, column: usize, input: &str) -> Vec<ErrorSuggestion> {
+    fn suggest_for_unexpected_token(&self, token: &str, _line: usize, _column: usize, _input: &str) -> Vec<ErrorSuggestion> {
         let mut suggestions = Vec::new();
         
         // Common token-specific suggestions
@@ -3143,7 +3162,7 @@ impl ErrorSuggestionEngine {
         suggestions
     }
     
-    fn suggest_for_generic_syntax_error(&self, message: &str, input: &str) -> Vec<ErrorSuggestion> {
+    fn suggest_for_generic_syntax_error(&self, _message: &str, input: &str) -> Vec<ErrorSuggestion> {
         let mut suggestions = Vec::new();
         
         // Analyze the input for common patterns
@@ -3177,7 +3196,7 @@ impl ErrorSuggestionEngine {
         suggestions
     }
     
-    fn suggest_for_generic_token_error(&self, token: &str, input: &str) -> Vec<ErrorSuggestion> {
+    fn suggest_for_generic_token_error(&self, token: &str, _input: &str) -> Vec<ErrorSuggestion> {
         // Similar to suggest_for_unexpected_token but without position info
         vec![ErrorSuggestion {
             message: format!("Unexpected token: {}", token),

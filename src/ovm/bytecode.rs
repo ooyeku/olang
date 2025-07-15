@@ -37,16 +37,22 @@ pub struct BytecodeVm {
 /// Call frame for function execution
 #[derive(Debug, Clone)]
 struct CallFrame {
+    #[allow(dead_code)]
     function_id: FunctionId,
+    #[allow(dead_code)]
     return_address: usize,
+    #[allow(dead_code)]
     base_register: usize,
+    #[allow(dead_code)]
     local_count: usize,
 }
 
 /// Exception handler for error recovery
 #[derive(Debug, Clone)]
 struct ExceptionHandler {
+    #[allow(dead_code)]
     handler_address: usize,
+    #[allow(dead_code)]
     stack_depth: usize,
 }
 
@@ -66,13 +72,14 @@ pub struct BytecodeCompiler {
     next_local_idx: u32,
 
     // Label tracking for control flow
-    label_counter: u32,
+    _label_counter: u32,
 
     // Function registry for calls
     function_registry: HashMap<String, FunctionId>,
 }
 
 /// Bytecode optimization engine
+#[allow(dead_code)]
 pub struct BytecodeOptimizer {
     // Dead code elimination
     dead_code_eliminator: DeadCodeEliminator,
@@ -407,6 +414,7 @@ pub struct ExecutionState {
     locals: Vec<OvmValue>,
 
     // Call stack
+    #[allow(dead_code)]
     call_stack: Vec<StackFrame>,
 
     // Program counter
@@ -452,6 +460,7 @@ pub struct RegisterAllocator {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct RegisterUsage {
     first_use: usize,
     last_use: usize,
@@ -479,16 +488,18 @@ pub struct InstructionEmitter {
 
 /// Bytecode optimization passes
 
+#[allow(dead_code)]
 pub struct DeadCodeEliminator {
     live_registers: std::collections::HashSet<Register>,
     live_instructions: std::collections::HashSet<usize>,
 }
-
+#[allow(dead_code)]
 pub struct RegisterOptimizer {
     register_map: HashMap<Register, Register>,
     interference_graph: HashMap<Register, std::collections::HashSet<Register>>,
 }
 
+#[allow(dead_code)]
 pub struct ControlFlowOptimizer {
     basic_blocks: Vec<BasicBlock>,
     cfg: ControlFlowGraph,
@@ -498,6 +509,7 @@ pub struct ConstantFolder {
     constant_values: HashMap<Register, OvmValue>,
 }
 
+#[allow(dead_code)]
 pub struct PeepholeOptimizer {
     patterns: Vec<OptimizationPattern>,
 }
@@ -513,6 +525,7 @@ struct BasicBlock {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ControlFlowGraph {
     blocks: Vec<BasicBlock>,
     entry_block: usize,
@@ -520,6 +533,7 @@ struct ControlFlowGraph {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct OptimizationPattern {
     pattern: Vec<InstructionPattern>,
     replacement: Vec<Instruction>,
@@ -527,6 +541,7 @@ struct OptimizationPattern {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum InstructionPattern {
     Exact(Instruction),
     Any,
@@ -2006,7 +2021,7 @@ impl BytecodeCompiler {
             optimizer: BytecodeOptimizer::new(),
             local_variables: HashMap::new(),
             next_local_idx: 0,
-            label_counter: 0,
+            _label_counter: 0,
             function_registry: HashMap::new(),
         }
     }

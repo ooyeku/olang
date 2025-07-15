@@ -951,7 +951,7 @@ impl LazyScheduler {
         let priority_queue = self.priority_queue.clone();
         let is_running = self.is_running.clone();
 
-        let handle = thread::spawn(move || {
+        let _ = thread::spawn(move || {
             Self::worker_thread_main(worker_id, work_queue, priority_queue, is_running);
         });
 
@@ -1281,7 +1281,7 @@ impl StreamFusionOptimizer {
 
         // Look for streams that can be fused together
         let fusable_pairs = self.find_fusable_pairs(&streams);
-        for (stream1, stream2, fusion_type) in fusable_pairs {
+        for (stream1, stream2, _fusion_type) in fusable_pairs {
             opportunities.push(FusionOpportunity {
                 streams: vec![stream1, stream2],
                 estimated_speedup: 1.5, // 50% speedup estimate
@@ -1717,7 +1717,7 @@ mod tests {
     #[test]
     fn test_pipeline_optimization() {
         let config = OvmConfig::default();
-        let engine = LazyEngine::new(&config).unwrap();
+        let _engine = LazyEngine::new(&config).unwrap();
         
         // Create operations as trait objects
         let map_op: Arc<dyn PipelineOperation + Send + Sync> = Arc::new(MapOperation::new(|v| v.clone_simple()));
@@ -1740,7 +1740,7 @@ mod tests {
         
         // Get initial stats
         let initial_stats = pipeline.get_stats();
-        let initial_stage_count = initial_stats.stage_count;
+        let _initial_stage_count = initial_stats.stage_count;
 
         // Optimize the pipeline
         let optimization_result = pipeline.optimize().unwrap();
@@ -1749,7 +1749,7 @@ mod tests {
         let optimized_stats = pipeline.get_stats();
         
         // Should have performed some optimizations
-        assert!(optimization_result.fusions_performed >= 0);
+        assert!(optimization_result.fusions_performed > 0);
         assert!(optimized_stats.optimization_level > 1);
     }
 
@@ -1849,7 +1849,9 @@ pub struct SkipOperation {
 }
 
 pub struct ReduceOperation {
+    #[allow(dead_code)]
     reducer: Arc<dyn Fn(OvmValue, &OvmValue) -> OvmValue + Send + Sync>,
+    #[allow(dead_code)]
     initial: Option<OvmValue>,
 }
 
@@ -1910,7 +1912,7 @@ impl PipelineOperation for MapOperation {
         Some((self.mapper)(input))
     }
 
-    fn can_fuse_with(&self, other: &dyn PipelineOperation) -> bool {
+    fn can_fuse_with(&self, _other: &dyn PipelineOperation) -> bool {
         // Map operations can fuse with most other operations
         true
     }
@@ -1929,7 +1931,7 @@ impl PipelineOperation for FilterOperation {
         }
     }
 
-    fn can_fuse_with(&self, other: &dyn PipelineOperation) -> bool {
+    fn can_fuse_with(&self, _other: &dyn PipelineOperation) -> bool {
         // Filter operations can fuse with most other operations
         true
     }
@@ -1949,7 +1951,7 @@ impl PipelineOperation for TakeOperation {
         }
     }
 
-    fn can_fuse_with(&self, other: &dyn PipelineOperation) -> bool {
+    fn can_fuse_with(&self, _other: &dyn PipelineOperation) -> bool {
         // Take operations can fuse with operations that come before them
         true
     }
@@ -1969,7 +1971,7 @@ impl PipelineOperation for SkipOperation {
         }
     }
 
-    fn can_fuse_with(&self, other: &dyn PipelineOperation) -> bool {
+    fn can_fuse_with(&self, _other: &dyn PipelineOperation) -> bool {
         // Skip operations can fuse with operations that come before them
         true
     }
@@ -1986,7 +1988,7 @@ impl PipelineOperation for ReduceOperation {
         Some(input.clone_simple())
     }
 
-    fn can_fuse_with(&self, other: &dyn PipelineOperation) -> bool {
+    fn can_fuse_with(&self, _other: &dyn PipelineOperation) -> bool {
         // Reduce operations have limited fusion potential
         false
     }
@@ -2036,7 +2038,7 @@ impl FusedPipeline {
         // Create a new stream that applies the pipeline stages
         // For now, just return the input stream ID as a simplified implementation
         
-        let generator = FusedPipelineGenerator {
+        let _generator = FusedPipelineGenerator {
             input_stream,
             stages: Vec::new(), // Simplified - would use references in full implementation
             current_stage: 0,
@@ -2193,6 +2195,7 @@ impl PipelineOperation for MergedPipelineOperation {
 }
 
 /// Generator for fused pipeline execution
+#[allow(dead_code)]
 pub struct FusedPipelineGenerator {
     input_stream: StreamId,
     stages: Vec<PipelineStage>,
@@ -2310,8 +2313,12 @@ impl StreamFusionOptimizer {
 #[derive(Clone)]
 pub struct FusedPipeline {
     id: PipelineId,
+    #[allow(dead_code)]
     stages: Vec<PipelineStage>,
+    #[allow(dead_code)]
     input_streams: Vec<StreamId>,
+    #[allow(dead_code)]
     output_stream: StreamId,
+    #[allow(dead_code)]
     optimization_level: u8,
 }

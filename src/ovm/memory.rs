@@ -33,11 +33,17 @@ pub struct UnifiedHeap {
 
 /// Heap region with bump pointer allocation
 pub struct HeapRegion {
+    #[allow(dead_code)]
     start: *mut u8,
+    #[allow(dead_code)]
     end: *mut u8,
+    #[allow(dead_code)]
     current: AtomicPtr<u8>,
+    #[allow(dead_code)]
     objects: RwLock<Vec<GcPtr<ValueHeader>>>,
+    #[allow(dead_code)]
     generation: Generation,
+    #[allow(dead_code)]
     region_id: usize,
 }
 
@@ -108,13 +114,17 @@ pub struct NurserySpace {
 
 /// Simplified generation spaces for better memory efficiency
 pub struct YoungGeneration {
+    #[allow(dead_code)]
     size: usize,
+    #[allow(dead_code)]
     used: AtomicUsize,
     regions: RwLock<Vec<Arc<HeapRegion>>>,
 }
 
 pub struct OldGeneration {
+    #[allow(dead_code)]
     size: usize,
+    #[allow(dead_code)]
     used: AtomicUsize,
     regions: RwLock<Vec<Arc<HeapRegion>>>,
 }

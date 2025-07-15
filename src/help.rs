@@ -5275,7 +5275,7 @@ For function-specific syntax, use: {}help <function_name>{}",
         // Collect function name suggestions with scores
         let mut function_suggestions: Vec<(String, f64)> = Vec::new();
         for function_name in self.functions.keys() {
-            let score = self.similarity_score(partial_input, function_name);
+            let score = self.similarity_score(&partial_lower, function_name);
             if score > 0.3 {
                 function_suggestions.push((function_name.clone(), score));
             }
@@ -5284,7 +5284,7 @@ For function-specific syntax, use: {}help <function_name>{}",
         // Collect category suggestions with scores
         let mut category_suggestions: Vec<(String, f64)> = Vec::new();
         for category in self.categories.keys() {
-            let score = self.similarity_score(partial_input, category);
+            let score = self.similarity_score(&partial_lower, category);
             if score > 0.3 {
                 category_suggestions.push((category.clone(), score));
             }

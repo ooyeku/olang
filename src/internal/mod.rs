@@ -57,6 +57,7 @@ pub(crate) enum LazyValue {
     /// A generic thunk that can be evaluated later
     Thunk(Arc<dyn Fn(&mut Interpreter) -> Result<Value, InterpreterError> + Send + Sync>),
     /// Lazy range generation
+    #[allow(dead_code)]
     Range {
         start: i64,
         end: i64,
@@ -200,6 +201,7 @@ impl ValueHandle {
     }
 
     /// Force evaluation without caching (for memory pressure scenarios)
+    #[allow(dead_code)]
     pub fn force(&self, interpreter: &mut Interpreter) -> Result<Value, InterpreterError> {
         let config = interpreter.get_lazy_config().clone();
         let mut context = LazyEvaluationContext::new(config);
@@ -207,6 +209,7 @@ impl ValueHandle {
     }
 
     /// Force evaluation with context
+    #[allow(dead_code)]
     pub fn force_with_context(
         &self,
         interpreter: &mut Interpreter,
@@ -222,12 +225,14 @@ impl ValueHandle {
     }
 
     /// Check if this handle contains a lazy value
+    #[allow(dead_code)]
     pub fn is_lazy(&self) -> bool {
         let guard = self.inner.lock().unwrap();
         matches!(&*guard, InternalValue::Lazy(_))
     }
 
     /// Get the internal value for optimization purposes
+    #[allow(dead_code)]
     pub fn get_internal(&self) -> Arc<InternalValue> {
         let guard = self.inner.lock().unwrap();
         Arc::new(guard.clone())
@@ -319,6 +324,7 @@ impl ValueHandle {
         }
     }
 
+    #[allow(dead_code)]
     /// Clear cached value to free memory
     pub fn clear_cache(&self) -> Result<(), InterpreterError> {
         if let Ok(guard) = self.inner.try_lock() {
@@ -384,6 +390,7 @@ impl std::fmt::Debug for LazyValue {
 
 impl LazyValue {
     /// Evaluate this lazy value to produce an eager value with enhanced error handling
+    #[allow(dead_code)]
     pub fn evaluate(&self, interpreter: &mut Interpreter) -> Result<Value, InterpreterError> {
         let config = interpreter.get_lazy_config().clone();
         let mut context = LazyEvaluationContext::new(config);
@@ -862,7 +869,7 @@ impl LazyValue {
             }),
         }
     }
-
+    #[allow(dead_code)]
     /// Attempt to fuse this lazy value with another operation
     pub fn try_fuse(&self, other: &LazyValue) -> Option<LazyValue> {
         match (self, other) {
@@ -917,12 +924,13 @@ impl InternalValue {
         context.evaluation_depth = context.evaluation_depth.saturating_sub(1);
         result
     }
-
+    #[allow(dead_code)]
     /// Convert a regular Value to an InternalValue
     pub fn from_value(value: Value) -> Self {
         InternalValue::Eager(value)
     }
 
+    #[allow(dead_code)]
     /// Convert an InternalValue to a ValueHandle
     pub fn into_handle(self) -> ValueHandle {
         ValueHandle {
@@ -1151,6 +1159,7 @@ pub(crate) fn create_lazy_filter(
     }
 }
 
+#[allow(dead_code)]
 /// Create a lazy range
 pub(crate) fn create_lazy_range(start: i64, end: i64, step: i64, inclusive: bool) -> LazyValue {
     LazyValue::Range {
@@ -1209,6 +1218,7 @@ pub(crate) fn try_fuse_operations(
     }
 }
 
+#[allow(dead_code)]
 /// Take first N elements from a lazy sequence
 pub(crate) fn create_lazy_take(source: ValueHandle, n: usize) -> ValueHandle {
     let source_internal = source.get_internal();
@@ -1227,6 +1237,7 @@ pub(crate) fn create_lazy_take(source: ValueHandle, n: usize) -> ValueHandle {
     ValueHandle::new_lazy(lazy_val)
 }
 
+#[allow(dead_code)]
 /// Skip first N elements from a lazy sequence  
 pub(crate) fn create_lazy_skip(source: ValueHandle, n: usize) -> ValueHandle {
     let source_internal = source.get_internal();
@@ -1408,7 +1419,7 @@ impl LazyEvaluationContext {
         cycle_nodes.push(current_thunk.to_string()); // Complete the cycle
         cycle_nodes.join(" -> ")
     }
-
+    #[allow(dead_code)]
     /// Clear circular dependency tracking for a specific thunk
     pub fn clear_thunk_dependency(&self, thunk_id: &str) {
         if self.config.thread_safety_checks {
@@ -1421,7 +1432,7 @@ impl LazyEvaluationContext {
             }
         }
     }
-
+    #[allow(dead_code)]
     /// Check for potential circular dependencies before they occur
     pub fn check_potential_cycle(&self, dependencies: &[String]) -> Result<(), InterpreterError> {
         if !self.config.circular_dependency_detection {
@@ -1470,7 +1481,7 @@ impl LazyEvaluationContext {
 
         Ok(())
     }
-
+    #[allow(dead_code)]
     /// Get statistics about circular dependency detection
     pub fn get_cycle_detection_stats(&self) -> (usize, usize) {
         let visited_count = if self.config.thread_safety_checks {
@@ -1595,7 +1606,7 @@ impl LazyEvaluationContext {
         
         // For now, just a placeholder
     }
-
+    #[allow(dead_code)]
     /// Check if we should use lazy evaluation based on memory pressure
     pub fn should_use_lazy_evaluation(&self, operation_size: usize) -> bool {
         if !self.config.lazy_by_default {
