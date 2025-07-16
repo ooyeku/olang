@@ -2887,6 +2887,7 @@ impl Parser {
             Rule::function_decl => Ok(ShareDecl::Function(self.build_function_decl(inner_pair.into_inner())?)),
             Rule::let_decl => Ok(ShareDecl::Let(self.build_let_decl(inner_pair.into_inner())?)),
             Rule::type_decl => Ok(ShareDecl::Type(self.build_type_decl(inner_pair.into_inner())?)),
+            Rule::use_decl => Ok(ShareDecl::Use(self.build_use_decl(inner_pair.into_inner())?)),
             _ => Err(ParseError::InvalidSyntax {
                 message: "Invalid declaration in share".to_string(),
             }),

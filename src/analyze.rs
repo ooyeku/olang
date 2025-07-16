@@ -1458,6 +1458,10 @@ impl Analyzer {
                 );
                 Ok(())
             }
+            ShareDecl::Use(use_decl) => {
+                // Analyze transitive sharing like a regular use declaration
+                self.analyze_use_decl(use_decl)
+            }
         }
     }
 
@@ -1523,6 +1527,9 @@ impl Analyzer {
             }
             ShareDecl::Type(_) => {
                 // Type declarations don't contain expressions
+            }
+            ShareDecl::Use(_) => {
+                // Use declarations don't contain expressions to mark
             }
         }
     }
@@ -1672,6 +1679,9 @@ impl DeadCodeDetector {
                     }
                     ShareDecl::Type(_) => {
                         // Type declarations don't contain expressions
+                    }
+                    ShareDecl::Use(_) => {
+                        // Use declarations don't contain expressions to mark
                     }
                 }
             }

@@ -39,7 +39,7 @@ program     = { SOI ~ (statement ~ ";"?)* ~ EOI }
 statement   = { share_decl | use_decl | error_type_decl | type_decl | let_decl | async_function_decl | function_decl | expr }
 
 // Share and use declarations - defined EARLY to get precedence
-share_decl = { "share" ~ (function_decl | let_decl | type_decl) }
+share_decl = { "share" ~ (use_decl | function_decl | let_decl | type_decl) }
 use_decl = { "use" ~ use_path ~ "{" ~ use_list ~ "}" }
 use_path = { identifier ~ ("." ~ identifier)* }
 use_list = { identifier ~ ("," ~ identifier)* }

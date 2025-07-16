@@ -855,6 +855,7 @@ pub enum ShareDecl {
     Function(FunctionDecl),
     Let(LetDecl),
     Type(TypeDecl),
+    Use(UseDecl), // Transitive sharing: share use module { items }
 }
 
 // New UseDecl struct

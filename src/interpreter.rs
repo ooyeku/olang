@@ -2068,7 +2068,23 @@ impl Interpreter {
             ShareDecl::Function(func) => self.eval_function_decl(func),
             ShareDecl::Let(letd) => self.eval_let_decl(letd),
             ShareDecl::Type(typed) => self.eval_type_decl(typed),
+            ShareDecl::Use(use_decl) => self.eval_transitive_share(use_decl),
         }
+    }
+
+    /// Handle transitive sharing: share use module { items }
+    fn eval_transitive_share(&mut self, use_decl: UseDecl) -> Result<Value, InterpreterError> {
+        // Load the module and import the specified items
+        let module_path = use_decl.path.join(".");
+        let module = self.load_module_from_file(&module_path)?;
+        
+        // Import items into current environment (makes them available locally)
+        self.bind_module_imports(&module, &Some(use_decl.items.clone()))?;
+        
+        // Note: The re-sharing is handled in load_module_from_file when processing ShareDecl::Use
+        // This just ensures the items are available in the current module's environment
+        
+        Ok(Value::Unit)
     }
 
     /// Load a module from the file system or standard library
@@ -2158,6 +2174,18 @@ impl Interpreter {
                                 definition: type_decl.definition,
                             };
                             exports.insert(type_decl.name, type_info);
+                        }
+                        ShareDecl::Use(use_decl) => {
+                            // Handle transitive sharing: re-export items from another module
+                            let module_path = use_decl.path.join(".");
+                            let module = self.load_module_from_file(&module_path)?;
+                            
+                            // Re-export the specified items
+                            for item_name in &use_decl.items {
+                                if let Some(value) = self.get_module_export(&module, item_name) {
+                                    exports.insert(item_name.clone(), value);
+                                }
+                            }
                         }
                     }
                 }
@@ -2590,6 +2618,12 @@ impl Interpreter {
                         }
                         ShareDecl::Type(type_decl) => {
                             exports.push(type_decl.name);
+                        }
+                        ShareDecl::Use(use_decl) => {
+                            // Add re-shared items to exports
+                            for item_name in &use_decl.items {
+                                exports.push(item_name.clone());
+                            }
                         }
                     }
                 }

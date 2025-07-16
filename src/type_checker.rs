@@ -256,6 +256,10 @@ impl TypeChecker {
                         // Type declarations don't have runtime values
                         Ok(TypeAnnotation::Unknown)
                     }
+                    crate::ast::ShareDecl::Use(_use_decl) => {
+                        // Transitive sharing doesn't produce types directly
+                        Ok(TypeAnnotation::Unknown)
+                    }
                 }
             }
             Statement::UseDecl(_use_decl) => {
