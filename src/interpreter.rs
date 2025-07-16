@@ -45,6 +45,10 @@ pub enum InterpreterError {
     ThunkCorrupted { thunk_id: String },
     #[error("Lazy evaluation chain too deep: {depth} > {max_depth}")]
     EvaluationChainTooDeep { depth: usize, max_depth: usize },
+    
+    // Feature 7: Circular dependency detection
+    #[error("Circular dependency detected: {cycle_path}")]
+    CircularDependencyDetected { cycle_path: String },
 }
 
 /// Configuration for module resolution debugging
@@ -140,6 +144,7 @@ pub struct Interpreter {
     module_cache: HashMap<String, ModuleCacheEntry>,
     dependency_tracker: ModuleDependencyTracker,
     current_module_path: Option<String>, // For tracking current module during loading
+    module_loading_stack: Vec<String>, // Feature 7: Track modules currently being loaded for circular detection
 }
 
 impl Default for Interpreter {
@@ -163,6 +168,7 @@ impl Interpreter {
             module_cache: HashMap::new(),
             dependency_tracker: ModuleDependencyTracker::new(),
             current_module_path: None, // For tracking current module during loading
+            module_loading_stack: Vec::new(), // Feature 7: Track modules currently being loaded for circular detection
         };
 
         // Register built-in functions
@@ -919,6 +925,7 @@ impl Interpreter {
             module_cache: self.module_cache.clone(),
             dependency_tracker: self.dependency_tracker.clone(),
             current_module_path: self.current_module_path.clone(), // For tracking current module during loading
+            module_loading_stack: Vec::new(), // Feature 7: Each thread gets its own loading stack
         }
     }
 
@@ -2062,6 +2069,21 @@ impl Interpreter {
     pub fn export_dependency_graph(&self) -> HashMap<String, Vec<String>> {
         self.dependency_tracker.dependencies.clone()
     }
+    
+    /// Feature 7: Get current module loading stack (for debugging)
+    pub fn get_module_loading_stack(&self) -> &Vec<String> {
+        &self.module_loading_stack
+    }
+    
+    /// Feature 7: Check if module loading stack is empty
+    pub fn is_module_loading_stack_empty(&self) -> bool {
+        self.module_loading_stack.is_empty()
+    }
+    
+    /// Feature 7: Detect all potential circular dependencies in the current dependency graph
+    pub fn detect_all_circular_dependencies(&self) -> Vec<Vec<String>> {
+        self.dependency_tracker.find_all_cycles()
+    }
 
     fn eval_share_decl(&mut self, share: ShareDecl) -> Result<Value, InterpreterError> {
         match share {
@@ -2089,6 +2111,20 @@ impl Interpreter {
 
     /// Load a module from the file system or standard library
     fn load_module_from_file(&mut self, module_path: &str) -> Result<Value, InterpreterError> {
+        // Feature 7: Check for circular dependency before loading
+        if self.module_loading_stack.contains(&module_path.to_string()) {
+            // Build cycle path for clear error message
+            let cycle_start = self.module_loading_stack.iter()
+                .position(|m| m == module_path)
+                .unwrap_or(0);
+            let mut cycle_path = self.module_loading_stack[cycle_start..].to_vec();
+            cycle_path.push(module_path.to_string());
+            
+            return Err(InterpreterError::CircularDependencyDetected {
+                cycle_path: cycle_path.join(" → "),
+            });
+        }
+        
         // Check cache first
         if let Ok(Some(cached)) = self.get_cached_module(module_path) {
             return Ok(cached.module);
@@ -2143,84 +2179,98 @@ impl Interpreter {
             module_env.define(name, module);
         }
         
+        // Feature 7: Add module to loading stack to track circular dependencies
+        self.module_loading_stack.push(module_path.to_string());
+        let stack_size_before = self.module_loading_stack.len();
+        
         // Save current environment and module path
         let saved_env = std::mem::replace(&mut self.environment, module_env);
         let saved_module_path = self.current_module_path.clone();
         self.current_module_path = Some(module_path.to_string());
         
         // Execute the module and collect exports
-        let mut exports = std::collections::HashMap::new();
-        let mut dependencies = Vec::new();
-        
-        for statement in program.statements {
-            match statement {
-                crate::ast::Statement::ShareDecl(share_decl) => {
-                    match share_decl {
-                        ShareDecl::Function(func_decl) => {
-                            let value = self.eval_function_decl(func_decl.clone())?;
-                            exports.insert(func_decl.name, value);
-                        }
-                        ShareDecl::Let(let_decl) => {
-                            let value = self.eval_let_decl(let_decl.clone())?;
-                            if let Pattern::Identifier(name) = let_decl.pattern {
-                                exports.insert(name, value);
+        let result = {
+            let mut exports = std::collections::HashMap::new();
+            let mut dependencies = Vec::new();
+            
+            // Process all statements in the module
+            for statement in program.statements {
+                match statement {
+                    crate::ast::Statement::ShareDecl(share_decl) => {
+                        match share_decl {
+                            ShareDecl::Function(func_decl) => {
+                                let value = self.eval_function_decl(func_decl.clone())?;
+                                exports.insert(func_decl.name, value);
                             }
-                        }
-                        ShareDecl::Type(type_decl) => {
-                            self.eval_type_decl(type_decl.clone())?;
-                            // Export type information as a special Type value
-                            let type_info = Value::TypeInfo {
-                                name: type_decl.name.clone(),
-                                definition: type_decl.definition,
-                            };
-                            exports.insert(type_decl.name, type_info);
-                        }
-                        ShareDecl::Use(use_decl) => {
-                            // Handle transitive sharing: re-export items from another module
-                            let module_path = use_decl.path.join(".");
-                            let module = self.load_module_from_file(&module_path)?;
-                            
-                            // Re-export the specified items
-                            for item_name in &use_decl.items {
-                                if let Some(value) = self.get_module_export(&module, item_name) {
-                                    exports.insert(item_name.clone(), value);
+                            ShareDecl::Let(let_decl) => {
+                                let value = self.eval_let_decl(let_decl.clone())?;
+                                if let Pattern::Identifier(name) = let_decl.pattern {
+                                    exports.insert(name, value);
+                                }
+                            }
+                            ShareDecl::Type(type_decl) => {
+                                self.eval_type_decl(type_decl.clone())?;
+                                // Export type information as a special Type value
+                                let type_info = Value::TypeInfo {
+                                    name: type_decl.name.clone(),
+                                    definition: type_decl.definition,
+                                };
+                                exports.insert(type_decl.name, type_info);
+                            }
+                            ShareDecl::Use(use_decl) => {
+                                // Handle transitive sharing: re-export items from another module
+                                let dep_module_path = use_decl.path.join(".");
+                                let module = self.load_module_from_file(&dep_module_path)?;
+                                
+                                // Re-export the specified items
+                                for item_name in &use_decl.items {
+                                    if let Some(value) = self.get_module_export(&module, item_name) {
+                                        exports.insert(item_name.clone(), value);
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                crate::ast::Statement::UseDecl(use_decl) => {
-                    dependencies.push(use_decl.path.join("."));
-                    self.eval_statement(crate::ast::Statement::UseDecl(use_decl))?;
-                }
-                _ => {
-                    self.eval_statement(statement)?;
+                    crate::ast::Statement::UseDecl(use_decl) => {
+                        dependencies.push(use_decl.path.join("."));
+                        self.eval_statement(crate::ast::Statement::UseDecl(use_decl))?;
+                    }
+                    _ => {
+                        self.eval_statement(statement)?;
+                    }
                 }
             }
-        }
+            
+            // Create module struct
+            let module = Value::Struct {
+                type_name: "Module".to_string(),
+                fields: exports,
+            };
+            
+            // Cache the module
+            let last_modified = if let Ok(metadata) = std::fs::metadata(&file_path) {
+                metadata.modified().ok()
+            } else { None };
+            self.module_cache.insert(module_path.to_string(), ModuleCacheEntry {
+                module: module.clone(),
+                file_path: Some(file_path),
+                last_modified,
+                dependencies,
+            });
+            
+            Ok(module)
+        };
         
         // Restore original environment and module path
         self.environment = saved_env;
         self.current_module_path = saved_module_path;
         
-        // Create module struct
-        let module = Value::Struct {
-            type_name: "Module".to_string(),
-            fields: exports,
-        };
+        // Feature 7: Clean up loading stack (ensure we only remove the module we added)
+        if self.module_loading_stack.len() >= stack_size_before {
+            self.module_loading_stack.truncate(stack_size_before - 1);
+        }
         
-        // Cache the module
-        let last_modified = if let Ok(metadata) = std::fs::metadata(&file_path) {
-            metadata.modified().ok()
-        } else { None };
-        self.module_cache.insert(module_path.to_string(), ModuleCacheEntry {
-            module: module.clone(),
-            file_path: Some(file_path),
-            last_modified,
-            dependencies,
-        });
-        
-        Ok(module)
+        result
     }
     
     /// Resolve module path to actual file path using dependency-free discovery
@@ -2763,6 +2813,54 @@ impl ModuleDependencyTracker {
         }
         
         false
+    }
+    
+    /// Feature 7: Find all cycles in the dependency graph using DFS
+    pub fn find_all_cycles(&self) -> Vec<Vec<String>> {
+        let mut cycles = Vec::new();
+        let mut visited = HashSet::new();
+        let mut rec_stack = HashSet::new();
+        let mut current_path = Vec::new();
+        
+        for module in self.dependencies.keys() {
+            if !visited.contains(module) {
+                self.dfs_find_cycles(module, &mut visited, &mut rec_stack, &mut current_path, &mut cycles);
+            }
+        }
+        
+        cycles
+    }
+    
+    /// DFS helper for cycle detection
+    fn dfs_find_cycles(
+        &self,
+        module: &str,
+        visited: &mut HashSet<String>,
+        rec_stack: &mut HashSet<String>,
+        current_path: &mut Vec<String>,
+        cycles: &mut Vec<Vec<String>>,
+    ) {
+        visited.insert(module.to_string());
+        rec_stack.insert(module.to_string());
+        current_path.push(module.to_string());
+        
+        if let Some(deps) = self.dependencies.get(module) {
+            for dep in deps {
+                if !visited.contains(dep) {
+                    self.dfs_find_cycles(dep, visited, rec_stack, current_path, cycles);
+                } else if rec_stack.contains(dep) {
+                    // Found a cycle - extract the cycle from current_path
+                    if let Some(cycle_start) = current_path.iter().position(|m| m == dep) {
+                        let mut cycle = current_path[cycle_start..].to_vec();
+                        cycle.push(dep.to_string()); // Complete the cycle
+                        cycles.push(cycle);
+                    }
+                }
+            }
+        }
+        
+        current_path.pop();
+        rec_stack.remove(module);
     }
 }
 
