@@ -1964,9 +1964,15 @@ impl Interpreter {
                 for item in item_list {
                     if let Some(value) = self.get_module_export(module, item) {
                         self.environment.define(item.clone(), value);
+                        crate::log::get_logger().debug("interpreter", &format!("Imported {} from module", item));
                     } else {
+                        // Debug: show what exports are available
+                        if let Value::Struct { fields, .. } = module {
+                            let available: Vec<_> = fields.keys().collect();
+                            crate::log::get_logger().debug("interpreter", &format!("Available exports: {:?}", available));
+                        }
                         return Err(InterpreterError::UndefinedVariable { 
-                            name: format!("module::{}", item) 
+                            name: format!("Export '{}' not found in module", item) 
                         });
                     }
                 }
@@ -2093,8 +2099,13 @@ impl Interpreter {
                 message: format!("Failed to parse module {}: {:?}", file_path.display(), e) 
             })?;
             
-        // Create a new environment for the module
+        // Create a new environment for the module with builtins
         let mut module_env = Environment::new();
+        
+        // Add builtin functions to module environment
+        for (name, func) in self.builtin_functions.get_functions() {
+            module_env.define(name.clone(), Value::Builtin(func.clone()));
+        }
         
         // Add stdlib modules to module environment
         for (name, module) in crate::stdlib::get_stdlib() {
@@ -2125,8 +2136,13 @@ impl Interpreter {
                             }
                         }
                         ShareDecl::Type(type_decl) => {
-                            self.eval_type_decl(type_decl)?;
-                            // Optionally insert type info
+                            self.eval_type_decl(type_decl.clone())?;
+                            // Export type information as a special Type value
+                            let type_info = Value::TypeInfo {
+                                name: type_decl.name.clone(),
+                                definition: type_decl.definition,
+                            };
+                            exports.insert(type_decl.name, type_info);
                         }
                     }
                 }

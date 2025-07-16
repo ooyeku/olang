@@ -372,6 +372,12 @@ pub enum Value {
         value: Option<Box<Value>>,
         error: Option<Box<Value>>,
     },
+
+    // Type information for exported types
+    TypeInfo {
+        name: String,
+        definition: TypeDefinition,
+    },
 }
 
 // Enable parallel processing by implementing Send and Sync for Value
@@ -782,6 +788,7 @@ impl std::fmt::Display for Value {
                     }
                 }
             },
+            Value::TypeInfo { name, .. } => write!(f, "<type: {}>", name),
         }
     }
 }
@@ -806,6 +813,7 @@ impl Value {
             Value::Unit => "Unit".to_string(),
             Value::Enum { type_name, .. } => type_name.clone(),
             Value::Promise { .. } => "Promise".to_string(),
+            Value::TypeInfo { .. } => "Type".to_string(),
         }
     }
 

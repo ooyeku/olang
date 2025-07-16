@@ -1503,6 +1503,7 @@ impl Repl {
             },
             Value::Promise { .. } => "promise",
             Value::Map(_) => "map",
+            Value::TypeInfo { .. } => "type",
         }
     }
 

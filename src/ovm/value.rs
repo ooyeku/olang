@@ -913,6 +913,11 @@ impl OvmValue {
                     data: ValueData::Struct(gc_ptr),
                 }
             }
+
+            AstValue::TypeInfo { name, .. } => {
+                // For now, represent types as string names
+                Self::new_string(name)
+            }
         }
     }
 

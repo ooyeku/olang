@@ -1672,6 +1672,7 @@ impl BytecodeVm {
             Ok(Value::Promise { .. }) => "promise",
             Ok(Value::Map(_)) => "map",
             Err(_) => "unknown",
+            Ok(crate::ast::Value::TypeInfo { .. }) => "type",
         }
     }
 
