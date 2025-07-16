@@ -2076,7 +2076,7 @@ impl Interpreter {
         }
     }
 
-    /// Load a module from the file system
+    /// Load a module from the file system or standard library
     fn load_module_from_file(&mut self, module_path: &str) -> Result<Value, InterpreterError> {
         // Check cache first
         if let Ok(Some(cached)) = self.get_cached_module(module_path) {
@@ -2085,6 +2085,26 @@ impl Interpreter {
 
         // Determine the file path
         let file_path = self.resolve_module_path(module_path)?;
+        
+        // Handle standard library modules
+        if file_path.to_string_lossy().starts_with("__stdlib__/") {
+            let stdlib_name = file_path.file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| InterpreterError::RuntimeError {
+                    message: format!("Invalid stdlib module path: {}", file_path.display())
+                })?;
+                
+            let stdlib = crate::stdlib::get_stdlib();
+            if let Some(module) = stdlib.get(stdlib_name) {
+                // Cache the stdlib module
+                self.cache_module(module_path.to_string(), module.clone(), None, Vec::new())?;
+                return Ok(module.clone());
+            } else {
+                return Err(InterpreterError::RuntimeError {
+                    message: format!("Standard library module '{}' not found", stdlib_name)
+                });
+            }
+        }
         
         // Read and parse the module file
         let content = std::fs::read_to_string(&file_path)
@@ -2180,24 +2200,155 @@ impl Interpreter {
         Ok(module)
     }
     
-    /// Resolve module path to actual file path
+    /// Resolve module path to actual file path using dependency-free discovery
+    /// 
+    /// Discovery Rules (Feature 4):
+    /// 1. Relative to current file - `use sibling_file { function }`
+    /// 2. Relative to project root - `use utils.helpers { function }`
+    /// 3. Standard library - `use std.io { println }` (built-in)
+    /// 4. Current directory first - Always check same folder first
     fn resolve_module_path(&self, module_path: &str) -> Result<std::path::PathBuf, InterpreterError> {
         let debug_config = &self.module_debug_config;
-        let start_time = if debug_config.show_resolution_timing {
+        let _start_time = if debug_config.show_resolution_timing {
             Some(Instant::now())
         } else {
             None
         };
 
         if debug_config.enable_resolution_tracing {
-            crate::log::get_logger().debug("interpreter", &format!("Resolving module: '{}'", module_path));
+            crate::log::get_logger().debug("interpreter", &format!("Resolving module: '{}' using dependency-free discovery", module_path));
         }
-        
+
+        // Try discovery algorithms in order of priority
+        if let Ok(path) = self.discover_module_same_directory(module_path) {
+            if debug_config.enable_resolution_tracing {
+                crate::log::get_logger().debug("interpreter", &format!("Found in same directory: {}", path.display()));
+            }
+            return Ok(path);
+        }
+
+        if let Ok(path) = self.discover_module_project_root(module_path) {
+            if debug_config.enable_resolution_tracing {
+                crate::log::get_logger().debug("interpreter", &format!("Found relative to project root: {}", path.display()));
+            }
+            return Ok(path);
+        }
+
+        if let Ok(path) = self.discover_module_stdlib(module_path) {
+            if debug_config.enable_resolution_tracing {
+                crate::log::get_logger().debug("interpreter", &format!("Found in standard library: {}", path.display()));
+            }
+            return Ok(path);
+        }
+
+        // Enhanced error with discovery information
+        self.create_module_not_found_error(module_path, debug_config)
+    }
+
+    /// 1. Check same directory as current file
+    fn discover_module_same_directory(&self, module_path: &str) -> Result<std::path::PathBuf, InterpreterError> {
+        let current_file_dir = if let Some(current_module) = &self.current_module_path {
+            // If we're loading from within a module, use that module's directory
+            if let Ok(cached) = self.get_cached_module(current_module) {
+                if let Some(cached_entry) = cached {
+                    if let Some(ref file_path) = cached_entry.file_path {
+                        file_path.parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf()
+                    } else {
+                        std::env::current_dir().map_err(|e| InterpreterError::RuntimeError { 
+                            message: format!("Failed to get current directory: {}", e) 
+                        })?
+                    }
+                } else {
+                    std::env::current_dir().map_err(|e| InterpreterError::RuntimeError { 
+                        message: format!("Failed to get current directory: {}", e) 
+                    })?
+                }
+            } else {
+                std::env::current_dir().map_err(|e| InterpreterError::RuntimeError { 
+                    message: format!("Failed to get current directory: {}", e) 
+                })?
+            }
+        } else {
+            // No current module context, use current working directory
+            std::env::current_dir().map_err(|e| InterpreterError::RuntimeError { 
+                message: format!("Failed to get current directory: {}", e) 
+            })?
+        };
+
+        self.try_resolve_in_directory(&current_file_dir, module_path)
+    }
+
+    /// 2. Check relative to project root
+    fn discover_module_project_root(&self, module_path: &str) -> Result<std::path::PathBuf, InterpreterError> {
+        let project_root = self.detect_project_root()?;
+        self.try_resolve_in_directory(&project_root, module_path)
+    }
+
+    /// 3. Check standard library
+    fn discover_module_stdlib(&self, module_path: &str) -> Result<std::path::PathBuf, InterpreterError> {
+        // Check if this is a stdlib module
+        let stdlib = crate::stdlib::get_stdlib();
+        if stdlib.contains_key(module_path) {
+            // Return a special path that indicates this is a stdlib module
+            // We'll handle this specially in load_module_from_file
+            return Ok(std::path::PathBuf::from(format!("__stdlib__/{}", module_path)));
+        }
+
+        // Check for std.* prefix
+        if module_path.starts_with("std.") {
+            let stdlib_name = &module_path[4..]; // Remove "std." prefix
+            if stdlib.contains_key(stdlib_name) {
+                return Ok(std::path::PathBuf::from(format!("__stdlib__/{}", stdlib_name)));
+            }
+        }
+
+        Err(InterpreterError::RuntimeError {
+            message: format!("Not a standard library module: {}", module_path)
+        })
+    }
+
+    /// Detect project root by looking for common project indicators
+    fn detect_project_root(&self) -> Result<std::path::PathBuf, InterpreterError> {
         let current_dir = std::env::current_dir()
             .map_err(|e| InterpreterError::RuntimeError { 
                 message: format!("Failed to get current directory: {}", e) 
             })?;
-        
+
+        // Look for project indicators in current and parent directories
+        let mut dir = current_dir;
+        loop {
+            // Check for common project files
+            let indicators = vec![
+                "Cargo.toml",     // Rust project
+                "package.json",   // Node.js project
+                "requirements.txt", // Python project
+                "go.mod",         // Go project
+                ".git",           // Git repository
+                "olang.toml",     // Future Olang project file
+                "main.ol",        // Olang entry point
+            ];
+
+            for indicator in indicators {
+                if dir.join(indicator).exists() {
+                    return Ok(dir);
+                }
+            }
+
+            // Move to parent directory
+            if let Some(parent) = dir.parent() {
+                dir = parent.to_path_buf();
+            } else {
+                // Reached filesystem root, use original current directory
+                return std::env::current_dir()
+                    .map_err(|e| InterpreterError::RuntimeError { 
+                        message: format!("Failed to get current directory: {}", e) 
+                    });
+            }
+        }
+    }
+
+    /// Try to resolve a module in a specific directory
+    fn try_resolve_in_directory(&self, base_dir: &std::path::Path, module_path: &str) -> Result<std::path::PathBuf, InterpreterError> {
         // Handle dotted paths by splitting on . and joining with /
         let file_parts: Vec<String> = module_path.split('.').map(|s| s.to_string()).collect();
         let file_name = format!("{}.ol", file_parts.last().unwrap_or(&String::new()));
@@ -2207,56 +2358,95 @@ impl Interpreter {
             String::new()
         };
 
-        let candidates = vec![
-            current_dir.join(&dir_path).join(&file_name),
-            current_dir.join(&dir_path).join("mod.ol"),
-            current_dir.join(&dir_path).join("index.ol"),
-            // src variants
-            current_dir.join("src").join(&dir_path).join(&file_name),
-            current_dir.join("src").join(&dir_path).join("mod.ol"),
-            current_dir.join("src").join(&dir_path).join("index.ol"),
-        ];
-
-        if debug_config.log_search_paths {
-            crate::log::get_logger().trace("interpreter", "Module search paths:");
-            for (i, candidate) in candidates.iter().enumerate() {
-                let status = if candidate.exists() { "exists" } else { "missing" };
-                crate::log::get_logger().trace("interpreter", &format!("  {}. {} {}", i + 1, status, candidate.display()));
-            }
-        }
+        // Generate candidates in order of preference
+        let mut candidates = Vec::new();
         
+        // Direct file path
+        if !dir_path.is_empty() {
+            candidates.push(base_dir.join(&dir_path).join(&file_name));
+            // mod.ol and index.ol for folder modules
+            candidates.push(base_dir.join(&dir_path).join("mod.ol"));
+            candidates.push(base_dir.join(&dir_path).join("index.ol"));
+        } else {
+            candidates.push(base_dir.join(&file_name));
+        }
+
+        // Try src/ subdirectory as well
+        if !dir_path.is_empty() {
+            candidates.push(base_dir.join("src").join(&dir_path).join(&file_name));
+            candidates.push(base_dir.join("src").join(&dir_path).join("mod.ol"));
+            candidates.push(base_dir.join("src").join(&dir_path).join("index.ol"));
+        } else {
+            candidates.push(base_dir.join("src").join(&file_name));
+        }
+
+        // Check each candidate
         for candidate in &candidates {
             if candidate.exists() && candidate.is_file() {
-                if debug_config.enable_resolution_tracing {
-                    crate::log::get_logger().debug("interpreter", &format!("Found module file: {}", candidate.display()));
-                    if let Some(start) = start_time {
-                        crate::log::get_logger().trace("interpreter", &format!("Module resolution time: {:?}", start.elapsed()));
-                    }
-                }
                 return Ok(candidate.clone());
             }
         }
 
-        // Enhanced error with debug information
+        Err(InterpreterError::RuntimeError {
+            message: format!("Module '{}' not found in directory {}", module_path, base_dir.display())
+        })
+    }
+
+    /// Create comprehensive error message for module not found
+    fn create_module_not_found_error(&self, module_path: &str, debug_config: &ModuleDebugConfig) -> Result<std::path::PathBuf, InterpreterError> {
         if debug_config.verbose_error_messages {
-            let search_paths: Vec<String> = candidates.iter()
-                .map(|p| p.display().to_string())
-                .collect();
+            let mut search_info = Vec::new();
             
-            Err(InterpreterError::RuntimeError { 
-                message: format!(
-                    "Module '{}' not found.\nSearched paths:\n  - {}",
-                    module_path,
-                    search_paths.join("\n  - ")
-                )
-            })
+            // Show what directories were searched
+            if let Ok(current_dir) = std::env::current_dir() {
+                search_info.push(format!("Same directory: {}", current_dir.display()));
+            }
+            
+            if let Ok(project_root) = self.detect_project_root() {
+                search_info.push(format!("Project root: {}", project_root.display()));
+            }
+            
+            // Check if it might be a typo of a stdlib module
+            let stdlib = crate::stdlib::get_stdlib();
+            let stdlib_suggestions: Vec<String> = stdlib.keys()
+                .filter(|name| {
+                    // Simple similarity check
+                    let distance = levenshtein_distance(module_path, name);
+                    distance <= 2 && distance > 0
+                })
+                .map(|s| s.to_string())
+                .collect();
+
+            let mut error_msg = format!(
+                "Module '{}' not found.\n\nSearched locations:\n  - {}",
+                module_path,
+                search_info.join("\n  - ")
+            );
+
+            if !stdlib_suggestions.is_empty() {
+                error_msg.push_str(&format!(
+                    "\n\nDid you mean one of these standard library modules?\n  - {}",
+                    stdlib_suggestions.join("\n  - ")
+                ));
+            }
+
+            // Show available stdlib modules if it looks like a stdlib reference
+            if module_path.starts_with("std.") || stdlib_suggestions.is_empty() {
+                let stdlib_modules: Vec<String> = stdlib.keys().cloned().collect();
+                error_msg.push_str(&format!(
+                    "\n\nAvailable standard library modules:\n  - {}",
+                    stdlib_modules.join("\n  - ")
+                ));
+            }
+            
+            Err(InterpreterError::RuntimeError { message: error_msg })
         } else {
             Err(InterpreterError::RuntimeError { 
                 message: format!("Module file not found: {}", module_path) 
             })
         }
     }
-    
+
     /// Get an export from a loaded module
     fn get_module_export(&self, module: &Value, export_name: &str) -> Option<Value> {
         match module {
@@ -2332,6 +2522,45 @@ impl ModuleDependencyTracker {
         
         false
     }
+}
+
+/// Calculate Levenshtein distance between two strings for similarity checking
+fn levenshtein_distance(s1: &str, s2: &str) -> usize {
+    let len1 = s1.len();
+    let len2 = s2.len();
+    
+    if len1 == 0 {
+        return len2;
+    }
+    if len2 == 0 {
+        return len1;
+    }
+    
+    let s1_chars: Vec<char> = s1.chars().collect();
+    let s2_chars: Vec<char> = s2.chars().collect();
+    
+    let mut dp = vec![vec![0; len2 + 1]; len1 + 1];
+    
+    // Initialize base cases
+    for i in 0..=len1 {
+        dp[i][0] = i;
+    }
+    for j in 0..=len2 {
+        dp[0][j] = j;
+    }
+    
+    // Fill the DP table
+    for i in 1..=len1 {
+        for j in 1..=len2 {
+            let cost = if s1_chars[i - 1] == s2_chars[j - 1] { 0 } else { 1 };
+            dp[i][j] = std::cmp::min(
+                std::cmp::min(dp[i - 1][j] + 1, dp[i][j - 1] + 1),
+                dp[i - 1][j - 1] + cost
+            );
+        }
+    }
+    
+    dp[len1][len2]
 }
 
 #[cfg(test)]
@@ -2494,3 +2723,4 @@ mod tests {
         assert!(interpreter.would_create_circular_dependency("B", "A"));  // Would create cycle
     }
 }
+
