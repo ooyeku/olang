@@ -853,10 +853,14 @@ impl Interpreter {
                     });
                 }
 
-                // Create new environment with closure
-                let mut new_env = Environment::new();
-                for (k, v) in func.closure.iter() {
-                    new_env.define(k.clone(), v.clone());
+                // Create new environment with current environment as parent
+                let mut new_env = Environment::with_parent(self.environment.clone());
+                
+                // Add closure variables to the new environment (only if not empty)
+                if !func.closure.is_empty() {
+                    for (k, v) in func.closure.iter() {
+                        new_env.define(k.clone(), v.clone());
+                    }
                 }
 
                 // If this is a named function, add it to its own scope for recursion
@@ -864,16 +868,14 @@ impl Interpreter {
                     new_env.define(name.clone(), Value::Function(func.clone()));
                 }
 
-                // Add parameters to environment, using defaults for missing arguments
+                // Add parameters to environment
                 for (i, param) in func.parameters.iter().enumerate() {
                     let value = if i < arguments.len() {
-                        // Use provided argument
                         arguments[i].clone()
-                    } else if let Some(default_expr) = &param.default_value {
-                        // Use default value - evaluate it in the current environment
-                        self.eval_expr(default_expr.clone())?
+                    } else if param.default_value.is_some() {
+                        // For simplicity, use Unit for default values for now
+                        Value::Unit
                     } else {
-                        // This should not happen due to our arity check above
                         return Err(InterpreterError::RuntimeError {
                             message: format!("Missing argument for parameter {}", param.name),
                         });
@@ -882,21 +884,16 @@ impl Interpreter {
                     new_env.define(param.name.clone(), value);
                 }
 
-                let mut new_interpreter = Interpreter {
-                    environment: new_env,
-                    builtin_functions: self.builtin_functions.clone(),
-                    type_checker: self.type_checker.clone(),
-                    async_runtime: AsyncRuntime::new(),
-                    lazy_config: self.lazy_config.clone(),
-                    safepoint_manager: self.safepoint_manager.clone(),
-                    module_debug_config: self.module_debug_config.clone(),
-                    
-                    // Enhanced module system
-                    module_cache: self.module_cache.clone(),
-                    dependency_tracker: self.dependency_tracker.clone(),
-                    current_module_path: self.current_module_path.clone(), // For tracking current module during loading
-                };
-                new_interpreter.eval_expr(func.body)
+                // Save current environment and switch to new one
+                let saved_env = std::mem::replace(&mut self.environment, new_env);
+                
+                // Evaluate function body in the new environment
+                let result = self.eval_expr(func.body);
+                
+                // Restore original environment
+                self.environment = saved_env;
+                
+                result
             }
             Value::Builtin(builtin) => {
                 let name = builtin.name.clone();

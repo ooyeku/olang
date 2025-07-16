@@ -425,6 +425,10 @@ impl Repl {
                             self.show_enhanced_error(&e);
                         }
                     }
+                    
+                    // Clean up module cache to prevent memory accumulation
+                    self.ovm_interpreter.get_classic_interpreter().clear_module_cache();
+                    
                     let _ = self.ovm_interpreter.force_gc();
                 } else {
                     if !self.multiline_buffer.is_empty() {
@@ -485,6 +489,10 @@ impl Repl {
                     self.show_enhanced_error(&e);
                 }
             }
+            
+            // Clean up module cache to prevent memory accumulation
+            self.ovm_interpreter.get_classic_interpreter().clear_module_cache();
+            
             let _ = self.ovm_interpreter.force_gc();
         }
 
