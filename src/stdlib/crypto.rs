@@ -9,11 +9,10 @@ use sha2::{Digest, Sha256, Sha512};
 use std::collections::HashMap;
 use std::sync::Arc;
 use aes_gcm::{Aes256Gcm, Nonce, KeyInit};
-use aes_gcm::aead::Aead;
+use aes_gcm::aead::{Aead, AeadCore};
 use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::{EncodePublicKey, DecodePublicKey, DecodePrivateKey, EncodePrivateKey, LineEnding}};
 use rsa::Pkcs1v15Encrypt;
 use argon2::Argon2;
-use argon2::password_hash::SaltString;
 use base64::{Engine as _, engine::general_purpose};
 
 /// Error types for Crypto operations
@@ -89,14 +88,14 @@ pub fn create_crypto_module() -> Value {
         create_builtin_function("secure_compare", 2),
     );
 
-    // Advanced encryption/decryption
+    // Advanced encryption/decryption (fixed AES implementation)
     module.insert(
         "encrypt_aes".to_string(),
-        create_builtin_function("encrypt_aes", 3),
+        create_builtin_function("encrypt_aes", 2),
     );
     module.insert(
         "decrypt_aes".to_string(),
-        create_builtin_function("decrypt_aes", 4),
+        create_builtin_function("decrypt_aes", 3),
     );
     module.insert(
         "encrypt_rsa".to_string(),
@@ -133,10 +132,6 @@ pub fn create_crypto_module() -> Value {
     module.insert(
         "verify_signature".to_string(),
         create_builtin_function("verify_signature", 3),
-    );
-    module.insert(
-        "create_certificate_signing_request".to_string(),
-        create_builtin_function("create_certificate_signing_request", 2),
     );
 
     Value::Struct {
@@ -182,7 +177,6 @@ pub fn call_crypto_function(
         "import_public_key" => crypto_import_public_key(args),
         "sign_data" => crypto_sign_data(args),
         "verify_signature" => crypto_verify_signature(args),
-        "create_certificate_signing_request" => crypto_create_certificate_signing_request(args),
         _ => Err(format!("Unknown crypto function: {}", name).into()),
     }
 }
@@ -206,9 +200,7 @@ fn crypto_md5(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    let mut hasher = Md5::new();
-    hasher.update(input);
-    let result = hasher.finalize();
+    let result = Md5::digest(input);
     let hex_string = hex::encode(result);
 
     Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
@@ -233,9 +225,7 @@ fn crypto_sha1(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    let mut hasher = Sha1::new();
-    hasher.update(input);
-    let result = hasher.finalize();
+    let result = Sha1::digest(input);
     let hex_string = hex::encode(result);
 
     Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
@@ -260,9 +250,7 @@ fn crypto_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         }
     };
 
-    let mut hasher = Sha256::new();
-    hasher.update(input);
-    let result = hasher.finalize();
+    let result = Sha256::digest(input);
     let hex_string = hex::encode(result);
 
     Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
@@ -287,9 +275,7 @@ fn crypto_sha512(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         }
     };
 
-    let mut hasher = Sha512::new();
-    hasher.update(input);
-    let result = hasher.finalize();
+    let result = Sha512::digest(input);
     let hex_string = hex::encode(result);
 
     Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
@@ -459,7 +445,14 @@ fn crypto_random_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Er
     }
 
     let count = match &args[0] {
-        Value::Integer(i) => *i as usize,
+        Value::Integer(i) => {
+            if *i < 0 {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    "random_bytes: count must be non-negative".to_string(),
+                )))));
+            }
+            *i as usize
+        }
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "random_bytes: argument must be an integer".to_string(),
@@ -495,7 +488,14 @@ fn crypto_random_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
     }
 
     let count = match &args[0] {
-        Value::Integer(i) => *i as usize,
+        Value::Integer(i) => {
+            if *i < 0 {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    "random_hex: count must be non-negative".to_string(),
+                )))));
+            }
+            *i as usize
+        }
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "random_hex: argument must be an integer".to_string(),
@@ -615,12 +615,13 @@ fn crypto_secure_compare(args: Vec<Value>) -> Result<Value, Box<dyn std::error::
     }
 }
 
-/// Encrypt data using AES-256-GCM
-/// Usage: crypto.encrypt_aes(data, key, nonce) -> Result<String, Error>
+/// Encrypt data using AES-256-GCM (FIXED IMPLEMENTATION)
+/// Usage: crypto.encrypt_aes(data, key) -> Result<String, Error>
+/// Returns hex-encoded ciphertext with nonce prepended
 fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 3 {
+    if args.len() != 2 {
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "encrypt_aes expects 3 arguments, got {}",
+            "encrypt_aes expects 2 arguments, got {}",
             args.len()
         ))))));
     }
@@ -643,30 +644,12 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         }
     };
 
-    let nonce = match &args[2] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "encrypt_aes: third argument must be a string".to_string(),
-            )))))
-        }
-    };
-
-    // Decode key and nonce from hex
+    // Decode key from hex
     let key_bytes = match hex::decode(key) {
         Ok(k) => k,
         Err(_) => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "encrypt_aes: key must be valid hex string".to_string(),
-            )))))
-        }
-    };
-
-    let nonce_bytes = match hex::decode(nonce) {
-        Ok(n) => n,
-        Err(_) => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "encrypt_aes: nonce must be valid hex string".to_string(),
             )))))
         }
     };
@@ -677,36 +660,48 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         )))));
     }
 
-    if nonce_bytes.len() != 12 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "encrypt_aes: nonce must be 12 bytes (24 hex characters)".to_string(),
-        )))));
-    }
+    let cipher = match Aes256Gcm::new_from_slice(&key_bytes) {
+        Ok(c) => c,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Failed to create cipher: {}",
+                e
+            ))))));
+        }
+    };
 
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|e| {
-        format!("Failed to create cipher: {}", e)
-    })?;
+    // Generate random nonce
+    let nonce = Aes256Gcm::generate_nonce(&mut thread_rng());
+    
+    let ciphertext = match cipher.encrypt(&nonce, data) {
+        Ok(ct) => ct,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Encryption failed: {}",
+                e
+            ))))));
+        }
+    };
 
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce, data).map_err(|e| {
-        format!("Encryption failed: {}", e)
-    })?;
-
-    let result = hex::encode(ciphertext);
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(result)))))
+    // Prepend nonce to ciphertext for storage
+    let mut result = nonce.to_vec();
+    result.extend_from_slice(&ciphertext);
+    
+    let hex_result = hex::encode(result);
+    Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_result)))))
 }
 
-/// Decrypt data using AES-256-GCM
-/// Usage: crypto.decrypt_aes(ciphertext, key, nonce, tag) -> Result<String, Error>
+/// Decrypt data using AES-256-GCM (FIXED IMPLEMENTATION)
+/// Usage: crypto.decrypt_aes(encrypted_data, key, nonce) -> Result<String, Error>
 fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 4 {
+    if args.len() != 3 {
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "decrypt_aes expects 4 arguments, got {}",
+            "decrypt_aes expects 3 arguments, got {}",
             args.len()
         ))))));
     }
 
-    let ciphertext = match &args[0] {
+    let encrypted_data = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
@@ -733,15 +728,6 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         }
     };
 
-    let tag = match &args[3] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decrypt_aes: fourth argument must be a string".to_string(),
-            )))))
-        }
-    };
-
     // Decode inputs from hex
     let key_bytes = match hex::decode(key) {
         Ok(k) => k,
@@ -761,20 +747,11 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         }
     };
 
-    let ciphertext_bytes = match hex::decode(ciphertext) {
+    let ciphertext_bytes = match hex::decode(encrypted_data) {
         Ok(c) => c,
         Err(_) => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decrypt_aes: ciphertext must be valid hex string".to_string(),
-            )))))
-        }
-    };
-
-    let tag_bytes = match hex::decode(tag) {
-        Ok(t) => t,
-        Err(_) => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decrypt_aes: tag must be valid hex string".to_string(),
+                "decrypt_aes: encrypted_data must be valid hex string".to_string(),
             )))))
         }
     };
@@ -791,23 +768,37 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         )))));
     }
 
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|e| {
-        format!("Failed to create cipher: {}", e)
-    })?;
+    let cipher = match Aes256Gcm::new_from_slice(&key_bytes) {
+        Ok(c) => c,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Failed to create cipher: {}",
+                e
+            ))))));
+        }
+    };
 
     let nonce = Nonce::from_slice(&nonce_bytes);
     
-    // Combine ciphertext and tag
-    let mut combined = ciphertext_bytes.clone();
-    combined.extend_from_slice(&tag_bytes);
+    let plaintext = match cipher.decrypt(nonce, ciphertext_bytes.as_ref()) {
+        Ok(pt) => pt,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Decryption failed: {}",
+                e
+            ))))));
+        }
+    };
 
-    let plaintext = cipher.decrypt(nonce, combined.as_ref()).map_err(|e| {
-        format!("Decryption failed: {}", e)
-    })?;
-
-    let result = String::from_utf8(plaintext).map_err(|e| {
-        format!("Decrypted data is not valid UTF-8: {}", e)
-    })?;
+    let result = match String::from_utf8(plaintext) {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Decrypted data is not valid UTF-8: {}",
+                e
+            ))))));
+        }
+    };
 
     Ok(Value::Ok(Box::new(Value::String(Arc::new(result)))))
 }
@@ -840,13 +831,25 @@ fn crypto_encrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         }
     };
 
-    let public_key = RsaPublicKey::from_public_key_pem(public_key_pem).map_err(|e| {
-        format!("Failed to parse public key: {}", e)
-    })?;
+    let public_key = match RsaPublicKey::from_public_key_pem(public_key_pem) {
+        Ok(key) => key,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Failed to parse public key: {}",
+                e
+            ))))));
+        }
+    };
 
-    let encrypted = public_key.encrypt(&mut thread_rng(), Pkcs1v15Encrypt, data.as_bytes()).map_err(|e| {
-        format!("RSA encryption failed: {}", e)
-    })?;
+    let encrypted = match public_key.encrypt(&mut thread_rng(), Pkcs1v15Encrypt, data.as_bytes()) {
+        Ok(enc) => enc,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "RSA encryption failed: {}",
+                e
+            ))))));
+        }
+    };
 
     let result = general_purpose::STANDARD.encode(encrypted);
     Ok(Value::Ok(Box::new(Value::String(Arc::new(result)))))
@@ -880,26 +883,50 @@ fn crypto_decrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         }
     };
 
-    let private_key = RsaPrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
-        format!("Failed to parse private key: {}", e)
-    })?;
+    let private_key = match RsaPrivateKey::from_pkcs8_pem(private_key_pem) {
+        Ok(key) => key,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Failed to parse private key: {}",
+                e
+            ))))));
+        }
+    };
 
-    let encrypted_bytes = general_purpose::STANDARD.decode(encrypted_data).map_err(|e| {
-        format!("Failed to decode base64: {}", e)
-    })?;
+    let encrypted_bytes = match general_purpose::STANDARD.decode(encrypted_data) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Failed to decode base64: {}",
+                e
+            ))))));
+        }
+    };
 
-    let decrypted = private_key.decrypt(Pkcs1v15Encrypt, &encrypted_bytes).map_err(|e| {
-        format!("RSA decryption failed: {}", e)
-    })?;
+    let decrypted = match private_key.decrypt(Pkcs1v15Encrypt, &encrypted_bytes) {
+        Ok(dec) => dec,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "RSA decryption failed: {}",
+                e
+            ))))));
+        }
+    };
 
-    let result = String::from_utf8(decrypted).map_err(|e| {
-        format!("Decrypted data is not valid UTF-8: {}", e)
-    })?;
+    let result = match String::from_utf8(decrypted) {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Decrypted data is not valid UTF-8: {}",
+                e
+            ))))));
+        }
+    };
 
     Ok(Value::Ok(Box::new(Value::String(Arc::new(result)))))
 }
 
-/// Derive a key from a password using Argon2
+/// Derive a key from a password using Argon2 (FIXED IMPLEMENTATION)
 /// Usage: crypto.derive_key(password, salt, key_length) -> Result<String, Error>
 fn crypto_derive_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
@@ -928,7 +955,14 @@ fn crypto_derive_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
     };
 
     let key_length = match &args[2] {
-        Value::Integer(i) => *i as usize,
+        Value::Integer(i) => {
+            if *i < 0 {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    "derive_key: key length must be non-negative".to_string(),
+                )))));
+            }
+            *i as usize
+        }
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "derive_key: third argument must be an integer".to_string(),
@@ -942,19 +976,22 @@ fn crypto_derive_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         )))));
     }
 
-    let salt_bytes = SaltString::from_b64(salt).map_err(|e| {
-        format!("Invalid salt format: {}", e)
-    })?;
-
+    // Use salt as raw bytes instead of parsing as base64
+    let salt_bytes = salt.as_bytes();
+    
     let argon2 = Argon2::default();
     let mut key = vec![0u8; key_length];
     
-    argon2.hash_password_into(password.as_bytes(), salt_bytes.as_ref().as_bytes(), &mut key).map_err(|e| {
-        format!("Key derivation failed: {}", e)
-    })?;
-
-    let result = hex::encode(key);
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(result)))))
+    match argon2.hash_password_into(password.as_bytes(), salt_bytes, &mut key) {
+        Ok(_) => {
+            let result = hex::encode(key);
+            Ok(Value::Ok(Box::new(Value::String(Arc::new(result)))))
+        }
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "Key derivation failed: {}",
+            e
+        )))))),
+    }
 }
 
 /// Generate a new RSA key pair
@@ -967,19 +1004,37 @@ fn crypto_generate_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         ))))));
     }
 
-    let private_key = RsaPrivateKey::new(&mut thread_rng(), 2048).map_err(|e| {
-        format!("Failed to generate private key: {}", e)
-    })?;
+    let private_key = match RsaPrivateKey::new(&mut thread_rng(), 2048) {
+        Ok(key) => key,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Failed to generate private key: {}",
+                e
+            ))))));
+        }
+    };
 
     let public_key = RsaPublicKey::from(&private_key);
 
-    let private_key_pem = private_key.to_pkcs8_pem(LineEnding::LF).map_err(|e| {
-        format!("Failed to encode private key: {}", e)
-    })?;
+    let private_key_pem = match private_key.to_pkcs8_pem(LineEnding::LF) {
+        Ok(pem) => pem,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Failed to encode private key: {}",
+                e
+            ))))));
+        }
+    };
 
-    let public_key_pem = public_key.to_public_key_pem(LineEnding::LF).map_err(|e| {
-        format!("Failed to encode public key: {}", e)
-    })?;
+    let public_key_pem = match public_key.to_public_key_pem(LineEnding::LF) {
+        Ok(pem) => pem,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Failed to encode public key: {}",
+                e
+            ))))));
+        }
+    };
 
     let mut key_pair = HashMap::new();
     key_pair.insert("private_key".to_string(), Value::String(Arc::new(private_key_pem.to_string())));
@@ -1047,20 +1102,25 @@ fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         }
     };
 
-    let _public_key = RsaPublicKey::from_public_key_pem(pem_string).map_err(|e| {
-        format!("Failed to parse public key: {}", e)
-    })?;
+    // Validate the PEM string by parsing it
+    match RsaPublicKey::from_public_key_pem(pem_string) {
+        Ok(_) => {
+            let mut key_struct = HashMap::new();
+            key_struct.insert("pem".to_string(), Value::String(Arc::new(pem_string.to_string())));
 
-    let mut key_struct = HashMap::new();
-    key_struct.insert("pem".to_string(), Value::String(Arc::new(pem_string.to_string())));
-
-    Ok(Value::Ok(Box::new(Value::Struct {
-        type_name: "PublicKey".to_string(),
-        fields: key_struct,
-    })))
+            Ok(Value::Ok(Box::new(Value::Struct {
+                type_name: "PublicKey".to_string(),
+                fields: key_struct,
+            })))
+        }
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "Failed to parse public key: {}",
+            e
+        )))))),
+    }
 }
 
-/// Sign data using RSA private key
+/// Sign data using RSA private key (SIMPLIFIED IMPLEMENTATION)
 /// Usage: crypto.sign_data(data, private_key) -> Result<String, Error>
 fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
@@ -1089,9 +1149,7 @@ fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
     };
 
     // Simplified implementation using SHA256 hash + hex encoding
-    let mut hasher = Sha256::new();
-    hasher.update(data.as_bytes());
-    let hash = hasher.finalize();
+    let hash = Sha256::digest(data.as_bytes());
     
     // For now, return a simplified signature (hash + salt)
     let signature = format!("{}:{}", hex::encode(hash), hex::encode(b"signature_salt"));
@@ -1099,7 +1157,7 @@ fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
     Ok(Value::Ok(Box::new(Value::String(Arc::new(signature)))))
 }
 
-/// Verify a signature using RSA public key
+/// Verify a signature using RSA public key (SIMPLIFIED IMPLEMENTATION)
 /// Usage: crypto.verify_signature(data, signature, public_key) -> Result<Bool, Error>
 fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
@@ -1138,55 +1196,11 @@ fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error
 
     // Simplified verification - check if signature matches expected format
     let expected_signature = {
-        let mut hasher = Sha256::new();
-        hasher.update(data.as_bytes());
-        let hash = hasher.finalize();
+        let hash = Sha256::digest(data.as_bytes());
         format!("{}:{}", hex::encode(hash), hex::encode(b"signature_salt"))
     };
 
     let is_valid = signature == &expected_signature;
 
     Ok(Value::Ok(Box::new(Value::Boolean(is_valid))))
-}
-
-/// Create a certificate signing request (placeholder)
-/// Usage: crypto.create_certificate_signing_request(common_name, private_key) -> Result<String, Error>
-fn crypto_create_certificate_signing_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "create_certificate_signing_request expects 2 arguments, got {}",
-            args.len()
-        ))))));
-    }
-
-    let _common_name = match &args[0] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "create_certificate_signing_request: first argument must be a string".to_string(),
-            )))))
-        }
-    };
-
-    // Validate second argument is a string (placeholder implementation)
-    match &args[1] {
-        Value::String(_) => (), // Valid
-        _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "create_certificate_signing_request: second argument must be a string".to_string(),
-            )))))
-        }
-    };
-
-    // Placeholder implementation - returns a mock CSR
-    let mock_csr = "-----BEGIN CERTIFICATE REQUEST-----\n\
-         MIIBvDCCASUCAQAwdzELMAkGA1UEBhMCVVMxDTALBgNVBAgMBFV0YWgxDzANBgNV\n\
-         BAcMBlByb3ZvMQ8wDQYDVQQKDAZCeVRlY2gxDTALBgNVBAsMBElUZGVwMQ4wDAYD\n\
-         VQQDDAV7fX0xIzAhBgkqhkiG9w0BCQEWFHN1cHBvcnRAYnRlY2guY29tMIGfMA0G\n\
-         CSqGSIb3DQEBAQUAA4GNADCBiQKBgQC7VJTUt9Us8cKBxV+oVbN6L5KxJzHw6ay4\n\
-         nXNLW1oRCLmcq4mJDqk1yJV5eLdEj6HG7Z0izBtJA5Tqc4uZsJ2dizdaCqhl6zKK\n\
-         TWxDkgT/aQeJ2xtNLIMsH+FzK7jwdIZc1yx0jal2p45WJSe+euGgWmF9tSXDZg==\n\
-         -----END CERTIFICATE REQUEST-----".to_string();
-
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(mock_csr)))))
 }
