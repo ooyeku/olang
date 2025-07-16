@@ -5,8 +5,11 @@ WHITESPACE  = _{ " " | "\t" | NEWLINE }
 NEWLINE     = _{ "\n" | "\r\n" }
 COMMENT     = _{ "//" ~ (!NEWLINE ~ ANY)* }
 
-// Identifiers and literals
-identifier  = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+// Keywords - these must not be parsed as identifiers
+keyword = { "fn" | "let" | "type" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "true" | "false" | "async" | "await" | "try" | "catch" | "error" | "share" | "use" | "struct" | "enum" }
+
+// Identifiers and literals - exclude keywords
+identifier  = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 integer     = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
 float       = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
 string      = @{ "\"" ~ string_char* ~ "\"" }
@@ -31,9 +34,15 @@ number      = { float | binary | octal | hex | integer }
 list        = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
 tuple       = { "(" ~ expr ~ "," ~ expr ~ ("," ~ expr)* ~ ")" }
 
-// Program structure
+// Program structure - Put share_decl and use_decl BEFORE expr to ensure they are matched first
 program     = { SOI ~ (statement ~ ";"?)* ~ EOI }
-statement   = { error_type_decl | type_decl | let_decl | async_function_decl | function_decl | import_decl | export_decl | expr }
+statement   = { share_decl | use_decl | error_type_decl | type_decl | let_decl | async_function_decl | function_decl | expr }
+
+// Share and use declarations - defined EARLY to get precedence
+share_decl = { "share" ~ (function_decl | let_decl | type_decl) }
+use_decl = { "use" ~ use_path ~ "{" ~ use_list ~ "}" }
+use_path = { identifier ~ ("." ~ identifier)* }
+use_list = { identifier ~ ("," ~ identifier)* }
 
 // Error type declaration (enum-like with variants)
 error_type_decl = { "error" ~ identifier ~ "{" ~ error_variant_list? ~ "}" }
@@ -98,6 +107,7 @@ try_catch_expr = { "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block }
 // Postfix operators
 postfix_op = { "?" }
 
+// Primary expressions
 primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | anonymous_object | map_literal | literal | identifier | "(" ~ expr ~ ")" | block }
 
 // Lambda functions
@@ -148,7 +158,7 @@ literal     = { float | integer | char_literal | raw_string | template_string | 
 builtin_type = _{ "Int" | "Float" | "String" | "Bool" | "List" | "Tuple" }
 
 // Type annotations
-type_annotation = { union_type | intersection_type | literal_type | anonymous_struct_type | generic_type | result_type | promise_type | function_type | tuple_type | list_type | map_type | custom_type | basic_type | unit_type }
+type_annotation = { union_type | intersection_type | literal_type | anonymous_struct_type | generic_type | result_type | promise_type | function_type | tuple_type | list_type | map_type | basic_type | custom_type | unit_type }
 base_type_annotation = { basic_type | custom_type | generic_type | list_type | map_type | tuple_type | unit_type | literal_type }
 anonymous_struct_type = { "{" ~ struct_field_list? ~ "}" }
 basic_type = { "Int" | "Float" | "String" | "Bool" | "Map" }
@@ -164,11 +174,6 @@ promise_type = { "Promise" ~ "<" ~ type_annotation ~ ("," ~ type_annotation)? ~ 
 union_type = { base_type_annotation ~ ("|" ~ base_type_annotation)+ }
 intersection_type = { basic_type ~ ("&" ~ basic_type)+ }
 literal_type = { string | integer | boolean }
-
-// Module statements
-import_decl = { "import" ~ (import_items ~ "from")? ~ string }
-import_items = { "{" ~ identifier ~ ("," ~ identifier)* ~ "}" | "*" }
-export_decl = { "export" ~ identifier ~ "=" ~ expr }
 
 // Struct expressions
 struct_literal = { identifier ~ "{" ~ field_value_list? ~ "}" }

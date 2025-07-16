@@ -1,4 +1,4 @@
-use crate::ast::{Expr, MatchArm, Pattern, Program, Statement, Argument, TemplatePart, Value, ImportDecl};
+use crate::ast::{Expr, MatchArm, Pattern, Program, Statement, Argument, TemplatePart, Value, ShareDecl, UseDecl};
 use crate::builtin::BuiltinFunctions;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -256,13 +256,13 @@ impl Analyzer {
                 
                 Ok(())
             }
-            Statement::ImportDecl(import_decl) => {
-                // Implement import analysis
-                self.analyze_import_decl(import_decl)
+            Statement::ShareDecl(share_decl) => {
+                // Analyze the shared declaration
+                self.analyze_share_decl(share_decl)
             }
-            Statement::ExportDecl(export_decl) => {
-                // Analyze the export value
-                self.analyze_expr(&export_decl.value)
+            Statement::UseDecl(use_decl) => {
+                // Analyze the use declaration
+                self.analyze_use_decl(use_decl)
             }
             Statement::AsyncFunctionDecl(async_func_decl) => {
                 // Add async function to current scope
@@ -1117,11 +1117,14 @@ impl Analyzer {
             Statement::AsyncFunctionDecl(async_func_decl) => {
                 self.mark_expression_reachable(&async_func_decl.body, reachable);
             }
-            Statement::ExportDecl(export_decl) => {
-                self.mark_expression_reachable(&export_decl.value, reachable);
+            Statement::ShareDecl(share_decl) => {
+                self.mark_share_decl_reachable(share_decl, reachable);
             }
-            Statement::TypeDecl(_) | Statement::ErrorTypeDecl(_) | Statement::ImportDecl(_) => {
-                // These don't contain expressions that can be unreachable
+            Statement::UseDecl(_) => {
+                // Use declarations don't contain expressions to mark
+            }
+            Statement::TypeDecl(_) | Statement::ErrorTypeDecl(_) => {
+                // Type declarations don't contain expressions to mark
             }
         }
     }
@@ -1359,87 +1362,169 @@ impl Analyzer {
         })
     }
     
-    /// Analyze import declarations for module dependencies and validation
-    fn analyze_import_decl(&mut self, import_decl: &ImportDecl) -> Result<(), AnalysisError> {
+    /// Analyze share declarations
+    fn analyze_share_decl(&mut self, share_decl: &ShareDecl) -> Result<(), AnalysisError> {
+        match share_decl {
+            ShareDecl::Function(func_decl) => {
+                // Add function to current scope
+                if self.scopes[self.current_scope].contains(&func_decl.name) {
+                    return Err(AnalysisError::DuplicateVariable {
+                        name: func_decl.name.clone(),
+                    });
+                }
+                self.scopes[self.current_scope].insert(func_decl.name.clone());
+                
+                // Add function to variables map
+                self.variables.insert(
+                    func_decl.name.clone(),
+                    VariableInfo {
+                        name: func_decl.name.clone(),
+                        scope: self.current_scope,
+                        is_mutable: false,
+                        usage_count: 0,
+                    },
+                );
+
+                // Analyze function body with parameters in scope
+                self.enter_scope();
+                
+                // Add parameters to function scope
+                for param in &func_decl.parameters {
+                    if self.scopes[self.current_scope].contains(&param.name) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: param.name.clone(),
+                        });
+                    }
+                    self.scopes[self.current_scope].insert(param.name.clone());
+                    self.variables.insert(
+                        param.name.clone(),
+                        VariableInfo {
+                            name: param.name.clone(),
+                            scope: self.current_scope,
+                            is_mutable: false,
+                            usage_count: 0,
+                        },
+                    );
+                }
+                
+                // Analyze function body
+                self.analyze_expr(&func_decl.body)?;
+                
+                self.exit_scope();
+                Ok(())
+            }
+            ShareDecl::Let(let_decl) => {
+                // Analyze the value expression if present
+                if let Some(value) = &let_decl.value {
+                    self.analyze_expr(value)?;
+                }
+
+                // Extract variable names from the pattern
+                let pattern_variables = self.extract_pattern_variables(&let_decl.pattern);
+                
+                // Check for duplicate variables in current scope
+                for var_name in &pattern_variables {
+                    if self.scopes[self.current_scope].contains(var_name) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: var_name.clone(),
+                        });
+                    }
+                }
+
+                // Add all variables from the pattern to current scope
+                for var_name in pattern_variables {
+                    self.scopes[self.current_scope].insert(var_name);
+                }
+                Ok(())
+            }
+            ShareDecl::Type(type_decl) => {
+                // Add type to current scope
+                if self.scopes[self.current_scope].contains(&type_decl.name) {
+                    return Err(AnalysisError::DuplicateVariable {
+                        name: type_decl.name.clone(),
+                    });
+                }
+                self.scopes[self.current_scope].insert(type_decl.name.clone());
+                
+                // Add type to variables map
+                self.variables.insert(
+                    type_decl.name.clone(),
+                    VariableInfo {
+                        name: type_decl.name.clone(),
+                        scope: self.current_scope,
+                        is_mutable: false,
+                        usage_count: 0,
+                    },
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// Analyze use declarations for module dependencies and validation
+    fn analyze_use_decl(&mut self, use_decl: &UseDecl) -> Result<(), AnalysisError> {
         // Check for valid module path format
-        if import_decl.module_path.is_empty() {
+        if use_decl.path.is_empty() {
             return Err(AnalysisError::TypeError {
-                message: "Empty module path in import declaration".to_string(),
+                message: "Empty module path in use declaration".to_string(),
             });
         }
         
         // Check for relative path traversal (security concern)
-        if import_decl.module_path.contains("..") {
+        let module_path = use_decl.path.join(".");
+        if module_path.contains("..") {
             return Err(AnalysisError::TypeError {
                 message: "Path traversal not allowed in module imports".to_string(),
             });
         }
         
         // Track imported symbols in current scope
-        match &import_decl.items {
-            Some(items) => {
-                // Specific imports: import { func1, func2 } from "module"
-                for item in items {
-                    if item.is_empty() {
-                        return Err(AnalysisError::TypeError {
-                            message: "Empty import item name".to_string(),
-                        });
-                    }
-                    
-                    // Check for duplicate imports in same scope
-                    if self.scopes[self.current_scope].contains(item) {
-                        return Err(AnalysisError::DuplicateVariable {
-                            name: item.clone(),
-                        });
-                    }
-                    
-                    // Add imported symbol to current scope
-                    self.scopes[self.current_scope].insert(item.clone());
-                    
-                    // Track in variables map
-                    self.variables.insert(
-                        item.clone(),
-                        VariableInfo {
-                            name: item.clone(),
-                            scope: self.current_scope,
-                            is_mutable: false, // Imported symbols are typically immutable
-                            usage_count: 0,    // Will be incremented when used
-                        },
-                    );
-                }
+        for item in &use_decl.items {
+            if item.is_empty() {
+                return Err(AnalysisError::TypeError {
+                    message: "Empty import item name".to_string(),
+                });
             }
-            None => {
-                // Wildcard import: import * from "module"
-                // We can't validate specific symbols without loading the module
-                // But we can check for conflicts if we know the module exports
-                
-                // For now, we'll just mark that a wildcard import happened
-                // In a full implementation, we would:
-                // 1. Load the module to get its exports
-                // 2. Check for conflicts with existing symbols
-                // 3. Add all exported symbols to the current scope
-                
-                // Add a special marker to track wildcard imports
-                let wildcard_marker = format!("__wildcard_import_{}", import_decl.module_path);
-                self.variables.insert(
-                    wildcard_marker.clone(),
-                    VariableInfo {
-                        name: wildcard_marker,
-                        scope: self.current_scope,
-                        is_mutable: false,
-                        usage_count: 0,
-                    },
-                );
+            
+            // Check for duplicate imports in same scope
+            if self.scopes[self.current_scope].contains(item) {
+                return Err(AnalysisError::DuplicateVariable {
+                    name: item.clone(),
+                });
             }
+            
+            // Add imported symbol to current scope
+            self.scopes[self.current_scope].insert(item.clone());
+            
+            // Track in variables map
+            self.variables.insert(
+                item.clone(),
+                VariableInfo {
+                    name: item.clone(),
+                    scope: self.current_scope,
+                    is_mutable: false,
+                    usage_count: 0,
+                },
+            );
         }
         
-        // Additional validation could include:
-        // - Checking if the module exists (requires file system access)
-        // - Validating that imported symbols exist in the target module
-        // - Detecting circular dependencies (requires global dependency tracking)
-        // - Checking for unused imports
-        
         Ok(())
+    }
+
+    fn mark_share_decl_reachable(&mut self, share_decl: &ShareDecl, reachable: &mut HashSet<usize>) {
+        match share_decl {
+            ShareDecl::Function(func_decl) => {
+                self.mark_expression_reachable(&func_decl.body, reachable);
+            }
+            ShareDecl::Let(let_decl) => {
+                if let Some(ref value) = let_decl.value {
+                    self.mark_expression_reachable(value, reachable);
+                }
+            }
+            ShareDecl::Type(_) => {
+                // Type declarations don't contain expressions
+            }
+        }
     }
 }
 
@@ -1574,11 +1659,27 @@ impl DeadCodeDetector {
             Statement::AsyncFunctionDecl(async_func_decl) => {
                 self.mark_expression_reachable(&async_func_decl.body);
             }
-            Statement::ExportDecl(export_decl) => {
-                self.mark_expression_reachable(&export_decl.value);
+            Statement::ShareDecl(share_decl) => {
+                // Handle share declarations by marking their expressions as reachable
+                match share_decl {
+                    ShareDecl::Function(func_decl) => {
+                        self.mark_expression_reachable(&func_decl.body);
+                    }
+                    ShareDecl::Let(let_decl) => {
+                        if let Some(ref value) = let_decl.value {
+                            self.mark_expression_reachable(value);
+                        }
+                    }
+                    ShareDecl::Type(_) => {
+                        // Type declarations don't contain expressions
+                    }
+                }
             }
-            Statement::TypeDecl(_) | Statement::ErrorTypeDecl(_) | Statement::ImportDecl(_) => {
-                // These don't contain expressions that can be unreachable
+            Statement::UseDecl(_) => {
+                // Use declarations don't contain expressions to mark
+            }
+            Statement::TypeDecl(_) | Statement::ErrorTypeDecl(_) => {
+                // Type declarations don't contain expressions to mark
             }
         }
     }

@@ -18,8 +18,8 @@ pub enum Statement {
     AsyncFunctionDecl(AsyncFunctionDecl),
     TypeDecl(TypeDecl),
     ErrorTypeDecl(ErrorTypeDecl),
-    ImportDecl(ImportDecl),
-    ExportDecl(ExportDecl),
+    ShareDecl(ShareDecl),
+    UseDecl(UseDecl),
 }
 
 /// Error type declaration
@@ -839,4 +839,19 @@ pub enum BitwiseOp {
     Xor,
     Shl,
     Shr,
+}
+
+// New ShareDecl enum
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ShareDecl {
+    Function(FunctionDecl),
+    Let(LetDecl),
+    Type(TypeDecl),
+}
+
+// New UseDecl struct
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UseDecl {
+    pub path: Vec<String>,
+    pub items: Vec<String>,
 }

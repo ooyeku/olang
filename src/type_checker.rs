@@ -236,13 +236,31 @@ impl TypeChecker {
                 // Error type declarations don't produce values, just register types
                 Ok(TypeAnnotation::Unknown)
             }
-            Statement::ImportDecl(_) => Ok(TypeAnnotation::Unknown),
-            Statement::ExportDecl(export_decl) => {
-                let value_type = self.infer_type(&export_decl.value)?;
-                self.context
-                    .variables
-                    .insert(export_decl.name.clone(), value_type.clone());
-                Ok(value_type)
+            Statement::ShareDecl(share_decl) => {
+                match share_decl {
+                    crate::ast::ShareDecl::Function(func_decl) => {
+                        self.check_function_decl(func_decl)
+                    }
+                    crate::ast::ShareDecl::Let(let_decl) => {
+                        if let Some(ref value) = let_decl.value {
+                            let value_type = self.infer_type(value)?;
+                            if let crate::ast::Pattern::Identifier(name) = &let_decl.pattern {
+                                self.context.variables.insert(name.clone(), value_type.clone());
+                            }
+                            Ok(value_type)
+                        } else {
+                            Ok(TypeAnnotation::Unknown)
+                        }
+                    }
+                    crate::ast::ShareDecl::Type(_type_decl) => {
+                        // Type declarations don't have runtime values
+                        Ok(TypeAnnotation::Unknown)
+                    }
+                }
+            }
+            Statement::UseDecl(_use_decl) => {
+                // Use declarations import symbols but don't produce types directly
+                Ok(TypeAnnotation::Unknown)
             }
             Statement::AsyncFunctionDecl(async_func_decl) => {
                 // Check async function declaration (similar to regular function)

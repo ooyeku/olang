@@ -1,8 +1,9 @@
 use crate::ast::{
-    Argument, AsyncFunctionDecl, BinaryOp, EnumVariant, ErrorTypeDecl, ExportDecl, Expr, FieldValue,
-    FunctionDecl, ImportDecl, LetDecl, MapEntry, MatchArm, Parameter, Pattern, Program, PromiseType,
+    Argument, AsyncFunctionDecl, BinaryOp, EnumVariant, ErrorTypeDecl, Expr, FieldValue,
+    FunctionDecl, LetDecl, MapEntry, MatchArm, Parameter, Pattern, Program, PromiseType,
     Statement, StructField, StructLiteral, TypeAnnotation, TypeDecl, TypeDefinition,
     BitwiseOp, UnaryOp, TemplatePart,
+    ShareDecl, UseDecl,
 };
 use pest::{iterators::Pair, iterators::Pairs, Parser as PestParser};
 use pest_derive::Parser;
@@ -233,11 +234,11 @@ impl Parser {
             Rule::error_type_decl => Ok(Statement::ErrorTypeDecl(
                 self.build_error_type_decl(pair.into_inner())?,
             )),
-            Rule::import_decl => Ok(Statement::ImportDecl(
-                self.build_import_decl(pair.into_inner())?,
+            Rule::share_decl => Ok(Statement::ShareDecl(
+                self.build_share_decl(pair.into_inner())?,
             )),
-            Rule::export_decl => Ok(Statement::ExportDecl(
-                self.build_export_decl(pair.into_inner())?,
+            Rule::use_decl => Ok(Statement::UseDecl(
+                self.build_use_decl(pair.into_inner())?,
             )),
             Rule::expr => Ok(Statement::Expression(self.build_expr(pair.into_inner())?)),
             _ => Err(ParseError::invalid_syntax_at(
@@ -2299,54 +2300,6 @@ impl Parser {
         })
     }
 
-    fn build_import_decl(&self, pairs: Pairs<Rule>) -> Result<ImportDecl, ParseError> {
-        let mut module_path = String::new();
-        let mut items = None;
-
-        for pair in pairs {
-            match pair.as_rule() {
-                Rule::import_items => {
-                    let items_inner = pair.into_inner();
-                    let mut item_list = Vec::new();
-                    for item_pair in items_inner {
-                        if item_pair.as_rule() == Rule::identifier {
-                            item_list.push(item_pair.as_str().to_string());
-                        }
-                    }
-                    items = if item_list.is_empty() {
-                        None
-                    } else {
-                        Some(item_list)
-                    };
-                }
-                Rule::string => {
-                    module_path = pair.as_str().trim_matches('"').to_string();
-                }
-                _ => {}
-            }
-        }
-
-        Ok(ImportDecl { module_path, items })
-    }
-
-    fn build_export_decl(&self, mut pairs: Pairs<Rule>) -> Result<ExportDecl, ParseError> {
-        let name = pairs
-            .next()
-            .ok_or_else(|| ParseError::InvalidSyntax {
-                message: "Missing export name".to_string(),
-            })?
-            .as_str()
-            .to_string();
-
-        let value = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing export value".to_string(),
-        })?;
-
-        let expr = self.build_expr(value.into_inner())?;
-
-        Ok(ExportDecl { name, value: expr })
-    }
-
     fn build_type_decl(&self, mut pairs: Pairs<Rule>) -> Result<TypeDecl, ParseError> {
         let name = pairs
             .next()
@@ -2923,6 +2876,45 @@ impl Parser {
         }
 
         Ok(result)
+    }
+
+    fn build_share_decl(&self, mut pairs: Pairs<Rule>) -> Result<ShareDecl, ParseError> {
+        let inner_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing declaration in share".to_string(),
+        })?;
+
+        match inner_pair.as_rule() {
+            Rule::function_decl => Ok(ShareDecl::Function(self.build_function_decl(inner_pair.into_inner())?)),
+            Rule::let_decl => Ok(ShareDecl::Let(self.build_let_decl(inner_pair.into_inner())?)),
+            Rule::type_decl => Ok(ShareDecl::Type(self.build_type_decl(inner_pair.into_inner())?)),
+            _ => Err(ParseError::InvalidSyntax {
+                message: "Invalid declaration in share".to_string(),
+            }),
+        }
+    }
+
+    fn build_use_decl(&self, mut pairs: Pairs<Rule>) -> Result<UseDecl, ParseError> {
+        let path_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing path in use".to_string(),
+        })?;
+        let mut path = Vec::new();
+        for part in path_pair.into_inner() {
+            if part.as_rule() == Rule::identifier {
+                path.push(part.as_str().to_string());
+            }
+        }
+
+        let list_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing item list in use".to_string(),
+        })?;
+        let mut items = Vec::new();
+        for item in list_pair.into_inner() {
+            if item.as_rule() == Rule::identifier {
+                items.push(item.as_str().to_string());
+            }
+        }
+
+        Ok(UseDecl { path, items })
     }
 }
 

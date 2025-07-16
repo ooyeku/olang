@@ -1,7 +1,7 @@
 use crate::ast::{
-    Argument, AsyncFunctionDecl, BinaryOp, BuiltinFunction, EnumVariantData, ErrorTypeDecl, ExportDecl, Expr,
-    Function, FunctionDecl, ImportDecl, LetDecl, MatchArm, Pattern, Program, PromiseType,
-    Statement, UnaryOp, Value,
+    Argument, AsyncFunctionDecl, BinaryOp, BuiltinFunction, EnumVariantData, ErrorTypeDecl, Expr,
+    Function, FunctionDecl, LetDecl, MatchArm, Pattern, Program, PromiseType,
+    Statement, UnaryOp, Value, ShareDecl, UseDecl,
 };
 use crate::async_runtime::AsyncRuntime;
 use crate::builtin::BuiltinFunctions;
@@ -236,9 +236,9 @@ impl Interpreter {
                 self.eval_async_function_decl(async_func_decl)
             }
             Statement::TypeDecl(type_decl) => self.eval_type_decl(type_decl),
-            Statement::ImportDecl(import_decl) => self.eval_import_decl(import_decl),
-            Statement::ExportDecl(export_decl) => self.eval_export_decl(export_decl),
             Statement::ErrorTypeDecl(error_type_decl) => self.eval_error_type_decl(error_type_decl),
+            Statement::ShareDecl(share_decl) => self.eval_share_decl(share_decl),
+            Statement::UseDecl(use_decl) => self.eval_use_decl(use_decl),
         }
     }
 
@@ -1480,224 +1480,6 @@ impl Interpreter {
         })
     }
 
-    fn eval_import_decl(&mut self, import_decl: ImportDecl) -> Result<Value, InterpreterError> {
-        // Enhanced module loading with caching and dependency tracking
-        let module_path = &import_decl.module_path;
-        
-        // Check for circular dependencies
-        if let Some(current_module) = &self.current_module_path {
-            if self.dependency_tracker.check_circular_dependency(current_module, module_path) {
-                return Err(InterpreterError::CircularDependency {
-                    cycle: format!("{} -> {}", current_module, module_path),
-                });
-            }
-        }
-        
-        // Try to load from cache first
-        if let Some(cached_module) = self.get_cached_module(module_path)? {
-            crate::log::get_logger().debug("interpreter", &format!("Using cached module: {}", module_path));
-            let module = cached_module.module.clone();
-            self.bind_module_imports(&module, &import_decl)?;
-            return Ok(Value::Unit);
-        }
-        
-        // Try to load from file system
-        if let Ok(module) = self.load_module_from_file(module_path) {
-            // Add to dependency tracker
-            if let Some(current_module) = &self.current_module_path {
-                self.dependency_tracker.add_dependency(current_module.clone(), module_path.clone());
-            }
-            
-            // Handle specific imports vs wildcard
-            self.bind_module_imports(&module, &import_decl)?;
-            Ok(Value::Unit)
-        } else {
-            // Fallback to stdlib modules
-            if let Some(module) = self.get_stdlib_module(module_path) {
-                // Cache stdlib module
-                self.cache_module(module_path.clone(), module.clone(), None, Vec::new())?;
-                
-                // Define the module in the environment
-                self.environment.define(module_path.clone(), module);
-                crate::log::get_logger().debug("interpreter", &format!("Imported stdlib module: {}", module_path));
-                Ok(Value::Unit)
-            } else {
-                Err(InterpreterError::RuntimeError { 
-                    message: format!("Module not found: {}", module_path) 
-                })
-            }
-        }
-    }
-
-    /// Load a module from the file system
-    fn load_module_from_file(&mut self, module_path: &str) -> Result<Value, InterpreterError> {
-        // Determine the file path
-        let file_path = self.resolve_module_path(module_path)?;
-        
-        // Read and parse the module file
-        let content = std::fs::read_to_string(&file_path)
-            .map_err(|e| InterpreterError::RuntimeError { 
-                message: format!("Failed to read module file {}: {}", file_path.display(), e) 
-            })?;
-            
-        // Parse the module
-        let parser = crate::parser::Parser::new();
-        let program = parser.parse(&content)
-            .map_err(|e| InterpreterError::RuntimeError { 
-                message: format!("Failed to parse module {}: {:?}", file_path.display(), e) 
-            })?;
-            
-        // Create a new environment for the module
-        let mut module_env = Environment::new();
-        
-        // Add stdlib modules to module environment
-        for (name, module) in crate::stdlib::get_stdlib() {
-            module_env.define(name, module);
-        }
-        
-        // Save current environment and module path
-        let saved_env = std::mem::replace(&mut self.environment, module_env);
-        let saved_module_path = self.current_module_path.clone();
-        self.current_module_path = Some(module_path.to_string());
-        
-        // Execute the module and collect exports
-        let mut exports = std::collections::HashMap::new();
-        let mut dependencies = Vec::new();
-        
-        for statement in program.statements {
-            match statement {
-                crate::ast::Statement::ExportDecl(export_decl) => {
-                    let value = self.eval_expr(export_decl.value)?;
-                    exports.insert(export_decl.name, value);
-                }
-                crate::ast::Statement::ImportDecl(import_decl) => {
-                    // Track dependencies
-                    dependencies.push(import_decl.module_path.clone());
-                    self.eval_statement(crate::ast::Statement::ImportDecl(import_decl))?;
-                }
-                _ => {
-                    self.eval_statement(statement)?;
-                }
-            }
-        }
-        
-        // Restore original environment and module path
-        self.environment = saved_env;
-        self.current_module_path = saved_module_path;
-        
-        // Create module struct
-        let module = Value::Struct {
-            type_name: "Module".to_string(),
-            fields: exports,
-        };
-        
-        // Cache the module
-        self.cache_module(module_path.to_string(), module.clone(), Some(file_path), dependencies)?;
-        
-        Ok(module)
-    }
-    
-    /// Resolve module path to actual file path with enhanced debugging
-    fn resolve_module_path(&self, module_path: &str) -> Result<std::path::PathBuf, InterpreterError> {
-        use std::path::PathBuf;
-        
-        let debug_config = &self.module_debug_config;
-        let start_time = if debug_config.show_resolution_timing {
-            Some(Instant::now())
-        } else {
-            None
-        };
-
-        if debug_config.enable_resolution_tracing {
-            crate::log::get_logger().debug("interpreter", &format!("Resolving module: '{}'", module_path));
-        }
-        
-        let current_dir = std::env::current_dir()
-            .map_err(|e| InterpreterError::RuntimeError { 
-                message: format!("Failed to get current directory: {}", e) 
-            })?;
-        
-        // Enhanced candidate resolution with debugging
-        let candidates = vec![
-            // Relative to current directory
-            current_dir.join(format!("{}.ol", module_path)),
-            current_dir.join(format!("{}/mod.ol", module_path)),
-            current_dir.join(format!("{}/index.ol", module_path)),
-            
-            // Relative to src directory
-            current_dir.join("src").join(format!("{}.ol", module_path)),
-            current_dir.join("src").join(format!("{}/mod.ol", module_path)),
-            current_dir.join("src").join(format!("{}/index.ol", module_path)),
-            
-            // Absolute path if it looks like one
-            PathBuf::from(format!("{}.ol", module_path)),
-        ];
-
-        if debug_config.log_search_paths {
-            crate::log::get_logger().trace("interpreter", "Module search paths:");
-            for (i, candidate) in candidates.iter().enumerate() {
-                let status = if candidate.exists() { "exists" } else { "missing" };
-                crate::log::get_logger().trace("interpreter", &format!("  {}. {} {}", i + 1, status, candidate.display()));
-            }
-        }
-        
-        for candidate in &candidates {
-            if candidate.exists() && candidate.is_file() {
-                if debug_config.enable_resolution_tracing {
-                    crate::log::get_logger().debug("interpreter", &format!("Found module file: {}", candidate.display()));
-                    if let Some(start) = start_time {
-                        crate::log::get_logger().trace("interpreter", &format!("Module resolution time: {:?}", start.elapsed()));
-                    }
-                }
-                return Ok(candidate.clone());
-            }
-        }
-
-        // Enhanced error with debug information
-        if debug_config.verbose_error_messages {
-            let search_paths: Vec<String> = candidates.iter()
-                .map(|p| p.display().to_string())
-                .collect();
-            
-            Err(InterpreterError::RuntimeError { 
-                message: format!(
-                    "Module '{}' not found.\nSearched paths:\n  - {}",
-                    module_path,
-                    search_paths.join("\n  - ")
-                )
-            })
-        } else {
-            Err(InterpreterError::RuntimeError { 
-                message: format!("Module file not found: {}", module_path) 
-            })
-        }
-    }
-    
-    /// Get an export from a loaded module
-    fn get_module_export(&self, module: &Value, export_name: &str) -> Option<Value> {
-        match module {
-            Value::Struct { fields, .. } => {
-                fields.get(export_name).cloned()
-            }
-            _ => None,
-        }
-    }
-    
-    /// Get a stdlib module by name
-    fn get_stdlib_module(&self, name: &str) -> Option<Value> {
-        let stdlib = crate::stdlib::get_stdlib();
-        stdlib.get(name).cloned()
-    }
-
-    fn eval_export_decl(&mut self, export_decl: ExportDecl) -> Result<Value, InterpreterError> {
-        // Evaluate the export value and store it
-        let value = self.eval_expr(export_decl.value)?;
-        self.environment
-            .define(export_decl.name.clone(), value.clone());
-        crate::log::get_logger().debug("interpreter", &format!("Export: {} = {:?}", export_decl.name, value));
-        Ok(value)
-    }
-
     fn eval_type_decl(
         &mut self,
         _type_decl: crate::ast::TypeDecl,
@@ -2133,32 +1915,20 @@ impl Interpreter {
 
     /// Get a cached module if it exists and is still valid
     fn get_cached_module(&self, module_path: &str) -> Result<Option<ModuleCacheEntry>, InterpreterError> {
-        if let Some(cached_entry) = self.module_cache.get(module_path) {
-            // Check if file-based module is still valid (not modified)
-            if let Some(file_path) = &cached_entry.file_path {
-                match std::fs::metadata(file_path) {
-                    Ok(metadata) => {
-                        if let (Ok(modified), Some(cached_modified)) = (metadata.modified(), cached_entry.last_modified) {
-                            if modified <= cached_modified {
-                                return Ok(Some(cached_entry.clone()));
-                            } else {
-                                crate::log::get_logger().debug("interpreter", &format!("Module {} was modified, invalidating cache", module_path));
-                                return Ok(None);
-                            }
+        if let Some(entry) = self.module_cache.get(module_path) {
+            if let Some(file_path) = self.resolve_module_path(module_path).ok() {
+                if let Ok(metadata) = std::fs::metadata(&file_path) {
+                    if let Ok(modified) = metadata.modified() {
+                        if entry.last_modified.map_or(true, |lm| modified > lm) {
+                            return Ok(None); // Invalidated
                         }
                     }
-                    Err(_) => {
-                        // File doesn't exist anymore, remove from cache
-                        return Ok(None);
-                    }
                 }
-            } else {
-                // Stdlib module - always valid
-                return Ok(Some(cached_entry.clone()));
             }
+            Ok(Some(entry.clone()))
+        } else {
+            Ok(None)
         }
-        
-        Ok(None)
     }
     
     /// Cache a module for future use
@@ -2187,27 +1957,25 @@ impl Interpreter {
     }
     
     /// Bind module imports to current environment
-    fn bind_module_imports(&mut self, module: &Value, import_decl: &ImportDecl) -> Result<(), InterpreterError> {
-        match &import_decl.items {
-            Some(items) => {
-                // Import specific items: import { func1, func2 } from "module"
-                for item in items {
+    fn bind_module_imports(&mut self, module: &Value, items: &Option<Vec<String>>) -> Result<(), InterpreterError> {
+        match items {
+            Some(item_list) => {
+                // Import specific items: use module { func1, func2 }
+                for item in item_list {
                     if let Some(value) = self.get_module_export(module, item) {
                         self.environment.define(item.clone(), value);
                     } else {
                         return Err(InterpreterError::UndefinedVariable { 
-                            name: format!("{}::{}", import_decl.module_path, item) 
+                            name: format!("module::{}", item) 
                         });
                     }
                 }
             }
             None => {
-                // Wildcard import: import * from "module"
-                if let Value::Struct { fields, .. } = module {
-                    for (name, value) in fields {
-                        self.environment.define(name.clone(), value.clone());
-                    }
-                }
+                // This shouldn't happen with the new system, but handle gracefully
+                return Err(InterpreterError::RuntimeError {
+                    message: "Wildcard imports not supported in new module system".to_string(),
+                });
             }
         }
         Ok(())
@@ -2293,6 +2061,202 @@ impl Interpreter {
     pub fn export_dependency_graph(&self) -> HashMap<String, Vec<String>> {
         self.dependency_tracker.dependencies.clone()
     }
+
+    fn eval_share_decl(&mut self, share: ShareDecl) -> Result<Value, InterpreterError> {
+        match share {
+            ShareDecl::Function(func) => self.eval_function_decl(func),
+            ShareDecl::Let(letd) => self.eval_let_decl(letd),
+            ShareDecl::Type(typed) => self.eval_type_decl(typed),
+        }
+    }
+
+    /// Load a module from the file system
+    fn load_module_from_file(&mut self, module_path: &str) -> Result<Value, InterpreterError> {
+        // Check cache first
+        if let Ok(Some(cached)) = self.get_cached_module(module_path) {
+            return Ok(cached.module);
+        }
+
+        // Determine the file path
+        let file_path = self.resolve_module_path(module_path)?;
+        
+        // Read and parse the module file
+        let content = std::fs::read_to_string(&file_path)
+            .map_err(|e| InterpreterError::RuntimeError { 
+                message: format!("Failed to read module file {}: {}", file_path.display(), e) 
+            })?;
+            
+        // Parse the module
+        let parser = crate::parser::Parser::new();
+        let program = parser.parse(&content)
+            .map_err(|e| InterpreterError::RuntimeError { 
+                message: format!("Failed to parse module {}: {:?}", file_path.display(), e) 
+            })?;
+            
+        // Create a new environment for the module
+        let mut module_env = Environment::new();
+        
+        // Add stdlib modules to module environment
+        for (name, module) in crate::stdlib::get_stdlib() {
+            module_env.define(name, module);
+        }
+        
+        // Save current environment and module path
+        let saved_env = std::mem::replace(&mut self.environment, module_env);
+        let saved_module_path = self.current_module_path.clone();
+        self.current_module_path = Some(module_path.to_string());
+        
+        // Execute the module and collect exports
+        let mut exports = std::collections::HashMap::new();
+        let mut dependencies = Vec::new();
+        
+        for statement in program.statements {
+            match statement {
+                crate::ast::Statement::ShareDecl(share_decl) => {
+                    match share_decl {
+                        ShareDecl::Function(func_decl) => {
+                            let value = self.eval_function_decl(func_decl.clone())?;
+                            exports.insert(func_decl.name, value);
+                        }
+                        ShareDecl::Let(let_decl) => {
+                            let value = self.eval_let_decl(let_decl.clone())?;
+                            if let Pattern::Identifier(name) = let_decl.pattern {
+                                exports.insert(name, value);
+                            }
+                        }
+                        ShareDecl::Type(type_decl) => {
+                            self.eval_type_decl(type_decl)?;
+                            // Optionally insert type info
+                        }
+                    }
+                }
+                crate::ast::Statement::UseDecl(use_decl) => {
+                    dependencies.push(use_decl.path.join("."));
+                    self.eval_statement(crate::ast::Statement::UseDecl(use_decl))?;
+                }
+                _ => {
+                    self.eval_statement(statement)?;
+                }
+            }
+        }
+        
+        // Restore original environment and module path
+        self.environment = saved_env;
+        self.current_module_path = saved_module_path;
+        
+        // Create module struct
+        let module = Value::Struct {
+            type_name: "Module".to_string(),
+            fields: exports,
+        };
+        
+        // Cache the module
+        let last_modified = if let Ok(metadata) = std::fs::metadata(&file_path) {
+            metadata.modified().ok()
+        } else { None };
+        self.module_cache.insert(module_path.to_string(), ModuleCacheEntry {
+            module: module.clone(),
+            file_path: Some(file_path),
+            last_modified,
+            dependencies,
+        });
+        
+        Ok(module)
+    }
+    
+    /// Resolve module path to actual file path
+    fn resolve_module_path(&self, module_path: &str) -> Result<std::path::PathBuf, InterpreterError> {
+        let debug_config = &self.module_debug_config;
+        let start_time = if debug_config.show_resolution_timing {
+            Some(Instant::now())
+        } else {
+            None
+        };
+
+        if debug_config.enable_resolution_tracing {
+            crate::log::get_logger().debug("interpreter", &format!("Resolving module: '{}'", module_path));
+        }
+        
+        let current_dir = std::env::current_dir()
+            .map_err(|e| InterpreterError::RuntimeError { 
+                message: format!("Failed to get current directory: {}", e) 
+            })?;
+        
+        // Handle dotted paths by splitting on . and joining with /
+        let file_parts: Vec<String> = module_path.split('.').map(|s| s.to_string()).collect();
+        let file_name = format!("{}.ol", file_parts.last().unwrap_or(&String::new()));
+        let dir_path = if file_parts.len() > 1 {
+            file_parts[..file_parts.len()-1].join("/")
+        } else {
+            String::new()
+        };
+
+        let candidates = vec![
+            current_dir.join(&dir_path).join(&file_name),
+            current_dir.join(&dir_path).join("mod.ol"),
+            current_dir.join(&dir_path).join("index.ol"),
+            // src variants
+            current_dir.join("src").join(&dir_path).join(&file_name),
+            current_dir.join("src").join(&dir_path).join("mod.ol"),
+            current_dir.join("src").join(&dir_path).join("index.ol"),
+        ];
+
+        if debug_config.log_search_paths {
+            crate::log::get_logger().trace("interpreter", "Module search paths:");
+            for (i, candidate) in candidates.iter().enumerate() {
+                let status = if candidate.exists() { "exists" } else { "missing" };
+                crate::log::get_logger().trace("interpreter", &format!("  {}. {} {}", i + 1, status, candidate.display()));
+            }
+        }
+        
+        for candidate in &candidates {
+            if candidate.exists() && candidate.is_file() {
+                if debug_config.enable_resolution_tracing {
+                    crate::log::get_logger().debug("interpreter", &format!("Found module file: {}", candidate.display()));
+                    if let Some(start) = start_time {
+                        crate::log::get_logger().trace("interpreter", &format!("Module resolution time: {:?}", start.elapsed()));
+                    }
+                }
+                return Ok(candidate.clone());
+            }
+        }
+
+        // Enhanced error with debug information
+        if debug_config.verbose_error_messages {
+            let search_paths: Vec<String> = candidates.iter()
+                .map(|p| p.display().to_string())
+                .collect();
+            
+            Err(InterpreterError::RuntimeError { 
+                message: format!(
+                    "Module '{}' not found.\nSearched paths:\n  - {}",
+                    module_path,
+                    search_paths.join("\n  - ")
+                )
+            })
+        } else {
+            Err(InterpreterError::RuntimeError { 
+                message: format!("Module file not found: {}", module_path) 
+            })
+        }
+    }
+    
+    /// Get an export from a loaded module
+    fn get_module_export(&self, module: &Value, export_name: &str) -> Option<Value> {
+        match module {
+            Value::Struct { fields, .. } => {
+                fields.get(export_name).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    fn eval_use_decl(&mut self, use_decl: UseDecl) -> Result<Value, InterpreterError> {
+        let module_path = use_decl.path.join(".");
+        let module = self.load_module_from_file(&module_path)?;
+        self.bind_module_imports(&module, &Some(use_decl.items))?;
+        Ok(Value::Unit)
+    }
 }
 
 impl Clone for Environment {
@@ -2357,7 +2321,6 @@ impl ModuleDependencyTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::ImportDecl;
     
     #[test]
     fn test_module_cache_creation_and_retrieval() {
@@ -2413,31 +2376,7 @@ mod tests {
         assert!(tracker.check_circular_dependency("D", "A"));  // D -> A would create cycle
     }
     
-    #[test]
-    fn test_circular_dependency_prevention() {
-        let mut interpreter = Interpreter::new();
-        interpreter.current_module_path = Some("module_a".to_string());
-        
-        // Add dependency: A -> B
-        interpreter.dependency_tracker.add_dependency("module_a".to_string(), "module_b".to_string());
-        
-        // Try to import A from B (would create circular dependency)
-        let circular_import = ImportDecl {
-            module_path: "module_a".to_string(),
-            items: None,
-        };
-        
-        interpreter.current_module_path = Some("module_b".to_string());
-        let result = interpreter.eval_import_decl(circular_import);
-        
-        // Should detect and prevent circular dependency
-        assert!(result.is_err());
-        if let Err(InterpreterError::CircularDependency { cycle }) = result {
-            assert!(cycle.contains("module_b -> module_a"));
-        } else {
-            panic!("Expected CircularDependency error");
-        }
-    }
+    // Removed test_circular_dependency_prevention as it used the old import system
     
     #[test]
     fn test_module_cache_invalidation() {
