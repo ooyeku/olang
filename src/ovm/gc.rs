@@ -101,6 +101,7 @@ pub struct RootScanner {
 /// Remembered set for cross-generational references
 pub struct RememberedSet {
     old_to_young_refs: HashMap<usize, Vec<GcPtr<ValueHeader>>>,
+    #[allow(dead_code)]
     dirty_regions: Vec<MemoryRegion>,
 }
 
@@ -120,9 +121,13 @@ pub struct FreeBlock {
 /// Memory region for compaction
 #[derive(Debug, Clone)]
 pub struct MemoryRegion {
+    #[allow(dead_code)]
     start: usize,
+    #[allow(dead_code)]
     end: usize,
+    #[allow(dead_code)]
     live_bytes: usize,
+    #[allow(dead_code)]
     total_bytes: usize,
 }
 
@@ -337,7 +342,7 @@ impl GarbageCollector {
         // Record timing
         self.last_mark_time = mark_time;
         
-        let collection_result = result?;
+        let _collection_result = result?;
         
         let sweep_time = sweep_start.elapsed();
         self.last_sweep_time = sweep_time;
@@ -463,8 +468,8 @@ impl GarbageCollector {
         gc_trigger_threshold: usize,
     ) {
         let (lock, cvar) = &*collection_trigger;
-        let mut last_mark_time = std::time::Duration::ZERO;
-        let mut last_sweep_time = std::time::Duration::ZERO;
+        let mut _last_mark_time = std::time::Duration::ZERO;
+        let mut _last_sweep_time = std::time::Duration::ZERO;
 
         while is_running.load(Ordering::Relaxed) {
             // Update collection trigger based on multiple factors
@@ -542,8 +547,8 @@ impl GarbageCollector {
                     Ok(_) => {
                         // Update timing statistics
                         let collection_time = collection_start.elapsed();
-                        last_mark_time = collection_time / 2; // Rough approximation
-                        last_sweep_time = collection_time / 2;
+                        _last_mark_time = collection_time / 2; // Rough approximation
+                        _last_sweep_time = collection_time / 2;
                         
                         // Reset counters after successful collection
                         allocation_counter.store(0, Ordering::Relaxed);

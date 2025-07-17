@@ -583,7 +583,7 @@ use std::sync::{Arc, Mutex};
         // Create lazy map
         let lazy_map = create_lazy_map(source.clone(), map_fn.clone());
         // Wrap as InternalValue (clone lazy_map so it can be used below)
-        let lazy_map_iv = InternalValue::Lazy(lazy_map.clone());
+        let _lazy_map_iv = InternalValue::Lazy(lazy_map.clone());
         // Now try to fuse with filter
         let fused = try_fuse_operations(&lazy_map, "filter", Some(filter_fn.clone()));
         assert!(fused.is_some(), "Fusion should produce a fused MapFiltered");

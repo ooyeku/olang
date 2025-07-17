@@ -1227,7 +1227,7 @@ impl CraneliftJitCompiler {
         
         // Load constants
         let _zero = builder.ins().iconst(ir_context.int_type, 0);
-        let one = builder.ins().iconst(ir_context.int_type, 1);
+        let _one = builder.ins().iconst(ir_context.int_type, 1);
         let two = builder.ins().iconst(ir_context.int_type, 2);
 
         // **Phase 3: Advanced optimization based on profile data**
@@ -1334,6 +1334,7 @@ impl CraneliftJitCompiler {
     }
 
     /// Get compiled function metadata
+    #[allow(dead_code)]
     pub fn get_compiled_function(&self, func_id: FunctionId) -> Option<&CompiledFunction> {
         self.compiled_functions.get(&func_id)
     }
@@ -1359,6 +1360,7 @@ impl CraneliftJitCompiler {
     }
 
     /// Execute compiled native function for a given FunctionId and arguments
+    #[allow(dead_code)]
     pub fn execute_compiled_function(
         &mut self,
         func_id: FunctionId,

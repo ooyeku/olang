@@ -151,9 +151,9 @@ impl OvmRepl {
         println!("Type ':help' for commands, ':quit' to exit");
 
         if self.interpreter.is_ovm_available() {
-            println!("✓ OVM is available and ready");
-        } else {
-            println!("⚠ OVM not initialized - using classic interpreter");
+                    println!("OK OVM is available and ready");
+    } else {
+        println!("WARNING OVM not initialized - using classic interpreter");
             println!("  Use ':init-ovm' to enable high-performance execution");
         }
 
@@ -235,8 +235,8 @@ impl OvmRepl {
 
     fn init_ovm_command(&mut self) {
         match self.interpreter.initialize_ovm_default() {
-            Ok(()) => println!("✓ OVM initialized successfully"),
-            Err(e) => println!("✗ Failed to initialize OVM: {}", e),
+            Ok(()) => println!("OK OVM initialized successfully"),
+            Err(e) => println!("ERROR Failed to initialize OVM: {}", e),
         }
     }
 
@@ -295,8 +295,8 @@ impl OvmRepl {
 
     fn force_gc(&mut self) {
         match self.interpreter.force_gc() {
-            Ok(()) => println!("✓ Garbage collection completed"),
-            Err(e) => println!("✗ GC failed: {}", e),
+            Ok(()) => println!("OK Garbage collection completed"),
+            Err(e) => println!("ERROR GC failed: {}", e),
         }
     }
 

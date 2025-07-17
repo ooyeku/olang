@@ -391,30 +391,9 @@ mod tests {
         }
     }
 
-    // Helper function to assert string values
-    fn assert_string_value(value: &Value, expected_content: &str) {
-        match value {
-            Value::String(msg) => {
-                assert!(msg.contains(expected_content), 
-                    "Expected string to contain '{}', but got: {}", expected_content, msg);
-            }
-            other => {
-                assert!(false, "Expected string value, got: {:?}", other);
-            }
-        }
-    }
 
-    // Helper function to assert struct modules
-    fn assert_struct_module(module: &Value) {
-        match module {
-            Value::Struct { type_name, fields: _ } => {
-                assert_eq!(type_name, "Module", "Expected Module struct type");
-            }
-            other => {
-                assert!(false, "Expected struct module, got: {:?}", other);
-            }
-        }
-    }
+
+
 
     #[test]
     fn test_testing_module_creation() {

@@ -282,21 +282,25 @@ impl OlangProject {
     }
 
     /// Check if project has web configuration
+    #[allow(dead_code)]
     pub fn is_web_project(&self) -> bool {
         self.project.project_type == "web" || self.web.is_some()
     }
 
     /// Check if project has CLI configuration
+    #[allow(dead_code)]
     pub fn is_cli_project(&self) -> bool {
         self.project.project_type == "cli" || self.cli.is_some()
     }
 
     /// Check if project is a library
+    #[allow(dead_code)]
     pub fn is_library(&self) -> bool {
         self.project.project_type == "library" || self.library.is_some()
     }
 
     /// Get all dependencies (including dev dependencies)
+    #[allow(dead_code)]
     pub fn get_all_dependencies(&self) -> HashMap<String, String> {
         let mut all_deps = self.dependencies.clone();
         all_deps.extend(self.dev_dependencies.clone());

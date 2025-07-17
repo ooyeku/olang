@@ -109,6 +109,7 @@ pub mod error_utils {
             Value::Enum { .. } => "enum",
             Value::Promise { .. } => "promise",
             Value::Map(_) => "map",
+            Value::TypeInfo { .. } => "type",
         }
     }
 }

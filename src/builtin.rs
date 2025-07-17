@@ -2565,76 +2565,7 @@ impl BuiltinFunctions {
         }
     }
 
-    fn map_list(
-        &self,
-        args: Vec<Value>,
-        interpreter: &mut crate::interpreter::Interpreter,
-    ) -> Result<Value, InterpreterError> {
-        if args.len() != 2 {
-            return Err(InterpreterError::ArityMismatch {
-                expected: 2,
-                got: args.len(),
-            });
-        }
 
-        let list = &args[0];
-        let function = &args[1];
-
-        let config = interpreter.get_lazy_config().clone();
-        let list_values = match list {
-            Value::List(items) => items.clone(),
-            _ => {
-                return Err(InterpreterError::TypeError {
-                    message: "map: first argument must be a list".to_string(),
-                });
-            }
-        };
-
-        // Enhanced timeout handling for lazy evaluation
-        if config.lazy_by_default && list_values.len() > config.lazy_threshold {
-            if let Value::Function(func) = function {
-                let source_handle = crate::internal::utils::value_to_handle(list.clone(), &config);
-                let mut lazy_val = crate::internal::create_lazy_map(source_handle.clone(), func.clone());
-                
-                // Fusion logic: if the source is already a lazy value, try to fuse
-                if config.fusion_enabled {
-                    if let crate::internal::InternalValue::Lazy(ref prev_lazy) = *source_handle.get_internal() {
-                        if let Some(fused) = crate::internal::try_fuse_operations(prev_lazy, "map", Some(func.clone())) {
-                            lazy_val = fused;
-                        }
-                    }
-                }
-                
-                let lazy_handle = crate::internal::ValueHandle::new_lazy(lazy_val);
-                
-                // Use enhanced timeout-aware evaluation
-                let mut context = crate::internal::LazyEvaluationContext::new(config);
-                return lazy_handle.get_with_context(interpreter, &mut context);
-            }
-        }
-
-        // Fall back to eager evaluation
-        if should_parallelize(list_values.len()) {
-            // PARALLEL VERSION - Now that Value implements Send + Sync!
-            let results: Result<Vec<_>, _> = list_values
-                .par_iter()
-                .map(|item| interpreter.call_function_safe(function.clone(), vec![item.clone()]))
-                .collect();
-
-            match results {
-                Ok(values) => Ok(Value::List(values.into())),
-                Err(e) => Err(e),
-            }
-        } else {
-            // SEQUENTIAL VERSION (for small lists)
-            let mut result = Vec::new();
-            for item in list_values.iter() {
-                let value = interpreter.call_function(function.clone(), vec![item.clone()])?;
-                result.push(value);
-            }
-            Ok(Value::List(result.into()))
-        }
-    }
 }
 
 impl Clone for BuiltinFunctions {

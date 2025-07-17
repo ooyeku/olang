@@ -8,14 +8,14 @@ fn main() {
     
     match OlangVirtualMachine::new(config) {
         Ok(mut ovm) => {
-            println!("✓ OVM created successfully");
+            println!("OK OVM created successfully");
             match ovm.start() {
-                Ok(()) => println!("✓ OVM started successfully"),
-                Err(e) => println!("✗ OVM start failed: {}", e),
+                Ok(()) => println!("OK OVM started successfully"),
+                Err(e) => println!("ERROR OVM start failed: {}", e),
             }
         }
         Err(e) => {
-            println!("✗ OVM creation failed: {}", e);
+            println!("ERROR OVM creation failed: {}", e);
         }
     }
 }

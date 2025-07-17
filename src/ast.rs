@@ -18,8 +18,9 @@ pub enum Statement {
     AsyncFunctionDecl(AsyncFunctionDecl),
     TypeDecl(TypeDecl),
     ErrorTypeDecl(ErrorTypeDecl),
-    ImportDecl(ImportDecl),
-    ExportDecl(ExportDecl),
+    ShareDecl(ShareDecl),
+    UseDecl(UseDecl),
+    TestDecl(TestDecl),
 }
 
 /// Error type declaration
@@ -218,6 +219,30 @@ pub enum Expr {
     // Spread/rest (for future use)
     Spread(Box<Expr>),
     Rest(Box<Expr>),
+
+    // Test assertions
+    AssertEq {
+        actual: Box<Expr>,
+        expected: Box<Expr>,
+        message: Option<String>,
+    },
+    AssertNe {
+        actual: Box<Expr>,
+        expected: Box<Expr>,
+        message: Option<String>,
+    },
+    Assert {
+        condition: Box<Expr>,
+        message: Option<String>,
+    },
+    AssertTrue {
+        expression: Box<Expr>,
+        message: Option<String>,
+    },
+    AssertFalse {
+        expression: Box<Expr>,
+        message: Option<String>,
+    },
 }
 
 /// Argument types for function calls
@@ -371,6 +396,12 @@ pub enum Value {
         state: PromiseState,
         value: Option<Box<Value>>,
         error: Option<Box<Value>>,
+    },
+
+    // Type information for exported types
+    TypeInfo {
+        name: String,
+        definition: TypeDefinition,
     },
 }
 
@@ -782,6 +813,7 @@ impl std::fmt::Display for Value {
                     }
                 }
             },
+            Value::TypeInfo { name, .. } => write!(f, "<type: {}>", name),
         }
     }
 }
@@ -806,6 +838,7 @@ impl Value {
             Value::Unit => "Unit".to_string(),
             Value::Enum { type_name, .. } => type_name.clone(),
             Value::Promise { .. } => "Promise".to_string(),
+            Value::TypeInfo { .. } => "Type".to_string(),
         }
     }
 
@@ -839,4 +872,27 @@ pub enum BitwiseOp {
     Xor,
     Shl,
     Shr,
+}
+
+// New ShareDecl enum
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ShareDecl {
+    Function(FunctionDecl),
+    Let(LetDecl),
+    Type(TypeDecl),
+    Use(UseDecl), // Transitive sharing: share use module { items }
+}
+
+// New UseDecl struct
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UseDecl {
+    pub path: Vec<String>,
+    pub items: Vec<String>,
+}
+
+// Test declaration struct
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TestDecl {
+    pub name: String,
+    pub body: Vec<Statement>,
 }

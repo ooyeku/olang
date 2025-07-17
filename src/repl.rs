@@ -425,6 +425,10 @@ impl Repl {
                             self.show_enhanced_error(&e);
                         }
                     }
+                    
+                    // Clean up module cache to prevent memory accumulation
+                    self.ovm_interpreter.get_classic_interpreter().clear_module_cache();
+                    
                     let _ = self.ovm_interpreter.force_gc();
                 } else {
                     if !self.multiline_buffer.is_empty() {
@@ -485,6 +489,10 @@ impl Repl {
                     self.show_enhanced_error(&e);
                 }
             }
+            
+            // Clean up module cache to prevent memory accumulation
+            self.ovm_interpreter.get_classic_interpreter().clear_module_cache();
+            
             let _ = self.ovm_interpreter.force_gc();
         }
 
@@ -1503,6 +1511,7 @@ impl Repl {
             },
             Value::Promise { .. } => "promise",
             Value::Map(_) => "map",
+            Value::TypeInfo { .. } => "type",
         }
     }
 
@@ -1903,12 +1912,12 @@ impl Repl {
         match parse_error {
             ParseError::InvalidSyntaxWithPosition { message, line, column, snippet } => {
                 println!("  {}: {}", "Parse Error".bright_red().bold(), message.bright_white());
-                println!("\n  {}", "📍 Location:".bright_yellow().bold());
+                println!("\n  {}", "Location:".bright_yellow().bold());
                 println!("    Line {}, Column {}", line.to_string().bright_cyan(), column.to_string().bright_cyan());
                 
                 // Show the formatted code snippet with highlighting
                 if !snippet.trim().is_empty() {
-                    println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                    println!("\n  {}", "Code Context:".bright_blue().bold());
                     self.show_highlighted_snippet(snippet);
                 }
             }
@@ -1921,7 +1930,7 @@ impl Repl {
                 println!("    Line {}, Column {}", line.to_string().bright_cyan(), column.to_string().bright_cyan());
                 
                 if !snippet.trim().is_empty() {
-                    println!("\n  {}", "📝 Code Context:".bright_blue().bold());
+                    println!("\n  {}", "Code Context:".bright_blue().bold());
                     self.show_highlighted_snippet(snippet);
                 }
             }
@@ -2186,6 +2195,7 @@ impl Repl {
 
 
     /// Handle module debug commands for troubleshooting module resolution
+    #[allow(dead_code)]
     fn handle_module_debug_command(&mut self, args: &[&str]) -> Result<(), ReplError> {
         match args.get(0).copied() {
             Some("trace") => {
@@ -2241,6 +2251,7 @@ impl Repl {
     }
 
     /// Show what paths would be searched for a given module
+    #[allow(dead_code)]
     fn show_module_search_paths(&self, module_path: &str) {
         use std::path::PathBuf;
         
@@ -2286,6 +2297,7 @@ impl Repl {
     }
 
     /// List all currently loaded modules
+    #[allow(dead_code)]
     fn list_loaded_modules(&mut self) {
         println!("=== Loaded Modules ===");
         
@@ -2541,7 +2553,7 @@ impl Repl {
             println!();
             
             // Show the code to try
-            println!("{}📝 Code to try:{}", Colors::MAGENTA, Colors::RESET);
+            println!("{}Code to try:{}", Colors::MAGENTA, Colors::RESET);
             println!("{}{}{}", Colors::BLUE, step.code, Colors::RESET);
             println!();
             
@@ -2579,7 +2591,7 @@ impl Repl {
                                 println!("{}Code executed successfully!{}", Colors::GREEN, Colors::RESET);
                             }
                             Err(e) => {
-                                println!("{}❌ Error executing code:{}", Colors::RED, Colors::RESET);
+                                println!("{}ERROR executing code:{}", Colors::RED, Colors::RESET);
                                 println!("{}", e);
                             }
                         }
@@ -2667,28 +2679,6 @@ impl Repl {
         }
         
         Ok(())
-    }
-    
-    /// Enhanced suggestions with auto-completion
-    fn show_enhanced_contextual_help(&mut self, parse_error: &ParseError, input: &str) {
-        // ... existing contextual help code ...
-        
-        // Add fuzzy search suggestions
-        let search_results = self.help_system.search(input, Some(SearchFilters {
-            max_results: 3,
-            min_relevance: 0.3,
-            ..Default::default()
-        }));
-        
-        if !search_results.is_empty() {
-            println!("\n  {}", "Related Functions:".bright_cyan().bold());
-            for result in search_results {
-                println!("    • {} - {}", 
-                    result.function_doc.name.bright_blue(),
-                    result.function_doc.description.bright_white()
-                );
-            }
-        }
     }
 }
 

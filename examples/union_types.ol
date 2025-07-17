@@ -3,7 +3,7 @@
 // Functions working with union-like patterns without type declarations
 
 // Status handling function
-fn format_status(status) -> String = {
+share fn format_status(status) -> String = {
     match status {
         "pending" => "⏳ Waiting",
         "running" => "🏃 In Progress", 
@@ -14,7 +14,7 @@ fn format_status(status) -> String = {
 }
 
 // Shape calculation with discriminated unions
-fn calculate_area(shape) -> Float = {
+share fn calculate_area(shape) -> Float = {
     match shape {
         { type: "circle", radius } => 3.14159 * radius * radius,
         { type: "rectangle", width, height } => width * height,
