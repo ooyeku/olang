@@ -145,6 +145,46 @@ fn show_file_parse_error(error: &olang::parser::ParseError, file_path: &PathBuf,
     println!();
 }
 
+/// Feature 9: Show classic interpreter errors with enhanced context and suggestions
+fn show_classic_interpreter_error(error: &olang::interpreter::InterpreterError, file_path: &PathBuf, interpreter: &olang::interpreter::Interpreter) {
+    println!("\n{}", "═══ Execution Error ═══".bright_red().bold());
+    println!("  {}: {}", "File".bright_blue().bold(), file_path.display().to_string().bright_white());
+    
+    // Use the enhanced error formatter
+    let formatted_error = interpreter.format_error(error);
+    println!("\n{}", formatted_error);
+    
+    println!();
+}
+
+/// Feature 9: Show interpreter errors with enhanced context and suggestions
+fn show_file_interpreter_error(error: &olang::ovm_integration::IntegrationError, file_path: &PathBuf, ovm_interpreter: &mut olang::ovm_integration::OvmInterpreter) {
+    println!("\n{}", "═══ Execution Error ═══".bright_red().bold());
+    println!("  {}: {}", "File".bright_blue().bold(), file_path.display().to_string().bright_white());
+    
+    // Extract the underlying interpreter error if possible
+    match error {
+        olang::ovm_integration::IntegrationError::ClassicInterpreterError(interpreter_error) => {
+            // Use the enhanced error formatter
+            let classic_interpreter = ovm_interpreter.get_classic_interpreter();
+            let formatted_error = classic_interpreter.format_error(interpreter_error);
+            println!("\n{}", formatted_error);
+        }
+        _ => {
+            // Fallback for other error types
+            println!("  {}: {}", "Error".bright_red().bold(), error);
+            
+            // Show helpful context
+            println!("\n  {}", "Help:".bright_cyan().bold());
+            println!("    • Check your import statements and module paths");
+            println!("    • Ensure all referenced functions exist and are shared");
+            println!("    • Use {} for interactive mode with better error messages", "olang".bright_cyan());
+        }
+    }
+    
+    println!();
+}
+
 fn show_highlighted_snippet(snippet: &str) {
     let lines: Vec<&str> = snippet.lines().collect();
     
@@ -340,11 +380,18 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
         let mut interpreter = olang::interpreter::Interpreter::new();
         match parser.parse(&source) {
             Ok(ast) => {
-                let result = interpreter.eval_program(ast)?;
-                if verbose {
-                    logger.info("main", &format!("Result: {:?}", result));
+                match interpreter.eval_program(ast) {
+                    Ok(result) => {
+                        if verbose {
+                            logger.info("main", &format!("Result: {:?}", result));
+                        }
+                        Ok(())
+                    }
+                    Err(e) => {
+                        show_classic_interpreter_error(&e, file_path, &interpreter);
+                        Err(anyhow::anyhow!("Execution failed"))
+                    }
                 }
-                Ok(())
             }
             Err(e) => {
                 show_file_parse_error(&e, file_path, &source);
@@ -385,7 +432,7 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
                         Ok(())
                     }
                     Err(e) => {
-                        logger.error("main", &format!("Execution error: {}", e));
+                        show_file_interpreter_error(&e, file_path, &mut ovm_interpreter);
                         Err(anyhow::anyhow!("Execution failed"))
                     }
                 }
