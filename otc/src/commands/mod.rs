@@ -1,6 +1,10 @@
 pub mod check;
+pub mod deps;
 pub mod new;
+pub mod organize;
 pub mod ovm;
 pub mod repl;
 pub mod run;
+pub mod tree;
+pub mod unused;
 pub mod version;

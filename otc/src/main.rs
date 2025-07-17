@@ -58,6 +58,29 @@ enum Commands {
     /// Execute with Olang Virtual Machine (high-performance)
     #[command(about = "Execute Olang programs using the OVM for enhanced performance")]
     Ovm(commands::ovm::OvmCommand),
+    /// Show file dependencies
+    Deps {
+        /// File to analyze dependencies for (.ol)
+        file: String,
+    },
+    /// Find unused shared functions
+    Unused {
+        /// Directory to scan for unused functions (default: current directory)
+        #[arg(short, long, default_value = ".")]
+        dir: String,
+    },
+    /// Visualize project structure
+    Tree {
+        /// Directory to visualize (default: current directory)
+        #[arg(short, long, default_value = ".")]
+        dir: String,
+    },
+    /// Suggest file reorganization
+    Organize {
+        /// Directory to analyze for reorganization (default: current directory)
+        #[arg(short, long, default_value = ".")]
+        dir: String,
+    },
     /// Print version information
     Version,
 }
@@ -92,6 +115,10 @@ fn main() {
         Commands::Test { filter } => commands::new::test_project(filter, verbose),
         Commands::Repl => commands::repl::execute(verbose),
         Commands::Ovm(ovm_cmd) => ovm_cmd.execute(),
+        Commands::Deps { file } => commands::deps::execute(file, verbose),
+        Commands::Unused { dir } => commands::unused::execute(dir, verbose),
+        Commands::Tree { dir } => commands::tree::execute(dir, verbose),
+        Commands::Organize { dir } => commands::organize::execute(dir, verbose),
         Commands::Version => commands::version::execute(verbose),
     };
 
