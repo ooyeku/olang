@@ -2,6 +2,7 @@ use crate::analyze::{AnalysisError, AnalysisReport};
 use crate::ast::{
     Argument, AsyncFunctionDecl, BinaryOp, Expr, Function, FunctionDecl, LetDecl, MatchArm, Pattern, Program,
     Statement, TypeDecl, UnaryOp, UseDecl, Value, ShareDecl, PromiseType, EnumVariantData, ErrorTypeDecl, BuiltinFunction,
+    TestDecl,
 };
 use crate::async_runtime::AsyncRuntime;
 use crate::builtin::BuiltinFunctions;
@@ -610,6 +611,7 @@ impl Interpreter {
             Statement::ErrorTypeDecl(error_type_decl) => self.eval_error_type_decl(error_type_decl),
             Statement::ShareDecl(share_decl) => self.eval_share_decl(share_decl),
             Statement::UseDecl(use_decl) => self.eval_use_decl(use_decl),
+            Statement::TestDecl(test_decl) => self.eval_test_decl(test_decl),
         }
     }
 
@@ -1169,6 +1171,60 @@ impl Interpreter {
                 // In full implementation, would execute in separate task
                 let result = self.eval_expr(*expression)?;
                 Ok(self.async_runtime.promise_resolve(result))
+            }
+            
+            // Test assertions
+            Expr::AssertEq { actual, expected, message } => {
+                let actual_val = self.eval_expr(*actual)?;
+                let expected_val = self.eval_expr(*expected)?;
+                if actual_val != expected_val {
+                    let msg = message.unwrap_or_else(|| format!("Assertion failed: {:?} != {:?}", actual_val, expected_val));
+                    return Err(InterpreterError::RuntimeError { message: msg });
+                }
+                Ok(Value::Unit)
+            }
+            Expr::AssertNe { actual, expected, message } => {
+                let actual_val = self.eval_expr(*actual)?;
+                let expected_val = self.eval_expr(*expected)?;
+                if actual_val == expected_val {
+                    let msg = message.unwrap_or_else(|| format!("Assertion failed: {:?} == {:?}", actual_val, expected_val));
+                    return Err(InterpreterError::RuntimeError { message: msg });
+                }
+                Ok(Value::Unit)
+            }
+            Expr::Assert { condition, message } => {
+                let condition_val = self.eval_expr(*condition)?;
+                match condition_val {
+                    Value::Boolean(true) => Ok(Value::Unit),
+                    Value::Boolean(false) => {
+                        let msg = message.unwrap_or_else(|| "Assertion failed: condition is false".to_string());
+                        Err(InterpreterError::RuntimeError { message: msg })
+                    }
+                    _ => {
+                        let msg = message.unwrap_or_else(|| format!("Assertion failed: condition is not boolean: {:?}", condition_val));
+                        Err(InterpreterError::RuntimeError { message: msg })
+                    }
+                }
+            }
+            Expr::AssertTrue { expression, message } => {
+                let val = self.eval_expr(*expression)?;
+                match val {
+                    Value::Boolean(true) => Ok(Value::Unit),
+                    _ => {
+                        let msg = message.unwrap_or_else(|| format!("Assertion failed: expected true, got {:?}", val));
+                        Err(InterpreterError::RuntimeError { message: msg })
+                    }
+                }
+            }
+            Expr::AssertFalse { expression, message } => {
+                let val = self.eval_expr(*expression)?;
+                match val {
+                    Value::Boolean(false) => Ok(Value::Unit),
+                    _ => {
+                        let msg = message.unwrap_or_else(|| format!("Assertion failed: expected false, got {:?}", val));
+                        Err(InterpreterError::RuntimeError { message: msg })
+                    }
+                }
             }
         }
     }
@@ -3432,6 +3488,15 @@ impl Interpreter {
         let module_path = use_decl.path.join(".");
         let module = self.load_module_from_file(&module_path)?;
         self.bind_module_imports(&module, &Some(use_decl.items))?;
+        Ok(Value::Unit)
+    }
+
+    fn eval_test_decl(&mut self, test_decl: TestDecl) -> Result<Value, InterpreterError> {
+        // For now, we'll just evaluate the test body and return Unit
+        // In a full implementation, this would be part of the test runner
+        for statement in &test_decl.body {
+            self.eval_statement(statement.clone())?;
+        }
         Ok(Value::Unit)
     }
 }

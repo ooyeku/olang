@@ -52,6 +52,15 @@ enum Commands {
         /// Run only tests matching this pattern
         #[arg(short, long)]
         filter: Option<String>,
+        /// Directory to search for tests (default: current directory)
+        #[arg(short, long, default_value = ".")]
+        dir: String,
+        /// Watch for file changes and re-run tests
+        #[arg(short, long)]
+        watch: bool,
+        /// Number of parallel test threads
+        #[arg(short, long)]
+        threads: Option<usize>,
     },
     /// Start an interactive REPL session
     Repl,
@@ -160,7 +169,7 @@ fn main() {
         Commands::Build { release } => commands::new::build_project(release, verbose),
         Commands::Run { file } => commands::run::execute(file, verbose),
         Commands::Check { file } => commands::check::execute(file, verbose),
-        Commands::Test { filter } => commands::new::test_project(filter, verbose),
+        Commands::Test { filter, dir, watch, threads } => commands::test::execute(filter, dir, watch, threads, verbose),
         Commands::Repl => commands::repl::execute(verbose),
         Commands::Ovm(ovm_cmd) => ovm_cmd.execute(),
         Commands::Deps { file } => commands::deps::execute(file, verbose),

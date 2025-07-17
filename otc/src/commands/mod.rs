@@ -6,6 +6,7 @@ pub mod ovm;
 pub mod refactor;
 pub mod repl;
 pub mod run;
+pub mod test;
 pub mod tree;
 pub mod unused;
 pub mod version;

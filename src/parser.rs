@@ -3,7 +3,7 @@ use crate::ast::{
     FunctionDecl, LetDecl, MapEntry, MatchArm, Parameter, Pattern, Program, PromiseType,
     Statement, StructField, StructLiteral, TypeAnnotation, TypeDecl, TypeDefinition,
     BitwiseOp, UnaryOp, TemplatePart,
-    ShareDecl, UseDecl,
+    ShareDecl, UseDecl, TestDecl,
 };
 use pest::{iterators::Pair, iterators::Pairs, Parser as PestParser};
 use pest_derive::Parser;
@@ -239,6 +239,9 @@ impl Parser {
             )),
             Rule::use_decl => Ok(Statement::UseDecl(
                 self.build_use_decl(pair.into_inner())?,
+            )),
+            Rule::test_decl => Ok(Statement::TestDecl(
+                self.build_test_decl(pair.into_inner())?,
             )),
             Rule::expr => Ok(Statement::Expression(self.build_expr(pair.into_inner())?)),
             _ => Err(ParseError::invalid_syntax_at(
@@ -2916,6 +2919,118 @@ impl Parser {
         }
 
         Ok(UseDecl { path, items })
+    }
+
+    fn build_test_decl(&self, mut pairs: Pairs<Rule>) -> Result<TestDecl, ParseError> {
+        // Get test name from string literal
+        let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing test name".to_string(),
+        })?;
+        let name = self.process_string_escapes(name_pair.as_str())?;
+
+        // Get test block with statements
+        let block_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing test block".to_string(),
+        })?;
+        
+        let mut body = Vec::new();
+        for statement_pair in block_pair.into_inner() {
+            if statement_pair.as_rule() == Rule::test_statement {
+                let inner = statement_pair.into_inner().next().unwrap();
+                if inner.as_rule() == Rule::assertion {
+                    // Handle assertion as expression
+                    let assertion_expr = self.build_assertion(inner.into_inner())?;
+                    body.push(Statement::Expression(assertion_expr));
+                } else {
+                    // Handle regular statement
+                    body.push(self.build_statement(inner)?);
+                }
+            }
+        }
+
+        Ok(TestDecl { name, body })
+    }
+
+    fn build_assertion(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let assertion_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing assertion type".to_string(),
+        })?;
+
+        match assertion_pair.as_rule() {
+            Rule::assert_eq => {
+                let mut inner = assertion_pair.into_inner();
+                let actual = self.build_expr(inner.next().unwrap().into_inner())?;
+                let expected = self.build_expr(inner.next().unwrap().into_inner())?;
+                let message = if let Some(msg_pair) = inner.next() {
+                    Some(self.process_string_escapes(msg_pair.as_str())?)
+                } else {
+                    None
+                };
+                Ok(Expr::AssertEq {
+                    actual: Box::new(actual),
+                    expected: Box::new(expected),
+                    message,
+                })
+            },
+            Rule::assert_ne => {
+                let mut inner = assertion_pair.into_inner();
+                let actual = self.build_expr(inner.next().unwrap().into_inner())?;
+                let expected = self.build_expr(inner.next().unwrap().into_inner())?;
+                let message = if let Some(msg_pair) = inner.next() {
+                    Some(self.process_string_escapes(msg_pair.as_str())?)
+                } else {
+                    None
+                };
+                Ok(Expr::AssertNe {
+                    actual: Box::new(actual),
+                    expected: Box::new(expected),
+                    message,
+                })
+            },
+            Rule::assert => {
+                let mut inner = assertion_pair.into_inner();
+                let condition = self.build_expr(inner.next().unwrap().into_inner())?;
+                let message = if let Some(msg_pair) = inner.next() {
+                    Some(self.process_string_escapes(msg_pair.as_str())?)
+                } else {
+                    None
+                };
+                Ok(Expr::Assert {
+                    condition: Box::new(condition),
+                    message,
+                })
+            },
+            Rule::assert_true => {
+                let mut inner = assertion_pair.into_inner();
+                let expression = self.build_expr(inner.next().unwrap().into_inner())?;
+                let message = if let Some(msg_pair) = inner.next() {
+                    Some(self.process_string_escapes(msg_pair.as_str())?)
+                } else {
+                    None
+                };
+                Ok(Expr::AssertTrue {
+                    expression: Box::new(expression),
+                    message,
+                })
+            },
+            Rule::assert_false => {
+                let mut inner = assertion_pair.into_inner();
+                let expression = self.build_expr(inner.next().unwrap().into_inner())?;
+                let message = if let Some(msg_pair) = inner.next() {
+                    Some(self.process_string_escapes(msg_pair.as_str())?)
+                } else {
+                    None
+                };
+                Ok(Expr::AssertFalse {
+                    expression: Box::new(expression),
+                    message,
+                })
+            },
+            _ => Err(ParseError::invalid_syntax_at(
+                format!("Unknown assertion type: {:?}", assertion_pair.as_rule()),
+                PositionInfo::from_pair(&assertion_pair),
+            )),
+        }
     }
 }
 

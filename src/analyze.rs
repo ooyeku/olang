@@ -1,4 +1,4 @@
-use crate::ast::{Expr, MatchArm, Pattern, Program, Statement, Argument, TemplatePart, Value, ShareDecl, UseDecl};
+use crate::ast::{Expr, MatchArm, Pattern, Program, Statement, Argument, TemplatePart, Value, ShareDecl, UseDecl, TestDecl};
 use crate::builtin::BuiltinFunctions;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -263,6 +263,10 @@ impl Analyzer {
             Statement::UseDecl(use_decl) => {
                 // Analyze the use declaration
                 self.analyze_use_decl(use_decl)
+            }
+            Statement::TestDecl(test_decl) => {
+                // Analyze the test declaration
+                self.analyze_test_decl(test_decl)
             }
             Statement::AsyncFunctionDecl(async_func_decl) => {
                 // Add async function to current scope
@@ -1123,6 +1127,12 @@ impl Analyzer {
             Statement::UseDecl(_) => {
                 // Use declarations don't contain expressions to mark
             }
+            Statement::TestDecl(test_decl) => {
+                // Mark all expressions in test body as reachable
+                for statement in &test_decl.body {
+                    self.mark_statement_reachable(statement, reachable);
+                }
+            }
             Statement::TypeDecl(_) | Statement::ErrorTypeDecl(_) => {
                 // Type declarations don't contain expressions to mark
             }
@@ -1287,6 +1297,25 @@ impl Analyzer {
                 self.mark_expression_reachable(left, reachable);
                 self.mark_expression_reachable(right, reachable);
             }
+            // Test assertions
+            Expr::AssertEq { actual, expected, .. } => {
+                self.mark_expression_reachable(actual, reachable);
+                self.mark_expression_reachable(expected, reachable);
+            }
+            Expr::AssertNe { actual, expected, .. } => {
+                self.mark_expression_reachable(actual, reachable);
+                self.mark_expression_reachable(expected, reachable);
+            }
+            Expr::Assert { condition, .. } => {
+                self.mark_expression_reachable(condition, reachable);
+            }
+            Expr::AssertTrue { expression, .. } => {
+                self.mark_expression_reachable(expression, reachable);
+            }
+            Expr::AssertFalse { expression, .. } => {
+                self.mark_expression_reachable(expression, reachable);
+            }
+            
             // Terminal expressions that don't contain other expressions
             Expr::Integer(_) | Expr::Float(_) | Expr::String(_) | Expr::Boolean(_) |
             Expr::RawString(_) | Expr::Identifier(_) | Expr::Break | Expr::Continue => {
@@ -1515,6 +1544,20 @@ impl Analyzer {
         Ok(())
     }
 
+    /// Analyze test declarations for proper structure and dependencies
+    fn analyze_test_decl(&mut self, test_decl: &TestDecl) -> Result<(), AnalysisError> {
+        // Create new scope for test
+        self.enter_scope();
+        
+        // Analyze all statements in test body
+        for statement in &test_decl.body {
+            self.analyze_statement(statement)?;
+        }
+        
+        self.exit_scope();
+        Ok(())
+    }
+
     fn mark_share_decl_reachable(&mut self, share_decl: &ShareDecl, reachable: &mut HashSet<usize>) {
         match share_decl {
             ShareDecl::Function(func_decl) => {
@@ -1687,6 +1730,12 @@ impl DeadCodeDetector {
             }
             Statement::UseDecl(_) => {
                 // Use declarations don't contain expressions to mark
+            }
+            Statement::TestDecl(test_decl) => {
+                // Mark all expressions in test body as reachable
+                for statement in &test_decl.body {
+                    self.mark_statement_reachable(statement);
+                }
             }
             Statement::TypeDecl(_) | Statement::ErrorTypeDecl(_) => {
                 // Type declarations don't contain expressions to mark

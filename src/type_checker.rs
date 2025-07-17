@@ -1,6 +1,6 @@
 use crate::ast::{
     Argument, BinaryOp, Expr, FunctionDecl, GenericTypeDefinition, LetDecl, Pattern, Program, Statement,
-    TypeAnnotation, TypeContext, TypeDecl, TypeError, UnaryOp, Value,
+    TypeAnnotation, TypeContext, TypeDecl, TypeError, UnaryOp, Value, TestDecl,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -264,6 +264,14 @@ impl TypeChecker {
             }
             Statement::UseDecl(_use_decl) => {
                 // Use declarations import symbols but don't produce types directly
+                Ok(TypeAnnotation::Unknown)
+            }
+            Statement::TestDecl(test_decl) => {
+                // Type check test declarations - all statements in test body should be valid
+                for statement in &test_decl.body {
+                    self.check_statement(statement)?;
+                }
+                // Test declarations don't produce types directly
                 Ok(TypeAnnotation::Unknown)
             }
             Statement::AsyncFunctionDecl(async_func_decl) => {

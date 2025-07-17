@@ -6,7 +6,7 @@ NEWLINE     = _{ "\n" | "\r\n" }
 COMMENT     = _{ "//" ~ (!NEWLINE ~ ANY)* }
 
 // Keywords - these must not be parsed as identifiers
-keyword = { "fn" | "let" | "type" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "true" | "false" | "async" | "await" | "try" | "catch" | "error" | "share" | "use" | "struct" | "enum" }
+keyword = { "fn" | "let" | "type" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "true" | "false" | "async" | "await" | "try" | "catch" | "error" | "share" | "use" | "struct" | "enum" | "test" }
 
 // Identifiers and literals - exclude keywords
 identifier  = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -36,13 +36,24 @@ tuple       = { "(" ~ expr ~ "," ~ expr ~ ("," ~ expr)* ~ ")" }
 
 // Program structure - Put share_decl and use_decl BEFORE expr to ensure they are matched first
 program     = { SOI ~ (statement ~ ";"?)* ~ EOI }
-statement   = { share_decl | use_decl | error_type_decl | type_decl | let_decl | async_function_decl | function_decl | expr }
+statement   = { share_decl | use_decl | test_decl | error_type_decl | type_decl | let_decl | async_function_decl | function_decl | expr }
 
 // Share and use declarations - defined EARLY to get precedence
 share_decl = { "share" ~ (use_decl | function_decl | let_decl | type_decl) }
 use_decl = { "use" ~ use_path ~ "{" ~ use_list ~ "}" }
 use_path = { identifier ~ ("." ~ identifier)* }
 use_list = { identifier ~ ("," ~ identifier)* }
+
+// Test declarations
+test_decl = { "test" ~ string ~ test_block }
+test_block = { "{" ~ (test_statement ~ ";"?)* ~ "}" }
+test_statement = { assertion | statement }
+assertion = { assert_eq | assert_ne | assert | assert_true | assert_false }
+assert_eq = { "assert_eq" ~ "(" ~ expr ~ "," ~ expr ~ ("," ~ string)? ~ ")" }
+assert_ne = { "assert_ne" ~ "(" ~ expr ~ "," ~ expr ~ ("," ~ string)? ~ ")" }
+assert = { "assert" ~ "(" ~ expr ~ ("," ~ string)? ~ ")" }
+assert_true = { "assert_true" ~ "(" ~ expr ~ ("," ~ string)? ~ ")" }
+assert_false = { "assert_false" ~ "(" ~ expr ~ ("," ~ string)? ~ ")" }
 
 // Error type declaration (enum-like with variants)
 error_type_decl = { "error" ~ identifier ~ "{" ~ error_variant_list? ~ "}" }

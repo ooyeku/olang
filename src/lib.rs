@@ -18,6 +18,7 @@ pub mod parallel;
 pub mod parser;
 pub mod repl;
 pub mod stdlib;
+pub mod test_framework;
 pub mod type_checker;
 pub mod version;
 

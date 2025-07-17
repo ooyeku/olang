@@ -20,6 +20,7 @@ pub enum Statement {
     ErrorTypeDecl(ErrorTypeDecl),
     ShareDecl(ShareDecl),
     UseDecl(UseDecl),
+    TestDecl(TestDecl),
 }
 
 /// Error type declaration
@@ -218,6 +219,30 @@ pub enum Expr {
     // Spread/rest (for future use)
     Spread(Box<Expr>),
     Rest(Box<Expr>),
+
+    // Test assertions
+    AssertEq {
+        actual: Box<Expr>,
+        expected: Box<Expr>,
+        message: Option<String>,
+    },
+    AssertNe {
+        actual: Box<Expr>,
+        expected: Box<Expr>,
+        message: Option<String>,
+    },
+    Assert {
+        condition: Box<Expr>,
+        message: Option<String>,
+    },
+    AssertTrue {
+        expression: Box<Expr>,
+        message: Option<String>,
+    },
+    AssertFalse {
+        expression: Box<Expr>,
+        message: Option<String>,
+    },
 }
 
 /// Argument types for function calls
@@ -863,4 +888,11 @@ pub enum ShareDecl {
 pub struct UseDecl {
     pub path: Vec<String>,
     pub items: Vec<String>,
+}
+
+// Test declaration struct
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TestDecl {
+    pub name: String,
+    pub body: Vec<Statement>,
 }
