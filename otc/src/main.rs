@@ -81,6 +81,54 @@ enum Commands {
         #[arg(short, long, default_value = ".")]
         dir: String,
     },
+    /// Move a shared function between files
+    #[command(name = "move-fn")]
+    MoveFn {
+        /// Function name to move
+        function: String,
+        /// Source file path
+        from: String,
+        /// Target file path
+        to: String,
+    },
+    /// Rename a function across all usage sites
+    #[command(name = "rename-fn")]
+    RenameFn {
+        /// Current function name
+        old_name: String,
+        /// New function name
+        new_name: String,
+        /// Directory to search for usages (default: current directory)
+        #[arg(short, long, default_value = ".")]
+        dir: String,
+    },
+    /// Extract functions into a new file
+    #[command(name = "extract-file")]
+    ExtractFile {
+        /// Functions to extract (comma-separated)
+        functions: String,
+        /// Source file path
+        from: String,
+        /// Target file path (new file to create)
+        to: String,
+    },
+    /// Merge two files together
+    #[command(name = "merge-files")]
+    MergeFiles {
+        /// First file to merge
+        file1: String,
+        /// Second file to merge
+        file2: String,
+        /// Output file path
+        output: String,
+    },
+    /// Fix import statements after refactoring
+    #[command(name = "fix-imports")]
+    FixImports {
+        /// Directory to scan and fix imports (default: current directory)
+        #[arg(short, long, default_value = ".")]
+        dir: String,
+    },
     /// Print version information
     Version,
 }
@@ -119,6 +167,11 @@ fn main() {
         Commands::Unused { dir } => commands::unused::execute(dir, verbose),
         Commands::Tree { dir } => commands::tree::execute(dir, verbose),
         Commands::Organize { dir } => commands::organize::execute(dir, verbose),
+        Commands::MoveFn { function, from, to } => commands::refactor::move_function(function, from, to, verbose),
+        Commands::RenameFn { old_name, new_name, dir } => commands::refactor::rename_function(old_name, new_name, dir, verbose),
+        Commands::ExtractFile { functions, from, to } => commands::refactor::extract_file(functions, from, to, verbose),
+        Commands::MergeFiles { file1, file2, output } => commands::refactor::merge_files(file1, file2, output, verbose),
+        Commands::FixImports { dir } => commands::refactor::fix_imports(dir, verbose),
         Commands::Version => commands::version::execute(verbose),
     };
 

@@ -3,6 +3,7 @@ pub mod deps;
 pub mod new;
 pub mod organize;
 pub mod ovm;
+pub mod refactor;
 pub mod repl;
 pub mod run;
 pub mod tree;
