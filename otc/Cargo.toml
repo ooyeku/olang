@@ -1,6 +1,6 @@
 [package]
 name = "otc"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Ola Yeku <oyeku@gmail.com>"]
 description = "Olang Toolchain - Command-line tools for the Olang language"

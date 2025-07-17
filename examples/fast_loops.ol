@@ -1,10 +1,10 @@
 
 
-fn fast_loop() = {
+share fn fast_loop() = {
     let data = 1..100
 
 
-let n = 1..10000
+let n = 1..100
 
 for numbers in n {
     let v = random.choice(n)

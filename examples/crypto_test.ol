@@ -1,7 +1,7 @@
 // examples/crypto_test.ol
 // Test crypto module functionality
 
-fn test_crypto() = {
+share fn demo_crypto() = {
     println("=== Testing Crypto Module ===")
     
     // Test hash functions
@@ -30,7 +30,7 @@ fn test_crypto() = {
     println("=== Crypto Module Tests Complete ===")
 }
 
-fn main() = test_crypto()
+fn main() = demo_crypto()
 
 // Execute test
 main() 
