@@ -1,5 +1,6 @@
 pub mod check;
 pub mod deps;
+pub mod global;
 pub mod new;
 pub mod organize;
 pub mod ovm;

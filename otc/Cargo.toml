@@ -1,17 +1,22 @@
 [package]
 name = "otc"
-version = "0.3.0"
+version = "0.18.0"
 edition = "2021"
-authors = ["Ola Yeku <oyeku@gmail.com>"]
+authors = ["Olang Team"]
 description = "Olang Toolchain - Command-line tools for the Olang language"
 license = "MIT"
 repository = "https://github.com/ooyeku/olang"
 
 [dependencies]
-olang = { path = ".." }
-clap = { version = "4.4", features = ["derive"] }
 anyhow = "1.0"
-miette = { version = "5.10", features = ["fancy"] }
-num_cpus = "1.16"
+clap = { version = "4.0", features = ["derive"] }
+olang = { path = ".." }
 toml = "0.8"
-serde = { version = "1.0", features = ["derive"] } 
+serde = { version = "1.0", features = ["derive"] }
+dirs = "5.0"
+chrono = { version = "0.4", features = ["serde"] }
+num_cpus = "1.0"
+miette = "7.0"
+
+[dev-dependencies]
+tempfile = "3.0" 
