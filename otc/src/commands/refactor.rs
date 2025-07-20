@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use olang::parser::Parser;
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Move a shared function from one file to another

@@ -392,13 +392,13 @@ fn display_organization_suggestions(analysis: &OrganizationAnalysis, verbose: bo
 
     println!("Suggestions:");
     
-    let mut high_priority: Vec<_> = analysis.suggestions.iter()
+    let high_priority: Vec<_> = analysis.suggestions.iter()
         .filter(|s| matches!(s.priority, Priority::High))
         .collect();
-    let mut medium_priority: Vec<_> = analysis.suggestions.iter()
+    let medium_priority: Vec<_> = analysis.suggestions.iter()
         .filter(|s| matches!(s.priority, Priority::Medium))
         .collect();
-    let mut low_priority: Vec<_> = analysis.suggestions.iter()
+    let low_priority: Vec<_> = analysis.suggestions.iter()
         .filter(|s| matches!(s.priority, Priority::Low))
         .collect();
 
