@@ -725,6 +725,18 @@ impl BuiltinFunctions {
             } => {
                 // For ranges, we still need to materialize, but only once
                 let end_val = if *inclusive { end + 1 } else { *end };
+                let range_size = (end_val - start) as usize;
+                
+                // MEMORY MONITORING: Check if range is too large before creating
+                if range_size > 1000 {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!(
+                            "Range size ({}) too large, this could cause memory issues. Maximum range size is 1000.",
+                            range_size
+                        ),
+                    });
+                }
+                
                 let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
                 return Self::process_map_range(range_vec, function, interpreter);
             }
@@ -770,7 +782,7 @@ impl BuiltinFunctions {
             // SEQUENTIAL VERSION (for small lists) - MEMORY OPTIMIZED
             let mut result = Vec::with_capacity(list_ref.len()); // Pre-allocate
             for item in list_ref.iter() {
-                let value = interpreter.call_function(function.clone(), vec![item.clone()])?;
+                let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
                 result.push(value);
             }
             Ok(Value::List(result.into()))
@@ -795,7 +807,7 @@ impl BuiltinFunctions {
         } else {
             let mut result = Vec::with_capacity(range_vec.len());
             for item in range_vec.iter() {
-                let value = interpreter.call_function(function.clone(), vec![item.clone()])?;
+                let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
                 result.push(value);
             }
             Ok(Value::List(result.into()))
@@ -829,7 +841,7 @@ impl BuiltinFunctions {
         } else {
             let mut result = Vec::with_capacity(range_vec.len());
             for item in range_vec.iter() {
-                let pred = interpreter.call_function(function.clone(), vec![item.clone()])?;
+                let pred = interpreter.call_function_optimized(function, vec![item.clone()])?;
                 if let Value::Boolean(true) = pred {
                     result.push(item.clone())
                 }
@@ -863,6 +875,18 @@ impl BuiltinFunctions {
             } => {
                 // For ranges, we still need to materialize, but only once
                 let end_val = if *inclusive { end + 1 } else { *end };
+                let range_size = (end_val - start) as usize;
+                
+                // MEMORY MONITORING: Check if range is too large before creating
+                if range_size > 1000 {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!(
+                            "Range size ({}) too large, this could cause memory issues. Maximum range size is 1000.",
+                            range_size
+                        ),
+                    });
+                }
+                
                 let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
                 return Self::process_filter_range(range_vec, function, interpreter);
             }
@@ -917,7 +941,8 @@ impl BuiltinFunctions {
             // SEQUENTIAL VERSION (for small lists) - MEMORY OPTIMIZED
             let mut result = Vec::with_capacity(list_ref.len()); // Worst case: all pass filter
             for item in list_ref.iter() {
-                let pred = interpreter.call_function(function.clone(), vec![item.clone()])?;
+                // Use optimized function call to reduce cloning
+                let pred = interpreter.call_function_optimized(function, vec![item.clone()])?;
                 if let Value::Boolean(true) = pred {
                     result.push(item.clone())
                 }
