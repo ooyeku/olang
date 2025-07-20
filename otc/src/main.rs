@@ -3,6 +3,7 @@ use std::process;
 
 mod commands;
 mod config;
+mod git_package;
 mod global;
 mod utils;
 
@@ -293,7 +294,7 @@ fn main() {
         Commands::MergeFiles { file1, file2, output } => commands::refactor::merge_files(file1, file2, output, verbose),
         Commands::FixImports { dir } => commands::refactor::fix_imports(dir, verbose),
         
-        // Global Package Management Commands
+        // Git Package Management Commands
         Commands::Install { url, global, offline: _ } => {
             if global {
                 if let Some(url) = url {
@@ -302,39 +303,44 @@ fn main() {
                     Err(anyhow::anyhow!("URL required for global package installation"))
                 }
             } else {
-                // TODO: Implement local package installation
-                Err(anyhow::anyhow!("Local package installation not yet implemented"))
+                // Use the new Simple Git Package System
+                commands::install::execute(url, verbose)
             }
         },
         Commands::List { global, cached: _ } => {
             if global {
                 commands::global::list_global(verbose)
             } else {
-                // TODO: Implement local package listing
-                Err(anyhow::anyhow!("Local package listing not yet implemented"))
+                // Use the new Simple Git Package System
+                commands::install::list(verbose)
             }
         },
-        Commands::Update { global: _ } => {
-            // TODO: Implement package updates
-            Err(anyhow::anyhow!("Package update not yet implemented"))
+        Commands::Update { global } => {
+            if global {
+                Err(anyhow::anyhow!("Global package update not yet implemented"))
+            } else {
+                // Use the new Simple Git Package System
+                commands::install::update(verbose)
+            }
         },
         Commands::Remove { name, global } => {
             if global {
                 commands::global::remove_global(name, verbose)
             } else {
-                // TODO: Implement local package removal
-                Err(anyhow::anyhow!("Local package removal not yet implemented"))
+                // Use the new Simple Git Package System
+                commands::install::remove(name, verbose)
             }
         },
         Commands::Clean => {
-            commands::global::cache_clean(verbose)
+            // Use the new Simple Git Package System
+            commands::install::clean(verbose)
         },
         Commands::Info { package, global } => {
             if global {
                 commands::global::info_global(package, verbose)
             } else {
-                // TODO: Implement local package info
-                Err(anyhow::anyhow!("Local package info not yet implemented"))
+                // Use the new Simple Git Package System for URL info
+                commands::install::info(package, verbose)
             }
         },
         
