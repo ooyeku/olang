@@ -954,22 +954,32 @@ impl Interpreter {
                         }
                     }
                     (Value::String(string), Value::Integer(idx)) => {
-                        let chars: Vec<char> = string.chars().collect();
+                        let string_len = string.chars().count();
                         let index = if idx < 0 {
                             // Negative indexing from end
-                            (chars.len() as i64 + idx) as usize
+                            if (-idx) as usize > string_len {
+                                return Err(InterpreterError::RuntimeError {
+                                    message: format!(
+                                        "Index {} out of bounds for string of length {}",
+                                        idx,
+                                        string_len
+                                    ),
+                                });
+                            }
+                            string_len - ((-idx) as usize)
                         } else {
                             idx as usize
                         };
 
-                        if index < chars.len() {
-                            Ok(Value::String(chars[index].to_string().into()))
+                        if let Some(ch) = string.chars().nth(index) {
+                            // More efficient: create single-char string directly
+                            Ok(Value::String(ch.to_string().into()))
                         } else {
                             Err(InterpreterError::RuntimeError {
                                 message: format!(
                                     "Index {} out of bounds for string of length {}",
                                     idx,
-                                    chars.len()
+                                    string_len
                                 ),
                             })
                         }
