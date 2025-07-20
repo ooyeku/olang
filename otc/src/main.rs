@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod git_package;
 mod global;
+mod lock_file;
 mod utils;
 
 #[derive(Parser)]
@@ -295,7 +296,7 @@ fn main() {
         Commands::FixImports { dir } => commands::refactor::fix_imports(dir, verbose),
         
         // Git Package Management Commands
-        Commands::Install { url, global, offline: _ } => {
+        Commands::Install { url, global, offline } => {
             if global {
                 if let Some(url) = url {
                     commands::global::install_global(url, verbose)
@@ -304,7 +305,7 @@ fn main() {
                 }
             } else {
                 // Use the new Simple Git Package System
-                commands::install::execute(url, verbose)
+                commands::install::execute_with_options(url, verbose, offline)
             }
         },
         Commands::List { global, cached: _ } => {
