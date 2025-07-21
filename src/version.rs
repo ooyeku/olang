@@ -10,7 +10,7 @@
 ///
 /// *NOTE*: Bump this constant (and the value in `Cargo.toml`) whenever a new
 /// release is cut.
-pub const VERSION: &str = "0.16";
+pub const VERSION: &str = "0.17";
 
 /// Convenience helper that returns the version string. Kept as a function to
 /// make it possible to pass a function pointer where a `'static` string slice
