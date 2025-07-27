@@ -393,10 +393,10 @@ fn test_literal_type_patterns() {
 
     let source = r#"
         match "pending" {
-            "pending" => "⏳ Waiting",
-            "running" => "🏃 In progress",
-            "completed" => "✅ Done",
-            "failed" => "❌ Error",
+            "pending" => "Waiting",
+            "running" => "In progress",
+            "completed" => "Done",
+            "failed" => "Error",
             _ => "Unknown status"
         }
     "#;
@@ -406,7 +406,7 @@ fn test_literal_type_patterns() {
 
     assert_eq!(
         result,
-        olang::ast::Value::String("⏳ Waiting".to_string().into())
+        olang::ast::Value::String("Waiting".to_string().into())
     );
 }
 
@@ -493,11 +493,11 @@ fn test_log_level_union_types() {
     let source = r#"
         fn log_message(level, message) = {
             match level {
-                "DEBUG" => `🐛 DEBUG: ${message}`,
-                "INFO" => `ℹ️ INFO: ${message}`,
-                "WARN" => `⚠️ WARN: ${message}`,
-                "ERROR" => `❌ ERROR: ${message}`,
-                _ => `? UNKNOWN: ${message}`
+                "DEBUG" => `DEBUG: ${message}`,
+                "INFO" => `INFO: ${message}`,
+                "WARN" => `WARN: ${message}`,
+                "ERROR" => `ERROR: ${message}`,
+                _ => `UNKNOWN: ${message}`
             }
         };
         log_message("WARN", "This is a warning")
@@ -508,7 +508,7 @@ fn test_log_level_union_types() {
 
     assert_eq!(
         result,
-        olang::ast::Value::String("⚠️ WARN: This is a warning".to_string().into())
+        olang::ast::Value::String("WARN: This is a warning".to_string().into())
     );
 }
 
@@ -535,8 +535,8 @@ fn test_user_management_system_comprehensive() {
         let validation = validate_user("Alice", "alice@example.com", 25, "admin");
         
         match validation {
-            { success: true, message } => `✅ ${message}`,
-            { success: false, message, code } => `❌ Error ${code}: ${message}`,
+            { success: true, message } => `${message}`,
+            { success: false, message, code } => `Error ${code}: ${message}`,
             _ => "Unknown validation result"
         }
     "#;
@@ -546,7 +546,7 @@ fn test_user_management_system_comprehensive() {
 
     assert_eq!(
         result,
-        olang::ast::Value::String("✅ Valid user".to_string().into())
+        olang::ast::Value::String("Valid user".to_string().into())
     );
 }
 

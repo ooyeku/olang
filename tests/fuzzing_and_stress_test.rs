@@ -26,18 +26,18 @@ use rand::{SeedableRng, RngCore};
 /// Property-based testing framework for Olang
 pub struct PropertyTester {
     parser: Parser,
-    interpreter: Interpreter,
-    type_checker: TypeChecker,
-    rng: Arc<Mutex<ChaCha8Rng>>,
+    _interpreter: Interpreter,
+    type_checker: TypeChecker,  
+    _rng: Arc<Mutex<ChaCha8Rng>>,
 }
 
 impl PropertyTester {
-    pub fn new() -> Self {
+    pub fn new() -> Self {  
         Self {
             parser: Parser::new(),
-            interpreter: Interpreter::new(),
+            _interpreter: Interpreter::new(),
             type_checker: TypeChecker::new(),
-            rng: Arc::new(Mutex::new(ChaCha8Rng::from_seed([42; 32]))),
+            _rng: Arc::new(Mutex::new(ChaCha8Rng::from_seed([42; 32]))),
         }
     }
 
@@ -111,16 +111,16 @@ impl PropertyTester {
 /// Parser fuzzing framework
 pub struct ParserFuzzer {
     parser: Parser,
-    malformed_inputs: Vec<String>,
-    stress_patterns: Vec<String>,
+    _malformed_inputs: Vec<String>,
+    _stress_patterns: Vec<String>,
 }
 
 impl ParserFuzzer {
     pub fn new() -> Self {
         Self {
             parser: Parser::new(),
-            malformed_inputs: Vec::new(),
-            stress_patterns: Vec::new(),
+            _malformed_inputs: Vec::new(),
+            _stress_patterns: Vec::new(),
         }
     }
 
@@ -447,9 +447,9 @@ impl PerformanceRegressionTester {
         let regressions = self.check_regressions();
         
         if regressions.is_empty() {
-            report.push_str("✅ No performance regressions detected!\n");
+            report.push_str("No performance regressions detected!\n");
         } else {
-            report.push_str(&format!("⚠️  {} performance regressions detected:\n\n", regressions.len()));
+            report.push_str(&format!("{} performance regressions detected:\n\n", regressions.len()));
             
             for regression in regressions {
                 report.push_str(&format!(
@@ -734,10 +734,10 @@ mod tests {
         regression_tester.record_baseline("comprehensive_test", Duration::from_millis(100));
         regression_tester.record_current("comprehensive_test", Duration::from_millis(120));
         
-        let regressions = regression_tester.check_regressions();
+        let _regressions = regression_tester.check_regressions();
         // Allow some regressions in comprehensive testing
         
-        println!("✅ Comprehensive fuzzing suite completed!");
+        println!("Comprehensive fuzzing suite completed!");
     }
 }
 

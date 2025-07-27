@@ -1,7 +1,7 @@
-use crate::analyze::{AnalysisError, AnalysisReport};
+use crate::analyze::{AnalysisReport};
 use crate::ast::{
-    Argument, AsyncFunctionDecl, BinaryOp, Expr, Function, FunctionDecl, LetDecl, MatchArm, Pattern, Program,
-    Statement, TypeDecl, UnaryOp, UseDecl, Value, ShareDecl, PromiseType, EnumVariantData, ErrorTypeDecl, BuiltinFunction,
+    Argument, BinaryOp, Expr, Function, FunctionDecl, LetDecl, MatchArm, Pattern, Program,
+    Statement, UnaryOp, UseDecl, Value, ShareDecl, PromiseType, EnumVariantData, BuiltinFunction,
     TestDecl,
 };
 use crate::async_runtime::AsyncRuntime;
@@ -2628,7 +2628,7 @@ impl Interpreter {
     }
     
     /// Feature 8: Validate persistent cache entry
-    fn is_persistent_cache_valid(&self, entry: &ModuleCacheEntry, module_path: &str) -> Result<bool, InterpreterError> {
+    fn is_persistent_cache_valid(&self, entry: &ModuleCacheEntry, _module_path: &str) -> Result<bool, InterpreterError> {
         if let Some(file_path) = &entry.file_path {
             if self.smart_cache_config.enable_content_hashing {
                 let current_hash = self.calculate_file_hash(file_path)?;
@@ -2926,7 +2926,7 @@ impl Interpreter {
         recency_score * 0.4 + frequency_score * 0.4 + compilation_cost_score * 0.2
     }
     
-    /// Feature 8: Save current cache to persistent storage
+    /// Feature 8: Prepare cache directory structure (persistent caching disabled for thread safety)
     pub fn save_cache_to_persistent_storage(&mut self) -> Result<(), InterpreterError> {
         if let Some(ref mut cache_manager) = self.persistent_cache_manager {
             for (module_path, entry) in &self.module_cache {
@@ -3873,7 +3873,7 @@ pub struct CacheStatistics {
 #[derive(Debug)]
 pub struct PersistentCacheManager {
     config: SmartCacheConfig,
-    cache_generation: u64,
+    _cache_generation: u64,
     last_cleanup: Instant,
 }
 
@@ -3888,7 +3888,7 @@ impl PersistentCacheManager {
         
         Ok(Self {
             config,
-            cache_generation: 1,
+            _cache_generation: 1,
             last_cleanup: Instant::now(),
         })
     }
@@ -3916,11 +3916,13 @@ impl PersistentCacheManager {
     }
     
     /// Save cache entry to persistent storage
-    pub fn save_cache_entry(&mut self, module_path: &str, entry: &ModuleCacheEntry) -> Result<(), InterpreterError> {
+    pub fn save_cache_entry(&mut self, module_path: &str, _entry: &ModuleCacheEntry) -> Result<(), InterpreterError> {
         if !self.config.enable_persistent_cache {
             return Ok(());
         }
         
+        // Feature 8: Simplified - persistent caching disabled for thread safety
+        // Only create cache directory structure, no actual serialization
         let cache_file = self.get_cache_file_path(module_path);
         if let Some(parent) = cache_file.parent() {
             std::fs::create_dir_all(parent)
@@ -3928,9 +3930,6 @@ impl PersistentCacheManager {
                     message: format!("Failed to create cache directory: {}", e),
                 })?;
         }
-        
-        // Feature 8: Simplified - persistent caching disabled for thread safety
-        // No serialization needed
             
         Ok(())
     }
@@ -3985,7 +3984,7 @@ impl PersistentCacheManager {
         }
         
         let max_size_bytes = self.config.max_cache_size_mb * 1024 * 1024;
-        let max_entries = self.config.max_cache_entries;
+        let max_entries = self.config.max_cache_entries;    
         
         // Remove entries if over limits
         let mut files_to_remove = Vec::new();
@@ -4040,44 +4039,7 @@ pub struct CacheCleanupStats {
     pub cleanup_time: Duration,
 }
 
-/// Calculate Levenshtein distance between two strings for similarity checking
-fn levenshtein_distance(s1: &str, s2: &str) -> usize {
-    let len1 = s1.len();
-    let len2 = s2.len();
-    
-    if len1 == 0 {
-        return len2;
-    }
-    if len2 == 0 {
-        return len1;
-    }
-    
-    let s1_chars: Vec<char> = s1.chars().collect();
-    let s2_chars: Vec<char> = s2.chars().collect();
-    
-    let mut dp = vec![vec![0; len2 + 1]; len1 + 1];
-    
-    // Initialize base cases
-    for i in 0..=len1 {
-        dp[i][0] = i;
-    }
-    for j in 0..=len2 {
-        dp[0][j] = j;
-    }
-    
-    // Fill the DP table
-    for i in 1..=len1 {
-        for j in 1..=len2 {
-            let cost = if s1_chars[i - 1] == s2_chars[j - 1] { 0 } else { 1 };
-            dp[i][j] = std::cmp::min(
-                std::cmp::min(dp[i - 1][j] + 1, dp[i][j - 1] + 1),
-                dp[i - 1][j - 1] + cost
-            );
-        }
-    }
-    
-    dp[len1][len2]
-}
+
 
 #[cfg(test)]
 mod tests {
