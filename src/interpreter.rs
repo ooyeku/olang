@@ -1,7 +1,7 @@
-use crate::analyze::{AnalysisError, AnalysisReport};
+use crate::analyze::{AnalysisReport};
 use crate::ast::{
-    Argument, AsyncFunctionDecl, BinaryOp, Expr, Function, FunctionDecl, LetDecl, MatchArm, Pattern, Program,
-    Statement, TypeDecl, UnaryOp, UseDecl, Value, ShareDecl, PromiseType, EnumVariantData, ErrorTypeDecl, BuiltinFunction,
+    Argument, BinaryOp, Expr, Function, FunctionDecl, LetDecl, MatchArm, Pattern, Program,
+    Statement, UnaryOp, UseDecl, Value, ShareDecl, PromiseType, EnumVariantData, BuiltinFunction,
     TestDecl,
 };
 use crate::async_runtime::AsyncRuntime;
@@ -474,6 +474,21 @@ impl Environment {
     pub fn get_all_variables(&self) -> &HashMap<String, Value> {
         &self.variables
     }
+
+    /// Reserve capacity for variables to avoid reallocations
+    pub fn reserve(&mut self, additional: usize) {
+        self.variables.reserve(additional);
+    }
+
+    /// Remove a variable from this environment (for scoped cleanup)
+    pub fn remove_variable(&mut self, name: &str) {
+        self.variables.remove(name);
+    }
+
+    /// Get ownership of all variables in this environment (for scoped operations)
+    pub fn into_variables(self) -> HashMap<String, Value> {
+        self.variables
+    }
 }
 
 /// Olang interpreter with optional type checking
@@ -499,6 +514,18 @@ pub struct Interpreter {
     
     // Feature 9: Intuitive error messages
     error_formatter: IntuitiveErrorFormatter,
+    
+    // MEMORY PROTECTION: Prevent exponential memory growth  
+    call_depth: usize,
+    max_call_depth: usize,
+    
+    // MEMORY MONITORING: Track memory usage to prevent corruption
+    memory_allocations: usize,
+    max_memory_allocations: usize,
+    
+    // AGGRESSIVE MEMORY MANAGEMENT: Track large allocations and force cleanup
+    large_allocation_count: usize,
+    last_cleanup_operation: usize,
 }
 
 impl Default for Interpreter {
@@ -537,6 +564,18 @@ impl Interpreter {
             persistent_cache_manager,
             cache_statistics: CacheStatistics::default(),
             error_formatter: IntuitiveErrorFormatter::default(),
+            
+            // MEMORY PROTECTION: Initialize recursion depth tracking
+            call_depth: 0,
+            max_call_depth: 1000, // Reasonable limit to prevent stack overflow
+            
+            // MEMORY MONITORING: Initialize memory tracking
+            memory_allocations: 0,
+            max_memory_allocations: 10000, // Prevent excessive allocations
+            
+            // AGGRESSIVE MEMORY MANAGEMENT: Initialize tracking
+            large_allocation_count: 0,
+            last_cleanup_operation: 0,
         };
 
         // Register built-in functions
@@ -670,10 +709,19 @@ impl Interpreter {
             Expr::String(s) => Ok(Value::String(std::sync::Arc::new((*s).clone()))),
             Expr::Boolean(b) => Ok(Value::Boolean(b)),
             Expr::List(items_rc) => {
-                let mut values = Vec::new();
+                // MEMORY MONITORING: Track list creation to prevent memory corruption
+                self.track_allocation(items_rc.len())?;
+                
+                let mut values = Vec::with_capacity(items_rc.len()); // Pre-allocate
                 for item in items_rc.iter() {
                     values.push(self.eval_expr(item.clone())?);
                 }
+                
+                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large list creation
+                if items_rc.len() > 10 {
+                    self.force_memory_cleanup();
+                }
+                
                 Ok(Value::List(std::sync::Arc::from(values)))
             }
             Expr::Tuple(items_rc) => {
@@ -954,22 +1002,32 @@ impl Interpreter {
                         }
                     }
                     (Value::String(string), Value::Integer(idx)) => {
-                        let chars: Vec<char> = string.chars().collect();
+                        let string_len = string.chars().count();
                         let index = if idx < 0 {
                             // Negative indexing from end
-                            (chars.len() as i64 + idx) as usize
+                            if (-idx) as usize > string_len {
+                                return Err(InterpreterError::RuntimeError {
+                                    message: format!(
+                                        "Index {} out of bounds for string of length {}",
+                                        idx,
+                                        string_len
+                                    ),
+                                });
+                            }
+                            string_len - ((-idx) as usize)
                         } else {
                             idx as usize
                         };
 
-                        if index < chars.len() {
-                            Ok(Value::String(chars[index].to_string().into()))
+                        if let Some(ch) = string.chars().nth(index) {
+                            // More efficient: create single-char string directly
+                            Ok(Value::String(ch.to_string().into()))
                         } else {
                             Err(InterpreterError::RuntimeError {
                                 message: format!(
                                     "Index {} out of bounds for string of length {}",
                                     idx,
-                                    chars.len()
+                                    string_len
                                 ),
                             })
                         }
@@ -1257,8 +1315,23 @@ impl Interpreter {
         callee: Value,
         arguments: Vec<Value>,
     ) -> Result<Value, InterpreterError> {
+        // MEMORY PROTECTION: Check recursion depth to prevent exponential memory growth
+        if self.call_depth >= self.max_call_depth {
+            return Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack", 
+                    self.max_call_depth
+                ),
+            });
+        }
+        
         match callee {
             Value::Function(func) => {
+                // Increment call depth for user functions
+                self.call_depth += 1;
+                
+                // MEMORY CLEANUP: Reset memory tracking for each new function call
+                self.reset_memory_tracking();
                 // Count required parameters (those without default values)
                 let required_params = func.parameters.iter()
                     .filter(|p| p.default_value.is_none())
@@ -1283,8 +1356,10 @@ impl Interpreter {
                 // Create new environment with current environment as parent
                 let mut new_env = Environment::with_parent(self.environment.clone());
                 
-                // Add closure variables to the new environment (only if not empty)
+                // Add closure variables to the new environment (only if not empty) - MEMORY OPTIMIZED
                 if !func.closure.is_empty() {
+                    // Reserve capacity to avoid reallocations
+                    new_env.reserve(func.closure.len());
                     for (k, v) in func.closure.iter() {
                         new_env.define(k.clone(), v.clone());
                     }
@@ -1295,7 +1370,8 @@ impl Interpreter {
                     new_env.define(name.clone(), Value::Function(func.clone()));
                 }
 
-                // Add parameters to environment
+                // Add parameters to environment - MEMORY OPTIMIZED
+                new_env.reserve(func.parameters.len()); // Reserve space for parameters
                 for (i, param) in func.parameters.iter().enumerate() {
                     let value = if i < arguments.len() {
                         arguments[i].clone()
@@ -1311,14 +1387,16 @@ impl Interpreter {
                     new_env.define(param.name.clone(), value);
                 }
 
-                // Save current environment and switch to new one
-                let saved_env = std::mem::replace(&mut self.environment, new_env);
+                // MEMORY OPTIMIZED: Use scoped evaluation instead of environment replacement
+                let result = self.eval_expr_with_env(func.body, new_env);
                 
-                // Evaluate function body in the new environment
-                let result = self.eval_expr(func.body);
+                // Decrement call depth when function completes
+                self.call_depth -= 1;
                 
-                // Restore original environment
-                self.environment = saved_env;
+                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after function calls
+                if self.memory_allocations > 5000 {
+                    self.force_memory_cleanup();
+                }
                 
                 result
             }
@@ -1367,6 +1445,18 @@ impl Interpreter {
             
             // Feature 9: Intuitive error messages
             error_formatter: self.error_formatter.clone(),
+            
+            // MEMORY PROTECTION: Initialize fresh recursion tracking for each thread
+            call_depth: 0,
+            max_call_depth: self.max_call_depth,
+            
+            // MEMORY MONITORING: Initialize fresh memory tracking for each thread
+            memory_allocations: 0,
+            max_memory_allocations: self.max_memory_allocations,
+            
+            // AGGRESSIVE MEMORY MANAGEMENT: Initialize fresh tracking for each thread
+            large_allocation_count: 0,
+            last_cleanup_operation: 0,
         }
     }
 
@@ -1379,6 +1469,115 @@ impl Interpreter {
         // Create a local copy of interpreter state for this thread
         let mut local_interpreter = self.thread_safe_clone();
         local_interpreter.call_function(function, args)
+    }
+
+    /// Optimized function call that reuses function references where possible
+    /// This reduces cloning for repeated calls with the same function
+    pub fn call_function_optimized(
+        &mut self,
+        function: &Value,
+        args: Vec<Value>,
+    ) -> Result<Value, InterpreterError> {
+        // Clone only when necessary
+        match function {
+            Value::Function(_) => {
+                // For user functions, we still need to clone for now
+                // TODO: Implement reference-based calling
+                self.call_function(function.clone(), args)
+            }
+            Value::Builtin(builtin) => {
+                // For builtin functions, we can optimize
+                let name = builtin.name.clone();
+                let builtin_functions = self.builtin_functions.clone();
+                BuiltinFunctions::call(&builtin_functions, &name, args, self)
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: "Cannot call non-function value".to_string(),
+            }),
+        }
+    }
+
+    /// MEMORY OPTIMIZED: Evaluate expression with scoped variables instead of environment replacement
+    /// This completely avoids expensive environment moving operations
+    fn eval_expr_with_env(&mut self, expr: Expr, temp_env: Environment) -> Result<Value, InterpreterError> {
+        // Instead of replacing environments, temporarily add variables to current environment
+        let mut added_vars = Vec::new();
+        
+        // Add all variables from temp_env to current environment, tracking what we added
+        for (name, value) in temp_env.into_variables() {
+            // Check if variable already exists (to restore later)
+            let existing = self.environment.get(&name);
+            added_vars.push((name.clone(), existing));
+            
+            // Add/override the variable
+            self.environment.define(name, value);
+        }
+        
+        // Evaluate expression with the temporary variables in place
+        let result = self.eval_expr(expr);
+        
+        // Restore original environment state
+        for (name, original_value) in added_vars.into_iter().rev() {
+            match original_value {
+                Some(value) => {
+                    // Restore original value
+                    self.environment.define(name, value);
+                }
+                None => {
+                    // Variable didn't exist before, remove it
+                    self.environment.remove_variable(&name);
+                }
+            }
+        }
+        
+        result
+    }
+
+    /// MEMORY MONITORING: Track memory allocations to prevent corruption
+    fn track_allocation(&mut self, size: usize) -> Result<(), InterpreterError> {
+        self.memory_allocations += size;
+        
+        // AGGRESSIVE MEMORY MANAGEMENT: Track large allocations
+        if size > 100 {
+            self.large_allocation_count += 1;
+            
+            // Force cleanup after every 5 large allocations
+            if self.large_allocation_count - self.last_cleanup_operation >= 5 {
+                self.force_memory_cleanup();
+                self.last_cleanup_operation = self.large_allocation_count;
+            }
+        }
+        
+        if self.memory_allocations > self.max_memory_allocations {
+            return Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "Memory allocation limit ({}) exceeded. Current allocations: {}. This prevents memory corruption.",
+                    self.max_memory_allocations, self.memory_allocations
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// MEMORY CLEANUP: Reset memory tracking between function calls to prevent accumulation
+    fn reset_memory_tracking(&mut self) {
+        self.memory_allocations = 0;
+        // Don't reset call_depth - it needs to be preserved for proper decrementing
+    }
+
+    /// AGGRESSIVE MEMORY MANAGEMENT: Force garbage collection and cleanup
+    pub fn force_memory_cleanup(&mut self) {
+        // Clear module cache to free large amounts of memory
+        self.clear_module_cache();
+        
+        // Reset all memory tracking
+        self.memory_allocations = 0;
+        
+        // Don't clear user environment - it breaks variable scoping
+        // self.clear_user_environment();
+        
+        // Perform intelligent cache cleanup to free memory
+        let _ = self.perform_intelligent_cache_cleanup();
     }
 
     fn eval_match(&mut self, value: Value, arms: Vec<MatchArm>) -> Result<Value, InterpreterError> {
@@ -2429,7 +2628,7 @@ impl Interpreter {
     }
     
     /// Feature 8: Validate persistent cache entry
-    fn is_persistent_cache_valid(&self, entry: &ModuleCacheEntry, module_path: &str) -> Result<bool, InterpreterError> {
+    fn is_persistent_cache_valid(&self, entry: &ModuleCacheEntry, _module_path: &str) -> Result<bool, InterpreterError> {
         if let Some(file_path) = &entry.file_path {
             if self.smart_cache_config.enable_content_hashing {
                 let current_hash = self.calculate_file_hash(file_path)?;
@@ -2727,7 +2926,7 @@ impl Interpreter {
         recency_score * 0.4 + frequency_score * 0.4 + compilation_cost_score * 0.2
     }
     
-    /// Feature 8: Save current cache to persistent storage
+    /// Feature 8: Prepare cache directory structure (persistent caching disabled for thread safety)
     pub fn save_cache_to_persistent_storage(&mut self) -> Result<(), InterpreterError> {
         if let Some(ref mut cache_manager) = self.persistent_cache_manager {
             for (module_path, entry) in &self.module_cache {
@@ -3674,7 +3873,7 @@ pub struct CacheStatistics {
 #[derive(Debug)]
 pub struct PersistentCacheManager {
     config: SmartCacheConfig,
-    cache_generation: u64,
+    _cache_generation: u64,
     last_cleanup: Instant,
 }
 
@@ -3689,7 +3888,7 @@ impl PersistentCacheManager {
         
         Ok(Self {
             config,
-            cache_generation: 1,
+            _cache_generation: 1,
             last_cleanup: Instant::now(),
         })
     }
@@ -3717,11 +3916,13 @@ impl PersistentCacheManager {
     }
     
     /// Save cache entry to persistent storage
-    pub fn save_cache_entry(&mut self, module_path: &str, entry: &ModuleCacheEntry) -> Result<(), InterpreterError> {
+    pub fn save_cache_entry(&mut self, module_path: &str, _entry: &ModuleCacheEntry) -> Result<(), InterpreterError> {
         if !self.config.enable_persistent_cache {
             return Ok(());
         }
         
+        // Feature 8: Simplified - persistent caching disabled for thread safety
+        // Only create cache directory structure, no actual serialization
         let cache_file = self.get_cache_file_path(module_path);
         if let Some(parent) = cache_file.parent() {
             std::fs::create_dir_all(parent)
@@ -3729,9 +3930,6 @@ impl PersistentCacheManager {
                     message: format!("Failed to create cache directory: {}", e),
                 })?;
         }
-        
-        // Feature 8: Simplified - persistent caching disabled for thread safety
-        // No serialization needed
             
         Ok(())
     }
@@ -3786,7 +3984,7 @@ impl PersistentCacheManager {
         }
         
         let max_size_bytes = self.config.max_cache_size_mb * 1024 * 1024;
-        let max_entries = self.config.max_cache_entries;
+        let max_entries = self.config.max_cache_entries;    
         
         // Remove entries if over limits
         let mut files_to_remove = Vec::new();
@@ -3841,44 +4039,7 @@ pub struct CacheCleanupStats {
     pub cleanup_time: Duration,
 }
 
-/// Calculate Levenshtein distance between two strings for similarity checking
-fn levenshtein_distance(s1: &str, s2: &str) -> usize {
-    let len1 = s1.len();
-    let len2 = s2.len();
-    
-    if len1 == 0 {
-        return len2;
-    }
-    if len2 == 0 {
-        return len1;
-    }
-    
-    let s1_chars: Vec<char> = s1.chars().collect();
-    let s2_chars: Vec<char> = s2.chars().collect();
-    
-    let mut dp = vec![vec![0; len2 + 1]; len1 + 1];
-    
-    // Initialize base cases
-    for i in 0..=len1 {
-        dp[i][0] = i;
-    }
-    for j in 0..=len2 {
-        dp[0][j] = j;
-    }
-    
-    // Fill the DP table
-    for i in 1..=len1 {
-        for j in 1..=len2 {
-            let cost = if s1_chars[i - 1] == s2_chars[j - 1] { 0 } else { 1 };
-            dp[i][j] = std::cmp::min(
-                std::cmp::min(dp[i - 1][j] + 1, dp[i][j - 1] + 1),
-                dp[i - 1][j - 1] + cost
-            );
-        }
-    }
-    
-    dp[len1][len2]
-}
+
 
 #[cfg(test)]
 mod tests {

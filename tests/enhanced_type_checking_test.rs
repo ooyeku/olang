@@ -39,7 +39,7 @@ fn test_intersection_type_compatibility() {
 
 #[test]
 fn test_enhanced_list_type_inference() {
-    let parser = Parser::new();
+    let _parser = Parser::new();
     let mut type_checker = TypeChecker::new();
     
     // Test mixed type list creates union type
@@ -134,7 +134,7 @@ fn test_type_constraint_checking() {
 
 #[test]
 fn test_enhanced_error_messages() {
-    let parser = Parser::new();
+    let _parser = Parser::new();
     let type_checker = TypeChecker::new();
     
     // Test type mismatch with suggestion
@@ -371,7 +371,7 @@ fn test_map_key_hashable_constraint() {
 
 #[test]
 fn test_comprehensive_type_system_integration() {
-    let parser = Parser::new();
+    let _parser = Parser::new();
     let mut type_checker = TypeChecker::new();
     
     // Test a complex expression using multiple enhanced features

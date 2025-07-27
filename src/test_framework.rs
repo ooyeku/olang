@@ -1,7 +1,6 @@
-use crate::ast::{Program, Statement, TestDecl};
+use crate::ast::{Statement, TestDecl};
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::parser::{Parser, ParseError};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -267,7 +266,7 @@ impl TestRunner {
 
     /// Run tests and watch for file changes (for continuous testing)
     pub fn run_watch_mode(&mut self, directory: &Path) -> Result<(), TestError> {
-        println!("🔍 Starting test watch mode for directory: {}", directory.display());
+        println!(" Starting test watch mode for directory: {}", directory.display());
         println!("Press Ctrl+C to stop...\n");
 
         // Initial test run
@@ -277,7 +276,7 @@ impl TestRunner {
 
         // In a full implementation, this would use a file watcher
         // For now, we'll just run once
-        println!("\n⚠️  Watch mode is not fully implemented yet.");
+        println!("\n Watch mode is not fully implemented yet.");
         println!("   Run the test command again to re-run tests.");
 
         Ok(())
@@ -335,20 +334,10 @@ pub struct TestReport {
 // Color extension trait for output formatting
 trait ColorExt {
     fn red(&self) -> String;
-    fn green(&self) -> String;
-    fn yellow(&self) -> String;
 }
 
 impl ColorExt for str {
     fn red(&self) -> String {
         format!("\x1b[31m{}\x1b[0m", self)
-    }
-    
-    fn green(&self) -> String {
-        format!("\x1b[32m{}\x1b[0m", self)
-    }
-    
-    fn yellow(&self) -> String {
-        format!("\x1b[33m{}\x1b[0m", self)
     }
 } 

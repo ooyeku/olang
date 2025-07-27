@@ -1,6 +1,6 @@
 use crate::ast::{
     Argument, BinaryOp, Expr, FunctionDecl, GenericTypeDefinition, LetDecl, Pattern, Program, Statement,
-    TypeAnnotation, TypeContext, TypeDecl, TypeError, UnaryOp, Value, TestDecl,
+    TypeAnnotation, TypeContext, TypeDecl, TypeError, UnaryOp, Value
 };
 use std::collections::{HashMap, HashSet};
 

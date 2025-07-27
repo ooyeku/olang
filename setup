@@ -1,0 +1,74 @@
+#!/bin/bash
+
+# Unified Olang Setup Script
+# Automatically detects platform and runs appropriate setup script
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+print_status() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Function to detect OS
+detect_os() {
+    case "$(uname -s)" in
+        Linux*)     echo "linux";;
+        Darwin*)    echo "macos";;
+        CYGWIN*|MINGW*|MSYS*) echo "windows";;
+        *)          echo "unknown";;
+    esac
+}
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Detect OS
+OS=$(detect_os)
+print_status "Detected OS: $OS"
+
+# Run appropriate setup script
+if [ "$OS" = "windows" ]; then
+    print_status "Running Windows setup script..."
+    if [ -f "$SCRIPT_DIR/setup.bat" ]; then
+        # For Windows, we need to run the batch file
+        # If we're in a Unix-like environment on Windows (WSL, Git Bash, etc.)
+        if command -v cmd.exe >/dev/null 2>&1; then
+            cmd.exe /c "$SCRIPT_DIR/setup.bat"
+        else
+            print_error "Windows setup script found but cmd.exe not available"
+            print_error "Please run setup.bat directly in a Windows command prompt"
+            exit 1
+        fi
+    else
+        print_error "Windows setup script (setup.bat) not found"
+        exit 1
+    fi
+else
+    print_status "Running Unix-like setup script..."
+    if [ -f "$SCRIPT_DIR/setup.sh" ]; then
+        # Make sure the script is executable
+        chmod +x "$SCRIPT_DIR/setup.sh"
+        # Run the shell script
+        "$SCRIPT_DIR/setup.sh"
+    else
+        print_error "Unix setup script (setup.sh) not found"
+        exit 1
+    fi
+fi
+
+print_success "Setup completed!" 

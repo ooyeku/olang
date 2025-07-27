@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use olang::parser::Parser;
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub fn execute(file_path: String, verbose: bool) -> Result<()> {
     let path = Path::new(&file_path);

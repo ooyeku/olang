@@ -324,7 +324,7 @@ impl Repl {
     }
 
     pub fn run(&mut self) -> Result<(), ReplError> {
-        println!("Olang v{} - A minimal, expressive language", VERSION);
+        println!("Olang v{}", VERSION);
 
         // Display OVM status with enhanced messaging
         if self.ovm_interpreter.is_ovm_available() {

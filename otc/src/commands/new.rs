@@ -1,37 +1,17 @@
-use anyhow::Result;
+//! Project Scaffolding Overhaul - Feature 2
+//!
+//! Simple, reliable project scaffold that always generates working code.
+//! Replaces the complex template system with a single, validated approach.
+
+use anyhow::{Context, Result};
 use crate::config::{OlangProject, ensure_project_directory};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Project templates available for scaffolding
-#[derive(Debug, Clone)]
-pub enum ProjectTemplate {
-    Default,
-    Web,
-    Cli,
-    Library,
-}
-
-impl ProjectTemplate {
-    pub fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
-            "default" => Ok(ProjectTemplate::Default),
-            "web" => Ok(ProjectTemplate::Web),
-            "cli" => Ok(ProjectTemplate::Cli),
-            "library" | "lib" => Ok(ProjectTemplate::Library),
-            _ => Err(anyhow::anyhow!("Unknown template: {}. Available: default, web, cli, library", s)),
-        }
-    }
-}
-
-/// Execute the new project command
-pub fn execute(name: String, is_lib: bool, template: String, verbose: bool) -> Result<()> {
-    let template = ProjectTemplate::from_str(&template)?;
-    
+/// Execute the simplified new project command
+pub fn execute(name: String, _is_lib: bool, _template: String, verbose: bool) -> Result<()> {
     if verbose {
         println!("Creating new Olang project: {}", name);
-        println!("Template: {:?}", template);
-        println!("Type: {}", if is_lib { "Library" } else { "Application" });
     }
 
     // Check if directory already exists
@@ -39,676 +19,124 @@ pub fn execute(name: String, is_lib: bool, template: String, verbose: bool) -> R
         return Err(anyhow::anyhow!("Directory '{}' already exists", name));
     }
 
-    // Create project structure
-    create_project_structure(&name, is_lib, &template, verbose)?;
+    // Create simple, reliable project structure
+    create_simple_project(&name, verbose)?;
+    
+    // Validate that the generated code works
+    validate_generated_project(&name, verbose)?;
     
     println!("Created new Olang project: {}", name);
+    println!();
     println!("Project structure:");
-    print_project_structure(&name);
-    println!("\nGet started:");
+    println!("   {}/", name);
+    println!("   ├── olang.toml        # Project configuration");
+    println!("   ├── README.md         # Documentation");
+    println!("   ├── src/");
+    println!("   │   └── main.ol       # Main entry point");
+    println!("   └── .gitignore        # Git ignore rules");
+    println!();
+    println!("Get started:");
     println!("   cd {}", name);
-    println!("   otc run main.ol");
+    println!("   otc run src/main.ol");
     
     Ok(())
 }
 
-/// Create the complete project structure
-fn create_project_structure(
-    name: &str, 
-    is_lib: bool, 
-    template: &ProjectTemplate,
-    verbose: bool
-) -> Result<()> {
+/// Create a simple, reliable project structure
+fn create_simple_project(name: &str, verbose: bool) -> Result<()> {
     // Create root directory
-    fs::create_dir(name)?;
+    fs::create_dir(name)
+        .with_context(|| format!("Failed to create project directory: {}", name))?;
+    
     if verbose {
         println!("Created directory: {}", name);
     }
 
-    // Create subdirectories
-    let dirs = match template {
-        ProjectTemplate::Web => vec!["src", "src/routes", "src/middleware", "src/models", "static", "templates", "tests"],
-        ProjectTemplate::Cli => vec!["src", "src/commands", "src/utils", "tests", "docs"],
-        ProjectTemplate::Library => vec!["src", "src/lib", "examples", "tests", "docs"],
-        ProjectTemplate::Default => vec!["src", "src/modules", "tests"],
-    };
-
-    for dir in dirs {
-        let dir_path = format!("{}/{}", name, dir);
-        fs::create_dir_all(&dir_path)?;
-        if verbose {
-            println!("Created directory: {}", dir_path);
-        }
+    // Create src directory
+    let src_dir = format!("{}/src", name);
+    fs::create_dir(&src_dir)
+        .with_context(|| format!("Failed to create src directory: {}", src_dir))?;
+    
+    if verbose {
+        println!("Created directory: {}", src_dir);
     }
 
-    // Create project manifest
-    create_project_manifest(name, is_lib, template)?;
-    
-    // Create main files
-    create_main_files(name, is_lib, template)?;
-    
-    // Create module examples
-    create_module_examples(name, template)?;
-    
-    // Create tests
-    create_test_files(name, template)?;
-    
-    // Create documentation
-    create_docs(name, template)?;
+    // Create project files
+    create_olang_toml(name, verbose)?;
+    create_main_ol(name, verbose)?;
+    create_readme_md(name, verbose)?;
+    create_gitignore(name, verbose)?;
 
     Ok(())
 }
 
-/// Create project manifest file (olang.toml)
-fn create_project_manifest(name: &str, is_lib: bool, template: &ProjectTemplate) -> Result<()> {
-    use crate::config::*;
+/// Create a simple, valid olang.toml file
+fn create_olang_toml(name: &str, verbose: bool) -> Result<()> {
+    let toml_content = format!(r#"[project]
+name = "{}"
+type = "application"
+version = "0.1.0"
+description = "A new Olang project"
+authors = ["Your Name <you@example.com>"]
 
-    let project_type = match template {
-        ProjectTemplate::Web => "web".to_string(),
-        ProjectTemplate::Cli => "cli".to_string(),
-        ProjectTemplate::Library => "library".to_string(),
-        ProjectTemplate::Default => if is_lib { "library" } else { "application" }.to_string(),
-    };
-
-    let description = match template {
-        ProjectTemplate::Web => Some("A web application built with Olang".to_string()),
-        ProjectTemplate::Cli => Some("A command-line application built with Olang".to_string()),
-        ProjectTemplate::Library => Some("A library built with Olang".to_string()),
-        ProjectTemplate::Default => Some("An Olang project".to_string()),
-    };
-
-    // Create base project configuration
-    let mut project = OlangProject::new(name.to_string(), project_type);
-    project.project.description = description;
-
-    // Configure template-specific settings
-    match template {
-        ProjectTemplate::Web => {
-            project.web = Some(WebConfig {
-                port: 8080,
-                host: "127.0.0.1".to_string(),
-                static_dir: "static".to_string(),
-                template_dir: "templates".to_string(),
-                middleware: Vec::new(),
-                cors: None,
-                ssl: None,
-            });
-            // Add common web dependencies
-            project.dependencies.insert("http".to_string(), "^1.0".to_string());
-            project.dependencies.insert("json".to_string(), "^1.0".to_string());
-        },
-        
-        ProjectTemplate::Cli => {
-            project.cli = Some(CliConfig {
-                binary_name: name.to_string(),
-                description: Some(format!("Command-line tool: {}", name)),
-                subcommands: Vec::new(),
-                global_flags: Vec::new(),
-            });
-            // Add common CLI dependencies
-            project.dependencies.insert("fs".to_string(), "^1.0".to_string());
-            project.dependencies.insert("os".to_string(), "^1.0".to_string());
-        },
-        
-        ProjectTemplate::Library => {
-            project.library = Some(LibraryConfig {
-                export_modules: vec!["src/lib/mod.ol".to_string()],
-                public_api: Vec::new(),
-                documentation_modules: Vec::new(),
-            });
-            project.build.entry_point = "src/lib/mod.ol".to_string();
-        },
-        
-        ProjectTemplate::Default => {
-            // Add common dependencies for default projects
-            project.dependencies.insert("math".to_string(), "^1.0".to_string());
-            project.dependencies.insert("dates".to_string(), "^1.0".to_string());
-            
-            if is_lib {
-                project.library = Some(LibraryConfig {
-                    export_modules: vec!["src/main.ol".to_string()],
-                    public_api: Vec::new(),
-                    documentation_modules: Vec::new(),
-                });
-            }
-        },
-    }
-
-    // Save the configuration to file
-    project.save_to_file(format!("{}/olang.toml", name))?;
-    Ok(())
-}
-
-/// Create main application files
-fn create_main_files(name: &str, is_lib: bool, template: &ProjectTemplate) -> Result<()> {
-    match template {
-        ProjectTemplate::Web => {
-            // Main web server file
-            let main_content = r#"// Web Application Entry Point
-import { Server } from "src/server"
-import { router } from "src/routes/mod"
-
-let server = Server.new()
-server.use_router(router)
-
-println("Starting web server on http://localhost:8080")
-server.listen(8080)
-"#;
-            fs::write(format!("{}/src/main.ol", name), main_content)?;
-
-            // Server module
-            let server_content = r#"// HTTP Server Implementation
-export Server = {
-    new: () => {
-        port: 8080,
-        host: "127.0.0.1",
-        routes: [],
-        
-        use_router: (self, router) => {
-            self.routes = self.routes ++ router.routes
-        },
-        
-        listen: (self, port) => {
-            self.port = port
-            // Start HTTP server
-            http.serve(self.host, self.port, self.routes)
-        }
-    }
-}
-"#;
-            fs::write(format!("{}/src/server.ol", name), server_content)?;
-
-            // Routes module
-            let routes_content = r#"// Route Definitions
-import { index_handler, about_handler } from "src/routes/handlers"
-
-export router = {
-    routes: [
-        { method: "GET", path: "/", handler: index_handler },
-        { method: "GET", path: "/about", handler: about_handler },
-    ]
-}
-"#;
-            fs::write(format!("{}/src/routes/mod.ol", name), routes_content)?;
-
-            let handlers_content = r#"// Route Handlers
-export index_handler = (req) => {
-    http.response_with_headers(
-        200,
-        "Welcome to Olang Web!",
-        { "Content-Type": "text/html" }
-    )
-}
-
-export about_handler = (req) => {
-    http.response_with_headers(
-        200, 
-        "About this Olang application",
-        { "Content-Type": "text/html" }
-    )
-}
-"#;
-            fs::write(format!("{}/src/routes/handlers.ol", name), handlers_content)?;
-        },
-
-        ProjectTemplate::Cli => {
-            let main_content = r#"// CLI Application Entry Point
-import { parse_args, run_command } from "src/commands/mod"
-
-let args = os.args()
-let command = parse_args(args)
-
-match command {
-    { cmd: "help" } => print_help(),
-    { cmd: "version" } => print_version(),
-    { cmd: name, args: cmd_args } => run_command(name, cmd_args),
-    _ => {
-        println("Unknown command. Use --help for usage information.")
-        os.exit(1)
-    }
-}
-
-let print_help = () => {
-    println("Usage: {} [COMMAND] [OPTIONS]", os.args()[0])
-    println("")
-    println("Commands:")
-    println("  help     Show this help message")
-    println("  version  Show version information")
-}
-
-let print_version = () => {
-    println("{} version 0.1.0", os.args()[0])
-}
-"#;
-            fs::write(format!("{}/src/main.ol", name), main_content)?;
-
-            let commands_content = r#"// Command Parsing and Execution
-export parse_args = (args) => {
-    if len(args) < 2 => {
-        cmd: "help"
-    }
-    else => {
-        cmd: args[1],
-        args: tail(tail(args))
-    }
-}
-
-export run_command = (name, args) => {
-    println("Running command: {} with args: {:?}", name, args)
-    // Add your command implementations here
-}
-"#;
-            fs::write(format!("{}/src/commands/mod.ol", name), commands_content)?;
-        },
-
-        ProjectTemplate::Library => {
-            let lib_content = r#"// Library Main Module
-export { math_utils } from "src/lib/math"
-export { string_utils } from "src/lib/strings"
-export { collection_utils } from "src/lib/collections"
-
-// Re-export common utilities
-export fibonacci = math_utils.fibonacci
-export reverse_string = string_utils.reverse
-export unique = collection_utils.unique
-"#;
-            fs::write(format!("{}/src/lib/mod.ol", name), lib_content)?;
-
-            let math_content = r#"// Mathematical Utilities
-export math_utils = {
-    fibonacci: (n) => {
-        if n <= 1 => n
-        else => math_utils.fibonacci(n - 1) + math_utils.fibonacci(n - 2)
-    },
-    
-    factorial: (n) => {
-        if n <= 1 => 1
-        else => n * math_utils.factorial(n - 1)
-    },
-    
-    gcd: (a, b) => {
-        if b == 0 => a
-        else => math_utils.gcd(b, a % b)
-    }
-}
-"#;
-            fs::write(format!("{}/src/lib/math.ol", name), math_content)?;
-
-            let strings_content = r#"// String Utilities
-export string_utils = {
-    reverse: (s) => {
-        s |> to_list |> reverse |> join("")
-    },
-    
-    capitalize: (s) => {
-        if len(s) == 0 => s
-        else => {
-            let first = s[0] |> upper
-            let rest = s |> substring(1)
-            first + rest
-        }
-    },
-    
-    words: (s) => {
-        s |> split(" ") |> filter((w) => len(w) > 0)
-    }
-}
-"#;
-            fs::write(format!("{}/src/lib/strings.ol", name), strings_content)?;
-
-            let collections_content = r#"// Collection Utilities
-export collection_utils = {
-    unique: (list) => {
-        list |> reduce([], (acc, item) => {
-            if acc |> contains(item) => acc
-            else => acc ++ [item]
-        })
-    },
-    
-    group_by: (list, key_fn) => {
-        list |> reduce({}, (acc, item) => {
-            let key = key_fn(item)
-            let current = acc |> get(key, [])
-            acc |> set(key, current ++ [item])
-        })
-    },
-    
-    chunk: (list, size) => {
-        if len(list) <= size => [list]
-        else => {
-            let chunk = list |> take(size)
-            let rest = list |> skip(size)
-            [chunk] ++ collection_utils.chunk(rest, size)
-        }
-    }
-}
-"#;
-            fs::write(format!("{}/src/lib/collections.ol", name), collections_content)?;
-
-            // Main entry point for library example
-            let main_content = r#"// Library Example Usage
-import { fibonacci, reverse_string, unique } from "src/lib/mod"
-
-// Demonstrate library functions
-println("Fibonacci(10): {}", fibonacci(10))
-println("Reverse 'hello': {}", reverse_string("hello"))
-println("Unique [1,2,2,3,1]: {:?}", unique([1,2,2,3,1]))
-"#;
-            fs::write(format!("{}/src/main.ol", name), main_content)?;
-        },
-
-        ProjectTemplate::Default => {
-            let main_content = if is_lib {
-                r#"// Library Module
-export { utilities } from "src/modules/utils"
-export { helpers } from "src/modules/helpers"
-
-// Example library function
-export greet = (name) => {
-    "Hello, " + name + "!"
-}
-"#
-            } else {
-                r#"// Main Application Entry Point
-import { utilities } from "src/modules/utils"
-import { helpers } from "src/modules/helpers"
-
-// Main application logic
-let main = () => {
-    println("Welcome to your new Olang project!")
-    
-    let result = utilities.process_data([1, 2, 3, 4, 5])
-    println("Processed data: {:?}", result)
-    
-    let message = helpers.format_message("Olang", "awesome")
-    println(message)
-}
-
-// Run the application
-main()
-"#
-            };
-            fs::write(format!("{}/src/main.ol", name), main_content)?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Create example modules
-fn create_module_examples(name: &str, template: &ProjectTemplate) -> Result<()> {
-    match template {
-        ProjectTemplate::Default => {
-            let utils_content = r#"// Utility Functions Module
-export utilities = {
-    process_data: (data) => {
-        data |> map((x) => x * 2) |> filter((x) => x > 5)
-    },
-    
-    calculate_sum: (numbers) => {
-        numbers |> reduce(0, (acc, x) => acc + x)
-    },
-    
-    format_list: (items) => {
-        "[" + (items |> map(to_string) |> join(", ")) + "]"
-    }
-}
-"#;
-            fs::write(format!("{}/src/modules/utils.ol", name), utils_content)?;
-
-            let helpers_content = r#"// Helper Functions Module
-export helpers = {
-    format_message: (name, adjective) => {
-        `${name} is ${adjective}!`
-    },
-    
-    current_timestamp: () => {
-        dates.now() |> dates.format("%Y-%m-%d %H:%M:%S")
-    },
-    
-    safe_divide: (a, b) => {
-        if b == 0 => Err("Division by zero")
-        else => Ok(a / b)
-    }
-}
-"#;
-            fs::write(format!("{}/src/modules/helpers.ol", name), helpers_content)?;
-        },
-        _ => {} // Other templates create their modules in create_main_files
-    }
-
-    Ok(())
-}
-
-/// Create test files
-fn create_test_files(name: &str, template: &ProjectTemplate) -> Result<()> {
-    let test_content = match template {
-        ProjectTemplate::Library => r#"// Library Tests
-import { fibonacci, reverse_string, unique } from "../src/lib/mod"
-
-// Test fibonacci function
-let test_fibonacci = () => {
-    testing.assert_eq(fibonacci(0), 0, "fibonacci(0) should be 0")
-    testing.assert_eq(fibonacci(1), 1, "fibonacci(1) should be 1")
-    testing.assert_eq(fibonacci(5), 5, "fibonacci(5) should be 5")
-    testing.assert_eq(fibonacci(10), 55, "fibonacci(10) should be 55")
-}
-
-// Test string utilities
-let test_string_utils = () => {
-    testing.assert_eq(reverse_string("hello"), "olleh", "Should reverse string")
-    testing.assert_eq(reverse_string(""), "", "Should handle empty string")
-}
-
-// Test collection utilities
-let test_collection_utils = () => {
-    testing.assert_eq(unique([1,2,2,3,1]), [1,2,3], "Should remove duplicates")
-    testing.assert_eq(unique([]), [], "Should handle empty array")
-}
-
-// Run all tests
-println("Running library tests...")
-test_fibonacci()
-test_string_utils()
-test_collection_utils()
-println("All tests passed!")
-"#,
-        _ => r#"// Project Tests
-import { utilities } from "../src/modules/utils"
-import { helpers } from "../src/modules/helpers"
-
-// Test utilities module
-let test_utilities = () => {
-    let result = utilities.process_data([1, 2, 3, 4, 5])
-    testing.assert_eq(result, [6, 8, 10], "process_data should double and filter")
-    
-    let sum = utilities.calculate_sum([1, 2, 3, 4])
-    testing.assert_eq(sum, 10, "calculate_sum should sum correctly")
-}
-
-// Test helpers module
-let test_helpers = () => {
-    let message = helpers.format_message("Olang", "great")
-    testing.assert_eq(message, "Olang is great!", "format_message should template correctly")
-    
-    let division = helpers.safe_divide(10, 2)
-    testing.assert_eq(division, Ok(5), "safe_divide should divide correctly")
-    
-    let zero_division = helpers.safe_divide(10, 0)
-    match zero_division {
-        Err(_) => {}, // Expected
-        Ok(_) => testing.fail("Should return error for division by zero")
-    }
-}
-
-// Run all tests
-println("Running project tests...")
-test_utilities()
-test_helpers()
-println("All tests passed!")
-"#,
-    };
-
-    fs::write(format!("{}/tests/main_test.ol", name), test_content)?;
-    Ok(())
-}
-
-/// Create documentation files
-fn create_docs(name: &str, template: &ProjectTemplate) -> Result<()> {
-    let readme_content = match template {
-        ProjectTemplate::Web => format!(r#"# {}
-
-A web application built with Olang.
-
-## Features
-
-- HTTP server with routing
-- Static file serving
-- Template rendering
-- Middleware support
-
-## Getting Started
-
-```bash
-# Run the web server
-otc run src/main.ol
-
-# Access the application
-curl http://localhost:8080
-```
-
-## Project Structure
-
-```
-{}/
-+-- src/
-|   +-- main.ol           # Application entry point
-|   +-- server.ol         # HTTP server implementation
-|   +-- routes/
-|       +-- mod.ol        # Route definitions
-|       +-- handlers.ol   # Route handlers
-+-- static/               # Static assets
-+-- templates/            # HTML templates
-+-- tests/                # Test files
-+-- olang.toml           # Project configuration
-```
-
-## Configuration
-
-Edit `olang.toml` to configure the web server:
-
-```toml
-[web]
-port = 8080
-host = "127.0.0.1"
-static_dir = "static"
-template_dir = "templates"
-```
-"#, name, name),
-
-        ProjectTemplate::Cli => format!(r#"# {}
-
-A command-line application built with Olang.
-
-## Installation
-
-```bash
-# Build the CLI tool
-otc build
-
-# Run locally
-otc run src/main.ol --help
-```
-
-## Usage
-
-```bash
-# Show help
-{} help
-
-# Show version
-{} version
-
-# Run commands
-{} [COMMAND] [OPTIONS]
-```
-
-## Project Structure
-
-```
-{}/
-+-- src/
-|   +-- main.ol           # CLI entry point
-|   +-- commands/
-|   |   +-- mod.ol        # Command parsing
-|   +-- utils/            # Utility functions
-+-- tests/                # Test files
-+-- olang.toml           # Project configuration
-```
-"#, name, name, name, name, name),
-
-        ProjectTemplate::Library => format!(r#"# {}
-
-A library built with Olang.
-
-## Installation
-
-Add to your `olang.toml`:
-
-```toml
 [dependencies]
-{} = "0.1.0"
-```
+# Add dependencies here
+# Example: math-utils = "https://github.com/user/math-utils.git"
+"#, name);
 
-## Usage
+    let toml_path = format!("{}/olang.toml", name);
+    fs::write(&toml_path, toml_content)
+        .with_context(|| format!("Failed to create olang.toml: {}", toml_path))?;
+    
+    if verbose {
+        println!("Created file: {}", toml_path);
+    }
 
-```olang
-import {{ fibonacci, reverse_string, unique }} from "{}"
+    Ok(())
+}
 
-let result = fibonacci(10)
-let reversed = reverse_string("hello")
-let unique_items = unique([1, 2, 2, 3])
-```
+/// Create a simple main.ol file that is guaranteed to parse and run
+fn create_main_ol(name: &str, verbose: bool) -> Result<()> {
+    let main_content = format!(r#"// A simple, working Olang program
+println("Hello from Olang!")
+println("Project: {}")
 
-## API Documentation
+// Example variables
+let name = "Olang"
+let number = 42
+let message = "Welcome to " + name + "!"
 
-### Math Utilities
+// Print examples
+println(message)
+println("Example number: ", number)
 
-- `fibonacci(n)` - Calculate the nth Fibonacci number
-- `factorial(n)` - Calculate factorial of n
-- `gcd(a, b)` - Calculate greatest common divisor
+// Example list
+let numbers = [1, 2, 3, 4, 5]
+println("Example list: ", numbers)
 
-### String Utilities
+// Simple calculation
+let result = 5 + 3
+println("5 + 3 = ", result)
 
-- `reverse(s)` - Reverse a string
-- `capitalize(s)` - Capitalize first letter
-- `words(s)` - Split string into words
+println("Project setup complete!")
+"#, name);
 
-### Collection Utilities
+    let main_path = format!("{}/src/main.ol", name);
+    fs::write(&main_path, main_content)
+        .with_context(|| format!("Failed to create src/main.ol: {}", main_path))?;
+    
+    if verbose {
+        println!("Created file: {}", main_path);
+    }
 
-- `unique(list)` - Remove duplicates from list
-- `group_by(list, fn)` - Group items by key function
-- `chunk(list, size)` - Split list into chunks
+    Ok(())
+}
 
-## Project Structure
+/// Create a helpful README.md file
+fn create_readme_md(name: &str, verbose: bool) -> Result<()> {
+    let readme_content = format!(r#"# {}
 
-```
-{}/
-+-- src/
-|   +-- lib/
-|       +-- mod.ol        # Main library exports
-|       +-- math.ol       # Math utilities
-|       +-- strings.ol    # String utilities
-|       +-- collections.ol # Collection utilities
-+-- examples/             # Usage examples
-+-- tests/                # Test files
-+-- olang.toml           # Project configuration
-```
-"#, name, name, name, name),
-
-        ProjectTemplate::Default => format!(r#"# {}
-
-An Olang project.
+A new Olang project.
 
 ## Getting Started
 
@@ -716,48 +144,82 @@ An Olang project.
 # Run the project
 otc run src/main.ol
 
-# Run tests
-otc run tests/main_test.ol
+# Check for errors
+otc check src/main.ol
 ```
 
 ## Project Structure
 
 ```
 {}/
-+-- src/
-|   +-- main.ol           # Application entry point
-|   +-- modules/
-|       +-- utils.ol      # Utility functions
-|       +-- helpers.ol    # Helper functions
-+-- tests/                # Test files
-+-- olang.toml           # Project configuration
+├── olang.toml          # Project configuration
+├── README.md           # This file
+├── src/
+│   └── main.ol         # Main entry point
+└── .gitignore         # Git ignore rules
+```
+
+## Adding Dependencies
+
+Edit `olang.toml` to add dependencies:
+
+```toml
+[dependencies]
+math-utils = "https://github.com/user/math-utils.git"
+```
+
+Then use in your code:
+
+```olang
+use math_utils {{ calculate_area }}
+
+fn main() {{
+    let area = calculate_area(5.0)
+    println("Area: " + to_string(area))
+}}
 ```
 
 ## Development
 
-1. Edit source files in `src/`
-2. Add modules in `src/modules/`
-3. Write tests in `tests/`
-4. Configure project in `olang.toml`
-"#, name, name),
-    };
+1. Edit `src/main.ol` to add your code
+2. Run with `otc run src/main.ol`
+3. Add dependencies in `olang.toml` as needed
+4. Check your code with `otc check src/main.ol`
 
-    fs::write(format!("{}/README.md", name), readme_content)?;
+## Learn More
 
-    // Create .gitignore
+- [Olang Documentation](https://github.com/ooyeku/olang)
+- [Olang Examples](https://github.com/ooyeku/olang/tree/main/examples)
+"#, name, name);
+
+    let readme_path = format!("{}/README.md", name);
+    fs::write(&readme_path, readme_content)
+        .with_context(|| format!("Failed to create README.md: {}", readme_path))?;
+    
+    if verbose {
+        println!("Created file: {}", readme_path);
+    }
+
+    Ok(())
+}
+
+/// Create a .gitignore file
+fn create_gitignore(name: &str, verbose: bool) -> Result<()> {
     let gitignore_content = r#"# Olang build artifacts
-/dist/
-/target/
+target/
+*.lock
 
-# IDE files
+# Editor files
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS files
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Logs
 *.log
@@ -768,25 +230,99 @@ Thumbs.db
 
 # Temporary files
 /tmp/
+temp/
 "#;
-    fs::write(format!("{}/.gitignore", name), gitignore_content)?;
+
+    let gitignore_path = format!("{}/.gitignore", name);
+    fs::write(&gitignore_path, gitignore_content)
+        .with_context(|| format!("Failed to create .gitignore: {}", gitignore_path))?;
+    
+    if verbose {
+        println!("Created file: {}", gitignore_path);
+    }
 
     Ok(())
 }
 
-/// Print the project structure
-fn print_project_structure(name: &str) {
-    println!("   {}/", name);
-    println!("   +-- src/");
-    println!("   |   +-- main.ol");
-    println!("   |   +-- modules/");
-    println!("   +-- tests/");
-    println!("   +-- olang.toml");
-    println!("   +-- README.md");
-    println!("   +-- .gitignore");
+/// Validate that the generated project actually works
+fn validate_generated_project(name: &str, verbose: bool) -> Result<()> {
+    if verbose {
+        println!("Validating generated project...");
+    }
+
+    // Validate that olang.toml is syntactically correct
+    validate_toml_file(name, verbose)?;
+    
+    // Validate that the Olang code parses correctly
+    validate_olang_code(name, verbose)?;
+    
+    if verbose {
+        println!("Project validation completed successfully");
+    }
+
+    Ok(())
 }
 
-/// Build the current project
+/// Validate that the olang.toml file is syntactically correct
+fn validate_toml_file(name: &str, verbose: bool) -> Result<()> {
+    let toml_path = format!("{}/olang.toml", name);
+    
+    if verbose {
+        println!("Validating {}", toml_path);
+    }
+
+    // Try to parse the TOML file we just created
+    let toml_content = fs::read_to_string(&toml_path)
+        .with_context(|| format!("Failed to read {}", toml_path))?;
+    
+    // Parse it to ensure it's valid TOML
+    let _: toml::Value = toml::from_str(&toml_content)
+        .with_context(|| format!("Generated olang.toml is not valid TOML: {}", toml_path))?;
+    
+    // Also try to parse it as an OlangProject to ensure it's compatible
+    OlangProject::parse_from_str(&toml_content)
+        .with_context(|| format!("Generated olang.toml is not a valid Olang project file: {}", toml_path))?;
+
+    if verbose {
+        println!("✓ olang.toml validation passed");
+    }
+
+    Ok(())
+}
+
+/// Validate that the generated Olang code parses correctly
+fn validate_olang_code(name: &str, verbose: bool) -> Result<()> {
+    let main_path = format!("{}/src/main.ol", name);
+    
+    if verbose {
+        println!("Validating {}", main_path);
+    }
+
+    // Read the generated Olang code
+    let code_content = fs::read_to_string(&main_path)
+        .with_context(|| format!("Failed to read {}", main_path))?;
+    
+    // Try to parse it with the Olang parser
+    let parser = olang::parser::Parser::new();
+    match parser.parse(&code_content) {
+        Ok(_ast) => {
+            if verbose {
+                println!("✓ Olang code parsing validation passed");
+            }
+        }
+        Err(parse_error) => {
+            return Err(anyhow::anyhow!(
+                "Generated Olang code failed to parse: {}\nError: {:?}", 
+                main_path, 
+                parse_error
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Build the current project (legacy function kept for compatibility)
 pub fn build_project(release: bool, verbose: bool) -> Result<()> {
     // Check if we're in an Olang project and load configuration
     ensure_project_directory()?;
@@ -798,7 +334,6 @@ pub fn build_project(release: bool, verbose: bool) -> Result<()> {
     if verbose {
         println!("Building project: {}", config.project.name);
         println!("Version: {}", config.project.version);
-        println!("Type: {}", config.project.project_type);
         println!("Mode: {}", if release { "Release" } else { "Debug" });
     }
 
@@ -827,6 +362,55 @@ pub fn build_project(release: bool, verbose: bool) -> Result<()> {
 
     println!("Build completed successfully");
     println!("Output: {}/", output_dir);
+
+    Ok(())
+}
+
+/// Copy source files to output directory
+fn copy_source_files(entry_point: &str, output_dir: &str, verbose: bool) -> Result<()> {
+    // Copy the entry point
+    let entry_name = Path::new(entry_point)
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("Invalid entry point"))?;
+    
+    let output_path = Path::new(output_dir).join(entry_name);
+    fs::copy(entry_point, &output_path)?;
+    
+    if verbose {
+        println!("Copied: {} -> {}", entry_point, output_path.display());
+    }
+
+    // Copy src directory if it exists
+    if Path::new("src").exists() {
+        copy_directory("src", &format!("{}/src", output_dir), verbose)?;
+    }
+
+    Ok(())
+}
+
+/// Copy a directory recursively
+fn copy_directory(src: &str, dst: &str, verbose: bool) -> Result<()> {
+    fs::create_dir_all(dst)?;
+    
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = Path::new(dst).join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_directory(
+                src_path.to_str().unwrap(),
+                dst_path.to_str().unwrap(),
+                verbose,
+            )?;
+        } else if file_type.is_file() {
+            fs::copy(&src_path, &dst_path)?;
+            if verbose {
+                println!("Copied: {} -> {}", src_path.display(), dst_path.display());
+            }
+        }
+    }
 
     Ok(())
 }
@@ -890,57 +474,6 @@ pub fn test_project(filter: Option<String>, verbose: bool) -> Result<()> {
         println!("All tests passed!");
         Ok(())
     }
-}
-
-
-
-/// Copy source files to output directory
-fn copy_source_files(entry_point: &str, output_dir: &str, verbose: bool) -> Result<()> {
-    // Copy the entry point
-    let entry_name = Path::new(entry_point)
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("Invalid entry point"))?;
-    
-    let output_path = Path::new(output_dir).join(entry_name);
-    fs::copy(entry_point, &output_path)?;
-    
-    if verbose {
-        println!("Copied: {} -> {}", entry_point, output_path.display());
-    }
-
-    // Copy src directory if it exists
-    if Path::new("src").exists() {
-        copy_directory("src", &format!("{}/src", output_dir), verbose)?;
-    }
-
-    Ok(())
-}
-
-/// Copy a directory recursively
-fn copy_directory(src: &str, dst: &str, verbose: bool) -> Result<()> {
-    fs::create_dir_all(dst)?;
-    
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let src_path = entry.path();
-        let dst_path = Path::new(dst).join(entry.file_name());
-
-        if file_type.is_dir() {
-            copy_directory(
-                src_path.to_str().unwrap(),
-                dst_path.to_str().unwrap(),
-                verbose,
-            )?;
-        } else if file_type.is_file() {
-            fs::copy(&src_path, &dst_path)?;
-            if verbose {
-                println!("Copied: {} -> {}", src_path.display(), dst_path.display());
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Find test files

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the complete syntax of the Olang programming language based on the grammar specification and current implementation status as of v0.16.
+This document describes the complete syntax of the Olang programming language based on the current grammar specification and implementation status.
 
 ## Table of Contents
 
@@ -20,50 +20,54 @@ This document describes the complete syntax of the Olang programming language ba
 12. [Loops](#loops)
 13. [Module System](#module-system)
 14. [Error Handling](#error-handling)
-15. [Help System](#help-system)
-16. [Implementation Status](#implementation-status)
+15. [Testing](#testing)
+16. [Help System](#help-system)
+17. [Implementation Status](#implementation-status)
 
 ## Literals
 
-### Supported Literals
+### Numeric Literals
 
 ```olang
-// Numbers
-42          // Integer
-3.14        // Float
+// Integers
+42          // Decimal integer
 -123        // Negative integer
--2.5        // Negative float
+1_000_000   // Integer with underscores for readability
 
-// Strings
+// Binary, Octal, and Hexadecimal
+0b1010      // Binary: 10
+0o755       // Octal: 493
+0xFF        // Hexadecimal: 255
+-0x1A       // Negative hexadecimal: -26
+
+// Floats
+3.14        // Float
+-2.5        // Negative float
+1.0e10      // Scientific notation
+1.5E-3      // Scientific notation with negative exponent
+```
+
+### String Literals
+
+```olang
+// Regular strings
 "Hello"     // String literal
 "Hello \"World\""  // String with escaped quotes
 "Line 1\nLine 2"   // String with newlines
 
-// Booleans
-true
-false
+// Raw strings (no escape processing)
+r"Raw string with \n literal backslash"
+r"Path: C:\Users\Name\file.txt"
 
-// Lists
-[1, 2, 3]      // List of integers
-["a", "b"]     // List of strings
-[]             // Empty list
+// Template strings (string interpolation)
+`Hello ${name}!`
+`Sum: ${a + b}`
+`Multi-line template
+ with ${interpolation}`
 
-// Tuples
-(1, 2)         // Tuple with two elements
-(1, "hello", true)  // Mixed type tuple
-
-// Maps (NEW in v0.16)
-#{}                    // Empty map
-#{"key": "value"}      // String key-value map
-#{1: "one", 2: "two"}  // Integer key map
-#{                     // Multi-line map
-    "name": "Alice",
-    "age": 30,
-    "active": true
-}
-
-// Unit
-()            // Unit type (represented as empty tuple syntax)
+// Character literals
+'a'         // Single character
+'\n'        // Escaped character
 ```
 
 ### String Escape Sequences
@@ -77,7 +81,41 @@ false
 "Newline: \n"     // \n
 "Carriage return: \r"  // \r
 "Tab: \t"         // \t
+"Null: \0"        // \0
+"Hex: \x41"       // \xXX (2 hex digits)
 "Unicode: \u0041" // \uXXXX (4 hex digits)
+"Unicode: \u{1F600}" // \u{XXXXXX} (variable length)
+```
+
+### Boolean and Unit Literals
+
+```olang
+true        // Boolean true
+false       // Boolean false
+()          // Unit type (empty tuple)
+```
+
+### Collection Literals
+
+```olang
+// Lists
+[1, 2, 3]      // List of integers
+["a", "b"]     // List of strings
+[]             // Empty list
+
+// Tuples
+(1, 2)         // Tuple with two elements
+(1, "hello", true)  // Mixed type tuple
+
+// Maps
+#{}                    // Empty map
+#{"key": "value"}      // String key-value map
+#{1: "one", 2: "two"}  // Integer key map
+#{                     // Multi-line map
+    "name": "Alice",
+    "age": 30,
+    "active": true
+}
 ```
 
 ## Identifiers and Variables
@@ -98,7 +136,7 @@ let uninitialized;
 let with_type: String;
 ```
 
-### Destructuring Let Declarations (NEW in v0.16)
+### Destructuring Let Declarations
 
 ```olang
 // Tuple destructuring
@@ -164,7 +202,7 @@ let x = point[0];     // SUPPORTED
 let y = point[1];     // SUPPORTED
 ```
 
-## Maps (NEW in v0.16)
+## Maps
 
 ### Map Creation
 
@@ -258,7 +296,7 @@ fn greet(name: String, age: Int) -> String =
     "Hello " + name + ", you are " + to_string(age);
 ```
 
-### Default Parameter Values (NEW in v0.16)
+### Default Parameter Values
 
 ```olang
 // Function with default values
@@ -282,7 +320,7 @@ let result4 = connect("example.com");     // Custom host, default port/timeout
 let result5 = connect("example.com", 9000); // Custom host and port
 ```
 
-### Named Arguments in Function Calls (NEW in v0.16)
+### Named Arguments in Function Calls
 
 ```olang
 // Function with named arguments
@@ -456,6 +494,17 @@ let or_result = a || b;
 let not_result = !a;
 ```
 
+### Bitwise Operators
+
+```olang
+// Bitwise operations
+let and_result = a & b;    // Bitwise AND
+let or_result = a | b;     // Bitwise OR
+let xor_result = a ^ b;    // Bitwise XOR
+let left_shift = a << 2;   // Left shift by 2
+let right_shift = a >> 1;  // Right shift by 1
+```
+
 ### Pipeline Operator
 
 ```olang
@@ -474,7 +523,7 @@ let processed = input
     |> sort()
     |> join(", ");
 
-// Map operations in pipelines (NEW in v0.16)
+// Map operations in pipelines
 let user_names = users
     |> map((user) => map_get(user, "name"))
     |> filter((name) => len(name) > 3);
@@ -494,7 +543,7 @@ let active: Bool = true;
 // Container types
 let numbers: [Int] = [1, 2, 3];
 let coords: (Float, Float) = (10.5, 20.3);
-let user_data: Map<String, String> = #{"name": "Alice", "role": "admin"};  // NEW in v0.16
+let user_data: Map<String, String> = #{"name": "Alice", "role": "admin"};
 
 // Function types
 let calculator: (Int, Int) -> Int = (a, b) => a + b;
@@ -507,6 +556,17 @@ let operation: Result<Int, String> = Ok(42);
 
 // Promise types
 let async_data: Promise<String, String> = fetch_data("url");
+
+// Union types
+let flexible: Int | String = 42;
+let flexible2: Int | String = "hello";
+
+// Intersection types
+let numeric: Int & Comparable = 42;
+
+// Literal types
+let specific: "admin" | "user" = "admin";
+let magic_number: 42 = 42;
 ```
 
 ### Custom Types
@@ -532,11 +592,10 @@ type Maybe<T> = enum {
     Some(T),
     None
 };
-```
 
-### Error Types
+// Union type definition
+type Flexible = Int | String | Bool;
 
-```olang
 // Error type declaration
 error NetworkError {
     Timeout,
@@ -639,25 +698,36 @@ for i in 0..100 {
 
 ## Module System
 
-### Imports
+### Share Declarations
 
 ```olang
-// Import entire module
-import "path/to/module";
+// Share function
+share fn public_function() = "I'm public";
 
-// Import specific items
-import { function1, function2 } from "module";
+// Share variable
+share let public_constant = 42;
 
-// Wildcard import
-import * from "utilities";
+// Share type
+share type PublicType = struct {
+    field: String
+};
+
+// Share use declaration (transitive sharing)
+share use module { function1, function2 };
 ```
 
-### Exports
+### Use Declarations
 
 ```olang
-// Export declaration
-export my_function = (x) => x * 2;
-export my_constant = 42;
+// Import specific items from module
+use module_name { function1, function2, type1 };
+
+// Import from nested module
+use parent.child { item1, item2 };
+
+// Import from multiple levels
+use utils.math { add, subtract };
+use utils.string { join, split };
 ```
 
 ## Error Handling
@@ -698,7 +768,62 @@ let result = try {
 let result = risky_operation()?;
 ```
 
-## Help System (NEW in v0.16)
+## Testing
+
+### Test Declarations
+
+```olang
+// Basic test
+test "addition test" {
+    let result = add(2, 3);
+    assert_eq(result, 5);
+}
+
+// Test with custom message
+test "string concatenation" {
+    let result = "Hello" + " " + "World";
+    assert_eq(result, "Hello World", "String concatenation failed");
+}
+
+// Test with assertions
+test "boolean operations" {
+    let value = true;
+    assert_true(value);
+    assert_false(!value);
+    assert(value == true);
+}
+
+// Test with inequality
+test "inequality test" {
+    let a = 10;
+    let b = 20;
+    assert_ne(a, b, "Values should not be equal");
+}
+```
+
+### Assertion Functions
+
+```olang
+// Equality assertion
+assert_eq(actual, expected);
+assert_eq(actual, expected, "Custom message");
+
+// Inequality assertion
+assert_ne(actual, expected);
+assert_ne(actual, expected, "Custom message");
+
+// Boolean assertion
+assert(condition);
+assert(condition, "Custom message");
+
+// True/False assertions
+assert_true(expression);
+assert_true(expression, "Custom message");
+assert_false(expression);
+assert_false(expression, "Custom message");
+```
+
+## Help System
 
 ### Enhanced Help Commands
 
@@ -735,64 +860,83 @@ let result = risky_operation()?;
 
 ## Implementation Status
 
-### Completed Features (v0.16)
+### Completed Features
 
 1. **Core Language Features**
+   - All literal types (integers, floats, strings, booleans, lists, tuples, maps)
+   - Binary, octal, and hexadecimal number literals
+   - Raw strings and template strings with interpolation
+   - Character literals
    - Default Parameter Values in Function Declarations
    - Named Arguments in Function Calls
    - Destructuring in Let Declarations
    - Map Literals and Operations
+   - Bitwise operations
+   - Test declarations and assertions
 
-2. **Bug Fixes**
-   - Debug Output Cleanup
-   - Panic-Heavy Test Code Refactoring
-   - Unimplemented Analysis Features
+2. **Type System**
+   - Basic type annotations
+   - Union and intersection types
+   - Generic types
+   - Result and Promise types
+   - Literal types
+   - Custom type definitions (structs, enums)
+   - Error type declarations
 
-3. **Type System Improvements**
-   - Enhanced Type Checking
-   - Union and Intersection Types
-   - Pattern Matching Exhaustiveness
+3. **Control Flow**
+   - If expressions
+   - Pattern matching with match expressions
+   - For, while, and infinite loops
+   - Break and continue statements
 
-4. **Error Handling**
-   - Error Context Enhancement
-   - Result Type Standardization
+4. **Functions**
+   - Function declarations with type annotations
+   - Lambda functions
+   - Async functions
+   - Default parameters
+   - Named arguments
 
-5. **Performance Optimizations**
-   - OVM Memory Management
-   - Lazy Evaluation Edge Cases
+5. **Operators**
+   - Arithmetic operators
+   - Comparison operators
+   - Logical operators
+   - Bitwise operators
+   - Pipeline operator
 
-6. **Standard Library**
+6. **Error Handling**
+   - Result types
+   - Try-catch expressions
+   - Try operator
+
+7. **Module System**
+   - Share declarations
+   - Use declarations
+   - Module imports
+
+8. **Standard Library**
    - Complete Stdlib Implementation (10 modules)
-   - CSV Module (18 functions)
-   - Crypto Module (23 functions)
    - All stdlib modules fully tested
 
-7. **Language Features**
-   - Complete AST Features
-   - Enhanced Pattern Matching
-   - Async/Await Support
+9. **Testing**
+   - Test declarations
+   - Assertion functions
+   - Test framework integration
 
-8. **Testing and Quality**
-   - Test Coverage Gaps Filled
-   - Fuzzing and Stress Testing
-   - Property-Based Testing
-
-9. **Developer Experience**
-   - Better REPL Error Messages
-   - Enhanced Help System
-   - Interactive Tutorials
+10. **Developer Experience**
+    - Enhanced Help System
+    - Interactive Tutorials
+    - Better REPL Error Messages
 
 ### In Progress Features
 
-1. **Module System Improvements**
-   - Module resolution cleanup
-   - Module caching system
-   - Import/export error handling
-
-2. **Advanced Type System**
+1. **Advanced Type System**
    - Generic type constraints
    - Type inference improvements
    - Complex type validation
+
+2. **Performance Optimizations**
+   - OVM memory management refinements
+   - Lazy evaluation edge cases
 
 ### Known Limitations
 
@@ -814,7 +958,7 @@ let result = risky_operation()?;
 #### Core Feature Testing
 
 ```olang
-// Test file: test_v0_16_features.ol
+// Test file: test_comprehensive_features.ol
 
 // Default parameters
 fn test_defaults(name: String = "World", count: Int = 1) = 
@@ -832,11 +976,26 @@ let scores = #{"Alice": 95, "Bob": 87};
 let alice_score = map_get(scores, "Alice");
 let updated_scores = map_set(scores, "Charlie", 92);
 
+// Bitwise operations
+let bitwise_and = 5 & 3;  // 1
+let bitwise_or = 5 | 3;   // 7
+let bitwise_xor = 5 ^ 3;  // 6
+let left_shift = 1 << 2;  // 4
+let right_shift = 8 >> 1; // 4
+
 // Pipeline with ranges
 let processed = (1..100) 
     |> filter((x) => x % 2 == 0)
     |> map((x) => x * x)
     |> sum();
+
+// Test assertions
+test "comprehensive test" {
+    assert_eq(bitwise_and, 1);
+    assert_ne(bitwise_or, bitwise_xor);
+    assert_true(processed > 0);
+    assert_false(processed < 0);
+}
 ```
 
 #### Help System Testing
@@ -849,4 +1008,4 @@ let processed = (1..100)
 :help_context                   // Context-sensitive help
 ```
 
-This comprehensive syntax documentation reflects the current state of Olang v0.16, including all completed features and known limitations. The language has evolved significantly with the addition of maps, default parameters, named arguments, destructuring, and an enhanced help system, making it more powerful and user-friendly for developers. 
+This comprehensive syntax documentation reflects the current state of Olang, including all completed features and known limitations. The language has evolved significantly with the addition of comprehensive literal support, bitwise operations, test declarations, enhanced type system, and an improved developer experience. 

@@ -715,16 +715,36 @@ impl BuiltinFunctions {
         let list = &args[0];
         let function = &args[1];
 
-        let list_values = match list {
-            Value::List(items) => items.as_ref().to_vec(),
+        // Work with references instead of copying the entire list
+        let list_ref = match list {
+            Value::List(items) => items.as_ref(),
             Value::Range {
                 start,
                 end,
                 inclusive,
             } => {
-                // Convert range to vector of integers
+                // For ranges, we still need to materialize, but only once
                 let end_val = if *inclusive { end + 1 } else { *end };
-                (*start..end_val).map(Value::Integer).collect()
+                let range_size = (end_val - start) as usize;
+                
+                // MEMORY MONITORING: Check if range is too large before creating
+                if range_size > 1000 {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!(
+                            "Range size ({}) too large, this could cause memory issues. Maximum range size is 1000.",
+                            range_size
+                        ),
+                    });
+                }
+                
+                let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
+                
+                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large range operations
+                if range_size > 50 {
+                    interpreter.force_memory_cleanup();
+                }
+                
+                return Self::process_map_range(range_vec, function, interpreter);
             }
             _ => {
                 return Err(InterpreterError::TypeError {
@@ -735,7 +755,7 @@ impl BuiltinFunctions {
 
         // Check if we should use lazy evaluation
         let config = interpreter.get_lazy_config();
-        if config.lazy_by_default && list_values.len() > config.lazy_threshold {
+        if config.lazy_by_default && list_ref.len() > config.lazy_threshold {
             if let Value::Function(func) = function {
                 let source_handle = crate::internal::utils::value_to_handle(list.clone(), config);
                 let mut lazy_val = crate::internal::create_lazy_map(source_handle.clone(), func.clone());
@@ -753,9 +773,9 @@ impl BuiltinFunctions {
         }
 
         // Fall back to eager evaluation
-        if should_parallelize(list_values.len()) {
+        if should_parallelize(list_ref.len()) {
             // PARALLEL VERSION - Now that Value implements Send + Sync!
-            let results: Result<Vec<_>, _> = list_values
+            let results: Result<Vec<_>, _> = list_ref
                 .par_iter()
                 .map(|item| interpreter.call_function_safe(function.clone(), vec![item.clone()]))
                 .collect();
@@ -765,11 +785,78 @@ impl BuiltinFunctions {
                 Err(e) => Err(e),
             }
         } else {
-            // SEQUENTIAL VERSION (for small lists)
-            let mut result = Vec::new();
-            for item in list_values.iter() {
-                let value = interpreter.call_function(function.clone(), vec![item.clone()])?;
+            // SEQUENTIAL VERSION (for small lists) - MEMORY OPTIMIZED
+            let mut result = Vec::with_capacity(list_ref.len()); // Pre-allocate
+            for item in list_ref.iter() {
+                let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
                 result.push(value);
+            }
+            
+            // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after map operations
+            if list_ref.len() > 5 {
+                interpreter.force_memory_cleanup();
+            }
+            
+            Ok(Value::List(result.into()))
+        }
+    }
+
+    fn process_map_range(
+        range_vec: Vec<Value>,
+        function: &Value,
+        interpreter: &mut crate::interpreter::Interpreter,
+    ) -> Result<Value, InterpreterError> {
+        if should_parallelize(range_vec.len()) {
+            let results: Result<Vec<_>, _> = range_vec
+                .par_iter()
+                .map(|item| interpreter.call_function_safe(function.clone(), vec![item.clone()]))
+                .collect();
+
+            match results {
+                Ok(values) => Ok(Value::List(values.into())),
+                Err(e) => Err(e),
+            }
+        } else {
+            let mut result = Vec::with_capacity(range_vec.len());
+            for item in range_vec.iter() {
+                let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
+                result.push(value);
+            }
+            Ok(Value::List(result.into()))
+        }
+    }
+
+    fn process_filter_range(
+        range_vec: Vec<Value>,
+        function: &Value,
+        interpreter: &mut crate::interpreter::Interpreter,
+    ) -> Result<Value, InterpreterError> {
+        if should_parallelize(range_vec.len()) {
+            let results: Result<Vec<_>, _> = range_vec
+                .par_iter()
+                .filter_map(|item| {
+                    match interpreter.call_function_safe(function.clone(), vec![item.clone()]) {
+                        Ok(Value::Boolean(true)) => Some(Ok(item.clone())),
+                        Ok(Value::Boolean(false)) => None,
+                        Ok(_) => Some(Err(InterpreterError::TypeError {
+                            message: "filter: predicate must return boolean".to_string(),
+                        })),
+                        Err(e) => Some(Err(e)),
+                    }
+                })
+                .collect();
+
+            match results {
+                Ok(values) => Ok(Value::List(values.into())),
+                Err(e) => Err(e),
+            }
+        } else {
+            let mut result = Vec::with_capacity(range_vec.len());
+            for item in range_vec.iter() {
+                let pred = interpreter.call_function_optimized(function, vec![item.clone()])?;
+                if let Value::Boolean(true) = pred {
+                    result.push(item.clone())
+                }
             }
             Ok(Value::List(result.into()))
         }
@@ -790,16 +877,36 @@ impl BuiltinFunctions {
         let list = &args[0];
         let function = &args[1];
 
-        let list_values = match list {
-            Value::List(items) => items.as_ref().to_vec(),
+        // Work with references instead of copying the entire list
+        let list_ref = match list {
+            Value::List(items) => items.as_ref(),
             Value::Range {
                 start,
                 end,
                 inclusive,
             } => {
-                // Convert range to vector of integers
+                // For ranges, we still need to materialize, but only once
                 let end_val = if *inclusive { end + 1 } else { *end };
-                (*start..end_val).map(Value::Integer).collect()
+                let range_size = (end_val - start) as usize;
+                
+                // MEMORY MONITORING: Check if range is too large before creating
+                if range_size > 1000 {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!(
+                            "Range size ({}) too large, this could cause memory issues. Maximum range size is 1000.",
+                            range_size
+                        ),
+                    });
+                }
+                
+                let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
+                
+                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large range operations
+                if range_size > 50 {
+                    interpreter.force_memory_cleanup();
+                }
+                
+                return Self::process_filter_range(range_vec, function, interpreter);
             }
             _ => {
                 return Err(InterpreterError::TypeError {
@@ -810,7 +917,7 @@ impl BuiltinFunctions {
 
         // Check if we should use lazy evaluation
         let config = interpreter.get_lazy_config();
-        if config.lazy_by_default && list_values.len() > config.lazy_threshold {
+        if config.lazy_by_default && list_ref.len() > config.lazy_threshold {
             if let Value::Function(func) = function {
                 let source_handle = crate::internal::utils::value_to_handle(list.clone(), config);
                 let mut lazy_val = crate::internal::create_lazy_filter(source_handle.clone(), func.clone());
@@ -828,9 +935,9 @@ impl BuiltinFunctions {
         }
 
         // Fall back to eager evaluation
-        if should_parallelize(list_values.len()) {
+        if should_parallelize(list_ref.len()) {
             // PARALLEL VERSION - filter with parallel processing
-            let results: Result<Vec<_>, _> = list_values
+            let results: Result<Vec<_>, _> = list_ref
                 .par_iter()
                 .filter_map(|item| {
                     match interpreter.call_function_safe(function.clone(), vec![item.clone()]) {
@@ -849,14 +956,21 @@ impl BuiltinFunctions {
                 Err(e) => Err(e),
             }
         } else {
-            // SEQUENTIAL VERSION (for small lists)
-            let mut result = Vec::new();
-            for item in list_values.iter() {
-                let pred = interpreter.call_function(function.clone(), vec![item.clone()])?;
+            // SEQUENTIAL VERSION (for small lists) - MEMORY OPTIMIZED
+            let mut result = Vec::with_capacity(list_ref.len()); // Worst case: all pass filter
+            for item in list_ref.iter() {
+                // Use optimized function call to reduce cloning
+                let pred = interpreter.call_function_optimized(function, vec![item.clone()])?;
                 if let Value::Boolean(true) = pred {
                     result.push(item.clone())
                 }
             }
+            
+            // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after filter operations
+            if list_ref.len() > 5 {
+                interpreter.force_memory_cleanup();
+            }
+            
             Ok(Value::List(result.into()))
         }
     }

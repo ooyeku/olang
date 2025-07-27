@@ -5,10 +5,10 @@
 // Status handling function
 share fn format_status(status) -> String = {
     match status {
-        "pending" => "⏳ Waiting",
-        "running" => "🏃 In Progress", 
-        "completed" => "✅ Done",
-        "failed" => "❌ Error",
+        "pending" => "Waiting",
+        "running" => "In Progress", 
+        "completed" => "Done",
+        "failed" => "Error",
         _ => "Unknown status"
     }
 }
@@ -92,7 +92,7 @@ fn handle_auth(auth) -> String = {
 
 // Example usage
 let task_status = "running"
-println(format_status(task_status))  // 🏃 In Progress
+println(format_status(task_status))  // In Progress
 
 let circle = { type: "circle", radius: 5.0 }
 let area = calculate_area(circle)
