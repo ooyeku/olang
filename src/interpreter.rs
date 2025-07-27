@@ -522,6 +522,10 @@ pub struct Interpreter {
     // MEMORY MONITORING: Track memory usage to prevent corruption
     memory_allocations: usize,
     max_memory_allocations: usize,
+    
+    // AGGRESSIVE MEMORY MANAGEMENT: Track large allocations and force cleanup
+    large_allocation_count: usize,
+    last_cleanup_operation: usize,
 }
 
 impl Default for Interpreter {
@@ -568,6 +572,10 @@ impl Interpreter {
             // MEMORY MONITORING: Initialize memory tracking
             memory_allocations: 0,
             max_memory_allocations: 10000, // Prevent excessive allocations
+            
+            // AGGRESSIVE MEMORY MANAGEMENT: Initialize tracking
+            large_allocation_count: 0,
+            last_cleanup_operation: 0,
         };
 
         // Register built-in functions
@@ -708,6 +716,12 @@ impl Interpreter {
                 for item in items_rc.iter() {
                     values.push(self.eval_expr(item.clone())?);
                 }
+                
+                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large list creation
+                if items_rc.len() > 10 {
+                    self.force_memory_cleanup();
+                }
+                
                 Ok(Value::List(std::sync::Arc::from(values)))
             }
             Expr::Tuple(items_rc) => {
@@ -1315,6 +1329,9 @@ impl Interpreter {
             Value::Function(func) => {
                 // Increment call depth for user functions
                 self.call_depth += 1;
+                
+                // MEMORY CLEANUP: Reset memory tracking for each new function call
+                self.reset_memory_tracking();
                 // Count required parameters (those without default values)
                 let required_params = func.parameters.iter()
                     .filter(|p| p.default_value.is_none())
@@ -1376,6 +1393,11 @@ impl Interpreter {
                 // Decrement call depth when function completes
                 self.call_depth -= 1;
                 
+                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after function calls
+                if self.memory_allocations > 5000 {
+                    self.force_memory_cleanup();
+                }
+                
                 result
             }
             Value::Builtin(builtin) => {
@@ -1431,6 +1453,10 @@ impl Interpreter {
             // MEMORY MONITORING: Initialize fresh memory tracking for each thread
             memory_allocations: 0,
             max_memory_allocations: self.max_memory_allocations,
+            
+            // AGGRESSIVE MEMORY MANAGEMENT: Initialize fresh tracking for each thread
+            large_allocation_count: 0,
+            last_cleanup_operation: 0,
         }
     }
 
@@ -1510,6 +1536,18 @@ impl Interpreter {
     /// MEMORY MONITORING: Track memory allocations to prevent corruption
     fn track_allocation(&mut self, size: usize) -> Result<(), InterpreterError> {
         self.memory_allocations += size;
+        
+        // AGGRESSIVE MEMORY MANAGEMENT: Track large allocations
+        if size > 100 {
+            self.large_allocation_count += 1;
+            
+            // Force cleanup after every 5 large allocations
+            if self.large_allocation_count - self.last_cleanup_operation >= 5 {
+                self.force_memory_cleanup();
+                self.last_cleanup_operation = self.large_allocation_count;
+            }
+        }
+        
         if self.memory_allocations > self.max_memory_allocations {
             return Err(InterpreterError::RuntimeError {
                 message: format!(
@@ -1519,6 +1557,27 @@ impl Interpreter {
             });
         }
         Ok(())
+    }
+
+    /// MEMORY CLEANUP: Reset memory tracking between function calls to prevent accumulation
+    fn reset_memory_tracking(&mut self) {
+        self.memory_allocations = 0;
+        // Don't reset call_depth - it needs to be preserved for proper decrementing
+    }
+
+    /// AGGRESSIVE MEMORY MANAGEMENT: Force garbage collection and cleanup
+    pub fn force_memory_cleanup(&mut self) {
+        // Clear module cache to free large amounts of memory
+        self.clear_module_cache();
+        
+        // Reset all memory tracking
+        self.memory_allocations = 0;
+        
+        // Don't clear user environment - it breaks variable scoping
+        // self.clear_user_environment();
+        
+        // Perform intelligent cache cleanup to free memory
+        let _ = self.perform_intelligent_cache_cleanup();
     }
 
     fn eval_match(&mut self, value: Value, arms: Vec<MatchArm>) -> Result<Value, InterpreterError> {

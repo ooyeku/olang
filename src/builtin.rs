@@ -738,6 +738,12 @@ impl BuiltinFunctions {
                 }
                 
                 let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
+                
+                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large range operations
+                if range_size > 50 {
+                    interpreter.force_memory_cleanup();
+                }
+                
                 return Self::process_map_range(range_vec, function, interpreter);
             }
             _ => {
@@ -785,6 +791,12 @@ impl BuiltinFunctions {
                 let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
                 result.push(value);
             }
+            
+            // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after map operations
+            if list_ref.len() > 5 {
+                interpreter.force_memory_cleanup();
+            }
+            
             Ok(Value::List(result.into()))
         }
     }
@@ -888,6 +900,12 @@ impl BuiltinFunctions {
                 }
                 
                 let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
+                
+                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large range operations
+                if range_size > 50 {
+                    interpreter.force_memory_cleanup();
+                }
+                
                 return Self::process_filter_range(range_vec, function, interpreter);
             }
             _ => {
@@ -947,6 +965,12 @@ impl BuiltinFunctions {
                     result.push(item.clone())
                 }
             }
+            
+            // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after filter operations
+            if list_ref.len() > 5 {
+                interpreter.force_memory_cleanup();
+            }
+            
             Ok(Value::List(result.into()))
         }
     }
