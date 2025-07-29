@@ -1525,7 +1525,7 @@ impl Parser {
                 let name = pair.as_str().to_string();
                 Ok(Pattern::Identifier(name))
             }
-            Rule::wildcard => Ok(Pattern::Wildcard),
+            Rule::pattern_wildcard => Ok(Pattern::Wildcard),
             Rule::integer => {
                 let value =
                     pair.as_str()
@@ -1850,7 +1850,7 @@ impl Parser {
                 let name = pair.as_str().to_string();
                 Ok(Pattern::Identifier(name))
             }
-            Rule::wildcard => Ok(Pattern::Wildcard),
+            Rule::pattern_wildcard => Ok(Pattern::Wildcard),
             Rule::integer => {
                 let value =
                     pair.as_str()
@@ -2913,8 +2913,21 @@ impl Parser {
         })?;
         let mut items = Vec::new();
         for item in list_pair.into_inner() {
-            if item.as_rule() == Rule::identifier {
-                items.push(item.as_str().to_string());
+            if item.as_rule() == Rule::use_item {
+                let inner = item.into_inner().next().unwrap();
+                match inner.as_rule() {
+                    Rule::identifier => {
+                        items.push(crate::ast::UseItem::Specific(inner.as_str().to_string()));
+                    }
+                    Rule::wildcard => {
+                        items.push(crate::ast::UseItem::Wildcard);
+                    }
+                    _ => {
+                        return Err(ParseError::InvalidSyntax {
+                            message: format!("Invalid use item: {:?}", inner.as_rule()),
+                        });
+                    }
+                }
             }
         }
 

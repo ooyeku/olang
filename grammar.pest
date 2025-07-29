@@ -42,7 +42,9 @@ statement   = { share_decl | use_decl | test_decl | error_type_decl | type_decl 
 share_decl = { "share" ~ (use_decl | function_decl | let_decl | type_decl) }
 use_decl = { "use" ~ use_path ~ "{" ~ use_list ~ "}" }
 use_path = { identifier ~ ("." ~ identifier)* }
-use_list = { identifier ~ ("," ~ identifier)* }
+use_list = { use_item ~ ("," ~ use_item)* }
+use_item = { wildcard | identifier }
+wildcard = { "*" }
 
 // Test declarations
 test_decl = { "test" ~ string ~ test_block }
@@ -142,7 +144,7 @@ match_expr  = { "match" ~ expr ~ "{" ~ match_arm+ ~ "}" }
 match_arm   = { pattern ~ ("if" ~ expr)? ~ "=>" ~ expr ~ (","?) }
 pattern     = { or_pattern }
 or_pattern  = { base_pattern ~ ("|" ~ base_pattern)* }
-base_pattern = { range_pattern | result_pattern | struct_pattern | anonymous_struct_pattern | integer | string | boolean | wildcard | list_pattern | tuple_pattern | identifier | enum_variant_pattern }
+base_pattern = { range_pattern | result_pattern | struct_pattern | anonymous_struct_pattern | integer | string | boolean | pattern_wildcard | list_pattern | tuple_pattern | identifier | enum_variant_pattern }
 range_pattern = { (integer ~ range_op ~ integer) | (char_literal ~ range_op ~ char_literal) }
 result_pattern = { "Ok" ~ "(" ~ pattern ~ ")" | "Err" ~ "(" ~ pattern ~ ")" }
 enum_variant_pattern = { identifier ~ ("(" ~ pattern ~ ("," ~ pattern)* ~ ")")? }
@@ -154,7 +156,7 @@ rest_pattern = { "..." ~ identifier }
 list_pattern = { "[" ~ list_pattern_inner? ~ "]" }
 list_pattern_inner = { (pattern ~ ("," ~ pattern)* ~ ("," ~ rest_pattern)?) | rest_pattern }
 tuple_pattern = { "(" ~ pattern ~ "," ~ pattern ~ ("," ~ pattern)* ~ ")" }
-wildcard    = { "_" }
+pattern_wildcard    = { "_" }
 
 // Blocks and control flow
 block       = { "{" ~ (statement ~ ";"?)* ~ "}" }

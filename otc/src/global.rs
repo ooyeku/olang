@@ -114,6 +114,7 @@ impl GlobalOtc {
     }
 
     /// Get the global base directory path
+    #[allow(dead_code)]
     pub fn base_dir(&self) -> &Path {
         &self.base_dir
     }
@@ -445,20 +446,36 @@ impl GlobalOtc {
 
     /// Run system health check
     pub fn doctor(&self, verbose: bool) -> Result<()> {
+        if verbose {
+            println!("Running OTC system health check...");
+            println!("Base directory: {}", self.base_dir.display());
+        }
+        
         let mut issues = Vec::new();
 
         // Check directory structure
         if !self.base_dir.exists() {
             issues.push("Global base directory does not exist".to_string());
+        } else if verbose {
+            println!("✓ Global base directory exists");
         }
+        
         if !self.otc_dir().exists() {
             issues.push("OTC directory does not exist".to_string());
+        } else if verbose {
+            println!("✓ OTC directory exists");
         }
+        
         if !self.cache_dir().exists() {
             issues.push("Cache directory does not exist".to_string());
+        } else if verbose {
+            println!("✓ Cache directory exists");
         }
+        
         if !self.packages_dir().exists() {
             issues.push("Packages directory does not exist".to_string());
+        } else if verbose {
+            println!("✓ Packages directory exists");
         }
 
         // Check configuration file

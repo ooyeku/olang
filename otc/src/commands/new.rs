@@ -415,7 +415,8 @@ fn copy_directory(src: &str, dst: &str, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-/// Run project tests
+/// Run project tests (legacy - use commands::test::execute instead)
+#[allow(dead_code)]
 pub fn test_project(filter: Option<String>, verbose: bool) -> Result<()> {
     // Check if we're in an Olang project and load configuration
     ensure_project_directory()?;
@@ -477,6 +478,7 @@ pub fn test_project(filter: Option<String>, verbose: bool) -> Result<()> {
 }
 
 /// Find test files
+#[allow(dead_code)]
 fn find_test_files(filter: Option<&str>) -> Result<Vec<PathBuf>> {
     let mut test_files = Vec::new();
     
@@ -502,6 +504,7 @@ fn find_test_files(filter: Option<&str>) -> Result<Vec<PathBuf>> {
 }
 
 /// Run a single test file
+#[allow(dead_code)]
 fn run_test_file(test_file: &Path) -> Result<()> {
     use std::process::Command;
 

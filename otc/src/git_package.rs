@@ -211,7 +211,7 @@ impl GitPackageManager {
             git_url.repo
         );
         
-        let package_dir = self.packages_dir.join(dir_name);
+        let package_dir = self.cache_dir.join("packages").join(dir_name);
         fs::create_dir_all(&package_dir)
             .with_context(|| format!("Failed to create package directory: {}", package_dir.display()))?;
         

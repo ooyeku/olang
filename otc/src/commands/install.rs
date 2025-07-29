@@ -9,7 +9,8 @@ use crate::lock_file::{LockFile, LockedPackage};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-/// Execute package installation from git URL or from olang.toml dependencies
+/// Execute package installation from git URL or from olang.toml dependencies (legacy wrapper)
+#[allow(dead_code)]
 pub fn execute(url: Option<String>, verbose: bool) -> Result<()> {
     execute_with_options(url, verbose, false)
 }
@@ -469,6 +470,7 @@ pub fn clean(verbose: bool) -> Result<()> {
 }
 
 /// Validate a package URL without installing
+#[allow(dead_code)]
 pub fn validate(url: String, verbose: bool) -> Result<()> {
     if verbose {
         println!("Validating package URL: {}", url);

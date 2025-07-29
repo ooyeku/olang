@@ -127,7 +127,13 @@ fn extract_used_functions(file_path: &Path) -> Result<Vec<String>> {
 
     for statement in &ast.statements {
         if let olang::ast::Statement::UseDecl(use_decl) = statement {
-            used.extend(use_decl.items.clone());
+            for item in &use_decl.items {
+                if let olang::ast::UseItem::Specific(name) = item {
+                    used.push(name.clone());
+                }
+                // Note: Wildcard imports can't be tracked for unused analysis
+                // since we don't know what specific functions they import
+            }
         }
     }
 

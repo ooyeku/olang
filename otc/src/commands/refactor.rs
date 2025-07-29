@@ -207,8 +207,6 @@ impl FunctionMover {
             .with_context(|| format!("Failed to parse source file: {}", self.from_path))?;
 
         // Find the function and extract its source code
-        let lines: Vec<&str> = source.lines().collect();
-        
         for statement in &ast.statements {
             if let olang::ast::Statement::ShareDecl(share_decl) = statement {
                 if let olang::ast::ShareDecl::Function(func) = share_decl {

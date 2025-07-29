@@ -220,11 +220,17 @@ fn display_project_tree(tree: &ProjectTree, verbose: bool) {
             }
             println!();
             
-            if verbose && (!file.shared_functions.is_empty() || !file.dependencies.is_empty()) {
+            if verbose && (!file.shared_functions.is_empty() || !file.dependencies.is_empty() || !file.private_functions.is_empty()) {
                 let func_prefix = format!("{}{}    ", dir_prefix, if is_last_file { " " } else { "│" });
+                
+                println!("{}module: {} ({})", func_prefix, file.module_name, file.path.display());
                 
                 if !file.shared_functions.is_empty() {
                     println!("{}shared: {}", func_prefix, file.shared_functions.join(", "));
+                }
+                
+                if !file.private_functions.is_empty() {
+                    println!("{}private: {}", func_prefix, file.private_functions.join(", "));
                 }
                 
                 if !file.dependencies.is_empty() {

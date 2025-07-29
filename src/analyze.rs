@@ -1513,32 +1513,41 @@ impl Analyzer {
         
         // Track imported symbols in current scope
         for item in &use_decl.items {
-            if item.is_empty() {
-                return Err(AnalysisError::TypeError {
-                    message: "Empty import item name".to_string(),
-                });
+            match item {
+                crate::ast::UseItem::Specific(name) => {
+                    if name.is_empty() {
+                        return Err(AnalysisError::TypeError {
+                            message: "Empty import item name".to_string(),
+                        });
+                    }
+                    
+                    // Check for duplicate imports in same scope
+                    if self.scopes[self.current_scope].contains(name) {
+                        return Err(AnalysisError::DuplicateVariable {
+                            name: name.clone(),
+                        });
+                    }
+                    
+                    // Add imported symbol to current scope
+                    self.scopes[self.current_scope].insert(name.clone());
+                    
+                    // Track in variables map
+                    self.variables.insert(
+                        name.clone(),
+                        VariableInfo {
+                            name: name.clone(),
+                            scope: self.current_scope,
+                            is_mutable: false,
+                            usage_count: 0,
+                        },
+                    );
+                }
+                crate::ast::UseItem::Wildcard => {
+                    // For wildcard imports, we can't track specific symbols at analysis time
+                    // since we don't know what will be imported until runtime
+                    // This is acceptable since wildcard imports bring everything into scope
+                }
             }
-            
-            // Check for duplicate imports in same scope
-            if self.scopes[self.current_scope].contains(item) {
-                return Err(AnalysisError::DuplicateVariable {
-                    name: item.clone(),
-                });
-            }
-            
-            // Add imported symbol to current scope
-            self.scopes[self.current_scope].insert(item.clone());
-            
-            // Track in variables map
-            self.variables.insert(
-                item.clone(),
-                VariableInfo {
-                    name: item.clone(),
-                    scope: self.current_scope,
-                    is_mutable: false,
-                    usage_count: 0,
-                },
-            );
         }
         
         Ok(())

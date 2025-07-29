@@ -155,6 +155,7 @@ impl LockFile {
     }
 
     /// Validate lock file integrity
+    #[allow(dead_code)]
     pub fn validate(&self) -> Result<()> {
         // Check version compatibility
         if self.metadata.version != "1" {
@@ -202,17 +203,20 @@ impl LockFile {
     }
 
     /// Get dependencies for a specific package
+    #[allow(dead_code)]
     pub fn get_package_dependencies(&self, name: &str) -> Option<&HashMap<String, String>> {
         self.packages.get(name).map(|pkg| &pkg.dependencies)
     }
 
     /// Update metadata with current timestamp
+    #[allow(dead_code)]
     pub fn update_metadata(&mut self) {
         self.metadata.generated = Some(chrono::Utc::now().to_rfc3339());
         self.metadata.otc_version = Some(olang::VERSION.to_string());
     }
 
     /// Check if lock file is stale compared to olang.toml
+    #[allow(dead_code)]
     pub fn is_stale(&self, olang_toml_path: &Path) -> Result<bool> {
         if !olang_toml_path.exists() {
             return Ok(false); // No olang.toml to compare against
@@ -236,6 +240,7 @@ impl LockFile {
     }
 
     /// Generate summary of locked packages
+    #[allow(dead_code)]
     pub fn summary(&self) -> String {
         if self.is_empty() {
             return "No packages locked".to_string();
@@ -258,6 +263,7 @@ impl LockFile {
 
 impl LockedPackage {
     /// Create a new locked package
+    #[allow(dead_code)]
     pub fn new(url: String, commit: String, version: String) -> Self {
         Self {
             url,
@@ -294,11 +300,13 @@ impl LockedPackage {
     }
 
     /// Check if package has dependencies
+    #[allow(dead_code)]
     pub fn has_dependencies(&self) -> bool {
         !self.dependencies.is_empty()
     }
 
     /// Get dependency count
+    #[allow(dead_code)]
     pub fn dependency_count(&self) -> usize {
         self.dependencies.len()
     }
