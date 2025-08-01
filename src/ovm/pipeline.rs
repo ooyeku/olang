@@ -694,9 +694,8 @@ impl PipelineEngine {
     }
 
     fn values_equal(&self, a: &OvmValue, b: &OvmValue) -> bool {
-        // Simple equality check
-        // TODO: Implement proper OvmValue equality
-        std::ptr::eq(a, b)
+        // Use the proper PartialEq implementation
+        a == b
     }
 }
 

@@ -1130,6 +1130,13 @@ impl ConcurrentMarkingEngine {
             | ValueData::Float(_)
             | ValueData::Boolean(_)
             | ValueData::Unit => None,
+            ValueData::Range(ptr) => {
+                if ptr.as_ptr().is_null() {
+                    None
+                } else {
+                    Some(GcPtr::new(ptr.as_ptr() as *mut ValueHeader))
+                }
+            }
         }
     }
 
@@ -1490,6 +1497,29 @@ impl SafepointManager {
     /// Unregister thread (simplified tracking)
     pub fn unregister_thread(&self) {
         self.active_threads.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// Check safepoint before allocation (no-op in simplified implementation)
+    pub fn check_safepoint(&self) {
+        // Simplified check - just poll for safepoint
+        let _ = self.safepoint_poll();
+    }
+    
+    /// Record allocation for GC triggering (placeholder)
+    pub fn record_allocation(&self, _size: usize) {
+        // In a full implementation, this would update allocation counters
+        // For now, we'll rely on the main GC's allocation tracking
+    }
+    
+    /// Check if GC collection should be triggered (placeholder)
+    pub fn should_collect(&self) -> bool {
+        // Simplified check - only collect if safepoint is explicitly requested
+        self.safepoint_requested.load(Ordering::Relaxed)
+    }
+    
+    /// Request GC collection (simplified)
+    pub fn request_collection(&self) {
+        let _ = self.request_safepoint();
     }
 
     /// Get simplified debug info

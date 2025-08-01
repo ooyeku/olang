@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use crate::ast::{Expr, Value as AstValue};
 
@@ -89,6 +90,7 @@ pub enum TypeTag {
     Tuple = 12,
     Function = 13,
     Struct = 14,
+    Range = 15,
 
     // Special types
     Builtin = 20,
@@ -160,6 +162,7 @@ pub enum ValueData {
     Tuple(GcPtr<ValueArray>),
     Function(GcPtr<FunctionObject>),
     Struct(GcPtr<StructObject>),
+    Range(GcPtr<RangeObject>),
     Builtin(GcPtr<BuiltinObject>),
 
     // Lazy values
@@ -217,6 +220,78 @@ pub struct FunctionObject {
 pub struct StructObject {
     pub type_name: String,
     pub fields: HashMap<String, OvmValue>,
+}
+
+/// Range object for OVM execution with proper iteration support
+#[derive(Debug)]
+pub struct RangeObject {
+    pub start: i64,
+    pub end: i64,
+    pub inclusive: bool,
+    pub current_position: Option<i64>, // For lazy iteration
+}
+
+impl RangeObject {
+    /// Create a new range object
+    pub fn new(start: i64, end: i64, inclusive: bool) -> Self {
+        Self {
+            start,
+            end,
+            inclusive,
+            current_position: None,
+        }
+    }
+
+    /// Check if the range contains a value
+    pub fn contains(&self, value: i64) -> bool {
+        if self.inclusive {
+            value >= self.start && value <= self.end
+        } else {
+            value >= self.start && value < self.end
+        }
+    }
+
+    /// Get the length of the range
+    pub fn len(&self) -> usize {
+        if self.start > self.end {
+            return 0;
+        }
+        let diff = if self.inclusive {
+            (self.end - self.start + 1).max(0)
+        } else {
+            (self.end - self.start).max(0)
+        };
+        diff as usize
+    }
+
+    /// Check if the range is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Convert to iterator (for list comprehensions, etc.)
+    pub fn to_vec(&self) -> Vec<i64> {
+        if self.start > self.end {
+            return Vec::new();
+        }
+        
+        let mut result = Vec::new();
+        let mut current = self.start;
+        
+        if self.inclusive {
+            while current <= self.end {
+                result.push(current);
+                current += 1;
+            }
+        } else {
+            while current < self.end {
+                result.push(current);
+                current += 1;
+            }
+        }
+        
+        result
+    }
 }
 
 /// Builtin function object for OVM-native execution
@@ -490,6 +565,99 @@ impl Clone for OvmValue {
         self.clone_simple()
     }
 }
+
+impl PartialEq for OvmValue {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare type tags first for quick rejection
+        if self.header.type_tag as u8 != other.header.type_tag as u8 {
+            return false;
+        }
+
+        // Compare based on value data
+        match (&self.data, &other.data) {
+            (ValueData::Integer(a), ValueData::Integer(b)) => a == b,
+            (ValueData::Float(a), ValueData::Float(b)) => a == b,
+            (ValueData::Boolean(a), ValueData::Boolean(b)) => a == b,
+            (ValueData::Unit, ValueData::Unit) => true,
+            
+            (ValueData::String(a), ValueData::String(b)) => unsafe {
+                // Compare string contents
+                a.as_ref() == b.as_ref()
+            },
+            
+            (ValueData::List(a), ValueData::List(b)) => unsafe {
+                let a_array = a.as_ref();
+                let b_array = b.as_ref();
+                
+                if a_array.length != b_array.length {
+                    return false;
+                }
+                
+                if a_array.length == 0 {
+                    return true;
+                }
+                
+                let a_slice = std::slice::from_raw_parts(a_array.data, a_array.length);
+                let b_slice = std::slice::from_raw_parts(b_array.data, b_array.length);
+                
+                a_slice.iter().zip(b_slice.iter()).all(|(x, y)| x == y)
+            },
+            
+            (ValueData::Tuple(a), ValueData::Tuple(b)) => unsafe {
+                let a_array = a.as_ref();
+                let b_array = b.as_ref();
+                
+                if a_array.length != b_array.length {
+                    return false;
+                }
+                
+                if a_array.length == 0 {
+                    return true;
+                }
+                
+                let a_slice = std::slice::from_raw_parts(a_array.data, a_array.length);
+                let b_slice = std::slice::from_raw_parts(b_array.data, b_array.length);
+                
+                a_slice.iter().zip(b_slice.iter()).all(|(x, y)| x == y)
+            },
+            
+            (ValueData::Range(a), ValueData::Range(b)) => unsafe {
+                let a_range = a.as_ref();
+                let b_range = b.as_ref();
+                
+                a_range.start == b_range.start &&
+                a_range.end == b_range.end &&
+                a_range.inclusive == b_range.inclusive
+            },
+            
+            (ValueData::Result { ok: a_ok, err: a_err }, ValueData::Result { ok: b_ok, err: b_err }) => {
+                match (a_ok, a_err, b_ok, b_err) {
+                    (Some(a_val), None, Some(b_val), None) => a_val.as_ref() == b_val.as_ref(),
+                    (None, Some(a_val), None, Some(b_val)) => a_val.as_ref() == b_val.as_ref(),
+                    (None, None, None, None) => true,
+                    _ => false,
+                }
+            },
+            
+            // For complex types, fall back to pointer comparison for now
+            (ValueData::Function(a), ValueData::Function(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (ValueData::Struct(a), ValueData::Struct(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (ValueData::Builtin(a), ValueData::Builtin(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (ValueData::Promise(a), ValueData::Promise(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (ValueData::Thunk(a), ValueData::Thunk(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (ValueData::LazyList(a), ValueData::LazyList(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (ValueData::Stream(a), ValueData::Stream(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (ValueData::CompiledFunction(a), ValueData::CompiledFunction(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (ValueData::OptimizedValue(a), ValueData::OptimizedValue(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (ValueData::Error(a), ValueData::Error(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            
+            // Different types are never equal
+            _ => false,
+        }
+    }
+}
+
+impl Eq for OvmValue {}
 
 impl OvmValue {
     /// Create a new integer value
@@ -778,12 +946,28 @@ impl OvmValue {
 
             AstValue::Range {
                 start,
-                end: _,
-                inclusive: _,
+                end,
+                inclusive,
             } => {
-                // For ranges, create a simple representation for now
-                // TODO: Implement proper range representation
-                Self::new_integer(start)
+                // Implement proper range representation
+                let range_obj = RangeObject {
+                    start,
+                    end,
+                    inclusive,
+                    current_position: None, // Will be set during iteration
+                };
+
+                let ptr = Box::into_raw(Box::new(range_obj));
+                let gc_ptr = GcPtr::new(ptr);
+
+                Self {
+                    header: ValueHeader::new(
+                        TypeTag::Range,
+                        ExecutionTier::Interpreter,
+                        LazyState::Eager,
+                    ),
+                    data: ValueData::Range(gc_ptr),
+                }
             }
 
             AstValue::Struct { type_name, fields } => {
@@ -921,6 +1105,45 @@ impl OvmValue {
         }
     }
 
+    /// Create OVM value from AST value with GC integration and safepoint coordination
+    pub fn from_ast_with_gc(
+        ast_value: AstValue, 
+        safepoint_manager: &Arc<crate::ovm::gc::SafepointManager>
+    ) -> Result<Self, RuntimeError> {
+        // First check for safepoint before allocation
+        safepoint_manager.check_safepoint();
+        
+        // Convert from AST using the standard method
+        let mut ovm_value = Self::from_ast(ast_value);
+        
+        // Update GC metadata for proper tracking
+        ovm_value.header.gc_bits.store(1, std::sync::atomic::Ordering::Relaxed); // Mark as allocated
+        ovm_value.header.tier = ExecutionTier::Interpreter; // Start at interpreter tier
+        
+        // Record allocation with safepoint manager
+        let allocation_size = std::mem::size_of::<OvmValue>() + 
+            match &ovm_value.data {
+                ValueData::String(s) => unsafe { s.as_ref().len() },
+                ValueData::List(gc_ptr) => {
+                    unsafe { (*gc_ptr.as_ptr()).length * std::mem::size_of::<OvmValue>() }
+                }
+                ValueData::Tuple(gc_ptr) => {
+                    unsafe { (*gc_ptr.as_ptr()).length * std::mem::size_of::<OvmValue>() }
+                }
+                ValueData::Function(_) => std::mem::size_of::<FunctionObject>(),
+                ValueData::Struct(_) => std::mem::size_of::<StructObject>(),
+                ValueData::Range(_) => std::mem::size_of::<RangeObject>(),
+                ValueData::Promise(_) => std::mem::size_of::<PromiseObject>(),
+                ValueData::Thunk(_) => std::mem::size_of::<ThunkObject>(),
+                ValueData::LazyList(_) => std::mem::size_of::<LazyListObject>(),
+                _ => 0,
+            };
+        
+        safepoint_manager.record_allocation(allocation_size);
+        
+        Ok(ovm_value)
+    }
+
     /// Create a new tuple value
     pub fn new_tuple(values: Vec<Self>) -> Self {
         let array = ValueArray {
@@ -997,6 +1220,17 @@ impl OvmValue {
             ValueData::Struct(_) => {
                 // Structs return unit for now
                 Ok(AstValue::Unit)
+            }
+            ValueData::Range(gc_ptr) => {
+                // Convert Range back to AST Range
+                unsafe {
+                    let range_ref = gc_ptr.as_ref();
+                    Ok(AstValue::Range {
+                        start: range_ref.start,
+                        end: range_ref.end,
+                        inclusive: range_ref.inclusive,
+                    })
+                }
             }
             ValueData::Builtin(_) => {
                 // Builtins return unit for now
@@ -1149,6 +1383,14 @@ impl fmt::Display for OvmValue {
             },
             ValueData::Function(_) => write!(f, "<function>"),
             ValueData::Struct(_) => write!(f, "<struct>"),
+            ValueData::Range(gc_ptr) => unsafe {
+                let range_ref = gc_ptr.as_ref();
+                if range_ref.inclusive {
+                    write!(f, "{}..={}", range_ref.start, range_ref.end)
+                } else {
+                    write!(f, "{}..{}", range_ref.start, range_ref.end)
+                }
+            },
             ValueData::Builtin(_) => write!(f, "<builtin>"),
             ValueData::Thunk(_) => write!(f, "<thunk>"),
             ValueData::Stream(_) => write!(f, "<stream>"),
