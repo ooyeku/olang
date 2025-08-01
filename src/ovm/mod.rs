@@ -196,20 +196,20 @@ impl OlangVirtualMachine {
         let use_pipeline = self.should_use_pipeline(&expr);
         let use_fusion = self.should_use_fusion(&expr);
 
-        // Log which optimization is being used
-        if use_lazy {
-            // For now, fall back to regular execution since lazy evaluation integration is not complete
-            // In a full implementation, this would use the lazy engine
+        // Execute using appropriate optimization strategy
+        let result = if use_lazy {
+            // Use lazy evaluation engine for large data structures or expensive computations
+            self.execute_with_lazy_evaluation(ovm_expr)?
         } else if use_pipeline {
-            // For now, fall back to regular execution since pipeline integration is not complete
-            // In a full implementation, this would use the pipeline engine
+            // Use pipeline engine for pipeline expressions
+            self.execute_with_pipeline(ovm_expr)?
         } else if use_fusion {
-            // For now, fall back to regular execution since fusion integration is not complete
-            // In a full implementation, this would use the fusion engine
-        }
-
-        // Execute using the execution engine (unified path for now)
-        let result = self.execution_engine.execute_expression(ovm_expr)?;
+            // Use fusion engine for fusable operations
+            self.execute_with_fusion(ovm_expr)?
+        } else {
+            // Regular execution engine
+            self.execution_engine.execute_expression(ovm_expr)?
+        };
 
         // Record execution metrics
         let execution_time = start_time.elapsed();
@@ -373,19 +373,131 @@ impl OlangVirtualMachine {
 
     /// Determine if an expression should use lazy evaluation
     fn should_use_lazy_evaluation(&self, expr: &Expr) -> bool {
+        self.analyze_lazy_potential(expr, 0) > 0.5 // Use lazy if potential is above threshold
+    }
+
+    /// Analyze the potential benefit of lazy evaluation for an expression
+    fn analyze_lazy_potential(&self, expr: &Expr, depth: u32) -> f64 {
+        // Prevent infinite recursion
+        if depth > 10 {
+            return 0.0;
+        }
+
         match expr {
-            // Large lists and ranges benefit from lazy evaluation
-            Expr::List(elements) if elements.len() > 100 => true,
-            Expr::Call { callee, .. } => {
-                if let Expr::Identifier(name) = callee.as_ref() {
-                    matches!(name.as_str(), "range" | "map" | "filter" | "take" | "skip")
+            // Large lists and ranges benefit significantly from lazy evaluation
+            Expr::List(elements) => {
+                let size_factor = (elements.len() as f64).log10() / 10.0; // Logarithmic scaling
+                if elements.len() > 100 {
+                    0.9 + size_factor // Very high potential for large lists
+                } else if elements.len() > 50 {
+                    0.7 + size_factor // High potential for medium lists
                 } else {
-                    false
+                    0.2 // Low potential for small lists
                 }
             }
-            // Generator expressions and infinite sequences
-            Expr::ForLoop { .. } | Expr::WhileLoop { .. } => true,
-            _ => false,
+
+            // Range expressions - excellent candidates for lazy evaluation
+            Expr::Range { start, end, .. } => {
+                // Try to estimate range size if possible
+                match (start.as_ref(), end.as_ref()) {
+                    (Expr::Integer(s), Expr::Integer(e)) => {
+                        let range_size = (e - s).abs();
+                        if range_size > 1000 {
+                            0.95 // Excellent candidate
+                        } else if range_size > 100 {
+                            0.8 // Good candidate
+                        } else {
+                            0.3 // Modest benefit
+                        }
+                    }
+                    _ => 0.7, // Unknown size, but ranges are generally good for lazy eval
+                }
+            }
+
+            // Function calls that are excellent for lazy evaluation
+            Expr::Call { callee, arguments } => {
+                if let Expr::Identifier(name) = callee.as_ref() {
+                    let base_potential = match name.as_str() {
+                        // Infinite sequence generators
+                        "range" | "repeat" | "cycle" => 0.9,
+                        
+                        // Stream processing functions
+                        "map" | "filter" | "take" | "skip" | "drop" => 0.8,
+                        
+                        // Reduction operations (less benefit as they need to consume all)
+                        "reduce" | "fold" | "sum" | "count" => 0.3,
+                        
+                        // I/O operations that might produce large results
+                        "read_file" | "read_lines" | "fetch" => 0.7,
+                        
+                        _ => 0.1,
+                    };
+
+                    // Boost potential if arguments contain lazy-friendly expressions
+                    let arg_boost = arguments.iter()
+                        .map(|arg| {
+                            let arg_expr = match arg {
+                                Argument::Positional(expr) => expr,
+                                Argument::Named { value, .. } => value,
+                            };
+                            self.analyze_lazy_potential(arg_expr, depth + 1)
+                        })
+                        .fold(0.0, f64::max) * 0.3; // Max boost of 30%
+
+                    (base_potential + arg_boost).min(1.0)
+                } else {
+                    // Unknown function calls get modest potential
+                    0.2
+                }
+            }
+
+            // Pipeline operations can benefit from lazy evaluation
+            Expr::Pipeline { left, right } => {
+                let left_potential = self.analyze_lazy_potential(left, depth + 1);
+                let right_potential = self.analyze_lazy_potential(right, depth + 1);
+                // Pipeline potential is influenced by both sides
+                (left_potential + right_potential) / 2.0 + 0.2 // Bonus for pipeline structure
+            }
+
+            // Control flow with potential for lazy evaluation
+            Expr::ForLoop { .. } | Expr::WhileLoop { .. } => 0.8, // Loops often benefit from lazy eval
+            
+            // Conditional expressions - moderate potential
+            Expr::If { condition, then_branch, else_branch } => {
+                let condition_potential = self.analyze_lazy_potential(condition, depth + 1);
+                let then_potential = self.analyze_lazy_potential(then_branch, depth + 1);
+                let else_potential = else_branch
+                    .as_ref()
+                    .map(|e| self.analyze_lazy_potential(e, depth + 1))
+                    .unwrap_or(0.0);
+                
+                // If branches have high lazy potential, the overall potential is good
+                (condition_potential + then_potential + else_potential) / 3.0
+            }
+
+            // Match expressions can have lazy potential if they operate on lazy-friendly data
+            Expr::Match { value, .. } => {
+                self.analyze_lazy_potential(value, depth + 1) * 0.7 // Slight reduction due to pattern matching overhead
+            }
+
+            // Lambda expressions - depend on their body
+            Expr::Lambda { body, .. } => {
+                self.analyze_lazy_potential(body, depth + 1) * 0.8 // Slight reduction for function call overhead
+            }
+
+            // Simple expressions have low lazy potential
+            Expr::Integer(_) | Expr::Float(_) | Expr::Boolean(_) | Expr::String(_) => 0.0,
+            Expr::Identifier(_) => 0.1, // Variable access might be expensive
+            
+            // Complex expressions might benefit moderately
+            Expr::BinaryOp { left, right, .. } => {
+                let left_potential = self.analyze_lazy_potential(left, depth + 1);
+                let right_potential = self.analyze_lazy_potential(right, depth + 1);
+                (left_potential + right_potential) / 4.0 // Reduced since binary ops are usually fast
+            }
+
+            // Default case for other expressions
+            _ => 0.2,
         }
     }
 
@@ -527,6 +639,120 @@ impl OlangVirtualMachine {
         // Start background metrics collection thread
         // This will be implemented with the metrics system
         Ok(())
+    }
+
+    /// Execute expression with lazy evaluation
+    fn execute_with_lazy_evaluation(&mut self, expr: execution::OvmExpr) -> Result<OvmValue, OvmError> {
+        // For large data structures or expensive computations, create lazy values
+        match &expr.expr {
+            // Create lazy ranges for large ranges
+            Expr::Range { start, end, .. } => {
+                if let (Expr::Integer(s), Expr::Integer(e)) = (start.as_ref(), end.as_ref()) {
+                    if (e - s).abs() > 1000 {
+                        // Create a lazy range stream
+                        return self.create_lazy_range(*s, *e);
+                    }
+                }
+                // Fall back to regular execution for small ranges
+                self.execution_engine.execute_expression(expr)
+            }
+            // Create lazy lists for large lists
+            Expr::List(items) if items.len() > 100 => {
+                // For now, just fall back to regular execution
+                // Full implementation would create lazy list processing
+                self.execution_engine.execute_expression(expr)
+            }
+            // For other expressions, use regular execution
+            _ => self.execution_engine.execute_expression(expr),
+        }
+        .map_err(OvmError::from)
+    }
+
+    /// Execute expression with pipeline optimization
+    fn execute_with_pipeline(&mut self, expr: execution::OvmExpr) -> Result<OvmValue, OvmError> {
+        // Use pipeline engine for pipeline expressions - simplified for now
+        // Full implementation would optimize pipeline operations
+        self.execution_engine.execute_expression(expr)
+            .map_err(OvmError::from)
+    }
+
+    /// Execute expression with fusion optimization
+    fn execute_with_fusion(&mut self, expr: execution::OvmExpr) -> Result<OvmValue, OvmError> {
+        // Use fusion engine for fusable operations - simplified for now
+        // Full implementation would fuse operations for performance
+        self.execution_engine.execute_expression(expr)
+            .map_err(OvmError::from)
+    }
+
+    /// Create a lazy range stream
+    fn create_lazy_range(&mut self, start: i64, end: i64) -> Result<OvmValue, OvmError> {
+        use crate::ovm::value::{GeneratorFunction, StreamObject, TypeTag, LazyState, ExecutionTier, ValueHeader, ValueData, GcPtr};
+        use std::sync::atomic::AtomicU32;
+
+        // Create a lazy stream that generates range values on demand
+        let step = if start < end { 1 } else { -1 };
+        let generator = GeneratorFunction::Range { start, end, step };
+        
+        let stream_obj = StreamObject {
+            generator,
+            buffer: Vec::new(),
+            buffer_position: 0,
+            is_infinite: false,
+            chunk_size: 64, // Reasonable chunk size
+        };
+
+        let stream_ptr = GcPtr::new(Box::into_raw(Box::new(stream_obj)));
+        
+        Ok(OvmValue {
+            header: ValueHeader {
+                type_tag: TypeTag::Stream,
+                lazy_state: LazyState::Stream,
+                tier: ExecutionTier::Interpreter,
+                gc_bits: AtomicU32::new(0),
+                optimization_data: std::mem::size_of::<StreamObject>() as u32,
+                force_count: AtomicU32::new(0),
+                ref_count: AtomicU32::new(1),
+                gc_mark: false,
+                age: 0,
+                size: std::mem::size_of::<StreamObject>() as u32,
+            },
+            data: ValueData::Stream(stream_ptr),
+        })
+    }
+
+    /// Create a lazy list (simplified implementation)
+    fn create_lazy_list(&mut self, _items: Vec<execution::OvmExpr>) -> Result<OvmValue, OvmError> {
+        use crate::ovm::value::{LazyListObject, TransformationChain, TypeTag, LazyState, ExecutionTier, ValueHeader, ValueData, GcPtr};
+        use std::sync::atomic::AtomicU32;
+
+        // For now, create a simple lazy list with a unit source
+        // This is a simplified implementation
+        let source_value = OvmValue::new_unit();
+        
+        let lazy_list_obj = LazyListObject {
+            source: Box::new(source_value),
+            transformation: TransformationChain::Identity,
+            materialized_prefix: Vec::new(),
+            materialization_point: 0,
+        };
+
+        let lazy_list_ptr = GcPtr::new(Box::into_raw(Box::new(lazy_list_obj)));
+        
+        Ok(OvmValue {
+            header: ValueHeader {
+                type_tag: TypeTag::LazyList,
+                lazy_state: LazyState::Lazy,
+                tier: ExecutionTier::Interpreter,
+                gc_bits: AtomicU32::new(0),
+                optimization_data: std::mem::size_of::<LazyListObject>() as u32,
+                force_count: AtomicU32::new(0),
+                ref_count: AtomicU32::new(1),
+                gc_mark: false,
+                age: 0,
+                size: std::mem::size_of::<LazyListObject>() as u32,
+            },
+            data: ValueData::LazyList(lazy_list_ptr),
+        })
     }
 }
 

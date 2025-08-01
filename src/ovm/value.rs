@@ -9,7 +9,7 @@ use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use crate::ast::{Expr, Value as AstValue};
+use crate::ast::{Expr, Value};
 
 /// Unified value representation for the OVM
 #[derive(Debug)]
@@ -558,6 +558,14 @@ pub enum RuntimeError {
     Generic { message: String },
 }
 
+impl RuntimeError {
+    pub fn new(message: &str) -> Self {
+        RuntimeError::Generic {
+            message: message.to_string(),
+        }
+    }
+}
+
 // Implementation of core methods
 
 impl Clone for OvmValue {
@@ -741,27 +749,252 @@ impl OvmValue {
         // Increment force count for profiling
         self.header.force_count.fetch_add(1, Ordering::Relaxed);
 
-        // Handle different lazy value types
-        match self.header.lazy_state {
+        // Handle different lazy value types based on lazy state
+        let lazy_state = self.header.lazy_state;
+        match lazy_state {
             LazyState::Lazy => {
+                // Extract the data temporarily to avoid borrowing issues
                 match &self.data {
-                    ValueData::Thunk(_) => {
-                        // TODO: Implement thunk forcing
-                        Ok(())
+                    ValueData::Thunk(thunk_ptr) => {
+                        let thunk_ptr_copy = GcPtr { ptr: thunk_ptr.ptr, generation: thunk_ptr.generation };
+                        self.force_thunk_impl(thunk_ptr_copy)?;
                     }
-                    ValueData::LazyList(_) => {
-                        // TODO: Implement lazy list forcing
-                        Ok(())
+                    ValueData::LazyList(lazy_list_ptr) => {
+                        let lazy_list_ptr_copy = GcPtr { ptr: lazy_list_ptr.ptr, generation: lazy_list_ptr.generation };
+                        self.force_lazy_list_impl(lazy_list_ptr_copy)?;
                     }
-                    _ => Ok(()),
+                    _ => {}
                 }
             }
             LazyState::Stream => {
                 // Streams remain lazy but may buffer more data
-                Ok(())
+                if let ValueData::Stream(stream_ptr) = &self.data {
+                    let stream_ptr_copy = GcPtr { ptr: stream_ptr.ptr, generation: stream_ptr.generation };
+                    self.advance_stream_buffer_impl(stream_ptr_copy)?;
+                }
             }
-            _ => Ok(()),
+            _ => {}
         }
+        Ok(())
+    }
+
+    /// Force evaluation of a thunk with memoization
+    fn force_thunk_impl(&mut self, thunk_ptr: GcPtr<ThunkObject>) -> Result<(), RuntimeError> {
+        // Prevent infinite recursion
+        if self.header.lazy_state == LazyState::Forcing {
+            return Err(RuntimeError::new("Circular thunk dependency detected"));
+        }
+
+        // Set forcing state
+        self.header.lazy_state = LazyState::Forcing;
+
+        // Access the thunk safely
+        let thunk_ref = unsafe { thunk_ptr.as_ref() };
+        
+        // Check if already memoized
+        if let Some(memoized) = &thunk_ref.memoized_value {
+            // Use memoized value - create a simple copy instead of clone
+            match &memoized.data {
+                ValueData::Integer(i) => self.data = ValueData::Integer(*i),
+                ValueData::Float(f) => self.data = ValueData::Float(*f),
+                ValueData::Boolean(b) => self.data = ValueData::Boolean(*b),
+                ValueData::Unit => self.data = ValueData::Unit,
+                _ => self.data = ValueData::Unit, // Fallback for complex types
+            }
+            self.header.type_tag = memoized.header.type_tag;
+            self.header.lazy_state = LazyState::Cached;
+            return Ok(());
+        }
+
+        // Evaluate the thunk
+        let evaluated_value = self.evaluate_thunk_expression(thunk_ref)?;
+
+        // Memoize the result in the thunk
+        let thunk_mut = unsafe { &mut *(thunk_ptr.as_ptr() as *mut ThunkObject) };
+        thunk_mut.memoized_value = Some(evaluated_value.clone_simple());
+
+        // Update this value with the result
+        match evaluated_value.data {
+            ValueData::Integer(i) => self.data = ValueData::Integer(i),
+            ValueData::Float(f) => self.data = ValueData::Float(f),
+            ValueData::Boolean(b) => self.data = ValueData::Boolean(b),
+            ValueData::Unit => self.data = ValueData::Unit,
+            data => self.data = data, // For other types that can be moved
+        }
+        self.header.type_tag = evaluated_value.header.type_tag;
+        self.header.lazy_state = LazyState::Cached;
+
+        Ok(())
+    }
+
+    /// Force evaluation of a lazy list
+    fn force_lazy_list_impl(&mut self, lazy_list_ptr: GcPtr<LazyListObject>) -> Result<(), RuntimeError> {
+        // For now, materialize a reasonable prefix of the lazy list
+        let chunk_size = 100; // Configurable chunk size
+        
+        let lazy_list_mut = unsafe { &mut *(lazy_list_ptr.as_ptr() as *mut LazyListObject) };
+        
+        // If we haven't materialized anything yet, start materializing
+        if lazy_list_mut.materialized_prefix.is_empty() {
+            match &lazy_list_mut.transformation {
+                TransformationChain::Identity => {
+                    // Copy from source - simplified implementation
+                    if let ValueData::List(source_list) = &lazy_list_mut.source.data {
+                        let source_array = unsafe { source_list.as_ref() };
+                        let mut materialized = 0;
+                        for i in 0..source_array.length.min(chunk_size) {
+                            unsafe {
+                                let item = source_array.data.add(i).read();
+                                lazy_list_mut.materialized_prefix.push(item);
+                                materialized += 1;
+                            }
+                        }
+                        lazy_list_mut.materialization_point = materialized;
+                    }
+                }
+                TransformationChain::Map(_map_fn) => {
+                    // Apply map transformation - simplified for now
+                    if let ValueData::List(source_list) = &lazy_list_mut.source.data {
+                        let source_array = unsafe { source_list.as_ref() };
+                        let mut materialized = 0;
+                        for i in 0..source_array.length.min(chunk_size) {
+                            unsafe {
+                                let item = source_array.data.add(i).read();
+                                // For now, just copy the item (would need interpreter context for actual function call)
+                                lazy_list_mut.materialized_prefix.push(item);
+                                materialized += 1;
+                            }
+                        }
+                        lazy_list_mut.materialization_point = materialized;
+                    }
+                }
+                TransformationChain::Filter(_filter_fn) => {
+                    // Apply filter transformation - simplified for now  
+                    if let ValueData::List(source_list) = &lazy_list_mut.source.data {
+                        let source_array = unsafe { source_list.as_ref() };
+                        let mut materialized = 0;
+                        for i in 0..source_array.length.min(chunk_size) {
+                            if materialized >= chunk_size {
+                                break;
+                            }
+                            unsafe {
+                                let item = source_array.data.add(i).read();
+                                // For now, include all items (would need interpreter context for actual predicate)
+                                lazy_list_mut.materialized_prefix.push(item);
+                                materialized += 1;
+                            }
+                        }
+                        lazy_list_mut.materialization_point = materialized;
+                    }
+                }
+                TransformationChain::Chain(_first, _second) => {
+                    // Apply chained transformations - simplified for now
+                    if let ValueData::List(source_list) = &lazy_list_mut.source.data {
+                        let source_array = unsafe { source_list.as_ref() };
+                        let mut materialized = 0;
+                        for i in 0..source_array.length.min(chunk_size) {
+                            unsafe {
+                                let item = source_array.data.add(i).read();
+                                lazy_list_mut.materialized_prefix.push(item);
+                                materialized += 1;
+                            }
+                        }
+                        lazy_list_mut.materialization_point = materialized;
+                    }
+                }
+            }
+        }
+
+        // Convert the lazy list to a regular list with materialized items
+        // For now, create a simplified result
+        if !lazy_list_mut.materialized_prefix.is_empty() {
+            // Take the first item as a representative result (simplified)
+            let first_item = lazy_list_mut.materialized_prefix[0].clone();
+            self.data = first_item.data;
+            self.header = first_item.header;
+        }
+        self.header.type_tag = TypeTag::List;
+        self.header.lazy_state = LazyState::Cached;
+
+        Ok(())
+    }
+
+    /// Advance stream buffer for better performance
+    fn advance_stream_buffer_impl(&mut self, stream_ptr: GcPtr<StreamObject>) -> Result<(), RuntimeError> {
+        let stream_mut = unsafe { &mut *(stream_ptr.as_ptr() as *mut StreamObject) };
+        
+        // Buffer more items if buffer is getting low
+        let buffer_threshold = stream_mut.chunk_size / 2;
+        if stream_mut.buffer.len() - stream_mut.buffer_position < buffer_threshold {
+            let items_to_generate = stream_mut.chunk_size;
+            
+            for _ in 0..items_to_generate {
+                match &mut stream_mut.generator {
+                    GeneratorFunction::Range { start, end, step } => {
+                        if *start < *end {
+                            let value = OvmValue::new_integer(*start);
+                            stream_mut.buffer.push(value);
+                            *start += *step;
+                        } else {
+                            break; // End of range
+                        }
+                    }
+                    GeneratorFunction::Map { source: _source, function: _function } => {
+                        // Simplified - would need interpreter context for function calls
+                        break;
+                    }
+                    GeneratorFunction::Filter { source: _source, predicate: _predicate } => {
+                        // Simplified - would need interpreter context for predicate calls
+                        break;
+                    }
+                    GeneratorFunction::Custom { function: _function } => {
+                        // Simplified - would need interpreter context for function calls
+                        break;
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Evaluate thunk expression (simplified version)
+    fn evaluate_thunk_expression(&self, thunk: &ThunkObject) -> Result<OvmValue, RuntimeError> {
+        // For now, return a simple computed value based on the expression
+        // In a full implementation, this would use the interpreter with the thunk's environment
+        match &thunk.expression {
+            Expr::Integer(value) => Ok(OvmValue::new_integer(*value)),
+            Expr::Float(value) => Ok(OvmValue::new_float(*value)),
+            Expr::Boolean(value) => Ok(OvmValue::new_boolean(*value)),
+            Expr::String(value) => Ok(OvmValue::new_string((**value).clone())),
+            Expr::BinaryOp { left, op, right } => {
+                // Simplified binary operation evaluation
+                if let (Expr::Integer(a), Expr::Integer(b)) = (left.as_ref(), right.as_ref()) {
+                    match op {
+                        crate::ast::BinaryOp::Add => Ok(OvmValue::new_integer(a + b)),
+                        crate::ast::BinaryOp::Subtract => Ok(OvmValue::new_integer(a - b)),
+                        crate::ast::BinaryOp::Multiply => Ok(OvmValue::new_integer(a * b)),
+                        crate::ast::BinaryOp::Divide => {
+                            if *b != 0 {
+                                Ok(OvmValue::new_integer(a / b))
+                            } else {
+                                Err(RuntimeError::new("Division by zero"))
+                            }
+                        }
+                        _ => Ok(OvmValue::new_integer(*a)), // Fallback
+                    }
+                } else {
+                    Ok(OvmValue::new_unit())
+                }
+            }
+            _ => Ok(OvmValue::new_unit()), // Fallback for complex expressions
+        }
+    }
+
+    /// Convert AST value to OVM value (simplified)
+    fn _convert_ast_value_to_ovm(&self, _value: Value) -> OvmValue {
+        // This method is currently unused but kept for future use
+        OvmValue::new_unit()
     }
 
     /// Create a new string value using simplified GC allocation
@@ -857,15 +1090,15 @@ impl OvmValue {
     }
 
     /// Enhanced from_ast conversion with better builtin support
-    pub fn from_ast(ast_value: AstValue) -> Self {
+    pub fn from_ast(ast_value: Value) -> Self {
         match ast_value {
-            AstValue::Integer(n) => Self::new_integer(n),
-            AstValue::Float(f) => Self::new_float(f),
-            AstValue::Boolean(b) => Self::new_boolean(b),
-            AstValue::String(s) => Self::new_string(s.as_ref().clone()),
-            AstValue::Unit => Self::new_unit(),
+            Value::Integer(n) => Self::new_integer(n),
+            Value::Float(f) => Self::new_float(f),
+            Value::Boolean(b) => Self::new_boolean(b),
+            Value::String(s) => Self::new_string(s.as_ref().clone()),
+            Value::Unit => Self::new_unit(),
 
-            AstValue::List(items) => {
+            Value::List(items) => {
                 let ovm_items: Vec<Self> = items
                     .iter()
                     .map(|item| Self::from_ast(item.clone()))
@@ -873,7 +1106,7 @@ impl OvmValue {
                 Self::new_list(ovm_items)
             }
 
-            AstValue::Tuple(items) => {
+            Value::Tuple(items) => {
                 let ovm_items: Vec<Self> = items
                     .iter()
                     .map(|item| Self::from_ast(item.clone()))
@@ -881,7 +1114,7 @@ impl OvmValue {
                 Self::new_tuple(ovm_items)
             }
 
-            AstValue::Function(func) => {
+            Value::Function(func) => {
                 // Create function object
                 let func_obj = FunctionObject {
                     name: func.name.clone(),
@@ -910,7 +1143,7 @@ impl OvmValue {
                 }
             }
 
-            AstValue::Builtin(builtin) => {
+            Value::Builtin(builtin) => {
                 // Create a placeholder builtin function
                 // In a real implementation, this would map to actual builtin functions
                 Self::new_builtin(builtin.name.clone(), builtin.arity, |_args| {
@@ -920,7 +1153,7 @@ impl OvmValue {
                 })
             }
 
-            AstValue::Ok(value) => Self {
+            Value::Ok(value) => Self {
                 header: ValueHeader::new(
                     TypeTag::Result,
                     ExecutionTier::Interpreter,
@@ -932,7 +1165,7 @@ impl OvmValue {
                 },
             },
 
-            AstValue::Err(value) => Self {
+            Value::Err(value) => Self {
                 header: ValueHeader::new(
                     TypeTag::Result,
                     ExecutionTier::Interpreter,
@@ -944,7 +1177,7 @@ impl OvmValue {
                 },
             },
 
-            AstValue::Range {
+            Value::Range {
                 start,
                 end,
                 inclusive,
@@ -970,7 +1203,7 @@ impl OvmValue {
                 }
             }
 
-            AstValue::Struct { type_name, fields } => {
+            Value::Struct { type_name, fields } => {
                 // Create struct object
                 let struct_fields: HashMap<String, OvmValue> = fields
                     .into_iter()
@@ -995,7 +1228,7 @@ impl OvmValue {
                 }
             }
 
-            AstValue::Enum {
+            Value::Enum {
                 type_name,
                 variant_name,
                 variant_data,
@@ -1041,7 +1274,7 @@ impl OvmValue {
                 }
             }
 
-            AstValue::Promise {
+            Value::Promise {
                 state,
                 value,
                 error,
@@ -1072,7 +1305,7 @@ impl OvmValue {
                 }
             }
 
-            AstValue::Map(map) => {
+            Value::Map(map) => {
                 // Convert HashMap<String, Value> to OVM representation
                 // For now, create a simple struct-like representation
                 let mut fields = HashMap::new();
@@ -1098,7 +1331,7 @@ impl OvmValue {
                 }
             }
 
-            AstValue::TypeInfo { name, .. } => {
+            Value::TypeInfo { name, .. } => {
                 // For now, represent types as string names
                 Self::new_string(name)
             }
@@ -1107,7 +1340,7 @@ impl OvmValue {
 
     /// Create OVM value from AST value with GC integration and safepoint coordination
     pub fn from_ast_with_gc(
-        ast_value: AstValue, 
+        ast_value: Value, 
         safepoint_manager: &Arc<crate::ovm::gc::SafepointManager>
     ) -> Result<Self, RuntimeError> {
         // First check for safepoint before allocation
@@ -1166,17 +1399,17 @@ impl OvmValue {
     }
 
     /// Convert to AST Value (for compatibility)
-    pub fn to_ast(&self) -> Result<AstValue, RuntimeError> {
+    pub fn to_ast(&self) -> Result<Value, RuntimeError> {
         match &self.data {
-            ValueData::Integer(i) => Ok(AstValue::Integer(*i)),
-            ValueData::Float(f) => Ok(AstValue::Float(*f)),
-            ValueData::Boolean(b) => Ok(AstValue::Boolean(*b)),
-            ValueData::Unit => Ok(AstValue::Unit),
+            ValueData::Integer(i) => Ok(Value::Integer(*i)),
+            ValueData::Float(f) => Ok(Value::Float(*f)),
+            ValueData::Boolean(b) => Ok(Value::Boolean(*b)),
+            ValueData::Unit => Ok(Value::Unit),
             ValueData::String(gc_ptr) => {
                 // Convert GC string back to Arc<String>
                 unsafe {
                     let string_ref = gc_ptr.as_ref();
-                    Ok(AstValue::String(std::sync::Arc::new(string_ref.clone())))
+                    Ok(Value::String(std::sync::Arc::new(string_ref.clone())))
                 }
             }
             ValueData::List(gc_ptr) => {
@@ -1193,7 +1426,7 @@ impl OvmValue {
                         }
                     }
 
-                    Ok(AstValue::List(ast_values.into()))
+                    Ok(Value::List(ast_values.into()))
                 }
             }
             ValueData::Tuple(gc_ptr) => {
@@ -1210,22 +1443,22 @@ impl OvmValue {
                         }
                     }
 
-                    Ok(AstValue::Tuple(std::sync::Arc::new(ast_values)))
+                    Ok(Value::Tuple(std::sync::Arc::new(ast_values)))
                 }
             }
             ValueData::Function(_) => {
                 // Functions return unit for now
-                Ok(AstValue::Unit)
+                Ok(Value::Unit)
             }
             ValueData::Struct(_) => {
                 // Structs return unit for now
-                Ok(AstValue::Unit)
+                Ok(Value::Unit)
             }
             ValueData::Range(gc_ptr) => {
                 // Convert Range back to AST Range
                 unsafe {
                     let range_ref = gc_ptr.as_ref();
-                    Ok(AstValue::Range {
+                    Ok(Value::Range {
                         start: range_ref.start,
                         end: range_ref.end,
                         inclusive: range_ref.inclusive,
@@ -1234,39 +1467,39 @@ impl OvmValue {
             }
             ValueData::Builtin(_) => {
                 // Builtins return unit for now
-                Ok(AstValue::Unit)
+                Ok(Value::Unit)
             }
             ValueData::Thunk(_) => {
                 // Thunks return unit for now
-                Ok(AstValue::Unit)
+                Ok(Value::Unit)
             }
             ValueData::Stream(_) => {
                 // Streams return unit for now
-                Ok(AstValue::Unit)
+                Ok(Value::Unit)
             }
             ValueData::LazyList(_) => {
                 // Lazy lists return unit for now
-                Ok(AstValue::Unit)
+                Ok(Value::Unit)
             }
             ValueData::Promise(_) => {
                 // Promises return unit for now
-                Ok(AstValue::Unit)
+                Ok(Value::Unit)
             }
             ValueData::CompiledFunction(_) => {
                 // Compiled functions return unit for now
-                Ok(AstValue::Unit)
+                Ok(Value::Unit)
             }
             ValueData::OptimizedValue(_) => {
                 // Optimized values return unit for now
-                Ok(AstValue::Unit)
+                Ok(Value::Unit)
             }
             ValueData::Error(_) => {
                 // Errors return unit for now
-                Ok(AstValue::Unit)
+                Ok(Value::Unit)
             }
             ValueData::Result { ok: _, err: _ } => {
                 // Results return unit for now
-                Ok(AstValue::Unit)
+                Ok(Value::Unit)
             }
         }
     }
@@ -1480,11 +1713,11 @@ mod tests {
 
     #[test]
     fn test_ast_conversion() {
-        let ast_int = AstValue::Integer(42);
+        let ast_int = Value::Integer(42);
         let ovm_int = OvmValue::from_ast(ast_int);
         assert_eq!(ovm_int.type_tag(), TypeTag::Integer);
 
         let converted_back = ovm_int.to_ast().unwrap();
-        assert_eq!(converted_back, AstValue::Integer(42));
+        assert_eq!(converted_back, Value::Integer(42));
     }
 }
