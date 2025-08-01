@@ -1150,19 +1150,40 @@ impl PipelineEngine {
         &self,
         input: &[OvmValue],
         predicate: &str,
-        _simd_engine: &crate::ovm::simd::SimdEngine,
-        vector_size: usize,
+        simd_engine: &crate::ovm::simd::SimdEngine,
+        _vector_size: usize,
     ) -> Result<Vec<OvmValue>, PipelineError> {
-        // For simple predicates, use vectorized approach with chunking
-        let chunk_size = vector_size.max(4);
+        // Try to use SIMD for common filtering predicates
+        let simd_predicate = match predicate {
+            "positive" | ">0" | "is_positive" => "is_positive",
+            "negative" | "<0" | "is_negative" => "is_negative", 
+            "even" | "is_even" => "is_even",
+            "odd" | "is_odd" => "is_odd",
+            "nonzero" | "!=0" | "is_nonzero" => "is_nonzero",
+            _ => {
+                // Fall back to sequential processing for complex predicates
+                return self.sequential_filter_operation(input, predicate);
+            }
+        };
+        
+        // Use SIMD engine for vectorized filtering
+        let input_arrays = vec![input.to_vec()];
+        simd_engine
+            .vectorize_array_operation("filter", &input_arrays, Some(simd_predicate))
+            .map_err(|e| PipelineError::Failed(format!("SIMD filter operation failed: {}", e)))
+    }
+    
+    /// Sequential fallback for filter operations
+    fn sequential_filter_operation(
+        &self,
+        input: &[OvmValue],
+        predicate: &str,
+    ) -> Result<Vec<OvmValue>, PipelineError> {
         let mut result = Vec::new();
         
-        // Process in chunks for better cache efficiency
-        for chunk in input.chunks(chunk_size) {
-            for value in chunk {
-                if self.evaluate_predicate(value, predicate)? {
-                    result.push(value.clone());
-                }
+        for value in input {
+            if self.evaluate_predicate(value, predicate)? {
+                result.push(value.clone());
             }
         }
         
@@ -1185,8 +1206,8 @@ impl PipelineEngine {
         match func_name {
             "sum" | "+" => self.vectorized_sum_reduce(input, simd_engine),
             "product" | "*" => self.vectorized_product_reduce(input, simd_engine),
-            "max" => self.vectorized_max_reduce(input),
-            "min" => self.vectorized_min_reduce(input),
+            "max" => self.vectorized_max_reduce(input, simd_engine),
+            "min" => self.vectorized_min_reduce(input, simd_engine),
             _ => self.sequential_reduce_operation(input, func_name),
         }
     }
@@ -1195,119 +1216,52 @@ impl PipelineEngine {
     fn vectorized_sum_reduce(
         &self,
         input: &[OvmValue],
-        _simd_engine: &crate::ovm::simd::SimdEngine,
+        simd_engine: &crate::ovm::simd::SimdEngine,
     ) -> Result<Vec<OvmValue>, PipelineError> {
-        // Extract numeric values and use parallel reduction
-        let mut sum = 0.0;
-        let mut has_float = false;
-        let mut int_sum = 0i64;
-        
-        for value in input {
-            if let Ok(ast_value) = value.to_ast() {
-                match ast_value {
-                    crate::ast::Value::Integer(i) => {
-                        if !has_float {
-                            int_sum += i;
-                        } else {
-                            sum += i as f64;
-                        }
-                    }
-                    crate::ast::Value::Float(f) => {
-                        if !has_float {
-                            has_float = true;
-                            sum = int_sum as f64 + f;
-                        } else {
-                            sum += f;
-                        }
-                    }
-                    _ => return Err(PipelineError::Failed("Non-numeric value in sum reduce".to_string())),
-                }
-            }
-        }
-        
-        let result_value = if has_float {
-            OvmValue::from_ast(crate::ast::Value::Float(sum))
-        } else {
-            OvmValue::from_ast(crate::ast::Value::Integer(int_sum))
-        };
-        
-        Ok(vec![result_value])
+        // Use SIMD engine for vectorized sum reduction
+        let input_arrays = vec![input.to_vec()];
+        simd_engine
+            .vectorize_array_operation("reduce", &input_arrays, Some("sum"))
+            .map_err(|e| PipelineError::Failed(format!("SIMD sum reduction failed: {}", e)))
     }
     
     /// Vectorized product reduction
     fn vectorized_product_reduce(
         &self,
         input: &[OvmValue],
-        _simd_engine: &crate::ovm::simd::SimdEngine,
+        simd_engine: &crate::ovm::simd::SimdEngine,
     ) -> Result<Vec<OvmValue>, PipelineError> {
-        let mut product = 1.0;
-        let mut has_float = false;
-        let mut int_product = 1i64;
-        
-        for value in input {
-            if let Ok(ast_value) = value.to_ast() {
-                match ast_value {
-                    crate::ast::Value::Integer(i) => {
-                        if !has_float {
-                            int_product = int_product.saturating_mul(i);
-                        } else {
-                            product *= i as f64;
-                        }
-                    }
-                    crate::ast::Value::Float(f) => {
-                        if !has_float {
-                            has_float = true;
-                            product = int_product as f64 * f;
-                        } else {
-                            product *= f;
-                        }
-                    }
-                    _ => return Err(PipelineError::Failed("Non-numeric value in product reduce".to_string())),
-                }
-            }
-        }
-        
-        let result_value = if has_float {
-            OvmValue::from_ast(crate::ast::Value::Float(product))
-        } else {
-            OvmValue::from_ast(crate::ast::Value::Integer(int_product))
-        };
-        
-        Ok(vec![result_value])
+        // Use SIMD engine for vectorized product reduction
+        let input_arrays = vec![input.to_vec()];
+        simd_engine
+            .vectorize_array_operation("reduce", &input_arrays, Some("product"))
+            .map_err(|e| PipelineError::Failed(format!("SIMD product reduction failed: {}", e)))
     }
     
     /// Vectorized max reduction
-    fn vectorized_max_reduce(&self, input: &[OvmValue]) -> Result<Vec<OvmValue>, PipelineError> {
-        if input.is_empty() {
-            return Ok(vec![]);
-        }
-        
-        let mut max_value = &input[0];
-        
-        for value in &input[1..] {
-            if self.compare_values(value, max_value)? == std::cmp::Ordering::Greater {
-                max_value = value;
-            }
-        }
-        
-        Ok(vec![max_value.clone()])
+    fn vectorized_max_reduce(
+        &self, 
+        input: &[OvmValue], 
+        simd_engine: &crate::ovm::simd::SimdEngine
+    ) -> Result<Vec<OvmValue>, PipelineError> {
+        // Use SIMD engine for vectorized max reduction
+        let input_arrays = vec![input.to_vec()];
+        simd_engine
+            .vectorize_array_operation("reduce", &input_arrays, Some("max"))
+            .map_err(|e| PipelineError::Failed(format!("SIMD max reduction failed: {}", e)))
     }
     
     /// Vectorized min reduction
-    fn vectorized_min_reduce(&self, input: &[OvmValue]) -> Result<Vec<OvmValue>, PipelineError> {
-        if input.is_empty() {
-            return Ok(vec![]);
-        }
-        
-        let mut min_value = &input[0];
-        
-        for value in &input[1..] {
-            if self.compare_values(value, min_value)? == std::cmp::Ordering::Less {
-                min_value = value;
-            }
-        }
-        
-        Ok(vec![min_value.clone()])
+    fn vectorized_min_reduce(
+        &self, 
+        input: &[OvmValue], 
+        simd_engine: &crate::ovm::simd::SimdEngine
+    ) -> Result<Vec<OvmValue>, PipelineError> {
+        // Use SIMD engine for vectorized min reduction
+        let input_arrays = vec![input.to_vec()];
+        simd_engine
+            .vectorize_array_operation("reduce", &input_arrays, Some("min"))
+            .map_err(|e| PipelineError::Failed(format!("SIMD min reduction failed: {}", e)))
     }
     
     /// Sequential reduce operation fallback

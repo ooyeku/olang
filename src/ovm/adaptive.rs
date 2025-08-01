@@ -125,6 +125,12 @@ pub struct ExecutionMetrics {
     pub compilation_success_rate: f64,
     pub deoptimization_rate: f64,
     pub gc_pressure: f64,
+    // SIMD-specific metrics
+    pub simd_operations_per_second: f64,
+    pub simd_vectorization_ratio: f64, // percentage of operations that were vectorized
+    pub simd_speedup_factor: f64,      // actual speedup achieved
+    pub simd_cache_efficiency: f64,    // how well SIMD operations utilize cache
+    pub simd_fallback_rate: f64,       // percentage of operations that fell back to scalar
 }
 
 /// Memory performance metrics
@@ -555,6 +561,103 @@ impl AdaptiveOptimizationSystem {
                 .unwrap_or(0),
         }
     }
+
+    /// Update SIMD metrics for adaptive optimization
+    pub fn update_simd_metrics(
+        &self,
+        vectorization_ratio: f64,
+        speedup_factor: f64,
+        cache_efficiency: f64,
+        fallback_rate: f64,
+        operations_per_second: f64,
+    ) -> Result<(), AdaptiveError> {
+        // Update execution metrics with SIMD data
+        if let Ok(mut execution_metrics) = 
+            self.performance_monitor.execution_metrics.write() {
+            execution_metrics.simd_vectorization_ratio = vectorization_ratio;
+            execution_metrics.simd_speedup_factor = speedup_factor;
+            execution_metrics.simd_cache_efficiency = cache_efficiency;
+            execution_metrics.simd_fallback_rate = fallback_rate;
+            execution_metrics.simd_operations_per_second = operations_per_second;
+        }
+
+        // Analyze SIMD performance and suggest optimizations
+        self.analyze_simd_performance(vectorization_ratio, speedup_factor, fallback_rate)
+    }
+
+    /// Analyze SIMD performance and suggest optimizations
+    fn analyze_simd_performance(
+        &self,
+        vectorization_ratio: f64,
+        speedup_factor: f64,
+        fallback_rate: f64,
+    ) -> Result<(), AdaptiveError> {
+        // Poor vectorization - suggest increasing vector size thresholds
+        if vectorization_ratio < 0.5 {
+            if let Ok(mut reconfig) = self.dynamic_reconfig.lock() {
+                reconfig.suggest_simd_optimization(SimdOptimization::IncreaseVectorThreshold);
+            }
+        }
+
+        // High fallback rate - suggest algorithm changes
+        if fallback_rate > 0.3 {
+            if let Ok(mut reconfig) = self.dynamic_reconfig.lock() {
+                reconfig.suggest_simd_optimization(SimdOptimization::OptimizeDataAlignment);
+            }
+        }
+
+        // Low speedup - suggest hardware-specific optimizations
+        if speedup_factor < 2.0 {
+            if let Ok(mut reconfig) = self.dynamic_reconfig.lock() {
+                reconfig.suggest_simd_optimization(SimdOptimization::TuneVectorWidth);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get SIMD optimization recommendations based on runtime metrics
+    pub fn get_simd_recommendations(&self) -> Result<Vec<SimdOptimization>, AdaptiveError> {
+        let mut recommendations = Vec::new();
+
+        if let Ok(execution_metrics) = self.performance_monitor.execution_metrics.read() {
+            // Analyze current SIMD performance
+            let vectorization_ratio = execution_metrics.simd_vectorization_ratio;
+            let speedup_factor = execution_metrics.simd_speedup_factor;
+            let cache_efficiency = execution_metrics.simd_cache_efficiency;
+            let fallback_rate = execution_metrics.simd_fallback_rate;
+
+            // Generate specific recommendations based on metrics
+            if vectorization_ratio < 0.6 {
+                recommendations.push(SimdOptimization::IncreaseVectorThreshold);
+            }
+
+            if cache_efficiency < 0.7 {
+                recommendations.push(SimdOptimization::OptimizeDataAlignment);
+            }
+
+            if speedup_factor < 3.0 && fallback_rate < 0.2 {
+                recommendations.push(SimdOptimization::TuneVectorWidth);
+            }
+
+            if fallback_rate > 0.4 {
+                recommendations.push(SimdOptimization::ImproveDataTypes);
+            }
+        }
+
+        Ok(recommendations)
+    }
+}
+
+/// SIMD-specific optimization recommendations
+#[derive(Debug, Clone, PartialEq)]
+pub enum SimdOptimization {
+    IncreaseVectorThreshold,  // Increase minimum array size for vectorization
+    OptimizeDataAlignment,    // Improve memory alignment for better cache performance
+    TuneVectorWidth,         // Adjust vector width based on hardware capabilities
+    ImproveDataTypes,        // Suggest better data type choices for vectorization
+    EnableLoopUnrolling,     // Unroll loops for better SIMD utilization
+    OptimizeMemoryAccess,    // Improve memory access patterns
 }
 
 /// Status of the adaptive optimization system
@@ -719,6 +822,37 @@ impl DynamicReconfigurationEngine {
 
     pub fn get_adaptation_count(&self) -> u64 {
         self.config_history.len() as u64
+    }
+
+    /// Suggest SIMD-specific optimizations
+    pub fn suggest_simd_optimization(&mut self, optimization: SimdOptimization) {
+        // Log the suggestion (in a real implementation, this would trigger actual optimizations)
+        match optimization {
+            SimdOptimization::IncreaseVectorThreshold => {
+                // Increase the minimum array size threshold for vectorization
+                // This would update the SIMD engine configuration
+            }
+            SimdOptimization::OptimizeDataAlignment => {
+                // Suggest better memory alignment strategies
+                // This would adjust memory allocation patterns
+            }
+            SimdOptimization::TuneVectorWidth => {
+                // Optimize vector width based on current hardware
+                // This would adjust SIMD vector sizes
+            }
+            SimdOptimization::ImproveDataTypes => {
+                // Suggest data type optimizations for better vectorization
+                // This would recommend specific numeric types
+            }
+            SimdOptimization::EnableLoopUnrolling => {
+                // Enable loop unrolling for better SIMD utilization
+                // This would adjust compilation flags
+            }
+            SimdOptimization::OptimizeMemoryAccess => {
+                // Optimize memory access patterns for SIMD
+                // This would suggest prefetching and caching strategies
+            }
+        }
     }
 }
 
