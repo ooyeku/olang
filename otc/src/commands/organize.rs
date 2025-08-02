@@ -253,9 +253,28 @@ fn find_common_prefixes(functions: &[String]) -> Vec<String> {
 
 fn generate_suggestions(
     files: &[FileAnalysis],
-    _dependency_graph: &HashMap<String, Vec<String>>,
+    dependency_graph: &HashMap<String, Vec<String>>,
 ) -> Vec<OrganizationSuggestion> {
     let mut suggestions = Vec::new();
+    
+    // Check for circular dependencies and suggest fixes
+    for (module, deps) in dependency_graph {
+        for dep in deps {
+            if let Some(dep_deps) = dependency_graph.get(dep) {
+                if dep_deps.contains(module) {
+                    suggestions.push(OrganizationSuggestion {
+                        suggestion_type: SuggestionType::BreakCircularDep,
+                        description: format!(
+                            "Break circular dependency between '{}' and '{}'", 
+                            module, dep
+                        ),
+                        files_involved: vec![module.clone(), dep.clone()],
+                        priority: Priority::High,
+                    });
+                }
+            }
+        }
+    }
 
     // Suggest moving related files to folders
     for file in files {
@@ -341,7 +360,7 @@ fn generate_suggestions(
 
 fn calculate_metrics(
     files: &[FileAnalysis],
-    _dependency_graph: &HashMap<String, Vec<String>>,
+    dependency_graph: &HashMap<String, Vec<String>>,
 ) -> OrganizationMetrics {
     let total_files = files.len();
     let avg_coupling = if total_files > 0 {
@@ -358,6 +377,9 @@ fn calculate_metrics(
     
     let large_files = files.iter().filter(|f| f.shared_functions.len() > 8).count();
     
+    // Detect circular dependencies
+    let circular_deps = detect_circular_dependencies(dependency_graph);
+    
     // Simple organization score (higher is better)
     let organization_score = (avg_cohesion * 0.6 + (1.0 - avg_coupling) * 0.4) * 100.0;
 
@@ -365,10 +387,51 @@ fn calculate_metrics(
         total_files,
         avg_coupling,
         avg_cohesion,
-        circular_deps: 0, // TODO: Implement circular dependency detection
+        circular_deps,
         large_files,
         organization_score,
     }
+}
+
+fn detect_circular_dependencies(dependency_graph: &HashMap<String, Vec<String>>) -> usize {
+    let mut cycles = 0;
+    let mut visited = HashSet::new();
+    let mut rec_stack = HashSet::new();
+    
+    for module in dependency_graph.keys() {
+        if !visited.contains(module) {
+            if has_cycle_dfs(module, dependency_graph, &mut visited, &mut rec_stack) {
+                cycles += 1;
+            }
+        }
+    }
+    
+    cycles
+}
+
+fn has_cycle_dfs(
+    module: &str,
+    graph: &HashMap<String, Vec<String>>,
+    visited: &mut HashSet<String>,
+    rec_stack: &mut HashSet<String>,
+) -> bool {
+    visited.insert(module.to_string());
+    rec_stack.insert(module.to_string());
+    
+    if let Some(dependencies) = graph.get(module) {
+        for dep in dependencies {
+            if !visited.contains(dep) {
+                if has_cycle_dfs(dep, graph, visited, rec_stack) {
+                    return true;
+                }
+            } else if rec_stack.contains(dep) {
+                return true;
+            }
+        }
+    }
+    
+    rec_stack.remove(module);
+    false
 }
 
 fn display_organization_suggestions(analysis: &OrganizationAnalysis, verbose: bool) {
@@ -381,6 +444,7 @@ fn display_organization_suggestions(analysis: &OrganizationAnalysis, verbose: bo
     println!("  Files: {}", analysis.metrics.total_files);
     println!("  Average coupling: {:.2}", analysis.metrics.avg_coupling);
     println!("  Average cohesion: {:.2}", analysis.metrics.avg_cohesion);
+    println!("  Circular dependencies: {}", analysis.metrics.circular_deps);
     println!("  Large files (>8 functions): {}", analysis.metrics.large_files);
     println!("  Organization score: {:.1}/100", analysis.metrics.organization_score);
     println!();
@@ -406,6 +470,10 @@ fn display_organization_suggestions(analysis: &OrganizationAnalysis, verbose: bo
         println!("\nHigh Priority:");
         for suggestion in high_priority {
             println!("  • {}", suggestion.description);
+            if verbose && !suggestion.files_involved.is_empty() {
+                println!("    Files: {}", suggestion.files_involved.join(", "));
+                println!("    Type: {:?}", suggestion.suggestion_type);
+            }
         }
     }
 
@@ -413,6 +481,10 @@ fn display_organization_suggestions(analysis: &OrganizationAnalysis, verbose: bo
         println!("\nMedium Priority:");
         for suggestion in &medium_priority {
             println!("  • {}", suggestion.description);
+            if verbose && !suggestion.files_involved.is_empty() {
+                println!("    Files: {}", suggestion.files_involved.join(", "));
+                println!("    Type: {:?}", suggestion.suggestion_type);
+            }
         }
     }
 
@@ -421,10 +493,27 @@ fn display_organization_suggestions(analysis: &OrganizationAnalysis, verbose: bo
         println!("\nLow Priority:");
         for suggestion in &low_priority {
             println!("  • {}", suggestion.description);
+            if !suggestion.files_involved.is_empty() {
+                println!("    Files: {}", suggestion.files_involved.join(", "));
+                println!("    Type: {:?}", suggestion.suggestion_type);
+            }
         }
     }
 
     if !verbose && (has_low_priority || !medium_priority.is_empty()) {
-        println!("\nUse --verbose to see all suggestions");
+        println!("\nUse --verbose to see all suggestions and detailed file information");
+    }
+    
+    // Show detailed file analysis in verbose mode
+    if verbose && !analysis.files.is_empty() {
+        println!("\n=== Detailed File Analysis ===");
+        for file in &analysis.files {
+            println!("\nFile: {} ({})", file.module_name, file.path.display());
+            println!("  Functions: {}", file.shared_functions.len());
+            println!("  Dependencies: {} -> [{}]", file.dependencies.len(), file.dependencies.join(", "));
+            println!("  Dependents: {} <- [{}]", file.dependents.len(), file.dependents.join(", "));
+            println!("  Coupling: {:.2}", file.coupling_score);
+            println!("  Cohesion: {:.2}", file.cohesion_score);
+        }
     }
 } 

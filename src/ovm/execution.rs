@@ -424,11 +424,22 @@ impl ExecutionEngine {
         self.ast_value_to_ovm(&ast_result)
     }
 
-    /// Convert AST value to OVM value
+    /// Convert AST value to OVM value with proper GC integration
     fn ast_value_to_ovm(&self, value: &Value) -> Result<OvmValue, ExecutionError> {
-        // For now, use a simple conversion
-        // TODO: Implement proper OVM value creation with GC integration
-        Ok(OvmValue::from_ast(value.clone()))
+        // Create OVM value with proper GC integration and metadata
+        let ovm_value = OvmValue::from_ast_with_gc(value.clone(), &self.safepoint_manager)
+            .map_err(|e| ExecutionError::ConversionError(format!("GC integration failed: {:?}", e)))?;
+        
+        // Update allocation statistics for GC triggering
+        self.safepoint_manager.record_allocation(std::mem::size_of::<OvmValue>());
+        
+        // Check if we should trigger GC collection
+        if self.safepoint_manager.should_collect() {
+            // Perform safepoint-coordinated GC if threshold reached
+            self.safepoint_manager.request_collection();
+        }
+        
+        Ok(ovm_value)
     }
 
     /// Convert OVM value to AST value

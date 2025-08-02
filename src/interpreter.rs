@@ -2770,15 +2770,32 @@ impl Interpreter {
     }
     
     /// Bind module imports to current environment
-    fn bind_module_imports(&mut self, module: &Value, items: &Option<Vec<String>>) -> Result<(), InterpreterError> {
+    fn bind_module_imports(&mut self, module: &Value, items: &Option<Vec<crate::ast::UseItem>>) -> Result<(), InterpreterError> {
         match items {
             Some(item_list) => {
-                // Import specific items: use module { func1, func2 }
-                for item in item_list {
-                    if let Some(value) = self.get_module_export(module, item) {
-                        self.environment.define(item.clone(), value);
-                        crate::log::get_logger().debug("interpreter", &format!("Imported {} from module", item));
+                // Check for wildcard imports
+                let has_wildcard = item_list.iter().any(|item| matches!(item, crate::ast::UseItem::Wildcard));
+                
+                if has_wildcard {
+                    // Import all shared objects from the module
+                    if let Value::Struct { fields, .. } = module {
+                        for (name, value) in fields {
+                            self.environment.define(name.clone(), value.clone());
+                            crate::log::get_logger().debug("interpreter", &format!("Wildcard imported {} from module", name));
+                        }
                     } else {
+                        return Err(InterpreterError::RuntimeError {
+                            message: "Cannot perform wildcard import on non-struct module".to_string(),
+                        });
+                    }
+                } else {
+                    // Import specific items: use module { func1, func2 }
+                    for item in item_list {
+                        if let crate::ast::UseItem::Specific(item_name) = item {
+                            if let Some(value) = self.get_module_export(module, item_name) {
+                                self.environment.define(item_name.clone(), value);
+                                crate::log::get_logger().debug("interpreter", &format!("Imported {} from module", item_name));
+                            } else {
                         // Feature 9: Enhanced function not found error with suggestions
                         let mut available_functions = Vec::new();
                         let current_file = self.current_module_path.clone();
@@ -2789,7 +2806,7 @@ impl Interpreter {
                         }
                         
                         // Generate suggestions for the missing function
-                        let suggestions = self.error_formatter.generate_suggestions(item, &available_functions);
+                        let suggestions = self.error_formatter.generate_suggestions(item_name, &available_functions);
                         
                         // Get the module path from the current context
                         let module_path = self.current_module_path
@@ -2798,12 +2815,14 @@ impl Interpreter {
                             .unwrap_or_else(|| "unknown_module".to_string());
                         
                         return Err(InterpreterError::FunctionNotFoundInModule {
-                            function_name: item.clone(),
+                            function_name: item_name.clone(),
                             module_path,
                             available_functions,
                             suggestions,
                             file_path: current_file,
                         });
+                            }
+                        }
                     }
                 }
             }
@@ -3167,9 +3186,21 @@ impl Interpreter {
                                 let module = self.load_module_from_file(&dep_module_path)?;
                                 
                                 // Re-export the specified items
-                                for item_name in &use_decl.items {
-                                    if let Some(value) = self.get_module_export(&module, item_name) {
-                                        exports.insert(item_name.clone(), value);
+                                for item in &use_decl.items {
+                                    match item {
+                                        crate::ast::UseItem::Specific(name) => {
+                                            if let Some(value) = self.get_module_export(&module, name) {
+                                                exports.insert(name.clone(), value);
+                                            }
+                                        }
+                                        crate::ast::UseItem::Wildcard => {
+                                            // For wildcard re-exports, import all exports from the module
+                                            if let Value::Struct { fields, .. } = &module {
+                                                for (name, value) in fields {
+                                                    exports.insert(name.clone(), value.clone());
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -3616,8 +3647,17 @@ impl Interpreter {
                         }
                         ShareDecl::Use(use_decl) => {
                             // Add re-shared items to exports
-                            for item_name in &use_decl.items {
-                                exports.push(item_name.clone());
+                            for item in &use_decl.items {
+                                match item {
+                                    crate::ast::UseItem::Specific(name) => {
+                                        exports.push(name.clone());
+                                    }
+                                    crate::ast::UseItem::Wildcard => {
+                                        // Wildcard re-exports would need to be resolved at runtime
+                                        // For now, we don't add anything to exports for wildcards
+                                        // in re-export context
+                                    }
+                                }
                             }
                         }
                     }

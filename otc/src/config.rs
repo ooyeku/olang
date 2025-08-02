@@ -190,6 +190,7 @@ impl OlangProject {
     }
 
     /// Save configuration to file
+    #[allow(dead_code)]
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let content = toml::to_string_pretty(self)
             .with_context(|| "Failed to serialize project configuration")?;
@@ -308,6 +309,7 @@ impl OlangProject {
     }
 
     /// Create a new project configuration with minimal required fields
+    #[allow(dead_code)]
     pub fn new(name: String, project_type: String) -> Self {
         Self {
             project: ProjectInfo {

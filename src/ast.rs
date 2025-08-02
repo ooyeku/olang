@@ -883,11 +883,18 @@ pub enum ShareDecl {
     Use(UseDecl), // Transitive sharing: share use module { items }
 }
 
+// Use item enum for specific imports or wildcard
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum UseItem {
+    Specific(String),
+    Wildcard,
+}
+
 // New UseDecl struct
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UseDecl {
     pub path: Vec<String>,
-    pub items: Vec<String>,
+    pub items: Vec<UseItem>,
 }
 
 // Test declaration struct

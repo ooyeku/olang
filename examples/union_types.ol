@@ -16,9 +16,9 @@ share fn format_status(status) -> String = {
 // Shape calculation with discriminated unions
 share fn calculate_area(shape) -> Float = {
     match shape {
-        { type: "circle", radius } => 3.14159 * radius * radius,
-        { type: "rectangle", width, height } => width * height,
-        { type: "triangle", base, height } => 0.5 * base * height,
+        { shapetype: "circle", radius: radius } => 3.14159 * radius * radius,
+        { shapetype: "rectangle", width: width, height: height } => width * height,
+        { shapetype: "triangle", base: base, height: height } => 0.5 * base * height,
         _ => 0.0
     }
 }
@@ -26,8 +26,8 @@ share fn calculate_area(shape) -> Float = {
 // API result handling
 fn handle_api_result(result) -> String = {
     match result {
-        { success: true, data, timestamp } => `Success at ${timestamp}: ${data}`,
-        { success: false, error, code } => `Error ${code}: ${error}`,
+        { success: true, data: data, timestamp: timestamp } => `Success at ${timestamp}: ${data}`,
+        { success: false, errormsg: errormsg, code: code } => `Error ${code}: ${errormsg}`,
         _ => "Unknown result format"
     }
 }
@@ -35,9 +35,9 @@ fn handle_api_result(result) -> String = {
 // Working with flexible data types using discriminated unions
 fn process_value(value) -> String = {
     match value {
-        { type: "string", value } => `String: "${value}"`,
-        { type: "int", value } => `Integer: ${value}`,
-        { type: "float", value } => `Float: ${value}`,
+        { valuetype: "string", value: value } => `String: "${value}"`,
+        { valuetype: "int", value: value } => `Integer: ${value}`,
+        { valuetype: "float", value: value } => `Float: ${value}`,
         _ => "Unknown value type"
     }
 }
@@ -45,9 +45,9 @@ fn process_value(value) -> String = {
 // HTTP response handling
 fn handle_http_response(response) -> String = {
     match response {
-        { status: 200, body, headers } => `OK: ${body}`,
-        { status: 404, message } => `Not found: ${message}`,
-        { status: 500, message, debug_info } => `Server error: ${message} (${debug_info})`,
+        { status: 200, body: body, headers: headers } => `OK: ${body}`,
+        { status: 404, message: message } => `Not found: ${message}`,
+        { status: 500, message: message, debuginfo: debuginfo } => `Server error: ${message} (${debuginfo})`,
         _ => "Unknown response format"
     }
 }
@@ -55,16 +55,16 @@ fn handle_http_response(response) -> String = {
 // Database operation results
 fn process_db_result(result) -> String = {
     match result {
-        { success: true, data, affected_rows } => {
-            `Database operation successful: ${affected_rows} rows affected`
+        { success: true, data: data, affectedrows: affectedrows } => {
+            `Database operation successful: ${affectedrows} rows affected`
         },
-        { success: false, error_type: "connection", message } => {
+        { success: false, errortype: "connection", message: message } => {
             `Connection error: ${message}`
         },
-        { success: false, error_type: "syntax", message } => {
+        { success: false, errortype: "syntax", message: message } => {
             `SQL syntax error: ${message}`
         },
-        { success: false, error_type: "permission", message } => {
+        { success: false, errortype: "permission", message: message } => {
             `Permission denied: ${message}`
         },
         _ => "Unknown database result"
@@ -74,7 +74,7 @@ fn process_db_result(result) -> String = {
 // User authentication system
 fn handle_auth(auth) -> String = {
     match auth {
-        { authenticated: true, user, token, expires } => {
+        { authenticated: true, user: user, token: token, expires: expires } => {
             `Welcome ${user.username}! Token expires: ${expires}`
         },
         { authenticated: false, reason: "invalid_credentials" } => {
@@ -91,54 +91,54 @@ fn handle_auth(auth) -> String = {
 }
 
 // Example usage
-let task_status = "running"
-println(format_status(task_status))  // In Progress
+let taskstatus = "running"
+println(format_status(taskstatus))  // In Progress
 
-let circle = { type: "circle", radius: 5.0 }
+let circle = { shapetype: "circle", radius: 5.0 }
 let area = calculate_area(circle)
 println(`Circle area: ${area}`)  // Circle area: 78.53975
 
-let api_success = {
+let apisuccess = {
     success: true,
     data: "User data retrieved",
     timestamp: "2024-01-15T10:30:00Z"
 }
 
-let api_error = {
+let apierror = {
     success: false,
-    error: "Database connection failed",
+    errormsg: "Database connection failed",
     code: 500
 }
 
-println(handle_api_result(api_success))
-println(handle_api_result(api_error))
+println(handle_api_result(apisuccess))
+println(handle_api_result(apierror))
 
 // Test StringOrNumber with discriminated unions
-let string_value = { type: "string", value: "Hello World" }
-let int_value = { type: "int", value: 42 }
-let float_value = { type: "float", value: 3.14159 }
+let stringvalue = { valuetype: "string", value: "Hello World" }
+let intvalue = { valuetype: "int", value: 42 }
+let floatvalue = { valuetype: "float", value: 3.14159 }
 
-println(process_value(string_value))   // String: "Hello World"
-println(process_value(int_value))      // Integer: 42
-println(process_value(float_value))    // Float: 3.14159
+println(process_value(stringvalue))   // String: "Hello World"
+println(process_value(intvalue))      // Integer: 42
+println(process_value(floatvalue))    // Float: 3.14159
 
 // HTTP response examples
-let success_response = { 
+let successresponse = { 
     status: 200, 
     body: "Welcome to the API!", 
     headers: ["Content-Type: application/json"] 
 }
 
-let not_found = { 
+let notfound = { 
     status: 404, 
     message: "Resource not found" 
 }
 
-println(handle_http_response(success_response))
-println(handle_http_response(not_found))
+println(handle_http_response(successresponse))
+println(handle_http_response(notfound))
 
 // Authentication examples  
-let successful_auth = {
+let successfulauth = {
     authenticated: true,
     user: { 
         id: 123,
@@ -149,10 +149,10 @@ let successful_auth = {
     expires: "2024-12-31T23:59:59Z"
 }
 
-let failed_auth = {
+let failedauth = {
     authenticated: false,
     reason: "invalid_credentials"
 }
 
-println(handle_auth(successful_auth))
-println(handle_auth(failed_auth)) 
+println(handle_auth(successfulauth))
+println(handle_auth(failedauth)) 
