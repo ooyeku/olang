@@ -141,7 +141,7 @@ pub enum PipelineOp {
 /// Data types for pipeline optimization
 #[allow(dead_code)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-enum DataType {
+pub enum DataType {
     Integer,
     Float,
     Boolean,
@@ -293,6 +293,7 @@ impl LoadBalancer {
     }
     
     /// Update worker load information
+    #[allow(dead_code)]
     pub fn update_worker_load(&mut self, worker_id: usize, load: f64) {
         if worker_id < self.worker_loads.len() {
             self.worker_loads[worker_id] = load;
@@ -301,6 +302,7 @@ impl LoadBalancer {
     }
     
     /// Get the least loaded worker
+    #[allow(dead_code)]
     pub fn get_least_loaded_worker(&self) -> usize {
         self.worker_loads
             .iter()
@@ -311,6 +313,7 @@ impl LoadBalancer {
     }
     
     /// Get average system load
+    #[allow(dead_code)]
     pub fn get_average_load(&self) -> f64 {
         if self.worker_loads.is_empty() {
             0.0
@@ -320,11 +323,13 @@ impl LoadBalancer {
     }
     
     /// Check if the system is overloaded
+    #[allow(dead_code)]
     pub fn is_overloaded(&self, threshold: f64) -> bool {
         self.get_average_load() > threshold
     }
     
     /// Record current loads in history
+    #[allow(dead_code)]
     pub fn record_snapshot(&mut self) {
         let snapshot = self.worker_loads.clone();
         
@@ -337,6 +342,7 @@ impl LoadBalancer {
     }
     
     /// Get load trend (positive = increasing, negative = decreasing)
+    #[allow(dead_code)]
     pub fn get_load_trend(&self) -> f64 {
         if self.load_history.len() < 2 {
             return 0.0;
@@ -3110,6 +3116,7 @@ impl PipelineFusionOptimizer {
         }
     }
 
+    #[allow(dead_code)]
     fn apply_fusion(&self, operations: Vec<PipelineOp>) -> Result<Vec<PipelineOp>, PipelineError> {
         // For now, return operations as-is
         // TODO: Implement fusion optimization
@@ -3129,6 +3136,7 @@ impl ParallelProcessor {
     }
     
     /// Process data in parallel using work stealing
+    #[allow(dead_code)]
     pub fn process_parallel_with_work_stealing(
         &self,
         input: Vec<OvmValue>,
@@ -3157,6 +3165,7 @@ impl ParallelProcessor {
         Ok(results)
     }
     
+    #[allow(dead_code)]
     fn find_work(
         &self,
         global_queue: &crossbeam::deque::Injector<Vec<OvmValue>>,
@@ -3180,6 +3189,7 @@ impl ParallelProcessor {
         None
     }
     
+    #[allow(dead_code)]
     fn apply_operation_parallel(
         &self,
         operation: &PipelineOp,
@@ -3304,6 +3314,7 @@ impl ThreadPool {
     }
     
     /// Shutdown the thread pool gracefully
+    #[allow(dead_code)]
     pub fn shutdown(&self) {
         use std::sync::atomic::Ordering;
         self.shutdown.store(true, Ordering::Relaxed);

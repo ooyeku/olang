@@ -1393,15 +1393,15 @@ impl CraneliftJitCompiler {
     /// Generate SIMD-optimized map square operation
     fn generate_simd_map_square(
         builder: &mut FunctionBuilder,
-        args_ptr: cranelift::prelude::Value,
+        _args_ptr: cranelift::prelude::Value,
         args_count: cranelift::prelude::Value,
         ir_context: &CodegenContext,
     ) -> Result<(), OptimizationError> {
         // Create basic blocks for SIMD and scalar processing
         let simd_block = builder.create_block();
         let scalar_block = builder.create_block();
-        let remainder_block = builder.create_block();
-        let exit_block = builder.create_block();
+        let _remainder_block = builder.create_block();
+        let _exit_block = builder.create_block();
 
         // Check if array length is suitable for SIMD processing (>= 4 elements)
         let min_simd_size = builder.ins().iconst(ir_context.int_type, 4);
@@ -1415,11 +1415,11 @@ impl CraneliftJitCompiler {
         // Load vectors of 4 f64 values and square them using SIMD
         // This is a simplified example - real implementation would iterate through the array
         let vector_size = builder.ins().iconst(ir_context.int_type, 4);
-        let simd_iterations = builder.ins().udiv(args_count, vector_size);
+        let _simd_iterations = builder.ins().udiv(args_count, vector_size);
         
         // Create a simple loop for SIMD processing
         let loop_block = builder.create_block();
-        let loop_exit = builder.create_block();
+        let _loop_exit = builder.create_block();
         
         builder.ins().jump(loop_block, &[]);
         builder.switch_to_block(loop_block);

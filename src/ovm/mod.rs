@@ -721,6 +721,7 @@ impl OlangVirtualMachine {
     }
 
     /// Create a lazy list (simplified implementation)
+    #[allow(dead_code)]
     fn create_lazy_list(&mut self, _items: Vec<execution::OvmExpr>) -> Result<OvmValue, OvmError> {
         use crate::ovm::value::{LazyListObject, TransformationChain, TypeTag, LazyState, ExecutionTier, ValueHeader, ValueData, GcPtr};
         use std::sync::atomic::AtomicU32;

@@ -1910,7 +1910,7 @@ impl SimdEngine {
         let mut b_f64 = Vec::with_capacity(b.len());
         let mut c_f64 = Vec::with_capacity(c.len());
 
-        for (((a_val, b_val), c_val)) in a.iter().zip(b.iter()).zip(c.iter()) {
+        for ((a_val, b_val), c_val) in a.iter().zip(b.iter()).zip(c.iter()) {
             let a_f = self.extract_f64(a_val).ok_or_else(|| {
                 SimdError::VectorizationFailed("Non-numeric value in array A".to_string())
             })?;

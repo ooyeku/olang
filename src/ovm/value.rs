@@ -1190,7 +1190,14 @@ impl OvmValue {
                     current_position: None, // Will be set during iteration
                 };
 
-                let ptr = Box::into_raw(Box::new(range_obj));
+                let boxed_range = match std::panic::catch_unwind(|| Box::new(range_obj)) {
+                    Ok(boxed) => boxed,
+                    Err(_) => {
+                        // Box allocation failed, create a simple range value instead
+                        return Self::new_unit(); // Fallback to unit value
+                    }
+                };
+                let ptr = Box::into_raw(boxed_range);
                 let gc_ptr = GcPtr::new(ptr);
 
                 Self {
@@ -1215,7 +1222,11 @@ impl OvmValue {
                     fields: struct_fields,
                 };
 
-                let ptr = Box::into_raw(Box::new(struct_obj));
+                let boxed_struct = match std::panic::catch_unwind(|| Box::new(struct_obj)) {
+                    Ok(boxed) => boxed,
+                    Err(_) => return Self::new_unit(),
+                };
+                let ptr = Box::into_raw(boxed_struct);
                 let gc_ptr = GcPtr::new(ptr);
 
                 Self {
