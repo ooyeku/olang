@@ -694,9 +694,9 @@ impl OlangVirtualMachine {
         let generator = GeneratorFunction::Range { start, end, step };
         
         let stream_obj = StreamObject {
-            generator,
-            buffer: Vec::new(),
-            buffer_position: 0,
+            generator: Mutex::new(generator),
+            buffer: Mutex::new(Vec::new()),
+            buffer_position: Mutex::new(0),
             is_infinite: false,
             chunk_size: 64, // Reasonable chunk size
         };
@@ -733,8 +733,8 @@ impl OlangVirtualMachine {
         let lazy_list_obj = LazyListObject {
             source: Box::new(source_value),
             transformation: TransformationChain::Identity,
-            materialized_prefix: Vec::new(),
-            materialization_point: 0,
+            materialized_prefix: Mutex::new(Vec::new()),
+            materialization_point: Mutex::new(0),
         };
 
         let lazy_list_ptr = GcPtr::new(Box::into_raw(Box::new(lazy_list_obj)));

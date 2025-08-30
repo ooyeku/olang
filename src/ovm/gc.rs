@@ -805,12 +805,12 @@ impl ConcurrentMarkingEngine {
     }
 
     fn mark_object(&self, object: GcPtr<ValueHeader>) -> Result<(), GcError> {
-        unsafe {
-            // Validate pointer before dereferencing
-            if object.as_ptr().is_null() {
-                return Err(GcError::InvalidReference);
-            }
+        // Validate pointer before entering unsafe block
+        if object.as_ptr().is_null() {
+            return Err(GcError::InvalidReference);
+        }
 
+        unsafe {
             let header = &*object.as_ptr();
 
             // Check if already marked to avoid cycles
@@ -866,14 +866,14 @@ impl ConcurrentMarkingEngine {
         &self,
         object: GcPtr<ValueHeader>,
     ) -> Result<Vec<GcPtr<ValueHeader>>, GcError> {
+        // Validate object pointer before entering unsafe block
+        if object.as_ptr().is_null() {
+            return Err(GcError::InvalidReference);
+        }
+
         let mut references = Vec::new();
 
         unsafe {
-            // Validate object pointer
-            if object.as_ptr().is_null() {
-                return Err(GcError::InvalidReference);
-            }
-
             let header = &*object.as_ptr();
 
             // Check object size and bounds before accessing data
@@ -960,9 +960,12 @@ impl ConcurrentMarkingEngine {
                             references.push(ref_ptr);
                         }
                     }
-                    if let Some(ref value) = &thunk.memoized_value {
-                        if let Some(ref_ptr) = self.extract_gc_reference_safe(value) {
-                            references.push(ref_ptr);
+                    // Handle memoized value (now behind a Mutex)
+                    if let Ok(memoized_guard) = thunk.memoized_value.lock() {
+                        if let Some(ref value) = &*memoized_guard {
+                            if let Some(ref_ptr) = self.extract_gc_reference_safe(value) {
+                                references.push(ref_ptr);
+                            }
                         }
                     }
                     // Safely handle dependencies
@@ -982,9 +985,12 @@ impl ConcurrentMarkingEngine {
                     if let Some(ref_ptr) = self.extract_gc_reference_safe(&lazy_list.source) {
                         references.push(ref_ptr);
                     }
-                    for value in &lazy_list.materialized_prefix {
-                        if let Some(ref_ptr) = self.extract_gc_reference_safe(value) {
-                            references.push(ref_ptr);
+                    // Handle materialized_prefix (now behind a Mutex)
+                    if let Ok(materialized_guard) = lazy_list.materialized_prefix.lock() {
+                        for value in &*materialized_guard {
+                            if let Some(ref_ptr) = self.extract_gc_reference_safe(value) {
+                                references.push(ref_ptr);
+                            }
                         }
                     }
                 }

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::ast::{Expr, Value};
 
@@ -343,7 +343,7 @@ impl BuiltinObject {
 pub struct ThunkObject {
     pub expression: Expr,
     pub environment: HashMap<String, OvmValue>,
-    pub memoized_value: Option<OvmValue>,
+    pub memoized_value: Mutex<Option<OvmValue>>,
     pub computation_cost: ComputationCost,
     pub dependencies: Vec<GcPtr<OvmValue>>,
 }
@@ -351,9 +351,9 @@ pub struct ThunkObject {
 /// Stream object for lazy sequences
 #[derive(Debug)]
 pub struct StreamObject {
-    pub generator: GeneratorFunction,
-    pub buffer: Vec<OvmValue>,
-    pub buffer_position: usize,
+    pub generator: Mutex<GeneratorFunction>,
+    pub buffer: Mutex<Vec<OvmValue>>,
+    pub buffer_position: Mutex<usize>,
     pub is_infinite: bool,
     pub chunk_size: usize,
 }
@@ -363,8 +363,8 @@ pub struct StreamObject {
 pub struct LazyListObject {
     pub source: Box<OvmValue>,
     pub transformation: TransformationChain,
-    pub materialized_prefix: Vec<OvmValue>,
-    pub materialization_point: usize,
+    pub materialized_prefix: Mutex<Vec<OvmValue>>,
+    pub materialization_point: Mutex<usize>,
 }
 
 /// Promise object for async operations
@@ -554,6 +554,9 @@ pub enum RuntimeError {
     #[error("Promise error: {message}")]
     PromiseError { message: String },
 
+    #[error("Concurrency error: {0}")]
+    ConcurrencyError(String),
+
     #[error("Runtime error: {message}")]
     Generic { message: String },
 }
@@ -605,6 +608,16 @@ impl PartialEq for OvmValue {
                     return true;
                 }
                 
+                // Validate pointers before creating slices
+                if a_array.data.is_null() || b_array.data.is_null() {
+                    return false;
+                }
+                
+                // Additional bounds check to prevent buffer overflows
+                if a_array.length > isize::MAX as usize || b_array.length > isize::MAX as usize {
+                    return false;
+                }
+                
                 let a_slice = std::slice::from_raw_parts(a_array.data, a_array.length);
                 let b_slice = std::slice::from_raw_parts(b_array.data, b_array.length);
                 
@@ -621,6 +634,16 @@ impl PartialEq for OvmValue {
                 
                 if a_array.length == 0 {
                     return true;
+                }
+                
+                // Validate pointers before creating slices
+                if a_array.data.is_null() || b_array.data.is_null() {
+                    return false;
+                }
+                
+                // Additional bounds check to prevent buffer overflows
+                if a_array.length > isize::MAX as usize || b_array.length > isize::MAX as usize {
+                    return false;
                 }
                 
                 let a_slice = std::slice::from_raw_parts(a_array.data, a_array.length);
@@ -791,27 +814,35 @@ impl OvmValue {
         // Access the thunk safely
         let thunk_ref = unsafe { thunk_ptr.as_ref() };
         
-        // Check if already memoized
-        if let Some(memoized) = &thunk_ref.memoized_value {
-            // Use memoized value - create a simple copy instead of clone
-            match &memoized.data {
-                ValueData::Integer(i) => self.data = ValueData::Integer(*i),
-                ValueData::Float(f) => self.data = ValueData::Float(*f),
-                ValueData::Boolean(b) => self.data = ValueData::Boolean(*b),
-                ValueData::Unit => self.data = ValueData::Unit,
-                _ => self.data = ValueData::Unit, // Fallback for complex types
+        // Check if already memoized (with lock)
+        {
+            let memoized_guard = thunk_ref.memoized_value.lock()
+                .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire thunk lock".to_string()))?;
+            
+            if let Some(memoized) = &*memoized_guard {
+                // Use memoized value - create a simple copy instead of clone
+                match &memoized.data {
+                    ValueData::Integer(i) => self.data = ValueData::Integer(*i),
+                    ValueData::Float(f) => self.data = ValueData::Float(*f),
+                    ValueData::Boolean(b) => self.data = ValueData::Boolean(*b),
+                    ValueData::Unit => self.data = ValueData::Unit,
+                    _ => self.data = ValueData::Unit, // Fallback for complex types
+                }
+                self.header.type_tag = memoized.header.type_tag;
+                self.header.lazy_state = LazyState::Cached;
+                return Ok(());
             }
-            self.header.type_tag = memoized.header.type_tag;
-            self.header.lazy_state = LazyState::Cached;
-            return Ok(());
         }
 
         // Evaluate the thunk
         let evaluated_value = self.evaluate_thunk_expression(thunk_ref)?;
 
-        // Memoize the result in the thunk
-        let thunk_mut = unsafe { &mut *(thunk_ptr.as_ptr() as *mut ThunkObject) };
-        thunk_mut.memoized_value = Some(evaluated_value.clone_simple());
+        // Memoize the result in the thunk (with lock)
+        {
+            let mut memoized_guard = thunk_ref.memoized_value.lock()
+                .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire thunk lock".to_string()))?;
+            *memoized_guard = Some(evaluated_value.clone_simple());
+        }
 
         // Update this value with the result
         match evaluated_value.data {
@@ -832,45 +863,51 @@ impl OvmValue {
         // For now, materialize a reasonable prefix of the lazy list
         let chunk_size = 100; // Configurable chunk size
         
-        let lazy_list_mut = unsafe { &mut *(lazy_list_ptr.as_ptr() as *mut LazyListObject) };
+        let lazy_list_ref = unsafe { lazy_list_ptr.as_ref() };
+        
+        // Use locks to safely access and modify the materialized data
+        let mut materialized_guard = lazy_list_ref.materialized_prefix.lock()
+            .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire lazy list lock".to_string()))?;
+        let mut materialization_point_guard = lazy_list_ref.materialization_point.lock()
+            .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire materialization point lock".to_string()))?;
         
         // If we haven't materialized anything yet, start materializing
-        if lazy_list_mut.materialized_prefix.is_empty() {
-            match &lazy_list_mut.transformation {
+        if materialized_guard.is_empty() {
+            match &lazy_list_ref.transformation {
                 TransformationChain::Identity => {
                     // Copy from source - simplified implementation
-                    if let ValueData::List(source_list) = &lazy_list_mut.source.data {
+                    if let ValueData::List(source_list) = &lazy_list_ref.source.data {
                         let source_array = unsafe { source_list.as_ref() };
                         let mut materialized = 0;
                         for i in 0..source_array.length.min(chunk_size) {
                             unsafe {
                                 let item = source_array.data.add(i).read();
-                                lazy_list_mut.materialized_prefix.push(item);
+                                materialized_guard.push(item);
                                 materialized += 1;
                             }
                         }
-                        lazy_list_mut.materialization_point = materialized;
+                        *materialization_point_guard = materialized;
                     }
                 }
                 TransformationChain::Map(_map_fn) => {
                     // Apply map transformation - simplified for now
-                    if let ValueData::List(source_list) = &lazy_list_mut.source.data {
+                    if let ValueData::List(source_list) = &lazy_list_ref.source.data {
                         let source_array = unsafe { source_list.as_ref() };
                         let mut materialized = 0;
                         for i in 0..source_array.length.min(chunk_size) {
                             unsafe {
                                 let item = source_array.data.add(i).read();
                                 // For now, just copy the item (would need interpreter context for actual function call)
-                                lazy_list_mut.materialized_prefix.push(item);
+                                materialized_guard.push(item);
                                 materialized += 1;
                             }
                         }
-                        lazy_list_mut.materialization_point = materialized;
+                        *materialization_point_guard = materialized;
                     }
                 }
                 TransformationChain::Filter(_filter_fn) => {
                     // Apply filter transformation - simplified for now  
-                    if let ValueData::List(source_list) = &lazy_list_mut.source.data {
+                    if let ValueData::List(source_list) = &lazy_list_ref.source.data {
                         let source_array = unsafe { source_list.as_ref() };
                         let mut materialized = 0;
                         for i in 0..source_array.length.min(chunk_size) {
@@ -880,26 +917,26 @@ impl OvmValue {
                             unsafe {
                                 let item = source_array.data.add(i).read();
                                 // For now, include all items (would need interpreter context for actual predicate)
-                                lazy_list_mut.materialized_prefix.push(item);
+                                materialized_guard.push(item);
                                 materialized += 1;
                             }
                         }
-                        lazy_list_mut.materialization_point = materialized;
+                        *materialization_point_guard = materialized;
                     }
                 }
                 TransformationChain::Chain(_first, _second) => {
                     // Apply chained transformations - simplified for now
-                    if let ValueData::List(source_list) = &lazy_list_mut.source.data {
+                    if let ValueData::List(source_list) = &lazy_list_ref.source.data {
                         let source_array = unsafe { source_list.as_ref() };
                         let mut materialized = 0;
                         for i in 0..source_array.length.min(chunk_size) {
                             unsafe {
                                 let item = source_array.data.add(i).read();
-                                lazy_list_mut.materialized_prefix.push(item);
+                                materialized_guard.push(item);
                                 materialized += 1;
                             }
                         }
-                        lazy_list_mut.materialization_point = materialized;
+                        *materialization_point_guard = materialized;
                     }
                 }
             }
@@ -907,9 +944,9 @@ impl OvmValue {
 
         // Convert the lazy list to a regular list with materialized items
         // For now, create a simplified result
-        if !lazy_list_mut.materialized_prefix.is_empty() {
+        if !materialized_guard.is_empty() {
             // Take the first item as a representative result (simplified)
-            let first_item = lazy_list_mut.materialized_prefix[0].clone();
+            let first_item = materialized_guard[0].clone();
             self.data = first_item.data;
             self.header = first_item.header;
         }
@@ -921,19 +958,27 @@ impl OvmValue {
 
     /// Advance stream buffer for better performance
     fn advance_stream_buffer_impl(&mut self, stream_ptr: GcPtr<StreamObject>) -> Result<(), RuntimeError> {
-        let stream_mut = unsafe { &mut *(stream_ptr.as_ptr() as *mut StreamObject) };
+        let stream_ref = unsafe { stream_ptr.as_ref() };
+        
+        // Use locks to safely access and modify the stream data
+        let mut buffer_guard = stream_ref.buffer.lock()
+            .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire stream buffer lock".to_string()))?;
+        let mut position_guard = stream_ref.buffer_position.lock()
+            .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire stream position lock".to_string()))?;
+        let mut generator_guard = stream_ref.generator.lock()
+            .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire stream generator lock".to_string()))?;
         
         // Buffer more items if buffer is getting low
-        let buffer_threshold = stream_mut.chunk_size / 2;
-        if stream_mut.buffer.len() - stream_mut.buffer_position < buffer_threshold {
-            let items_to_generate = stream_mut.chunk_size;
+        let buffer_threshold = stream_ref.chunk_size / 2;
+        if buffer_guard.len() - *position_guard < buffer_threshold {
+            let items_to_generate = stream_ref.chunk_size;
             
             for _ in 0..items_to_generate {
-                match &mut stream_mut.generator {
+                match &mut *generator_guard {
                     GeneratorFunction::Range { start, end, step } => {
                         if *start < *end {
                             let value = OvmValue::new_integer(*start);
-                            stream_mut.buffer.push(value);
+                            buffer_guard.push(value);
                             *start += *step;
                         } else {
                             break; // End of range
@@ -1429,7 +1474,7 @@ impl OvmValue {
                     let array_ref = gc_ptr.as_ref();
                     let mut ast_values = Vec::with_capacity(array_ref.length);
 
-                    if array_ref.length > 0 && !array_ref.data.is_null() {
+                    if array_ref.length > 0 && !array_ref.data.is_null() && array_ref.length <= isize::MAX as usize {
                         let data_slice =
                             std::slice::from_raw_parts(array_ref.data, array_ref.length);
                         for ovm_val in data_slice {
@@ -1446,7 +1491,7 @@ impl OvmValue {
                     let array_ref = gc_ptr.as_ref();
                     let mut ast_values = Vec::with_capacity(array_ref.length);
 
-                    if array_ref.length > 0 && !array_ref.data.is_null() {
+                    if array_ref.length > 0 && !array_ref.data.is_null() && array_ref.length <= isize::MAX as usize {
                         let data_slice =
                             std::slice::from_raw_parts(array_ref.data, array_ref.length);
                         for ovm_val in data_slice {
@@ -1597,7 +1642,7 @@ impl fmt::Display for OvmValue {
                 let array_ref = gc_ptr.as_ref();
                 write!(f, "[")?;
 
-                if array_ref.length > 0 && !array_ref.data.is_null() {
+                if array_ref.length > 0 && !array_ref.data.is_null() && array_ref.length <= isize::MAX as usize {
                     let data_slice = std::slice::from_raw_parts(array_ref.data, array_ref.length);
                     for (i, val) in data_slice.iter().enumerate() {
                         if i > 0 {
@@ -1613,7 +1658,7 @@ impl fmt::Display for OvmValue {
                 let array_ref = gc_ptr.as_ref();
                 write!(f, "(")?;
 
-                if array_ref.length > 0 && !array_ref.data.is_null() {
+                if array_ref.length > 0 && !array_ref.data.is_null() && array_ref.length <= isize::MAX as usize {
                     let data_slice = std::slice::from_raw_parts(array_ref.data, array_ref.length);
                     for (i, val) in data_slice.iter().enumerate() {
                         if i > 0 {
