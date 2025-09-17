@@ -1,0 +1,45 @@
+issue_id: OLANG-001
+current_version: 2
+created_at: 2025-09-16T23:53:59.630988-05:00
+updated_at: 2025-09-16T23:54:13.805777-05:00
+entries:
+    - id: hist_1758084839618114000
+      issue_id: OLANG-001
+      version: 1
+      type: created
+      author: olayeku
+      timestamp: 2025-09-16T23:53:59.618116-05:00
+      message: 'Issue created: Ovm cache size management'
+      changes:
+        - field: title
+          old_value: null
+          new_value: Ovm cache size management
+        - field: description
+          old_value: null
+          new_value: Ovm cache size grows indefinately
+        - field: type
+          old_value: null
+          new_value: bug
+        - field: status
+          old_value: null
+          new_value: open
+        - field: priority
+          old_value: null
+          new_value: medium
+      metadata:
+        git_author: olayeku
+        git_branch: main
+        git_email: ooyeku@gmail.com
+    - id: hist_1758084853805559000
+      issue_id: OLANG-001
+      version: 2
+      type: updated
+      author: olayeku
+      timestamp: 2025-09-16T23:54:13.805567-05:00
+      message: Updated assignee
+      changes:
+        - field: assignee
+          old_value: ""
+          new_value: olayeku
+      metadata:
+        git_branch: main
