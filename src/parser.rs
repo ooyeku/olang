@@ -53,8 +53,6 @@ impl PositionInfo {
     }
 }
 
-/// Default number of context lines to show around an error (configurable)
-const DEFAULT_CONTEXT_LINES: usize = 0;
 
 /// Very basic snippet sanitizer to avoid leaking sensitive content in logs.
 /// - Truncates long lines
