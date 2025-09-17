@@ -101,6 +101,7 @@ pub struct IntuitiveErrorFormatter {
     pub show_suggestions: bool,
     pub show_context: bool,
     pub max_suggestions: usize,
+    pub max_list_items: usize,
 }
 
 impl Default for IntuitiveErrorFormatter {
@@ -110,6 +111,7 @@ impl Default for IntuitiveErrorFormatter {
             show_suggestions: true,
             show_context: true,
             max_suggestions: 5,
+            max_list_items: 10,
         }
     }
 }
@@ -185,7 +187,8 @@ impl IntuitiveErrorFormatter {
         if !searched_paths.is_empty() {
             result.push_str("\nSearched in:\n");
             for path in searched_paths {
-                result.push_str(&format!("  • {}\n", path));
+                let safe = self.sanitize_path(path);
+                result.push_str(&format!("  • {}\n", safe));
             }
         }
         
@@ -200,11 +203,11 @@ impl IntuitiveErrorFormatter {
         // Show available modules if any
         if !available_modules.is_empty() {
             result.push_str("\nAvailable modules:\n");
-            for module in available_modules.iter().take(10) {
+            for module in available_modules.iter().take(self.max_list_items) {
                 result.push_str(&format!("  • {}\n", module));
             }
-            if available_modules.len() > 10 {
-                result.push_str(&format!("  ... and {} more\n", available_modules.len() - 10));
+            if available_modules.len() > self.max_list_items {
+                result.push_str(&format!("  ... and {} more\n", available_modules.len() - self.max_list_items));
             }
         }
         
@@ -228,9 +231,10 @@ impl IntuitiveErrorFormatter {
         let mut result = String::new();
         
         // Main error message with context
-        if let Some(path) = file_path {
+        if let Some(path) = file_path.as_ref() {
+            let safe_path = self.sanitize_path(path);
             result.push_str(&format!("Error: Cannot find '{}' in {}\n", function_name, module_path));
-            result.push_str(&format!("  --> {}\n", path));
+            result.push_str(&format!("  --> {}\n", safe_path));
         } else {
             result.push_str(&format!("Error: Cannot find '{}' in {}\n", function_name, module_path));
         }
@@ -251,11 +255,11 @@ impl IntuitiveErrorFormatter {
         // Show available functions
         if !available_functions.is_empty() {
             result.push_str(&format!("\nAvailable functions in {}:\n", module_path));
-            for func in available_functions.iter().take(10) {
+            for func in available_functions.iter().take(self.max_list_items) {
                 result.push_str(&format!("  • {}\n", func));
             }
-            if available_functions.len() > 10 {
-                result.push_str(&format!("  ... and {} more\n", available_functions.len() - 10));
+            if available_functions.len() > self.max_list_items {
+                result.push_str(&format!("  ... and {} more\n", available_functions.len() - self.max_list_items));
             }
         }
         
@@ -277,14 +281,15 @@ impl IntuitiveErrorFormatter {
         suggestions: &[String],
     ) -> String {
         let mut result = String::new();
+        let safe_path = self.sanitize_path(file_path);
         
         // Location information
         if let Some(col) = column {
             result.push_str(&format!("Error: Import failed\n"));
-            result.push_str(&format!("  --> {}:{}:{}\n", file_path, line, col));
+            result.push_str(&format!("  --> {}:{}:{}\n", safe_path, line, col));
         } else {
             result.push_str(&format!("Error: Import failed\n"));
-            result.push_str(&format!("  --> {}:{}\n", file_path, line));
+            result.push_str(&format!("  --> {}:{}\n", safe_path, line));
         }
         
         result.push_str(&format!("\nFailed to import: {}\n", import_path));
@@ -356,6 +361,21 @@ impl IntuitiveErrorFormatter {
         result
     }
     
+    /// Sanitize file paths to avoid leaking sensitive directories
+    fn sanitize_path(&self, raw: &str) -> String {
+        if let Ok(home) = std::env::var("HOME") {
+            if raw.starts_with(&home) {
+                return raw.replacen(&home, "~", 1);
+            }
+        }
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            if raw.starts_with(&userprofile) {
+                return raw.replacen(&userprofile, "~", 1);
+            }
+        }
+        raw.to_string()
+    }
+
     /// Calculate Levenshtein distance for "did you mean" suggestions
     pub fn levenshtein_distance(a: &str, b: &str) -> usize {
         let len_a = a.len();
