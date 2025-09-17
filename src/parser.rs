@@ -9,6 +9,7 @@ use pest::{iterators::Pair, iterators::Pairs, Parser as PestParser};
 use pest_derive::Parser;
 use thiserror::Error;
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -23,99 +24,51 @@ pub struct PositionInfo {
 }
 
 impl PositionInfo {
+    /// Create PositionInfo from a pest Pair. Uses the original input via pest::Position to build a snippet.
+    /// Note: pest's line/column are 1-based; we keep this convention for display and caret alignment.
     pub fn from_pair(pair: &Pair<Rule>) -> Self {
         let pos = pair.as_span().start_pos();
-        let line = pos.line_col().0;
-        let column = pos.line_col().1;
+        let (line, column) = pos.line_col();
         let offset = pos.pos();
-        
-        // Extract a snippet of the input around the error position
-        let _input = pair.as_str();
-        let snippet = Self::extract_snippet_from_pair(pair, line, column);
-        
-        Self {
-            line,
-            column,
-            offset,
-            input_snippet: snippet,
-        }
+
+        // Build a sanitized, single-line snippet with a caret under the column
+        let error_line = sanitize_snippet(pos.line_of());
+        let mut snippet = String::new();
+        snippet.push_str(&format!("{:4} | {}\n", line, error_line));
+        snippet.push_str(&format!("{:4} | {}^", "", " ".repeat(column.saturating_sub(1))));
+
+        Self { line, column, offset, input_snippet: snippet }
     }
-    
+
+    /// Create PositionInfo directly from a pest::Position
     pub fn from_position(pos: pest::Position) -> Self {
-        let line = pos.line_col().0;
-        let column = pos.line_col().1;
+        let (line, column) = pos.line_col();
         let offset = pos.pos();
-        
-        // Extract a snippet of the input around the error position
-        let snippet = format!("Line {}, Column {}", line, column);
-        
-        Self {
-            line,
-            column,
-            offset,
-            input_snippet: snippet,
-        }
+        let error_line = sanitize_snippet(pos.line_of());
+        let mut snippet = String::new();
+        snippet.push_str(&format!("{:4} | {}\n", line, error_line));
+        snippet.push_str(&format!("{:4} | {}^", "", " ".repeat(column.saturating_sub(1))));
+
+        Self { line, column, offset, input_snippet: snippet }
     }
-    
-    fn extract_snippet_from_pair(pair: &Pair<Rule>, line: usize, column: usize) -> String {
-        let input = pair.as_str();
-        let lines: Vec<&str> = input.lines().collect();
-        if line > 0 && line <= lines.len() {
-            let error_line = lines[line - 1];
-            let mut snippet = String::new();
-            
-            // Add context lines before and after if available
-            if line > 1 {
-                snippet.push_str(&format!("{:4} | {}\n", line - 1, lines[line - 2]));
-            }
-            
-            // Add the error line with a caret pointer
-            snippet.push_str(&format!("{:4} | {}\n", line, error_line));
-            
-            // Add caret pointer
-            let pointer = format!("{:4} | {}{}", "", " ".repeat(column.saturating_sub(1)), "^");
-            snippet.push_str(&pointer);
-            
-            // Add context line after if available
-            if line < lines.len() {
-                snippet.push_str(&format!("\n{:4} | {}", line + 1, lines[line]));
-            }
-            
-            snippet
-        } else {
-            format!("Line {}, Column {}", line, column)
-        }
+}
+
+/// Default number of context lines to show around an error (configurable)
+const DEFAULT_CONTEXT_LINES: usize = 0;
+
+/// Very basic snippet sanitizer to avoid leaking sensitive content in logs.
+/// - Truncates long lines
+/// - Replaces control characters with spaces
+fn sanitize_snippet(s: &str) -> String {
+    let mut line = s.chars()
+        .map(|c| if c.is_control() && c != '\n' && c != '\t' { ' ' } else { c })
+        .collect::<String>();
+    let max_len = 200usize;
+    if line.len() > max_len {
+        line.truncate(max_len);
+        line.push_str(" …");
     }
-    
-    #[allow(dead_code)]
-    fn extract_snippet(input: &str, line: usize, column: usize) -> String {
-        let lines: Vec<&str> = input.lines().collect();
-        if line > 0 && line <= lines.len() {
-            let error_line = lines[line - 1];
-            let mut snippet = String::new();
-            
-            // Add context lines before and after if available
-            if line > 1 {
-                snippet.push_str(&format!("{:4} | {}\n", line - 1, lines[line - 2]));
-            }
-            
-            // Add the error line with a caret pointer
-            snippet.push_str(&format!("{:4} | {}\n", line, error_line));
-            
-            // Add caret pointer
-            let pointer = format!("{:4} | {}{}", "", " ".repeat(column.saturating_sub(1)), "^");
-            snippet.push_str(&pointer);
-            
-            // Add context line after if available
-            if line < lines.len() {
-                snippet.push_str(&format!("\n{:4} | {}", line + 1, lines[line]));
-            }
-            
-            snippet
-        } else {
-            "Unable to extract snippet".to_string()
-        }
-    }
+    line
 }
 
 #[derive(Error, Debug)]
@@ -127,14 +80,14 @@ pub enum ParseError {
         message: String,
         line: usize,
         column: usize,
-        snippet: String,
+        snippet: Arc<str>,
     },
     #[error("Unexpected token at line {line}, column {column}: {token}\n{snippet}")]
     UnexpectedTokenWithPosition {
         token: String,
         line: usize,
         column: usize,
-        snippet: String,
+        snippet: Arc<str>,
     },
     #[error("Invalid syntax: {message}")]
     InvalidSyntax { message: String },
@@ -148,7 +101,7 @@ impl ParseError {
             message,
             line: position.line,
             column: position.column,
-            snippet: position.input_snippet,
+            snippet: position.input_snippet.into(),
         }
     }
     
@@ -157,7 +110,7 @@ impl ParseError {
             token,
             line: position.line,
             column: position.column,
-            snippet: position.input_snippet,
+            snippet: position.input_snippet.into(),
         }
     }
 }
@@ -193,6 +146,15 @@ impl Parser {
     /// Get suggestions for a parse error
     pub fn get_suggestions(&self, error: &ParseError, input: &str) -> Vec<ErrorSuggestion> {
         self.suggestion_engine.suggest_for_parse_error(error, input)
+    }
+
+    /// Convenience: returns suggestions for the given input without altering the error API.
+    /// If parsing succeeds, returns an empty Vec.
+    pub fn suggestions_for(&self, input: &str) -> Vec<ErrorSuggestion> {
+        match self.parse(input) {
+            Ok(_) => Vec::new(),
+            Err(err) => self.suggestion_engine.suggest_for_parse_error(&err, input),
+        }
     }
 
     pub fn parse(&self, input: &str) -> Result<Program, ParseError> {
