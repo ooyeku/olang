@@ -459,6 +459,7 @@ fn start_repl(verbose: bool, no_ovm: bool, logger: &Logger) -> anyhow::Result<()
             enable_ovm_lazy_eval: true,
             fallback_on_error: true,
             enable_ovm_builtins: true,
+            ovm_cache_enabled: false,
             ovm_preferred_builtins: vec![
                 "len".to_string(),
                 "typeof".to_string(),

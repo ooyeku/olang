@@ -728,10 +728,10 @@ impl BuiltinFunctions {
                 let range_size = (end_val - start) as usize;
                 
                 // MEMORY MONITORING: Check if range is too large before creating
-                if range_size > 1000 {
+                if range_size > 10_000_000 {
                     return Err(InterpreterError::RuntimeError {
                         message: format!(
-                            "Range size ({}) too large, this could cause memory issues. Maximum range size is 1000.",
+                            "Range size ({}) too large, this could cause memory issues. Maximum range size is 10000000.",
                             range_size
                         ),
                     });
@@ -890,10 +890,10 @@ impl BuiltinFunctions {
                 let range_size = (end_val - start) as usize;
                 
                 // MEMORY MONITORING: Check if range is too large before creating
-                if range_size > 1000 {
+                if range_size > 10_000_000 {
                     return Err(InterpreterError::RuntimeError {
                         message: format!(
-                            "Range size ({}) too large, this could cause memory issues. Maximum range size is 1000.",
+                            "Range size ({}) too large, this could cause memory issues. Maximum range size is 10000000.",
                             range_size
                         ),
                     });

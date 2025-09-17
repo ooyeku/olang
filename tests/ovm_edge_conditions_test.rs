@@ -255,6 +255,7 @@ fn test_ovm_configuration_edge_cases() {
         enable_ovm_lazy_eval: false,
         fallback_on_error: true,
         enable_ovm_builtins: false,
+        ovm_cache_enabled: false,
         ovm_preferred_builtins: vec![],
     };
     
@@ -274,6 +275,7 @@ fn test_ovm_configuration_edge_cases() {
         enable_ovm_lazy_eval: true,
         fallback_on_error: false,
         enable_ovm_builtins: true,
+        ovm_cache_enabled: false,
         ovm_preferred_builtins: vec!["map".to_string(), "filter".to_string(), "reduce".to_string()],
     };
     

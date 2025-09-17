@@ -23,6 +23,12 @@ pub struct OvmInterpreter {
     /// Function registry mapping names to OVM function IDs
     function_registry: HashMap<String, FunctionId>,
 
+    /// Ahead-of-time function analysis results
+    function_analysis: HashMap<String, FunctionAnalysis>,
+
+    /// Compiled state cache for functions
+    compiled_state: HashMap<String, CompiledState>,
+
     /// Performance statistics
     execution_stats: Arc<Mutex<ExecutionStats>>,
 }
@@ -48,6 +54,9 @@ pub struct IntegrationConfig {
     /// Whether to enable OVM builtin execution
     pub enable_ovm_builtins: bool,
 
+    /// Enable persistence of compiled artifacts across sessions
+    pub ovm_cache_enabled: bool,
+
     /// List of builtin functions that should use OVM
     pub ovm_preferred_builtins: Vec<String>,
 }
@@ -61,6 +70,7 @@ impl Default for IntegrationConfig {
             enable_ovm_lazy_eval: true,
             fallback_on_error: true,
             enable_ovm_builtins: true,
+            ovm_cache_enabled: false,
             ovm_preferred_builtins: vec![
                 // Simple mathematical builtins that can benefit from OVM
                 "len".to_string(),
@@ -104,6 +114,28 @@ pub struct ExecutionStats {
     pub average_ovm_time_ms: f64,
 }
 
+/// Ahead-of-time function analysis result
+#[derive(Debug, Clone, Default)]
+pub struct FunctionAnalysis {
+    pub eligible: bool,
+    pub cost: usize,
+    pub reason: Option<String>,
+}
+
+/// Compiled state of a function in the current interpreter session
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompiledState {
+    Pending,
+    NotEligible,
+    Compiled(FunctionId),
+}
+
+impl Default for CompiledState {
+    fn default() -> Self {
+        CompiledState::Pending
+    }
+}
+
 /// Detailed OVM status information
 #[derive(Debug, Clone)]
 pub struct OvmStatus {
@@ -121,6 +153,8 @@ impl OvmInterpreter {
             ovm: None,
             integration_config: IntegrationConfig::default(),
             function_registry: HashMap::new(),
+            function_analysis: HashMap::new(),
+            compiled_state: HashMap::new(),
             execution_stats: Arc::new(Mutex::new(ExecutionStats::default())),
         }
     }
@@ -132,6 +166,8 @@ impl OvmInterpreter {
             ovm: None,
             integration_config,
             function_registry: HashMap::new(),
+            function_analysis: HashMap::new(),
+            compiled_state: HashMap::new(),
             execution_stats: Arc::new(Mutex::new(ExecutionStats::default())),
         }
     }
@@ -203,11 +239,42 @@ impl OvmInterpreter {
         let start = std::time::Instant::now();
         let auto_compile = self.integration_config.auto_compile_functions;
 
+        // Ahead-of-time: analyze all functions and pre-compile eligible ones
+        self.analyze_program_functions(&program);
+        if auto_compile {
+            for stmt in &program.statements {
+                if let crate::ast::Statement::FunctionDecl(fd) = stmt {
+                    if let Some(analysis) = self.function_analysis.get(&fd.name) {
+                        if analysis.eligible {
+                            // Compile once if not compiled yet
+                            let already_compiled = matches!(self.compiled_state.get(&fd.name), Some(CompiledState::Compiled(_)));
+                            if !already_compiled {
+                                if let Some(ovm) = &mut self.ovm {
+                                    if let Ok(func_id) = ovm.register_function(fd.clone()) {
+                                        self.function_registry.insert(fd.name.clone(), func_id);
+                                        self.compiled_state.insert(fd.name.clone(), CompiledState::Compiled(func_id));
+                                        self.increment_compilation_count();
+                                    }
+                                }
+                            }
+                        } else {
+                            self.compiled_state.insert(fd.name.clone(), CompiledState::NotEligible);
+                        }
+                    }
+                }
+            }
+        }
+
         // Execute each statement through OVM
         let mut last_value = Value::Unit;
         for statement in program.statements {
             match statement {
                 crate::ast::Statement::Expression(expr) => {
+                    // Fast-path: if this is a call to a precompiled function and args are variable-free, run directly in OVM
+                    if let Some(res) = self.try_fastpath_compiled_call(&expr) {
+                        last_value = res?;
+                        continue;
+                    }
                     // Enhanced builtin routing logic with variable environment synchronization
                     if self.should_use_ovm_for_expression(&expr) {
                         // Before routing to OVM, ensure all variables in the expression are accessible
@@ -239,16 +306,19 @@ impl OvmInterpreter {
                 }
                 crate::ast::Statement::FunctionDecl(func_decl) => {
                     if auto_compile {
-                        let func_id = self
-                            .ovm
-                            .as_mut()
-                            .ok_or(IntegrationError::OvmNotInitialized)?
-                            .register_function(func_decl.clone())
-                            .map_err(IntegrationError::OvmExecutionError)?;
-
-                        self.function_registry
-                            .insert(func_decl.name.clone(), func_id);
-                        self.increment_compilation_count();
+                        let already_compiled = matches!(self.compiled_state.get(&func_decl.name), Some(CompiledState::Compiled(_)));
+                        if !already_compiled {
+                            let func_id = self
+                                .ovm
+                                .as_mut()
+                                .ok_or(IntegrationError::OvmNotInitialized)?
+                                .register_function(func_decl.clone())
+                                .map_err(IntegrationError::OvmExecutionError)?;
+                            self.function_registry
+                                .insert(func_decl.name.clone(), func_id);
+                            self.compiled_state.insert(func_decl.name.clone(), CompiledState::Compiled(func_id));
+                            self.increment_compilation_count();
+                        }
                     }
 
                     // Also register with classic interpreter for compatibility
@@ -609,6 +679,169 @@ impl OvmInterpreter {
             // For other expressions, be conservative and assume they might need variables
             _ => true,
         }
+    }
+
+    /// Variant that treats certain identifiers as allowed (e.g., function parameters)
+    fn expression_needs_classic_variables_with_allow(&self, expr: &crate::ast::Expr, allowed: &std::collections::HashSet<String>) -> bool {
+        match expr {
+            crate::ast::Expr::Identifier(name) => {
+                // Allowed identifiers (params) and builtins do not require classic resolution
+                !(allowed.contains(name) || self.is_builtin_function(name))
+            }
+            crate::ast::Expr::Call { callee, arguments } => {
+                if self.expression_needs_classic_variables_with_allow(callee, allowed) {
+                    return true;
+                }
+                for arg in arguments {
+                    let arg_expr = match arg {
+                        Argument::Positional(expr) => expr,
+                        Argument::Named { value, .. } => value,
+                    };
+                    if self.expression_needs_classic_variables_with_allow(arg_expr, allowed) {
+                        return true;
+                    }
+                }
+                false
+            }
+            crate::ast::Expr::BinaryOp { left, right, .. } => {
+                self.expression_needs_classic_variables_with_allow(left, allowed)
+                    || self.expression_needs_classic_variables_with_allow(right, allowed)
+            }
+            crate::ast::Expr::UnaryOp { operand, .. } => {
+                self.expression_needs_classic_variables_with_allow(operand, allowed)
+            }
+            crate::ast::Expr::List(elements) => {
+                elements.iter().any(|e| self.expression_needs_classic_variables_with_allow(e, allowed))
+            }
+            crate::ast::Expr::Tuple(elements) => {
+                elements.iter().any(|e| self.expression_needs_classic_variables_with_allow(e, allowed))
+            }
+            crate::ast::Expr::Index { object, index } => {
+                self.expression_needs_classic_variables_with_allow(object, allowed)
+                    || self.expression_needs_classic_variables_with_allow(index, allowed)
+            }
+            crate::ast::Expr::FieldAccess { object, .. } => {
+                self.expression_needs_classic_variables_with_allow(object, allowed)
+            }
+            crate::ast::Expr::Pipeline { left, right } => {
+                self.expression_needs_classic_variables_with_allow(left, allowed)
+                    || self.expression_needs_classic_variables_with_allow(right, allowed)
+            }
+            crate::ast::Expr::Integer(_)
+            | crate::ast::Expr::Float(_)
+            | crate::ast::Expr::String(_)
+            | crate::ast::Expr::Boolean(_) => false,
+            _ => true,
+        }
+    }
+
+    /// Determine if an expression is OVM-friendly given a set of allowed identifiers (params)
+    fn is_ovm_friendly_expr_with_params(&self, expr: &crate::ast::Expr, allowed: &std::collections::HashSet<String>) -> bool {
+        // Reject constructs we don't support in OVM yet
+        match expr {
+            crate::ast::Expr::Match { .. }
+            | crate::ast::Expr::ForLoop { .. }
+            | crate::ast::Expr::WhileLoop { .. }
+            | crate::ast::Expr::Loop { .. } => return false,
+            _ => {}
+        }
+        // If needs classic variables beyond allowed, not friendly
+        if self.expression_needs_classic_variables_with_allow(expr, allowed) {
+            return false;
+        }
+        // Recursively check children where applicable
+        match expr {
+            crate::ast::Expr::Call { callee, arguments } => {
+                if !self.is_ovm_friendly_expr_with_params(callee, allowed) { return false; }
+                for arg in arguments {
+                    let e = match arg { Argument::Positional(e) => e, Argument::Named { value, .. } => value };
+                    if !self.is_ovm_friendly_expr_with_params(e, allowed) { return false; }
+                }
+                true
+            }
+            crate::ast::Expr::BinaryOp { left, right, .. } => {
+                self.is_ovm_friendly_expr_with_params(left, allowed)
+                    && self.is_ovm_friendly_expr_with_params(right, allowed)
+            }
+            crate::ast::Expr::UnaryOp { operand, .. } => self.is_ovm_friendly_expr_with_params(operand, allowed),
+            crate::ast::Expr::List(items) => items.iter().all(|e| self.is_ovm_friendly_expr_with_params(e, allowed)),
+            crate::ast::Expr::Tuple(items) => items.iter().all(|e| self.is_ovm_friendly_expr_with_params(e, allowed)),
+            crate::ast::Expr::Pipeline { left, right } => {
+                self.is_ovm_friendly_expr_with_params(left, allowed)
+                    && self.is_ovm_friendly_expr_with_params(right, allowed)
+            }
+            _ => true,
+        }
+    }
+
+    /// Estimate cost as approximate node count times a small constant
+    fn estimate_expr_cost(&self, expr: &crate::ast::Expr) -> usize {
+        fn count(expr: &crate::ast::Expr) -> usize {
+            match expr {
+                crate::ast::Expr::Call { callee, arguments } => {
+                    let mut c = 1 + count(callee);
+                    for arg in arguments {
+                        let e = match arg { Argument::Positional(e) => e, Argument::Named { value, .. } => value };
+                        c += count(e);
+                    }
+                    c
+                }
+                crate::ast::Expr::BinaryOp { left, right, .. } => 1 + count(left) + count(right),
+                crate::ast::Expr::UnaryOp { operand, .. } => 1 + count(operand),
+                crate::ast::Expr::List(items) => 1 + items.iter().map(count).sum::<usize>(),
+                crate::ast::Expr::Tuple(items) => 1 + items.iter().map(count).sum::<usize>(),
+                crate::ast::Expr::Pipeline { left, right } => 1 + count(left) + count(right),
+                crate::ast::Expr::If { condition, then_branch, else_branch } => {
+                    1 + count(condition) + count(then_branch) + else_branch.as_ref().map(|e| count(e)).unwrap_or(0)
+                }
+                _ => 1,
+            }
+        }
+        count(expr)
+    }
+
+    /// Analyze a function declaration and produce FunctionAnalysis
+    fn analyze_function(&self, func_decl: &FunctionDecl) -> FunctionAnalysis {
+        let mut allowed = std::collections::HashSet::new();
+        for p in &func_decl.parameters { allowed.insert(p.name.clone()); }
+        let eligible = self.is_ovm_friendly_expr_with_params(&func_decl.body, &allowed);
+        let cost = self.estimate_expr_cost(&func_decl.body);
+        FunctionAnalysis { eligible, cost, reason: if eligible { None } else { Some("Not OVM-friendly body".to_string()) } }
+    }
+
+    /// Analyze all functions in a program and populate caches
+    fn analyze_program_functions(&mut self, program: &Program) {
+        for stmt in &program.statements {
+            if let crate::ast::Statement::FunctionDecl(fd) = stmt {
+                let analysis = self.analyze_function(fd);
+                self.function_analysis.insert(fd.name.clone(), analysis);
+                // Initialize compiled state if missing
+                self.compiled_state.entry(fd.name.clone()).or_insert(CompiledState::Pending);
+            }
+        }
+    }
+
+    /// Try to bypass routing for direct calls to compiled functions
+    fn try_fastpath_compiled_call(&mut self, expr: &crate::ast::Expr) -> Option<Result<Value, IntegrationError>> {
+        use crate::ast::Expr as E;
+        if let E::Call { callee, arguments: _ } = expr {
+            if let E::Identifier(name) = callee.as_ref() {
+                if let Some(CompiledState::Compiled(_fid)) = self.compiled_state.get(name).copied() {
+                    // Only fast-path when the call expression has no external identifiers
+                    let allowed = std::collections::HashSet::new();
+                    if self.expression_needs_classic_variables_with_allow(expr, &allowed) {
+                        return None;
+                    }
+                    let ovm_value = self
+                        .ovm
+                        .as_mut()
+                        .ok_or(IntegrationError::OvmNotInitialized)
+                        .and_then(|ovm| ovm.execute_expression(expr.clone()).map_err(IntegrationError::OvmExecutionError));
+                    return Some(ovm_value.and_then(|v| self.convert_ovm_to_ast_value(v)));
+                }
+            }
+        }
+        None
     }
 }
 

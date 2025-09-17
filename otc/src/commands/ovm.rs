@@ -89,6 +89,7 @@ impl OvmCommand {
             enable_ovm_lazy_eval: self.lazy,
             fallback_on_error: !self.no_fallback,
             enable_ovm_builtins: true,
+            ovm_cache_enabled: true,
             ovm_preferred_builtins: vec![
                 "len".to_string(),
                 "typeof".to_string(),
