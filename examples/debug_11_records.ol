@@ -1,6 +1,6 @@
 // Debug the exact 11-record memory corruption issue
 
-share fn debug_11() = {
+fn debug_11() = {
     println("=== Testing exactly 11 records ===")
     
     // Step 1: Create exactly 11 records
