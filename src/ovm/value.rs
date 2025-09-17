@@ -963,7 +963,7 @@ impl OvmValue {
         // Use locks to safely access and modify the stream data
         let mut buffer_guard = stream_ref.buffer.lock()
             .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire stream buffer lock".to_string()))?;
-        let mut position_guard = stream_ref.buffer_position.lock()
+        let position_guard = stream_ref.buffer_position.lock()
             .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire stream position lock".to_string()))?;
         let mut generator_guard = stream_ref.generator.lock()
             .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire stream generator lock".to_string()))?;

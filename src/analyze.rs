@@ -678,6 +678,14 @@ impl Analyzer {
 
     fn exit_scope(&mut self) {
         if self.current_scope > 0 {
+            // Remove variables that belong to this scope from the variables map
+            if let Some(scope_set) = self.scopes.get(self.current_scope) {
+                let names_to_remove: Vec<String> = scope_set.iter().cloned().collect();
+                for name in names_to_remove {
+                    self.variables.remove(&name);
+                }
+            }
+            // Pop the scope and update current_scope index
             self.scopes.pop();
             self.current_scope -= 1;
         }
