@@ -8,6 +8,9 @@ use crate::interpreter::{Interpreter, InterpreterError};
 use crate::ovm::{FunctionId, OlangVirtualMachine, OvmConfig, OvmError, OvmValue};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
+use std::fs;
+use sha2::{Sha256, Digest};
 
 /// Enhanced interpreter that can use either traditional interpretation or OVM execution
 pub struct OvmInterpreter {
@@ -31,6 +34,12 @@ pub struct OvmInterpreter {
 
     /// Performance statistics
     execution_stats: Arc<Mutex<ExecutionStats>>,
+
+    /// Disk cache of known functions (keyed by hash) loaded from previous runs
+    cached_functions: HashMap<String, FunctionDecl>,
+
+    /// Whether the cache has been loaded this session
+    cache_loaded: bool,
 }
 
 /// Configuration for OVM integration behavior
@@ -76,7 +85,7 @@ impl Default for IntegrationConfig {
             enable_ovm_lazy_eval: true,
             fallback_on_error: true,
             enable_ovm_builtins: true,
-            ovm_cache_enabled: false,
+            ovm_cache_enabled: true,
             enable_parallel: true,
             max_parallelism: None,
             ovm_preferred_builtins: vec![
@@ -174,6 +183,8 @@ impl OvmInterpreter {
             function_analysis: HashMap::new(),
             compiled_state: HashMap::new(),
             execution_stats: Arc::new(Mutex::new(ExecutionStats::default())),
+            cached_functions: HashMap::new(),
+            cache_loaded: false,
         }
     }
 
@@ -187,6 +198,8 @@ impl OvmInterpreter {
             function_analysis: HashMap::new(),
             compiled_state: HashMap::new(),
             execution_stats: Arc::new(Mutex::new(ExecutionStats::default())),
+            cached_functions: HashMap::new(),
+            cache_loaded: false,
         }
     }
 
@@ -204,6 +217,34 @@ impl OvmInterpreter {
         ovm.start().map_err(IntegrationError::OvmInitError)?;
 
         self.ovm = Some(ovm);
+
+        // Log cache directory for visibility
+        if self.integration_config.ovm_cache_enabled {
+            let cache_dir = Self::cache_dir_path();
+            crate::log::get_logger().info(
+                "ovm_cache",
+                &format!("Cache enabled. Directory: {}", cache_dir.display()),
+            );
+        }
+
+        // Load cached function metadata if enabled
+        if self.integration_config.ovm_cache_enabled {
+            let _ = self.load_cached_functions();
+            // For safety, do not preload cached functions by default.
+            // Preloading can be explicitly enabled via OLANG_OVM_PRELOAD=1
+            let preload = std::env::var("OLANG_OVM_PRELOAD")
+                .map(|v| v == "1" || v.to_lowercase() == "true")
+                .unwrap_or(false);
+            if preload {
+                let _ = self.preload_cached_functions();
+            } else {
+                crate::log::get_logger().info(
+                    "ovm_cache",
+                    "Skipping preload of cached functions (set OLANG_OVM_PRELOAD=1 to enable)",
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -225,6 +266,21 @@ impl OvmInterpreter {
 
     /// Evaluate a program using the best available execution method
     pub fn eval_program(&mut self, program: Program) -> Result<Value, IntegrationError> {
+        // Proactively persist any function declarations to cache (even if we end up using classic)
+        if self.integration_config.ovm_cache_enabled {
+            for stmt in &program.statements {
+                if let crate::ast::Statement::FunctionDecl(fd) = stmt {
+                    // Log any error; do not fail execution due to cache issues
+                    if let Err(e) = self.save_function_to_cache(fd) {
+                        crate::log::get_logger().warn(
+                            "ovm_cache",
+                            &format!("Cache save failed for function '{}': {}", fd.name, e),
+                        );
+                    }
+                }
+            }
+        }
+
         let complexity = self.estimate_complexity(&program);
         let should_use_ovm = self.should_use_ovm(&program, complexity);
 
@@ -272,6 +328,8 @@ impl OvmInterpreter {
                                         self.function_registry.insert(fd.name.clone(), func_id);
                                         self.compiled_state.insert(fd.name.clone(), CompiledState::Compiled(func_id));
                                         self.increment_compilation_count();
+                                        // Persist to disk cache for future runs
+                                        let _ = self.save_function_to_cache(fd);
                                     }
                                 }
                             }
@@ -345,6 +403,8 @@ impl OvmInterpreter {
                                 .insert(func_decl.name.clone(), func_id);
                             self.compiled_state.insert(func_decl.name.clone(), CompiledState::Compiled(func_id));
                             self.increment_compilation_count();
+                            // Persist to disk cache for future runs
+                            let _ = self.save_function_to_cache(&func_decl);
                         }
                     }
 
@@ -499,6 +559,148 @@ impl OvmInterpreter {
         if let Ok(mut stats) = self.execution_stats.lock() {
             stats.compilation_count += 1;
         }
+    }
+
+    // === Persistent cache helpers ===
+    fn cache_dir_path() -> PathBuf {
+        // Allow overriding the cache directory via environment variables
+        // Primary: OLANG_OVM_CACHE_DIR, Fallback: OVM_CACHE_DIR
+        if let Ok(dir) = std::env::var("OLANG_OVM_CACHE_DIR") {
+            return PathBuf::from(dir);
+        }
+        if let Ok(dir) = std::env::var("OVM_CACHE_DIR") {
+            return PathBuf::from(dir);
+        }
+        if let Some(home) = dirs::home_dir() {
+            home.join(".olang").join("ovm-cache")
+        } else {
+            PathBuf::from(".olang/ovm-cache")
+        }
+    }
+
+    fn ensure_cache_dir() -> Result<PathBuf, IntegrationError> {
+        let dir = Self::cache_dir_path();
+        if let Err(e) = fs::create_dir_all(&dir) {
+            return Err(IntegrationError::ConversionError(format!(
+                "Failed to create cache dir {}: {}",
+                dir.display(), e
+            )));
+        }
+        Ok(dir)
+    }
+
+    fn function_key(fd: &FunctionDecl) -> Result<String, IntegrationError> {
+        let bytes = bincode::serialize(fd).map_err(|e| IntegrationError::ConversionError(format!(
+            "Failed to serialize function '{}': {:?}", fd.name, e
+        )))?;
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        let hash = hasher.finalize();
+        Ok(format!("{:x}", hash))
+    }
+
+    fn save_function_to_cache(&self, fd: &FunctionDecl) -> Result<(), IntegrationError> {
+        if !self.integration_config.ovm_cache_enabled { return Ok(()); }
+        let dir = Self::ensure_cache_dir()?;
+        let key = Self::function_key(fd)?;
+        let filename = format!("{}-{}.olfunc", fd.name, &key[..16]);
+        let path = dir.join(&filename);
+        let bytes = bincode::serialize(fd).map_err(|e| IntegrationError::ConversionError(format!(
+            "Failed to serialize function for cache: {:?}", e
+        )))?;
+        // Atomic write: write to temp file then rename
+        let tmp_path = dir.join(format!("{}.tmp", filename));
+        match fs::write(&tmp_path, &bytes) {
+            Ok(()) => {
+                if let Err(e) = fs::rename(&tmp_path, &path) {
+                    let _ = fs::remove_file(&tmp_path);
+                    let msg = format!("Failed to move cache file into place ({} -> {}): {}", tmp_path.display(), path.display(), e);
+                    crate::log::get_logger().warn("ovm_cache", &msg);
+                    return Err(IntegrationError::ConversionError(msg));
+                }
+                crate::log::get_logger().info(
+                    "ovm_cache",
+                    &format!("Saved function '{}' to {}", fd.name, path.display()),
+                );
+                Ok(())
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&tmp_path);
+                let msg = format!("Failed to write cache temp file {}: {}", tmp_path.display(), e);
+                crate::log::get_logger().warn("ovm_cache", &msg);
+                Err(IntegrationError::ConversionError(msg))
+            }
+        }
+    }
+
+    fn load_cached_functions(&mut self) -> Result<(), IntegrationError> {
+        if self.cache_loaded || !self.integration_config.ovm_cache_enabled { return Ok(()); }
+        let dir = Self::ensure_cache_dir()?;
+        let entries = fs::read_dir(&dir).map_err(|e| IntegrationError::ConversionError(format!(
+            "Failed to read cache dir {}: {}", dir.display(), e
+        )))?;
+        let mut loaded = 0usize;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension() {
+                if ext == "olfunc" || ext == "bin" {
+                    match fs::read(&path) {
+                        Ok(bytes) => {
+                            match bincode::deserialize::<FunctionDecl>(&bytes) {
+                                Ok(fd) => {
+                                    if let Ok(key) = Self::function_key(&fd) {
+                                        self.cached_functions.insert(key, fd);
+                                        loaded += 1;
+                                    }
+                                }
+                                Err(e) => {
+                                    crate::log::get_logger().warn(
+                                        "ovm_cache",
+                                        &format!(
+                                            "Failed to deserialize cache file {}: {:?}",
+                                            path.display(), e
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            crate::log::get_logger().warn(
+                                "ovm_cache",
+                                &format!("Failed to read cache file {}: {}", path.display(), e),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        self.cache_loaded = true;
+        crate::log::get_logger().info(
+            "ovm_cache",
+            &format!("Loaded {} cached function(s) from {}", loaded, dir.display()),
+        );
+        Ok(())
+    }
+
+    fn preload_cached_functions(&mut self) -> Result<(), IntegrationError> {
+        if self.ovm.is_none() || !self.integration_config.ovm_cache_enabled { return Ok(()); }
+        // Register any cached function with the OVM to avoid re-parsing/resolution cost later
+        let mut registered = 0usize;
+        for fd in self.cached_functions.values().cloned() {
+            if let Some(ovm) = &mut self.ovm {
+                if let Ok(func_id) = ovm.register_function(fd.clone()) {
+                    self.function_registry.insert(fd.name.clone(), func_id);
+                    self.compiled_state.insert(fd.name.clone(), CompiledState::Compiled(func_id));
+                    registered += 1;
+                    // Do not increment compilation_count here; these are preloaded
+                }
+            }
+        }
+        crate::log::get_logger().info(
+            "ovm_cache",
+            &format!("Preloaded {} cached function(s) into OVM", registered),
+        );
+        Ok(())
     }
 
     /// Enhanced expression routing logic

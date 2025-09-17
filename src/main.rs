@@ -475,7 +475,7 @@ fn start_repl(verbose: bool, no_ovm: bool, logger: &Logger) -> anyhow::Result<()
             enable_ovm_lazy_eval: true,
             fallback_on_error: true,
             enable_ovm_builtins: true,
-            ovm_cache_enabled: false,
+            ovm_cache_enabled: true,
             enable_parallel: std::env::var("OVM_ENABLE_PARALLEL").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(true),
             max_parallelism: std::env::var("OVM_PARALLELISM").ok().and_then(|s| s.parse::<usize>().ok()),
             ovm_preferred_builtins: vec![

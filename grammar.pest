@@ -11,7 +11,7 @@ keyword = { "fn" | "let" | "type" | "if" | "else" | "match" | "for" | "while" | 
 // Identifiers and literals - exclude keywords
 identifier  = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 integer     = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
-float       = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
+float       = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")*)? }
 string      = @{ "\"" ~ string_char* ~ "\"" }
 raw_string  = @{ "r\"" ~ ("\\\"" | (!"\"" ~ ANY))* ~ "\"" }
 template_string = { "`" ~ template_raw_content ~ "`" }
@@ -165,7 +165,7 @@ block       = { "{" ~ (statement ~ ";"?)* ~ "}" }
 if_expr     = { "if" ~ expr ~ "=>" ~ (block | expr) ~ ("else" ~ "=>" ~ (block | expr))? }
 
 // Literals
-literal     = { float | integer | char_literal | raw_string | template_string | string | boolean | list | tuple }
+literal     = { float | binary | octal | hex | integer | char_literal | raw_string | template_string | string | boolean | list | tuple }
 
 // Built-in types (for future type system)
 builtin_type = _{ "Int" | "Float" | "String" | "Bool" | "List" | "Tuple" }

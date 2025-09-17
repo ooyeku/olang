@@ -2018,28 +2018,49 @@ impl Parser {
                 Ok(Expr::Float(value))
             }
             Rule::binary => {
-                let s = pair.as_str().replace('_', "").replace("0b", "");
-                let value = i64::from_str_radix(&s, 2).map_err(|_| ParseError::invalid_syntax_at(
+                let raw = pair.as_str().replace('_', "");
+                let (sign, digits) = if raw.starts_with("-0b") {
+                    (-1i64, &raw[3..])
+                } else if raw.starts_with("+0b") {
+                    (1i64, &raw[3..])
+                } else {
+                    (1i64, &raw[2..])
+                };
+                let parsed = i64::from_str_radix(digits, 2).map_err(|_| ParseError::invalid_syntax_at(
                     "Invalid binary literal".to_string(),
                     PositionInfo::from_pair(&pair),
                 ))?;
-                Ok(Expr::Integer(value))
+                Ok(Expr::Integer(sign * parsed))
             }
             Rule::octal => {
-                let s = pair.as_str().replace('_', "").replace("0o", "");
-                let value = i64::from_str_radix(&s, 8).map_err(|_| ParseError::invalid_syntax_at(
+                let raw = pair.as_str().replace('_', "");
+                let (sign, digits) = if raw.starts_with("-0o") {
+                    (-1i64, &raw[3..])
+                } else if raw.starts_with("+0o") {
+                    (1i64, &raw[3..])
+                } else {
+                    (1i64, &raw[2..])
+                };
+                let parsed = i64::from_str_radix(digits, 8).map_err(|_| ParseError::invalid_syntax_at(
                     "Invalid octal literal".to_string(),
                     PositionInfo::from_pair(&pair),
                 ))?;
-                Ok(Expr::Integer(value))
+                Ok(Expr::Integer(sign * parsed))
             }
             Rule::hex => {
-                let s = pair.as_str().replace('_', "").replace("0x", "");
-                let value = i64::from_str_radix(&s, 16).map_err(|_| ParseError::invalid_syntax_at(
+                let raw = pair.as_str().replace('_', "");
+                let (sign, digits) = if raw.starts_with("-0x") {
+                    (-1i64, &raw[3..])
+                } else if raw.starts_with("+0x") {
+                    (1i64, &raw[3..])
+                } else {
+                    (1i64, &raw[2..])
+                };
+                let parsed = i64::from_str_radix(digits, 16).map_err(|_| ParseError::invalid_syntax_at(
                     "Invalid hex literal".to_string(),
                     PositionInfo::from_pair(&pair),
                 ))?;
-                Ok(Expr::Integer(value))
+                Ok(Expr::Integer(sign * parsed))
             }
             Rule::string => {
                 let full_str = pair.as_str();

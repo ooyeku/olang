@@ -2083,6 +2083,7 @@ impl Interpreter {
     fn eval_unary_op(&self, op: UnaryOp, operand: Value) -> Result<Value, InterpreterError> {
         match (op, operand) {
             (UnaryOp::Negate, Value::Integer(n)) => Ok(Value::Integer(-n)),
+            (UnaryOp::Negate, Value::Float(x)) => Ok(Value::Float(-x)),
             (UnaryOp::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
             _ => Err(InterpreterError::TypeError {
                 message: "Invalid unary operation".to_string(),
