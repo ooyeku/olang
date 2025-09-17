@@ -67,7 +67,6 @@ r"Path: C:\Users\Name\file.txt"
 
 // Character literals
 'a'         // Single character
-'\n'        // Escaped character
 ```
 
 ### String Escape Sequences
@@ -87,12 +86,11 @@ r"Path: C:\Users\Name\file.txt"
 "Unicode: \u{1F600}" // \u{XXXXXX} (variable length)
 ```
 
-### Boolean and Unit Literals
+### Boolean
 
 ```olang
 true        // Boolean true
 false       // Boolean false
-()          // Unit type (empty tuple)
 ```
 
 ### Collection Literals

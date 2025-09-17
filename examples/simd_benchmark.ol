@@ -4,7 +4,7 @@
 // Test configuration
 let SMALL_SIZE = 100
 let MEDIUM_SIZE = 1000
-let LARGE_SIZE = 10000
+let LARGE_SIZE = 100000
 
 println("=== SIMD Performance Benchmark ===")
 
