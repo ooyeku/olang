@@ -57,6 +57,12 @@ pub struct IntegrationConfig {
     /// Enable persistence of compiled artifacts across sessions
     pub ovm_cache_enabled: bool,
 
+    /// Enable parallel execution of independent expressions
+    pub enable_parallel: bool,
+
+    /// Maximum parallelism (threads) to use when parallel is enabled
+    pub max_parallelism: Option<usize>,
+
     /// List of builtin functions that should use OVM
     pub ovm_preferred_builtins: Vec<String>,
 }
@@ -71,6 +77,8 @@ impl Default for IntegrationConfig {
             fallback_on_error: true,
             enable_ovm_builtins: true,
             ovm_cache_enabled: false,
+            enable_parallel: false,
+            max_parallelism: None,
             ovm_preferred_builtins: vec![
                 // Simple mathematical builtins that can benefit from OVM
                 "len".to_string(),
@@ -143,6 +151,28 @@ pub struct OvmStatus {
     pub running: bool,
     pub memory_usage: usize,
     pub uptime: std::time::Duration,
+}
+
+/// Simple parallel executor using the global rayon pool
+struct ParallelExecutor;
+impl ParallelExecutor {
+    fn initialize_if_needed(max_threads: Option<usize>) {
+        if let Some(n) = max_threads {
+            let _ = crate::parallel::initialize_parallelization(Some(n));
+        }
+    }
+    fn parallel_map<T, R, F>(items: &[T], f: F) -> Vec<R>
+    where
+        T: Send + Sync,
+        R: Send,
+        F: Fn(usize, &T) -> R + Send + Sync,
+    {
+        use rayon::prelude::*;
+        (0..items.len())
+            .into_par_iter()
+            .map(|i| f(i, &items[i]))
+            .collect()
+    }
 }
 
 impl OvmInterpreter {
@@ -265,7 +295,16 @@ impl OvmInterpreter {
             }
         }
 
-        // Execute each statement through OVM
+        // Parallel settings from config/env
+        let enable_parallel = self.integration_config.enable_parallel
+            || std::env::var("OVM_ENABLE_PARALLEL").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false);
+        let max_threads = self.integration_config.max_parallelism
+            .or_else(|| std::env::var("OVM_PARALLELISM").ok().and_then(|s| s.parse::<usize>().ok()));
+        if enable_parallel {
+            ParallelExecutor::initialize_if_needed(max_threads);
+        }
+
+        // Execute each statement through OVM (sequential by default)
         let mut last_value = Value::Unit;
         for statement in program.statements {
             match statement {
@@ -776,6 +815,47 @@ impl OvmInterpreter {
 
     /// Estimate cost as approximate node count times a small constant
     fn estimate_expr_cost(&self, expr: &crate::ast::Expr) -> usize {
+        fn is_allowed_pure_builtin(name: &str) -> bool {
+            matches!(
+                name,
+                "len"
+                    | "typeof"
+                    | "to_string"
+                    | "to_int"
+                    | "to_float"
+                    | "sum"
+                    | "average"
+                    | "min"
+                    | "max"
+                    | "clamp"
+                    | "reverse"
+                    | "sort"
+                    | "contains"
+            )
+        }
+        fn is_pure_expression(expr: &crate::ast::Expr) -> bool {
+            use crate::ast::Expr as E;
+            match expr {
+                E::Integer(_) | E::Float(_) | E::String(_) | E::Boolean(_) => true,
+                E::List(items) => items.iter().all(is_pure_expression),
+                E::Tuple(items) => items.iter().all(is_pure_expression),
+                E::BinaryOp { left, right, .. } => is_pure_expression(left) && is_pure_expression(right),
+                E::UnaryOp { operand, .. } => is_pure_expression(operand),
+                E::Call { callee, arguments } => {
+                    if let E::Identifier(name) = callee.as_ref() {
+                        if !is_allowed_pure_builtin(name) { return false; }
+                        arguments.iter().all(|arg| match arg { Argument::Positional(e) => is_pure_expression(e), Argument::Named{ value, .. } => is_pure_expression(value) })
+                    } else {
+                        false
+                    }
+                }
+                E::Pipeline { .. } => false,
+                E::Identifier(_) => false,
+                E::FieldAccess { .. } | E::Index { .. } => false,
+                _ => false,
+            }
+        }
+        // existing cost estimator
         fn count(expr: &crate::ast::Expr) -> usize {
             match expr {
                 crate::ast::Expr::Call { callee, arguments } => {
@@ -798,6 +878,49 @@ impl OvmInterpreter {
             }
         }
         count(expr)
+    }
+
+    /// Determine if an expression is pure and independent (no env deps, no side effects)
+    fn is_pure_independent_expr(&self, expr: &crate::ast::Expr) -> bool {
+        // No classic variables and OVM-friendly builtins only
+        !self.expression_needs_classic_variables(expr) && {
+            fn is_allowed_pure_builtin(name: &str) -> bool {
+                matches!(
+                    name,
+                    "len"
+                        | "typeof"
+                        | "to_string"
+                        | "to_int"
+                        | "to_float"
+                        | "sum"
+                        | "average"
+                        | "min"
+                        | "max"
+                        | "clamp"
+                        | "reverse"
+                        | "sort"
+                        | "contains"
+                )
+            }
+            use crate::ast::Expr as E;
+            fn check(expr: &E) -> bool {
+                match expr {
+                    E::Integer(_) | E::Float(_) | E::String(_) | E::Boolean(_) => true,
+                    E::List(items) => items.iter().all(check),
+                    E::Tuple(items) => items.iter().all(check),
+                    E::BinaryOp { left, right, .. } => check(left) && check(right),
+                    E::UnaryOp { operand, .. } => check(operand),
+                    E::Call { callee, arguments } => {
+                        if let E::Identifier(name) = callee.as_ref() {
+                            if !is_allowed_pure_builtin(name) { return false; }
+                            arguments.iter().all(|a| match a { Argument::Positional(e) => check(e), Argument::Named{ value, .. } => check(value) })
+                        } else { false }
+                    }
+                    _ => false,
+                }
+            }
+            check(expr)
+        }
     }
 
     /// Analyze a function declaration and produce FunctionAnalysis

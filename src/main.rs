@@ -40,6 +40,14 @@ struct Cli {
     /// Show OVM performance statistics
     #[arg(long)]
     ovm_stats: bool,
+
+    /// Enable parallel evaluation of independent expressions (experimental)
+    #[arg(long)]
+    enable_parallel: bool,
+
+    /// Set maximum parallelism for OVM/builtins (threads). Also respects OVM_PARALLELISM env var.
+    #[arg(long, value_name = "N")]
+    ovm_parallelism: Option<usize>,
 }
 
 fn main() {
@@ -49,7 +57,7 @@ fn main() {
     let logger = init_logger();
 
     // Initialize parallelization early for optimal performance
-    if let Err(e) = initialize_parallelization(None) {
+    if let Err(e) = initialize_parallelization(cli.ovm_parallelism) {
         if cli.verbose {
             logger.warn("main", &format!("Failed to initialize parallel processing: {}", e));
         }
@@ -58,6 +66,14 @@ fn main() {
             "main",
             &format!("Multi-threading enabled: {} CPU cores detected, using aggressive parallelization", num_cpus::get())
         );
+    }
+
+    // Allow enabling/disabling parallel at runtime
+    if cli.enable_parallel {
+        std::env::set_var("OVM_ENABLE_PARALLEL", "1");
+    }
+    if let Some(n) = cli.ovm_parallelism {
+        std::env::set_var("OVM_PARALLELISM", n.to_string());
     }
 
     // Set a very aggressive parallel threshold for maximum multi-threading by default
@@ -460,6 +476,8 @@ fn start_repl(verbose: bool, no_ovm: bool, logger: &Logger) -> anyhow::Result<()
             fallback_on_error: true,
             enable_ovm_builtins: true,
             ovm_cache_enabled: false,
+            enable_parallel: std::env::var("OVM_ENABLE_PARALLEL").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false),
+            max_parallelism: std::env::var("OVM_PARALLELISM").ok().and_then(|s| s.parse::<usize>().ok()),
             ovm_preferred_builtins: vec![
                 "len".to_string(),
                 "typeof".to_string(),

@@ -90,6 +90,8 @@ impl OvmCommand {
             fallback_on_error: !self.no_fallback,
             enable_ovm_builtins: true,
             ovm_cache_enabled: true,
+            enable_parallel: std::env::var("OVM_ENABLE_PARALLEL").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false),
+            max_parallelism: std::env::var("OVM_PARALLELISM").ok().and_then(|s| s.parse::<usize>().ok()),
             ovm_preferred_builtins: vec![
                 "len".to_string(),
                 "typeof".to_string(),
