@@ -6,10 +6,10 @@ let SMALL_SIZE = 100
 let MEDIUM_SIZE = 1000
 let LARGE_SIZE = 10000
 
-print("=== SIMD Performance Benchmark ===")
+println("=== SIMD Performance Benchmark ===")
 
 // Test 1: Vectorized arithmetic operations
-print("Test 1: Vectorized arithmetic operations...")
+println("Test 1: Vectorized arithmetic operations...")
 
 // Create test data
 let data1 = range(1, LARGE_SIZE)
@@ -29,10 +29,10 @@ let combined = zip(squares, doubled) |> map((pair) => {
 let fused = data1 |> map((x) => x * x + x * 2 + 1)  // Polynomial evaluation
 
 let result1 = combined |> take(10) |> reduce(0, (a, b) => a + b)
-print("Vectorized arithmetic result: " + result1)
+println("Vectorized arithmetic result: " + result1)
 
 // Test 2: Vectorized filtering and predicates
-print("Test 2: Vectorized filtering...")
+println("Test 2: Vectorized filtering...")
 
 let data = range(-5000, 5000)
 
@@ -48,10 +48,10 @@ let complex_filter = data
     |> filter((x) => x % 10 == 0)
 
 let result2 = complex_filter |> take(5) |> reduce(0, (a, b) => a + b)
-print("Vectorized filtering result: " + result2)
+println("Vectorized filtering result: " + result2)
 
 // Test 3: Vectorized reductions
-print("Test 3: Vectorized reductions...")
+println("Test 3: Vectorized reductions...")
 
 let reduction_data = range(1, LARGE_SIZE)
 
@@ -59,11 +59,11 @@ let reduction_data = range(1, LARGE_SIZE)
 let sum_result = reduction_data |> reduce(0, (a, b) => a + b)
 let product_small = range(1, 10) |> reduce(1, (a, b) => a * b)
 
-print("Sum result: " + sum_result)
-print("Product result: " + product_small)
+println("Sum result: " + sum_result)
+println("Product result: " + product_small)
 
 // Test 4: Pipeline fusion opportunities
-print("Test 4: Pipeline fusion...")
+println("Test 4: Pipeline fusion...")
 
 // This should trigger pipeline fusion
 let fusion_result = range(1, MEDIUM_SIZE)
@@ -74,10 +74,10 @@ let fusion_result = range(1, MEDIUM_SIZE)
     |> map((x) => x / 2)           // Stage 5: Should fuse with stages 1&3
     |> reduce(0, (a, b) => a + b)  // Final reduction
 
-print("Pipeline fusion result: " + fusion_result)
+println("Pipeline fusion result: " + fusion_result)
 
 // Test 5: Memory optimization
-print("Test 5: Memory optimization...")
+println("Test 5: Memory optimization...")
 
 // Large computation that should benefit from memory optimization
 let memory_result = range(1, MEDIUM_SIZE)
@@ -89,7 +89,7 @@ let memory_result = range(1, MEDIUM_SIZE)
     |> take(100)
     |> reduce(0, (a, b) => a + b)
 
-print("Memory optimization result: " + memory_result)
+println("Memory optimization result: " + memory_result)
 
-print("=== Benchmark Complete ===")
-print("All SIMD and pipeline optimizations tested successfully!")
+println("=== Benchmark Complete ===")
+println("All SIMD and pipeline optimizations tested successfully!")

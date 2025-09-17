@@ -280,7 +280,7 @@ impl Repl {
             fallback_on_error: true,
             enable_ovm_builtins: true,
             ovm_cache_enabled: false,
-            enable_parallel: std::env::var("OVM_ENABLE_PARALLEL").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false),
+            enable_parallel: std::env::var("OVM_ENABLE_PARALLEL").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(true),
             max_parallelism: std::env::var("OVM_PARALLELISM").ok().and_then(|s| s.parse::<usize>().ok()),
             ovm_preferred_builtins: vec![
                 "len".to_string(),
@@ -418,9 +418,9 @@ impl Repl {
                         Ok(value) => {
                             if value != Value::Unit {
                                 if self.config.show_types {
-                                    println!("{} : {}", value, Self::get_type_name(&value));
+                                    println!("{} : {}", repl_format(&value), Self::get_type_name(&value));
                                 } else {
-                                    println!("{}", value);
+                                    repl_print(&value);
                                 }
                             }
                         }
@@ -474,17 +474,17 @@ impl Repl {
                         let duration = start.elapsed();
                         if value != Value::Unit {
                             if self.config.show_types {
-                                println!("{} : {}", value, Self::get_type_name(&value));
+                                println!("{} : {}", repl_format(&value), Self::get_type_name(&value));
                             } else {
-                                println!("{}", value);
+                                repl_print(&value);
                             }
                         }
                         println!("Execution time: {:.2}ms", duration.as_secs_f64() * 1000.0);
                     } else if value != Value::Unit {
                         if self.config.show_types {
-                            println!("{} : {}", value, Self::get_type_name(&value));
+                            println!("{} : {}", repl_format(&value), Self::get_type_name(&value));
                         } else {
-                            println!("{}", value);
+                            repl_print(&value);
                         }
                     }
                 }
@@ -796,7 +796,7 @@ impl Repl {
                         Ok(value) => {
                             let duration = start.elapsed();
                             if value != Value::Unit {
-                                println!("{}", value);
+                                repl_print(&value);
                             }
                             println!("Execution time: {:.2}ms", duration.as_secs_f64() * 1000.0);
                         }
@@ -964,7 +964,7 @@ impl Repl {
                             match self.eval_line(&content) {
                                 Ok(value) => {
                                     if value != Value::Unit {
-                                        println!("{}", value);
+                                        repl_print(&value);
                                     }
                                     println!("File '{}' executed successfully", filename);
                                 }
@@ -1331,7 +1331,7 @@ impl Repl {
                         match self.eval_line(&command) {
                             Ok(value) => {
                                 if value != Value::Unit {
-                                    println!("{}", value);
+                                    repl_print(&value);
                                 }
                             }
                             Err(e) => {
@@ -2589,7 +2589,7 @@ impl Repl {
                         match self.eval_line(&step.code) {
                             Ok(value) => {
                                 if value != Value::Unit {
-                                    println!("{}", value);
+                                    repl_print(&value);
                                 }
                                 println!("{}Code executed successfully!{}", Colors::GREEN, Colors::RESET);
                             }
@@ -2616,7 +2616,7 @@ impl Repl {
                             match self.eval_line(&user_code) {
                                 Ok(value) => {
                                     if value != Value::Unit {
-                                        println!("{}", value);
+                                        repl_print(&value);
                                     }
                                     println!("{}Great job!{}", Colors::GREEN, Colors::RESET);
                                 }
@@ -2706,4 +2706,17 @@ impl ReplExt for Repl {
         // Note: This would need &mut self to work properly, but keeping for compatibility
         None // Simplified for now
     }
+}
+
+
+// Pretty-print helpers for REPL output to avoid quoted strings
+fn repl_format(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.as_str().to_string(),
+        _ => format!("{}", value),
+    }
+}
+
+fn repl_print(value: &Value) {
+    println!("{}", repl_format(value));
 }

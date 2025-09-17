@@ -77,7 +77,7 @@ impl Default for IntegrationConfig {
             fallback_on_error: true,
             enable_ovm_builtins: true,
             ovm_cache_enabled: false,
-            enable_parallel: false,
+            enable_parallel: true,
             max_parallelism: None,
             ovm_preferred_builtins: vec![
                 // Simple mathematical builtins that can benefit from OVM

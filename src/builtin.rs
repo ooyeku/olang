@@ -676,10 +676,10 @@ impl BuiltinFunctions {
             // Force evaluation of any lazy values before printing
             let output = args
                 .iter()
-                .map(|arg| {
-                    // This is a force point - in full implementation,
-                    // we would force lazy values here
-                    arg.to_string()
+                .map(|arg| match arg {
+                    // Print raw string content without quotes for a nicer UX
+                    Value::String(s) => s.as_str().to_string(),
+                    _ => format!("{}", arg),
                 })
                 .collect::<Vec<String>>()
                 .join(" ");
@@ -696,7 +696,10 @@ impl BuiltinFunctions {
             });
         }
 
-        print!("{}", args[0]);
+        match &args[0] {
+            Value::String(s) => print!("{}", s.as_str()),
+            other => print!("{}", other),
+        }
         Ok(Value::Unit)
     }
 
