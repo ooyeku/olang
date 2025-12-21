@@ -328,48 +328,7 @@ impl Repl {
 
     pub fn run(&mut self) -> Result<(), ReplError> {
         println!("Olang v{}", VERSION);
-
-        // Display OVM status with enhanced messaging
-        if self.ovm_interpreter.is_ovm_available() {
-            let stats = self.ovm_interpreter.get_stats();
-            println!(
-                "{}",
-                "OVM (Olang Virtual Machine) is running in the background".bright_green()
-            );
-            println!(
-                "{}",
-                "   • Advanced pipeline fusion optimization active".bright_cyan()
-            );
-            println!(
-                "{}",
-                "   • Automatic SIMD vectorization enabled".bright_cyan()
-            );
-            println!(
-                "{}",
-                "   • Garbage collection and memory optimization active".bright_cyan()
-            );
-            println!(
-                "{}",
-                "   • Your code is being optimized automatically!".bright_white()
-            );
-
-            if stats.ovm_executions > 0 || stats.classic_executions > 0 {
-                println!(
-                    "   • Previous session: {} total executions",
-                    (stats.ovm_executions + stats.classic_executions)
-                        .to_string()
-                        .bright_white()
-                );
-            }
-        } else {
-            println!(
-                "{}",
-                "OVM not available - using classic interpreter".bright_yellow()
-            );
-        }
-
-        println!();
-        println!("Type 'help' for help, ':debug' for debugging commands, ':ovm status' for OVM details, ':env' to see environment, 'quit' to exit");
+        println!("Type ':help' for help or 'quit' to exit");
         println!();
 
         loop {
@@ -443,7 +402,7 @@ impl Repl {
             }
 
             // Handle special commands
-            if line.starts_with(':') || line == "help" || line == "quit" {
+            if line.starts_with(':') || line == "quit" {
                 if let Err(e) = self.handle_command(line) {
                     eprintln!("Command error: {}", e);
                 }
@@ -512,7 +471,7 @@ impl Repl {
         let command_name = parts[0];
 
         match command_name {
-            "help" | ":help" => {
+            ":help" => {
                 if parts.len() == 1 {
                     println!("{}", self.help_system.show_overview());
                 } else {
@@ -528,7 +487,7 @@ impl Repl {
                                 if let Some(tutorial) = self.help_system.get_tutorial(tutorial_name) {
                                     println!("{}", self.help_system.format_tutorial(tutorial));
                                 } else {
-                                    println!("Tutorial '{}' not found. Use 'help tutorials' to see available tutorials.", tutorial_name);
+                                    println!("Tutorial '{}' not found. Use ':help tutorials' to see available tutorials.", tutorial_name);
                                 }
                             } else {
                                 println!("{}", self.help_system.format_tutorial_list());

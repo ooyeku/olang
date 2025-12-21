@@ -351,7 +351,7 @@ impl HelpSystem {
         }
         
         output.push_str(&format!(
-            "{}TIP: Use 'help <function>' for detailed documentation{}\n",
+            "{}TIP: Use ':help <function>' for detailed documentation{}\n",
             Colors::DIM,
             Colors::RESET
         ));
@@ -606,7 +606,7 @@ impl HelpSystem {
         }
         
         output.push_str(&format!(
-            "{}TIP: Start a tutorial: help tutorial <name>{}\n",
+            "{}TIP: Start a tutorial: :help tutorial <name>{}\n",
             Colors::DIM,
             Colors::RESET
         ));
@@ -778,10 +778,10 @@ impl HelpSystem {
                 suggestions.push("help error.syntax - Common syntax errors and fixes".to_string());
             }
             if error.contains("TypeError") || error.contains("type") {
-                suggestions.push("help error.types - Type errors and conversions".to_string());
+                suggestions.push(":help error.types - Type errors and conversions".to_string());
             }
             if error.contains("undefined") || error.contains("not found") {
-                suggestions.push("help error.runtime - Runtime error debugging".to_string());
+                suggestions.push(":help error.runtime - Runtime error debugging".to_string());
             }
         }
         
@@ -789,24 +789,24 @@ impl HelpSystem {
         if !context.current_variables.is_empty() {
             let has_lists = context.current_variables.iter().any(|v| v.contains("list") || v.contains("array"));
             if has_lists {
-                suggestions.push("help list - List manipulation functions".to_string());
+                suggestions.push(":help list - List manipulation functions".to_string());
             }
         }
         
         // Working category suggestions
         if let Some(ref category) = context.current_working_category {
             if category == "List" {
-                suggestions.push("help map - Transform lists with functions".to_string());
-                suggestions.push("help filter - Filter lists by conditions".to_string());
-                suggestions.push("help reduce - Reduce lists to single values".to_string());
+                suggestions.push(":help map - Transform lists with functions".to_string());
+                suggestions.push(":help filter - Filter lists by conditions".to_string());
+                suggestions.push(":help reduce - Reduce lists to single values".to_string());
             }
         }
         
         // Always include general suggestions
         if suggestions.is_empty() {
             suggestions.push("Tutorial: basic_operations - Learn Olang fundamentals".to_string());
-            suggestions.push("help examples - See practical examples".to_string());
-            suggestions.push("help syntax - Language syntax reference".to_string());
+            suggestions.push(":help examples - See practical examples".to_string());
+            suggestions.push(":help syntax - Language syntax reference".to_string());
         }
         
         suggestions
@@ -875,7 +875,7 @@ impl HelpSystem {
         }
         
         output.push_str(&format!(
-            "{}TIP: Type 'help <topic>' for detailed information{}\n",
+            "{}TIP: Type ':help <topic>' for detailed information{}\n",
             Colors::DIM,
             Colors::RESET
         ));
@@ -3047,7 +3047,7 @@ impl HelpSystem {
                 ":search \"List[T] -> Int\" // Find functions with specific signature".to_string(),
             ],
             category: "REPL".to_string(),
-            see_also: vec![":examples".to_string(), "help list".to_string()],
+            see_also: vec![":examples".to_string(), ":help list".to_string()],
         });
 
         // Environment Management
@@ -3166,10 +3166,10 @@ impl HelpSystem {
 {}Welcome to Olang!{} This interactive help system provides documentation for all built-in functions and REPL commands.
 
 {}Quick Start:{}
-  help <function>      - Show detailed help for a specific function
-  help list            - List all available functions by category  
-  help examples        - Show practical examples
-  help syntax          - Show language syntax reference
+  :help <function>      - Show detailed help for a specific function
+  :help list            - List all available functions by category  
+  :help examples        - Show practical examples
+  :help syntax          - Show language syntax reference
 
 {}Popular Functions:{}
   {}println{}, {}print{}       - Output text and values
@@ -3186,8 +3186,8 @@ impl HelpSystem {
 {}Categories Available:{}
 {}
 
-Type '{}help <function>{}' for detailed documentation on any function.
-Type '{}help list{}' to see all functions organized by category.
+Type '{}:help <function>{}' for detailed documentation on any function.
+Type '{}:help list{}' to see all functions organized by category.
 
 {}Happy coding! {}",
             Colors::BOLD, Colors::RESET,
@@ -3216,10 +3216,56 @@ Type '{}help list{}' to see all functions organized by category.
 
     /// Format detailed documentation for a function
     fn format_function_documentation(&self, func: &FunctionDoc) -> String {
-        format!(
-            "Function: {}\nDescription: {}\nSyntax: {}\nReturns: {}",
-            func.name, func.description, func.syntax, func.return_type
-        )
+        let mut output = format!(
+            "\n{}═══ Function: {}{} ═══{}\n\n",
+            Colors::BOLD, Colors::CYAN, func.name, Colors::RESET
+        );
+
+        output.push_str(&format!(
+            "{}Description:{} {}\n",
+            Colors::YELLOW, Colors::RESET, func.description
+        ));
+
+        output.push_str(&format!(
+            "{}Category:   {} {}\n",
+            Colors::YELLOW, Colors::RESET, func.category
+        ));
+
+        output.push_str(&format!(
+            "{}Syntax:     {} {}{}{}\n",
+            Colors::YELLOW, Colors::RESET, Colors::CYAN, func.syntax, Colors::RESET
+        ));
+
+        output.push_str(&format!(
+            "{}Returns:    {} {}{}{}\n",
+            Colors::YELLOW, Colors::RESET, Colors::GREEN, func.return_type, Colors::RESET
+        ));
+
+        if !func.parameters.is_empty() {
+            output.push_str(&format!("\n{}Parameters:{}\n", Colors::BOLD, Colors::RESET));
+            for param in &func.parameters {
+                output.push_str(&format!("  • {}\n", param));
+            }
+        }
+
+        if !func.examples.is_empty() {
+            output.push_str(&format!("\n{}Examples:{}\n", Colors::BOLD, Colors::RESET));
+            for example in &func.examples {
+                output.push_str(&format!(
+                    "  {}>>{} {}{}{}\n",
+                    Colors::GREEN, Colors::RESET, Colors::CYAN, example, Colors::RESET
+                ));
+            }
+        }
+
+        if !func.see_also.is_empty() {
+            output.push_str(&format!(
+                "\n{}See Also:{} {}\n",
+                Colors::DIM, Colors::RESET, func.see_also.join(", ")
+            ));
+        }
+
+        output
     }
 
     /// List all available functions
@@ -3310,7 +3356,7 @@ Type '{}help list{}' to see all functions organized by category.
     println(\"Error: \" + error)
   }}
 
-For more examples on specific functions, use: {}help <function_name>{}",
+For more examples on specific functions, use: {}:help <function_name>{}",
             Colors::BOLD,
             Colors::RESET,
             Colors::GREEN,
@@ -3381,7 +3427,7 @@ For more examples on specific functions, use: {}help <function_name>{}",
   import my_module
   export {{ function_name, CONSTANT }}
 
-For function-specific syntax, use: {}help <function_name>{}",
+For function-specific syntax, use: {}:help <function_name>{}",
             Colors::BOLD,
             Colors::RESET,
             Colors::GREEN,
@@ -5331,13 +5377,13 @@ For function-specific syntax, use: {}help <function_name>{}",
                 .collect::<Vec<_>>();
             
             if suggestions.is_empty() {
-                format!("Function '{}' not found.", function_name)
+                format!("{}{}Function '{}' not found.{}", Colors::BOLD, Colors::RED, function_name, Colors::RESET)
             } else {
                 format!(
-                    "Function '{}' not found. Did you mean:\n{}",
-                    function_name,
+                    "{}{}Function '{}' not found.{} Did you mean:\n{}",
+                    Colors::BOLD, Colors::RED, function_name, Colors::RESET,
                     suggestions.iter()
-                        .map(|s| format!("  • {}", s))
+                        .map(|s| format!("  {}•{} {}{}{}", Colors::YELLOW, Colors::RESET, Colors::CYAN, s, Colors::RESET))
                         .collect::<Vec<_>>()
                         .join("\n")
                 )
@@ -5368,7 +5414,7 @@ For function-specific syntax, use: {}help <function_name>{}",
                 }
                 
                 output.push_str(&format!(
-                    "\n{}Use 'help <function_name>' for detailed documentation{}\n",
+                    "\n{}Use ':help <function_name>' for detailed documentation{}\n",
                     Colors::DIM, Colors::RESET
                 ));
             }
@@ -5384,13 +5430,13 @@ For function-specific syntax, use: {}help <function_name>{}",
                 .collect::<Vec<_>>();
             
             if suggestions.is_empty() {
-                format!("Category '{}' not found.", category)
+                format!("{}{}Category '{}' not found.{}", Colors::BOLD, Colors::RED, category, Colors::RESET)
             } else {
                 format!(
-                    "Category '{}' not found. Did you mean:\n{}",
-                    category,
+                    "{}{}Category '{}' not found.{} Did you mean:\n{}",
+                    Colors::BOLD, Colors::RED, category, Colors::RESET,
                     suggestions.iter()
-                        .map(|s| format!("  • {}", s))
+                        .map(|s| format!("  {}•{} {}{}{}", Colors::YELLOW, Colors::RESET, Colors::CYAN, s, Colors::RESET))
                         .collect::<Vec<_>>()
                         .join("\n")
                 )
