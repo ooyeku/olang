@@ -619,6 +619,43 @@ impl Interpreter {
         }
     }
 
+    /// Set the current file path for module resolution context
+    /// This allows relative module imports to be resolved correctly
+    /// when running a file from a different directory
+    pub fn set_current_file(&mut self, file_path: &std::path::Path) {
+        // Store the file path as the current module context
+        if let Some(path_str) = file_path.to_str() {
+            self.current_module_path = Some(path_str.to_string());
+            
+            // Calculate content hash if the file exists (to prevent cache invalidation)
+            let content_hash = if file_path.exists() {
+                self.calculate_file_hash(file_path).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            
+            // Also cache a dummy entry so discover_module_same_directory can find the directory
+            let cache_entry = ModuleCacheEntry {
+                module: Value::Unit,
+                file_path: Some(file_path.to_path_buf()),
+                last_modified: Some(std::time::SystemTime::now()),
+                dependencies: vec![],
+                content_hash,
+                compilation_time: std::time::Duration::default(),
+                access_count: 0,
+                last_accessed: std::time::SystemTime::now(),
+                cache_generation: 0,
+                memory_size: 0,
+            };
+            self.module_cache.insert(path_str.to_string(), cache_entry);
+        }
+    }
+
+    /// Clear the current file context
+    pub fn clear_current_file(&mut self) {
+        self.current_module_path = None;
+    }
+
     /// Register built-in functions in the environment
     fn register_builtins(&mut self) {
         for (name, func) in self.builtin_functions.get_functions() {
@@ -2585,11 +2622,15 @@ impl Interpreter {
             return self.load_from_persistent_cache(module_path);
         }
         
-        // Get file info before borrowing cache mutably
-        let file_path = self.resolve_module_path(module_path).ok();
-        let (should_validate, current_hash) = if let Some(ref path) = file_path {
-            if self.smart_cache_config.enable_content_hashing && path.exists() {
-                (true, Some(self.calculate_file_hash(path)?))
+        // Get file path from the cached entry itself to avoid recursion
+        // (calling resolve_module_path here would cause infinite recursion)
+        let (should_validate, current_hash) = if let Some(entry) = self.module_cache.get(module_path) {
+            if let Some(ref path) = entry.file_path {
+                if self.smart_cache_config.enable_content_hashing && path.exists() {
+                    (true, Some(self.calculate_file_hash(path)?))
+                } else {
+                    (false, None)
+                }
             } else {
                 (false, None)
             }
@@ -3170,7 +3211,32 @@ impl Interpreter {
         // Save current environment and module path
         let saved_env = std::mem::replace(&mut self.environment, module_env);
         let saved_module_path = self.current_module_path.clone();
-        self.current_module_path = Some(module_path.to_string());
+        
+        // Set current module path to the FULL file path (not just module name)
+        // This allows nested imports to resolve relative to this file's directory
+        let file_path_str = file_path.to_string_lossy().to_string();
+        self.current_module_path = Some(file_path_str.clone());
+        
+        // Pre-cache a placeholder entry so nested imports can find this module's directory
+        // The full module value will be added after the module is fully loaded
+        let content_hash = if file_path.exists() {
+            self.calculate_file_hash(&file_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let placeholder_entry = ModuleCacheEntry {
+            module: Value::Unit,  // Placeholder until full load
+            file_path: Some(file_path.clone()),
+            last_modified: file_path.metadata().ok().and_then(|m| m.modified().ok()),
+            dependencies: vec![],
+            content_hash,
+            compilation_time: std::time::Duration::default(),
+            access_count: 0,
+            last_accessed: SystemTime::now(),
+            cache_generation: 0,
+            memory_size: 0,
+        };
+        self.module_cache.insert(file_path_str, placeholder_entry);
         
         // Execute the module and collect exports
         let result = {

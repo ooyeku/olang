@@ -806,13 +806,6 @@ impl OvmInterpreter {
             .retain(|name| name != builtin_name);
     }
 
-    #[allow(dead_code)]
-    /// Check if an expression should use the classic interpreter (updated logic)
-    fn should_use_classic_interpreter(&self, expr: &crate::ast::Expr) -> bool {
-        // Use the inverse of the enhanced OVM routing logic
-        !self.should_use_ovm_for_expression(expr)
-    }
-
     /// Check if a name corresponds to a builtin function
     fn is_builtin_function(&self, name: &str) -> bool {
         // List of builtin functions that should use classic interpreter

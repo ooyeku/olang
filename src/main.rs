@@ -391,9 +391,22 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
     let source = std::fs::read_to_string(file_path)?;
     let parser = OlangParser::new();
     
+    // Get absolute path for module resolution
+    let absolute_path = if file_path.is_absolute() {
+        file_path.clone()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join(file_path)
+    };
+    
     if no_ovm {
         // Use classic interpreter
         let mut interpreter = olang::interpreter::Interpreter::new();
+        
+        // Set file context for proper module resolution
+        interpreter.set_current_file(&absolute_path);
+        
         match parser.parse(&source) {
             Ok(ast) => {
                 match interpreter.eval_program(ast) {
@@ -418,6 +431,9 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
         // Use OVM integration
         let config = IntegrationConfig::default();
         let mut ovm_interpreter = OvmInterpreter::with_config(config);
+        
+        // Set file context for proper module resolution
+        ovm_interpreter.get_classic_interpreter().set_current_file(&absolute_path);
         
         // Initialize OVM
         if let Err(e) = ovm_interpreter.initialize_ovm_default() {

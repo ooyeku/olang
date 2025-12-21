@@ -775,33 +775,15 @@ impl BuiltinFunctions {
             }
         }
 
-        // Fall back to eager evaluation
-        if should_parallelize(list_ref.len()) {
-            // PARALLEL VERSION - Now that Value implements Send + Sync!
-            let results: Result<Vec<_>, _> = list_ref
-                .par_iter()
-                .map(|item| interpreter.call_function_safe(function.clone(), vec![item.clone()]))
-                .collect();
-
-            match results {
-                Ok(values) => Ok(Value::List(values.into())),
-                Err(e) => Err(e),
-            }
-        } else {
-            // SEQUENTIAL VERSION (for small lists) - MEMORY OPTIMIZED
-            let mut result = Vec::with_capacity(list_ref.len()); // Pre-allocate
-            for item in list_ref.iter() {
-                let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
-                result.push(value);
-            }
-            
-            // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after map operations
-            if list_ref.len() > 5 {
-                interpreter.force_memory_cleanup();
-            }
-            
-            Ok(Value::List(result.into()))
+        // Sequential evaluation - parallel disabled because interpreter cloning is too expensive
+        // (cloning full interpreter state for each element defeats parallelization benefits)
+        let mut result = Vec::with_capacity(list_ref.len());
+        for item in list_ref.iter() {
+            let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
+            result.push(value);
         }
+        
+        Ok(Value::List(result.into()))
     }
 
     fn process_map_range(
@@ -809,24 +791,13 @@ impl BuiltinFunctions {
         function: &Value,
         interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
-        if should_parallelize(range_vec.len()) {
-            let results: Result<Vec<_>, _> = range_vec
-                .par_iter()
-                .map(|item| interpreter.call_function_safe(function.clone(), vec![item.clone()]))
-                .collect();
-
-            match results {
-                Ok(values) => Ok(Value::List(values.into())),
-                Err(e) => Err(e),
-            }
-        } else {
-            let mut result = Vec::with_capacity(range_vec.len());
-            for item in range_vec.iter() {
-                let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
-                result.push(value);
-            }
-            Ok(Value::List(result.into()))
+        // Sequential only - parallel disabled due to interpreter cloning overhead
+        let mut result = Vec::with_capacity(range_vec.len());
+        for item in range_vec.iter() {
+            let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
+            result.push(value);
         }
+        Ok(Value::List(result.into()))
     }
 
     fn process_filter_range(
@@ -834,35 +805,15 @@ impl BuiltinFunctions {
         function: &Value,
         interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
-        if should_parallelize(range_vec.len()) {
-            let results: Result<Vec<_>, _> = range_vec
-                .par_iter()
-                .filter_map(|item| {
-                    match interpreter.call_function_safe(function.clone(), vec![item.clone()]) {
-                        Ok(Value::Boolean(true)) => Some(Ok(item.clone())),
-                        Ok(Value::Boolean(false)) => None,
-                        Ok(_) => Some(Err(InterpreterError::TypeError {
-                            message: "filter: predicate must return boolean".to_string(),
-                        })),
-                        Err(e) => Some(Err(e)),
-                    }
-                })
-                .collect();
-
-            match results {
-                Ok(values) => Ok(Value::List(values.into())),
-                Err(e) => Err(e),
+        // Sequential only - parallel disabled due to interpreter cloning overhead
+        let mut result = Vec::with_capacity(range_vec.len());
+        for item in range_vec.iter() {
+            let pred = interpreter.call_function_optimized(function, vec![item.clone()])?;
+            if let Value::Boolean(true) = pred {
+                result.push(item.clone())
             }
-        } else {
-            let mut result = Vec::with_capacity(range_vec.len());
-            for item in range_vec.iter() {
-                let pred = interpreter.call_function_optimized(function, vec![item.clone()])?;
-                if let Value::Boolean(true) = pred {
-                    result.push(item.clone())
-                }
-            }
-            Ok(Value::List(result.into()))
         }
+        Ok(Value::List(result.into()))
     }
 
     fn filter(
@@ -937,45 +888,16 @@ impl BuiltinFunctions {
             }
         }
 
-        // Fall back to eager evaluation
-        if should_parallelize(list_ref.len()) {
-            // PARALLEL VERSION - filter with parallel processing
-            let results: Result<Vec<_>, _> = list_ref
-                .par_iter()
-                .filter_map(|item| {
-                    match interpreter.call_function_safe(function.clone(), vec![item.clone()]) {
-                        Ok(Value::Boolean(true)) => Some(Ok(item.clone())),
-                        Ok(Value::Boolean(false)) => None,
-                        Ok(_) => Some(Err(InterpreterError::TypeError {
-                            message: "filter: predicate must return boolean".to_string(),
-                        })),
-                        Err(e) => Some(Err(e)),
-                    }
-                })
-                .collect();
-
-            match results {
-                Ok(values) => Ok(Value::List(values.into())),
-                Err(e) => Err(e),
+        // Sequential evaluation - parallel disabled due to interpreter cloning overhead
+        let mut result = Vec::with_capacity(list_ref.len());
+        for item in list_ref.iter() {
+            let pred = interpreter.call_function_optimized(function, vec![item.clone()])?;
+            if let Value::Boolean(true) = pred {
+                result.push(item.clone())
             }
-        } else {
-            // SEQUENTIAL VERSION (for small lists) - MEMORY OPTIMIZED
-            let mut result = Vec::with_capacity(list_ref.len()); // Worst case: all pass filter
-            for item in list_ref.iter() {
-                // Use optimized function call to reduce cloning
-                let pred = interpreter.call_function_optimized(function, vec![item.clone()])?;
-                if let Value::Boolean(true) = pred {
-                    result.push(item.clone())
-                }
-            }
-            
-            // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after filter operations
-            if list_ref.len() > 5 {
-                interpreter.force_memory_cleanup();
-            }
-            
-            Ok(Value::List(result.into()))
         }
+        
+        Ok(Value::List(result.into()))
     }
 
     fn reduce(
@@ -2226,39 +2148,16 @@ impl BuiltinFunctions {
             }
         }
 
-        // Fall back to eager evaluation
-        if should_parallelize(list_values.len()) {
-            // PARALLEL VERSION - Now that Value implements Send + Sync!
-            let results: Result<Vec<_>, _> = list_values
-                .par_iter()
-                .map(|item| {
-                    let pred_res = interpreter.call_function_safe(predicate.clone(), vec![item.clone()]);
-                    let func_res = match pred_res {
-                        Ok(Value::Boolean(true)) => {
-                            interpreter.call_function_safe(function.clone(), vec![item.clone()])
-                        }
-                        _ => Ok(Value::Err(Box::new(Value::String("FilteredOut".to_string().into())))),
-                    };
-                    func_res
-                })
-                .collect();
-
-            match results {
-                Ok(values) => Ok(Value::List(values.into())),
-                Err(e) => Err(e),
+        // Sequential evaluation - parallel disabled due to interpreter cloning overhead
+        let mut result = Vec::new();
+        for item in list_values.iter() {
+            let pred = interpreter.call_function(predicate.clone(), vec![item.clone()])?;
+            if matches!(pred, Value::Boolean(true)) {
+                let func_res = interpreter.call_function(function.clone(), vec![item.clone()])?;
+                result.push(func_res);
             }
-        } else {
-            // SEQUENTIAL VERSION (for small lists)
-            let mut result = Vec::new();
-            for item in list_values.iter() {
-                let pred = interpreter.call_function(predicate.clone(), vec![item.clone()])?;
-                if matches!(pred, Value::Boolean(true)) {
-                    let func_res = interpreter.call_function(function.clone(), vec![item.clone()]);
-                    result.push(func_res?);
-                }
-            }
-            Ok(Value::List(result.into()))
         }
+        Ok(Value::List(result.into()))
     }
 
     fn map_get(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {

@@ -326,8 +326,10 @@ use std::sync::{Arc, Mutex};
         assert!(config.lazy_by_default);
 
         // Test setting new config
-        let mut new_config = LazyConfig::default();
-        new_config.lazy_threshold = 50;
+        let new_config = LazyConfig {
+            lazy_threshold: 50,
+            ..Default::default()
+        };
         interpreter.set_lazy_config(new_config.clone());
 
         let updated_config = interpreter.get_lazy_config();
@@ -596,11 +598,12 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_lazy_evaluation_timeout() {
-        let mut config = LazyConfig::default();
-        config.timeout_ms = 10; // Very short timeout
-        config.timeout_strategy = TimeoutStrategy::Fixed(10); // Use fixed timeout to ensure it's used
-        config.enable_recovery = false; // Disable recovery for this test
-        
+        let config = LazyConfig {
+            timeout_ms: 10, // Very short timeout
+            timeout_strategy: TimeoutStrategy::Fixed(10), // Use fixed timeout to ensure it's used
+            enable_recovery: false, // Disable recovery for this test
+            ..Default::default()
+        };
         let context = LazyEvaluationContext::new(config);
         
         // Sleep to exceed timeout
@@ -614,12 +617,13 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_timeout_strategy_adaptive() {
-        let mut config = LazyConfig::default();
-        config.timeout_strategy = TimeoutStrategy::Adaptive {
-            base_ms: 1000,
-            scaling_factor: 1.5,
+        let config = LazyConfig {
+            timeout_strategy: TimeoutStrategy::Adaptive {
+                base_ms: 1000,
+                scaling_factor: 1.5,
+            },
+            ..Default::default()
         };
-        
         let mut context = LazyEvaluationContext::new(config);
         
         // Initial timeout should be base
@@ -633,13 +637,14 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_timeout_strategy_progressive() {
-        let mut config = LazyConfig::default();
-        config.timeout_strategy = TimeoutStrategy::Progressive {
-            initial_ms: 500,
-            max_ms: 5000,
-            multiplier: 2.0,
+        let config = LazyConfig {
+            timeout_strategy: TimeoutStrategy::Progressive {
+                initial_ms: 500,
+                max_ms: 5000,
+                multiplier: 2.0,
+            },
+            ..Default::default()
         };
-        
         let mut context = LazyEvaluationContext::new(config);
         
         // Initial timeout
@@ -653,15 +658,16 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_timeout_strategy_per_operation() {
-        let mut config = LazyConfig::default();
-        config.timeout_strategy = TimeoutStrategy::PerOperation {
-            map_ms: 1000,
-            filter_ms: 2000,
-            range_ms: 3000,
-            concat_ms: 4000,
-            thunk_ms: 5000,
+        let config = LazyConfig {
+            timeout_strategy: TimeoutStrategy::PerOperation {
+                map_ms: 1000,
+                filter_ms: 2000,
+                range_ms: 3000,
+                concat_ms: 4000,
+                thunk_ms: 5000,
+            },
+            ..Default::default()
         };
-        
         let context = LazyEvaluationContext::new(config);
         
         assert_eq!(context.get_operation_timeout("map"), 1000);
@@ -673,9 +679,10 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_memory_strategy_conservative() {
-        let mut config = LazyConfig::default();
-        config.memory_strategy = MemoryStrategy::Conservative;
-        
+        let config = LazyConfig {
+            memory_strategy: MemoryStrategy::Conservative,
+            ..Default::default()
+        };
         let handle = ValueHandle::new_eager(Value::Integer(42));
         
         // Should only cache small values
@@ -690,9 +697,10 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_memory_strategy_aggressive() {
-        let mut config = LazyConfig::default();
-        config.memory_strategy = MemoryStrategy::Aggressive;
-        
+        let config = LazyConfig {
+            memory_strategy: MemoryStrategy::Aggressive,
+            ..Default::default()
+        };
         let handle = ValueHandle::new_eager(Value::Integer(42));
         
         // Should cache everything
@@ -739,8 +747,10 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_circular_dependency_recovery() {
-        let mut config = LazyConfig::default();
-        config.enable_recovery = true;
+        let config = LazyConfig {
+            enable_recovery: true,
+            ..Default::default()
+        };
         
         let mut context = LazyEvaluationContext::new(config);
         
@@ -771,9 +781,10 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_evaluation_depth_limit() {
-        let mut config = LazyConfig::default();
-        config.max_evaluation_depth = 2;
-        
+        let config = LazyConfig {
+            max_evaluation_depth: 2,
+            ..Default::default()
+        };
         let mut context = LazyEvaluationContext::new(config);
         
         // Should succeed within limit
@@ -788,9 +799,10 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_thread_safety_checks() {
-        let mut config = LazyConfig::default();
-        config.thread_safety_checks = true;
-        
+        let config = LazyConfig {
+            thread_safety_checks: true,
+            ..Default::default()
+        };
         let context = LazyEvaluationContext::new(config);
         
         // Thread safety check should pass on same thread
@@ -820,8 +832,10 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_range_evaluation_edge_cases() {
-        let mut config = LazyConfig::default();
-        config.timeout_ms = 1000; // Short timeout for testing
+        let config = LazyConfig {
+            timeout_ms: 1000, // Short timeout for testing
+            ..Default::default()
+        };
         
         let mut context = LazyEvaluationContext::new(config);
         
@@ -870,10 +884,11 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_memory_optimization() {
-        let mut config = LazyConfig::default();
-        config.auto_cleanup_enabled = true;
-        config.memory_monitoring_enabled = true;
-        
+        let config = LazyConfig {
+            auto_cleanup_enabled: true,
+            memory_monitoring_enabled: true,
+            ..Default::default()
+        };
         let mut context = LazyEvaluationContext::new(config);
         
         // Test memory optimization
@@ -882,10 +897,11 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_lazy_evaluation_with_recovery() {
-        let mut config = LazyConfig::default();
-        config.enable_recovery = true;
-        config.force_evaluation_on_error = true;
-        
+        let config = LazyConfig {
+            enable_recovery: true,
+            force_evaluation_on_error: true,
+            ..Default::default()
+        };
         let mut interpreter = Interpreter::new();
         let mut context = LazyEvaluationContext::new(config);
         
@@ -937,8 +953,10 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_value_handle_memory_aware_caching() {
-        let mut config = LazyConfig::default();
-        config.memory_strategy = MemoryStrategy::Balanced;
+        let config = LazyConfig {
+            memory_strategy: MemoryStrategy::Balanced,
+            ..Default::default()
+        };
         
         let handle = ValueHandle::new_eager(Value::Integer(42));
         
@@ -955,9 +973,11 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_error_recovery_mechanisms() {
-        let mut config = LazyConfig::default();
-        config.enable_recovery = true;
-        config.timeout_ms = 50; // Short timeout
+        let config = LazyConfig {
+            enable_recovery: true,
+            timeout_ms: 50, // Short timeout
+            ..Default::default()
+        };
         
         let mut context = LazyEvaluationContext::new(config.clone());
         
@@ -977,16 +997,16 @@ use std::sync::{Arc, Mutex};
     #[test]
     fn test_comprehensive_edge_case_coverage() {
         // This test ensures all major edge cases are covered
-        let mut config = LazyConfig::default();
-        
         // Enable all safety features
-        config.circular_dependency_detection = true;
-        config.thread_safety_checks = true;
-        config.enable_recovery = true;
-        config.timeout_monitoring_enabled = true;
-        config.memory_monitoring_enabled = true;
-        config.auto_cleanup_enabled = true;
-        
+        let config = LazyConfig {
+            circular_dependency_detection: true,
+            thread_safety_checks: true,
+            enable_recovery: true,
+            timeout_monitoring_enabled: true,
+            memory_monitoring_enabled: true,
+            auto_cleanup_enabled: true,
+            ..Default::default()
+        };
         let context = LazyEvaluationContext::new(config);
         
         // Test cycle detection stats

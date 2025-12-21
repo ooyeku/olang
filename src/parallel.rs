@@ -15,7 +15,7 @@ pub struct ParallelConfig {
 impl Default for ParallelConfig {
     fn default() -> Self {
         Self {
-            min_parallel_size: 10, // Very aggressive - parallelize lists with just 10+ items
+            min_parallel_size: 1000, 
             max_threads: num_cpus::get(),
             enabled: true,
         }

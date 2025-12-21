@@ -1786,8 +1786,10 @@ mod tests {
 
     #[test]
     fn test_allocation_tracking() {
-        let mut config = MemoryConfig::default();
-        config.gc_trigger_threshold = 512; // Set threshold below test allocation
+        let config = MemoryConfig {
+            gc_trigger_threshold: 512, // Set threshold below test allocation
+            ..Default::default()
+        };
         let gc = GarbageCollector::new(&config).unwrap();
 
         gc.record_allocation(1024);
