@@ -158,7 +158,7 @@ let (x, 2) = (42, 2);  // Matches when second element is 2
 
 // Struct destructuring
 let Point { x, y } = some_point;
-let User { name, age, .. } = user_data;  // Ignore remaining fields
+let User { name, age } = user_data;
 ```
 
 ### Variable Assignment
@@ -452,7 +452,7 @@ let process_result = match operation_result {
 ```olang
 // Struct pattern matching
 let info = match user {
-    User { name: "admin", .. } => "Administrator",
+    User { name: "admin" } => "Administrator",
     User { name, age } => name + " (" + to_string(age) + ")",
     _ => "Unknown user"
 };
@@ -829,22 +829,19 @@ assert_false(expression, "Custom message");
 // Basic help
 :help                    // Show general help
 :help println           // Show function help
-:help list               // Show category help
+:help list               // Show categories and functions
 
-// Advanced search with fuzzy matching
-:help "print"           // Fuzzy search for print-related functions
-:help "http"            // Find HTTP-related functions
-:help "json"            // Find JSON operations
+// Advanced search
+:help search print       // Search for print-related functions
+:help search "http get"  // Search with multiple terms
 
 // Interactive tutorials
-:tutorial               // List available tutorials
-:tutorial_run basic     // Run basic tutorial
-:tutorial_run lists     // Run list operations tutorial
-:tutorial_run http      // Run HTTP client tutorial
+:help tutorials          // List available tutorials
+:help tutorial basic     // View basic tutorial
+:help tutorial lists     // View list operations tutorial
 
-// Context-sensitive help
-:help_context          // Get help based on current context
-:help_suggest          // Get suggestions for common operations
+// Contextual help
+:help contextual         // Get help based on current REPL state
 ```
 
 ### Help System Features
@@ -912,7 +909,7 @@ assert_false(expression, "Custom message");
    - Module imports
 
 8. **Standard Library**
-   - Complete Stdlib Implementation (10 modules)
+   - Complete Stdlib Implementation (11 modules)
    - All stdlib modules fully tested
 
 9. **Testing**
@@ -1001,9 +998,10 @@ test "comprehensive test" {
 ```olang
 // REPL commands for testing help system
 :help map_get                    // Function help
-:help "json"                     // Fuzzy search
-:tutorial_run basic             // Interactive tutorial
-:help_context                   // Context-sensitive help
+:help search json                // Search
+:help tutorials                  // List tutorials
+:help tutorial basic             // View tutorial
+:help contextual                 // Contextal help
 ```
 
 This comprehensive syntax documentation reflects the current state of Olang, including all completed features and known limitations. The language has evolved significantly with the addition of comprehensive literal support, bitwise operations, test declarations, enhanced type system, and an improved developer experience. 
