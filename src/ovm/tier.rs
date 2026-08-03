@@ -20,7 +20,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Function, FunctionDecl, Value};
-use crate::ovm::bytecode::BytecodeVm;
+use crate::ovm::bytecode::{BytecodeError, BytecodeVm};
 use crate::ovm::{FunctionId, OvmValue};
 
 /// Default number of calls before a function is considered hot.
@@ -48,6 +48,9 @@ pub struct BytecodeTier {
     compiled: HashMap<String, FunctionId>,
     /// Names that failed compilation — never retried
     rejected: HashSet<String>,
+    /// User functions the interpreter has declared, so a promoted function
+    /// calling a helper can have that helper compiled too
+    known_functions: HashMap<String, Function>,
     stats: TierStats,
     /// Emit a line when a function is promoted (for --ovm-stats / debugging)
     verbose: bool,
@@ -61,6 +64,7 @@ impl BytecodeTier {
             call_counts: HashMap::new(),
             compiled: HashMap::new(),
             rejected: HashSet::new(),
+            known_functions: HashMap::new(),
             stats: TierStats::default(),
             verbose: false,
         }
@@ -73,6 +77,18 @@ impl BytecodeTier {
 
     pub fn stats(&self) -> TierStats {
         self.stats
+    }
+
+    /// Record a user function declaration so calls to it can be compiled.
+    pub fn note_function(&mut self, name: String, func: Function) {
+        // A redefinition invalidates anything compiled against the old body
+        if self.compiled.remove(&name).is_some() || self.rejected.remove(&name) {
+            // Compiled code may have inlined nothing, but callers resolved the
+            // old id; drop everything so the next call recompiles cleanly.
+            self.compiled.clear();
+            self.rejected.clear();
+        }
+        self.known_functions.insert(name, func);
     }
 
     /// Try to execute `func(args)` on the bytecode VM.
@@ -126,52 +142,124 @@ impl BytecodeTier {
         }
     }
 
-    /// Note that a user function exists so self-recursive calls resolve.
+    /// Compile `name`, pulling in any user functions it calls.
+    ///
+    /// The compiler reports an unresolved callee rather than failing outright,
+    /// so this compiles the callee and retries. Ids are registered with the VM
+    /// *before* compilation, which is what lets mutually recursive functions
+    /// resolve each other.
     fn compile(&mut self, name: &str, func: &Function) -> Option<FunctionId> {
-        // Note: func.closure is NOT a usable eligibility signal — every
-        // user function captures the whole prelude (stdlib module bindings),
-        // so it is never empty. The real gate is the compiler: a body that
-        // references anything other than its own parameters and locals fails
-        // to compile with "Unresolved identifier", which lands in reject().
+        // Bound the retry loop: each iteration resolves one callee, so this is
+        // only reached by a pathological dependency graph.
+        const MAX_RESOLUTION_STEPS: usize = 64;
 
+        let func_id = self.register(name, func)?;
+
+        for _ in 0..MAX_RESOLUTION_STEPS {
+            let decl = match Self::declaration(name, func) {
+                Some(decl) => decl,
+                None => {
+                    self.reject(name);
+                    return None;
+                }
+            };
+
+            match self.vm.compile_function(func_id, &decl) {
+                Ok(()) => {
+                    self.compiled.insert(name.to_string(), func_id);
+                    self.stats.promoted += 1;
+                    if self.verbose {
+                        eprintln!("[ovm] promoted '{}' to the bytecode tier", name);
+                    }
+                    return Some(func_id);
+                }
+                Err(BytecodeError::UnresolvedCallee(callee)) => {
+                    // Resolve the dependency, then retry this function
+                    if !self.compile_dependency(&callee) {
+                        if self.verbose {
+                            eprintln!(
+                                "[ovm] '{}' stays interpreted: cannot compile callee '{}'",
+                                name, callee
+                            );
+                        }
+                        self.reject(name);
+                        return None;
+                    }
+                }
+                Err(e) => {
+                    if self.verbose {
+                        eprintln!("[ovm] '{}' stays interpreted: {}", name, e);
+                    }
+                    self.reject(name);
+                    return None;
+                }
+            }
+        }
+
+        if self.verbose {
+            eprintln!(
+                "[ovm] '{}' stays interpreted: dependency chain too deep",
+                name
+            );
+        }
+        self.reject(name);
+        None
+    }
+
+    /// Compile a callee so the caller can resolve it. Returns whether the
+    /// callee is now available to the VM.
+    fn compile_dependency(&mut self, name: &str) -> bool {
+        if self.compiled.contains_key(name) {
+            return true;
+        }
+        if self.rejected.contains(name) {
+            return false;
+        }
+
+        let func = match self.known_functions.get(name) {
+            Some(func) => func.clone(),
+            // Not a user function we know about (a builtin the VM lacks, or a
+            // value that isn't a plain function)
+            None => return false,
+        };
+
+        self.compile(name, &func).is_some()
+    }
+
+    /// Assign a function id and make the name resolvable before compiling, so
+    /// self- and mutual recursion can refer to it.
+    fn register(&mut self, name: &str, func: &Function) -> Option<FunctionId> {
         // Default parameter values are evaluated by the interpreter
         if func.parameters.iter().any(|p| p.default_value.is_some()) {
             self.reject(name);
             return None;
         }
 
-        let decl = FunctionDecl {
+        let func_id = FunctionId::new();
+        self.vm.register_function(name.to_string(), func_id);
+        Some(func_id)
+    }
+
+    /// Build the declaration the VM compiles.
+    ///
+    /// Note: `func.closure` is NOT an eligibility signal — every user function
+    /// captures the whole prelude, so it is never empty. The real gate is the
+    /// compiler, which rejects a body referencing anything but its own
+    /// parameters and locals.
+    fn declaration(name: &str, func: &Function) -> Option<FunctionDecl> {
+        Some(FunctionDecl {
             name: name.to_string(),
             type_params: Vec::new(),
             parameters: func.parameters.clone(),
             return_type: None,
             body: (*func.body).clone(),
-        };
-
-        // Register before compiling so self-recursive calls resolve
-        let func_id = FunctionId::new();
-        self.vm.register_function(name.to_string(), func_id);
-
-        match self.vm.compile_function(func_id, &decl) {
-            Ok(()) => {
-                self.compiled.insert(name.to_string(), func_id);
-                self.stats.promoted += 1;
-                if self.verbose {
-                    eprintln!("[ovm] promoted '{}' to the bytecode tier", name);
-                }
-                Some(func_id)
-            }
-            Err(e) => {
-                if self.verbose {
-                    eprintln!("[ovm] '{}' stays interpreted: {}", name, e);
-                }
-                self.reject(name);
-                None
-            }
-        }
+        })
     }
 
     fn reject(&mut self, name: &str) {
+        // Withdraw the pre-compilation registration so nothing else resolves a
+        // call against a name that has no bytecode
+        self.vm.unregister_function(name);
         self.rejected.insert(name.to_string());
         self.compiled.remove(name);
         self.stats.rejected += 1;

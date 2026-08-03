@@ -38,6 +38,13 @@ olang --ovm-tier -v program.ol     # log each promotion decision
 Note that `--ovm-tier` takes its value with `=` (`--ovm-tier=10`), so that a
 bare `--ovm-tier` doesn't swallow the following filename.
 
+When a function calls another user function, the compiler reports the
+unresolved callee rather than giving up; the tier compiles that callee and
+retries. Names are registered with the VM *before* compilation, which is what
+lets mutually recursive functions resolve each other — and are withdrawn if
+compilation fails, so nothing later resolves a call against a name that has no
+bytecode.
+
 The decision logic lives in `src/ovm/tier.rs`.
 
 ### What can be promoted
@@ -48,14 +55,16 @@ A function is eligible when its body uses only the subset the VM implements:
 - arithmetic, comparison, and logical operators
 - `if`/`else` expressions
 - blocks, `let` bindings, assignment to locals, and `while` loops
-- calls to **itself** (recursion) and to VM-implemented builtins (`len`,
+- calls to itself (recursion), to other user functions (compiled on demand,
+  including mutual recursion), and to VM-implemented builtins (`len`,
   `to_string`)
 
 Anything else causes the function to stay interpreted:
 
 - referencing a global or captured variable — the VM has no environment
 - `match`, lambdas, pipelines, `for` loops, structs, maps, async
-- calling another user function (see [Known limitations](#known-limitations))
+- calling a function that itself cannot be compiled (the rejection propagates
+  to every caller)
 - default parameter values
 - arguments or return values that don't round-trip through the OVM value
   model (functions, structs, maps, promises)
@@ -69,16 +78,16 @@ the interpreter, which is why enabling the tier can never break a program.
 handle is rejected at compile time rather than approximated at runtime. This
 rule is enforced by two test suites:
 
-- `tests/bytecode_differential_test.rs` (29 groups) runs programs through
+- `tests/bytecode_differential_test.rs` (30 groups) runs programs through
   *both* the interpreter and the VM and asserts identical results —
   arithmetic and overflow errors, float semantics, comparisons, branches,
   recursion, loops, strings, lists, ranges, arity errors, and a set of
   aliasing cases specific to the register-window design. It also asserts the
   inverse: unsupported features must be *rejected*, never miscompiled.
-- `tests/bytecode_tier_test.rs` (14 tests) runs whole programs with and
+- `tests/bytecode_tier_test.rs` (22 tests) runs whole programs with and
   without the tier enabled and asserts the observable results match,
   including mixed programs where some functions are promoted and others are
-  not.
+  not, transitive and mutual recursion, and function redefinition.
 
 If you extend the VM, extend the differential suite in the same change. A
 divergence found by these tests is a bytecode bug by definition — the
@@ -139,6 +148,10 @@ Measured on an Apple Silicon laptop, release build. Reproduce with
 |---|---|---|---|
 | `fib(20)` (recursive calls) | 837 ms | 6.9 ms | ~121× |
 | 100k-iteration `while` loop | 27.9 ms | 4.2 ms | ~6.6× |
+| 300k-iteration loop across 4 functions | 38.9 s | 0.40 s | ~97× |
+
+The third row is the case transitive compilation unlocked: before it, a
+function calling a helper was rejected outright and saw no benefit at all.
 
 End to end through the CLI, `fib(27)`:
 
@@ -159,16 +172,12 @@ ten representative programs). Use it when changing the evaluator; use
 
 These are real gaps, not oversights:
 
-1. **Only self-recursive and leaf functions are promoted.** A call to another
-   user function requires that callee to be compiled too, and the tier
-   compiles one function at a time. `fib` and `fact` qualify; a function
-   calling a helper does not. Lifting this (transitive compilation) is the
-   highest-value next step.
-2. **The expression subset is narrow.** No `match`, `for`, lambdas, or
+1. **The expression subset is narrow.** No `match`, `for`, lambdas, or
    pipelines — which excludes a lot of idiomatic Olang.
-3. **Only two builtins are implemented in the VM** (`len`, `to_string`). A
-   function calling any other builtin stays interpreted.
-4. **The tier is opt-in.** It should default to on once coverage is wide
+2. **Only two builtins are implemented in the VM** (`len`, `to_string`). A
+   function calling any other builtin stays interpreted, and so does every
+   function that calls it.
+3. **The tier is opt-in.** It should default to on once coverage is wide
    enough that the check is worth paying on every call.
 
 ## Not implemented

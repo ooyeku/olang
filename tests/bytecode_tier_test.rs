@@ -247,3 +247,132 @@ f(5)
     assert_eq!(promotion_count(src, 3), 1, "should promote on the 3rd call");
     assert_eq!(promotion_count(src, 99), 0, "threshold above call count");
 }
+
+// --- Transitive compilation ---
+// A promoted function may call other user functions; the tier compiles those
+// too. These cover the cases where that can go wrong.
+
+#[test]
+fn helper_functions_are_compiled_transitively() {
+    let src = r#"
+fn square(n) = n * n
+fn sum_squares(n) = if n <= 0 => 0 else => square(n) + sum_squares(n - 1)
+sum_squares(20)
+"#;
+    assert_eq!(eval(src, Some(2)).unwrap(), Value::Integer(2870));
+    // Both the caller and the helper should be promoted
+    assert_eq!(promotion_count(src, 2), 2);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn mutual_recursion_compiles() {
+    let src = r#"
+fn is_even(n) = if n == 0 => true else => is_odd(n - 1)
+fn is_odd(n) = if n == 0 => false else => is_even(n - 1)
+is_even(100)
+"#;
+    assert_eq!(eval(src, Some(2)).unwrap(), Value::Boolean(true));
+    assert_eq!(promotion_count(src, 2), 2);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn deep_helper_chain_compiles() {
+    let src = r#"
+fn a(n) = n + 1
+fn b(n) = a(n) * 2
+fn c(n) = b(n) + a(n)
+fn d(n) = c(n) + b(n)
+d(1) + d(2) + d(3)
+"#;
+    assert_tier_transparent(src);
+    assert_eq!(eval(src, Some(1)).unwrap(), eval(src, None).unwrap());
+}
+
+#[test]
+fn caller_is_rejected_when_helper_cannot_compile() {
+    // `describe` references a global, so neither it nor its caller may be
+    // promoted — but the program must still produce the right answer.
+    let src = r#"
+let prefix = "n="
+fn describe(n) = prefix + to_string(n)
+fn label(n) = describe(n) + "!"
+len(label(1)) + len(label(2))
+"#;
+    assert_eq!(promotion_count(src, 1), 0);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn helper_returning_a_string_round_trips() {
+    let src = r#"
+fn greet(name) = "hi " + name
+fn shout(name) = greet(name) + "!"
+shout("ann")
+shout("bob")
+"#;
+    assert_tier_transparent(src);
+    assert_eq!(
+        eval(src, Some(1)).unwrap(),
+        Value::String("hi bob!".to_string().into())
+    );
+}
+
+#[test]
+fn redefining_a_function_uses_the_new_body() {
+    // A promoted function that is later redefined must not keep executing the
+    // stale compiled body.
+    let src = r#"
+fn f(n) = n + 1
+f(1)
+f(2)
+f(3)
+fn f(n) = n + 100
+f(4)
+"#;
+    assert_eq!(eval(src, Some(2)).unwrap(), Value::Integer(104));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn helper_errors_propagate_through_the_caller() {
+    let src = r#"
+fn div(a, b) = a / b
+fn safe(a) = div(10, a)
+safe(2)
+safe(1)
+safe(0)
+"#;
+    assert!(eval(src, None).is_err());
+    assert!(eval(src, Some(1)).is_err());
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn rejected_helper_does_not_leave_a_dangling_registration() {
+    // A function's name is registered with the VM before compiling so that
+    // recursion resolves. If compilation then fails, that registration must be
+    // withdrawn — otherwise a later function compiles a call against a name
+    // that has no bytecode and dies at runtime with "Function not found".
+    //
+    // Order matters: `clamp` must be rejected on its own first (it uses an
+    // operator the VM lacks), and only later does `poly` compile a call to it.
+    let src = r#"
+fn square(n) = n * n
+fn clamp(n) = if n > 10 => n % 10 else => n
+fn poly(n) = square(clamp(n)) + clamp(n)
+fn run(limit) = {
+    let total = 0
+    let i = 0
+    while i < limit {
+        total = total + poly(i)
+        i = i + 1
+    }
+    total
+}
+run(300)
+"#;
+    assert_tier_transparent(src);
+    assert_eq!(eval(src, Some(5)).unwrap(), eval(src, None).unwrap());
+}

@@ -485,6 +485,12 @@ pub enum BytecodeError {
     #[error("Compilation failed: {0}")]
     CompilationFailed(String),
 
+    /// A call to a function the VM doesn't know yet. Reported separately from
+    /// CompilationFailed so a caller can compile the callee and retry rather
+    /// than giving up on the whole function.
+    #[error("Unresolved callee: {0}")]
+    UnresolvedCallee(String),
+
     #[error("Runtime error: {0}")]
     RuntimeError(String),
 
@@ -594,6 +600,16 @@ impl BytecodeVm {
     /// Register a function for dynamic calls
     pub fn register_function(&mut self, name: String, func_id: FunctionId) {
         self.function_registry.insert(name, func_id);
+    }
+
+    /// Withdraw a registration.
+    ///
+    /// Names are registered before compilation so recursive calls resolve; if
+    /// compilation then fails the name must be withdrawn, or a later function
+    /// will compile a call against an id that has no bytecode and fail at
+    /// runtime with FunctionNotFound.
+    pub fn unregister_function(&mut self, name: &str) {
+        self.function_registry.remove(name);
     }
 
     /// Check if function has compiled bytecode
@@ -2137,6 +2153,7 @@ impl BytecodeCompiler {
                     BinaryOp::Subtract => self.emitter.emit_sub(dst_reg, left_reg, right_reg),
                     BinaryOp::Multiply => self.emitter.emit_mul(dst_reg, left_reg, right_reg),
                     BinaryOp::Divide => self.emitter.emit_div(dst_reg, left_reg, right_reg),
+                    BinaryOp::Modulo => self.emitter.emit_mod(dst_reg, left_reg, right_reg),
                     BinaryOp::Equal => self.emitter.emit_eq(dst_reg, left_reg, right_reg),
                     BinaryOp::NotEqual => self.emitter.emit_ne(dst_reg, left_reg, right_reg),
                     BinaryOp::LessThan => self.emitter.emit_lt(dst_reg, left_reg, right_reg),
@@ -2231,10 +2248,7 @@ impl BytecodeCompiler {
                 if !self.builtin_names.contains(&function_name)
                     && !self.function_registry.contains_key(&function_name)
                 {
-                    return Err(BytecodeError::CompilationFailed(format!(
-                        "Unresolved callee '{}' in bytecode tier",
-                        function_name
-                    )));
+                    return Err(BytecodeError::UnresolvedCallee(function_name));
                 }
 
                 let mut arg_regs = Vec::new();
@@ -2469,6 +2483,10 @@ impl InstructionEmitter {
 
     pub fn emit_div(&mut self, dst: Register, lhs: Register, rhs: Register) {
         self.instructions.push(Instruction::Div { dst, lhs, rhs });
+    }
+
+    pub fn emit_mod(&mut self, dst: Register, lhs: Register, rhs: Register) {
+        self.instructions.push(Instruction::Mod { dst, lhs, rhs });
     }
 
     pub fn emit_eq(&mut self, dst: Register, lhs: Register, rhs: Register) {

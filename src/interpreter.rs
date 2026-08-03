@@ -814,6 +814,12 @@ impl Interpreter {
             closure: Arc::new(closure),
         };
 
+        // Let the bytecode tier know this function exists, so a promoted
+        // function that calls it can have it compiled too
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.note_function(func_decl.name.clone(), function.clone());
+        }
+
         let function_value = Value::Function(function);
 
         // Define the function in the current environment so it can be called recursively

@@ -436,3 +436,13 @@ fn outer(a, b) = middle(a) + middle(b) + a + b
 "#;
     assert_same(src, "outer", &ints(&[2, 3]));
 }
+
+#[test]
+fn modulo_matches_interpreter() {
+    let src = "fn m(a, b) = a % b";
+    for (a, b) in [(10, 3), (-10, 3), (10, -3), (-10, -3), (7, 7)] {
+        assert_same(src, "m", &ints(&[a, b]));
+    }
+    assert_same(src, "m", &ints(&[1, 0])); // both must error
+    assert_same(src, "m", &[Value::Integer(i64::MIN), Value::Integer(-1)]);
+}
