@@ -132,12 +132,12 @@ use std::sync::{Arc, Mutex};
                 type_annotation: None,
                 default_value: None,
             }],
-            body: crate::ast::Expr::BinaryOp {
+            body: std::sync::Arc::new(crate::ast::Expr::BinaryOp {
                 left: Box::new(crate::ast::Expr::Identifier("x".to_string())),
                 op: crate::ast::BinaryOp::Multiply,
                 right: Box::new(crate::ast::Expr::Integer(2)),
-            },
-            closure: HashMap::new(),
+            }),
+            closure: std::sync::Arc::new(HashMap::new()),
         };
 
         let source_list = Value::List(Arc::from(vec![
@@ -178,7 +178,7 @@ use std::sync::{Arc, Mutex};
                 type_annotation: None,
                 default_value: None,
             }],
-            body: crate::ast::Expr::BinaryOp {
+            body: std::sync::Arc::new(crate::ast::Expr::BinaryOp {
                 left: Box::new(crate::ast::Expr::BinaryOp {
                     left: Box::new(crate::ast::Expr::Identifier("x".to_string())),
                     op: crate::ast::BinaryOp::Modulo,
@@ -186,8 +186,8 @@ use std::sync::{Arc, Mutex};
                 }),
                 op: crate::ast::BinaryOp::Equal,
                 right: Box::new(crate::ast::Expr::Integer(0)),
-            },
-            closure: HashMap::new(),
+            }),
+            closure: std::sync::Arc::new(HashMap::new()),
         };
 
         let source_list = Value::List(Arc::from(vec![
@@ -427,12 +427,12 @@ use std::sync::{Arc, Mutex};
                 type_annotation: None,
                 default_value: None,
             }],
-            body: crate::ast::Expr::BinaryOp {
+            body: std::sync::Arc::new(crate::ast::Expr::BinaryOp {
                 left: Box::new(crate::ast::Expr::Identifier("x".to_string())),
                 op: crate::ast::BinaryOp::Multiply,
                 right: Box::new(crate::ast::Expr::Integer(2)),
-            },
-            closure: HashMap::new(),
+            }),
+            closure: std::sync::Arc::new(HashMap::new()),
         };
 
         let predicate = Function {
@@ -442,7 +442,7 @@ use std::sync::{Arc, Mutex};
                 type_annotation: None,
                 default_value: None,
             }],
-            body: crate::ast::Expr::BinaryOp {
+            body: std::sync::Arc::new(crate::ast::Expr::BinaryOp {
                 left: Box::new(crate::ast::Expr::BinaryOp {
                     left: Box::new(crate::ast::Expr::Identifier("x".to_string())),
                     op: crate::ast::BinaryOp::Modulo,
@@ -450,8 +450,8 @@ use std::sync::{Arc, Mutex};
                 }),
                 op: crate::ast::BinaryOp::Equal,
                 right: Box::new(crate::ast::Expr::Integer(0)),
-            },
-            closure: HashMap::new(),
+            }),
+            closure: std::sync::Arc::new(HashMap::new()),
         };
 
         let lazy_map_filtered = LazyValue::MapFiltered {
@@ -494,12 +494,12 @@ use std::sync::{Arc, Mutex};
                 type_annotation: None,
                 default_value: None,
             }],
-            body: crate::ast::Expr::BinaryOp {
+            body: std::sync::Arc::new(crate::ast::Expr::BinaryOp {
                 left: Box::new(crate::ast::Expr::Identifier("x".to_string())),
                 op: crate::ast::BinaryOp::Multiply,
                 right: Box::new(crate::ast::Expr::Integer(2)),
-            },
-            closure: HashMap::new(),
+            }),
+            closure: std::sync::Arc::new(HashMap::new()),
         };
 
         let predicate = Function {
@@ -509,7 +509,7 @@ use std::sync::{Arc, Mutex};
                 type_annotation: None,
                 default_value: None,
             }],
-            body: crate::ast::Expr::BinaryOp {
+            body: std::sync::Arc::new(crate::ast::Expr::BinaryOp {
                 left: Box::new(crate::ast::Expr::BinaryOp {
                     left: Box::new(crate::ast::Expr::Identifier("x".to_string())),
                     op: crate::ast::BinaryOp::Modulo,
@@ -517,8 +517,8 @@ use std::sync::{Arc, Mutex};
                 }),
                 op: crate::ast::BinaryOp::Equal,
                 right: Box::new(crate::ast::Expr::Integer(0)),
-            },
-            closure: HashMap::new(),
+            }),
+            closure: std::sync::Arc::new(HashMap::new()),
         };
 
         let lazy_map_filtered = LazyValue::MapFiltered {
@@ -569,14 +569,14 @@ use std::sync::{Arc, Mutex};
         let map_fn = Function {
             name: Some("map_fn".to_string()),
             parameters: vec![Parameter { name: "x".to_string(), type_annotation: None, default_value: None }],
-            body: crate::ast::Expr::Identifier("x".to_string()),
+            body: std::sync::Arc::new(crate::ast::Expr::Identifier("x".to_string())),
             closure: Default::default(),
         };
         // Dummy function for filter
         let filter_fn = Function {
             name: Some("filter_fn".to_string()),
             parameters: vec![Parameter { name: "x".to_string(), type_annotation: None, default_value: None }],
-            body: crate::ast::Expr::Identifier("x".to_string()),
+            body: std::sync::Arc::new(crate::ast::Expr::Identifier("x".to_string())),
             closure: Default::default(),
         };
         // Source list

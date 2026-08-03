@@ -1,6 +1,6 @@
 [package]
 name = "olang"
-version = "0.22.0"
+version = "0.23.0-dev"
 edition = "2021"
 authors = ["Ola Yeku <oyeku@gmail.com>"]
 description = "A minimal, expressive language with first-class functions, pipelines, and pattern matching"
@@ -123,3 +123,7 @@ panic = "abort"
 [profile.dev]
 opt-level = 0
 debug = true 
+
+[[bench]]
+name = "interpreter_bench"
+harness = false

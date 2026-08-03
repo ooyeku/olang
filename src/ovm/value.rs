@@ -1198,11 +1198,11 @@ impl OvmValue {
                 let func_obj = FunctionObject {
                     name: func.name.clone(),
                     parameters: func.parameters.iter().map(|p| p.name.clone()).collect(),
-                    body: func.body,
+                    body: (*func.body).clone(),
                     closure: func
                         .closure
-                        .into_iter()
-                        .map(|(k, v)| (k, Self::from_ast(v)))
+                        .iter()
+                        .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
                         .collect(),
                     compilation_tier: ExecutionTier::Interpreter,
                     call_count: AtomicU32::new(0),

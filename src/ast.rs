@@ -417,8 +417,10 @@ const _: () = {
 pub struct Function {
     pub name: Option<String>,
     pub parameters: Vec<Parameter>,
-    pub body: Expr,
-    pub closure: HashMap<String, Value>,
+    // Arc so cloning a function value (every call/env lookup) is cheap
+    // instead of deep-copying the body AST and captured environment
+    pub body: Arc<Expr>,
+    pub closure: Arc<HashMap<String, Value>>,
 }
 
 /// Built-in function

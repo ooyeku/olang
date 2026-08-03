@@ -209,7 +209,7 @@ impl TestRunner {
         // Execute all non-test statements to set up context
         for statement in &program.statements {
             if !matches!(statement, Statement::TestDecl(_)) {
-                interpreter.eval_statement(statement.clone())?;
+                interpreter.eval_statement(statement)?;
             }
         }
 
@@ -218,7 +218,7 @@ impl TestRunner {
 
     fn execute_test_body(&self, interpreter: &mut Interpreter, test_body: &[Statement]) -> Result<(), InterpreterError> {
         for statement in test_body {
-            interpreter.eval_statement(statement.clone())?;
+            interpreter.eval_statement(statement)?;
         }
         Ok(())
     }

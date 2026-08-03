@@ -272,7 +272,7 @@ impl ExecutionEngine {
             .map_err(|_| ExecutionError::Failed("Failed to lock interpreter".to_string()))?;
 
         interpreter
-            .eval_statement(Statement::Expression(expr.clone()))
+            .eval_statement(&Statement::Expression(expr.clone()))
             .map_err(ExecutionError::from)
     }
 
@@ -398,7 +398,7 @@ impl ExecutionEngine {
 
         // Wrap expression in a statement to use the public interface
         let statement = Statement::Expression(expr);
-        let ast_result = interpreter.eval_statement(statement)?;
+        let ast_result = interpreter.eval_statement(&statement)?;
         self.ast_value_to_ovm(&ast_result)
     }
 
@@ -417,8 +417,8 @@ impl ExecutionEngine {
         let function_value = Value::Function(crate::ast::Function {
             name: Some(func_decl.name.clone()),
             parameters: func_decl.parameters.clone(),
-            body: func_decl.body.clone(),
-            closure: HashMap::new(),
+            body: std::sync::Arc::new(func_decl.body.clone()),
+            closure: std::sync::Arc::new(HashMap::new()),
         });
 
         // Call the function

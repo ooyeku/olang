@@ -367,7 +367,7 @@ impl OvmInterpreter {
                             // Fallback to classic interpreter for expressions that reference variables
                             last_value = self
                                 .classic_interpreter
-                                .eval_statement(crate::ast::Statement::Expression(expr))
+                                .eval_statement(&crate::ast::Statement::Expression(expr))
                                 .map_err(IntegrationError::ClassicInterpreterError)?;
                             self.increment_fallback_count();
                         } else {
@@ -384,7 +384,7 @@ impl OvmInterpreter {
                         // Fallback to classic interpreter for complex builtins and pipelines
                         last_value = self
                             .classic_interpreter
-                            .eval_statement(crate::ast::Statement::Expression(expr))
+                            .eval_statement(&crate::ast::Statement::Expression(expr))
                             .map_err(IntegrationError::ClassicInterpreterError)?;
                         self.increment_fallback_count();
                     }
@@ -411,14 +411,14 @@ impl OvmInterpreter {
                     // Also register with classic interpreter for compatibility
                     last_value = self
                         .classic_interpreter
-                        .eval_statement(crate::ast::Statement::FunctionDecl(func_decl))
+                        .eval_statement(&crate::ast::Statement::FunctionDecl(func_decl))
                         .map_err(IntegrationError::ClassicInterpreterError)?;
                 }
                 other_statement => {
                     // Handle other statement types with classic interpreter
                     last_value = self
                         .classic_interpreter
-                        .eval_statement(other_statement)
+                        .eval_statement(&other_statement)
                         .map_err(IntegrationError::ClassicInterpreterError)?;
                 }
             }

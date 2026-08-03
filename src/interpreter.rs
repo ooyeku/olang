@@ -742,28 +742,28 @@ impl Interpreter {
         }
 
         let mut last_value = Value::Unit;
-        for statement in program.statements {
+        for statement in &program.statements {
             last_value = self.eval_statement(statement)?;
         }
         Ok(last_value)
     }
 
-    pub fn eval_statement(&mut self, statement: Statement) -> Result<Value, InterpreterError> {
+    pub fn eval_statement(&mut self, statement: &Statement) -> Result<Value, InterpreterError> {
         // Safepoint poll for GC coordination
         self.safepoint_poll()?;
 
         match statement {
             Statement::Expression(expr) => self.eval_expr(expr),
             Statement::LetDecl(let_decl) => self.eval_let_decl(let_decl),
-            Statement::FunctionDecl(func_decl) => self.eval_function_decl(func_decl),
+            Statement::FunctionDecl(func_decl) => self.eval_function_decl(func_decl.clone()),
             Statement::AsyncFunctionDecl(async_func_decl) => {
-                self.eval_async_function_decl(async_func_decl)
+                self.eval_async_function_decl(async_func_decl.clone())
             }
-            Statement::TypeDecl(type_decl) => self.eval_type_decl(type_decl),
-            Statement::ErrorTypeDecl(error_type_decl) => self.eval_error_type_decl(error_type_decl),
-            Statement::ShareDecl(share_decl) => self.eval_share_decl(share_decl),
-            Statement::UseDecl(use_decl) => self.eval_use_decl(use_decl),
-            Statement::TestDecl(test_decl) => self.eval_test_decl(test_decl),
+            Statement::TypeDecl(type_decl) => self.eval_type_decl(type_decl.clone()),
+            Statement::ErrorTypeDecl(error_type_decl) => self.eval_error_type_decl(error_type_decl.clone()),
+            Statement::ShareDecl(share_decl) => self.eval_share_decl(share_decl.clone()),
+            Statement::UseDecl(use_decl) => self.eval_use_decl(use_decl.clone()),
+            Statement::TestDecl(test_decl) => self.eval_test_decl(test_decl.clone()),
         }
     }
 
@@ -776,8 +776,8 @@ impl Interpreter {
         Ok(Value::Unit)
     }
 
-    fn eval_let_decl(&mut self, let_decl: LetDecl) -> Result<Value, InterpreterError> {
-        let value = if let Some(expr) = let_decl.value {
+    fn eval_let_decl(&mut self, let_decl: &LetDecl) -> Result<Value, InterpreterError> {
+        let value = if let Some(expr) = &let_decl.value {
             self.eval_expr(expr)?
         } else {
             Value::Unit
@@ -805,8 +805,8 @@ impl Interpreter {
         let function = Function {
             name: Some(func_decl.name.clone()),
             parameters: func_decl.parameters,
-            body: func_decl.body,
-            closure,
+            body: Arc::new(func_decl.body),
+            closure: Arc::new(closure),
         };
 
         let function_value = Value::Function(function);
@@ -818,19 +818,19 @@ impl Interpreter {
         Ok(function_value)
     }
 
-    fn eval_expr(&mut self, expr: Expr) -> Result<Value, InterpreterError> {
+    fn eval_expr(&mut self, expr: &Expr) -> Result<Value, InterpreterError> {
         match expr {
-            Expr::Integer(n) => Ok(Value::Integer(n)),
-            Expr::Float(x) => Ok(Value::Float(x)),
-            Expr::String(s) => Ok(Value::String(std::sync::Arc::new((*s).clone()))),
-            Expr::Boolean(b) => Ok(Value::Boolean(b)),
+            Expr::Integer(n) => Ok(Value::Integer(*n)),
+            Expr::Float(x) => Ok(Value::Float(*x)),
+            Expr::String(s) => Ok(Value::String(s.clone())),
+            Expr::Boolean(b) => Ok(Value::Boolean(*b)),
             Expr::List(items_rc) => {
                 // MEMORY MONITORING: Track list creation to prevent memory corruption
                 self.track_allocation(items_rc.len())?;
                 
                 let mut values = Vec::with_capacity(items_rc.len()); // Pre-allocate
                 for item in items_rc.iter() {
-                    values.push(self.eval_expr(item.clone())?);
+                    values.push(self.eval_expr(item)?);
                 }
                 
                 // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large list creation
@@ -843,16 +843,16 @@ impl Interpreter {
             Expr::Tuple(items_rc) => {
                 let mut values = Vec::new();
                 for item in items_rc.iter() {
-                    values.push(self.eval_expr(item.clone())?);
+                    values.push(self.eval_expr(item)?);
                 }
                 Ok(Value::Tuple(std::sync::Arc::new(values)))
             }
             Expr::Identifier(name) => self
                 .environment
-                .get(&name)
-                .ok_or(InterpreterError::UndefinedVariable { name }),
+                .get(name)
+                .ok_or_else(|| InterpreterError::UndefinedVariable { name: name.clone() }),
             Expr::Call { callee, arguments } => {
-                let callee_value = self.eval_expr(*callee)?;
+                let callee_value = self.eval_expr(callee)?;
                 
                 // Enhanced named argument resolution
                 let arg_values = self.resolve_arguments(&callee_value, arguments)?;
@@ -866,16 +866,16 @@ impl Interpreter {
                 Ok(Value::Function(Function {
                     name: None,
                     parameters: parameters.clone(),
-                    body: *body,
-                    closure,
+                    body: Arc::new((**body).clone()),
+                    closure: Arc::new(closure),
                 }))
             }
             Expr::Pipeline { left, right } => {
-                let left_value = self.eval_expr(*left)?;
-                match *right {
+                let left_value = self.eval_expr(left)?;
+                match right.as_ref() {
                     Expr::Call { callee, arguments } => {
                         // Enhanced named argument resolution for pipelines
-                        let callee_value = self.eval_expr(*callee)?;
+                        let callee_value = self.eval_expr(callee)?;
 
                         // The piped value fills the first parameter, so resolve
                         // the explicit arguments against the remaining ones —
@@ -897,7 +897,7 @@ impl Interpreter {
                         self.call_function(callee_value, final_args)
                     }
                     Expr::Identifier(name) => {
-                        let function_value = self.environment.get(&name).ok_or_else(|| {
+                        let function_value = self.environment.get(name).ok_or_else(|| {
                             InterpreterError::UndefinedVariable { name: name.clone() }
                         })?;
                         self.call_function(function_value, vec![left_value])
@@ -910,7 +910,7 @@ impl Interpreter {
                 }
             }
             Expr::Match { value, arms } => {
-                let value = self.eval_expr(*value)?;
+                let value = self.eval_expr(value)?;
                 self.eval_match(value, arms)
             }
             Expr::If {
@@ -918,13 +918,13 @@ impl Interpreter {
                 then_branch,
                 else_branch,
             } => {
-                let condition = self.eval_expr(*condition)?;
+                let condition = self.eval_expr(condition)?;
                 let condition_bool = self.to_boolean(&condition)?;
 
                 if condition_bool {
-                    self.eval_expr(*then_branch)
+                    self.eval_expr(then_branch)
                 } else if let Some(else_expr) = else_branch {
-                    self.eval_expr(*else_expr)
+                    self.eval_expr(else_expr)
                 } else {
                     Ok(Value::Unit)
                 }
@@ -937,37 +937,37 @@ impl Interpreter {
                 Ok(result)
             }
             Expr::BinaryOp { left, op, right } => {
-                let left = self.eval_expr(*left)?;
-                let right = self.eval_expr(*right)?;
-                self.eval_binary_op(left, op, right)
+                let left = self.eval_expr(left)?;
+                let right = self.eval_expr(right)?;
+                self.eval_binary_op(left, op.clone(), right)
             }
             Expr::UnaryOp { op, operand } => {
-                let operand = self.eval_expr(*operand)?;
-                self.eval_unary_op(op, operand)
+                let operand = self.eval_expr(operand)?;
+                self.eval_unary_op(op.clone(), operand)
             }
             Expr::Range {
                 start,
                 end,
                 inclusive,
             } => {
-                let start_val = self.eval_expr(*start)?;
-                let end_val = self.eval_expr(*end)?;
-                self.eval_range(start_val, end_val, inclusive)
+                let start_val = self.eval_expr(start)?;
+                let end_val = self.eval_expr(end)?;
+                self.eval_range(start_val, end_val, *inclusive)
             }
             Expr::StructLiteral(struct_literal) => self.eval_struct_literal(struct_literal),
             Expr::AnonymousObject { fields } => self.eval_anonymous_object(fields),
             Expr::MapLiteral { entries } => self.eval_map_literal(entries),
             Expr::FieldAccess { object, field } => self.eval_field_access(object, field),
             Expr::ResultOk(expr) => {
-                let value = self.eval_expr(*expr)?;
+                let value = self.eval_expr(expr)?;
                 Ok(Value::Ok(Box::new(value)))
             }
             Expr::ResultErr(expr) => {
-                let value = self.eval_expr(*expr)?;
+                let value = self.eval_expr(expr)?;
                 Ok(Value::Err(Box::new(value)))
             }
             Expr::Try(expr) => {
-                let value = self.eval_expr(*expr)?;
+                let value = self.eval_expr(expr)?;
                 match value {
                     Value::Ok(inner) => Ok(*inner),
                     Value::Err(err) => Err(InterpreterError::RuntimeError {
@@ -983,16 +983,16 @@ impl Interpreter {
                 catch_var,
                 catch_block,
             } => {
-                let try_result = self.eval_expr(*try_block)?;
+                let try_result = self.eval_expr(try_block)?;
                 match try_result {
                     Value::Ok(inner) => Ok(*inner),
                     Value::Err(err) => {
                         // Create new scope for catch block with error variable
                         let parent = self.environment.clone();
                         self.environment = Environment::with_parent(parent);
-                        self.environment.define(catch_var, *err);
+                        self.environment.define(catch_var.clone(), *err);
 
-                        let result = self.eval_expr(*catch_block);
+                        let result = self.eval_expr(catch_block);
 
                         // Restore parent environment
                         if let Some(parent) = self.environment.parent.take() {
@@ -1016,7 +1016,7 @@ impl Interpreter {
             Expr::Break => Err(InterpreterError::BreakSignal),
             Expr::Continue => Err(InterpreterError::ContinueSignal),
             Expr::Assignment { target, value } => {
-                let val = self.eval_expr(*value)?;
+                let val = self.eval_expr(value)?;
                 self.environment.set(&target, val.clone()).or_else(|_| {
                     // If variable not defined, define it
                     self.environment.define(target.clone(), val.clone());
@@ -1033,7 +1033,7 @@ impl Interpreter {
                     match part {
                         crate::ast::TemplatePart::Literal(s) => result.push_str(&s),
                         crate::ast::TemplatePart::Interpolation(expr) => {
-                            let val = self.eval_expr(*expr)?;
+                            let val = self.eval_expr(expr)?;
                             // For template interpolation, we want raw values without quotes
                             match val {
                                 Value::String(s) => result.push_str(&s),
@@ -1048,8 +1048,8 @@ impl Interpreter {
                 Ok(Value::String(result.into()))
             }
             Expr::BitwiseOp { left, op, right } => {
-                let left_val = self.eval_expr(*left)?;
-                let right_val = self.eval_expr(*right)?;
+                let left_val = self.eval_expr(left)?;
+                let right_val = self.eval_expr(right)?;
                 
                 match (left_val, right_val) {
                     (Value::Integer(l), Value::Integer(r)) => {
@@ -1080,16 +1080,16 @@ impl Interpreter {
             Expr::Spread(expr) => {
                 // For now, just evaluate the inner expression
                 // Spread semantics would be handled at the call site
-                self.eval_expr(*expr)
+                self.eval_expr(expr)
             }
             Expr::Rest(expr) => {
                 // For now, just evaluate the inner expression
                 // Rest semantics would be handled in pattern matching
-                self.eval_expr(*expr)
+                self.eval_expr(expr)
             }
             Expr::Index { object, index } => {
-                let object_value = self.eval_expr(*object)?;
-                let index_value = self.eval_expr(*index)?;
+                let object_value = self.eval_expr(object)?;
+                let index_value = self.eval_expr(index)?;
 
                 match (object_value, index_value) {
                     (Value::List(list), Value::Integer(idx)) => {
@@ -1184,9 +1184,9 @@ impl Interpreter {
                     .collect();
                 let function = Function {
                     name: None,
-                    parameters,
-                    body: *body,
-                    closure,
+                    parameters: parameters.clone(),
+                    body: Arc::new((**body).clone()),
+                    closure: Arc::new(closure),
                 };
                 
                 // Return a function that when called returns a promise
@@ -1194,7 +1194,7 @@ impl Interpreter {
             }
             Expr::Await { expression } => {
                 // Enhanced await implementation with proper promise resolution
-                let value = self.eval_expr(*expression)?;
+                let value = self.eval_expr(expression)?;
                 match value {
                     Value::Promise {
                         state: crate::ast::PromiseState::Resolved,
@@ -1227,14 +1227,14 @@ impl Interpreter {
                 value,
                 delay,
             } => {
-                let evaluated_value = self.eval_expr(*value)?;
+                let evaluated_value = self.eval_expr(value)?;
                 match promise_type {
                     PromiseType::Resolve => Ok(self.async_runtime.promise_resolve(evaluated_value)),
                     PromiseType::Reject => Ok(self.async_runtime.promise_reject(evaluated_value)),
                     PromiseType::Delay => {
                         // Enhanced delay implementation
                         if let Some(delay_expr) = delay {
-                            let delay_value = self.eval_expr(*delay_expr)?;
+                            let delay_value = self.eval_expr(delay_expr)?;
                             match delay_value {
                                 Value::Integer(ms) if ms >= 0 => {
                                     let (_, delayed_promise) = self.async_runtime.create_delayed_promise(ms as u64, evaluated_value);
@@ -1361,59 +1361,59 @@ impl Interpreter {
                 // Enhanced spawn implementation - evaluate expression asynchronously
                 // For now, just evaluate the expression and wrap in resolved promise
                 // In full implementation, would execute in separate task
-                let result = self.eval_expr(*expression)?;
+                let result = self.eval_expr(expression)?;
                 Ok(self.async_runtime.promise_resolve(result))
             }
             
             // Test assertions
             Expr::AssertEq { actual, expected, message } => {
-                let actual_val = self.eval_expr(*actual)?;
-                let expected_val = self.eval_expr(*expected)?;
+                let actual_val = self.eval_expr(actual)?;
+                let expected_val = self.eval_expr(expected)?;
                 if actual_val != expected_val {
-                    let msg = message.unwrap_or_else(|| format!("Assertion failed: {:?} != {:?}", actual_val, expected_val));
+                    let msg = message.clone().unwrap_or_else(|| format!("Assertion failed: {:?} != {:?}", actual_val, expected_val));
                     return Err(InterpreterError::RuntimeError { message: msg });
                 }
                 Ok(Value::Unit)
             }
             Expr::AssertNe { actual, expected, message } => {
-                let actual_val = self.eval_expr(*actual)?;
-                let expected_val = self.eval_expr(*expected)?;
+                let actual_val = self.eval_expr(actual)?;
+                let expected_val = self.eval_expr(expected)?;
                 if actual_val == expected_val {
-                    let msg = message.unwrap_or_else(|| format!("Assertion failed: {:?} == {:?}", actual_val, expected_val));
+                    let msg = message.clone().unwrap_or_else(|| format!("Assertion failed: {:?} == {:?}", actual_val, expected_val));
                     return Err(InterpreterError::RuntimeError { message: msg });
                 }
                 Ok(Value::Unit)
             }
             Expr::Assert { condition, message } => {
-                let condition_val = self.eval_expr(*condition)?;
+                let condition_val = self.eval_expr(condition)?;
                 match condition_val {
                     Value::Boolean(true) => Ok(Value::Unit),
                     Value::Boolean(false) => {
-                        let msg = message.unwrap_or_else(|| "Assertion failed: condition is false".to_string());
+                        let msg = message.clone().unwrap_or_else(|| "Assertion failed: condition is false".to_string());
                         Err(InterpreterError::RuntimeError { message: msg })
                     }
                     _ => {
-                        let msg = message.unwrap_or_else(|| format!("Assertion failed: condition is not boolean: {:?}", condition_val));
+                        let msg = message.clone().unwrap_or_else(|| format!("Assertion failed: condition is not boolean: {:?}", condition_val));
                         Err(InterpreterError::RuntimeError { message: msg })
                     }
                 }
             }
             Expr::AssertTrue { expression, message } => {
-                let val = self.eval_expr(*expression)?;
+                let val = self.eval_expr(expression)?;
                 match val {
                     Value::Boolean(true) => Ok(Value::Unit),
                     _ => {
-                        let msg = message.unwrap_or_else(|| format!("Assertion failed: expected true, got {:?}", val));
+                        let msg = message.clone().unwrap_or_else(|| format!("Assertion failed: expected true, got {:?}", val));
                         Err(InterpreterError::RuntimeError { message: msg })
                     }
                 }
             }
             Expr::AssertFalse { expression, message } => {
-                let val = self.eval_expr(*expression)?;
+                let val = self.eval_expr(expression)?;
                 match val {
                     Value::Boolean(false) => Ok(Value::Unit),
                     _ => {
-                        let msg = message.unwrap_or_else(|| format!("Assertion failed: expected false, got {:?}", val));
+                        let msg = message.clone().unwrap_or_else(|| format!("Assertion failed: expected false, got {:?}", val));
                         Err(InterpreterError::RuntimeError { message: msg })
                     }
                 }
@@ -1434,8 +1434,8 @@ impl Interpreter {
         let function = Function {
             name: Some(async_func_decl.name.clone()),
             parameters: async_func_decl.parameters,
-            body: async_func_decl.body,
-            closure,
+            body: Arc::new(async_func_decl.body),
+            closure: Arc::new(closure),
         };
 
         let function_value = Value::Function(function);
@@ -1513,7 +1513,7 @@ impl Interpreter {
                     let value = if i < arguments.len() {
                         arguments[i].clone()
                     } else if let Some(default_expr) = &param.default_value {
-                        self.eval_expr(default_expr.clone())?
+                        self.eval_expr(default_expr)?
                     } else {
                         return Err(InterpreterError::RuntimeError {
                             message: format!("Missing argument for parameter {}", param.name),
@@ -1524,7 +1524,7 @@ impl Interpreter {
                 }
 
                 // MEMORY OPTIMIZED: Use scoped evaluation instead of environment replacement
-                let result = self.eval_expr_with_env(func.body, new_env);
+                let result = self.eval_expr_with_env(&func.body, new_env);
                 
                 // Decrement call depth when function completes
                 self.call_depth -= 1;
@@ -1635,7 +1635,7 @@ impl Interpreter {
 
     /// MEMORY OPTIMIZED: Evaluate expression with scoped variables instead of environment replacement
     /// This completely avoids expensive environment moving operations
-    fn eval_expr_with_env(&mut self, expr: Expr, temp_env: Environment) -> Result<Value, InterpreterError> {
+    fn eval_expr_with_env(&mut self, expr: &Expr, temp_env: Environment) -> Result<Value, InterpreterError> {
         // Instead of replacing environments, temporarily add variables to current environment
         let mut added_vars = Vec::new();
         
@@ -1716,7 +1716,7 @@ impl Interpreter {
         let _ = self.perform_intelligent_cache_cleanup();
     }
 
-    fn eval_match(&mut self, value: Value, arms: Vec<MatchArm>) -> Result<Value, InterpreterError> {
+    fn eval_match(&mut self, value: Value, arms: &[MatchArm]) -> Result<Value, InterpreterError> {
         for arm in arms {
             let mut bindings = HashMap::new();
             if self.pattern_matches_bind(&arm.pattern, &value, &mut bindings)? {
@@ -1729,7 +1729,7 @@ impl Interpreter {
                         self.environment.define(k.clone(), v.clone());
                     }
                     
-                    let guard_result = self.eval_expr(*guard_expr.clone());
+                    let guard_result = self.eval_expr(guard_expr);
                     
                     // Restore parent environment
                     if let Some(parent) = self.environment.parent.take() {
@@ -1750,7 +1750,7 @@ impl Interpreter {
                     for (k, v) in bindings {
                         self.environment.define(k, v);
                     }
-                    let result = self.eval_expr(arm.expression);
+                    let result = self.eval_expr(&arm.expression);
                     if let Some(parent) = self.environment.parent.take() {
                         self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
                     }
@@ -2303,30 +2303,30 @@ impl Interpreter {
 
     fn eval_struct_literal(
         &mut self,
-        struct_literal: crate::ast::StructLiteral,
+        struct_literal: &crate::ast::StructLiteral,
     ) -> Result<Value, InterpreterError> {
         let mut fields = std::collections::HashMap::new();
 
-        for field_value in struct_literal.fields {
-            let value = self.eval_expr(field_value.value)?;
-            fields.insert(field_value.name, value);
+        for field_value in &struct_literal.fields {
+            let value = self.eval_expr(&field_value.value)?;
+            fields.insert(field_value.name.clone(), value);
         }
 
         Ok(Value::Struct {
-            type_name: struct_literal.type_name,
+            type_name: struct_literal.type_name.clone(),
             fields,
         })
     }
 
     fn eval_anonymous_object(
         &mut self,
-        field_values: Vec<crate::ast::FieldValue>,
+        field_values: &[crate::ast::FieldValue],
     ) -> Result<Value, InterpreterError> {
         let mut fields = std::collections::HashMap::new();
 
         for field_value in field_values {
-            let value = self.eval_expr(field_value.value)?;
-            fields.insert(field_value.name, value);
+            let value = self.eval_expr(&field_value.value)?;
+            fields.insert(field_value.name.clone(), value);
         }
 
         // Use a generic type name for anonymous objects
@@ -2338,13 +2338,13 @@ impl Interpreter {
 
     fn eval_map_literal(
         &mut self,
-        entries: Vec<crate::ast::MapEntry>,
+        entries: &[crate::ast::MapEntry],
     ) -> Result<Value, InterpreterError> {
         let mut map = std::collections::HashMap::new();
 
         for entry in entries {
-            let key = self.eval_expr(entry.key)?;
-            let value = self.eval_expr(entry.value)?;
+            let key = self.eval_expr(&entry.key)?;
+            let value = self.eval_expr(&entry.value)?;
 
             // Convert key to string (maps in Olang use string keys)
             let key_str = match key {
@@ -2368,17 +2368,17 @@ impl Interpreter {
 
     fn eval_field_access(
         &mut self,
-        object: Box<crate::ast::Expr>,
-        field: String,
+        object: &crate::ast::Expr,
+        field: &str,
     ) -> Result<Value, InterpreterError> {
-        let object_value = self.eval_expr(*object)?;
+        let object_value = self.eval_expr(object)?;
 
         match object_value {
             Value::Struct { fields, type_name } => {
                 if type_name == "Module" {
                     // Handle module function access (e.g., fs.read_file)
                     fields
-                        .get(&field)
+                        .get(field)
                         .cloned()
                         .ok_or_else(|| InterpreterError::TypeError {
                             message: format!("Function '{}' not found in module", field),
@@ -2386,7 +2386,7 @@ impl Interpreter {
                 } else {
                     // Handle regular struct field access
                     fields
-                        .get(&field)
+                        .get(field)
                         .cloned()
                         .ok_or_else(|| InterpreterError::TypeError {
                             message: format!("Field '{}' not found", field),
@@ -2555,7 +2555,7 @@ impl Interpreter {
         iterable: &Expr,
         body: &Expr,
     ) -> Result<Value, InterpreterError> {
-        let iterable_value = self.eval_expr(iterable.clone())?;
+        let iterable_value = self.eval_expr(iterable)?;
 
         match iterable_value {
             Value::List(items) => {
@@ -2617,7 +2617,7 @@ impl Interpreter {
             if let Some(name) = variable {
                 self.environment.define(name.to_string(), item);
             }
-            match self.eval_expr(body.clone()) {
+            match self.eval_expr(body) {
                 Ok(v) => last_value = v,
                 Err(InterpreterError::BreakSignal) => break,
                 Err(InterpreterError::ContinueSignal) => continue,
@@ -2638,14 +2638,14 @@ impl Interpreter {
             // Safepoint poll for GC coordination at start of each iteration
             self.safepoint_poll()?;
 
-            let condition_value = self.eval_expr(condition.clone())?;
+            let condition_value = self.eval_expr(condition)?;
             let condition_bool = self.to_boolean(&condition_value)?;
 
             if !condition_bool {
                 break;
             }
 
-            match self.eval_expr(body.clone()) {
+            match self.eval_expr(body) {
                 Ok(v) => last_value = v,
                 Err(InterpreterError::BreakSignal) => break,
                 Err(InterpreterError::ContinueSignal) => continue,
@@ -2662,7 +2662,7 @@ impl Interpreter {
             // Safepoint poll for GC coordination at start of each iteration
             self.safepoint_poll()?;
 
-            match self.eval_expr(body.clone()) {
+            match self.eval_expr(body) {
                 Ok(v) => last_value = v,
                 Err(InterpreterError::BreakSignal) => return Ok(last_value),
                 Err(InterpreterError::ContinueSignal) => continue,
@@ -2672,7 +2672,7 @@ impl Interpreter {
     }
 
     /// Resolve arguments (both positional and named) for function calls
-    fn resolve_arguments(&mut self, callee: &Value, arguments: Vec<Argument>) -> Result<Vec<Value>, InterpreterError> {
+    fn resolve_arguments(&mut self, callee: &Value, arguments: &[Argument]) -> Result<Vec<Value>, InterpreterError> {
         // Get function parameter information if available
         let parameters = match callee {
             Value::Function(func) => Some(&func.parameters),
@@ -2699,12 +2699,12 @@ impl Interpreter {
                 }
                 Argument::Named { name, value } => {
                     let evaluated_value = self.eval_expr(value)?;
-                    if named_args.iter().any(|(n, _)| n == &name) {
+                    if named_args.iter().any(|(n, _)| n == name) {
                         return Err(InterpreterError::RuntimeError {
                             message: format!("Duplicate named argument: {}", name),
                         });
                     }
-                    named_args.push((name, evaluated_value));
+                    named_args.push((name.clone(), evaluated_value));
                 }
             }
         }
@@ -2732,7 +2732,7 @@ impl Interpreter {
                     resolved_args.push(named_args.remove(pos).1);
                 } else if let Some(default_expr) = &param.default_value {
                     // Use default value
-                    let default_value = self.eval_expr(default_expr.clone())?;
+                    let default_value = self.eval_expr(default_expr)?;
                     resolved_args.push(default_value);
                 } else {
                     // Missing required argument
@@ -3257,7 +3257,7 @@ impl Interpreter {
     fn eval_share_decl(&mut self, share: ShareDecl) -> Result<Value, InterpreterError> {
         match share {
             ShareDecl::Function(func) => self.eval_function_decl(func),
-            ShareDecl::Let(letd) => self.eval_let_decl(letd),
+            ShareDecl::Let(letd) => self.eval_let_decl(&letd),
             ShareDecl::Type(typed) => self.eval_type_decl(typed),
             ShareDecl::Use(use_decl) => self.eval_transitive_share(use_decl),
         }
@@ -3400,7 +3400,7 @@ impl Interpreter {
                                 exports.insert(func_decl.name.clone(), value);
                             }
                             ShareDecl::Let(let_decl) => {
-                                let value = self.eval_let_decl(let_decl.clone())?;
+                                let value = self.eval_let_decl(let_decl)?;
                                 if let Pattern::Identifier(name) = &let_decl.pattern {
                                     exports.insert(name.clone(), value);
                                 }
@@ -3442,10 +3442,10 @@ impl Interpreter {
                     }
                     crate::ast::Statement::UseDecl(use_decl) => {
                         dependencies.push(use_decl.path.join("."));
-                        self.eval_statement(crate::ast::Statement::UseDecl(use_decl.clone()))?;
+                        self.eval_statement(&crate::ast::Statement::UseDecl(use_decl.clone()))?;
                     }
                     _ => {
-                        self.eval_statement(statement.clone())?;
+                        self.eval_statement(statement)?;
                     }
                 }
             }
@@ -3968,7 +3968,7 @@ impl Interpreter {
         // For now, we'll just evaluate the test body and return Unit
         // In a full implementation, this would be part of the test runner
         for statement in &test_decl.body {
-            self.eval_statement(statement.clone())?;
+            self.eval_statement(statement)?;
         }
         Ok(Value::Unit)
     }

@@ -21,7 +21,7 @@ impl ThreadSafeFunction {
             name: func.name.clone(),
             parameters: func.parameters.clone(),
             body_code: serde_json::to_string(&func.body).unwrap_or_else(|_| "null".to_string()),
-            closure: func.closure.clone(),
+            closure: (*func.closure).clone(),
         }
     }
 
@@ -33,8 +33,8 @@ impl ThreadSafeFunction {
         Function {
             name: self.name.clone(),
             parameters: self.parameters.clone(),
-            body,
-            closure: self.closure.clone(),
+            body: std::sync::Arc::new(body),
+            closure: std::sync::Arc::new(self.closure.clone()),
         }
     }
 }
