@@ -68,8 +68,10 @@ pub struct BytecodeCompiler {
     optimizer: BytecodeOptimizer,
 
     // Local variable tracking
-    local_variables: HashMap<String, u32>,
-    next_local_idx: u32,
+    /// Variable name -> the register that holds it (a register window:
+    /// parameters occupy registers 0..n, so reading a variable is free
+    /// rather than a LoadLocal that clones out of a separate array)
+    local_variables: HashMap<String, Register>,
 
     // Label tracking for control flow
     _label_counter: u32,
@@ -1918,15 +1920,17 @@ impl ExecutionState {
         self.registers
             .resize(bytecode.register_count as usize, OvmValue::new_unit());
 
-        // Set up locals with arguments
+        // Arguments occupy the first registers (the compiler assigns
+        // parameters registers 0..n in declaration order)
+        for (i, arg) in args.iter().enumerate() {
+            if i < self.registers.len() {
+                self.registers[i] = arg.clone();
+            }
+        }
+
         self.locals.clear();
         self.locals
             .resize(bytecode.local_count as usize, OvmValue::new_unit());
-        for (i, arg) in args.iter().enumerate() {
-            if i < self.locals.len() {
-                self.locals[i] = arg.clone();
-            }
-        }
 
         // Reset program counter
         self.pc = 0;
@@ -1998,7 +2002,6 @@ impl BytecodeCompiler {
             emitter: InstructionEmitter::new(),
             optimizer: BytecodeOptimizer::new(),
             local_variables: HashMap::new(),
-            next_local_idx: 0,
             _label_counter: 0,
             function_registry: HashMap::new(),
         }
@@ -2013,13 +2016,11 @@ impl BytecodeCompiler {
         self.register_allocator.reset();
         self.emitter.reset();
         self.local_variables.clear();
-        self.next_local_idx = 0;
 
-        // Add function parameters as locals
+        // Parameters occupy the first registers, in declaration order
         for param in &func.parameters {
-            self.local_variables
-                .insert(param.name.clone(), self.next_local_idx);
-            self.next_local_idx += 1;
+            let reg = self.register_allocator.allocate_register();
+            self.local_variables.insert(param.name.clone(), reg);
         }
 
         // Compile function body
@@ -2042,7 +2043,7 @@ impl BytecodeCompiler {
             function_id: func_id,
             instructions,
             register_count: self.register_allocator.max_register_used(),
-            local_count: self.next_local_idx,
+            local_count: 0,
             param_count: func.parameters.len(),
             constants,
             debug_info: BytecodeDebugInfo {
@@ -2095,10 +2096,9 @@ impl BytecodeCompiler {
             }
 
             Expr::Identifier(name) => {
-                let dst_reg = self.register_allocator.allocate_register();
-                if let Some(&local_idx) = self.local_variables.get(name) {
-                    self.emitter.emit_load_local(dst_reg, local_idx);
-                    Ok(dst_reg)
+                if let Some(&reg) = self.local_variables.get(name) {
+                    // The variable already lives in a register — nothing to emit
+                    Ok(reg)
                 } else {
                     // Refuse to compile references we can't resolve — loading
                     // Unit instead silently changed program results when a
@@ -2252,17 +2252,20 @@ impl BytecodeCompiler {
             }
 
             Expr::Assignment { target, value } => {
-                let value_reg = self.compile_expression(value)?;
-                match self.local_variables.get(target) {
-                    Some(&local_idx) => {
-                        self.emitter.emit_store_local(value_reg, local_idx);
-                        Ok(value_reg)
+                let target_reg = match self.local_variables.get(target) {
+                    Some(&reg) => reg,
+                    None => {
+                        return Err(BytecodeError::CompilationFailed(format!(
+                            "Assignment to unresolved variable '{}' (globals not supported in bytecode tier)",
+                            target
+                        )))
                     }
-                    None => Err(BytecodeError::CompilationFailed(format!(
-                        "Assignment to unresolved variable '{}' (globals not supported in bytecode tier)",
-                        target
-                    ))),
+                };
+                let value_reg = self.compile_expression(value)?;
+                if value_reg != target_reg {
+                    self.emitter.emit_move(target_reg, value_reg);
                 }
+                Ok(target_reg)
             }
 
             Expr::WhileLoop { condition, body } => {
@@ -2324,12 +2327,11 @@ impl BytecodeCompiler {
                         reg
                     }
                 };
-                let local_idx = *self.local_variables.entry(name).or_insert_with(|| {
-                    let idx = self.next_local_idx;
-                    self.next_local_idx += 1;
-                    idx
-                });
-                self.emitter.emit_store_local(value_reg, local_idx);
+                // Bind the name to its own register so later assignments
+                // don't clobber the (possibly shared) value register
+                let var_reg = self.register_allocator.allocate_register();
+                self.local_variables.insert(name, var_reg);
+                self.emitter.emit_move(var_reg, value_reg);
 
                 // Let evaluates to Unit
                 let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));

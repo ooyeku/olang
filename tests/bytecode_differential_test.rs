@@ -303,3 +303,136 @@ fn unsupported_features_fail_compilation() {
         );
     }
 }
+
+// --- Aliasing and binding cases (register-window hazards) ---
+// Variables live in registers; a copy that accidentally shares a register
+// with its source would silently change results. These lock that down.
+
+#[test]
+fn copy_then_mutate_source() {
+    let src = r#"
+fn f(a) = {
+    let x = a
+    a = a + 100
+    x
+}
+"#;
+    assert_same(src, "f", &ints(&[7]));
+}
+
+#[test]
+fn mutate_copy_leaves_source() {
+    let src = r#"
+fn f(a) = {
+    let x = a
+    x = x + 100
+    a
+}
+"#;
+    assert_same(src, "f", &ints(&[7]));
+}
+
+#[test]
+fn assignment_to_parameter() {
+    let src = r#"
+fn f(a, b) = {
+    a = a + b
+    b = b * 2
+    a + b
+}
+"#;
+    assert_same(src, "f", &ints(&[3, 4]));
+}
+
+#[test]
+fn self_referential_assignment() {
+    let src = r#"
+fn f(n) = {
+    let acc = n
+    acc = acc + acc
+    acc = acc * acc
+    acc
+}
+"#;
+    assert_same(src, "f", &ints(&[3]));
+}
+
+#[test]
+fn chained_copies() {
+    let src = r#"
+fn f(a) = {
+    let x = a
+    let y = x
+    let z = y
+    x = 1
+    y = 2
+    z
+}
+"#;
+    assert_same(src, "f", &ints(&[9]));
+}
+
+#[test]
+fn shadowing_in_block() {
+    let src = r#"
+fn f(a) = {
+    let x = a
+    let x = x + 1
+    x
+}
+"#;
+    assert_same(src, "f", &ints(&[5]));
+}
+
+#[test]
+fn swap_via_temporary() {
+    let src = r#"
+fn f(a, b) = {
+    let tmp = a
+    a = b
+    b = tmp
+    a * 10 + b
+}
+"#;
+    assert_same(src, "f", &ints(&[3, 7]));
+}
+
+#[test]
+fn loop_carried_variables() {
+    let src = r#"
+fn f(n) = {
+    let a = 0
+    let b = 1
+    let i = 0
+    while i < n {
+        let next = a + b
+        a = b
+        b = next
+        i = i + 1
+    }
+    a
+}
+"#;
+    for n in [0, 1, 5, 20] {
+        assert_same(src, "f", &ints(&[n]));
+    }
+}
+
+#[test]
+fn argument_registers_not_clobbered_by_call() {
+    let src = r#"
+fn double(x) = x * 2
+fn f(a, b) = double(a) + b + a
+"#;
+    assert_same(src, "f", &ints(&[3, 5]));
+}
+
+#[test]
+fn nested_calls_preserve_caller_values() {
+    let src = r#"
+fn inner(x) = x + 1
+fn middle(x) = inner(x) * 2
+fn outer(a, b) = middle(a) + middle(b) + a + b
+"#;
+    assert_same(src, "outer", &ints(&[2, 3]));
+}
