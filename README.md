@@ -1,5 +1,7 @@
 # Olang
 
+[![CI](https://github.com/ooyeku/olang/actions/workflows/ci.yml/badge.svg)](https://github.com/ooyeku/olang/actions/workflows/ci.yml)
+
 Current Status: Very early/Experimental.
 
 **Vision**: A modern, functional programming language with advanced features, high-performance execution, and comprehensive standard library.
