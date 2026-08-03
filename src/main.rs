@@ -52,7 +52,7 @@ struct Cli {
     /// Compile hot functions to OVM bytecode after N calls (default 50 when
     /// the flag is given without a value). Functions the tier cannot compile
     /// keep running on the interpreter.
-    #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "50")]
+    #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "50")]
     ovm_tier: Option<u32>,
 }
 
@@ -442,6 +442,17 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
                         if verbose {
                             logger.info("main", &format!("Result: {:?}", result));
                         }
+                        if ovm_stats {
+                            match interpreter.bytecode_tier_stats() {
+                                Some(tier) => println!(
+                                    "Bytecode tier: {} promoted, {} rejected, {} bytecode calls",
+                                    tier.promoted, tier.rejected, tier.bytecode_calls
+                                ),
+                                None => println!(
+                                    "Bytecode tier: disabled (enable with --ovm-tier)"
+                                ),
+                            }
+                        }
                         Ok(())
                     }
                     Err(e) => {
@@ -485,19 +496,24 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
                         }
                         
                         if ovm_stats {
+                            // Statistics are explicitly requested output, not
+                            // logging — going through logger.info() meant the
+                            // flag printed nothing at the default log level.
                             let stats = ovm_interpreter.get_stats();
-                            logger.info("main", "OVM Performance Statistics:");
-                            logger.info("main", &format!("  Classic executions: {}", stats.classic_executions));
-                            logger.info("main", &format!("  OVM executions: {}", stats.ovm_executions));
-                            logger.info("main", &format!("  Fallback executions: {}", stats.fallback_executions));
-                            logger.info("main", &format!("  Compilations: {}", stats.compilation_count));
-                            logger.info("main", &format!("  Average classic time: {:.2}ms", stats.average_classic_time_ms));
-                            logger.info("main", &format!("  Average OVM time: {:.2}ms", stats.average_ovm_time_ms));
-                            if let Some(tier) = ovm_interpreter.get_classic_interpreter().bytecode_tier_stats() {
-                                logger.info("main", &format!(
-                                    "  Bytecode tier: {} promoted, {} rejected, {} calls",
+                            println!("OVM Performance Statistics:");
+                            println!("  Classic executions: {}", stats.classic_executions);
+                            println!("  OVM executions: {}", stats.ovm_executions);
+                            println!("  Fallback executions: {}", stats.fallback_executions);
+                            println!("  Compilations: {}", stats.compilation_count);
+                            println!("  Average classic time: {:.2}ms", stats.average_classic_time_ms);
+                            println!("  Average OVM time: {:.2}ms", stats.average_ovm_time_ms);
+                            if let Some(tier) =
+                                ovm_interpreter.get_classic_interpreter().bytecode_tier_stats()
+                            {
+                                println!(
+                                    "  Bytecode tier: {} promoted, {} rejected, {} bytecode calls",
                                     tier.promoted, tier.rejected, tier.bytecode_calls
-                                ));
+                                );
                             }
                         }
                         
