@@ -9,9 +9,9 @@ COMMENT     = _{ "//" ~ (!NEWLINE ~ ANY)* }
 keyword = { "fn" | "let" | "type" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "true" | "false" | "async" | "await" | "try" | "catch" | "error" | "share" | "use" | "struct" | "enum" | "test" }
 
 // Identifiers and literals - exclude keywords
-identifier  = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
-integer     = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
-float       = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")*)? }
+identifier  = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_")) ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+integer     = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ !(ASCII_ALPHA | "_") }
+float       = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")*)? ~ !(ASCII_ALPHA | "_") }
 string      = @{ "\"" ~ string_char* ~ "\"" }
 raw_string  = @{ "r\"" ~ ("\\\"" | (!"\"" ~ ANY))* ~ "\"" }
 template_string = { "`" ~ template_raw_content ~ "`" }
@@ -25,9 +25,9 @@ boolean     = { "true" | "false" }
 char_literal = @{ "'" ~ (!"'" ~ ANY) ~ "'" }
 
 // Enhanced numeric literals
-binary      = @{ ("+" | "-")? ~ "0b" ~ ASCII_BIN_DIGIT+ ~ ("_" ~ ASCII_BIN_DIGIT+)* }
-octal       = @{ ("+" | "-")? ~ "0o" ~ ASCII_OCT_DIGIT+ ~ ("_" ~ ASCII_OCT_DIGIT+)* }
-hex         = @{ ("+" | "-")? ~ "0x" ~ ASCII_HEX_DIGIT+ ~ ("_" ~ ASCII_HEX_DIGIT+)* }
+binary      = @{ ("+" | "-")? ~ "0b" ~ ASCII_BIN_DIGIT+ ~ ("_" ~ ASCII_BIN_DIGIT+)* ~ !(ASCII_ALPHANUMERIC | "_") }
+octal       = @{ ("+" | "-")? ~ "0o" ~ ASCII_OCT_DIGIT+ ~ ("_" ~ ASCII_OCT_DIGIT+)* ~ !(ASCII_ALPHANUMERIC | "_") }
+hex         = @{ ("+" | "-")? ~ "0x" ~ ASCII_HEX_DIGIT+ ~ ("_" ~ ASCII_HEX_DIGIT+)* ~ !(ASCII_ALPHANUMERIC | "_") }
 number      = { float | binary | octal | hex | integer }
 
 // Lists and tuples

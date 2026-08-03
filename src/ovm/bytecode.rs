@@ -1277,20 +1277,31 @@ impl BytecodeVm {
 
         let result_ast = match (&left_ast, &right_ast) {
             (Value::Integer(a), Value::Integer(b)) => match op {
-                BinaryOp::Add => Value::Integer(a + b),
-                BinaryOp::Subtract => Value::Integer(a - b),
-                BinaryOp::Multiply => Value::Integer(a * b),
+                BinaryOp::Add => Value::Integer(a.checked_add(*b).ok_or_else(|| {
+                    BytecodeError::RuntimeError("Integer overflow in addition".to_string())
+                })?),
+                BinaryOp::Subtract => Value::Integer(a.checked_sub(*b).ok_or_else(|| {
+                    BytecodeError::RuntimeError("Integer overflow in subtraction".to_string())
+                })?),
+                BinaryOp::Multiply => Value::Integer(a.checked_mul(*b).ok_or_else(|| {
+                    BytecodeError::RuntimeError("Integer overflow in multiplication".to_string())
+                })?),
                 BinaryOp::Divide => {
                     if *b == 0 {
                         return Err(BytecodeError::DivisionByZero);
                     }
-                    Value::Integer(a / b)
+                    // checked_div also rejects i64::MIN / -1, which overflows
+                    Value::Integer(a.checked_div(*b).ok_or_else(|| {
+                        BytecodeError::RuntimeError("Integer overflow in division".to_string())
+                    })?)
                 }
                 BinaryOp::Modulo => {
                     if *b == 0 {
                         return Err(BytecodeError::DivisionByZero);
                     }
-                    Value::Integer(a % b)
+                    Value::Integer(a.checked_rem(*b).ok_or_else(|| {
+                        BytecodeError::RuntimeError("Integer overflow in modulo".to_string())
+                    })?)
                 }
                 BinaryOp::Equal => Value::Boolean(a == b),
                 BinaryOp::NotEqual => Value::Boolean(a != b),
@@ -1310,13 +1321,14 @@ impl BytecodeVm {
                 BinaryOp::Subtract => Value::Float(a - b),
                 BinaryOp::Multiply => Value::Float(a * b),
                 BinaryOp::Divide => {
-                    if b.abs() < f64::EPSILON {
+                    // Match interpreter semantics: only exact zero is rejected
+                    if *b == 0.0 {
                         return Err(BytecodeError::DivisionByZero);
                     }
                     Value::Float(a / b)
                 }
-                BinaryOp::Equal => Value::Boolean((a - b).abs() < f64::EPSILON),
-                BinaryOp::NotEqual => Value::Boolean((a - b).abs() >= f64::EPSILON),
+                BinaryOp::Equal => Value::Boolean(a == b),
+                BinaryOp::NotEqual => Value::Boolean(a != b),
                 BinaryOp::LessThan => Value::Boolean(a < b),
                 BinaryOp::LessThanEqual => Value::Boolean(a <= b),
                 BinaryOp::GreaterThan => Value::Boolean(a > b),
@@ -1355,6 +1367,12 @@ impl BytecodeVm {
                     )))
                 }
             },
+            (Value::Integer(a), Value::Float(b)) => {
+                self.execute_float_binary_op(*a as f64, *b, op)?
+            }
+            (Value::Float(a), Value::Integer(b)) => {
+                self.execute_float_binary_op(*a, *b as f64, op)?
+            }
             _ => {
                 return Err(BytecodeError::TypeError(
                     "Type mismatch in binary operation".to_string(),
@@ -1365,6 +1383,40 @@ impl BytecodeVm {
         Ok(OvmValue::from_ast(result_ast))
     }
 
+    /// Float arithmetic shared by the Float/Float and mixed Int/Float paths,
+    /// mirroring the interpreter's coercion semantics
+    fn execute_float_binary_op(&self, a: f64, b: f64, op: BinaryOp) -> Result<Value, BytecodeError> {
+        Ok(match op {
+            BinaryOp::Add => Value::Float(a + b),
+            BinaryOp::Subtract => Value::Float(a - b),
+            BinaryOp::Multiply => Value::Float(a * b),
+            BinaryOp::Divide => {
+                if b == 0.0 {
+                    return Err(BytecodeError::DivisionByZero);
+                }
+                Value::Float(a / b)
+            }
+            BinaryOp::Modulo => {
+                if b == 0.0 {
+                    return Err(BytecodeError::DivisionByZero);
+                }
+                Value::Float(a % b)
+            }
+            BinaryOp::Equal => Value::Boolean(a == b),
+            BinaryOp::NotEqual => Value::Boolean(a != b),
+            BinaryOp::LessThan => Value::Boolean(a < b),
+            BinaryOp::LessThanEqual => Value::Boolean(a <= b),
+            BinaryOp::GreaterThan => Value::Boolean(a > b),
+            BinaryOp::GreaterThanEqual => Value::Boolean(a >= b),
+            _ => {
+                return Err(BytecodeError::TypeError(format!(
+                    "Unsupported operation: {:?}",
+                    op
+                )))
+            }
+        })
+    }
+
     /// Execute unary operation
     fn execute_unary_op(&self, value: &OvmValue, op: UnaryOp) -> Result<OvmValue, BytecodeError> {
         let value_ast = value
@@ -1372,7 +1424,9 @@ impl BytecodeVm {
             .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
 
         let result_ast = match (&value_ast, &op) {
-            (Value::Integer(a), UnaryOp::Negate) => Value::Integer(-a),
+            (Value::Integer(a), UnaryOp::Negate) => Value::Integer(a.checked_neg().ok_or_else(|| {
+                BytecodeError::RuntimeError("Integer overflow in negation".to_string())
+            })?),
             (Value::Float(a), UnaryOp::Negate) => Value::Float(-a),
             (Value::Boolean(a), UnaryOp::Not) => Value::Boolean(!a),
             _ => {
@@ -1752,18 +1806,16 @@ impl BytecodeVm {
 
         match (string_value, start_value, end_value) {
             (Value::String(s), Value::Integer(start_idx), Value::Integer(end_idx)) => {
+                // Slice by chars: byte slicing panics inside multibyte
+                // characters (and on reversed indices)
                 let start_idx = start_idx.max(0) as usize;
                 let end_idx = end_idx.max(0) as usize;
-                let slice = if start_idx >= s.len() {
-                    ""
-                } else if end_idx >= s.len() {
-                    &s[start_idx..]
+                let slice: String = if end_idx > start_idx {
+                    s.chars().skip(start_idx).take(end_idx - start_idx).collect()
                 } else {
-                    &s[start_idx..end_idx]
+                    String::new()
                 };
-                Ok(OvmValue::from_ast(Value::String(Arc::new(
-                    slice.to_string(),
-                ))))
+                Ok(OvmValue::from_ast(Value::String(Arc::new(slice))))
             }
             _ => Err(BytecodeError::TypeError(
                 "String slice requires string and integer indices".to_string(),
@@ -2151,12 +2203,16 @@ impl BytecodeCompiler {
                 let dst_reg = self.register_allocator.allocate_register();
                 if let Some(&local_idx) = self.local_variables.get(name) {
                     self.emitter.emit_load_local(dst_reg, local_idx);
+                    Ok(dst_reg)
                 } else {
-                    // For now, treat as a constant unit value
-                    let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));
-                    self.emitter.emit_load_const(dst_reg, const_idx);
+                    // Refuse to compile references we can't resolve — loading
+                    // Unit instead silently changed program results when a
+                    // function was promoted to the bytecode tier
+                    Err(BytecodeError::CompilationFailed(format!(
+                        "Unresolved identifier '{}' (globals/closures not supported in bytecode tier)",
+                        name
+                    )))
                 }
-                Ok(dst_reg)
             }
 
             Expr::BinaryOp { left, op, right } => {
@@ -2244,12 +2300,14 @@ impl BytecodeCompiler {
                 Ok(dst_reg)
             }
 
-            _ => {
-                // For unsupported expressions, return a unit constant
-                let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));
-                let dst_reg = self.register_allocator.allocate_register();
-                self.emitter.emit_load_const(dst_reg, const_idx);
-                Ok(dst_reg)
+            other => {
+                // Refuse to compile unsupported expressions — substituting a
+                // Unit constant (e.g. for a recursive call site) silently
+                // changed program results on promotion to the bytecode tier
+                Err(BytecodeError::CompilationFailed(format!(
+                    "Unsupported expression in bytecode tier: {:?}",
+                    std::mem::discriminant(other)
+                )))
             }
         }
     }

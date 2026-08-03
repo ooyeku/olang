@@ -465,13 +465,12 @@ use std::sync::{Arc, Mutex};
 
         match result {
             Value::List(items) => {
-                // Map operation doubles values: [1,2,3,4] -> [2,4,6,8]
-                // Filter operation keeps even numbers: [2,4,6,8] -> [2,4,6,8] (all are even)
-                assert_eq!(items.len(), 4); // All mapped values pass filter
-                assert_eq!(items[0], Value::Integer(2)); // 1 * 2 = 2 (even, passes filter)
-                assert_eq!(items[1], Value::Integer(4)); // 2 * 2 = 4 (even, passes filter)
-                assert_eq!(items[2], Value::Integer(6)); // 3 * 2 = 6 (even, passes filter)
-                assert_eq!(items[3], Value::Integer(8)); // 4 * 2 = 8 (even, passes filter)
+                // Filter keeps even source values: [1,2,3,4] -> [2,4]
+                // Map then doubles them: [2,4] -> [4,8]
+                // (filter-before-map matches the sequential map_filtered path)
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0], Value::Integer(4)); // 2 * 2 = 4
+                assert_eq!(items[1], Value::Integer(8)); // 4 * 2 = 8
             }
             _ => assert!(false, "Expected LazyValue::MapFiltered, got: {:?}", result),
         }

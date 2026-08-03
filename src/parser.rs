@@ -8,7 +8,7 @@ use crate::ast::{
 use pest::{iterators::Pair, iterators::Pairs, Parser as PestParser};
 use pest_derive::Parser;
 use thiserror::Error;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 use std::sync::Arc;
 
 #[derive(Parser)]
@@ -58,12 +58,12 @@ impl PositionInfo {
 /// - Truncates long lines
 /// - Replaces control characters with spaces
 fn sanitize_snippet(s: &str) -> String {
+    let max_len = 200usize;
     let mut line = s.chars()
         .map(|c| if c.is_control() && c != '\n' && c != '\t' { ' ' } else { c })
+        .take(max_len)
         .collect::<String>();
-    let max_len = 200usize;
-    if line.len() > max_len {
-        line.truncate(max_len);
+    if s.chars().count() > max_len {
         line.push_str(" …");
     }
     line
@@ -562,7 +562,7 @@ impl Parser {
                                 let arg = args.into_iter().next().ok_or_else(|| ParseError::InvalidSyntax {
                                     message: format!("{} expression missing argument", name),
                                 })?;
-                                let expr = match arg {
+                                let inner = match arg {
                                     Argument::Positional(e) => e,
                                     Argument::Named { .. } => {
                                         return Err(ParseError::InvalidSyntax {
@@ -570,11 +570,15 @@ impl Parser {
                                         });
                                     }
                                 };
-                                return match name.as_str() {
-                                    "Ok" => Ok(Expr::ResultOk(Box::new(expr))),
-                                    "Err" => Ok(Expr::ResultErr(Box::new(expr))),
+                                // Keep looping so trailing postfix operations
+                                // (`?`, `.field`, indexing) still apply —
+                                // returning here silently dropped them
+                                expr = match name.as_str() {
+                                    "Ok" => Expr::ResultOk(Box::new(inner)),
+                                    "Err" => Expr::ResultErr(Box::new(inner)),
                                     _ => unreachable!(),
                                 };
+                                continue;
                             } else {
                                 return Err(ParseError::InvalidSyntax {
                                     message: format!(
@@ -1068,7 +1072,7 @@ impl Parser {
                     message: "Empty literal type".to_string(),
                 })?;
                 let value = match inner.as_rule() {
-                    Rule::string => crate::ast::Value::String(std::sync::Arc::new(inner.as_str().trim_matches('"').to_string())),
+                    Rule::string => crate::ast::Value::String(std::sync::Arc::new(self.unquote_string(inner.as_str())?)),
                     Rule::integer => {
                         let v = inner.as_str().parse::<i64>().map_err(|_| ParseError::InvalidSyntax {
                             message: "Invalid integer in literal type".to_string(),
@@ -1496,7 +1500,7 @@ impl Parser {
                 Ok(Pattern::Literal(crate::ast::Value::Integer(value)))
             }
             Rule::string => {
-                let value = pair.as_str().trim_matches('"').to_string();
+                let value = self.unquote_string(pair.as_str())?;
                 Ok(Pattern::Literal(crate::ast::Value::String(value.into())))
             }
             Rule::boolean => {
@@ -1821,7 +1825,7 @@ impl Parser {
                 Ok(Pattern::Literal(crate::ast::Value::Integer(value)))
             }
             Rule::string => {
-                let value = pair.as_str().trim_matches('"').to_string();
+                let value = self.unquote_string(pair.as_str())?;
                 Ok(Pattern::Literal(crate::ast::Value::String(value.into())))
             }
             Rule::boolean => {
@@ -2674,18 +2678,35 @@ impl Parser {
                     current_literal.clear();
                 }
 
-                // Extract the expression inside ${}
+                // Extract the expression inside ${}, ignoring braces that
+                // appear inside string literals (e.g. `${ "}" }`)
                 let mut expr_content = String::new();
                 let mut brace_count = 1;
-                
+                let mut in_string = false;
+                let mut prev_escape = false;
+
                 while let Some(ch) = chars.next() {
-                    if ch == '{' {
-                        brace_count += 1;
-                    } else if ch == '}' {
-                        brace_count -= 1;
-                        if brace_count == 0 {
-                            break;
+                    if in_string {
+                        if prev_escape {
+                            prev_escape = false;
+                        } else if ch == '\\' {
+                            prev_escape = true;
+                        } else if ch == '"' {
+                            in_string = false;
                         }
+                        expr_content.push(ch);
+                        continue;
+                    }
+                    match ch {
+                        '"' => in_string = true,
+                        '{' => brace_count += 1,
+                        '}' => {
+                            brace_count -= 1;
+                            if brace_count == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
                     }
                     expr_content.push(ch);
                 }
@@ -2715,14 +2736,39 @@ impl Parser {
 
     fn parse_expression_from_string(&self, expr_str: &str) -> Result<Expr, ParseError> {
         // Use Pest to parse just the expression
-        let pairs = OlangParser::parse(Rule::expr, expr_str)
-            .map_err(|e| ParseError::Pest(e))?;
-        
+        let trimmed = expr_str.trim();
+        let pairs = OlangParser::parse(Rule::expr, trimmed)
+            .map_err(ParseError::Pest)?;
+
         let expr_pair = pairs.into_iter().next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Empty expression in template interpolation".to_string(),
         })?;
-        
+
+        // The parse isn't anchored with EOI, so reject leftover input instead
+        // of silently discarding it (`${1 + }` used to parse as just `1`)
+        if expr_pair.as_span().end() != trimmed.len() {
+            return Err(ParseError::InvalidSyntax {
+                message: format!(
+                    "Invalid expression in template interpolation: '{}'",
+                    trimmed
+                ),
+            });
+        }
+
         self.build_expr(expr_pair.into_inner())
+    }
+
+    /// Strip exactly one pair of surrounding quotes and process escapes.
+    /// (`trim_matches('"')` also eats an escaped closing quote, and skipping
+    /// escape processing made `"\n"` patterns match a literal backslash-n.)
+    fn unquote_string(&self, s: &str) -> Result<String, ParseError> {
+        if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+            self.process_string_escapes(&s[1..s.len() - 1])
+        } else {
+            Err(ParseError::InvalidSyntax {
+                message: "Malformed string literal".to_string(),
+            })
+        }
     }
 
     fn process_string_escapes(&self, input: &str) -> Result<String, ParseError> {
@@ -2920,7 +2966,7 @@ impl Parser {
         let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing test name".to_string(),
         })?;
-        let name = self.process_string_escapes(name_pair.as_str())?;
+        let name = self.unquote_string(name_pair.as_str())?;
 
         // Get test block with statements
         let block_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -2956,7 +3002,7 @@ impl Parser {
                 let actual = self.build_expr(inner.next().unwrap().into_inner())?;
                 let expected = self.build_expr(inner.next().unwrap().into_inner())?;
                 let message = if let Some(msg_pair) = inner.next() {
-                    Some(self.process_string_escapes(msg_pair.as_str())?)
+                    Some(self.unquote_string(msg_pair.as_str())?)
                 } else {
                     None
                 };
@@ -2971,7 +3017,7 @@ impl Parser {
                 let actual = self.build_expr(inner.next().unwrap().into_inner())?;
                 let expected = self.build_expr(inner.next().unwrap().into_inner())?;
                 let message = if let Some(msg_pair) = inner.next() {
-                    Some(self.process_string_escapes(msg_pair.as_str())?)
+                    Some(self.unquote_string(msg_pair.as_str())?)
                 } else {
                     None
                 };
@@ -2985,7 +3031,7 @@ impl Parser {
                 let mut inner = assertion_pair.into_inner();
                 let condition = self.build_expr(inner.next().unwrap().into_inner())?;
                 let message = if let Some(msg_pair) = inner.next() {
-                    Some(self.process_string_escapes(msg_pair.as_str())?)
+                    Some(self.unquote_string(msg_pair.as_str())?)
                 } else {
                     None
                 };
@@ -2998,7 +3044,7 @@ impl Parser {
                 let mut inner = assertion_pair.into_inner();
                 let expression = self.build_expr(inner.next().unwrap().into_inner())?;
                 let message = if let Some(msg_pair) = inner.next() {
-                    Some(self.process_string_escapes(msg_pair.as_str())?)
+                    Some(self.unquote_string(msg_pair.as_str())?)
                 } else {
                     None
                 };
@@ -3011,7 +3057,7 @@ impl Parser {
                 let mut inner = assertion_pair.into_inner();
                 let expression = self.build_expr(inner.next().unwrap().into_inner())?;
                 let message = if let Some(msg_pair) = inner.next() {
-                    Some(self.process_string_escapes(msg_pair.as_str())?)
+                    Some(self.unquote_string(msg_pair.as_str())?)
                 } else {
                     None
                 };

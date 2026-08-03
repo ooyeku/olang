@@ -12,6 +12,8 @@ use aes_gcm::{Aes256Gcm, Nonce, KeyInit};
 use aes_gcm::aead::{Aead, AeadCore};
 use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::{EncodePublicKey, DecodePublicKey, DecodePrivateKey, EncodePrivateKey, LineEnding}};
 use rsa::Pkcs1v15Encrypt;
+use rsa::pkcs1v15::{Signature as RsaSignature, SigningKey as RsaSigningKey, VerifyingKey as RsaVerifyingKey};
+use rsa::signature::{SignatureEncoding, Signer, Verifier};
 use argon2::Argon2;
 use base64::{Engine as _, engine::general_purpose};
 
@@ -691,12 +693,15 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_result)))))
 }
 
-/// Decrypt data using AES-256-GCM (FIXED IMPLEMENTATION)
-/// Usage: crypto.decrypt_aes(encrypted_data, key, nonce) -> Result<String, Error>
+/// Decrypt data using AES-256-GCM
+/// Usage: crypto.decrypt_aes(encrypted_data, key) -> Result<String, Error>
+///        (encrypted_data is the output of encrypt_aes: hex of nonce || ciphertext)
+/// Or:    crypto.decrypt_aes(ciphertext, key, nonce) -> Result<String, Error>
+///        (ciphertext and nonce as separate hex strings)
 fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 3 {
+    if args.len() != 2 && args.len() != 3 {
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "decrypt_aes expects 3 arguments, got {}",
+            "decrypt_aes expects 2 or 3 arguments, got {}",
             args.len()
         ))))));
     }
@@ -719,15 +724,6 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         }
     };
 
-    let nonce = match &args[2] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decrypt_aes: third argument must be a string".to_string(),
-            )))))
-        }
-    };
-
     // Decode inputs from hex
     let key_bytes = match hex::decode(key) {
         Ok(k) => k,
@@ -738,22 +734,45 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         }
     };
 
-    let nonce_bytes = match hex::decode(nonce) {
-        Ok(n) => n,
-        Err(_) => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decrypt_aes: nonce must be valid hex string".to_string(),
-            )))))
-        }
-    };
-
-    let ciphertext_bytes = match hex::decode(encrypted_data) {
+    let decoded = match hex::decode(encrypted_data) {
         Ok(c) => c,
         Err(_) => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "decrypt_aes: encrypted_data must be valid hex string".to_string(),
             )))))
         }
+    };
+
+    // With 3 args the nonce is passed separately; with 2 args it is the
+    // 12 bytes encrypt_aes prepends to the ciphertext.
+    let (nonce_bytes, ciphertext_bytes) = if args.len() == 3 {
+        let nonce = match &args[2] {
+            Value::String(s) => s.as_ref(),
+            _ => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    "decrypt_aes: third argument must be a string".to_string(),
+                )))))
+            }
+        };
+        let nonce_bytes = match hex::decode(nonce) {
+            Ok(n) => n,
+            Err(_) => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    "decrypt_aes: nonce must be valid hex string".to_string(),
+                )))))
+            }
+        };
+        (nonce_bytes, decoded)
+    } else {
+        if decoded.len() < 12 {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "decrypt_aes: encrypted_data too short to contain a nonce".to_string(),
+            )))));
+        }
+        let ciphertext = decoded[12..].to_vec();
+        let mut nonce_bytes = decoded;
+        nonce_bytes.truncate(12);
+        (nonce_bytes, ciphertext)
     };
 
     if key_bytes.len() != 32 {
@@ -1120,7 +1139,7 @@ fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
     }
 }
 
-/// Sign data using RSA private key (SIMPLIFIED IMPLEMENTATION)
+/// Sign data using RSA private key (PKCS#1 v1.5 over SHA-256)
 /// Usage: crypto.sign_data(data, private_key) -> Result<String, Error>
 fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
@@ -1139,7 +1158,7 @@ fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         }
     };
 
-    let _private_key_pem = match &args[1] {
+    let private_key_pem = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
@@ -1148,16 +1167,26 @@ fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         }
     };
 
-    // Simplified implementation using SHA256 hash + hex encoding
-    let hash = Sha256::digest(data.as_bytes());
-    
-    // For now, return a simplified signature (hash + salt)
-    let signature = format!("{}:{}", hex::encode(hash), hex::encode(b"signature_salt"));
-    
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(signature)))))
+    let private_key = match RsaPrivateKey::from_pkcs8_pem(private_key_pem) {
+        Ok(k) => k,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "sign_data: failed to parse private key: {}",
+                e
+            ))))));
+        }
+    };
+
+    // RSA PKCS#1 v1.5 signature over SHA-256(data)
+    let signing_key = RsaSigningKey::<Sha256>::new(private_key);
+    let signature = signing_key.sign(data.as_bytes());
+
+    Ok(Value::Ok(Box::new(Value::String(Arc::new(hex::encode(
+        signature.to_bytes(),
+    ))))))
 }
 
-/// Verify a signature using RSA public key (SIMPLIFIED IMPLEMENTATION)
+/// Verify a signature using RSA public key (PKCS#1 v1.5 over SHA-256)
 /// Usage: crypto.verify_signature(data, signature, public_key) -> Result<Bool, Error>
 fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
@@ -1185,7 +1214,7 @@ fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error
         }
     };
 
-    let _public_key_pem = match &args[2] {
+    let public_key_pem = match &args[2] {
         Value::String(s) => s.as_ref(),
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
@@ -1194,13 +1223,32 @@ fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error
         }
     };
 
-    // Simplified verification - check if signature matches expected format
-    let expected_signature = {
-        let hash = Sha256::digest(data.as_bytes());
-        format!("{}:{}", hex::encode(hash), hex::encode(b"signature_salt"))
+    let public_key = match RsaPublicKey::from_public_key_pem(public_key_pem) {
+        Ok(k) => k,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "verify_signature: failed to parse public key: {}",
+                e
+            ))))));
+        }
     };
 
-    let is_valid = signature == &expected_signature;
+    let signature_bytes = match hex::decode(signature) {
+        Ok(b) => b,
+        Err(_) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "verify_signature: signature must be a valid hex string".to_string(),
+            )))))
+        }
+    };
+
+    let signature = match RsaSignature::try_from(signature_bytes.as_slice()) {
+        Ok(s) => s,
+        Err(_) => return Ok(Value::Ok(Box::new(Value::Boolean(false)))),
+    };
+
+    let verifying_key = RsaVerifyingKey::<Sha256>::new(public_key);
+    let is_valid = verifying_key.verify(data.as_bytes(), &signature).is_ok();
 
     Ok(Value::Ok(Box::new(Value::Boolean(is_valid))))
 }

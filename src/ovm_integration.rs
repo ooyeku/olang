@@ -1212,7 +1212,7 @@ mod tests {
         // Test OVM-preferred builtin call routes to OVM
         let len_call = Expr::Call {
             callee: Box::new(Expr::Identifier("len".to_string())),
-            arguments: vec![Argument::Positional(Expr::List(std::rc::Rc::from(
+            arguments: vec![Argument::Positional(Expr::List(std::sync::Arc::from(
                 [Expr::Integer(1), Expr::Integer(2)] as [Expr; 2],
             )))],
         };
@@ -1222,7 +1222,7 @@ mod tests {
         let map_call = Expr::Call {
             callee: Box::new(Expr::Identifier("map".to_string())),
             arguments: vec![
-                Argument::Positional(Expr::List(std::rc::Rc::from(
+                Argument::Positional(Expr::List(std::sync::Arc::from(
                     [Expr::Integer(1), Expr::Integer(2)] as [Expr; 2]
                 ))),
                 Argument::Positional(Expr::Lambda {

@@ -727,8 +727,8 @@ impl BuiltinFunctions {
                 inclusive,
             } => {
                 // For ranges, we still need to materialize, but only once
-                let end_val = if *inclusive { end + 1 } else { *end };
-                let range_size = (end_val - start) as usize;
+                let end_val = if *inclusive { end.saturating_add(1) } else { *end };
+                let range_size = end_val.saturating_sub(*start).max(0) as usize;
                 
                 // MEMORY MONITORING: Check if range is too large before creating
                 if range_size > 10_000_000 {
@@ -840,8 +840,8 @@ impl BuiltinFunctions {
                 inclusive,
             } => {
                 // For ranges, we still need to materialize, but only once
-                let end_val = if *inclusive { end + 1 } else { *end };
-                let range_size = (end_val - start) as usize;
+                let end_val = if *inclusive { end.saturating_add(1) } else { *end };
+                let range_size = end_val.saturating_sub(*start).max(0) as usize;
                 
                 // MEMORY MONITORING: Check if range is too large before creating
                 if range_size > 10_000_000 {
@@ -946,7 +946,7 @@ impl BuiltinFunctions {
 
         match &args[0] {
             Value::List(items) => Ok(Value::Integer(items.len() as i64)),
-            Value::String(s) => Ok(Value::Integer(s.len() as i64)),
+            Value::String(s) => Ok(Value::Integer(s.chars().count() as i64)),
             Value::Tuple(items) => Ok(Value::Integer(items.len() as i64)),
             _ => Err(InterpreterError::TypeError {
                 message: "len: argument must be a list, string, or tuple".to_string(),
@@ -1461,7 +1461,7 @@ impl BuiltinFunctions {
                 inclusive,
             } => {
                 // Convert range to vector of integers
-                let end_val = if *inclusive { end + 1 } else { *end };
+                let end_val = if *inclusive { end.saturating_add(1) } else { *end };
                 let values: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
                 let use_parallel = should_parallelize(values.len());
                 (values, use_parallel)
@@ -1487,13 +1487,20 @@ impl BuiltinFunctions {
                             if acc.2 {
                                 acc.1 += *n as f64;
                             } else {
-                                acc.0 += n;
+                                acc.0 = acc.0.checked_add(*n).ok_or_else(|| {
+                                    InterpreterError::RuntimeError {
+                                        message: "sum: integer overflow".to_string(),
+                                    }
+                                })?;
                             }
                             Ok(acc)
                         }
                         Value::Float(f) => {
                             if !acc.2 {
+                                // Zero the int accumulator when promoting so the
+                                // reduce step doesn't add it a second time
                                 acc.1 = acc.0 as f64;
+                                acc.0 = 0;
                                 acc.2 = true;
                             }
                             acc.1 += f;
@@ -1509,9 +1516,14 @@ impl BuiltinFunctions {
                     |mut acc1, acc2| {
                         if acc1.2 || acc2.2 {
                             acc1.1 += acc1.0 as f64 + acc2.1 + acc2.0 as f64;
+                            acc1.0 = 0;
                             acc1.2 = true;
                         } else {
-                            acc1.0 += acc2.0;
+                            acc1.0 = acc1.0.checked_add(acc2.0).ok_or_else(|| {
+                                InterpreterError::RuntimeError {
+                                    message: "sum: integer overflow".to_string(),
+                                }
+                            })?;
                         }
                         Ok(acc1)
                     },
@@ -1533,7 +1545,11 @@ impl BuiltinFunctions {
                         if is_float {
                             float_acc += *n as f64;
                         } else {
-                            int_acc += *n;
+                            int_acc = int_acc.checked_add(*n).ok_or_else(|| {
+                                InterpreterError::RuntimeError {
+                                    message: "sum: integer overflow".to_string(),
+                                }
+                            })?;
                         }
                     }
                     Value::Float(f) => {
@@ -2093,7 +2109,17 @@ impl BuiltinFunctions {
         }
 
         // Fall back to eager evaluation
-        Ok(Value::List(vec![list1.clone(), list2.clone()].into()))
+        let (a, b) = match (list1, list2) {
+            (Value::List(a), Value::List(b)) => (a, b),
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "concat: arguments must be lists".to_string(),
+                })
+            }
+        };
+        let mut combined: Vec<Value> = a.as_ref().to_vec();
+        combined.extend(b.iter().cloned());
+        Ok(Value::List(combined.into()))
     }
 
     fn map_filtered(
@@ -2119,7 +2145,7 @@ impl BuiltinFunctions {
                 inclusive,
             } => {
                 // Convert range to vector of integers
-                let end_val = if *inclusive { end + 1 } else { *end };
+                let end_val = if *inclusive { end.saturating_add(1) } else { *end };
                 (*start..end_val).map(Value::Integer).collect()
             }
             _ => {
@@ -2134,7 +2160,7 @@ impl BuiltinFunctions {
         if config.lazy_by_default && list_values.len() > config.lazy_threshold {
             if let (Value::Function(func), Value::Function(pred)) = (function, predicate) {
                 let source_handle = crate::internal::utils::value_to_handle(list.clone(), config);
-                let mut lazy_val = crate::internal::create_lazy_map_filtered(source_handle.clone(), pred.clone(), func.clone());
+                let mut lazy_val = crate::internal::create_lazy_map_filtered(source_handle.clone(), func.clone(), pred.clone());
                 // Fusion logic: if the source is already a lazy value, try to fuse
                 if config.fusion_enabled {
                     if let crate::internal::InternalValue::Lazy(ref prev_lazy) = *source_handle.get_internal() {

@@ -812,9 +812,9 @@ fn csv_set_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
     if row_index >= csv_data.len() {
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "set_cell: row index {} out of bounds (max: {})",
+            "set_cell: row index {} out of bounds (have {} rows)",
             row_index,
-            csv_data.len() - 1
+            csv_data.len()
         ))))));
     }
 
@@ -829,9 +829,9 @@ fn csv_set_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
     if column_index >= row.len() {
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "set_cell: column index {} out of bounds (max: {})",
+            "set_cell: column index {} out of bounds (have {} columns)",
             column_index,
-            row.len() - 1
+            row.len()
         ))))));
     }
 
@@ -1097,43 +1097,38 @@ fn csv_to_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
 
     let start_row = if include_headers && !csv_data.is_empty() { 1 } else { 0 };
-    
+
     for row in &csv_data[start_row..] {
         let row_data = match row {
             Value::List(row_values) => row_values,
             _ => continue,
         };
 
-        let mut obj = String::new();
-        obj.push('{');
-
+        let mut obj = serde_json::Map::new();
         for (i, cell) in row_data.iter().enumerate() {
-            if i > 0 {
-                obj.push(',');
-            }
-
             let key = if i < headers.len() {
-                format!("\"{}\"", headers[i])
+                headers[i].to_string()
             } else {
-                format!("\"column_{}\"", i)
+                format!("column_{}", i)
             };
 
             let value = match cell {
-                Value::String(s) => format!("\"{}\"", s.replace("\"", "\\\"")),
-                Value::Integer(i) => i.to_string(),
-                Value::Float(f) => f.to_string(),
-                Value::Boolean(b) => b.to_string(),
-                _ => "\"\"".to_string(),
+                Value::String(s) => serde_json::Value::String(s.to_string()),
+                Value::Integer(n) => serde_json::Value::Number((*n).into()),
+                Value::Float(f) => serde_json::Number::from_f64(*f)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null),
+                Value::Boolean(b) => serde_json::Value::Bool(*b),
+                _ => serde_json::Value::String(String::new()),
             };
 
-            obj.push_str(&format!("{}:{}", key, value));
+            obj.insert(key, value);
         }
 
-        obj.push('}');
-        json_objects.push(obj);
+        json_objects.push(serde_json::Value::Object(obj));
     }
 
-    let json_array = format!("[{}]", json_objects.join(","));
+    let json_array = serde_json::Value::Array(json_objects).to_string();
     Ok(Value::Ok(Box::new(Value::String(Arc::new(json_array)))))
 }
 
@@ -1165,30 +1160,27 @@ fn csv_from_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         }
     };
 
-    // Simple JSON parsing for array of objects
-    // This is a basic implementation - in production, use a proper JSON parser
-    let json_str = json_data.trim();
-    if !json_str.starts_with('[') || !json_str.ends_with(']') {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "from_json: JSON data must be an array".to_string(),
-        )))));
-    }
+    let parsed: serde_json::Value = match serde_json::from_str(json_data) {
+        Ok(v) => v,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "from_json: invalid JSON: {}",
+                e
+            ))))))
+        }
+    };
 
-    let content = &json_str[1..json_str.len()-1];
-    if content.trim().is_empty() {
-        // Empty array - return CSV with headers only
-        let header_row: Vec<Value> = headers.iter().map(|h| {
-            match h {
-                Value::String(s) => Value::String(s.clone()),
-                _ => Value::String(Arc::new("".to_string())),
-            }
-        }).collect();
-        
-        return Ok(Value::Ok(Box::new(Value::List(vec![Value::List(header_row.into())].into()))));
-    }
+    let objects = match parsed {
+        serde_json::Value::Array(objs) => objs,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "from_json: JSON data must be an array".to_string(),
+            )))))
+        }
+    };
 
     let mut csv_rows = Vec::new();
-    
+
     // Add header row
     let header_row: Vec<Value> = headers.iter().map(|h| {
         match h {
@@ -1198,30 +1190,28 @@ fn csv_from_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     }).collect();
     csv_rows.push(Value::List(header_row.into()));
 
-    // Parse objects (simplified - assumes simple key-value pairs)
-    let objects = content.split("},{");
-    for obj_str in objects {
-        let clean_obj = obj_str.trim_matches('{').trim_matches('}');
-        let mut row = vec![Value::String(Arc::new("".to_string())); headers.len()];
-        
-        let pairs = clean_obj.split(',');
-        for pair in pairs {
-            let parts: Vec<&str> = pair.split(':').collect();
-            if parts.len() == 2 {
-                let key = parts[0].trim().trim_matches('"');
-                let value = parts[1].trim().trim_matches('"');
-                
-                if let Some(index) = headers.iter().position(|h| {
-                    match h {
-                        Value::String(s) => s.as_ref() == key,
-                        _ => false,
-                    }
-                }) {
-                    row[index] = Value::String(Arc::new(value.to_string()));
-                }
-            }
-        }
-        
+    for obj in objects {
+        let map = match obj {
+            serde_json::Value::Object(m) => m,
+            _ => continue,
+        };
+
+        let row: Vec<Value> = headers
+            .iter()
+            .map(|h| {
+                let key = match h {
+                    Value::String(s) => s.as_ref().as_str(),
+                    _ => "",
+                };
+                let cell = match map.get(key) {
+                    Some(serde_json::Value::String(s)) => s.clone(),
+                    Some(serde_json::Value::Null) | None => String::new(),
+                    Some(other) => other.to_string(),
+                };
+                Value::String(Arc::new(cell))
+            })
+            .collect();
+
         csv_rows.push(Value::List(row.into()));
     }
 

@@ -798,29 +798,32 @@ impl LazyValue {
                 let mut results = Vec::new();
                 for (index, item) in items.iter().enumerate() {
                     context.check_timeout()?;
-                    
-                    // First apply the mapper
-                    let mapped_result = interpreter.call_function(
-                        Value::Function((**mapper).to_function()),
-                        vec![item.clone()],
-                    ).map_err(|e| InterpreterError::LazyEvaluationError {
-                        message: format!("Map function failed at index {}: {}", index, e),
-                    })?;
 
-                    // Then apply the predicate to the mapped result
+                    // Filter on the original item first, then map — matching
+                    // the sequential map_filtered semantics
                     let pred_result = interpreter.call_function(
                         Value::Function((**predicate).to_function()),
-                        vec![mapped_result.clone()],
+                        vec![item.clone()],
                     ).map_err(|e| InterpreterError::LazyEvaluationError {
                         message: format!("Filter predicate failed at index {}: {}", index, e),
                     })?;
 
-                    if let Value::Boolean(true) = pred_result {
-                        results.push(mapped_result);
-                    } else if !matches!(pred_result, Value::Boolean(false)) {
-                        return Err(InterpreterError::LazyEvaluationError {
-                            message: format!("Filter predicate must return boolean, got: {:?}", pred_result),
-                        });
+                    match pred_result {
+                        Value::Boolean(true) => {
+                            let mapped_result = interpreter.call_function(
+                                Value::Function((**mapper).to_function()),
+                                vec![item.clone()],
+                            ).map_err(|e| InterpreterError::LazyEvaluationError {
+                                message: format!("Map function failed at index {}: {}", index, e),
+                            })?;
+                            results.push(mapped_result);
+                        }
+                        Value::Boolean(false) => {}
+                        other => {
+                            return Err(InterpreterError::LazyEvaluationError {
+                                message: format!("Filter predicate must return boolean, got: {:?}", other),
+                            });
+                        }
                     }
                 }
                 Ok(Value::List(Arc::from(results)))
@@ -830,36 +833,38 @@ impl LazyValue {
                 end,
                 inclusive,
             } => {
-                // Convert range to vector, map, then filter
-                let end_val = if inclusive { end + 1 } else { end };
+                let end_val = if inclusive { end.saturating_add(1) } else { end };
                 let mut results = Vec::new();
-                
+
                 for i in start..end_val {
                     context.check_timeout()?;
-                    
-                    let item = Value::Integer(i);
-                    // First apply the mapper
-                    let mapped_result = interpreter.call_function(
-                        Value::Function((**mapper).to_function()), 
-                        vec![item]
-                    ).map_err(|e| InterpreterError::LazyEvaluationError {
-                        message: format!("Map function failed at value {}: {}", i, e),
-                    })?;
 
-                    // Then apply the predicate to the mapped result
+                    let item = Value::Integer(i);
+                    // Filter on the original item first, then map — matching
+                    // the sequential map_filtered semantics
                     let pred_result = interpreter.call_function(
                         Value::Function((**predicate).to_function()),
-                        vec![mapped_result.clone()],
+                        vec![item.clone()],
                     ).map_err(|e| InterpreterError::LazyEvaluationError {
                         message: format!("Filter predicate failed at value {}: {}", i, e),
                     })?;
 
-                    if let Value::Boolean(true) = pred_result {
-                        results.push(mapped_result);
-                    } else if !matches!(pred_result, Value::Boolean(false)) {
-                        return Err(InterpreterError::LazyEvaluationError {
-                            message: format!("Filter predicate must return boolean, got: {:?}", pred_result),
-                        });
+                    match pred_result {
+                        Value::Boolean(true) => {
+                            let mapped_result = interpreter.call_function(
+                                Value::Function((**mapper).to_function()),
+                                vec![item],
+                            ).map_err(|e| InterpreterError::LazyEvaluationError {
+                                message: format!("Map function failed at value {}: {}", i, e),
+                            })?;
+                            results.push(mapped_result);
+                        }
+                        Value::Boolean(false) => {}
+                        other => {
+                            return Err(InterpreterError::LazyEvaluationError {
+                                message: format!("Filter predicate must return boolean, got: {:?}", other),
+                            });
+                        }
                     }
                 }
                 Ok(Value::List(Arc::from(results)))

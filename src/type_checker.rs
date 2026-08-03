@@ -756,6 +756,13 @@ impl TypeChecker {
             .functions
             .insert(func_decl.name.clone(), func_type.clone());
 
+        // Also register it in the body-scope checker (cloned before this
+        // point) so recursive calls resolve
+        type_checker
+            .context
+            .functions
+            .insert(func_decl.name.clone(), func_type.clone());
+
         // Add parameters to body scope
         for (param, param_type) in func_decl.parameters.iter().zip(param_types.iter()) {
             type_checker
@@ -1385,6 +1392,10 @@ impl TypeChecker {
                     false
                 }
             }
+            // Unknown types satisfy any constraint (gradual typing) — rejecting
+            // them made valid code like `fn f(k) { {k: 1} }` fail the map-key
+            // Hashable check
+            TypeAnnotation::Unknown => true,
             _ => false,
         }
     }

@@ -154,7 +154,10 @@ fn math_abs(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
 
     match &args[0] {
-        Value::Integer(n) => Ok(Value::Integer(n.abs())),
+        Value::Integer(n) => match n.checked_abs() {
+            Some(v) => Ok(Value::Integer(v)),
+            None => Err("abs: integer overflow".into()),
+        },
         Value::Float(f) => Ok(Value::Float(f.abs())),
         _ => Err("abs: argument must be a number".into()),
     }
@@ -167,14 +170,13 @@ fn math_min(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("min expects 2 arguments, got {}", args.len()).into());
     }
 
+    if let (Value::Integer(a), Value::Integer(b)) = (&args[0], &args[1]) {
+        return Ok(Value::Integer(*a.min(b)));
+    }
+
     let a = get_numeric(&args[0])?;
     let b = get_numeric(&args[1])?;
-
-    let result = a.min(b);
-    match (&args[0], &args[1]) {
-        (Value::Integer(_), Value::Integer(_)) => Ok(Value::Integer(result as i64)),
-        _ => Ok(Value::Float(result)),
-    }
+    Ok(Value::Float(a.min(b)))
 }
 
 /// Maximum of two numbers
@@ -184,14 +186,13 @@ fn math_max(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("max expects 2 arguments, got {}", args.len()).into());
     }
 
+    if let (Value::Integer(a), Value::Integer(b)) = (&args[0], &args[1]) {
+        return Ok(Value::Integer(*a.max(b)));
+    }
+
     let a = get_numeric(&args[0])?;
     let b = get_numeric(&args[1])?;
-
-    let result = a.max(b);
-    match (&args[0], &args[1]) {
-        (Value::Integer(_), Value::Integer(_)) => Ok(Value::Integer(result as i64)),
-        _ => Ok(Value::Float(result)),
-    }
+    Ok(Value::Float(a.max(b)))
 }
 
 /// Power function
@@ -551,15 +552,20 @@ fn math_gcd(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => return Err("gcd: arguments must be integers".into()),
     };
 
-    fn gcd_impl(a: i64, b: i64) -> i64 {
-        if b == 0 {
-            a.abs()
-        } else {
-            gcd_impl(b, a % b)
+    // Compute over u64 so i64::MIN inputs don't overflow on abs()
+    fn gcd_impl(mut a: u64, mut b: u64) -> u64 {
+        while b != 0 {
+            let t = a % b;
+            a = b;
+            b = t;
         }
+        a
     }
 
-    Ok(Value::Integer(gcd_impl(a, b)))
+    let g = gcd_impl(a.unsigned_abs(), b.unsigned_abs());
+    i64::try_from(g)
+        .map(Value::Integer)
+        .map_err(|_| "gcd: result overflows integer range".into())
 }
 
 /// Least common multiple
@@ -583,17 +589,23 @@ fn math_lcm(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Ok(Value::Integer(0));
     }
 
-    // Use the identity: lcm(a,b) = |a*b| / gcd(a,b)
-    fn gcd_impl(a: i64, b: i64) -> i64 {
-        if b == 0 {
-            a.abs()
-        } else {
-            gcd_impl(b, a % b)
+    // Use the identity: lcm(a,b) = |a*b| / gcd(a,b), over u64 with overflow checks
+    fn gcd_impl(mut a: u64, mut b: u64) -> u64 {
+        while b != 0 {
+            let t = a % b;
+            a = b;
+            b = t;
         }
+        a
     }
 
-    let gcd = gcd_impl(a, b);
-    let lcm = (a.abs() / gcd) * b.abs();
+    let ua = a.unsigned_abs();
+    let ub = b.unsigned_abs();
+    let gcd = gcd_impl(ua, ub);
+    let lcm = (ua / gcd)
+        .checked_mul(ub)
+        .and_then(|v| i64::try_from(v).ok())
+        .ok_or("lcm: result overflows integer range")?;
 
     Ok(Value::Integer(lcm))
 }

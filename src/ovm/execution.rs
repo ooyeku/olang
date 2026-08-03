@@ -310,12 +310,14 @@ impl ExecutionEngine {
                     Err(OptimizationError::Failed("JIT compiler lock failed".to_string()))
                 }
             };
-            
-            // Update execution statistics
-            let execution_time = start_time.elapsed();
-            self.update_function_stats(func_id, execution_time);
-            
-            return result.map_err(ExecutionError::OptimizationError);
+
+            // Only return on success — a JIT failure falls through to the
+            // bytecode/interpreter tiers instead of aborting the call
+            if let Ok(value) = result {
+                let execution_time = start_time.elapsed();
+                self.update_function_stats(func_id, execution_time);
+                return Ok(value);
+            }
         }
 
         // Check if we have bytecode for this function and execute if available

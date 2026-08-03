@@ -186,11 +186,21 @@ pub enum ValueData {
 }
 
 /// GC pointer type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct GcPtr<T> {
     ptr: NonNull<T>,
     generation: u32,
 }
+
+// Manual impls: the derived ones bound on `T: Copy`/`T: Clone`, but copying
+// the pointer itself never requires copying the pointee.
+impl<T> Clone for GcPtr<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for GcPtr<T> {}
 
 unsafe impl<T> Send for GcPtr<T> {}
 unsafe impl<T> Sync for GcPtr<T> {}
@@ -731,17 +741,38 @@ impl OvmValue {
         }
     }
 
-    /// Simple clone for basic value types
+    /// Clone a value. Immediate values are copied; heap values share their
+    /// GcPtr payload (previously they were silently replaced with Unit,
+    /// destroying every string/list/function that went through a register
+    /// copy or argument pass).
     pub fn clone_simple(&self) -> Self {
-        match &self.data {
-            ValueData::Integer(i) => Self::new_integer(*i),
-            ValueData::Float(f) => Self::new_float(*f),
-            ValueData::Boolean(b) => Self::new_boolean(*b),
-            ValueData::Unit => Self::new_unit(),
-            _ => {
-                // For complex types, create a unit value as fallback
-                Self::new_unit()
-            }
+        let data = match &self.data {
+            ValueData::Integer(i) => ValueData::Integer(*i),
+            ValueData::Float(f) => ValueData::Float(*f),
+            ValueData::Boolean(b) => ValueData::Boolean(*b),
+            ValueData::Unit => ValueData::Unit,
+            ValueData::String(p) => ValueData::String(*p),
+            ValueData::List(p) => ValueData::List(*p),
+            ValueData::Tuple(p) => ValueData::Tuple(*p),
+            ValueData::Function(p) => ValueData::Function(*p),
+            ValueData::Struct(p) => ValueData::Struct(*p),
+            ValueData::Range(p) => ValueData::Range(*p),
+            ValueData::Builtin(p) => ValueData::Builtin(*p),
+            ValueData::Thunk(p) => ValueData::Thunk(*p),
+            ValueData::Stream(p) => ValueData::Stream(*p),
+            ValueData::LazyList(p) => ValueData::LazyList(*p),
+            ValueData::Promise(p) => ValueData::Promise(*p),
+            ValueData::CompiledFunction(p) => ValueData::CompiledFunction(*p),
+            ValueData::OptimizedValue(p) => ValueData::OptimizedValue(*p),
+            ValueData::Error(p) => ValueData::Error(*p),
+            ValueData::Result { ok, err } => ValueData::Result {
+                ok: ok.clone(),
+                err: err.clone(),
+            },
+        };
+        Self {
+            header: self.header.clone(),
+            data,
         }
     }
 
@@ -976,7 +1007,10 @@ impl OvmValue {
             for _ in 0..items_to_generate {
                 match &mut *generator_guard {
                     GeneratorFunction::Range { start, end, step } => {
-                        if *start < *end {
+                        // Honor the step direction — a descending range
+                        // (negative step) never satisfies `start < end`
+                        let in_range = if *step >= 0 { *start < *end } else { *start > *end };
+                        if in_range {
                             let value = OvmValue::new_integer(*start);
                             buffer_guard.push(value);
                             *start += *step;
@@ -1506,10 +1540,17 @@ impl OvmValue {
                 // Functions return unit for now
                 Ok(Value::Unit)
             }
-            ValueData::Struct(_) => {
-                // Structs return unit for now
-                Ok(Value::Unit)
-            }
+            ValueData::Struct(gc_ptr) => unsafe {
+                let struct_ref = gc_ptr.as_ref();
+                let mut fields = HashMap::new();
+                for (name, val) in &struct_ref.fields {
+                    fields.insert(name.clone(), val.to_ast()?);
+                }
+                Ok(Value::Struct {
+                    type_name: struct_ref.type_name.clone(),
+                    fields,
+                })
+            },
             ValueData::Range(gc_ptr) => {
                 // Convert Range back to AST Range
                 unsafe {
@@ -1549,13 +1590,20 @@ impl OvmValue {
                 // Optimized values return unit for now
                 Ok(Value::Unit)
             }
-            ValueData::Error(_) => {
-                // Errors return unit for now
-                Ok(Value::Unit)
-            }
-            ValueData::Result { ok: _, err: _ } => {
-                // Results return unit for now
-                Ok(Value::Unit)
+            ValueData::Error(gc_ptr) => unsafe {
+                let error_ref = gc_ptr.as_ref();
+                Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(
+                    error_ref.message.clone(),
+                )))))
+            },
+            ValueData::Result { ok, err } => {
+                if let Some(ok_val) = ok {
+                    Ok(Value::Ok(Box::new(ok_val.to_ast()?)))
+                } else if let Some(err_val) = err {
+                    Ok(Value::Err(Box::new(err_val.to_ast()?)))
+                } else {
+                    Err(RuntimeError::new("Result value has neither Ok nor Err"))
+                }
             }
         }
     }

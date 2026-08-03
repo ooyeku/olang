@@ -16,6 +16,33 @@ use sha2::Digest; // For SHA256 hashing
 use thiserror::Error;
 use im::HashMap as ImHashMap;  // Persistent/immutable HashMap for O(1) cloning
 
+/// Integer range iterator that can't overflow (a plain `start..end + 1` panics
+/// when `end == i64::MAX`).
+struct RangeIter {
+    next: i64,
+    end: i64,
+    inclusive: bool,
+    done: bool,
+}
+
+impl Iterator for RangeIter {
+    type Item = i64;
+
+    fn next(&mut self) -> Option<i64> {
+        if self.done {
+            return None;
+        }
+        let current = self.next;
+        let last = if self.inclusive { self.end } else { self.end - 1 };
+        if current >= last {
+            self.done = true;
+        } else {
+            self.next = current + 1;
+        }
+        Some(current)
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum InterpreterError {
     #[error("Undefined variable: {name}")]
@@ -28,6 +55,12 @@ pub enum InterpreterError {
     ArityMismatch { expected: usize, got: usize },
     #[error("Pattern match failed")]
     PatternMatchFailed,
+    // Loop control flow signals — intercepted by the loop evaluators, an error
+    // only if they escape to top level (i.e. used outside a loop)
+    #[error("'break' used outside of a loop")]
+    BreakSignal,
+    #[error("'continue' used outside of a loop")]
+    ContinueSignal,
     
     // Enhanced lazy evaluation error types
     #[error("Lazy evaluation error: {message}")]
@@ -495,29 +528,16 @@ impl Environment {
         if self.variables.contains_key(name) {
             Arc::make_mut(&mut self.variables).insert(name.to_string(), value);
             Ok(())
-        } else if let Some(parent) = &self.parent {
-            // For parent mutation, we need to clone and mutate
-            // This is less common, so acceptable performance trade-off
-            if parent.contains_var(name) {
-                // Can't mutate through Arc, so define locally (shadowing)
-                Arc::make_mut(&mut self.variables).insert(name.to_string(), value);
-                Ok(())
-            } else {
-                Err(InterpreterError::UndefinedVariable {
-                    name: name.to_string(),
-                })
-            }
+        } else if let Some(parent) = &mut self.parent {
+            // Write through to the ancestor that owns the variable; shadowing
+            // it locally would silently discard the assignment when this
+            // scope is popped (e.g. `x = x + 1` inside a for-loop body)
+            Arc::make_mut(parent).set(name, value)
         } else {
             Err(InterpreterError::UndefinedVariable {
                 name: name.to_string(),
             })
         }
-    }
-
-    /// Check if variable exists anywhere in chain
-    fn contains_var(&self, name: &str) -> bool {
-        self.variables.contains_key(name) 
-            || self.parent.as_ref().map_or(false, |p| p.contains_var(name))
     }
 
     /// Get all variables in this environment (excluding parent environments)
@@ -856,15 +876,24 @@ impl Interpreter {
                     Expr::Call { callee, arguments } => {
                         // Enhanced named argument resolution for pipelines
                         let callee_value = self.eval_expr(*callee)?;
-                        
-                        // Resolve arguments excluding the piped value
-                        let pipeline_arguments = arguments;
-                        let additional_args = self.resolve_arguments(&callee_value, pipeline_arguments)?;
-                        
+
+                        // The piped value fills the first parameter, so resolve
+                        // the explicit arguments against the remaining ones —
+                        // otherwise `5 |> add(3)` errors on "missing" param.
+                        let resolve_target = match &callee_value {
+                            Value::Function(func) if !func.parameters.is_empty() => {
+                                let mut shifted = func.clone();
+                                shifted.parameters.remove(0);
+                                Value::Function(shifted)
+                            }
+                            other => other.clone(),
+                        };
+                        let additional_args = self.resolve_arguments(&resolve_target, arguments)?;
+
                         // Prepend the piped value as the first argument
                         let mut final_args = vec![left_value];
                         final_args.extend(additional_args);
-                        
+
                         self.call_function(callee_value, final_args)
                     }
                     Expr::Identifier(name) => {
@@ -984,12 +1013,8 @@ impl Interpreter {
             } => self.eval_for_loop(&variable, &iterable, &body),
             Expr::WhileLoop { condition, body } => self.eval_while_loop(&condition, &body),
             Expr::Loop { body } => self.eval_loop(&body),
-            Expr::Break => Err(InterpreterError::RuntimeError {
-                message: "break".to_string(),
-            }),
-            Expr::Continue => Err(InterpreterError::RuntimeError {
-                message: "continue".to_string(),
-            }),
+            Expr::Break => Err(InterpreterError::BreakSignal),
+            Expr::Continue => Err(InterpreterError::ContinueSignal),
             Expr::Assignment { target, value } => {
                 let val = self.eval_expr(*value)?;
                 self.environment.set(&target, val.clone()).or_else(|_| {
@@ -1028,12 +1053,22 @@ impl Interpreter {
                 
                 match (left_val, right_val) {
                     (Value::Integer(l), Value::Integer(r)) => {
+                        let shift_amount = |r: i64| {
+                            u32::try_from(r).ok().filter(|s| *s < 64).ok_or_else(|| {
+                                InterpreterError::RuntimeError {
+                                    message: format!(
+                                        "Shift amount {} out of range (must be 0..64)",
+                                        r
+                                    ),
+                                }
+                            })
+                        };
                         let result = match op {
                             crate::ast::BitwiseOp::And => l & r,
                             crate::ast::BitwiseOp::Or => l | r,
                             crate::ast::BitwiseOp::Xor => l ^ r,
-                            crate::ast::BitwiseOp::Shl => l << r,
-                            crate::ast::BitwiseOp::Shr => l >> r,
+                            crate::ast::BitwiseOp::Shl => l.wrapping_shl(shift_amount(r)?),
+                            crate::ast::BitwiseOp::Shr => l.wrapping_shr(shift_amount(r)?),
                         };
                         Ok(Value::Integer(result))
                     }
@@ -1477,9 +1512,8 @@ impl Interpreter {
                 for (i, param) in func.parameters.iter().enumerate() {
                     let value = if i < arguments.len() {
                         arguments[i].clone()
-                    } else if param.default_value.is_some() {
-                        // For simplicity, use Unit for default values for now
-                        Value::Unit
+                    } else if let Some(default_expr) = &param.default_value {
+                        self.eval_expr(default_expr.clone())?
                     } else {
                         return Err(InterpreterError::RuntimeError {
                             message: format!("Missing argument for parameter {}", param.name),
@@ -1702,10 +1736,9 @@ impl Interpreter {
                         self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
                     }
                     
-                    match guard_result {
-                        Ok(guard_value) => self.to_boolean(&guard_value)?,
-                        Err(_) => false, // Guard evaluation failed, treat as false
-                    }
+                    // Surface guard errors instead of silently treating them
+                    // as "no match" (which hid typos like undefined variables)
+                    self.to_boolean(&guard_result?)?
                 } else {
                     true // No guard clause, pattern match is sufficient
                 };
@@ -1830,14 +1863,16 @@ impl Interpreter {
                     }
                     EnumVariantData::Struct(fields) => {
                         // For struct variants, patterns should match field values
-                        // This is a simplified implementation - real struct matching would be more complex
                         if patterns.len() != fields.len() {
                             return Ok(false);
                         }
-                        // For now, just match values in order
-                        let field_values: Vec<_> = fields.values().collect();
-                        for (p, v) in patterns.iter().zip(field_values.iter()) {
-                            if !self.pattern_matches_bind(p, *v, bindings)? {
+                        // Positional patterns carry no field names, so match in
+                        // field-name order — HashMap iteration order would make
+                        // multi-field matches succeed or fail nondeterministically
+                        let mut field_values: Vec<(&String, &Value)> = fields.iter().collect();
+                        field_values.sort_by_key(|(name, _)| name.as_str());
+                        for (p, (_, v)) in patterns.iter().zip(field_values.iter()) {
+                            if !self.pattern_matches_bind(p, v, bindings)? {
                                 return Ok(false);
                             }
                         }
@@ -1969,11 +2004,23 @@ impl Interpreter {
         right: Value,
     ) -> Result<Value, InterpreterError> {
         match (left, op, right) {
-            (Value::Integer(a), BinaryOp::Add, Value::Integer(b)) => Ok(Value::Integer(a + b)),
+            (Value::Integer(a), BinaryOp::Add, Value::Integer(b)) => {
+                a.checked_add(b).map(Value::Integer).ok_or_else(|| {
+                    InterpreterError::RuntimeError {
+                        message: "Integer overflow in addition".to_string(),
+                    }
+                })
+            }
             (Value::Float(a), BinaryOp::Add, Value::Float(b)) => Ok(Value::Float(a + b)),
             (Value::Integer(a), BinaryOp::Add, Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
             (Value::Float(a), BinaryOp::Add, Value::Integer(b)) => Ok(Value::Float(a + b as f64)),
-            (Value::Integer(a), BinaryOp::Subtract, Value::Integer(b)) => Ok(Value::Integer(a - b)),
+            (Value::Integer(a), BinaryOp::Subtract, Value::Integer(b)) => {
+                a.checked_sub(b).map(Value::Integer).ok_or_else(|| {
+                    InterpreterError::RuntimeError {
+                        message: "Integer overflow in subtraction".to_string(),
+                    }
+                })
+            }
             (Value::Float(a), BinaryOp::Subtract, Value::Float(b)) => Ok(Value::Float(a - b)),
             (Value::Integer(a), BinaryOp::Subtract, Value::Float(b)) => {
                 Ok(Value::Float(a as f64 - b))
@@ -1981,7 +2028,13 @@ impl Interpreter {
             (Value::Float(a), BinaryOp::Subtract, Value::Integer(b)) => {
                 Ok(Value::Float(a - b as f64))
             }
-            (Value::Integer(a), BinaryOp::Multiply, Value::Integer(b)) => Ok(Value::Integer(a * b)),
+            (Value::Integer(a), BinaryOp::Multiply, Value::Integer(b)) => {
+                a.checked_mul(b).map(Value::Integer).ok_or_else(|| {
+                    InterpreterError::RuntimeError {
+                        message: "Integer overflow in multiplication".to_string(),
+                    }
+                })
+            }
             (Value::Float(a), BinaryOp::Multiply, Value::Float(b)) => Ok(Value::Float(a * b)),
             (Value::Integer(a), BinaryOp::Multiply, Value::Float(b)) => {
                 Ok(Value::Float(a as f64 * b))
@@ -1995,7 +2048,12 @@ impl Interpreter {
                         message: "Division by zero".to_string(),
                     })
                 } else {
-                    Ok(Value::Integer(a / b))
+                    // checked_div also rejects i64::MIN / -1, which overflows
+                    a.checked_div(b).map(Value::Integer).ok_or_else(|| {
+                        InterpreterError::RuntimeError {
+                            message: "Integer overflow in division".to_string(),
+                        }
+                    })
                 }
             }
             (Value::Float(a), BinaryOp::Divide, Value::Float(b)) => {
@@ -2031,7 +2089,12 @@ impl Interpreter {
                         message: "Modulo by zero".to_string(),
                     })
                 } else {
-                    Ok(Value::Integer(a % b))
+                    // checked_rem also rejects i64::MIN % -1, which overflows
+                    a.checked_rem(b).map(Value::Integer).ok_or_else(|| {
+                        InterpreterError::RuntimeError {
+                            message: "Integer overflow in modulo".to_string(),
+                        }
+                    })
                 }
             }
             (Value::Float(a), BinaryOp::Modulo, Value::Float(b)) => {
@@ -2164,7 +2227,11 @@ impl Interpreter {
 
     fn eval_unary_op(&self, op: UnaryOp, operand: Value) -> Result<Value, InterpreterError> {
         match (op, operand) {
-            (UnaryOp::Negate, Value::Integer(n)) => Ok(Value::Integer(-n)),
+            (UnaryOp::Negate, Value::Integer(n)) => n.checked_neg().map(Value::Integer).ok_or_else(|| {
+                InterpreterError::RuntimeError {
+                    message: "Integer overflow in negation".to_string(),
+                }
+            }),
             (UnaryOp::Negate, Value::Float(x)) => Ok(Value::Float(-x)),
             (UnaryOp::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
             _ => Err(InterpreterError::TypeError {
@@ -2492,55 +2559,72 @@ impl Interpreter {
 
         match iterable_value {
             Value::List(items) => {
-                let mut last_value = Value::Unit;
                 let parent_env = std::mem::replace(&mut self.environment, Environment::new());
                 self.environment.parent = Some(Arc::new(parent_env));
 
-                for item in items.iter() {
-                    // Safepoint poll for GC coordination during iteration
-                    self.safepoint_poll()?;
+                let result = self.run_loop_body(body, items.iter().cloned(), Some(variable));
 
-                    self.environment.define(variable.to_string(), item.clone());
-                    last_value = self.eval_expr(body.clone())?;
-                }
-
-                // Restore parent environment
+                // Restore parent environment (also on error, so a failing body
+                // doesn't leak the loop scope into subsequent statements)
                 if let Some(parent) = self.environment.parent.take() {
                     self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
                 }
 
-                Ok(last_value)
+                result
             }
             Value::Range {
                 start,
                 end,
                 inclusive,
             } => {
-                let mut last_value = Value::Unit;
                 let parent_env = std::mem::replace(&mut self.environment, Environment::new());
                 self.environment.parent = Some(Arc::new(parent_env));
 
-                let range_end = if inclusive { end + 1 } else { end };
-                for i in start..range_end {
-                    // Safepoint poll for GC coordination during iteration
-                    self.safepoint_poll()?;
-
-                    self.environment
-                        .define(variable.to_string(), Value::Integer(i));
-                    last_value = self.eval_expr(body.clone())?;
-                }
+                let items = RangeIter {
+                    next: start,
+                    end,
+                    inclusive,
+                    done: if inclusive { start > end } else { start >= end },
+                };
+                let result =
+                    self.run_loop_body(body, items.map(Value::Integer), Some(variable));
 
                 // Restore parent environment
                 if let Some(parent) = self.environment.parent.take() {
                     self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
                 }
 
-                Ok(last_value)
+                result
             }
             _ => Err(InterpreterError::TypeError {
                 message: format!("Cannot iterate over {:?}", iterable_value),
             }),
         }
+    }
+
+    /// Run a loop body over an iterator of items, honoring break/continue.
+    fn run_loop_body(
+        &mut self,
+        body: &Expr,
+        items: impl Iterator<Item = Value>,
+        variable: Option<&str>,
+    ) -> Result<Value, InterpreterError> {
+        let mut last_value = Value::Unit;
+        for item in items {
+            // Safepoint poll for GC coordination during iteration
+            self.safepoint_poll()?;
+
+            if let Some(name) = variable {
+                self.environment.define(name.to_string(), item);
+            }
+            match self.eval_expr(body.clone()) {
+                Ok(v) => last_value = v,
+                Err(InterpreterError::BreakSignal) => break,
+                Err(InterpreterError::ContinueSignal) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(last_value)
     }
 
     fn eval_while_loop(
@@ -2561,18 +2645,29 @@ impl Interpreter {
                 break;
             }
 
-            last_value = self.eval_expr(body.clone())?;
+            match self.eval_expr(body.clone()) {
+                Ok(v) => last_value = v,
+                Err(InterpreterError::BreakSignal) => break,
+                Err(InterpreterError::ContinueSignal) => continue,
+                Err(e) => return Err(e),
+            }
         }
 
         Ok(last_value)
     }
 
     fn eval_loop(&mut self, body: &Expr) -> Result<Value, InterpreterError> {
+        let mut last_value = Value::Unit;
         loop {
             // Safepoint poll for GC coordination at start of each iteration
             self.safepoint_poll()?;
 
-            let _ = self.eval_expr(body.clone())?;
+            match self.eval_expr(body.clone()) {
+                Ok(v) => last_value = v,
+                Err(InterpreterError::BreakSignal) => return Ok(last_value),
+                Err(InterpreterError::ContinueSignal) => continue,
+                Err(e) => return Err(e),
+            }
         }
     }
 
@@ -2585,7 +2680,9 @@ impl Interpreter {
         };
         
         let mut resolved_args = Vec::new();
-        let mut named_args = HashMap::new();
+        // Vec keeps source order — a HashMap would append named args to
+        // builtins in nondeterministic order
+        let mut named_args: Vec<(String, Value)> = Vec::new();
         let mut positional_count = 0;
         
         // First pass: collect positional and named arguments
@@ -2602,12 +2699,12 @@ impl Interpreter {
                 }
                 Argument::Named { name, value } => {
                     let evaluated_value = self.eval_expr(value)?;
-                    if named_args.contains_key(&name) {
+                    if named_args.iter().any(|(n, _)| n == &name) {
                         return Err(InterpreterError::RuntimeError {
                             message: format!("Duplicate named argument: {}", name),
                         });
                     }
-                    named_args.insert(name, evaluated_value);
+                    named_args.push((name, evaluated_value));
                 }
             }
         }
@@ -2630,9 +2727,9 @@ impl Interpreter {
                 let param_index = resolved_args.len();
                 let param = &params[param_index];
                 
-                if let Some(named_value) = named_args.remove(&param.name) {
+                if let Some(pos) = named_args.iter().position(|(n, _)| n == &param.name) {
                     // Use named argument value
-                    resolved_args.push(named_value);
+                    resolved_args.push(named_args.remove(pos).1);
                 } else if let Some(default_expr) = &param.default_value {
                     // Use default value
                     let default_value = self.eval_expr(default_expr.clone())?;
@@ -2647,7 +2744,8 @@ impl Interpreter {
             
             // Check for unrecognized named arguments
             if !named_args.is_empty() {
-                let unrecognized: Vec<String> = named_args.keys().cloned().collect();
+                let unrecognized: Vec<String> =
+                    named_args.iter().map(|(n, _)| n.clone()).collect();
                 return Err(InterpreterError::RuntimeError {
                     message: format!("Unrecognized named argument(s): {}", unrecognized.join(", ")),
                 });

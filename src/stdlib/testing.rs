@@ -295,10 +295,12 @@ fn run_test(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    // For now, just return success with the test name
-    // In a full implementation, this would actually execute the test function
-    let success_msg = format!("Test '{}' passed", test_name);
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(success_msg)))))
+    // Stdlib builtins cannot call back into the interpreter to execute the
+    // test function, so surface that honestly instead of reporting a false pass.
+    Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+        "run_test: cannot execute test '{}' — use a `test \"{}\" {{ ... }}` block instead",
+        test_name, test_name
+    ))))))
 }
 
 /// Get a summary of test results
@@ -322,7 +324,7 @@ fn reset_tests(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Integer(a), Value::Integer(b)) => a == b,
-        (Value::Float(a), Value::Float(b)) => (a - b).abs() < f64::EPSILON,
+        (Value::Float(a), Value::Float(b)) => floats_equal(*a, *b),
         (Value::String(a), Value::String(b)) => a == b,
         (Value::Boolean(a), Value::Boolean(b)) => a == b,
         (Value::Unit, Value::Unit) => true,
@@ -341,10 +343,21 @@ fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::Ok(a), Value::Ok(b)) => values_equal(a, b),
         (Value::Err(a), Value::Err(b)) => values_equal(a, b),
         // Allow numeric type coercion
-        (Value::Integer(a), Value::Float(b)) => (*a as f64 - b).abs() < f64::EPSILON,
-        (Value::Float(a), Value::Integer(b)) => (a - *b as f64).abs() < f64::EPSILON,
+        (Value::Integer(a), Value::Float(b)) => floats_equal(*a as f64, *b),
+        (Value::Float(a), Value::Integer(b)) => floats_equal(*a, *b as f64),
         _ => false,
     }
+}
+
+/// Compare floats with a relative tolerance so small-magnitude values are not
+/// spuriously equal (an absolute EPSILON made 1e-20 == 2e-20 "pass").
+fn floats_equal(a: f64, b: f64) -> bool {
+    if a == b {
+        return true;
+    }
+    let diff = (a - b).abs();
+    let scale = a.abs().max(b.abs());
+    diff <= scale * f64::EPSILON * 4.0
 }
 
 #[cfg(test)]
@@ -564,11 +577,13 @@ mod tests {
         ])
         .unwrap();
 
-        let success_msg = assert_ok_result(&result);
-        if let Value::String(msg) = success_msg {
-            assert!(msg.contains("Test 'my_test' passed"));
+        // run_test cannot execute the function from a stdlib builtin, so it
+        // must report an error rather than a false pass
+        let err_msg = assert_err_result(&result);
+        if let Value::String(msg) = err_msg {
+            assert!(msg.contains("cannot execute test 'my_test'"));
         } else {
-            assert!(false, "Expected string success message, got: {:?}", success_msg);
+            assert!(false, "Expected string error message, got: {:?}", err_msg);
         }
     }
 

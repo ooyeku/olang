@@ -163,6 +163,34 @@ pub fn call_dates_function(
     }
 }
 
+/// Parse a datetime string accepting the formats this module itself produces:
+/// plain ISO (with or without fractional seconds), space-separated, and RFC3339.
+fn parse_datetime_flexible(s: &str) -> Result<NaiveDateTime, Box<dyn std::error::Error>> {
+    for fmt in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f"] {
+        if let Ok(dt) = NaiveDateTime::parse_from_str(s, fmt) {
+            return Ok(dt);
+        }
+    }
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.naive_local());
+    }
+    Err(format!(
+        "Cannot parse datetime: '{}'. Expected format: YYYY-MM-DDTHH:MM:SS or RFC3339",
+        s
+    )
+    .into())
+}
+
+/// Parse a date string, also accepting any datetime format the module produces.
+fn parse_date_flexible(s: &str) -> Result<NaiveDate, Box<dyn std::error::Error>> {
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Ok(d);
+    }
+    parse_datetime_flexible(s).map(|dt| dt.date()).map_err(|_| {
+        format!("Cannot parse date: '{}'. Expected format: YYYY-MM-DD", s).into()
+    })
+}
+
 /// Current local date and time
 /// Usage: dates.now() -> "2024-06-15T14:30:00+00:00"
 fn dates_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -426,16 +454,7 @@ fn dates_format_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::
         _ => return Err("format_datetime: second argument must be a string".into()),
     };
 
-    let datetime = match NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%dT%H:%M:%S") {
-        Ok(dt) => dt,
-        Err(_) => {
-            return Err(format!(
-                "Cannot parse datetime: '{}'. Expected format: YYYY-MM-DDTHH:MM:SS",
-                datetime_str
-            )
-            .into())
-        }
-    };
+    let datetime = parse_datetime_flexible(datetime_str)?;
 
     let formatted = datetime.format(format_str).to_string();
     Ok(Value::String(formatted.into()))
@@ -501,17 +520,14 @@ fn dates_add_days(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         }
     };
 
-    match date.checked_add_days(chrono::Days::new(days.unsigned_abs())) {
-        Some(new_date) => {
-            if days < 0 {
-                match new_date.checked_sub_days(chrono::Days::new((days.abs() * 2) as u64)) {
-                    Some(final_date) => Ok(Value::String(final_date.to_string().into())),
-                    None => Err("Date arithmetic overflow".into()),
-                }
-            } else {
-                Ok(Value::String(new_date.to_string().into()))
-            }
-        }
+    let result = if days < 0 {
+        date.checked_sub_days(chrono::Days::new(days.unsigned_abs()))
+    } else {
+        date.checked_add_days(chrono::Days::new(days as u64))
+    };
+
+    match result {
+        Some(new_date) => Ok(Value::String(new_date.to_string().into())),
         None => Err("Date arithmetic overflow".into()),
     }
 }
@@ -524,7 +540,9 @@ fn dates_add_weeks(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
     }
 
     let weeks = match &args[1] {
-        Value::Integer(w) => *w * 7, // Convert weeks to days
+        Value::Integer(w) => w
+            .checked_mul(7) // Convert weeks to days
+            .ok_or("add_weeks: overflow converting weeks to days")?,
         _ => return Err("add_weeks: second argument must be an integer".into()),
     };
 
@@ -560,19 +578,15 @@ fn dates_add_months(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         }
     };
 
-    let mut year = date.year();
-    let mut month = date.month() as i32;
     let day = date.day();
 
-    month += months as i32;
-    while month > 12 {
-        month -= 12;
-        year += 1;
-    }
-    while month < 1 {
-        month += 12;
-        year -= 1;
-    }
+    // Work in total months (i64) so large offsets error instead of truncating
+    let total = (date.year() as i64) * 12 + (date.month() as i64 - 1);
+    let total = total
+        .checked_add(months)
+        .ok_or("Date arithmetic overflow")?;
+    let year: i32 = i32::try_from(total.div_euclid(12)).map_err(|_| "Date arithmetic overflow")?;
+    let month = (total.rem_euclid(12) + 1) as i32;
 
     match NaiveDate::from_ymd_opt(year, month as u32, day) {
         Some(new_date) => Ok(Value::String(new_date.to_string().into())),
@@ -601,7 +615,9 @@ fn dates_add_years(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
     }
 
     let years = match &args[1] {
-        Value::Integer(y) => *y * 12, // Convert years to months
+        Value::Integer(y) => y
+            .checked_mul(12) // Convert years to months
+            .ok_or("add_years: overflow converting years to months")?,
         _ => return Err("add_years: second argument must be an integer".into()),
     };
 
@@ -664,16 +680,7 @@ fn dates_year(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => return Err("year: argument must be a string".into()),
     };
 
-    let date = match NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-        Ok(d) => d,
-        Err(_) => {
-            return Err(format!(
-                "Cannot parse date: '{}'. Expected format: YYYY-MM-DD",
-                date_str
-            )
-            .into())
-        }
-    };
+    let date = parse_date_flexible(date_str)?;
 
     Ok(Value::Integer(date.year() as i64))
 }
@@ -690,16 +697,7 @@ fn dates_month(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => return Err("month: argument must be a string".into()),
     };
 
-    let date = match NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-        Ok(d) => d,
-        Err(_) => {
-            return Err(format!(
-                "Cannot parse date: '{}'. Expected format: YYYY-MM-DD",
-                date_str
-            )
-            .into())
-        }
-    };
+    let date = parse_date_flexible(date_str)?;
 
     Ok(Value::Integer(date.month() as i64))
 }
@@ -716,16 +714,7 @@ fn dates_day(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => return Err("day: argument must be a string".into()),
     };
 
-    let date = match NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-        Ok(d) => d,
-        Err(_) => {
-            return Err(format!(
-                "Cannot parse date: '{}'. Expected format: YYYY-MM-DD",
-                date_str
-            )
-            .into())
-        }
-    };
+    let date = parse_date_flexible(date_str)?;
 
     Ok(Value::Integer(date.day() as i64))
 }
@@ -742,16 +731,7 @@ fn dates_hour(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => return Err("hour: argument must be a string".into()),
     };
 
-    let datetime = match NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%dT%H:%M:%S") {
-        Ok(dt) => dt,
-        Err(_) => {
-            return Err(format!(
-                "Cannot parse datetime: '{}'. Expected format: YYYY-MM-DDTHH:MM:SS",
-                datetime_str
-            )
-            .into())
-        }
-    };
+    let datetime = parse_datetime_flexible(datetime_str)?;
 
     Ok(Value::Integer(datetime.hour() as i64))
 }
@@ -768,16 +748,7 @@ fn dates_minute(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => return Err("minute: argument must be a string".into()),
     };
 
-    let datetime = match NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%dT%H:%M:%S") {
-        Ok(dt) => dt,
-        Err(_) => {
-            return Err(format!(
-                "Cannot parse datetime: '{}'. Expected format: YYYY-MM-DDTHH:MM:SS",
-                datetime_str
-            )
-            .into())
-        }
-    };
+    let datetime = parse_datetime_flexible(datetime_str)?;
 
     Ok(Value::Integer(datetime.minute() as i64))
 }
@@ -794,16 +765,7 @@ fn dates_second(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => return Err("second: argument must be a string".into()),
     };
 
-    let datetime = match NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%dT%H:%M:%S") {
-        Ok(dt) => dt,
-        Err(_) => {
-            return Err(format!(
-                "Cannot parse datetime: '{}'. Expected format: YYYY-MM-DDTHH:MM:SS",
-                datetime_str
-            )
-            .into())
-        }
-    };
+    let datetime = parse_datetime_flexible(datetime_str)?;
 
     Ok(Value::Integer(datetime.second() as i64))
 }
@@ -820,16 +782,7 @@ fn dates_weekday(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => return Err("weekday: argument must be a string".into()),
     };
 
-    let date = match NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-        Ok(d) => d,
-        Err(_) => {
-            return Err(format!(
-                "Cannot parse date: '{}'. Expected format: YYYY-MM-DD",
-                date_str
-            )
-            .into())
-        }
-    };
+    let date = parse_date_flexible(date_str)?;
 
     let weekday = match date.weekday() {
         Weekday::Sun => 0,
@@ -909,16 +862,7 @@ fn dates_timestamp(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => return Err("timestamp: argument must be a string".into()),
     };
 
-    let datetime = match NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%dT%H:%M:%S") {
-        Ok(dt) => dt,
-        Err(_) => {
-            return Err(format!(
-                "Cannot parse datetime: '{}'. Expected format: YYYY-MM-DDTHH:MM:SS",
-                datetime_str
-            )
-            .into())
-        }
-    };
+    let datetime = parse_datetime_flexible(datetime_str)?;
 
     let timestamp = datetime.and_utc().timestamp();
     Ok(Value::Integer(timestamp))

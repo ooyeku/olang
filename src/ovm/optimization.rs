@@ -966,13 +966,15 @@ impl OptimizationEngine {
         }
     }
 
-    /// Check if function is compiled
-    pub fn has_compiled_function(&self, func_id: FunctionId) -> bool {
-        if let Ok(compiler) = self.jit_compiler.lock() {
-            compiler.has_compiled_function(func_id)
-        } else {
-            false
-        }
+    /// Check if function is compiled.
+    ///
+    /// Always false for now: the current codegen emits placeholder bodies
+    /// that return small constant integers as `*mut OvmValue`, and
+    /// `execute_compiled_function` would dereference them (undefined
+    /// behavior / segfault). Until real codegen lands, the JIT tier must not
+    /// be selected; execution falls back to bytecode or the interpreter.
+    pub fn has_compiled_function(&self, _func_id: FunctionId) -> bool {
+        false
     }
 }
 
@@ -1483,6 +1485,7 @@ impl CraneliftJitCompiler {
     }
 
     /// Check if function has compiled native code
+    #[allow(dead_code)] // unused while the JIT tier is disabled (placeholder codegen)
     pub fn has_compiled_function(&self, func_id: FunctionId) -> bool {
         self.compiled_functions.contains_key(&func_id)
     }

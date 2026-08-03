@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::rc::Rc;
+
 use std::sync::Arc;
 
 /// Represents a complete Olang program
@@ -72,10 +72,10 @@ pub enum Expr {
     // Literals
     Integer(i64),
     Float(f64),
-    String(Rc<String>),
+    String(Arc<String>),
     Boolean(bool),
-    List(Rc<[Expr]>),
-    Tuple(Rc<Vec<Expr>>),
+    List(Arc<[Expr]>),
+    Tuple(Arc<Vec<Expr>>),
 
     // Variables and calls
     Identifier(String),
@@ -204,7 +204,7 @@ pub enum Expr {
     Spawn(Box<Expr>), // spawn async_expr
 
     // New string literal variants
-    RawString(Rc<String>),
+    RawString(Arc<String>),
     TemplateString {
         parts: Vec<TemplatePart>,
     },
@@ -405,9 +405,12 @@ pub enum Value {
     },
 }
 
-// Enable parallel processing by implementing Send and Sync for Value
-unsafe impl Send for Value {}
-unsafe impl Sync for Value {}
+// Value is Send + Sync automatically now that Expr uses Arc throughout;
+// assert it here so a non-thread-safe field can't sneak back in.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Value>()
+};
 
 /// Function value
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

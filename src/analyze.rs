@@ -23,6 +23,10 @@ pub struct Analyzer {
     variables: HashMap<String, VariableInfo>,
     current_scope: usize,
     scopes: Vec<HashSet<String>>,
+    /// Declared enums: name -> set of variant names (for exhaustiveness checks)
+    enum_definitions: HashMap<String, HashSet<String>>,
+    /// Names pre-registered as builtins (excluded from unused-variable reports)
+    builtin_names: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,10 +73,13 @@ impl Analyzer {
             );
         }
 
+        let builtin_names = scopes[0].clone();
         Self {
             variables,
             current_scope: 0,
             scopes,
+            enum_definitions: HashMap::new(),
+            builtin_names,
         }
     }
     
@@ -82,6 +89,8 @@ impl Analyzer {
             variables: HashMap::new(),
             current_scope: 0,
             scopes: vec![HashSet::new()],
+            enum_definitions: HashMap::new(),
+            builtin_names: HashSet::new(),
         }
     }
 
@@ -208,12 +217,15 @@ impl Analyzer {
                         let mut variant_names = HashSet::new();
                         for variant in variants {
                             // Check for duplicate variant names
-                            if !variant_names.insert(&variant.name) {
+                            if !variant_names.insert(variant.name.clone()) {
                                 return Err(AnalysisError::DuplicateVariable {
                                     name: format!("Variant '{}' in enum '{}'", variant.name, type_decl.name),
                                 });
                             }
                         }
+                        // Record for exhaustiveness checking
+                        self.enum_definitions
+                            .insert(type_decl.name.clone(), variant_names);
                     }
                     _ => {
                         // Handle other type definitions (Union, Alias, etc.)
@@ -766,7 +778,9 @@ impl Analyzer {
     pub fn get_unused_variables(&self) -> Vec<&String> {
         self.variables
             .iter()
-            .filter(|(_, info)| info.usage_count == 0)
+            // Pre-registered builtins are not user variables and shouldn't
+            // be reported as unused
+            .filter(|(name, info)| info.usage_count == 0 && !self.builtin_names.contains(*name))
             .map(|(name, _)| name)
             .collect()
     }
@@ -858,10 +872,15 @@ impl Analyzer {
                 Ok(false)
             }
             PatternAnalysis::Enum(covered_variants) => {
-                // For enum exhaustiveness, we'd need type information about all possible variants
-                // For now, we do a basic check - if we have many variants covered, it's likely exhaustive
-                // A full implementation would check against the actual enum definition
-                Ok(covered_variants.len() >= 2) // Basic heuristic
+                // Exhaustive only if some declared enum's variants are all
+                // covered. Without a matching declaration, be conservative:
+                // the old "2+ variants covered" heuristic accepted matches
+                // that miss variants (runtime PatternMatchFailed).
+                let exhaustive = self.enum_definitions.values().any(|variants| {
+                    covered_variants.iter().all(|v| variants.contains(v))
+                        && variants.iter().all(|v| covered_variants.contains(v))
+                });
+                Ok(exhaustive)
             }
             PatternAnalysis::Tuple(_arity) => {
                 // Tuple patterns are exhaustive only if they have comprehensive coverage
@@ -987,35 +1006,28 @@ impl Analyzer {
                     }
                 }
                 Pattern::Guarded { pattern, .. } => {
-                    // Analyze the inner pattern, but guards make exhaustiveness more complex
+                    // A guard can fail at runtime, so a guarded pattern must
+                    // NOT be credited toward coverage (crediting it made
+                    // `Ok(v) if v > 0 => .., Err(e) => ..` pass as exhaustive
+                    // while `Ok(0)` matched no arm). Record the shape of the
+                    // inner pattern only so the analysis category is right.
                     let inner_analysis = self.analyze_pattern_structure(&[pattern.as_ref().clone()])?;
-                    // Integrate inner pattern analysis, but guards can fail so exhaustiveness is affected
                     match inner_analysis {
-                        PatternAnalysis::Boolean(sub_true, sub_false) => {
+                        PatternAnalysis::Boolean(..) => {
                             has_boolean = true;
-                            has_true = has_true || sub_true;
-                            has_false = has_false || sub_false;
                         }
-                        PatternAnalysis::Result(sub_ok, sub_err) => {
+                        PatternAnalysis::Result(..) => {
                             has_result = true;
-                            has_ok = has_ok || sub_ok;
-                            has_err = has_err || sub_err;
                         }
-                        PatternAnalysis::Literals(sub_literals) => {
-                            literal_values.extend(sub_literals);
-                        }
-                        PatternAnalysis::Enum(sub_variants) => {
-                            enum_variants.extend(sub_variants);
-                        }
+                        PatternAnalysis::Literals(_) => {}
+                        PatternAnalysis::Enum(_) => {}
                         PatternAnalysis::Tuple(sub_arity) => {
                             tuple_arities.insert(sub_arity);
                         }
                         PatternAnalysis::List => {
                             has_list = true;
                         }
-                        PatternAnalysis::Mixed => {
-                            // Mixed patterns contribute to overall mixed analysis
-                        }
+                        PatternAnalysis::Mixed => {}
                     }
                 }
                 _ => {

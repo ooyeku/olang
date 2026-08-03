@@ -181,21 +181,15 @@ impl TestRunner {
         }
 
         // Run the test body
-        let status = match self.execute_test_body(&mut interpreter, &test.body) {
+        let (status, error_message) = match self.execute_test_body(&mut interpreter, &test.body) {
             Ok(_) => {
                 println!("  ✓ {}", test.name);
-                TestStatus::Passed
+                (TestStatus::Passed, None)
             }
             Err(e) => {
                 println!("  ✗ {} - {}", test.name, e);
-                TestStatus::Failed
+                (TestStatus::Failed, Some(e.to_string()))
             }
-        };
-
-        let error_message = if status == TestStatus::Failed {
-            Some(format!("Test failed"))
-        } else {
-            None
         };
 
         TestResult {

@@ -162,6 +162,10 @@ fn random_uniform(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         _ => return Err("uniform: second argument must be a number".into()),
     };
 
+    if !min.is_finite() || !max.is_finite() {
+        return Err("uniform: min and max must be finite numbers".into());
+    }
+
     if min >= max {
         return Err("uniform: min must be less than max".into());
     }
@@ -192,13 +196,14 @@ fn random_gauss(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => return Err("gauss: second argument (std_dev) must be a number".into()),
     };
 
-    if std_dev <= 0.0 {
-        return Err("gauss: standard deviation must be positive".into());
+    if !(std_dev > 0.0) || !std_dev.is_finite() || !mean.is_finite() {
+        return Err("gauss: standard deviation must be a positive finite number".into());
     }
 
     let rng = get_rng();
     let mut rng = rng.lock().unwrap();
-    let normal = rand_distr::Normal::new(mean, std_dev).unwrap();
+    let normal = rand_distr::Normal::new(mean, std_dev)
+        .map_err(|e| format!("gauss: invalid distribution parameters: {}", e))?;
     let value = normal.sample(&mut *rng);
 
     Ok(Value::Float(value))
@@ -242,7 +247,8 @@ fn random_choice(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
             end,
             inclusive,
         } => {
-            if start >= end {
+            let empty = if *inclusive { start > end } else { start >= end };
+            if empty {
                 return Err("choice: cannot choose from empty range".into());
             }
 
@@ -269,7 +275,8 @@ fn random_choices(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     }
 
     let k = match &args[1] {
-        Value::Integer(n) => *n as usize,
+        Value::Integer(n) if *n >= 0 => *n as usize,
+        Value::Integer(_) => return Err("choices: count cannot be negative".into()),
         _ => return Err("choices: second argument must be an integer".into()),
     };
 
@@ -293,7 +300,8 @@ fn random_choices(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
             end,
             inclusive,
         } => {
-            if start >= end {
+            let empty = if *inclusive { start > end } else { start >= end };
+            if empty {
                 return Err("choices: cannot choose from empty range".into());
             }
 
@@ -320,7 +328,8 @@ fn random_sample(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     }
 
     let k = match &args[1] {
-        Value::Integer(n) => *n as usize,
+        Value::Integer(n) if *n >= 0 => *n as usize,
+        Value::Integer(_) => return Err("sample: count cannot be negative".into()),
         _ => return Err("sample: second argument must be an integer".into()),
     };
 
@@ -348,32 +357,51 @@ fn random_sample(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
             end,
             inclusive,
         } => {
+            // Compute the size in i128 so reversed or extreme bounds can't wrap
             let range_size = if *inclusive {
-                (*end - *start + 1) as usize
+                *end as i128 - *start as i128 + 1
             } else {
-                (*end - *start) as usize
+                *end as i128 - *start as i128
             };
 
-            if range_size == 0 {
+            if range_size <= 0 {
                 return Err("sample: cannot sample from empty range".into());
             }
 
-            if k > range_size {
+            if k as i128 > range_size {
                 return Err("sample: sample size cannot be larger than range size".into());
             }
 
-            // Create a vector of all values in the range, then sample from it
-            let mut range_values: Vec<i64> = if *inclusive {
-                (*start..=*end).collect()
+            // For small ranges, shuffle all values; for large ones, draw
+            // distinct values by rejection sampling instead of materializing
+            // the whole range.
+            if range_size <= 1_000_000 {
+                let mut range_values: Vec<i64> = if *inclusive {
+                    (*start..=*end).collect()
+                } else {
+                    (*start..*end).collect()
+                };
+
+                range_values.shuffle(&mut *rng);
+                range_values.truncate(k);
+
+                let result: Vec<Value> = range_values.into_iter().map(Value::Integer).collect();
+                Ok(Value::List(result.into()))
             } else {
-                (*start..*end).collect()
-            };
-
-            range_values.shuffle(&mut *rng);
-            range_values.truncate(k);
-
-            let result: Vec<Value> = range_values.into_iter().map(Value::Integer).collect();
-            Ok(Value::List(result.into()))
+                let mut seen = std::collections::HashSet::with_capacity(k);
+                let mut result = Vec::with_capacity(k);
+                while result.len() < k {
+                    let value = if *inclusive {
+                        rng.gen_range(*start..=*end)
+                    } else {
+                        rng.gen_range(*start..*end)
+                    };
+                    if seen.insert(value) {
+                        result.push(Value::Integer(value));
+                    }
+                }
+                Ok(Value::List(result.into()))
+            }
         }
         _ => return Err("sample: first argument must be a list or range".into()),
     }
@@ -387,7 +415,8 @@ fn random_randstr(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     }
 
     let length = match &args[0] {
-        Value::Integer(n) => *n as usize,
+        Value::Integer(n) if *n >= 0 => *n as usize,
+        Value::Integer(_) => return Err("randstr: length cannot be negative".into()),
         _ => return Err("randstr: argument must be an integer".into()),
     };
 
@@ -412,7 +441,8 @@ fn random_randstr_alpha(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
     }
 
     let length = match &args[0] {
-        Value::Integer(n) => *n as usize,
+        Value::Integer(n) if *n >= 0 => *n as usize,
+        Value::Integer(_) => return Err("randstr_alpha: length cannot be negative".into()),
         _ => return Err("randstr_alpha: argument must be an integer".into()),
     };
 
@@ -441,7 +471,8 @@ fn random_randstr_numeric(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
     }
 
     let length = match &args[0] {
-        Value::Integer(n) => *n as usize,
+        Value::Integer(n) if *n >= 0 => *n as usize,
+        Value::Integer(_) => return Err("randstr_numeric: length cannot be negative".into()),
         _ => return Err("randstr_numeric: argument must be an integer".into()),
     };
 
@@ -470,7 +501,8 @@ fn random_randstr_alnum(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
     }
 
     let length = match &args[0] {
-        Value::Integer(n) => *n as usize,
+        Value::Integer(n) if *n >= 0 => *n as usize,
+        Value::Integer(_) => return Err("randstr_alnum: length cannot be negative".into()),
         _ => return Err("randstr_alnum: argument must be an integer".into()),
     };
 
