@@ -144,10 +144,10 @@ match_expr  = { "match" ~ expr ~ "{" ~ match_arm+ ~ "}" }
 match_arm   = { pattern ~ ("if" ~ expr)? ~ "=>" ~ expr ~ (","?) }
 pattern     = { or_pattern }
 or_pattern  = { base_pattern ~ ("|" ~ base_pattern)* }
-base_pattern = { range_pattern | result_pattern | struct_pattern | anonymous_struct_pattern | integer | string | boolean | pattern_wildcard | list_pattern | tuple_pattern | identifier | enum_variant_pattern }
+base_pattern = { range_pattern | result_pattern | struct_pattern | anonymous_struct_pattern | integer | string | boolean | pattern_wildcard | list_pattern | tuple_pattern | enum_variant_pattern | identifier }
 range_pattern = { (integer ~ range_op ~ integer) | (char_literal ~ range_op ~ char_literal) }
 result_pattern = { "Ok" ~ "(" ~ pattern ~ ")" | "Err" ~ "(" ~ pattern ~ ")" }
-enum_variant_pattern = { identifier ~ ("(" ~ pattern ~ ("," ~ pattern)* ~ ")")? }
+enum_variant_pattern = { identifier ~ "(" ~ pattern ~ ("," ~ pattern)* ~ ")" }
 struct_pattern = { identifier ~ "{" ~ struct_pattern_fields? ~ "}" }
 anonymous_struct_pattern = { "{" ~ struct_pattern_fields? ~ "}" }
 struct_pattern_fields = { struct_pattern_field ~ ("," ~ struct_pattern_field)* ~ ","? }

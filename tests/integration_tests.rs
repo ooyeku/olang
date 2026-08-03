@@ -1,3 +1,4 @@
+use olang::ast::Value;
 use olang::{Interpreter, Parser};
 
 // =============================================================================
@@ -658,4 +659,82 @@ fn test_default_parameters_error_too_many_args() {
     if let Err(e) = result {
         assert!(e.to_string().contains("ArityMismatch") || e.to_string().contains("Arity mismatch"));
     }
+}
+
+// --- Regressions found while verifying the documentation examples ---
+
+#[test]
+fn promise_all_collects_results() {
+    // Promise.all silently evaluated to [] because the parser skipped pairs
+    // for grammar literals that produce none, consuming the argument list.
+    let source = r#"
+async fn double(x: Int) -> Promise<Int, String> = { x * 2 }
+await Promise.all([double(1), double(2), double(3)])
+"#;
+    let parser = Parser::new();
+    let program = parser.parse(source).expect("should parse");
+    let mut interpreter = Interpreter::new();
+    let result = interpreter.eval_program(program).expect("should evaluate");
+    assert_eq!(
+        result,
+        Value::List(
+            vec![Value::Integer(2), Value::Integer(4), Value::Integer(6)].into()
+        )
+    );
+}
+
+#[test]
+fn promise_resolve_returns_its_argument() {
+    // The same pair-skipping bug read the argument as the method name.
+    let parser = Parser::new();
+    let program = parser
+        .parse("await Promise.resolve(42)")
+        .expect("should parse");
+    let mut interpreter = Interpreter::new();
+    assert_eq!(
+        interpreter.eval_program(program).expect("should evaluate"),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn let_declarations_work_inside_test_blocks() {
+    // `test_statement` wraps a `statement`, which build_statement rejected.
+    let source = r#"
+test "arithmetic" {
+    let x = 21
+    assert_eq(x * 2, 42)
+}
+"#;
+    let parser = Parser::new();
+    assert!(
+        parser.parse(source).is_ok(),
+        "a let declaration inside a test block should parse"
+    );
+}
+
+#[test]
+fn enum_variant_patterns_accept_payloads() {
+    // `identifier` preceded `enum_variant_pattern` in the grammar, so any
+    // payload-carrying variant pattern failed to parse.
+    let parser = Parser::new();
+    assert!(
+        parser
+            .parse("match value { Circle(r) => r, _ => 0 }")
+            .is_ok(),
+        "enum variant patterns with payloads should parse"
+    );
+}
+
+#[test]
+fn bare_identifier_patterns_still_bind() {
+    // Guard against the above fix turning binding patterns into variant
+    // patterns, which would stop them matching anything.
+    let parser = Parser::new();
+    let program = parser.parse("match 7 { n => n + 1 }").expect("should parse");
+    let mut interpreter = Interpreter::new();
+    assert_eq!(
+        interpreter.eval_program(program).expect("should evaluate"),
+        Value::Integer(8)
+    );
 }

@@ -204,6 +204,14 @@ impl Parser {
                 self.build_test_decl(pair.into_inner())?,
             )),
             Rule::expr => Ok(Statement::Expression(self.build_expr(pair.into_inner())?)),
+            // `test_statement` wraps a plain `statement`, so unwrap one level
+            // rather than rejecting (this blocked `let` inside test blocks)
+            Rule::statement => {
+                let inner = pair.into_inner().next().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Empty statement".to_string(),
+                })?;
+                self.build_statement(inner)
+            }
             _ => Err(ParseError::invalid_syntax_at(
                 format!("Invalid statement: {:?}", pair.as_rule()),
                 PositionInfo::from_pair(&pair),
@@ -923,7 +931,9 @@ impl Parser {
     }
 
     fn build_promise_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let _promise_literal = pairs.next(); // Skip "Promise"
+        // "Promise" and "." are silent string literals in the grammar and
+        // produce no pairs — skipping them consumed the method instead, so
+        // the argument was read as the method name.
         let method = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing promise method".to_string(),
         })?;
@@ -961,10 +971,10 @@ impl Parser {
         })
     }
 
-    fn build_all_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let _promise_literal = pairs.next(); // Skip "Promise"
-        let _all_literal = pairs.next(); // Skip "all"
-
+    fn build_all_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        // As in build_promise_expr: the literals are silent, so skipping
+        // "Promise"/"all" consumed the argument list and every Promise.all
+        // silently evaluated to an empty list.
         let mut expressions = Vec::new();
         for pair in pairs {
             if pair.as_rule() == Rule::arg_list {
@@ -976,10 +986,8 @@ impl Parser {
         Ok(Expr::All(expressions))
     }
 
-    fn build_race_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let _promise_literal = pairs.next(); // Skip "Promise"
-        let _race_literal = pairs.next(); // Skip "race"
-
+    fn build_race_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        // Same silent-literal issue as build_all_expr
         let mut expressions = Vec::new();
         for pair in pairs {
             if pair.as_rule() == Rule::arg_list {
