@@ -88,6 +88,8 @@ impl BytecodeTier {
             self.compiled.clear();
             self.rejected.clear();
         }
+        // A user definition shadows any builtin of the same name
+        self.vm.shadow_builtin(&name);
         self.known_functions.insert(name, func);
     }
 

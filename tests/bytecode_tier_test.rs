@@ -376,3 +376,77 @@ run(300)
     assert_tier_transparent(src);
     assert_eq!(eval(src, Some(5)).unwrap(), eval(src, None).unwrap());
 }
+
+// --- Builtins ---
+
+#[test]
+fn user_function_shadows_a_builtin_of_the_same_name() {
+    // The VM knows a `clamp` builtin. A user function of the same name must
+    // win, exactly as it does in the interpreter's environment lookup —
+    // otherwise a promoted caller silently calls the wrong function.
+    let src = r#"
+fn clamp(n) = n + 1000
+fn use_it(n) = clamp(n)
+use_it(1) + use_it(2) + use_it(3)
+"#;
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(3006));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn builtins_are_callable_from_promoted_functions() {
+    let src = r#"
+fn describe(n) = len(to_string(n * 111))
+describe(1) + describe(22) + describe(333)
+"#;
+    assert_tier_transparent(src);
+    assert_eq!(promotion_count(src, 2), 1, "should still promote");
+}
+
+#[test]
+fn list_builtins_agree() {
+    let src = r#"
+fn work(n) = {
+    let xs = range(0, n)
+    sum(xs) + len(xs) + head(reverse(xs))
+}
+work(5) + work(10) + work(20)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn string_builtins_agree() {
+    let src = r#"
+fn shout(s) = {
+    let parts = split(s, ",")
+    join(parts, "-") + to_string(len(parts))
+}
+shout("a,b,c")
+shout("x,y")
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn result_builtins_agree() {
+    let src = r#"
+fn check(n) = if is_ok(Ok(n)) => unwrap_or(Ok(n), 0) else => 0
+check(1) + check(2) + check(3)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn builtin_errors_match_the_interpreter() {
+    // head([]) errors; promotion must not change that
+    let src = r#"
+fn first(xs) = head(xs)
+first([1, 2])
+first([3])
+first([])
+"#;
+    assert!(eval(src, None).is_err());
+    assert!(eval(src, Some(1)).is_err());
+    assert_tier_transparent(src);
+}

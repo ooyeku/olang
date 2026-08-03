@@ -507,7 +507,8 @@ anything outside it stays on the interpreter. See
 - REPL with help system, tutorials, shell integration, and TAB completion
 
 ### Next Phase
-- **Widen the bytecode tier**: `match` and `for` support; more builtins
+- **Widen the bytecode tier**: `match` and `for` support; cheaper builtin
+  calls (they currently round-trip through the AST value model)
 - **Enable the tier by default** once coverage justifies it
 - **Real JIT codegen** to replace the disabled Cranelift scaffolding
 - Package manager and ecosystem

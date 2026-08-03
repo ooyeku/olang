@@ -56,8 +56,7 @@ A function is eligible when its body uses only the subset the VM implements:
 - `if`/`else` expressions
 - blocks, `let` bindings, assignment to locals, and `while` loops
 - calls to itself (recursion), to other user functions (compiled on demand,
-  including mutual recursion), and to VM-implemented builtins (`len`,
-  `to_string`)
+  including mutual recursion), and to 34 builtins (see [Builtins](#builtins))
 
 Anything else causes the function to stay interpreted:
 
@@ -84,7 +83,7 @@ rule is enforced by two test suites:
   recursion, loops, strings, lists, ranges, arity errors, and a set of
   aliasing cases specific to the register-window design. It also asserts the
   inverse: unsupported features must be *rejected*, never miscompiled.
-- `tests/bytecode_tier_test.rs` (22 tests) runs whole programs with and
+- `tests/bytecode_tier_test.rs` (28 tests) runs whole programs with and
   without the tier enabled and asserts the observable results match,
   including mixed programs where some functions are promoted and others are
   not, transitive and mutual recursion, and function redefinition.
@@ -139,6 +138,40 @@ flow and stores, register renaming rewrote only three opcodes, and the
 control-flow pass treated label ids as addresses. Passes may return
 individually, each validated against the differential suite.
 
+## Builtins
+
+The VM does not reimplement builtins — it calls the interpreter's own
+implementations through `BuiltinFunctions::call`. Reimplementation would be a
+second source of truth that could drift from the semantics the differential
+tests hold the VM to; delegating makes them identical by construction.
+
+34 builtins are enabled:
+
+| Group | Builtins |
+|---|---|
+| Conversion | `to_string`, `to_int`, `to_float`, `typeof`, `len` |
+| List access | `head`, `tail`, `cons`, `concat`, `reverse`, `sort`, `take`, `skip`, `flatten`, `zip`, `enumerate`, `chunk`, `range` |
+| Aggregation | `sum`, `min`, `max`, `average`, `contains` |
+| Strings | `split`, `join`, `starts_with`, `ends_with` |
+| Results | `is_ok`, `is_err`, `unwrap`, `unwrap_or` |
+| Numeric | `clamp` |
+| Output | `print`, `println` |
+
+Two categories are deliberately excluded:
+
+- **Higher-order builtins** (`map`, `filter`, `reduce`, `fold`, `find`,
+  `group_by`, ...) take a function argument, and function values cannot cross
+  into the VM. A call passing a named function is rejected at compile time
+  anyway, since the callee is not a local.
+- **Map-returning builtins** (`map_set`, `group_by`, ...) produce values that
+  do not survive the round trip back to an AST value — a `Map` would come back
+  as a `Struct`. `execute_builtin_call` checks representability and errors
+  rather than silently returning a corrupted value.
+
+A user function shadows a builtin of the same name, matching the interpreter's
+environment lookup: declaring `fn clamp(...)` makes calls to `clamp` resolve to
+the user's definition in compiled code too.
+
 ## Performance
 
 Measured on an Apple Silicon laptop, release build. Reproduce with
@@ -149,9 +182,13 @@ Measured on an Apple Silicon laptop, release build. Reproduce with
 | `fib(20)` (recursive calls) | 837 ms | 6.9 ms | ~121× |
 | 100k-iteration `while` loop | 27.9 ms | 4.2 ms | ~6.6× |
 | 300k-iteration loop across 4 functions | 38.9 s | 0.40 s | ~97× |
+| 100k-iteration loop dominated by `sum`/`range` | 23.2 s | 7.2 s | ~3.2× |
 
 The third row is the case transitive compilation unlocked: before it, a
-function calling a helper was rejected outright and saw no benefit at all.
+function calling a helper was rejected outright and saw no benefit at all. The
+fourth shows the ceiling on builtin-heavy code — those functions can now be
+promoted at all (previously they were rejected), but each builtin call still
+round-trips through the AST value model.
 
 End to end through the CLI, `fib(27)`:
 
@@ -174,10 +211,14 @@ These are real gaps, not oversights:
 
 1. **The expression subset is narrow.** No `match`, `for`, lambdas, or
    pipelines — which excludes a lot of idiomatic Olang.
-2. **Only two builtins are implemented in the VM** (`len`, `to_string`). A
-   function calling any other builtin stays interpreted, and so does every
-   function that calls it.
-3. **The tier is opt-in.** It should default to on once coverage is wide
+2. **Higher-order and map-returning builtins are unavailable** (see
+   [Builtins](#builtins)). A function calling one stays interpreted, and so
+   does every function that calls it.
+3. **Builtin calls cost a value round trip.** Delegation converts arguments
+   and results between the OVM and AST value models, so a function dominated
+   by builtin work sees a much smaller speedup than one dominated by
+   arithmetic and control flow.
+4. **The tier is opt-in.** It should default to on once coverage is wide
    enough that the check is worth paying on every call.
 
 ## Not implemented

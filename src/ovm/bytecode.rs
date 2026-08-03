@@ -1,5 +1,6 @@
 //! Register-based bytecode VM for intermediate-tier execution between interpreter and JIT
 
+use crate::builtin::BuiltinFunctions;
 use crate::ast::{BinaryOp, Expr, FunctionDecl, UnaryOp, Value};
 use crate::ovm::{FunctionId, OvmValue};
 use std::collections::HashMap;
@@ -31,7 +32,18 @@ pub struct BytecodeVm {
     function_registry: HashMap<String, FunctionId>,
 
     // Builtin function registry
-    builtin_registry: HashMap<String, u32>,
+    /// Builtins the VM will execute, by name. Kept to a curated set: each
+    /// takes only value arguments and returns a value that round-trips
+    /// losslessly through the OVM value model.
+    builtin_names: std::collections::HashSet<String>,
+    /// The interpreter's builtin implementations, used directly rather than
+    /// reimplemented — reimplementation would drift from the semantics the
+    /// differential tests hold the VM to.
+    builtins: BuiltinFunctions,
+    /// Scratch interpreter that builtin calls run against. Boxed to break the
+    /// Interpreter -> BytecodeTier -> BytecodeVm -> Interpreter type cycle,
+    /// and created on first use since most functions call no builtins.
+    builtin_interpreter: Option<Box<crate::interpreter::Interpreter>>,
     /// Current nesting depth of execute(); bounds Rust stack growth from
     /// recursive CallNamed so runaway recursion errors instead of aborting
     call_depth: u32,
@@ -573,13 +585,31 @@ impl Default for Label {
 
 impl BytecodeVm {
     pub fn new() -> Self {
-        let mut builtin_registry = HashMap::new();
-
-        // Only builtins the VM actually implements may be advertised —
-        // registering names without implementations turned working programs
-        // into runtime "Unknown builtin function" errors.
-        builtin_registry.insert("len".to_string(), 0);
-        builtin_registry.insert("to_string".to_string(), 1);
+        // Only builtins that take value arguments and return values the OVM
+        // model represents losslessly. Higher-order builtins (map, filter,
+        // reduce, ...) are excluded because a function argument cannot reach
+        // the VM, and map/group_by are excluded because a Map does not survive
+        // the round trip back to an AST value.
+        let builtin_names: std::collections::HashSet<String> = [
+            // conversion and inspection
+            "to_string", "to_int", "to_float", "typeof", "len",
+            // list access and construction
+            "head", "tail", "cons", "concat", "reverse", "sort", "take", "skip",
+            "flatten", "zip", "enumerate", "chunk", "range",
+            // aggregation
+            "sum", "min", "max", "average", "contains",
+            // strings
+            "split", "join", "starts_with", "ends_with",
+            // results
+            "is_ok", "is_err", "unwrap", "unwrap_or",
+            // numeric
+            "clamp",
+            // output
+            "print", "println",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
         Self {
             compiler: BytecodeCompiler::new(),
@@ -589,7 +619,9 @@ impl BytecodeVm {
             call_stack: Vec::new(),
             exception_handlers: Vec::new(),
             function_registry: HashMap::new(),
-            builtin_registry,
+            builtin_names,
+            builtins: BuiltinFunctions::new(),
+            builtin_interpreter: None,
             call_depth: 0,
             // Must match the interpreter's own limit: a program that recurses
             // 900 deep has to behave the same whether or not it was promoted
@@ -600,6 +632,13 @@ impl BytecodeVm {
     /// Register a function for dynamic calls
     pub fn register_function(&mut self, name: String, func_id: FunctionId) {
         self.function_registry.insert(name, func_id);
+    }
+
+    /// Note that `name` is a user-defined function, so it shadows any builtin
+    /// of the same name — matching the interpreter, where an environment
+    /// lookup finds the user's definition first.
+    pub fn shadow_builtin(&mut self, name: &str) {
+        self.builtin_names.remove(name);
     }
 
     /// Withdraw a registration.
@@ -631,7 +670,7 @@ impl BytecodeVm {
 
         // Set up registries so the compiler can validate callees
         self.compiler.function_registry = self.function_registry.clone();
-        self.compiler.builtin_names = self.builtin_registry.keys().cloned().collect();
+        self.compiler.builtin_names = self.builtin_names.clone();
 
         let bytecode = self.compiler.compile_function(func_id, func)?;
 
@@ -887,18 +926,12 @@ impl BytecodeVm {
                     ));
                 }
 
-                Instruction::CallBuiltin {
-                    dst,
-                    builtin_id,
-                    args,
-                } => {
-                    let mut arg_values = Vec::new();
-                    for arg_reg in args {
-                        arg_values.push(self.execution_state.get_register(*arg_reg)?);
-                    }
-
-                    let result = self.execute_builtin_call(*builtin_id, &arg_values)?;
-                    self.execution_state.set_register(*dst, result)?;
+                // The compiler emits CallNamed for builtins (resolved by name);
+                // reaching this means hand-written or stale bytecode.
+                Instruction::CallBuiltin { .. } => {
+                    return Err(BytecodeError::RuntimeError(
+                        "CallBuiltin is not emitted by the compiler; use CallNamed".to_string(),
+                    ));
                 }
 
                 Instruction::CallNamed {
@@ -912,12 +945,13 @@ impl BytecodeVm {
                     }
 
                     // Check if it's a builtin function first
-                    if let Some(&builtin_id) = self.builtin_registry.get(function_name) {
-                        let result = self.execute_builtin_call(builtin_id, &arg_values)?;
-                        self.execution_state.set_register(*dst, result)?;
-                    } else if let Some(&func_id) = self.function_registry.get(function_name) {
-                        // Recursive call to execute the named function
+                    // User functions first: a user definition shadows a
+                    // builtin of the same name, as it does in the interpreter
+                    if let Some(&func_id) = self.function_registry.get(function_name) {
                         let result = self.execute(func_id, &arg_values)?;
+                        self.execution_state.set_register(*dst, result)?;
+                    } else if self.builtin_names.contains(function_name) {
+                        let result = self.execute_builtin_call(function_name, &arg_values)?;
                         self.execution_state.set_register(*dst, result)?;
                     } else {
                         return Err(BytecodeError::NamedFunctionNotFound(function_name.clone()));
@@ -1382,50 +1416,61 @@ impl BytecodeVm {
 
     /// Execute function call
     /// Execute builtin function call
+    /// Execute a builtin by delegating to the interpreter's implementation.
+    ///
+    /// Reimplementing builtins in the VM would be a second source of truth
+    /// that could drift from the interpreter; delegating makes them identical
+    /// by construction. The cost is a value round trip per call, which is
+    /// dominated by the builtin's own work.
     fn execute_builtin_call(
-        &self,
-        builtin_id: u32,
+        &mut self,
+        name: &str,
         args: &[OvmValue],
     ) -> Result<OvmValue, BytecodeError> {
-        match builtin_id {
-            0 => {
-                // len function
-                if args.len() != 1 {
-                    return Err(BytecodeError::RuntimeError(
-                        "len expects 1 argument".to_string(),
-                    ));
-                }
-                let value = args[0]
-                    .to_ast()
-                    .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-                match value {
-                    Value::List(list) => Ok(OvmValue::from_ast(Value::Integer(list.len() as i64))),
-                    // Char count, matching the interpreter's len builtin
-                    Value::String(s) => {
-                        Ok(OvmValue::from_ast(Value::Integer(s.chars().count() as i64)))
-                    }
-                    _ => Err(BytecodeError::TypeError(
-                        "len can only be applied to lists and strings".to_string(),
-                    )),
-                }
-            }
-            1 => {
-                // toString function
-                if args.len() != 1 {
-                    return Err(BytecodeError::RuntimeError(
-                        "toString expects 1 argument".to_string(),
-                    ));
-                }
-                let value = args[0]
-                    .to_ast()
-                    .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-                let string_repr = format!("{}", value);
-                Ok(OvmValue::from_ast(Value::String(Arc::new(string_repr))))
-            }
-            _ => Err(BytecodeError::RuntimeError(format!(
-                "Unknown builtin function: {}",
-                builtin_id
-            ))),
+        let mut ast_args = Vec::with_capacity(args.len());
+        for arg in args {
+            ast_args.push(
+                arg.to_ast()
+                    .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?,
+            );
+        }
+
+        let interpreter = self
+            .builtin_interpreter
+            .get_or_insert_with(|| Box::new(crate::interpreter::Interpreter::new()));
+
+        let result = BuiltinFunctions::call(&self.builtins, name, ast_args, interpreter)
+            .map_err(|e| BytecodeError::RuntimeError(e.to_string()))?;
+
+        // Defence in depth: the curated builtin set should only ever produce
+        // representable values, but returning something lossy would silently
+        // become Unit rather than failing, so check before converting.
+        if !Self::round_trips(&result) {
+            return Err(BytecodeError::RuntimeError(format!(
+                "builtin '{}' returned a value the bytecode tier cannot represent",
+                name
+            )));
+        }
+
+        Ok(OvmValue::from_ast(result))
+    }
+
+    /// Whether a value survives conversion to the OVM model and back.
+    ///
+    /// Maps, structs, enums, and functions do not: they either collapse to a
+    /// different type or to Unit.
+    fn round_trips(value: &Value) -> bool {
+        match value {
+            Value::Integer(_)
+            | Value::Float(_)
+            | Value::Boolean(_)
+            | Value::String(_)
+            | Value::Unit
+            | Value::Range { .. } => true,
+            Value::List(items) => items.iter().all(Self::round_trips),
+            Value::Tuple(items) => items.iter().all(Self::round_trips),
+            Value::Ok(inner) | Value::Err(inner) => Self::round_trips(inner),
+            _ => false,
         }
     }
 
@@ -2824,28 +2869,44 @@ mod tests {
 
     #[test]
     fn test_builtin_functions() {
-        let vm = BytecodeVm::new();
+        // Builtins are dispatched by name and delegate to the interpreter's
+        // implementations.
+        let mut vm = BytecodeVm::new();
 
-        // Test len function (builtin_id = 0)
         let list_arg = OvmValue::from_ast(Value::List(
             vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)].into(),
         ));
 
-        let result = vm.execute_builtin_call(0, &[list_arg]);
+        let result = vm.execute_builtin_call("len", &[list_arg]);
         assert!(result.is_ok());
         match result.unwrap().to_ast() {
             Ok(Value::Integer(n)) => assert_eq!(n, 3, "List length should be 3"),
             _ => panic!("Expected integer result"),
         }
 
-        // Test toString function (builtin_id = 1)
         let int_arg = OvmValue::from_ast(Value::Integer(42));
-        let result = vm.execute_builtin_call(1, &[int_arg]);
+        let result = vm.execute_builtin_call("to_string", &[int_arg]);
         assert!(result.is_ok());
         match result.unwrap().to_ast() {
             Ok(Value::String(s)) => assert_eq!(*s, "42", "Should convert to string"),
             _ => panic!("Expected string result"),
         }
+    }
+
+    #[test]
+    fn unrepresentable_builtin_results_are_rejected() {
+        // A value that cannot round-trip through the OVM model must produce an
+        // error rather than silently becoming Unit.
+        let mut vm = BytecodeVm::new();
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("a".to_string(), Value::Integer(1));
+        assert!(!BytecodeVm::round_trips(&Value::Map(Arc::new(fields))));
+        assert!(BytecodeVm::round_trips(&Value::Integer(1)));
+        assert!(BytecodeVm::round_trips(&Value::Ok(Box::new(Value::Integer(1)))));
+        // sanity: the delegation path still works for a representable result
+        assert!(vm
+            .execute_builtin_call("to_string", &[OvmValue::new_integer(7)])
+            .is_ok());
     }
 
     #[test]
