@@ -34,7 +34,7 @@ println("Vectorized arithmetic result: " + result1)
 // Test 2: Vectorized filtering and predicates
 println("Test 2: Vectorized filtering...")
 
-let data = range(-5000, 5000)
+let data = range(-5000, 50000)
 
 // These filters should use SIMD predicates
 let positive = data |> filter((x) => x > 0)
