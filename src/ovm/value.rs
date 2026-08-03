@@ -5,7 +5,8 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU32, Ordering};
+
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 
 use crate::ast::{Expr, Value};
@@ -21,56 +22,23 @@ pub struct OvmValue {
     pub data: ValueData,
 }
 
-/// Value header containing metadata for GC, execution, and optimization
-#[derive(Debug)]
+/// Value metadata. Kept deliberately small and Copy: it is cloned on every
+/// register read in the bytecode dispatch loop.
+///
+/// The mark bits, refcount, age, and force counters of the old tracing-GC
+/// header are gone — Arc payloads handle reclamation, and the atomics made
+/// every value clone measurably more expensive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct ValueHeader {
-    /// GC metadata (mark bits, generation, forwarding pointer)
-    pub gc_bits: AtomicU32,
-
     /// Value type tag for fast type checking
     pub type_tag: TypeTag,
 
     /// Current execution tier for this value
     pub tier: ExecutionTier,
 
-    /// Tier-specific optimization data
-    pub optimization_data: u32,
-
     /// Lazy evaluation state
     pub lazy_state: LazyState,
-
-    /// Force count for profiling lazy evaluation
-    pub force_count: AtomicU32,
-
-    /// Reference count for shared values (when not using GC)
-    pub ref_count: AtomicU32,
-
-    /// Mark bit for garbage collection
-    pub gc_mark: bool,
-
-    /// Age of the value
-    pub age: u8,
-
-    /// Size of the value
-    pub size: u32,
-}
-
-impl Clone for ValueHeader {
-    fn clone(&self) -> Self {
-        Self {
-            gc_bits: AtomicU32::new(self.gc_bits.load(Ordering::Relaxed)),
-            type_tag: self.type_tag,
-            tier: self.tier,
-            optimization_data: self.optimization_data,
-            lazy_state: self.lazy_state,
-            force_count: AtomicU32::new(self.force_count.load(Ordering::Relaxed)),
-            ref_count: AtomicU32::new(self.ref_count.load(Ordering::Relaxed)),
-            gc_mark: self.gc_mark,
-            age: self.age,
-            size: self.size,
-        }
-    }
 }
 
 /// Type tags for fast runtime type checking
@@ -714,9 +682,6 @@ impl OvmValue {
             return Ok(());
         }
 
-        // Increment force count for profiling
-        self.header.force_count.fetch_add(1, Ordering::Relaxed);
-
         // Handle different lazy value types based on lazy state
         let lazy_state = self.header.lazy_state;
         match lazy_state {
@@ -1293,8 +1258,6 @@ impl OvmValue {
         // Convert from AST using the standard method
         let mut ovm_value = Self::from_ast(ast_value);
         
-        // Update GC metadata for proper tracking
-        ovm_value.header.gc_bits.store(1, std::sync::atomic::Ordering::Relaxed); // Mark as allocated
         ovm_value.header.tier = ExecutionTier::Interpreter; // Start at interpreter tier
         
         // Record allocation with safepoint manager
@@ -1413,33 +1376,12 @@ impl OvmValue {
 }
 
 impl ValueHeader {
-    pub fn new(type_tag: TypeTag, tier: ExecutionTier, lazy_state: LazyState) -> Self {
+    pub const fn new(type_tag: TypeTag, tier: ExecutionTier, lazy_state: LazyState) -> Self {
         Self {
-            gc_bits: AtomicU32::new(0),
             type_tag,
             tier,
-            optimization_data: 0,
             lazy_state,
-            force_count: AtomicU32::new(0),
-            ref_count: AtomicU32::new(1),
-            gc_mark: false,
-            age: 0,
-            size: 0,
         }
-    }
-
-    pub fn mark_for_gc(&self) {
-        // Set mark bit for garbage collection
-        self.gc_bits.fetch_or(0x1, Ordering::Relaxed);
-    }
-
-    pub fn is_marked(&self) -> bool {
-        (self.gc_bits.load(Ordering::Relaxed) & 0x1) != 0
-    }
-
-    pub fn clear_mark(&self) {
-        // Clear mark bit
-        self.gc_bits.fetch_and(!0x1, Ordering::Relaxed);
     }
 }
 
@@ -1504,18 +1446,11 @@ const _: () = {
 
 impl Default for ValueHeader {
     fn default() -> Self {
-        Self {
-            gc_bits: AtomicU32::new(0),
-            type_tag: TypeTag::Unit,
-            tier: ExecutionTier::Interpreter,
-            optimization_data: 0,
-            lazy_state: LazyState::Eager,
-            force_count: AtomicU32::new(0),
-            ref_count: AtomicU32::new(1),
-            gc_mark: false,
-            age: 0,
-            size: 0,
-        }
+        Self::new(
+            TypeTag::Unit,
+            ExecutionTier::Interpreter,
+            LazyState::Eager,
+        )
     }
 }
 
@@ -1563,13 +1498,6 @@ mod tests {
         assert_eq!(header.type_tag, TypeTag::Integer);
         assert_eq!(header.tier, ExecutionTier::Interpreter);
         assert_eq!(header.lazy_state, LazyState::Eager);
-        assert!(!header.is_marked());
-
-        header.mark_for_gc();
-        assert!(header.is_marked());
-
-        header.clear_mark();
-        assert!(!header.is_marked());
     }
 
     #[test]

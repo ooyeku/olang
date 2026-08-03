@@ -426,7 +426,6 @@ pub struct ExecutionState {
     exception: Option<VmException>,
 
     // Current bytecode being executed
-    current_bytecode: Option<CompiledBytecode>,
 }
 
 /// Stack frame for function calls  
@@ -665,7 +664,6 @@ impl BytecodeVm {
     /// Execute bytecode instructions - Complete implementation
     fn execute_bytecode(&mut self, bytecode: &CompiledBytecode) -> Result<OvmValue, BytecodeError> {
         let mut pc = bytecode.entry_point;
-        self.execution_state.current_bytecode = Some(bytecode.clone());
 
         while pc < bytecode.instructions.len() {
             let instruction = &bytecode.instructions[pc];
@@ -697,108 +695,124 @@ impl BytecodeVm {
 
                 // Arithmetic operations
                 Instruction::Add { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_binary_op(&left, &right, BinaryOp::Add)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_binary_op(left, right, BinaryOp::Add)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Sub { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_binary_op(&left, &right, BinaryOp::Subtract)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_binary_op(left, right, BinaryOp::Subtract)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Mul { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_binary_op(&left, &right, BinaryOp::Multiply)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_binary_op(left, right, BinaryOp::Multiply)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Div { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_binary_op(&left, &right, BinaryOp::Divide)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_binary_op(left, right, BinaryOp::Divide)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Mod { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_binary_op(&left, &right, BinaryOp::Modulo)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_binary_op(left, right, BinaryOp::Modulo)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Neg { dst, src } => {
-                    let value = self.execution_state.get_register(*src)?;
-                    let result = self.execute_unary_op(&value, UnaryOp::Negate)?;
+                    let result = self
+
+                        .execute_unary_op(self.execution_state.register_ref(*src)?, UnaryOp::Negate)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 // Comparison operations
                 Instruction::Eq { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_binary_op(&left, &right, BinaryOp::Equal)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_binary_op(left, right, BinaryOp::Equal)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Ne { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_binary_op(&left, &right, BinaryOp::NotEqual)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_binary_op(left, right, BinaryOp::NotEqual)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Lt { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_binary_op(&left, &right, BinaryOp::LessThan)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_binary_op(left, right, BinaryOp::LessThan)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Le { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_binary_op(&left, &right, BinaryOp::LessThanEqual)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_binary_op(left, right, BinaryOp::LessThanEqual)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Gt { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_binary_op(&left, &right, BinaryOp::GreaterThan)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_binary_op(left, right, BinaryOp::GreaterThan)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Ge { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result =
-                        self.execute_binary_op(&left, &right, BinaryOp::GreaterThanEqual)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_binary_op(left, right, BinaryOp::GreaterThanEqual)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 // Logical operations
                 Instruction::And { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_logical_and(&left, &right)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_logical_and(left, right)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Or { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_logical_or(&left, &right)?;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+
+                    let result = self.execute_logical_or(left, right)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::Not { dst, src } => {
-                    let value = self.execution_state.get_register(*src)?;
-                    let result = self.execute_unary_op(&value, UnaryOp::Not)?;
+                    let result = self
+
+                        .execute_unary_op(self.execution_state.register_ref(*src)?, UnaryOp::Not)?;
+
                     self.execution_state.set_register(*dst, result)?;
                 }
 
@@ -809,16 +823,14 @@ impl BytecodeVm {
                 }
 
                 Instruction::JumpIfTrue { condition, target } => {
-                    let cond_value = self.execution_state.get_register(*condition)?;
-                    if self.is_truthy(&cond_value) {
+                    if self.is_truthy(self.execution_state.register_ref(*condition)?) {
                         pc = target.0 as usize;
                         continue;
                     }
                 }
 
                 Instruction::JumpIfFalse { condition, target } => {
-                    let cond_value = self.execution_state.get_register(*condition)?;
-                    if !self.is_truthy(&cond_value) {
+                    if !self.is_truthy(self.execution_state.register_ref(*condition)?) {
                         pc = target.0 as usize;
                         continue;
                     }
@@ -828,7 +840,7 @@ impl BytecodeVm {
                     if let Some(reg) = value {
                         return Ok(self.execution_state.get_register(*reg)?);
                     } else {
-                        return Ok(OvmValue::from_ast(Value::Unit));
+                        return Ok(OvmValue::new_unit());
                     }
                 }
 
@@ -880,18 +892,12 @@ impl BytecodeVm {
 
                 // Collection operations
                 Instruction::MakeList { dst, elements } => {
-                    let mut list_values = Vec::new();
+                    let mut list_values = Vec::with_capacity(elements.len());
                     for elem_reg in elements {
-                        let value = self.execution_state.get_register(*elem_reg)?;
-                        list_values.push(
-                            value
-                                .to_ast()
-                                .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?,
-                        );
+                        list_values.push(self.execution_state.get_register(*elem_reg)?);
                     }
-                    let list_value = Value::List(list_values.into());
                     self.execution_state
-                        .set_register(*dst, OvmValue::from_ast(list_value))?;
+                        .set_register(*dst, OvmValue::new_list(list_values))?;
                 }
 
                 Instruction::MakeRange { dst, start, end, inclusive } => {
@@ -955,18 +961,12 @@ impl BytecodeVm {
 
                 // Tuple operations
                 Instruction::MakeTuple { dst, elements } => {
-                    let mut tuple_values = Vec::new();
+                    let mut tuple_values = Vec::with_capacity(elements.len());
                     for elem_reg in elements {
-                        let value = self.execution_state.get_register(*elem_reg)?;
-                        tuple_values.push(
-                            value
-                                .to_ast()
-                                .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?,
-                        );
+                        tuple_values.push(self.execution_state.get_register(*elem_reg)?);
                     }
-                    let tuple_value = Value::Tuple(tuple_values.into());
                     self.execution_state
-                        .set_register(*dst, OvmValue::from_ast(tuple_value))?;
+                        .set_register(*dst, OvmValue::new_tuple(tuple_values))?;
                 }
 
                 Instruction::TupleGet { dst, tuple, index } => {
@@ -1170,23 +1170,19 @@ impl BytecodeVm {
         right: &OvmValue,
         op: BinaryOp,
     ) -> Result<OvmValue, BytecodeError> {
-        // Convert to AST values for computation
-        let left_ast = left
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-        let right_ast = right
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        use crate::ovm::value::ValueData;
 
-        let result_ast = match (&left_ast, &right_ast) {
-            (Value::Integer(a), Value::Integer(b)) => match op {
-                BinaryOp::Add => Value::Integer(a.checked_add(*b).ok_or_else(|| {
+        // Operate directly on ValueData — converting operands through the AST
+        // representation on every instruction dominated the dispatch loop.
+        let result = match (&left.data, &right.data) {
+            (ValueData::Integer(a), ValueData::Integer(b)) => match op {
+                BinaryOp::Add => OvmValue::new_integer(a.checked_add(*b).ok_or_else(|| {
                     BytecodeError::RuntimeError("Integer overflow in addition".to_string())
                 })?),
-                BinaryOp::Subtract => Value::Integer(a.checked_sub(*b).ok_or_else(|| {
+                BinaryOp::Subtract => OvmValue::new_integer(a.checked_sub(*b).ok_or_else(|| {
                     BytecodeError::RuntimeError("Integer overflow in subtraction".to_string())
                 })?),
-                BinaryOp::Multiply => Value::Integer(a.checked_mul(*b).ok_or_else(|| {
+                BinaryOp::Multiply => OvmValue::new_integer(a.checked_mul(*b).ok_or_else(|| {
                     BytecodeError::RuntimeError("Integer overflow in multiplication".to_string())
                 })?),
                 BinaryOp::Divide => {
@@ -1194,7 +1190,7 @@ impl BytecodeVm {
                         return Err(BytecodeError::DivisionByZero);
                     }
                     // checked_div also rejects i64::MIN / -1, which overflows
-                    Value::Integer(a.checked_div(*b).ok_or_else(|| {
+                    OvmValue::new_integer(a.checked_div(*b).ok_or_else(|| {
                         BytecodeError::RuntimeError("Integer overflow in division".to_string())
                     })?)
                 }
@@ -1202,16 +1198,16 @@ impl BytecodeVm {
                     if *b == 0 {
                         return Err(BytecodeError::DivisionByZero);
                     }
-                    Value::Integer(a.checked_rem(*b).ok_or_else(|| {
+                    OvmValue::new_integer(a.checked_rem(*b).ok_or_else(|| {
                         BytecodeError::RuntimeError("Integer overflow in modulo".to_string())
                     })?)
                 }
-                BinaryOp::Equal => Value::Boolean(a == b),
-                BinaryOp::NotEqual => Value::Boolean(a != b),
-                BinaryOp::LessThan => Value::Boolean(a < b),
-                BinaryOp::LessThanEqual => Value::Boolean(a <= b),
-                BinaryOp::GreaterThan => Value::Boolean(a > b),
-                BinaryOp::GreaterThanEqual => Value::Boolean(a >= b),
+                BinaryOp::Equal => OvmValue::new_boolean(a == b),
+                BinaryOp::NotEqual => OvmValue::new_boolean(a != b),
+                BinaryOp::LessThan => OvmValue::new_boolean(a < b),
+                BinaryOp::LessThanEqual => OvmValue::new_boolean(a <= b),
+                BinaryOp::GreaterThan => OvmValue::new_boolean(a > b),
+                BinaryOp::GreaterThanEqual => OvmValue::new_boolean(a >= b),
                 _ => {
                     return Err(BytecodeError::TypeError(format!(
                         "Unsupported operation: {:?}",
@@ -1219,63 +1215,42 @@ impl BytecodeVm {
                     )))
                 }
             },
-            (Value::Float(a), Value::Float(b)) => match op {
-                BinaryOp::Add => Value::Float(a + b),
-                BinaryOp::Subtract => Value::Float(a - b),
-                BinaryOp::Multiply => Value::Float(a * b),
-                BinaryOp::Divide => {
-                    // Match interpreter semantics: only exact zero is rejected
-                    if *b == 0.0 {
-                        return Err(BytecodeError::DivisionByZero);
-                    }
-                    Value::Float(a / b)
-                }
-                BinaryOp::Equal => Value::Boolean(a == b),
-                BinaryOp::NotEqual => Value::Boolean(a != b),
-                BinaryOp::LessThan => Value::Boolean(a < b),
-                BinaryOp::LessThanEqual => Value::Boolean(a <= b),
-                BinaryOp::GreaterThan => Value::Boolean(a > b),
-                BinaryOp::GreaterThanEqual => Value::Boolean(a >= b),
-                _ => {
-                    return Err(BytecodeError::TypeError(format!(
-                        "Unsupported operation: {:?}",
-                        op
-                    )))
-                }
-            },
-            (Value::String(a), Value::String(b)) => match op {
-                BinaryOp::Add => Value::String(Arc::new(format!("{}{}", a, b))),
-                BinaryOp::Equal => Value::Boolean(a == b),
-                BinaryOp::NotEqual => Value::Boolean(a != b),
-                BinaryOp::LessThan => Value::Boolean(a < b),
-                BinaryOp::LessThanEqual => Value::Boolean(a <= b),
-                BinaryOp::GreaterThan => Value::Boolean(a > b),
-                BinaryOp::GreaterThanEqual => Value::Boolean(a >= b),
-                _ => {
-                    return Err(BytecodeError::TypeError(format!(
-                        "Unsupported operation: {:?}",
-                        op
-                    )))
-                }
-            },
-            (Value::Boolean(a), Value::Boolean(b)) => match op {
-                BinaryOp::Equal => Value::Boolean(a == b),
-                BinaryOp::NotEqual => Value::Boolean(a != b),
-                BinaryOp::And => Value::Boolean(*a && *b),
-                BinaryOp::Or => Value::Boolean(*a || *b),
-                _ => {
-                    return Err(BytecodeError::TypeError(format!(
-                        "Unsupported operation: {:?}",
-                        op
-                    )))
-                }
-            },
-            (Value::Integer(a), Value::Float(b)) => {
+            (ValueData::Float(a), ValueData::Float(b)) => {
+                self.execute_float_binary_op(*a, *b, op)?
+            }
+            (ValueData::Integer(a), ValueData::Float(b)) => {
                 self.execute_float_binary_op(*a as f64, *b, op)?
             }
-            (Value::Float(a), Value::Integer(b)) => {
+            (ValueData::Float(a), ValueData::Integer(b)) => {
                 self.execute_float_binary_op(*a, *b as f64, op)?
             }
+            (ValueData::String(a), ValueData::String(b)) => match op {
+                BinaryOp::Add => OvmValue::new_string(format!("{}{}", a, b)),
+                BinaryOp::Equal => OvmValue::new_boolean(a == b),
+                BinaryOp::NotEqual => OvmValue::new_boolean(a != b),
+                BinaryOp::LessThan => OvmValue::new_boolean(a < b),
+                BinaryOp::LessThanEqual => OvmValue::new_boolean(a <= b),
+                BinaryOp::GreaterThan => OvmValue::new_boolean(a > b),
+                BinaryOp::GreaterThanEqual => OvmValue::new_boolean(a >= b),
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "Unsupported operation: {:?}",
+                        op
+                    )))
+                }
+            },
+            (ValueData::Boolean(a), ValueData::Boolean(b)) => match op {
+                BinaryOp::Equal => OvmValue::new_boolean(a == b),
+                BinaryOp::NotEqual => OvmValue::new_boolean(a != b),
+                BinaryOp::And => OvmValue::new_boolean(*a && *b),
+                BinaryOp::Or => OvmValue::new_boolean(*a || *b),
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "Unsupported operation: {:?}",
+                        op
+                    )))
+                }
+            },
             _ => {
                 return Err(BytecodeError::TypeError(
                     "Type mismatch in binary operation".to_string(),
@@ -1283,34 +1258,34 @@ impl BytecodeVm {
             }
         };
 
-        Ok(OvmValue::from_ast(result_ast))
+        Ok(result)
     }
 
     /// Float arithmetic shared by the Float/Float and mixed Int/Float paths,
     /// mirroring the interpreter's coercion semantics
-    fn execute_float_binary_op(&self, a: f64, b: f64, op: BinaryOp) -> Result<Value, BytecodeError> {
+    fn execute_float_binary_op(&self, a: f64, b: f64, op: BinaryOp) -> Result<OvmValue, BytecodeError> {
         Ok(match op {
-            BinaryOp::Add => Value::Float(a + b),
-            BinaryOp::Subtract => Value::Float(a - b),
-            BinaryOp::Multiply => Value::Float(a * b),
+            BinaryOp::Add => OvmValue::new_float(a + b),
+            BinaryOp::Subtract => OvmValue::new_float(a - b),
+            BinaryOp::Multiply => OvmValue::new_float(a * b),
             BinaryOp::Divide => {
                 if b == 0.0 {
                     return Err(BytecodeError::DivisionByZero);
                 }
-                Value::Float(a / b)
+                OvmValue::new_float(a / b)
             }
             BinaryOp::Modulo => {
                 if b == 0.0 {
                     return Err(BytecodeError::DivisionByZero);
                 }
-                Value::Float(a % b)
+                OvmValue::new_float(a % b)
             }
-            BinaryOp::Equal => Value::Boolean(a == b),
-            BinaryOp::NotEqual => Value::Boolean(a != b),
-            BinaryOp::LessThan => Value::Boolean(a < b),
-            BinaryOp::LessThanEqual => Value::Boolean(a <= b),
-            BinaryOp::GreaterThan => Value::Boolean(a > b),
-            BinaryOp::GreaterThanEqual => Value::Boolean(a >= b),
+            BinaryOp::Equal => OvmValue::new_boolean(a == b),
+            BinaryOp::NotEqual => OvmValue::new_boolean(a != b),
+            BinaryOp::LessThan => OvmValue::new_boolean(a < b),
+            BinaryOp::LessThanEqual => OvmValue::new_boolean(a <= b),
+            BinaryOp::GreaterThan => OvmValue::new_boolean(a > b),
+            BinaryOp::GreaterThanEqual => OvmValue::new_boolean(a >= b),
             _ => {
                 return Err(BytecodeError::TypeError(format!(
                     "Unsupported operation: {:?}",
@@ -1322,25 +1297,21 @@ impl BytecodeVm {
 
     /// Execute unary operation
     fn execute_unary_op(&self, value: &OvmValue, op: UnaryOp) -> Result<OvmValue, BytecodeError> {
-        let value_ast = value
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        use crate::ovm::value::ValueData;
 
-        let result_ast = match (&value_ast, &op) {
-            (Value::Integer(a), UnaryOp::Negate) => Value::Integer(a.checked_neg().ok_or_else(|| {
-                BytecodeError::RuntimeError("Integer overflow in negation".to_string())
-            })?),
-            (Value::Float(a), UnaryOp::Negate) => Value::Float(-a),
-            (Value::Boolean(a), UnaryOp::Not) => Value::Boolean(!a),
-            _ => {
-                return Err(BytecodeError::TypeError(format!(
-                    "Unsupported unary operation: {:?}",
-                    op
-                )))
+        match (&value.data, &op) {
+            (ValueData::Integer(a), UnaryOp::Negate) => {
+                Ok(OvmValue::new_integer(a.checked_neg().ok_or_else(|| {
+                    BytecodeError::RuntimeError("Integer overflow in negation".to_string())
+                })?))
             }
-        };
-
-        Ok(OvmValue::from_ast(result_ast))
+            (ValueData::Float(a), UnaryOp::Negate) => Ok(OvmValue::new_float(-a)),
+            (ValueData::Boolean(a), UnaryOp::Not) => Ok(OvmValue::new_boolean(!a)),
+            _ => Err(BytecodeError::TypeError(format!(
+                "Unsupported unary operation: {:?}",
+                op
+            ))),
+        }
     }
 
     /// Execute logical AND operation
@@ -1669,11 +1640,13 @@ impl BytecodeVm {
 
     /// Check if value is truthy
     fn is_truthy(&self, value: &OvmValue) -> bool {
-        match value.to_ast() {
-            Ok(Value::Boolean(b)) => b,
-            Ok(Value::Integer(i)) => i != 0,
-            Ok(Value::Float(f)) => f != 0.0,
-            Ok(Value::Unit) => false,
+        use crate::ovm::value::ValueData;
+
+        match &value.data {
+            ValueData::Boolean(b) => *b,
+            ValueData::Integer(i) => *i != 0,
+            ValueData::Float(f) => *f != 0.0,
+            ValueData::Unit => false,
             _ => true,
         }
     }
@@ -1924,7 +1897,6 @@ impl ExecutionState {
             call_stack: Vec::new(),
             pc: 0,
             exception: None,
-            current_bytecode: None,
         }
     }
 
@@ -1943,17 +1915,13 @@ impl ExecutionState {
 
         // Allocate registers
         self.registers.clear();
-        self.registers.resize(
-            bytecode.register_count as usize,
-            OvmValue::from_ast(Value::Unit),
-        );
+        self.registers
+            .resize(bytecode.register_count as usize, OvmValue::new_unit());
 
         // Set up locals with arguments
         self.locals.clear();
-        self.locals.resize(
-            bytecode.local_count as usize,
-            OvmValue::from_ast(Value::Unit),
-        );
+        self.locals
+            .resize(bytecode.local_count as usize, OvmValue::new_unit());
         for (i, arg) in args.iter().enumerate() {
             if i < self.locals.len() {
                 self.locals[i] = arg.clone();
@@ -1974,6 +1942,26 @@ impl ExecutionState {
             .get(reg.0 as usize)
             .cloned()
             .ok_or(BytecodeError::InvalidRegister(reg))
+    }
+
+    /// Borrow a register without cloning. Cloning an OvmValue copies its
+    /// header (three atomics), which dominated the dispatch loop when every
+    /// operand read went through get_register.
+    #[inline]
+    pub fn register_ref(&self, reg: Register) -> Result<&OvmValue, BytecodeError> {
+        self.registers
+            .get(reg.0 as usize)
+            .ok_or(BytecodeError::InvalidRegister(reg))
+    }
+
+    /// Borrow two registers at once (operands of a binary instruction).
+    #[inline]
+    pub fn register_pair(
+        &self,
+        lhs: Register,
+        rhs: Register,
+    ) -> Result<(&OvmValue, &OvmValue), BytecodeError> {
+        Ok((self.register_ref(lhs)?, self.register_ref(rhs)?))
     }
 
     pub fn set_register(&mut self, reg: Register, value: OvmValue) -> Result<(), BytecodeError> {

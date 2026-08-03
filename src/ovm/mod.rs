@@ -687,7 +687,6 @@ impl OlangVirtualMachine {
     /// Create a lazy range stream
     fn create_lazy_range(&mut self, start: i64, end: i64) -> Result<OvmValue, OvmError> {
         use crate::ovm::value::{GeneratorFunction, StreamObject, TypeTag, LazyState, ExecutionTier, ValueHeader, ValueData};
-        use std::sync::atomic::AtomicU32;
 
         // Create a lazy stream that generates range values on demand
         let step = if start < end { 1 } else { -1 };
@@ -704,18 +703,7 @@ impl OlangVirtualMachine {
         let stream_ptr = std::sync::Arc::new(stream_obj);
         
         Ok(OvmValue {
-            header: ValueHeader {
-                type_tag: TypeTag::Stream,
-                lazy_state: LazyState::Stream,
-                tier: ExecutionTier::Interpreter,
-                gc_bits: AtomicU32::new(0),
-                optimization_data: std::mem::size_of::<StreamObject>() as u32,
-                force_count: AtomicU32::new(0),
-                ref_count: AtomicU32::new(1),
-                gc_mark: false,
-                age: 0,
-                size: std::mem::size_of::<StreamObject>() as u32,
-            },
+            header: ValueHeader::new(TypeTag::Stream, ExecutionTier::Interpreter, LazyState::Stream),
             data: ValueData::Stream(stream_ptr),
         })
     }
@@ -724,7 +712,6 @@ impl OlangVirtualMachine {
     #[allow(dead_code)]
     fn create_lazy_list(&mut self, _items: Vec<execution::OvmExpr>) -> Result<OvmValue, OvmError> {
         use crate::ovm::value::{LazyListObject, TransformationChain, TypeTag, LazyState, ExecutionTier, ValueHeader, ValueData};
-        use std::sync::atomic::AtomicU32;
 
         // For now, create a simple lazy list with a unit source
         // This is a simplified implementation
@@ -740,18 +727,7 @@ impl OlangVirtualMachine {
         let lazy_list_ptr = std::sync::Arc::new(lazy_list_obj);
         
         Ok(OvmValue {
-            header: ValueHeader {
-                type_tag: TypeTag::LazyList,
-                lazy_state: LazyState::Lazy,
-                tier: ExecutionTier::Interpreter,
-                gc_bits: AtomicU32::new(0),
-                optimization_data: std::mem::size_of::<LazyListObject>() as u32,
-                force_count: AtomicU32::new(0),
-                ref_count: AtomicU32::new(1),
-                gc_mark: false,
-                age: 0,
-                size: std::mem::size_of::<LazyListObject>() as u32,
-            },
+            header: ValueHeader::new(TypeTag::LazyList, ExecutionTier::Interpreter, LazyState::Lazy),
             data: ValueData::LazyList(lazy_list_ptr),
         })
     }
