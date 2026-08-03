@@ -80,22 +80,14 @@ pub struct BytecodeCompiler {
 
 /// Bytecode optimization engine
 #[allow(dead_code)]
-pub struct BytecodeOptimizer {
-    // Dead code elimination
-    dead_code_eliminator: DeadCodeEliminator,
-
-    // Register reuse optimization
-    register_optimizer: RegisterOptimizer,
-
-    // Control flow optimization
-    control_flow_optimizer: ControlFlowOptimizer,
-
-    // Constant folding
-    constant_folder: ConstantFolder,
-
-    // Peephole optimization
-    peephole_optimizer: PeepholeOptimizer,
-}
+/// Placeholder for future optimization passes.
+///
+/// The previous pipeline (dead-code elimination, register renaming, peephole
+/// rewrites, control-flow "optimization") was deleted rather than fixed: it
+/// removed live control flow and stores, renamed registers for only a subset
+/// of opcodes, and treated label IDs as instruction addresses. Passes may
+/// return once they can be validated against the differential test suite.
+pub struct BytecodeOptimizer {}
 
 /// Compiled bytecode representation
 #[derive(Debug, Clone)]
@@ -104,6 +96,8 @@ pub struct CompiledBytecode {
     pub instructions: Vec<Instruction>,
     pub register_count: u32,
     pub local_count: u32,
+    /// Declared parameter count, enforced at call time
+    pub param_count: usize,
     pub constants: Vec<OvmValue>,
     pub debug_info: BytecodeDebugInfo,
     pub optimization_level: u8,
@@ -463,98 +457,19 @@ pub struct VmStatistics {
 pub struct RegisterAllocator {
     next_register: u32,
     free_registers: Vec<Register>,
-    register_usage: HashMap<Register, RegisterUsage>,
     max_registers: u32,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct RegisterUsage {
-    first_use: usize,
-    last_use: usize,
-    is_temporary: bool,
-    live_range: Option<LiveRange>,
-}
-
-#[derive(Debug, Clone)]
-struct LiveRange {
-    start: usize,
-    end: usize,
 }
 
 /// Instruction emitter
 pub struct InstructionEmitter {
     instructions: Vec<Instruction>,
-    labels: HashMap<String, Label>,
-    unresolved_labels: HashMap<Label, Vec<usize>>, // Label -> instruction indices that reference it
-    next_label: u32,
+    /// Label id -> instruction offset where the label was placed
+    label_positions: HashMap<u32, usize>,
     next_label_id: u32,
     constants: Vec<OvmValue>,
     constant_map: HashMap<String, u32>, // For deduplication
     current_line: u32,
     debug_info: BytecodeDebugInfo,
-}
-
-/// Bytecode optimization passes
-
-#[allow(dead_code)]
-pub struct DeadCodeEliminator {
-    live_registers: std::collections::HashSet<Register>,
-    live_instructions: std::collections::HashSet<usize>,
-}
-#[allow(dead_code)]
-pub struct RegisterOptimizer {
-    register_map: HashMap<Register, Register>,
-    interference_graph: HashMap<Register, std::collections::HashSet<Register>>,
-}
-
-#[allow(dead_code)]
-pub struct ControlFlowOptimizer {
-    basic_blocks: Vec<BasicBlock>,
-    cfg: ControlFlowGraph,
-}
-
-pub struct ConstantFolder {
-    constant_values: HashMap<Register, OvmValue>,
-}
-
-#[allow(dead_code)]
-pub struct PeepholeOptimizer {
-    patterns: Vec<OptimizationPattern>,
-}
-
-#[derive(Debug, Clone)]
-struct BasicBlock {
-    id: usize,
-    instructions: Vec<Instruction>,
-    predecessors: Vec<usize>,
-    successors: Vec<usize>,
-    entry_point: usize,
-    exit_point: usize,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct ControlFlowGraph {
-    blocks: Vec<BasicBlock>,
-    entry_block: usize,
-    exit_blocks: Vec<usize>,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct OptimizationPattern {
-    pattern: Vec<InstructionPattern>,
-    replacement: Vec<Instruction>,
-    condition: Option<fn(&[Instruction]) -> bool>,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-enum InstructionPattern {
-    Exact(Instruction),
-    Any,
-    Register(String), // Named register for pattern matching
 }
 
 /// VM errors
@@ -721,20 +636,30 @@ impl BytecodeVm {
 
         let bytecode = bytecode.ok_or(BytecodeError::FunctionNotFound(func_id))?;
 
-        // Prepare execution state
-        self.execution_state
-            .prepare_for_execution(&bytecode, args)?;
+        // Give this call its own frame: nested calls (e.g. recursion through
+        // CallNamed) re-enter execute(), and sharing one ExecutionState would
+        // clobber the caller's registers and locals.
+        let caller_state = std::mem::replace(&mut self.execution_state, ExecutionState::new());
 
-        // Record cache hit
-        self.stats.bytecode_cache_hits += 1;
-        self.stats.function_calls += 1;
+        let result = (|| {
+            self.execution_state
+                .prepare_for_execution(&bytecode, args)?;
 
-        // Execute bytecode
-        let start_time = std::time::Instant::now();
-        let result = self.execute_bytecode(&bytecode)?;
-        self.stats.execution_time += start_time.elapsed();
+            // Record cache hit
+            self.stats.bytecode_cache_hits += 1;
+            self.stats.function_calls += 1;
 
-        Ok(result)
+            // Execute bytecode
+            let start_time = std::time::Instant::now();
+            let result = self.execute_bytecode(&bytecode)?;
+            self.stats.execution_time += start_time.elapsed();
+            Ok(result)
+        })();
+
+        // Restore the caller's frame on both success and error paths
+        self.execution_state = caller_state;
+
+        result
     }
 
     /// Execute bytecode instructions - Complete implementation
@@ -907,35 +832,13 @@ impl BytecodeVm {
                     }
                 }
 
-                // Function operations
-                Instruction::Call {
-                    dst,
-                    function,
-                    args,
-                    ..
-                } => {
-                    let _func_value = self.execution_state.get_register(*function)?;
-                    let mut arg_values = Vec::new();
-                    for arg_reg in args {
-                        arg_values.push(self.execution_state.get_register(*arg_reg)?);
-                    }
-
-                    // Create a call frame and handle function call
-                    let call_frame = CallFrame {
-                        function_id: FunctionId::new(), // Placeholder for dynamic dispatch
-                        return_address: pc + 1,
-                        base_register: 0,
-                        local_count: arg_values.len(),
-                    };
-
-                    self.call_stack.push(call_frame);
-
-                    // For now, implement a basic function call mechanism
-                    // In a complete implementation, this would handle dynamic dispatch
-                    let result = self.execute_function_call(&arg_values)?;
-                    self.execution_state.set_register(*dst, result)?;
-
-                    self.call_stack.pop();
+                // Function operations. The compiler only emits CallNamed;
+                // a dynamic Call reaching the VM means a compilation bug, and
+                // the old placeholder silently returned Unit for it.
+                Instruction::Call { .. } => {
+                    return Err(BytecodeError::RuntimeError(
+                        "Dynamic function calls are not supported in the bytecode tier".to_string(),
+                    ));
                 }
 
                 Instruction::CallBuiltin {
@@ -1473,16 +1376,6 @@ impl BytecodeVm {
     }
 
     /// Execute function call
-    fn execute_function_call(&self, _args: &[OvmValue]) -> Result<OvmValue, BytecodeError> {
-        // Placeholder implementation for function calls
-        // In a complete implementation, this would:
-        // 1. Look up the function in the function registry
-        // 2. Set up a new execution context
-        // 3. Execute the function's bytecode
-        // 4. Return the result
-        Ok(OvmValue::from_ast(Value::Unit))
-    }
-
     /// Execute builtin function call
     fn execute_builtin_call(
         &self,
@@ -1502,7 +1395,10 @@ impl BytecodeVm {
                     .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
                 match value {
                     Value::List(list) => Ok(OvmValue::from_ast(Value::Integer(list.len() as i64))),
-                    Value::String(s) => Ok(OvmValue::from_ast(Value::Integer(s.len() as i64))),
+                    // Char count, matching the interpreter's len builtin
+                    Value::String(s) => {
+                        Ok(OvmValue::from_ast(Value::Integer(s.chars().count() as i64)))
+                    }
                     _ => Err(BytecodeError::TypeError(
                         "len can only be applied to lists and strings".to_string(),
                     )),
@@ -2037,6 +1933,14 @@ impl ExecutionState {
         bytecode: &CompiledBytecode,
         args: &[OvmValue],
     ) -> Result<(), BytecodeError> {
+        if args.len() != bytecode.param_count {
+            return Err(BytecodeError::RuntimeError(format!(
+                "Function expects {} argument(s), got {}",
+                bytecode.param_count,
+                args.len()
+            )));
+        }
+
         // Allocate registers
         self.registers.clear();
         self.registers.resize(
@@ -2138,7 +2042,9 @@ impl BytecodeCompiler {
             self.emitter.emit_return(Some(result_reg));
         }
 
-        // Apply optimizations
+        // Patch jump targets from label ids to instruction offsets
+        self.emitter.resolve_labels()?;
+
         let mut instructions = self.emitter.take_instructions();
         let constants = self.emitter.take_constants();
 
@@ -2149,6 +2055,7 @@ impl BytecodeCompiler {
             instructions,
             register_count: self.register_allocator.max_register_used(),
             local_count: self.next_local_idx,
+            param_count: func.parameters.len(),
             constants,
             debug_info: BytecodeDebugInfo {
                 function_name: Some(func.name.clone()),
@@ -2300,6 +2207,96 @@ impl BytecodeCompiler {
                 Ok(dst_reg)
             }
 
+            Expr::Call { callee, arguments } => {
+                // Only direct calls to named functions/builtins are supported;
+                // the callee is resolved by name at runtime through the VM's
+                // registries (which also makes recursion work).
+                let function_name = match callee.as_ref() {
+                    Expr::Identifier(name) => name.clone(),
+                    other => {
+                        return Err(BytecodeError::CompilationFailed(format!(
+                            "Unsupported callee in bytecode tier: {:?}",
+                            std::mem::discriminant(other)
+                        )))
+                    }
+                };
+
+                let mut arg_regs = Vec::new();
+                for argument in arguments {
+                    match argument {
+                        crate::ast::Argument::Positional(expr) => {
+                            arg_regs.push(self.compile_expression(expr)?);
+                        }
+                        crate::ast::Argument::Named { .. } => {
+                            return Err(BytecodeError::CompilationFailed(
+                                "Named arguments are not supported in the bytecode tier"
+                                    .to_string(),
+                            ))
+                        }
+                    }
+                }
+
+                let dst_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::CallNamed {
+                    dst: dst_reg,
+                    function_name,
+                    args: arg_regs,
+                });
+                Ok(dst_reg)
+            }
+
+            Expr::Block(statements) => {
+                // A block evaluates its statements in order; its value is the
+                // value of the last statement (Unit for an empty block).
+                let mut result_reg = None;
+                for statement in statements.iter() {
+                    result_reg = Some(self.compile_statement(statement)?);
+                }
+                match result_reg {
+                    Some(reg) => Ok(reg),
+                    None => {
+                        let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));
+                        let dst_reg = self.register_allocator.allocate_register();
+                        self.emitter.emit_load_const(dst_reg, const_idx);
+                        Ok(dst_reg)
+                    }
+                }
+            }
+
+            Expr::Assignment { target, value } => {
+                let value_reg = self.compile_expression(value)?;
+                match self.local_variables.get(target) {
+                    Some(&local_idx) => {
+                        self.emitter.emit_store_local(value_reg, local_idx);
+                        Ok(value_reg)
+                    }
+                    None => Err(BytecodeError::CompilationFailed(format!(
+                        "Assignment to unresolved variable '{}' (globals not supported in bytecode tier)",
+                        target
+                    ))),
+                }
+            }
+
+            Expr::WhileLoop { condition, body } => {
+                let loop_start = self.emitter.create_label();
+                let loop_end = self.emitter.create_label();
+
+                self.emitter.place_label(loop_start);
+                let condition_reg = self.compile_expression(condition)?;
+                self.emitter.emit_branch_if_false(condition_reg, loop_end);
+
+                self.compile_expression(body)?;
+                self.emitter.emit_jump(loop_start);
+
+                self.emitter.place_label(loop_end);
+
+                // While loops evaluate to Unit
+                let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));
+                let dst_reg = self.register_allocator.allocate_register();
+                self.emitter.emit_load_const(dst_reg, const_idx);
+                Ok(dst_reg)
+            }
+
             other => {
                 // Refuse to compile unsupported expressions — substituting a
                 // Unit constant (e.g. for a recursive call site) silently
@@ -2311,6 +2308,53 @@ impl BytecodeCompiler {
             }
         }
     }
+
+    /// Compile a statement inside a block, returning the register holding its
+    /// value (let-declarations evaluate to Unit like in the interpreter).
+    fn compile_statement(
+        &mut self,
+        statement: &crate::ast::Statement,
+    ) -> Result<Register, BytecodeError> {
+        match statement {
+            crate::ast::Statement::Expression(expr) => self.compile_expression(expr),
+            crate::ast::Statement::LetDecl(let_decl) => {
+                let name = match &let_decl.pattern {
+                    crate::ast::Pattern::Identifier(name) => name.clone(),
+                    other => {
+                        return Err(BytecodeError::CompilationFailed(format!(
+                            "Unsupported let pattern in bytecode tier: {:?}",
+                            std::mem::discriminant(other)
+                        )))
+                    }
+                };
+                let value_reg = match &let_decl.value {
+                    Some(expr) => self.compile_expression(expr)?,
+                    None => {
+                        let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));
+                        let reg = self.register_allocator.allocate_register();
+                        self.emitter.emit_load_const(reg, const_idx);
+                        reg
+                    }
+                };
+                let local_idx = *self.local_variables.entry(name).or_insert_with(|| {
+                    let idx = self.next_local_idx;
+                    self.next_local_idx += 1;
+                    idx
+                });
+                self.emitter.emit_store_local(value_reg, local_idx);
+
+                // Let evaluates to Unit
+                let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));
+                let dst_reg = self.register_allocator.allocate_register();
+                self.emitter.emit_load_const(dst_reg, const_idx);
+                Ok(dst_reg)
+            }
+            other => Err(BytecodeError::CompilationFailed(format!(
+                "Unsupported statement in bytecode tier: {:?}",
+                std::mem::discriminant(other)
+            ))),
+        }
+    }
 }
 
 // Implementation stubs for optimization components
@@ -2319,7 +2363,6 @@ impl RegisterAllocator {
         Self {
             next_register: 0,
             free_registers: Vec::new(),
-            register_usage: HashMap::new(),
             max_registers: 0,
         }
     }
@@ -2327,7 +2370,6 @@ impl RegisterAllocator {
     pub fn reset(&mut self) {
         self.next_register = 0;
         self.free_registers.clear();
-        self.register_usage.clear();
         self.max_registers = 0;
     }
 
@@ -2355,9 +2397,7 @@ impl InstructionEmitter {
     pub fn new() -> Self {
         Self {
             instructions: Vec::new(),
-            labels: HashMap::new(),
-            unresolved_labels: HashMap::new(),
-            next_label: 0,
+            label_positions: HashMap::new(),
             next_label_id: 0,
             constants: Vec::new(),
             constant_map: HashMap::new(),
@@ -2368,9 +2408,7 @@ impl InstructionEmitter {
 
     pub fn reset(&mut self) {
         self.instructions.clear();
-        self.labels.clear();
-        self.unresolved_labels.clear();
-        self.next_label = 0;
+        self.label_positions.clear();
         self.next_label_id = 0;
         self.constants.clear();
         self.constant_map.clear();
@@ -2470,10 +2508,39 @@ impl InstructionEmitter {
         label
     }
 
+    /// Bind a label to the current instruction offset.
     pub fn place_label(&mut self, label: Label) {
-        // Labels are handled during instruction placement
-        // For now, we'll just store them in a way that can be resolved later
-        self.labels.insert(format!("label_{}", label.0), label);
+        self.label_positions.insert(label.0, self.instructions.len());
+    }
+
+    /// Patch every jump target from a label id to the instruction offset the
+    /// label was placed at. Must run after emission, before execution — a
+    /// label id is meaningless as a program counter.
+    pub fn resolve_labels(&mut self) -> Result<(), BytecodeError> {
+        let resolve = |target: &mut Label, positions: &HashMap<u32, usize>| {
+            match positions.get(&target.0) {
+                Some(&offset) => {
+                    *target = Label(offset as u32);
+                    Ok(())
+                }
+                None => Err(BytecodeError::CompilationFailed(format!(
+                    "Jump references unplaced label {}",
+                    target.0
+                ))),
+            }
+        };
+
+        for instruction in &mut self.instructions {
+            match instruction {
+                Instruction::Jump { target }
+                | Instruction::JumpIfTrue { target, .. }
+                | Instruction::JumpIfFalse { target, .. } => {
+                    resolve(target, &self.label_positions)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     pub fn emit_nop(&mut self) {
@@ -2497,1001 +2564,16 @@ impl InstructionEmitter {
 
 impl BytecodeOptimizer {
     pub fn new() -> Self {
-        Self {
-            dead_code_eliminator: DeadCodeEliminator::new(),
-            register_optimizer: RegisterOptimizer::new(),
-            control_flow_optimizer: ControlFlowOptimizer::new(),
-            constant_folder: ConstantFolder::new(),
-            peephole_optimizer: PeepholeOptimizer::new(),
-        }
+        Self {}
     }
 
+    /// No-op: correctness first. See the struct docs for why the previous
+    /// pipeline was removed.
     pub fn optimize_instructions(
         &mut self,
         instructions: Vec<Instruction>,
     ) -> Result<Vec<Instruction>, BytecodeError> {
-        let mut optimized = instructions;
-
-        // Full optimization pipeline - re-enabled all optimizations
-        
-        // 1. Dead code elimination - remove unused instructions
-        optimized = self.dead_code_eliminator.eliminate_dead_code(optimized)?;
-
-        // 2. Constant folding - evaluate constant expressions at compile time
-        optimized = self.constant_folder.fold_constants(optimized)?;
-
-        // 3. Peephole optimizations - local instruction patterns
-        optimized = self.peephole_optimizer.optimize(optimized)?;
-
-        // 4. Control flow optimization - optimize jumps and branches
-        optimized = self.control_flow_optimizer.optimize_control_flow(optimized)?;
-
-        // 5. Register allocation optimization - minimize register usage
-        optimized = self.register_optimizer.optimize_registers(optimized)?;
-
-        Ok(optimized)
-    }
-}
-
-impl DeadCodeEliminator {
-    pub fn new() -> Self {
-        Self {
-            live_registers: std::collections::HashSet::new(),
-            live_instructions: std::collections::HashSet::new(),
-        }
-    }
-
-    pub fn eliminate_dead_code(
-        &mut self,
-        instructions: Vec<Instruction>,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        let mut live_instructions = Vec::new();
-        let mut live_registers = std::collections::HashSet::new();
-
-        // Mark return instructions and their dependencies as live
-        for (i, instruction) in instructions.iter().enumerate() {
-            match instruction {
-                Instruction::Return { value } => {
-                    live_instructions.push(i);
-                    if let Some(reg) = value {
-                        live_registers.insert(*reg);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Backward pass to mark dependencies
-        for i in (0..instructions.len()).rev() {
-            let instruction = &instructions[i];
-            let mut should_keep = live_instructions.contains(&i);
-
-            // Check if instruction produces a live register
-            match instruction {
-                Instruction::LoadConst { dst, .. }
-                | Instruction::LoadLocal { dst, .. }
-                | Instruction::Move { dst, .. }
-                | Instruction::Add { dst, .. }
-                | Instruction::Sub { dst, .. }
-                | Instruction::Mul { dst, .. }
-                | Instruction::Div { dst, .. }
-                | Instruction::Eq { dst, .. }
-                | Instruction::Ne { dst, .. }
-                | Instruction::Lt { dst, .. }
-                | Instruction::Le { dst, .. }
-                | Instruction::Gt { dst, .. }
-                | Instruction::Ge { dst, .. }
-                | Instruction::And { dst, .. }
-                | Instruction::Or { dst, .. }
-                | Instruction::Not { dst, .. }
-                | Instruction::MakeList { dst, .. }
-                | Instruction::ListGet { dst, .. }
-                | Instruction::ListLen { dst, .. }
-                | Instruction::ListPop { dst, .. }
-                | Instruction::MakeTuple { dst, .. }
-                | Instruction::TupleGet { dst, .. }
-                | Instruction::StringConcat { dst, .. }
-                | Instruction::StringLen { dst, .. }
-                | Instruction::TypeOf { dst, .. } => {
-                    if live_registers.contains(dst) {
-                        should_keep = true;
-                    }
-                }
-                _ => {}
-            }
-
-            if should_keep && !live_instructions.contains(&i) {
-                live_instructions.push(i);
-
-                // Mark input registers as live
-                match instruction {
-                    Instruction::Move { src, .. } => {
-                        live_registers.insert(*src);
-                    }
-                    Instruction::Add { lhs, rhs, .. }
-                    | Instruction::Sub { lhs, rhs, .. }
-                    | Instruction::Mul { lhs, rhs, .. }
-                    | Instruction::Div { lhs, rhs, .. }
-                    | Instruction::Eq { lhs, rhs, .. }
-                    | Instruction::Ne { lhs, rhs, .. }
-                    | Instruction::Lt { lhs, rhs, .. }
-                    | Instruction::Le { lhs, rhs, .. }
-                    | Instruction::Gt { lhs, rhs, .. }
-                    | Instruction::Ge { lhs, rhs, .. }
-                    | Instruction::And { lhs, rhs, .. }
-                    | Instruction::Or { lhs, rhs, .. } => {
-                        live_registers.insert(*lhs);
-                        live_registers.insert(*rhs);
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Filter out dead instructions
-        live_instructions.sort();
-        let mut result = Vec::new();
-        for &i in &live_instructions {
-            result.push(instructions[i].clone());
-        }
-
-        Ok(result)
-    }
-}
-
-impl RegisterOptimizer {
-    pub fn new() -> Self {
-        Self {
-            register_map: HashMap::new(),
-            interference_graph: HashMap::new(),
-        }
-    }
-
-    pub fn optimize_registers(
-        &mut self,
-        instructions: Vec<Instruction>,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        // Phase 2: Advanced Register Allocation with Live Range Analysis
-        let live_ranges = self.compute_live_ranges(&instructions)?;
-        let interference_graph = self.build_interference_graph(&live_ranges)?;
-        let coloring = self.graph_coloring_allocation(&interference_graph)?;
-
-        // Apply register renaming based on coloring
-        let optimized_instructions = self.apply_register_renaming(instructions, &coloring)?;
-
-        Ok(optimized_instructions)
-    }
-
-    /// Compute live ranges for all registers using dataflow analysis
-    fn compute_live_ranges(
-        &mut self,
-        instructions: &[Instruction],
-    ) -> Result<HashMap<Register, LiveRange>, BytecodeError> {
-        let mut live_ranges = HashMap::new();
-        let mut register_uses = HashMap::<Register, Vec<usize>>::new();
-        let mut register_defs = HashMap::<Register, Vec<usize>>::new();
-
-        // First pass: collect all uses and definitions
-        for (i, instruction) in instructions.iter().enumerate() {
-            // Collect register definitions (writes)
-            if let Some(def_reg) = self.get_definition_register(instruction) {
-                register_defs.entry(def_reg).or_default().push(i);
-            }
-
-            // Collect register uses (reads)
-            for use_reg in self.get_use_registers(instruction) {
-                register_uses.entry(use_reg).or_default().push(i);
-            }
-        }
-
-        // Second pass: compute live ranges
-        for (reg, uses) in register_uses.iter() {
-            if let Some(defs) = register_defs.get(reg) {
-                if let (Some(&first_def), Some(&last_use)) = (defs.first(), uses.last()) {
-                    live_ranges.insert(
-                        *reg,
-                        LiveRange {
-                            start: first_def,
-                            end: last_use,
-                        },
-                    );
-                }
-            }
-        }
-
-        Ok(live_ranges)
-    }
-
-    /// Build interference graph for register allocation
-    fn build_interference_graph(
-        &mut self,
-        live_ranges: &HashMap<Register, LiveRange>,
-    ) -> Result<HashMap<Register, std::collections::HashSet<Register>>, BytecodeError> {
-        let mut interference_graph = HashMap::new();
-
-        // For each pair of registers, check if their live ranges overlap
-        let registers: Vec<_> = live_ranges.keys().cloned().collect();
-        for i in 0..registers.len() {
-            for j in (i + 1)..registers.len() {
-                let reg1 = registers[i];
-                let reg2 = registers[j];
-
-                if let (Some(range1), Some(range2)) =
-                    (live_ranges.get(&reg1), live_ranges.get(&reg2))
-                {
-                    if self.ranges_interfere(range1, range2) {
-                        interference_graph
-                            .entry(reg1)
-                            .or_insert_with(std::collections::HashSet::new)
-                            .insert(reg2);
-                        interference_graph
-                            .entry(reg2)
-                            .or_insert_with(std::collections::HashSet::new)
-                            .insert(reg1);
-                    }
-                }
-            }
-        }
-
-        Ok(interference_graph)
-    }
-
-    /// Graph coloring register allocation using greedy algorithm
-    fn graph_coloring_allocation(
-        &mut self,
-        interference_graph: &HashMap<Register, std::collections::HashSet<Register>>,
-    ) -> Result<HashMap<Register, Register>, BytecodeError> {
-        let mut coloring = HashMap::new();
-        let available_colors = (0..32).map(Register).collect::<Vec<_>>(); // 32 physical registers
-
-        // Sort registers by degree (most constrained first)
-        let mut registers: Vec<_> = interference_graph.keys().cloned().collect();
-        registers.sort_by_key(|reg| interference_graph.get(reg).map_or(0, |set| set.len()));
-        registers.reverse(); // Most constrained first
-
-        for reg in registers {
-            // Find available color not used by interfering registers
-            let mut used_colors = std::collections::HashSet::new();
-            if let Some(interfering) = interference_graph.get(&reg) {
-                for interfering_reg in interfering {
-                    if let Some(&color) = coloring.get(interfering_reg) {
-                        used_colors.insert(color);
-                    }
-                }
-            }
-
-            // Assign first available color
-            let assigned_color = available_colors
-                .iter()
-                .find(|&&color| !used_colors.contains(&color))
-                .copied()
-                .unwrap_or(reg); // Fallback to original register if no color available
-
-            coloring.insert(reg, assigned_color);
-        }
-
-        Ok(coloring)
-    }
-
-    /// Apply register renaming based on allocation results
-    fn apply_register_renaming(
-        &mut self,
-        instructions: Vec<Instruction>,
-        coloring: &HashMap<Register, Register>,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        let mut renamed_instructions = Vec::new();
-
-        for instruction in instructions {
-            let renamed = self.rename_instruction_registers(instruction, coloring);
-            renamed_instructions.push(renamed);
-        }
-
-        Ok(renamed_instructions)
-    }
-
-    /// Helper methods for register analysis
-    fn get_definition_register(&self, instruction: &Instruction) -> Option<Register> {
-        match instruction {
-            Instruction::LoadConst { dst, .. }
-            | Instruction::LoadLocal { dst, .. }
-            | Instruction::Move { dst, .. }
-            | Instruction::Add { dst, .. }
-            | Instruction::Sub { dst, .. }
-            | Instruction::Mul { dst, .. }
-            | Instruction::Div { dst, .. }
-            | Instruction::Eq { dst, .. }
-            | Instruction::Ne { dst, .. }
-            | Instruction::Lt { dst, .. }
-            | Instruction::Le { dst, .. }
-            | Instruction::Gt { dst, .. }
-            | Instruction::Ge { dst, .. }
-            | Instruction::And { dst, .. }
-            | Instruction::Or { dst, .. }
-            | Instruction::Not { dst, .. }
-            | Instruction::MakeList { dst, .. }
-            | Instruction::ListGet { dst, .. }
-            | Instruction::ListLen { dst, .. }
-            | Instruction::ListPop { dst, .. }
-            | Instruction::MakeTuple { dst, .. }
-            | Instruction::TupleGet { dst, .. }
-            | Instruction::StringConcat { dst, .. }
-            | Instruction::StringLen { dst, .. }
-            | Instruction::TypeOf { dst, .. } => Some(*dst),
-            _ => None,
-        }
-    }
-
-    fn get_use_registers(&self, instruction: &Instruction) -> Vec<Register> {
-        match instruction {
-            Instruction::Move { src, .. } => vec![*src],
-            Instruction::Add { lhs, rhs, .. }
-            | Instruction::Sub { lhs, rhs, .. }
-            | Instruction::Mul { lhs, rhs, .. }
-            | Instruction::Div { lhs, rhs, .. }
-            | Instruction::Eq { lhs, rhs, .. }
-            | Instruction::Ne { lhs, rhs, .. }
-            | Instruction::Lt { lhs, rhs, .. }
-            | Instruction::Le { lhs, rhs, .. }
-            | Instruction::Gt { lhs, rhs, .. }
-            | Instruction::Ge { lhs, rhs, .. }
-            | Instruction::And { lhs, rhs, .. }
-            | Instruction::Or { lhs, rhs, .. } => vec![*lhs, *rhs],
-            Instruction::Not { src, .. } => vec![*src],
-            Instruction::StoreLocal { src, .. } => vec![*src],
-            Instruction::Return { value } => value.map_or(vec![], |v| vec![v]),
-            Instruction::MakeList { elements, .. } => elements.clone(),
-            Instruction::ListGet { list, index, .. } => vec![*list, *index],
-            Instruction::ListSet { list, index, value } => vec![*list, *index, *value],
-            Instruction::ListPush { list, value } => vec![*list, *value],
-            Instruction::ListPop { list, .. } => vec![*list],
-            Instruction::MakeTuple { elements, .. } => elements.clone(),
-            Instruction::TupleGet { tuple, .. } => vec![*tuple],
-            Instruction::StringConcat { lhs, rhs, .. } => vec![*lhs, *rhs],
-            Instruction::StringLen { src, .. } => vec![*src],
-            Instruction::TypeOf { src, .. } => vec![*src],
-            _ => vec![],
-        }
-    }
-
-    fn ranges_interfere(&self, range1: &LiveRange, range2: &LiveRange) -> bool {
-        !(range1.end < range2.start || range2.end < range1.start)
-    }
-
-    fn rename_instruction_registers(
-        &self,
-        instruction: Instruction,
-        coloring: &HashMap<Register, Register>,
-    ) -> Instruction {
-        match instruction {
-            Instruction::LoadConst { dst, const_idx } => Instruction::LoadConst {
-                dst: coloring.get(&dst).copied().unwrap_or(dst),
-                const_idx,
-            },
-            Instruction::Move { dst, src } => Instruction::Move {
-                dst: coloring.get(&dst).copied().unwrap_or(dst),
-                src: coloring.get(&src).copied().unwrap_or(src),
-            },
-            Instruction::Add { dst, lhs, rhs } => Instruction::Add {
-                dst: coloring.get(&dst).copied().unwrap_or(dst),
-                lhs: coloring.get(&lhs).copied().unwrap_or(lhs),
-                rhs: coloring.get(&rhs).copied().unwrap_or(rhs),
-            },
-            // Add similar renaming for other instructions...
-            _ => instruction, // For now, return as-is for unhandled instructions
-        }
-    }
-}
-
-impl ControlFlowOptimizer {
-    pub fn new() -> Self {
-        Self {
-            basic_blocks: Vec::new(),
-            cfg: ControlFlowGraph {
-                blocks: Vec::new(),
-                entry_block: 0,
-                exit_blocks: Vec::new(),
-            },
-        }
-    }
-
-    pub fn optimize_control_flow(
-        &mut self,
-        instructions: Vec<Instruction>,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        // Phase 2: Advanced Control Flow Optimization
-        let basic_blocks = self.build_basic_blocks(&instructions)?;
-        let cfg = self.build_control_flow_graph(&basic_blocks)?;
-
-        // Apply control flow optimizations
-        let optimized_cfg = self.optimize_cfg(cfg)?;
-        let optimized_instructions = self.reconstruct_instructions(&optimized_cfg)?;
-
-        Ok(optimized_instructions)
-    }
-
-    fn build_basic_blocks(
-        &mut self,
-        instructions: &[Instruction],
-    ) -> Result<Vec<BasicBlock>, BytecodeError> {
-        let mut blocks = Vec::new();
-        let mut current_block = Vec::new();
-        let mut block_id = 0;
-        let mut leaders = std::collections::HashSet::new();
-
-        // Identify block leaders (first instruction, jump targets, instruction after jumps)
-        leaders.insert(0); // First instruction is always a leader
-
-        for (i, instruction) in instructions.iter().enumerate() {
-            match instruction {
-                Instruction::Jump { target }
-                | Instruction::JumpIfTrue { target, .. }
-                | Instruction::JumpIfFalse { target, .. } => {
-                    leaders.insert(target.0 as usize);
-                    if i + 1 < instructions.len() {
-                        leaders.insert(i + 1); // Instruction after jump
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Build basic blocks
-        for (i, instruction) in instructions.iter().enumerate() {
-            if leaders.contains(&i) && !current_block.is_empty() {
-                // Start new block
-                blocks.push(BasicBlock {
-                    id: block_id,
-                    instructions: current_block.clone(),
-                    predecessors: Vec::new(),
-                    successors: Vec::new(),
-                    entry_point: i - current_block.len(),
-                    exit_point: i - 1,
-                });
-                current_block.clear();
-                block_id += 1;
-            }
-            current_block.push(instruction.clone());
-        }
-
-        // Add final block
-        if !current_block.is_empty() {
-            let block_len = current_block.len();
-            blocks.push(BasicBlock {
-                id: block_id,
-                instructions: current_block,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-                entry_point: instructions.len() - block_len,
-                exit_point: instructions.len() - 1,
-            });
-        }
-
-        Ok(blocks)
-    }
-
-    fn build_control_flow_graph(
-        &mut self,
-        blocks: &[BasicBlock],
-    ) -> Result<ControlFlowGraph, BytecodeError> {
-        let mut cfg_blocks = blocks.to_vec();
-
-        // Build successor/predecessor relationships
-        for i in 0..cfg_blocks.len() {
-            if let Some(last_instruction) = cfg_blocks[i].instructions.last() {
-                match last_instruction {
-                    Instruction::Jump { target } => {
-                        let target_block =
-                            self.find_block_by_address(&cfg_blocks, target.0 as usize);
-                        if let Some(target_id) = target_block {
-                            cfg_blocks[i].successors.push(target_id);
-                            cfg_blocks[target_id].predecessors.push(i);
-                        }
-                    }
-                    Instruction::JumpIfTrue { target, .. }
-                    | Instruction::JumpIfFalse { target, .. } => {
-                        // Conditional jump has two successors
-                        let target_block =
-                            self.find_block_by_address(&cfg_blocks, target.0 as usize);
-                        if let Some(target_id) = target_block {
-                            cfg_blocks[i].successors.push(target_id);
-                            cfg_blocks[target_id].predecessors.push(i);
-                        }
-
-                        // Fall-through successor
-                        if i + 1 < cfg_blocks.len() {
-                            cfg_blocks[i].successors.push(i + 1);
-                            cfg_blocks[i + 1].predecessors.push(i);
-                        }
-                    }
-                    Instruction::Return { .. } => {
-                        // No successors for return
-                    }
-                    _ => {
-                        // Fall-through to next block
-                        if i + 1 < cfg_blocks.len() {
-                            cfg_blocks[i].successors.push(i + 1);
-                            cfg_blocks[i + 1].predecessors.push(i);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Identify exit blocks
-        let exit_blocks = cfg_blocks
-            .iter()
-            .enumerate()
-            .filter(|(_, block)| block.successors.is_empty())
-            .map(|(i, _)| i)
-            .collect();
-
-        Ok(ControlFlowGraph {
-            blocks: cfg_blocks,
-            entry_block: 0,
-            exit_blocks,
-        })
-    }
-
-    fn optimize_cfg(
-        &mut self,
-        mut cfg: ControlFlowGraph,
-    ) -> Result<ControlFlowGraph, BytecodeError> {
-        // Apply various CFG optimizations
-        self.eliminate_unreachable_blocks(&mut cfg)?;
-        self.merge_sequential_blocks(&mut cfg)?;
-        self.eliminate_empty_blocks(&mut cfg)?;
-        self.optimize_jumps(&mut cfg)?;
-
-        Ok(cfg)
-    }
-
-    fn eliminate_unreachable_blocks(
-        &mut self,
-        cfg: &mut ControlFlowGraph,
-    ) -> Result<(), BytecodeError> {
-        let mut reachable = std::collections::HashSet::new();
-        let mut worklist = vec![cfg.entry_block];
-
-        // Mark reachable blocks
-        while let Some(block_id) = worklist.pop() {
-            if reachable.insert(block_id) {
-                for &successor in &cfg.blocks[block_id].successors {
-                    worklist.push(successor);
-                }
-            }
-        }
-
-        // Remove unreachable blocks
-        cfg.blocks.retain(|block| reachable.contains(&block.id));
-
-        Ok(())
-    }
-
-    fn merge_sequential_blocks(&mut self, cfg: &mut ControlFlowGraph) -> Result<(), BytecodeError> {
-        let mut merged = true;
-
-        while merged {
-            merged = false;
-
-            for i in 0..cfg.blocks.len() {
-                if cfg.blocks[i].successors.len() == 1 {
-                    let successor_id = cfg.blocks[i].successors[0];
-                    if successor_id < cfg.blocks.len()
-                        && cfg.blocks[successor_id].predecessors.len() == 1
-                    {
-                        // Merge blocks
-                        let mut successor_instructions =
-                            cfg.blocks[successor_id].instructions.clone();
-                        cfg.blocks[i]
-                            .instructions
-                            .append(&mut successor_instructions);
-                        cfg.blocks[i].successors = cfg.blocks[successor_id].successors.clone();
-                        cfg.blocks[i].exit_point = cfg.blocks[successor_id].exit_point;
-
-                        // Update successor references
-                        let successors = cfg.blocks[i].successors.clone();
-                        for &succ in &successors {
-                            if succ < cfg.blocks.len() {
-                                if let Some(pos) = cfg.blocks[succ]
-                                    .predecessors
-                                    .iter()
-                                    .position(|&x| x == successor_id)
-                                {
-                                    cfg.blocks[succ].predecessors[pos] = i;
-                                }
-                            }
-                        }
-
-                        // Mark for removal
-                        cfg.blocks[successor_id].instructions.clear();
-                        merged = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Remove empty blocks
-        cfg.blocks.retain(|block| !block.instructions.is_empty());
-
-        Ok(())
-    }
-
-    fn eliminate_empty_blocks(&mut self, cfg: &mut ControlFlowGraph) -> Result<(), BytecodeError> {
-        // Remove blocks that only contain jumps
-        for i in 0..cfg.blocks.len() {
-            if cfg.blocks[i].instructions.len() == 1 {
-                if let Instruction::Jump { target } = &cfg.blocks[i].instructions[0] {
-                    let target_block = self.find_block_by_address(&cfg.blocks, target.0 as usize);
-                    if let Some(target_id) = target_block {
-                        // Redirect predecessors to target
-                        for &pred in &cfg.blocks[i].predecessors.clone() {
-                            if pred < cfg.blocks.len() {
-                                // Update predecessor's successors
-                                for succ in &mut cfg.blocks[pred].successors {
-                                    if *succ == i {
-                                        *succ = target_id;
-                                    }
-                                }
-                            }
-                        }
-
-                        // Update target's predecessors
-                        if target_id < cfg.blocks.len() {
-                            cfg.blocks[target_id].predecessors.retain(|&x| x != i);
-                            let predecessors = cfg.blocks[i].predecessors.clone();
-                            cfg.blocks[target_id].predecessors.extend(&predecessors);
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn optimize_jumps(&mut self, cfg: &mut ControlFlowGraph) -> Result<(), BytecodeError> {
-        // Optimize jump instructions (e.g., jump to next instruction)
-        for block in &mut cfg.blocks {
-            if let Some(last_instruction) = block.instructions.last_mut() {
-                match last_instruction {
-                    Instruction::Jump { target } => {
-                        // Check if jumping to immediately next instruction
-                        if target.0 as usize == block.exit_point + 1 {
-                            // Remove redundant jump
-                            block.instructions.pop();
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn reconstruct_instructions(
-        &mut self,
-        cfg: &ControlFlowGraph,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        let mut instructions = Vec::new();
-
-        for block in &cfg.blocks {
-            instructions.extend(block.instructions.iter().cloned());
-        }
-
         Ok(instructions)
-    }
-
-    fn find_block_by_address(&self, blocks: &[BasicBlock], address: usize) -> Option<usize> {
-        blocks
-            .iter()
-            .position(|block| address >= block.entry_point && address <= block.exit_point)
-    }
-}
-
-// Add new optimization passes for Phase 2
-
-/// Loop optimization pass
-// Loop optimization removed - not currently used in main execution path
-
-// Function inlining optimization removed - not currently used in main execution path
-
-// Phase 2: Enhanced Optimization Pass Implementations
-
-impl ConstantFolder {
-    pub fn new() -> Self {
-        Self {
-            constant_values: HashMap::new(),
-        }
-    }
-
-    pub fn fold_constants(
-        &mut self,
-        instructions: Vec<Instruction>,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        let mut result = Vec::new();
-        self.constant_values.clear();
-
-        for instruction in instructions {
-            match instruction {
-                // Track constant loads
-                Instruction::LoadConst { dst: _, const_idx: _ } => {
-                    // We can't actually fold without access to the constants table here
-                    // In a complete implementation, this would be passed in
-                    result.push(instruction);
-                }
-
-                // Fold binary operations on constants
-                Instruction::Add { dst, lhs, rhs } => {
-                    if let (Some(left_val), Some(right_val)) = (
-                        self.constant_values.get(&lhs).cloned(),
-                        self.constant_values.get(&rhs).cloned(),
-                    ) {
-                        // Try to fold the operation
-                        if let (Ok(left_ast), Ok(right_ast)) =
-                            (left_val.to_ast(), right_val.to_ast())
-                        {
-                            match (left_ast, right_ast) {
-                                (Value::Integer(a), Value::Integer(b)) => {
-                                    let folded_value = OvmValue::from_ast(Value::Integer(a + b));
-                                    self.constant_values.insert(dst, folded_value);
-                                    // In a complete implementation, we'd emit a LoadConst instead
-                                    result.push(instruction);
-                                }
-                                (Value::Float(a), Value::Float(b)) => {
-                                    let folded_value = OvmValue::from_ast(Value::Float(a + b));
-                                    self.constant_values.insert(dst, folded_value);
-                                    result.push(instruction);
-                                }
-                                _ => {
-                                    result.push(instruction);
-                                }
-                            }
-                        } else {
-                            result.push(instruction);
-                        }
-                    } else {
-                        result.push(instruction);
-                    }
-                }
-
-                // Similar for other arithmetic operations
-                Instruction::Sub { dst, lhs, rhs } => {
-                    if let (Some(left_val), Some(right_val)) = (
-                        self.constant_values.get(&lhs).cloned(),
-                        self.constant_values.get(&rhs).cloned(),
-                    ) {
-                        if let (Ok(left_ast), Ok(right_ast)) =
-                            (left_val.to_ast(), right_val.to_ast())
-                        {
-                            match (left_ast, right_ast) {
-                                (Value::Integer(a), Value::Integer(b)) => {
-                                    let folded_value = OvmValue::from_ast(Value::Integer(a - b));
-                                    self.constant_values.insert(dst, folded_value);
-                                    result.push(instruction);
-                                }
-                                (Value::Float(a), Value::Float(b)) => {
-                                    let folded_value = OvmValue::from_ast(Value::Float(a - b));
-                                    self.constant_values.insert(dst, folded_value);
-                                    result.push(instruction);
-                                }
-                                _ => {
-                                    result.push(instruction);
-                                }
-                            }
-                        } else {
-                            result.push(instruction);
-                        }
-                    } else {
-                        result.push(instruction);
-                    }
-                }
-
-                _ => {
-                    result.push(instruction);
-                }
-            }
-        }
-
-        Ok(result)
-    }
-}
-
-impl PeepholeOptimizer {
-    pub fn new() -> Self {
-        Self {
-            patterns: Vec::new(),
-        }
-    }
-
-    pub fn optimize(
-        &mut self,
-        instructions: Vec<Instruction>,
-    ) -> Result<Vec<Instruction>, BytecodeError> {
-        let mut result = Vec::new();
-        let mut i = 0;
-
-        while i < instructions.len() {
-            let current = &instructions[i];
-
-            // Phase 2: Enhanced pattern matching with more sophisticated optimizations
-
-            // Look for 3-instruction patterns first
-            if i + 2 < instructions.len() {
-                let next = &instructions[i + 1];
-                let next2 = &instructions[i + 2];
-
-                // Pattern: Move r1, r2; Move r2, r3; Move r3, r1 -> Nop (cycle elimination)
-                if let (
-                    Instruction::Move {
-                        dst: dst1,
-                        src: src1,
-                    },
-                    Instruction::Move {
-                        dst: dst2,
-                        src: src2,
-                    },
-                    Instruction::Move {
-                        dst: dst3,
-                        src: src3,
-                    },
-                ) = (current, next, next2)
-                {
-                    if dst1 == src2 && dst2 == src3 && dst3 == src1 {
-                        // Eliminate the entire cycle
-                        i += 3;
-                        continue;
-                    }
-                }
-            }
-
-            // Look for 2-instruction patterns
-            if i + 1 < instructions.len() {
-                let next = &instructions[i + 1];
-
-                // Pattern: Move r1, r2; Move r2, r1 -> eliminate redundant moves
-                if let (
-                    Instruction::Move {
-                        dst: dst1,
-                        src: src1,
-                    },
-                    Instruction::Move {
-                        dst: dst2,
-                        src: src2,
-                    },
-                ) = (current, next)
-                {
-                    if dst1 == src2 && src1 == dst2 {
-                        // Skip both instructions (they cancel out)
-                        i += 2;
-                        continue;
-                    }
-                }
-
-                // Pattern: LoadConst r1, c; Move r2, r1 -> LoadConst r2, c
-                if let (
-                    Instruction::LoadConst {
-                        dst: dst1,
-                        const_idx,
-                    },
-                    Instruction::Move { dst: dst2, src },
-                ) = (current, next)
-                {
-                    if dst1 == src {
-                        result.push(Instruction::LoadConst {
-                            dst: *dst2,
-                            const_idx: *const_idx,
-                        });
-                        i += 2;
-                        continue;
-                    }
-                }
-
-                // Pattern: Add r1, r2, r3; Move r4, r1 -> Add r4, r2, r3
-                if let (
-                    Instruction::Add {
-                        dst: dst1,
-                        lhs,
-                        rhs,
-                    },
-                    Instruction::Move { dst: dst2, src },
-                ) = (current, next)
-                {
-                    if dst1 == src {
-                        result.push(Instruction::Add {
-                            dst: *dst2,
-                            lhs: *lhs,
-                            rhs: *rhs,
-                        });
-                        i += 2;
-                        continue;
-                    }
-                }
-
-                // Pattern: Sub r1, r2, r3; Move r4, r1 -> Sub r4, r2, r3
-                if let (
-                    Instruction::Sub {
-                        dst: dst1,
-                        lhs,
-                        rhs,
-                    },
-                    Instruction::Move { dst: dst2, src },
-                ) = (current, next)
-                {
-                    if dst1 == src {
-                        result.push(Instruction::Sub {
-                            dst: *dst2,
-                            lhs: *lhs,
-                            rhs: *rhs,
-                        });
-                        i += 2;
-                        continue;
-                    }
-                }
-
-                // Pattern: Mul r1, r2, r3; Move r4, r1 -> Mul r4, r2, r3
-                if let (
-                    Instruction::Mul {
-                        dst: dst1,
-                        lhs,
-                        rhs,
-                    },
-                    Instruction::Move { dst: dst2, src },
-                ) = (current, next)
-                {
-                    if dst1 == src {
-                        result.push(Instruction::Mul {
-                            dst: *dst2,
-                            lhs: *lhs,
-                            rhs: *rhs,
-                        });
-                        i += 2;
-                        continue;
-                    }
-                }
-
-                // Pattern: Not r1, r2; Not r3, r1 -> Move r3, r2 (double negation)
-                if let (
-                    Instruction::Not {
-                        dst: dst1,
-                        src: src1,
-                    },
-                    Instruction::Not {
-                        dst: dst2,
-                        src: src2,
-                    },
-                ) = (current, next)
-                {
-                    if dst1 == src2 {
-                        result.push(Instruction::Move {
-                            dst: *dst2,
-                            src: *src1,
-                        });
-                        i += 2;
-                        continue;
-                    }
-                }
-            }
-
-            // Single instruction optimizations
-            match current {
-                // Pattern: Move r1, r1 -> Nop (self-move elimination)
-                Instruction::Move { dst, src } if dst == src => {
-                    // Skip this instruction
-                    i += 1;
-                    continue;
-                }
-
-                _ => {}
-            }
-
-            // No optimization applied, keep the instruction
-            result.push(current.clone());
-            i += 1;
-        }
-
-        Ok(result)
     }
 }
 
@@ -3571,7 +2653,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix bytecode execution for functions with parameters
     fn test_function_with_parameters() {
         let mut vm = BytecodeVm::new();
         let func_id = FunctionId::new();
@@ -3772,7 +2853,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix bytecode execution for complex expressions
     fn test_bytecode_execution_arithmetic() {
         let mut vm = BytecodeVm::new();
         let func_id = FunctionId::new();
@@ -3809,7 +2889,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix bytecode execution for complex expressions
     fn test_bytecode_execution_with_optimizations() {
         let mut vm = BytecodeVm::new();
         let func_id = FunctionId::new();
@@ -3849,7 +2928,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix bytecode execution for complex expressions
     fn test_bytecode_execution_control_flow() {
         let mut vm = BytecodeVm::new();
         let func_id = FunctionId::new();
@@ -3889,7 +2967,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix bytecode execution for complex expressions
     fn test_bytecode_execution_range_operations() {
         let mut vm = BytecodeVm::new();
         let func_id = FunctionId::new();
@@ -3954,7 +3031,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix bytecode execution for complex expressions
     fn test_bytecode_error_handling() {
         let mut vm = BytecodeVm::new();
         let invalid_func_id = FunctionId::new();
