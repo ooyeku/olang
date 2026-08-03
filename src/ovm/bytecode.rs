@@ -32,6 +32,10 @@ pub struct BytecodeVm {
 
     // Builtin function registry
     builtin_registry: HashMap<String, u32>,
+    /// Current nesting depth of execute(); bounds Rust stack growth from
+    /// recursive CallNamed so runaway recursion errors instead of aborting
+    call_depth: u32,
+    max_call_depth: u32,
 }
 
 /// Call frame for function execution
@@ -72,6 +76,8 @@ pub struct BytecodeCompiler {
     /// parameters occupy registers 0..n, so reading a variable is free
     /// rather than a LoadLocal that clones out of a separate array)
     local_variables: HashMap<String, Register>,
+    /// Builtin names the VM implements (for compile-time callee validation)
+    builtin_names: std::collections::HashSet<String>,
 
     // Label tracking for control flow
     _label_counter: u32,
@@ -563,15 +569,11 @@ impl BytecodeVm {
     pub fn new() -> Self {
         let mut builtin_registry = HashMap::new();
 
-        // Register common builtin functions
+        // Only builtins the VM actually implements may be advertised —
+        // registering names without implementations turned working programs
+        // into runtime "Unknown builtin function" errors.
         builtin_registry.insert("len".to_string(), 0);
-        builtin_registry.insert("toString".to_string(), 1);
-        builtin_registry.insert("println".to_string(), 2);
-        builtin_registry.insert("print".to_string(), 3);
-        builtin_registry.insert("map".to_string(), 4);
-        builtin_registry.insert("filter".to_string(), 5);
-        builtin_registry.insert("reduce".to_string(), 6);
-        builtin_registry.insert("range".to_string(), 7);
+        builtin_registry.insert("to_string".to_string(), 1);
 
         Self {
             compiler: BytecodeCompiler::new(),
@@ -582,6 +584,10 @@ impl BytecodeVm {
             exception_handlers: Vec::new(),
             function_registry: HashMap::new(),
             builtin_registry,
+            call_depth: 0,
+            // Must match the interpreter's own limit: a program that recurses
+            // 900 deep has to behave the same whether or not it was promoted
+            max_call_depth: 1000,
         }
     }
 
@@ -607,8 +613,9 @@ impl BytecodeVm {
     ) -> Result<(), BytecodeError> {
         let start_time = std::time::Instant::now();
 
-        // Set up function registry for the compiler
+        // Set up registries so the compiler can validate callees
         self.compiler.function_registry = self.function_registry.clone();
+        self.compiler.builtin_names = self.builtin_registry.keys().cloned().collect();
 
         let bytecode = self.compiler.compile_function(func_id, func)?;
 
@@ -637,6 +644,14 @@ impl BytecodeVm {
 
         let bytecode = bytecode.ok_or(BytecodeError::FunctionNotFound(func_id))?;
 
+        if self.call_depth >= self.max_call_depth {
+            return Err(BytecodeError::RuntimeError(format!(
+                "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
+                self.max_call_depth
+            )));
+        }
+        self.call_depth += 1;
+
         // Give this call its own frame: nested calls (e.g. recursion through
         // CallNamed) re-enter execute(), and sharing one ExecutionState would
         // clobber the caller's registers and locals.
@@ -659,6 +674,7 @@ impl BytecodeVm {
 
         // Restore the caller's frame on both success and error paths
         self.execution_state = caller_state;
+        self.call_depth -= 1;
 
         result
     }
@@ -2002,6 +2018,7 @@ impl BytecodeCompiler {
             emitter: InstructionEmitter::new(),
             optimizer: BytecodeOptimizer::new(),
             local_variables: HashMap::new(),
+            builtin_names: std::collections::HashSet::new(),
             _label_counter: 0,
             function_registry: HashMap::new(),
         }
@@ -2208,6 +2225,17 @@ impl BytecodeCompiler {
                         )))
                     }
                 };
+
+                // Reject callees the VM can't resolve at compile time rather
+                // than failing mid-execution
+                if !self.builtin_names.contains(&function_name)
+                    && !self.function_registry.contains_key(&function_name)
+                {
+                    return Err(BytecodeError::CompilationFailed(format!(
+                        "Unresolved callee '{}' in bytecode tier",
+                        function_name
+                    )));
+                }
 
                 let mut arg_regs = Vec::new();
                 for argument in arguments {

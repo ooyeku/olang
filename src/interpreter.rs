@@ -602,6 +602,10 @@ pub struct Interpreter {
     // AGGRESSIVE MEMORY MANAGEMENT: Track large allocations and force cleanup
     large_allocation_count: usize,
     last_cleanup_operation: usize,
+
+    /// Optional bytecode tier: hot functions are compiled and executed on the
+    /// OVM instead of walking the AST. Disabled unless explicitly enabled.
+    bytecode_tier: Option<crate::ovm::tier::BytecodeTier>,
 }
 
 impl Default for Interpreter {
@@ -652,6 +656,7 @@ impl Interpreter {
             // AGGRESSIVE MEMORY MANAGEMENT: Initialize tracking
             large_allocation_count: 0,
             last_cleanup_operation: 0,
+            bytecode_tier: None,
         };
 
         // Register built-in functions
@@ -1447,6 +1452,20 @@ impl Interpreter {
         Ok(function_value)
     }
 
+    /// Enable promotion of hot functions to the OVM bytecode tier.
+    ///
+    /// Promotion never changes program behavior: anything the tier can't
+    /// compile (closures, unsupported expressions, unresolved callees) stays
+    /// interpreted. See `crate::ovm::tier` and the differential test suite.
+    pub fn enable_bytecode_tier(&mut self, threshold: u32, verbose: bool) {
+        self.bytecode_tier =
+            Some(crate::ovm::tier::BytecodeTier::new(threshold).with_verbose(verbose));
+    }
+
+    pub fn bytecode_tier_stats(&self) -> Option<crate::ovm::tier::TierStats> {
+        self.bytecode_tier.as_ref().map(|t| t.stats())
+    }
+
     pub fn call_function(
         &mut self,
         callee: Value,
@@ -1488,6 +1507,22 @@ impl Interpreter {
                         expected: func.parameters.len(),
                         got: arguments.len(),
                     });
+                }
+
+                // Hot-function promotion: run on the bytecode tier when the
+                // function is eligible, otherwise fall through to the AST walk
+                if self.bytecode_tier.is_some() && arguments.len() == func.parameters.len() {
+                    let mut tier = self.bytecode_tier.take();
+                    let outcome = tier
+                        .as_mut()
+                        .map(|t| t.try_call(&func, &arguments))
+                        .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
+                    self.bytecode_tier = tier;
+
+                    if let crate::ovm::tier::TierOutcome::Ran(result) = outcome {
+                        self.call_depth -= 1;
+                        return result.map_err(|message| InterpreterError::RuntimeError { message });
+                    }
                 }
 
                 // Create new environment with current environment as parent
@@ -1593,6 +1628,9 @@ impl Interpreter {
             // AGGRESSIVE MEMORY MANAGEMENT: Initialize fresh tracking for each thread
             large_allocation_count: 0,
             last_cleanup_operation: 0,
+
+            // Each thread profiles independently; the VM is not shared
+            bytecode_tier: None,
         }
     }
 

@@ -12,6 +12,7 @@ use crate::ast::{Argument, Expr, FunctionDecl};
 // Core OVM modules
 pub mod adaptive; // Adaptive optimization system
 pub mod bytecode; // Register-based bytecode VM
+pub mod tier; // Hot-function promotion to the bytecode tier
 pub mod config;
 pub mod execution;
 pub mod fusion;

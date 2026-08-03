@@ -48,9 +48,31 @@ struct Cli {
     /// Set maximum parallelism for OVM/builtins (threads). Also respects OVM_PARALLELISM env var.
     #[arg(long, value_name = "N")]
     ovm_parallelism: Option<usize>,
+
+    /// Compile hot functions to OVM bytecode after N calls (default 50 when
+    /// the flag is given without a value). Functions the tier cannot compile
+    /// keep running on the interpreter.
+    #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "50")]
+    ovm_tier: Option<u32>,
 }
 
+/// The interpreter recurses on the host stack, and its documented call-depth
+/// limit (1000) needs more than the default 8 MB main-thread stack — without
+/// this, a program recursing ~700 deep aborted the process instead of
+/// reporting "Maximum call depth exceeded".
+const INTERPRETER_STACK_SIZE: usize = 256 * 1024 * 1024;
+
 fn main() {
+    let exit_code = std::thread::Builder::new()
+        .stack_size(INTERPRETER_STACK_SIZE)
+        .spawn(run)
+        .expect("failed to spawn interpreter thread")
+        .join()
+        .unwrap_or(1);
+    process::exit(exit_code);
+}
+
+fn run() -> i32 {
     let cli = Cli::parse();
     
     // Initialize logger
@@ -99,17 +121,19 @@ fn main() {
 
     if let Some(file_path) = cli.file {
         // Execute file in batch mode
-        if let Err(e) = execute_file(&file_path, cli.verbose, cli.no_ovm, cli.ovm_stats, logger) {
+        if let Err(e) = execute_file(&file_path, cli.verbose, cli.no_ovm, cli.ovm_stats, cli.ovm_tier, logger) {
             logger.error("main", &format!("Error executing file: {}", e));
-            process::exit(1);
+            return 1;
         }
     } else {
         // Start REPL
         if let Err(e) = start_repl(cli.verbose, cli.no_ovm, logger) {
             logger.error("main", &format!("REPL error: {}", e));
-            process::exit(1);
+            return 1;
         }
     }
+
+    0
 }
 
 /// Enhanced error display for file execution
@@ -387,7 +411,7 @@ fn show_suggestion(suggestion: &ErrorSuggestion) {
     }
 }
 
-fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: bool, logger: &Logger) -> anyhow::Result<()> {
+fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: bool, ovm_tier: Option<u32>, logger: &Logger) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file_path)?;
     let parser = OlangParser::new();
     
@@ -403,7 +427,11 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
     if no_ovm {
         // Use classic interpreter
         let mut interpreter = olang::interpreter::Interpreter::new();
-        
+
+        if let Some(threshold) = ovm_tier {
+            interpreter.enable_bytecode_tier(threshold, verbose);
+        }
+
         // Set file context for proper module resolution
         interpreter.set_current_file(&absolute_path);
         
@@ -431,6 +459,12 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
         // Use OVM integration
         let config = IntegrationConfig::default();
         let mut ovm_interpreter = OvmInterpreter::with_config(config);
+
+        if let Some(threshold) = ovm_tier {
+            ovm_interpreter
+                .get_classic_interpreter()
+                .enable_bytecode_tier(threshold, verbose);
+        }
         
         // Set file context for proper module resolution
         ovm_interpreter.get_classic_interpreter().set_current_file(&absolute_path);
@@ -459,6 +493,12 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
                             logger.info("main", &format!("  Compilations: {}", stats.compilation_count));
                             logger.info("main", &format!("  Average classic time: {:.2}ms", stats.average_classic_time_ms));
                             logger.info("main", &format!("  Average OVM time: {:.2}ms", stats.average_ovm_time_ms));
+                            if let Some(tier) = ovm_interpreter.get_classic_interpreter().bytecode_tier_stats() {
+                                logger.info("main", &format!(
+                                    "  Bytecode tier: {} promoted, {} rejected, {} calls",
+                                    tier.promoted, tier.rejected, tier.bytecode_calls
+                                ));
+                            }
                         }
                         
                         Ok(())

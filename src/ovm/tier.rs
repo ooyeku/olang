@@ -1,0 +1,351 @@
+//! Hot-function promotion to the bytecode tier.
+//!
+//! The interpreter consults this on every user function call. Once a function
+//! has been called `threshold` times, the tier tries to compile it; if that
+//! succeeds, subsequent calls execute as bytecode instead of walking the AST.
+//!
+//! The design rule is that promotion may never change what a program does.
+//! Everything the bytecode tier cannot handle is *rejected at compile time*
+//! and permanently falls back to the interpreter:
+//!
+//! - bodies referencing anything but their own parameters and locals (the
+//!   VM has no environment, so captured/global variables are unresolvable)
+//! - unsupported expressions (match, lambdas, pipelines, for loops, …)
+//! - calls to anything but the function itself or a VM-implemented builtin
+//! - arguments or results that don't round-trip through the OVM value model
+//!
+//! `tests/bytecode_differential_test.rs` is the safety net: it asserts the VM
+//! and interpreter agree on every program the VM accepts.
+
+use std::collections::{HashMap, HashSet};
+
+use crate::ast::{Function, FunctionDecl, Value};
+use crate::ovm::bytecode::BytecodeVm;
+use crate::ovm::{FunctionId, OvmValue};
+
+/// Default number of calls before a function is considered hot.
+pub const DEFAULT_PROMOTION_THRESHOLD: u32 = 50;
+
+/// Outcome of asking the tier to run a call.
+pub enum TierOutcome {
+    /// The call ran on the bytecode VM.
+    Ran(Result<Value, String>),
+    /// Not eligible (or not hot yet) — the caller should interpret it.
+    Fallback,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TierStats {
+    pub promoted: u32,
+    pub rejected: u32,
+    pub bytecode_calls: u64,
+}
+
+pub struct BytecodeTier {
+    vm: BytecodeVm,
+    threshold: u32,
+    call_counts: HashMap<String, u32>,
+    compiled: HashMap<String, FunctionId>,
+    /// Names that failed compilation — never retried
+    rejected: HashSet<String>,
+    stats: TierStats,
+    /// Emit a line when a function is promoted (for --ovm-stats / debugging)
+    verbose: bool,
+}
+
+impl BytecodeTier {
+    pub fn new(threshold: u32) -> Self {
+        Self {
+            vm: BytecodeVm::new(),
+            threshold,
+            call_counts: HashMap::new(),
+            compiled: HashMap::new(),
+            rejected: HashSet::new(),
+            stats: TierStats::default(),
+            verbose: false,
+        }
+    }
+
+    pub fn with_verbose(mut self, verbose: bool) -> Self {
+        self.verbose = verbose;
+        self
+    }
+
+    pub fn stats(&self) -> TierStats {
+        self.stats
+    }
+
+    /// Try to execute `func(args)` on the bytecode VM.
+    pub fn try_call(&mut self, func: &Function, args: &[Value]) -> TierOutcome {
+        let name = match &func.name {
+            Some(name) => name.clone(),
+            // Anonymous lambdas have no stable identity to profile
+            None => return TierOutcome::Fallback,
+        };
+
+        if self.rejected.contains(&name) {
+            return TierOutcome::Fallback;
+        }
+
+        let func_id = match self.compiled.get(&name) {
+            Some(id) => *id,
+            None => {
+                let count = self.call_counts.entry(name.clone()).or_insert(0);
+                *count += 1;
+                if *count < self.threshold {
+                    return TierOutcome::Fallback;
+                }
+                match self.compile(&name, func) {
+                    Some(id) => id,
+                    None => return TierOutcome::Fallback,
+                }
+            }
+        };
+
+        // Arguments must round-trip through the OVM value model
+        let mut ovm_args = Vec::with_capacity(args.len());
+        for arg in args {
+            if !Self::is_representable(arg) {
+                return TierOutcome::Fallback;
+            }
+            ovm_args.push(OvmValue::from_ast(arg.clone()));
+        }
+
+        self.stats.bytecode_calls += 1;
+        match self.vm.execute(func_id, &ovm_args) {
+            Ok(value) => match value.to_ast() {
+                Ok(ast) => TierOutcome::Ran(Ok(ast)),
+                // A result we can't convert would be observable as a wrong
+                // value; refuse rather than return something else.
+                Err(_) => {
+                    self.reject(&name);
+                    TierOutcome::Fallback
+                }
+            },
+            Err(e) => TierOutcome::Ran(Err(e.to_string())),
+        }
+    }
+
+    /// Note that a user function exists so self-recursive calls resolve.
+    fn compile(&mut self, name: &str, func: &Function) -> Option<FunctionId> {
+        // Note: func.closure is NOT a usable eligibility signal — every
+        // user function captures the whole prelude (stdlib module bindings),
+        // so it is never empty. The real gate is the compiler: a body that
+        // references anything other than its own parameters and locals fails
+        // to compile with "Unresolved identifier", which lands in reject().
+
+        // Default parameter values are evaluated by the interpreter
+        if func.parameters.iter().any(|p| p.default_value.is_some()) {
+            self.reject(name);
+            return None;
+        }
+
+        let decl = FunctionDecl {
+            name: name.to_string(),
+            type_params: Vec::new(),
+            parameters: func.parameters.clone(),
+            return_type: None,
+            body: (*func.body).clone(),
+        };
+
+        // Register before compiling so self-recursive calls resolve
+        let func_id = FunctionId::new();
+        self.vm.register_function(name.to_string(), func_id);
+
+        match self.vm.compile_function(func_id, &decl) {
+            Ok(()) => {
+                self.compiled.insert(name.to_string(), func_id);
+                self.stats.promoted += 1;
+                if self.verbose {
+                    eprintln!("[ovm] promoted '{}' to the bytecode tier", name);
+                }
+                Some(func_id)
+            }
+            Err(e) => {
+                if self.verbose {
+                    eprintln!("[ovm] '{}' stays interpreted: {}", name, e);
+                }
+                self.reject(name);
+                None
+            }
+        }
+    }
+
+    fn reject(&mut self, name: &str) {
+        self.rejected.insert(name.to_string());
+        self.compiled.remove(name);
+        self.stats.rejected += 1;
+    }
+
+    /// Values the OVM model round-trips losslessly.
+    fn is_representable(value: &Value) -> bool {
+        match value {
+            Value::Integer(_)
+            | Value::Float(_)
+            | Value::Boolean(_)
+            | Value::String(_)
+            | Value::Unit
+            | Value::Range { .. } => true,
+            Value::List(items) => items.iter().all(Self::is_representable),
+            Value::Tuple(items) => items.iter().all(Self::is_representable),
+            // Functions, structs, maps, promises and results either lose
+            // information or aren't usable inside the tier
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{BinaryOp, Expr, Parameter};
+    use std::sync::Arc;
+
+    fn param(name: &str) -> Parameter {
+        Parameter {
+            name: name.to_string(),
+            type_annotation: None,
+            default_value: None,
+        }
+    }
+
+    /// fn double(x) = x * 2
+    fn double_fn() -> Function {
+        Function {
+            name: Some("double".to_string()),
+            parameters: vec![param("x")],
+            body: Arc::new(Expr::BinaryOp {
+                left: Box::new(Expr::Identifier("x".to_string())),
+                op: BinaryOp::Multiply,
+                right: Box::new(Expr::Integer(2)),
+            }),
+            closure: Arc::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn promotes_only_after_threshold() {
+        let mut tier = BytecodeTier::new(3);
+        let func = double_fn();
+
+        for _ in 0..2 {
+            assert!(matches!(
+                tier.try_call(&func, &[Value::Integer(5)]),
+                TierOutcome::Fallback
+            ));
+        }
+        assert_eq!(tier.stats().promoted, 0);
+
+        match tier.try_call(&func, &[Value::Integer(5)]) {
+            TierOutcome::Ran(Ok(Value::Integer(10))) => {}
+            other => panic!("expected bytecode result 10, got {:?}", matches!(other, TierOutcome::Fallback)),
+        }
+        assert_eq!(tier.stats().promoted, 1);
+    }
+
+    #[test]
+    fn prelude_capture_does_not_block_promotion() {
+        // Every user function captures the prelude; that must not stop a
+        // self-contained function from being promoted.
+        let mut tier = BytecodeTier::new(1);
+        let mut closure = HashMap::new();
+        closure.insert("println".to_string(), Value::Unit);
+        let func = Function {
+            closure: Arc::new(closure),
+            ..double_fn()
+        };
+
+        match tier.try_call(&func, &[Value::Integer(5)]) {
+            TierOutcome::Ran(Ok(Value::Integer(10))) => {}
+            _ => panic!("self-contained function should be promoted"),
+        }
+    }
+
+    #[test]
+    fn body_referencing_a_capture_is_rejected() {
+        let mut tier = BytecodeTier::new(1);
+        let mut closure = HashMap::new();
+        closure.insert("captured".to_string(), Value::Integer(1));
+        let func = Function {
+            name: Some("uses_capture".to_string()),
+            parameters: vec![param("x")],
+            body: Arc::new(Expr::BinaryOp {
+                left: Box::new(Expr::Identifier("x".to_string())),
+                op: BinaryOp::Add,
+                right: Box::new(Expr::Identifier("captured".to_string())),
+            }),
+            closure: Arc::new(closure),
+        };
+
+        assert!(matches!(
+            tier.try_call(&func, &[Value::Integer(5)]),
+            TierOutcome::Fallback
+        ));
+        assert_eq!(tier.stats().rejected, 1);
+    }
+
+    #[test]
+    fn anonymous_functions_are_skipped() {
+        let mut tier = BytecodeTier::new(1);
+        let func = Function {
+            name: None,
+            ..double_fn()
+        };
+        assert!(matches!(
+            tier.try_call(&func, &[Value::Integer(5)]),
+            TierOutcome::Fallback
+        ));
+    }
+
+    #[test]
+    fn rejection_is_permanent() {
+        let mut tier = BytecodeTier::new(1);
+        // A body referencing an unknown global can't compile
+        let func = Function {
+            name: Some("bad".to_string()),
+            parameters: vec![param("x")],
+            body: Arc::new(Expr::Identifier("nonexistent_global".to_string())),
+            closure: Arc::new(HashMap::new()),
+        };
+
+        for _ in 0..5 {
+            assert!(matches!(
+                tier.try_call(&func, &[Value::Integer(1)]),
+                TierOutcome::Fallback
+            ));
+        }
+        // Compiled once, rejected once — never retried
+        assert_eq!(tier.stats().rejected, 1);
+    }
+
+    #[test]
+    fn non_representable_arguments_fall_back() {
+        let mut tier = BytecodeTier::new(1);
+        let func = double_fn();
+        // Passing a function value must not go to the VM
+        assert!(matches!(
+            tier.try_call(&func, &[Value::Function(double_fn())]),
+            TierOutcome::Fallback
+        ));
+    }
+
+    #[test]
+    fn runtime_errors_propagate() {
+        let mut tier = BytecodeTier::new(1);
+        let func = Function {
+            name: Some("div".to_string()),
+            parameters: vec![param("a"), param("b")],
+            body: Arc::new(Expr::BinaryOp {
+                left: Box::new(Expr::Identifier("a".to_string())),
+                op: BinaryOp::Divide,
+                right: Box::new(Expr::Identifier("b".to_string())),
+            }),
+            closure: Arc::new(HashMap::new()),
+        };
+
+        match tier.try_call(&func, &[Value::Integer(1), Value::Integer(0)]) {
+            TierOutcome::Ran(Err(_)) => {}
+            _ => panic!("division by zero should surface as an error"),
+        }
+    }
+}
