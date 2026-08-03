@@ -5,8 +5,12 @@ use crate::ovm_integration::{IntegrationConfig, IntegrationError, OvmInterpreter
 use crate::parser::{ErrorSuggestion, ParseError, Parser, SuggestionSeverity};
 use crate::version::VERSION;
 use colored::*;
+use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::{history::DefaultHistory, Config, Editor};
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::validate::Validator;
+use rustyline::{history::DefaultHistory, Config, Context, Editor, Helper};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::time::Instant;
@@ -214,8 +218,150 @@ impl InteractiveDebugger {
     }
 }
 
+/// All REPL colon-commands, used for TAB completion of the command word.
+const REPL_COMMANDS: &[&str] = &[
+    ":help", ":quit", ":gc", ":env", ":clear", ":ovm", ":version", ":history",
+    ":type", ":time", ":memory", ":stats", ":parallel", ":run", ":debug",
+    ":watch", ":inspect", ":trace", ":set", ":stack", ":profile", ":config",
+    ":benchmark", ":search", ":tutorial", ":tutorial_run", ":contextual_help",
+    ":help_advanced", ":sh", ":cd", ":pwd", ":ls",
+];
+
+/// Commands whose arguments are file paths (get filename completion).
+const PATH_COMMANDS: &[&str] = &[":sh", ":cd", ":ls", ":run"];
+
+/// Rustyline helper: completes REPL command names, file paths (after shell /
+/// path-taking commands and inside double-quoted strings), and known
+/// function / variable identifiers.
+struct ReplHelper {
+    file_completer: FilenameCompleter,
+    /// Builtin + stdlib function names (static after startup)
+    function_names: Vec<String>,
+    /// User-defined variables/functions, refreshed after each evaluation
+    user_identifiers: Vec<String>,
+}
+
+impl ReplHelper {
+    fn new(function_names: Vec<String>) -> Self {
+        Self {
+            file_completer: FilenameCompleter::new(),
+            function_names,
+            user_identifiers: Vec::new(),
+        }
+    }
+
+    /// Is the cursor inside an unclosed double-quoted string literal?
+    fn in_string_literal(before_cursor: &str) -> bool {
+        let mut in_string = false;
+        let mut escaped = false;
+        for ch in before_cursor.chars() {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = !in_string;
+            }
+        }
+        in_string
+    }
+
+    /// The identifier-ish token ending at the cursor (letters, digits, `_`, `.`).
+    fn current_identifier(before_cursor: &str) -> &str {
+        let start = before_cursor
+            .rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        &before_cursor[start..]
+    }
+
+    fn complete_identifiers(&self, line: &str, pos: usize) -> (usize, Vec<Pair>) {
+        let before = &line[..pos];
+        let word = Self::current_identifier(before);
+        let start = pos - word.len();
+        if word.is_empty() {
+            return (start, Vec::new());
+        }
+        let mut candidates: Vec<Pair> = self
+            .function_names
+            .iter()
+            .chain(self.user_identifiers.iter())
+            .filter(|name| name.starts_with(word) && name.as_str() != word)
+            .map(|name| Pair {
+                display: name.clone(),
+                replacement: name.clone(),
+            })
+            .collect();
+        candidates.sort_by(|a, b| a.display.cmp(&b.display));
+        candidates.dedup_by(|a, b| a.display == b.display);
+        (start, candidates)
+    }
+
+    fn complete_commands(&self, word: &str) -> Vec<Pair> {
+        REPL_COMMANDS
+            .iter()
+            .filter(|cmd| cmd.starts_with(word))
+            .map(|cmd| Pair {
+                display: cmd.to_string(),
+                replacement: cmd.to_string(),
+            })
+            .collect()
+    }
+}
+
+impl Completer for ReplHelper {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        let before = &line[..pos];
+
+        // Shell shortcut: `!command args...` — complete paths everywhere
+        if line.starts_with('!') {
+            return self.file_completer.complete(line, pos, ctx);
+        }
+
+        if line.starts_with(':') {
+            let first_word_end = line.find(char::is_whitespace).unwrap_or(line.len());
+            if pos <= first_word_end {
+                // Completing the command name itself
+                return Ok((0, self.complete_commands(before)));
+            }
+            let command = &line[..first_word_end];
+            if PATH_COMMANDS.contains(&command) {
+                return self.file_completer.complete(line, pos, ctx);
+            }
+            if command == ":help" || command == ":type" || command == ":search" {
+                return Ok(self.complete_identifiers(line, pos));
+            }
+            // Default for other commands: try file paths (e.g. `:config load <file>`)
+            return self.file_completer.complete(line, pos, ctx);
+        }
+
+        // Regular olang code: complete file paths inside string literals
+        // (fs.read("src/ma<TAB>), identifiers elsewhere
+        if Self::in_string_literal(before) {
+            return self.file_completer.complete(line, pos, ctx);
+        }
+
+        Ok(self.complete_identifiers(line, pos))
+    }
+}
+
+impl Hinter for ReplHelper {
+    type Hint = String;
+}
+
+impl Highlighter for ReplHelper {}
+impl Validator for ReplHelper {}
+impl Helper for ReplHelper {}
+
 pub struct Repl {
-    editor: Editor<(), DefaultHistory>,
+    editor: Editor<ReplHelper, DefaultHistory>,
     ovm_interpreter: OvmInterpreter,
     parser: Parser,
     verbose: bool,
@@ -258,7 +404,18 @@ impl Repl {
             .history_ignore_space(true)
             .build();
 
-        let mut editor = Editor::<(), DefaultHistory>::with_config(config)?;
+        let mut editor = Editor::<ReplHelper, DefaultHistory>::with_config(config)?;
+
+        // TAB completion: REPL commands, file paths, and known identifiers
+        let help_system = HelpSystem::new();
+        let mut function_names = help_system.get_function_names();
+        function_names.extend(
+            crate::builtin::BuiltinFunctions::new()
+                .get_functions()
+                .keys()
+                .cloned(),
+        );
+        editor.set_helper(Some(ReplHelper::new(function_names)));
 
         // Load history if available
         let history_file = format!(
@@ -316,7 +473,7 @@ impl Repl {
             parser: Parser::new(),
             verbose,
             history_file,
-            help_system: HelpSystem::new(),
+            help_system,
             config: ReplConfig::default(),
             multiline_mode: false,
             multiline_buffer: String::new(),
@@ -332,6 +489,8 @@ impl Repl {
         println!();
 
         loop {
+            self.refresh_completions();
+
             let prompt = if self.multiline_mode {
                 "...> "
             } else {
@@ -401,6 +560,12 @@ impl Repl {
                 continue;
             }
 
+            // Shell escape: `!command` runs through the user's shell
+            if let Some(shell_cmd) = line.strip_prefix('!') {
+                self.run_shell_command(shell_cmd);
+                continue;
+            }
+
             // Handle special commands
             if line.starts_with(':') || line == "quit" {
                 if let Err(e) = self.handle_command(line) {
@@ -466,6 +631,73 @@ impl Repl {
         Ok(())
     }
 
+    /// Refresh TAB-completion candidates with the current user-defined
+    /// variables and functions.
+    fn refresh_completions(&mut self) {
+        let names: Vec<String> = self
+            .ovm_interpreter
+            .get_classic_interpreter()
+            .get_user_variables()
+            .keys()
+            .cloned()
+            .collect();
+        if let Some(helper) = self.editor.helper_mut() {
+            helper.user_identifiers = names;
+        }
+    }
+
+    /// Run a command through the user's shell, streaming its output.
+    /// `cd` is intercepted so it changes the REPL's own working directory.
+    fn run_shell_command(&mut self, cmd: &str) {
+        let cmd = cmd.trim();
+        if cmd.is_empty() {
+            println!("Usage: :sh <command>   (or !<command>)");
+            return;
+        }
+
+        if cmd == "cd" || cmd.starts_with("cd ") {
+            let target = cmd.strip_prefix("cd").unwrap_or("").trim();
+            self.change_directory(target);
+            return;
+        }
+
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        match std::process::Command::new(&shell).arg("-c").arg(cmd).status() {
+            Ok(status) => {
+                if !status.success() {
+                    match status.code() {
+                        Some(code) => println!("{}", format!("(exit code {})", code).bright_red()),
+                        None => println!("{}", "(terminated by signal)".bright_red()),
+                    }
+                }
+            }
+            Err(e) => eprintln!("Failed to run '{}' via {}: {}", cmd, shell, e),
+        }
+    }
+
+    /// Change the REPL's working directory (with `~` expansion); empty target
+    /// goes home.
+    fn change_directory(&mut self, target: &str) {
+        let target = if target.is_empty() { "~" } else { target };
+        let expanded = if target == "~" || target.starts_with("~/") {
+            match std::env::var("HOME") {
+                Ok(home) => target.replacen('~', &home, 1),
+                Err(_) => target.to_string(),
+            }
+        } else {
+            target.to_string()
+        };
+
+        match std::env::set_current_dir(&expanded) {
+            Ok(()) => {
+                if let Ok(cwd) = std::env::current_dir() {
+                    println!("{}", cwd.display().to_string().bright_cyan());
+                }
+            }
+            Err(e) => eprintln!("cd: {}: {}", expanded, e),
+        }
+    }
+
     fn handle_command(&mut self, command: &str) -> Result<(), ReplError> {
         let parts: Vec<&str> = command.split_whitespace().collect();
         let command_name = parts[0];
@@ -527,6 +759,23 @@ impl Repl {
             }
             "quit" | ":quit" => {
                 std::process::exit(0);
+            }
+            ":sh" => {
+                // Preserve the raw remainder (quotes, pipes, etc.)
+                let cmd = command[":sh".len()..].trim().to_string();
+                self.run_shell_command(&cmd);
+            }
+            ":pwd" => match std::env::current_dir() {
+                Ok(cwd) => println!("{}", cwd.display()),
+                Err(e) => eprintln!("pwd: {}", e),
+            },
+            ":cd" => {
+                let target = command[":cd".len()..].trim().to_string();
+                self.change_directory(&target);
+            }
+            ":ls" => {
+                let args = command[":ls".len()..].trim();
+                self.run_shell_command(&format!("ls {}", args));
             }
             ":gc" => {
                 if self.ovm_interpreter.is_ovm_available() {
@@ -1238,7 +1487,7 @@ impl Repl {
                         // Offer interactive mode
                         println!("\n{}Interactive Mode:{}", Colors::CYAN, Colors::RESET);
                         println!("  Would you like to try the tutorial interactively?");
-                        println!("  Use ':tutorial run {}' to start interactive mode", tutorial_name);
+                        println!("  Use ':tutorial_run {}' to start interactive mode", tutorial_name);
                     } else {
                         println!("Tutorial '{}' not found.", tutorial_name);
                         println!("{}", self.help_system.format_tutorial_list());
@@ -1325,7 +1574,10 @@ impl Repl {
             }
             _ => {
                 return Err(ReplError::Parse(ParseError::InvalidSyntax {
-                    message: format!("Unknown command: {}", command),
+                    message: format!(
+                        "Unknown command: {}. Try ':help', or ':sh <command>' / '!<command>' to run a shell command",
+                        command
+                    ),
                 }));
             }
         }
@@ -1499,8 +1751,9 @@ impl Repl {
     fn format_value_preview(value: &Value) -> String {
         match value {
             Value::String(s) => {
-                if s.len() > 50 {
-                    format!("\"{}...\"", &s[..47])
+                if s.chars().count() > 50 {
+                    let preview: String = s.chars().take(47).collect();
+                    format!("\"{}...\"", preview)
                 } else {
                     format!("\"{}\"", s)
                 }
@@ -2284,18 +2537,24 @@ impl Repl {
         let target_lower = target.to_lowercase();
         let candidate_lower = candidate.to_lowercase();
         
-        // Check for similar starts
-        if target_lower.starts_with(&candidate_lower[..2]) || 
-           candidate_lower.starts_with(&target_lower[..2]) {
-            return true;
+        // Compare 2-char prefixes/suffixes by chars — byte slicing panics on
+        // multibyte identifiers (e.g. `xé`)
+        let target_chars: Vec<char> = target_lower.chars().collect();
+        let candidate_chars: Vec<char> = candidate_lower.chars().collect();
+        if target_chars.len() >= 2 && candidate_chars.len() >= 2 {
+            // Check for similar starts
+            if target_chars[..2] == candidate_chars[..2] {
+                return true;
+            }
+
+            // Check for similar endings
+            if target_chars[target_chars.len() - 2..]
+                == candidate_chars[candidate_chars.len() - 2..]
+            {
+                return true;
+            }
         }
-        
-        // Check for similar endings
-        if target_lower.ends_with(&candidate_lower[candidate_lower.len()-2..]) || 
-           candidate_lower.ends_with(&target_lower[target_lower.len()-2..]) {
-            return true;
-        }
-        
+
         false
     }
     
@@ -2558,4 +2817,81 @@ fn repl_format(value: &Value) -> String {
 
 fn repl_print(value: &Value) {
     println!("{}", repl_format(value));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustyline::history::DefaultHistory;
+
+    fn helper() -> ReplHelper {
+        ReplHelper::new(vec![
+            "println".to_string(),
+            "print".to_string(),
+            "map".to_string(),
+        ])
+    }
+
+    fn complete(h: &ReplHelper, line: &str, pos: usize) -> (usize, Vec<String>) {
+        let history = DefaultHistory::new();
+        let ctx = Context::new(&history);
+        let (start, pairs) = h.complete(line, pos, &ctx).unwrap();
+        (start, pairs.into_iter().map(|p| p.replacement).collect())
+    }
+
+    #[test]
+    fn completes_repl_command_names() {
+        let h = helper();
+        let (start, names) = complete(&h, ":p", 2);
+        assert_eq!(start, 0);
+        assert!(names.contains(&":pwd".to_string()));
+        assert!(names.contains(&":profile".to_string()));
+        assert!(!names.contains(&":help".to_string()));
+    }
+
+    #[test]
+    fn completes_file_paths_after_shell_commands() {
+        let h = helper();
+        // `:sh cat Car` should offer Cargo.toml / Cargo.lock from the repo root
+        let (_, names) = complete(&h, ":sh cat Car", 11);
+        assert!(
+            names.iter().any(|n| n.contains("Cargo.toml")),
+            "expected Cargo.toml in {:?}",
+            names
+        );
+        // Bare `!` shell shortcut too
+        let (_, names) = complete(&h, "!cat Car", 8);
+        assert!(names.iter().any(|n| n.contains("Cargo.toml")));
+    }
+
+    #[test]
+    fn completes_file_paths_inside_string_literals() {
+        let h = helper();
+        let line = "fs.read(\"Car";
+        let (_, names) = complete(&h, line, line.len());
+        assert!(
+            names.iter().any(|n| n.contains("Cargo.toml")),
+            "expected Cargo.toml in {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn completes_identifiers_in_code() {
+        let mut h = helper();
+        h.user_identifiers = vec!["my_variable".to_string()];
+        let (start, names) = complete(&h, "pri", 3);
+        assert_eq!(start, 0);
+        assert_eq!(names, vec!["print".to_string(), "println".to_string()]);
+        let (_, names) = complete(&h, "1 + my_v", 8);
+        assert_eq!(names, vec!["my_variable".to_string()]);
+    }
+
+    #[test]
+    fn string_literal_detection_handles_escapes() {
+        assert!(ReplHelper::in_string_literal("fs.read(\"abc"));
+        assert!(!ReplHelper::in_string_literal("fs.read(\"abc\")"));
+        assert!(ReplHelper::in_string_literal("x = \"a\\\"b"));
+        assert!(!ReplHelper::in_string_literal("let x = 1"));
+    }
 }

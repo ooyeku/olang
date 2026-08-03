@@ -2841,6 +2841,72 @@ impl HelpSystem {
 
     /// Add REPL command documentation
     fn add_repl_commands(&mut self) {
+        // Shell command execution
+        self.add_function(FunctionDoc {
+            name: ":sh".to_string(),
+            description: "Run a command through your shell ($SHELL), streaming its output. `!<command>` is a shortcut for the same thing. `cd` changes the REPL's own working directory. TAB completes file paths in shell commands."
+                .to_string(),
+            syntax: ":sh <command>   or   !<command>".to_string(),
+            parameters: vec![
+                "command - Any shell command line (pipes, globs, and quotes work)".to_string(),
+            ],
+            return_type: "Display".to_string(),
+            examples: vec![
+                ":sh ls -la              // List files".to_string(),
+                "!git status             // Shortcut form".to_string(),
+                ":sh cat data.csv | head // Pipes work".to_string(),
+                "!cd src                 // Changes the REPL's working directory".to_string(),
+            ],
+            category: "REPL".to_string(),
+            see_also: vec![":cd".to_string(), ":pwd".to_string(), ":ls".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: ":cd".to_string(),
+            description: "Change the REPL's working directory (supports ~ expansion; no argument goes home). Affects relative paths used by fs. functions and shell commands."
+                .to_string(),
+            syntax: ":cd [directory]".to_string(),
+            parameters: vec![
+                "directory (optional) - Target directory; defaults to $HOME".to_string(),
+            ],
+            return_type: "Display".to_string(),
+            examples: vec![
+                ":cd src                 // Enter a subdirectory".to_string(),
+                ":cd ~/projects          // ~ expands to your home directory".to_string(),
+                ":cd                     // Go home".to_string(),
+            ],
+            category: "REPL".to_string(),
+            see_also: vec![":pwd".to_string(), ":ls".to_string(), ":sh".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: ":pwd".to_string(),
+            description: "Print the REPL's current working directory".to_string(),
+            syntax: ":pwd".to_string(),
+            parameters: vec![],
+            return_type: "Display".to_string(),
+            examples: vec![":pwd                    // /Users/you/projects".to_string()],
+            category: "REPL".to_string(),
+            see_also: vec![":cd".to_string(), ":ls".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: ":ls".to_string(),
+            description: "List directory contents (passes arguments through to your system's ls)"
+                .to_string(),
+            syntax: ":ls [args]".to_string(),
+            parameters: vec![
+                "args (optional) - Any arguments your system ls accepts".to_string(),
+            ],
+            return_type: "Display".to_string(),
+            examples: vec![
+                ":ls                     // List current directory".to_string(),
+                ":ls -la src             // Long listing of src/".to_string(),
+            ],
+            category: "REPL".to_string(),
+            see_also: vec![":cd".to_string(), ":pwd".to_string(), ":sh".to_string()],
+        });
+
         // Environment Inspection
         self.add_function(FunctionDoc {
             name: ":env".to_string(),
@@ -3179,9 +3245,12 @@ impl HelpSystem {
 
 {}REPL Commands:{}
   {}:env{}               - Show current environment
-  {}:history{}           - Show command history  
+  {}:history{}           - Show command history
   {}:type <expr>{}       - Check expression type
   {}:clear{}             - Clear screen or environment
+  :sh <cmd> or !<cmd>  - Run a shell command
+  :cd, :pwd, :ls       - Navigate the filesystem
+  TAB                  - Complete commands, functions, and file paths
 
 {}Categories Available:{}
 {}
@@ -4620,16 +4689,15 @@ For function-specific syntax, use: {}:help <function_name>{}",
         self.add_function(FunctionDoc {
             name: "crypto.decrypt_aes".to_string(),
             description: "Decrypt data using AES-256-GCM with authentication".to_string(),
-            syntax: "crypto.decrypt_aes(ciphertext, key, nonce, tag)".to_string(),
+            syntax: "crypto.decrypt_aes(encrypted_data, key) or crypto.decrypt_aes(ciphertext, key, nonce)".to_string(),
             parameters: vec![
-                "ciphertext: String - Encrypted data as hex string".to_string(),
+                "encrypted_data: String - Output of encrypt_aes (hex of nonce || ciphertext)".to_string(),
                 "key: String - 32-byte key as hex string (64 characters)".to_string(),
-                "nonce: String - 12-byte nonce as hex string (24 characters)".to_string(),
-                "tag: String - Authentication tag as hex string".to_string(),
+                "nonce: String - Optional 12-byte nonce as hex (24 characters) when the ciphertext does not embed it".to_string(),
             ],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "crypto.decrypt_aes(encrypted_data, key, nonce, tag)  // Ok(\"original message\")".to_string(),
+                "crypto.decrypt_aes(encrypted_data, key)  // Ok(\"original message\")".to_string(),
             ],
             category: "Crypto".to_string(),
             see_also: vec!["crypto.encrypt_aes".to_string()],
