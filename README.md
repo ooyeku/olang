@@ -16,12 +16,17 @@ Current Status: Very early/Experimental.
 - **Bitwise Operations**: Full support for `&`, `|`, `^`, `<<`, `>>` operations
 - **Advanced Literals**: Binary (`0b1010`), octal (`0o755`), hex (`0xFF`), raw strings (`r"..."`), character literals (`'a'`)
 
-### High-Performance Execution
-- **OVM (Olang Virtual Machine)**: Advanced bytecode VM with JIT compilation via Cranelift
-- **Lazy Evaluation**: Memory-efficient lazy evaluation for large datasets
-- **Parallel Processing**: Automatic parallelization for list operations
-- **Garbage Collection**: Concurrent, generational garbage collection
-- **Performance Monitoring**: Built-in performance metrics and profiling
+### Execution
+- **Tiered Execution**: A tree-walking interpreter plus an opt-in register-based
+  bytecode VM that hot functions are promoted to (`--ovm-tier`). Promotion is
+  transparent: anything the VM can't compile keeps running on the interpreter
+- **Lazy Evaluation**: Lazy list operations for large datasets
+- **Parallel Processing**: Multi-threaded list operations
+- **Reference Counting**: Deterministic memory reclamation
+- **Performance Monitoring**: Execution statistics via `--ovm-stats`
+
+See [docs/ovm.md](docs/ovm.md) for the architecture, measured speedups, and an
+explicit list of what is and isn't implemented.
 
 ### Type System
 - **Union Types**: `Int | String | Bool`
@@ -31,9 +36,10 @@ Current Status: Very early/Experimental.
 - **Promise Types**: `Promise<T, E>` for async operations
 - **Literal Types**: `"admin" | "user"`, `42`
 
-### Standard Library (10 Modules)
+### Standard Library (11 Modules)
 - **fs**: File system operations (read, write, copy, move, etc.)
-- **http**: HTTP client and server functionality
+- **http**: HTTP client (requests, headers, JSON); `http.serve` is a
+  placeholder, not a working server
 - **math**: Comprehensive mathematical functions
 - **random**: Random number generation and distributions
 - **dates**: Date/time parsing, formatting, and arithmetic
@@ -42,6 +48,7 @@ Current Status: Very early/Experimental.
 - **base64**: Base64 encoding and decoding
 - **crypto**: Cryptographic operations (hashing, encryption, etc.)
 - **os**: Operating system utilities
+- **testing**: Assertions for the built-in test framework
 
 ### Development Features
 - **Testing Framework**: Built-in test declarations and assertions
@@ -49,6 +56,8 @@ Current Status: Very early/Experimental.
 - **Error Handling**: Try-catch expressions and Result types
 - **Async/Await**: Full async programming support
 - **Help System**: Interactive help with fuzzy search and tutorials
+- **REPL Shell Integration**: Run shell commands and navigate the filesystem
+  without leaving the REPL, with TAB completion for paths and identifiers
 
 ## Installation
 
@@ -109,11 +118,49 @@ olang> let inc = (x) => x + 1
 olang> inc(5)
 6
 olang> [1,2,3] |> map(inc) |> filter((n) => n % 2 == 1)
-[1,3]
-olang> match Some(42) { Some(v) => println(v), None => println("nope") }
+[3]
+olang> match Ok(42) { Ok(v) => println(v), Err(e) => println(e) }
 42
-olang> let template = `Hello ${name}, your score is ${score}%`
+olang> let name = "ann"
+olang> let score = 91
+olang> `Hello ${name}, your score is ${score}%`
+"Hello ann, your score is 91%"
 olang> :help map
+```
+
+#### Shell Commands
+
+Run shell commands without leaving the REPL. `cd` changes the REPL's own
+working directory, so relative paths in `fs.` calls and later commands follow
+along:
+
+```
+olang> :pwd                        # print working directory
+olang> :cd src                     # change directory (supports ~)
+olang> :ls -la                     # list files
+olang> :sh cat data.csv | head     # any shell command; pipes and globs work
+olang> !git status                 # ! is shorthand for :sh
+```
+
+#### TAB Completion
+
+Press TAB to complete:
+
+- REPL commands — `:p` completes to `:pwd`, `:profile`, ...
+- File paths after shell commands (`!`, `:sh`, `:cd`, `:ls`, `:run`) **and
+  inside string literals**, so `fs.read("src/ma` completes to `src/main.rs`
+- Function and variable names, including stdlib functions and bindings you
+  defined earlier in the session
+
+#### Other REPL Commands
+
+```
+:env                 # show current environment
+:type <expr>         # inspect the type of an expression
+:history             # command history (:!<n> re-runs an entry)
+:time <expr>         # time an expression
+:help <topic>        # documentation, tutorials, and fuzzy search
+:clear               # clear screen or environment
 ```
 
 ### File Execution
@@ -133,11 +180,20 @@ olang --batch script.ol
 # Verbose output
 olang --verbose
 
+# Compile hot functions to bytecode after 50 calls (or --ovm-tier=N).
+# Note the '=': a bare --ovm-tier would otherwise swallow the filename.
+olang --ovm-tier script.ol
+olang --ovm-tier=10 script.ol
+
 # Disable OVM (use classic interpreter only)
 olang --no-ovm script.ol
 
-# Show OVM performance statistics
+# Show execution statistics, including tier promotions
 olang --ovm-stats script.ol
+
+# Control parallelism for list operations
+olang --enable-parallel script.ol
+olang --ovm-parallelism 4 script.ol
 
 # Enable tracing for debugging
 olang --trace
@@ -180,21 +236,29 @@ data
 ### Pattern Matching
 
 ```olang
-match value {
-  Some(x) => println("Got", x),
-  None => println("None"),
+// Result patterns (note: `error` is a reserved keyword, so bind another name)
+match result {
+  Ok(value) => println(value),
+  Err(e) => println(e),
 }
 
 // List patterns with rest
 match list {
-  [head, ...tail] => println("Head:", head, "Tail:", tail),
+  [head, ...tail] => println(head),
   [] => println("Empty list"),
 }
 
-// Struct patterns
+// Struct patterns (every field must be named — there is no `..` rest form)
 match user {
-  User { name: "admin", .. } => "Administrator",
   User { name, age } => `${name} (${age})`,
+}
+
+// Guards and ranges
+match n {
+  0 => "zero",
+  1..10 => "small",
+  x if x > 100 => "large",
+  _ => "medium",
 }
 ```
 
@@ -211,9 +275,8 @@ let regular = "Hello \"World\""
 let raw = r"C:\Users\Name\file.txt"
 let template = `Hello ${name}!`
 
-// Character literals
+// Character literals (exactly one character; no escape sequences)
 let char = 'a'
-let newline = '\n'
 ```
 
 ### Type System
@@ -238,10 +301,11 @@ type Color = enum {
     RGB(Int, Int, Int)
 }
 
-// Error types
+// Error types — a variant's payload may be () or an anonymous struct,
+// but not a named type
 error NetworkError {
     Timeout,
-    ConnectionFailed: String,
+    ConnectionFailed: (),
     InvalidResponse: {
         status: Int,
         message: String
@@ -285,53 +349,68 @@ test "string concatenation" {
 
 ## Standard Library Examples
 
+> **Note:** Standard library functions return `Result` values (`Ok(...)` /
+> `Err(...)`). Use `unwrap(...)`, the `?` operator, or `match` to get at the
+> value — the examples below use `unwrap` for brevity.
+
 ### File System Operations
 
 ```olang
 // Read and write files
-let content = fs.read_file("input.txt")
+let content = unwrap(fs.read_file("input.txt"))
 fs.write_file("output.txt", content)
 
 // Directory operations
-let files = fs.list_dir(".")
-files |> filter((f) => fs.is_file(f)) |> map(println)
+let files = unwrap(fs.list_dir("."))
+println(len(files))
 ```
 
 ### HTTP Operations
 
 ```olang
 // HTTP client
-let response = http.get("https://api.example.com/data")
-let data = json.parse(response.body)
+let response = unwrap(http.get("https://api.example.com/data"))
+let data = unwrap(json.parse(response.body))
 
-// HTTP server
-http.serve(8080, (req) => {
-    http.response(200, "Hello, World!")
-})
+// POST with a JSON body
+let created = http.post("https://api.example.com/items", unwrap(json.stringify(data)))
 ```
+
+Server support (`http.serve`) is not implemented — it currently returns a
+placeholder message rather than binding a port.
 
 ### Data Processing
 
 ```olang
-// CSV processing
-let data = csv.parse_with_headers("data.csv")
-let filtered = data |> filter((row) => row.age > 25)
+// CSV processing — parse_with_headers takes CSV *text*, not a path
+let text = unwrap(fs.read_file("data.csv"))
+let rows = unwrap(csv.parse_with_headers(text))
+println(len(rows))
 
-// JSON manipulation
-let user = json.parse('{"name": "Alice", "age": 30}')
-let name = json.get(user, "name")
+// JSON manipulation (note: strings use double quotes)
+let user = unwrap(json.parse("{\"name\": \"Alice\", \"age\": 30}"))
+let encoded = unwrap(json.stringify(user))
 ```
 
 ### Cryptography
 
 ```olang
 // Hashing
-let hash = crypto.sha256("password")
-let verified = crypto.verify_bcrypt("password", hash)
+let hash = unwrap(crypto.sha256("password"))
 
-// Encryption
-let encrypted = crypto.encrypt_aes("secret data", "key")
-let decrypted = crypto.decrypt_aes(encrypted, "key")
+// Password hashing and verification
+let stored = unwrap(crypto.hash_password("secret"))
+let ok = unwrap(crypto.verify_password("secret", stored))
+
+// Encryption — the key is a 32-byte hex string
+let key = unwrap(crypto.random_hex(32))
+let encrypted = unwrap(crypto.encrypt_aes("secret data", key))
+let decrypted = unwrap(crypto.decrypt_aes(encrypted, key))
+
+// RSA signing
+let keys = unwrap(crypto.generate_key_pair())
+let signature = unwrap(crypto.sign_data("message", keys.private_key))
+let valid = unwrap(crypto.verify_signature("message", signature, keys.public_key))
 ```
 
 
@@ -345,10 +424,27 @@ cargo test
 cargo test -- --nocapture  # Show output
 ```
 
+Two suites guard the bytecode tier specifically:
+
+```bash
+# The VM must produce identical results to the interpreter
+cargo test --test bytecode_differential_test
+
+# Whole programs must behave the same with and without promotion
+cargo test --test bytecode_tier_test
+```
+
+If you extend the bytecode VM, extend the differential suite in the same
+change — the interpreter defines the language, so any divergence is a VM bug.
+
 ### Benchmarks
 
 ```bash
+# Interpreter benchmarks (ten representative programs)
 cargo bench
+
+# Interpreter vs. bytecode tier on the same functions
+cargo run --release --example tier_compare
 ```
 
 ### Code Formatting
@@ -366,40 +462,57 @@ cargo clippy
 ### Performance Testing
 
 ```bash
-# Run performance benchmarks
-cargo run --release --example benchmark
+# Compare execution tiers
+cargo run --release --example tier_compare
 
-# Test OVM performance
-olang --ovm-stats examples/benchmark.ol
+# Inspect tier promotions in a real program
+olang --ovm-tier --ovm-stats examples/benchmark.ol
 ```
 
 ## Performance
 
-Olang features advanced performance optimizations:
+Enabling `--ovm-tier` promotes hot functions to the bytecode VM. Measured on an
+Apple Silicon laptop, release build:
 
-- **OVM Bytecode VM**: 2-12x speedup for computation-intensive operations
-- **Lazy Evaluation**: 85-92% memory reduction for large datasets
-- **Parallel Processing**: Automatic multi-threading for list operations
-- **JIT Compilation**: Native code generation for hot functions
-- **Memory Management**: Concurrent garbage collection with lazy awareness
+| Workload | Interpreter | Bytecode tier | Speedup |
+|---|---|---|---|
+| `fib(20)` (recursive calls) | 837 ms | 6.9 ms | ~121x |
+| 100k-iteration `while` loop | 27.9 ms | 4.2 ms | ~6.6x |
+
+End to end through the CLI, `fib(27)` runs in **23.6 s** interpreted and
+**0.20 s** with the tier enabled, producing identical output.
+
+Reproduce with `cargo run --release --example tier_compare`. Call-heavy code
+benefits most, because a promoted recursive function runs its whole call tree
+inside the VM.
+
+Not every function qualifies — the VM supports a subset of the language, and
+anything outside it stays on the interpreter. See
+[docs/ovm.md](docs/ovm.md#known-limitations) for the current boundaries.
 
 ## Roadmap
 
-### Current Status (v0.18)
-- Core language features complete
-- Standard library (10 modules) implemented
-- OVM with bytecode VM and JIT compilation
-- Advanced type system with unions and intersections
+### Current Status (v0.23, experimental)
+- Core language features implemented
+- Standard library (11 modules)
+- Tree-walking interpreter with an opt-in bytecode tier for hot functions,
+  covered by differential tests against the interpreter
+- Reference-counted value model
+- Type system with unions, intersections, and generics
 - Async/await runtime
 - Testing framework
-- Help system with tutorials
+- REPL with help system, tutorials, shell integration, and TAB completion
 
 ### Next Phase
-- Advanced fusion optimization
-- SIMD vectorization improvements
-- Production monitoring and analytics
-- WebAssembly target
+- **Widen the bytecode tier**: transitive compilation so functions calling
+  other user functions qualify; `match` and `for` support; more builtins
+- **Enable the tier by default** once coverage justifies it
+- **Real JIT codegen** to replace the disabled Cranelift scaffolding
 - Package manager and ecosystem
+- WebAssembly target
+
+Known gaps are tracked explicitly in
+[docs/ovm.md](docs/ovm.md#not-implemented) rather than implied to be finished.
 
 ## Contributing
 
@@ -418,7 +531,7 @@ This project is licensed under the MIT License—see the [LICENSE](LICENSE) file
 - [Pest](https://pest.rs/) for parsing
 - [Rustyline](https://github.com/kkawakam/rustyline) for REPL functionality
 - [Serde](https://serde.rs/) for serialization
-- [Cranelift](https://github.com/bytecodealliance/wasmtime/tree/main/cranelift) for JIT compilation
+- [Cranelift](https://github.com/bytecodealliance/wasmtime/tree/main/cranelift) for the (in-progress) JIT backend
 - [Crossbeam](https://github.com/crossbeam-rs/crossbeam) for concurrent data structures
 
 ## Examples Directory
@@ -427,14 +540,19 @@ Check out the `examples/` directory for comprehensive sample programs demonstrat
 
 - `union_types.ol` - Advanced pattern matching and discriminated unions
 - `string_interpolation.ol` - Template strings and advanced literals
-- `sales_analyzer.ol` - Complex data processing with pipelines
+- `simple_sales.ol` - Data processing with pipelines
 - `crypto_test.ol` - Cryptographic operations
 - `dates.ol` - Date/time manipulation
-- And many more...
+- `loops.ol`, `fast_loops.ol` - Loop forms and performance comparison
+- `benchmark.ol` - Mixed workload used for performance checks
+- `base_utils.ol`, `extended_utils.ol`, `stats_module.ol` - Module system
+- And more in the directory.
 
 ## Documentation
 
-- [Setup Guide](SETUP.md) - Installation and setup instructions
-- [Syntax Documentation](docs/syntax.md) - Complete language syntax reference
-- [OVM Documentation](docs/ovm.md) - Virtual machine architecture and features
+- [Syntax Reference](docs/syntax.md) - Complete language syntax
+- [OVM Architecture](docs/ovm.md) - Execution tiers, the bytecode VM, measured
+  performance, and current limitations
+
+Installation instructions are in [Installation](#installation) above.
 - [Standard Library](docs/stdlib.md) - API reference for all modules 

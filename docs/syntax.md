@@ -21,8 +21,11 @@ This document describes the complete syntax of the Olang programming language ba
 13. [Module System](#module-system)
 14. [Error Handling](#error-handling)
 15. [Testing](#testing)
-16. [Help System](#help-system)
+16. [Help System and REPL](#help-system)
 17. [Implementation Status](#implementation-status)
+
+For how Olang executes code (interpreter, bytecode tier, performance), see
+[OVM Architecture](ovm.md).
 
 ## Literals
 
@@ -117,6 +120,15 @@ false       // Boolean false
 ```
 
 ## Identifiers and Variables
+
+Identifiers start with a letter and may contain letters, digits, and
+underscores. The reserved keywords are `fn`, `let`, `type`, `if`, `else`,
+`match`, `for`, `while`, `loop`, `break`, `continue`, `true`, `false`,
+`async`, `await`, `try`, `catch`, `error`, `share`, `use`, `struct`, `enum`,
+and `test` — note that `error` is reserved, so it cannot be used as a
+variable or binding name. Names that merely *begin* with a keyword are ordinary
+identifiers — `match_count`, `for_each`, and `type_name` are all valid, since
+only the exact keyword is reserved.
 
 ### Variable Declaration
 
@@ -670,27 +682,38 @@ while counter < 10 {
 
 ```olang
 // Infinite loop with break
+let counter = 0
 loop {
-    let input = read_input();
-    if input == "quit" {
-        break;
-    }
-    process(input);
+    counter = counter + 1
+    if counter >= 3 => break
 }
+println(counter)   // 3
 ```
 
 ### Loop Control
 
+Note that `if` is an expression and always uses `=>`, including when its body
+is `break` or `continue`. There is no `if cond { ... }` statement form.
+
 ```olang
 // Break and continue
-for i in 0..100 {
-    if i % 2 == 0 {
-        continue;  // Skip even numbers
+for i in 0..10 {
+    if i % 2 == 0 => continue   // Skip even numbers
+    if i > 6 => break           // Stop past 6
+    println(i)
+}
+// prints 1, 3, 5
+```
+
+To run several statements in a branch, use a block after `=>`:
+
+```olang
+for i in 0..5 {
+    if i == 2 => {
+        println("found two")
+        continue
     }
-    if i > 50 {
-        break;     // Stop after 50
-    }
-    println(i);
+    println(i)
 }
 ```
 
@@ -844,6 +867,23 @@ assert_false(expression, "Custom message");
 :help contextual         // Get help based on current REPL state
 ```
 
+### Shell Commands
+
+The REPL can run shell commands and navigate the filesystem. `cd` changes the
+REPL's own working directory, so relative paths in `fs.` calls follow along:
+
+```olang
+:pwd                     // Print working directory
+:cd src                  // Change directory (supports ~)
+:ls -la                  // List files
+:sh cat data.csv | head  // Any shell command; pipes and globs work
+!git status              // ! is shorthand for :sh
+```
+
+TAB completes REPL commands, function and variable names, and file paths —
+including inside string literals, so `fs.read("src/ma` completes to
+`src/main.rs`.
+
 ### Help System Features
 
 1. **Fuzzy Search**: Case-insensitive search with similarity matching
@@ -922,6 +962,12 @@ assert_false(expression, "Custom message");
     - Interactive Tutorials
     - Better REPL Error Messages
 
+11. **Execution**
+    - Tree-walking interpreter (the semantics reference)
+    - Opt-in bytecode tier for hot functions (`--ovm-tier`), covered by
+      differential tests against the interpreter — see
+      [OVM Architecture](ovm.md)
+
 ### In Progress Features
 
 1. **Advanced Type System**
@@ -929,15 +975,19 @@ assert_false(expression, "Custom message");
    - Type inference improvements
    - Complex type validation
 
-2. **Performance Optimizations**
-   - OVM memory management refinements
+2. **Bytecode Tier Coverage**
+   - Only self-recursive and leaf functions are promoted today; functions
+     calling other user functions still interpret
+   - `match`, `for` loops, lambdas, and pipelines are not yet compiled
+   - See [Known limitations](ovm.md#known-limitations)
+
+3. **Performance Optimizations**
    - Lazy evaluation edge cases
 
 ### Known Limitations
 
 1. **Module System**
    - Module resolution has verbose debug output
-   - No module caching implemented
    - Import/export needs better error handling
 
 2. **Advanced Type Features**
@@ -945,8 +995,10 @@ assert_false(expression, "Custom message");
    - Some complex type scenarios not fully supported
 
 3. **Performance**
-   - Large recursive operations may cause stack overflow
-   - Some OVM optimizations still being refined
+   - Recursion is bounded at 1000 frames and reports
+     "Maximum call depth exceeded" rather than crashing
+   - The bytecode tier covers a subset of the language; everything outside it
+     runs on the interpreter
 
 ### Testing Strategy
 
