@@ -3917,13 +3917,10 @@ mod tests {
         assert!(result.is_ok(), "Function execution should succeed");
 
         let result_value = result.unwrap();
-        if let crate::ovm::value::ValueData::Range(gc_ptr) = result_value.data {
-            unsafe {
-                let range = gc_ptr.as_ref();
-                assert_eq!(range.start, 1, "Range start should be 1");
-                assert_eq!(range.end, 10, "Range end should be 10");
-                assert_eq!(range.inclusive, false, "Range should not be inclusive");
-            }
+        if let crate::ovm::value::ValueData::Range(range) = &result_value.data {
+            assert_eq!(range.start, 1, "Range start should be 1");
+            assert_eq!(range.end, 10, "Range end should be 10");
+            assert_eq!(range.inclusive, false, "Range should not be inclusive");
         } else {
             panic!("Expected range result, got: {:?}", result_value);
         }

@@ -686,7 +686,7 @@ impl OlangVirtualMachine {
 
     /// Create a lazy range stream
     fn create_lazy_range(&mut self, start: i64, end: i64) -> Result<OvmValue, OvmError> {
-        use crate::ovm::value::{GeneratorFunction, StreamObject, TypeTag, LazyState, ExecutionTier, ValueHeader, ValueData, GcPtr};
+        use crate::ovm::value::{GeneratorFunction, StreamObject, TypeTag, LazyState, ExecutionTier, ValueHeader, ValueData};
         use std::sync::atomic::AtomicU32;
 
         // Create a lazy stream that generates range values on demand
@@ -701,7 +701,7 @@ impl OlangVirtualMachine {
             chunk_size: 64, // Reasonable chunk size
         };
 
-        let stream_ptr = GcPtr::new(Box::into_raw(Box::new(stream_obj)));
+        let stream_ptr = std::sync::Arc::new(stream_obj);
         
         Ok(OvmValue {
             header: ValueHeader {
@@ -723,7 +723,7 @@ impl OlangVirtualMachine {
     /// Create a lazy list (simplified implementation)
     #[allow(dead_code)]
     fn create_lazy_list(&mut self, _items: Vec<execution::OvmExpr>) -> Result<OvmValue, OvmError> {
-        use crate::ovm::value::{LazyListObject, TransformationChain, TypeTag, LazyState, ExecutionTier, ValueHeader, ValueData, GcPtr};
+        use crate::ovm::value::{LazyListObject, TransformationChain, TypeTag, LazyState, ExecutionTier, ValueHeader, ValueData};
         use std::sync::atomic::AtomicU32;
 
         // For now, create a simple lazy list with a unit source
@@ -737,7 +737,7 @@ impl OlangVirtualMachine {
             materialization_point: Mutex::new(0),
         };
 
-        let lazy_list_ptr = GcPtr::new(Box::into_raw(Box::new(lazy_list_obj)));
+        let lazy_list_ptr = std::sync::Arc::new(lazy_list_obj);
         
         Ok(OvmValue {
             header: ValueHeader {

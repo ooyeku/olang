@@ -11,7 +11,7 @@ use olang::{Interpreter, Parser};
 
 /// Parse once, evaluate per-iteration on a shared interpreter.
 fn bench_program(c: &mut Criterion, name: &str, source: &str) {
-    let mut parser = Parser::new();
+    let parser = Parser::new();
     let program = parser
         .parse(source)
         .unwrap_or_else(|e| panic!("bench '{}' failed to parse: {}", name, e));

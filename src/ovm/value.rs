@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -156,61 +155,35 @@ pub enum ValueData {
     Boolean(bool),
     Unit,
 
-    // GC-managed values
-    String(GcPtr<String>),
-    List(GcPtr<ValueArray>),
-    Tuple(GcPtr<ValueArray>),
-    Function(GcPtr<FunctionObject>),
-    Struct(GcPtr<StructObject>),
-    Range(GcPtr<RangeObject>),
-    Builtin(GcPtr<BuiltinObject>),
+    // Heap values, reference-counted. Arc replaces the old raw-pointer
+    // GcPtr scheme, which leaked every allocation (Box::into_raw with no
+    // dealloc anywhere) and required unsafe derefs at every use site.
+    String(Arc<String>),
+    List(Arc<Vec<OvmValue>>),
+    Tuple(Arc<Vec<OvmValue>>),
+    Function(Arc<FunctionObject>),
+    Struct(Arc<StructObject>),
+    Range(Arc<RangeObject>),
+    Builtin(Arc<BuiltinObject>),
 
     // Lazy values
-    Thunk(GcPtr<ThunkObject>),
-    Stream(GcPtr<StreamObject>),
-    LazyList(GcPtr<LazyListObject>),
+    Thunk(Arc<ThunkObject>),
+    Stream(Arc<StreamObject>),
+    LazyList(Arc<LazyListObject>),
 
     // Async values
-    Promise(GcPtr<PromiseObject>),
+    Promise(Arc<PromiseObject>),
 
     // Compiled representations
-    CompiledFunction(GcPtr<CompiledFunctionObject>),
-    OptimizedValue(GcPtr<OptimizedValueObject>),
+    CompiledFunction(Arc<CompiledFunctionObject>),
+    OptimizedValue(Arc<OptimizedValueObject>),
 
     // Error handling
-    Error(GcPtr<ErrorObject>),
+    Error(Arc<ErrorObject>),
     Result {
         ok: Option<Box<OvmValue>>,
         err: Option<Box<OvmValue>>,
     },
-}
-
-/// GC pointer type
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub struct GcPtr<T> {
-    ptr: NonNull<T>,
-    generation: u32,
-}
-
-// Manual impls: the derived ones bound on `T: Copy`/`T: Clone`, but copying
-// the pointer itself never requires copying the pointee.
-impl<T> Clone for GcPtr<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for GcPtr<T> {}
-
-unsafe impl<T> Send for GcPtr<T> {}
-unsafe impl<T> Sync for GcPtr<T> {}
-
-/// Array of values for lists and tuples
-#[derive(Debug)]
-pub struct ValueArray {
-    pub length: usize,
-    pub capacity: usize,
-    pub data: *mut OvmValue,
 }
 
 /// Function object representation
@@ -355,7 +328,7 @@ pub struct ThunkObject {
     pub environment: HashMap<String, OvmValue>,
     pub memoized_value: Mutex<Option<OvmValue>>,
     pub computation_cost: ComputationCost,
-    pub dependencies: Vec<GcPtr<OvmValue>>,
+    pub dependencies: Vec<Arc<OvmValue>>,
 }
 
 /// Stream object for lazy sequences
@@ -389,8 +362,9 @@ pub struct PromiseObject {
 /// Compiled function object
 #[derive(Debug)]
 pub struct CompiledFunctionObject {
-    pub original_function: GcPtr<FunctionObject>,
-    pub compiled_code: *const u8,
+    pub original_function: Arc<FunctionObject>,
+    /// Address of native code (stored as usize so OvmValue stays Send/Sync)
+    pub compiled_code: usize,
     pub code_size: usize,
     pub optimization_level: OptimizationLevel,
     pub deoptimization_count: AtomicU32,
@@ -431,28 +405,28 @@ pub enum GeneratorFunction {
     },
     Map {
         source: Box<OvmValue>,
-        function: GcPtr<FunctionObject>,
+        function: Arc<FunctionObject>,
     },
     Filter {
         source: Box<OvmValue>,
-        predicate: GcPtr<FunctionObject>,
+        predicate: Arc<FunctionObject>,
     },
     Custom {
-        function: GcPtr<FunctionObject>,
+        function: Arc<FunctionObject>,
     },
 }
 
 #[derive(Debug)]
 pub enum TransformationChain {
     Identity,
-    Map(GcPtr<FunctionObject>),
-    Filter(GcPtr<FunctionObject>),
+    Map(Arc<FunctionObject>),
+    Filter(Arc<FunctionObject>),
     Chain(Box<TransformationChain>, Box<TransformationChain>),
 }
 
 #[derive(Debug)]
 pub struct CallbackFunction {
-    pub function: GcPtr<FunctionObject>,
+    pub function: Arc<FunctionObject>,
     pub is_error_handler: bool,
 }
 
@@ -473,7 +447,7 @@ pub struct OptimizationData {
 #[derive(Debug)]
 pub struct InlineCacheEntry {
     pub call_site_id: u32,
-    pub target_function: GcPtr<FunctionObject>,
+    pub target_function: Arc<FunctionObject>,
     pub hit_count: u32,
 }
 
@@ -601,75 +575,15 @@ impl PartialEq for OvmValue {
             (ValueData::Boolean(a), ValueData::Boolean(b)) => a == b,
             (ValueData::Unit, ValueData::Unit) => true,
             
-            (ValueData::String(a), ValueData::String(b)) => unsafe {
-                // Compare string contents
-                a.as_ref() == b.as_ref()
-            },
-            
-            (ValueData::List(a), ValueData::List(b)) => unsafe {
-                let a_array = a.as_ref();
-                let b_array = b.as_ref();
-                
-                if a_array.length != b_array.length {
-                    return false;
-                }
-                
-                if a_array.length == 0 {
-                    return true;
-                }
-                
-                // Validate pointers before creating slices
-                if a_array.data.is_null() || b_array.data.is_null() {
-                    return false;
-                }
-                
-                // Additional bounds check to prevent buffer overflows
-                if a_array.length > isize::MAX as usize || b_array.length > isize::MAX as usize {
-                    return false;
-                }
-                
-                let a_slice = std::slice::from_raw_parts(a_array.data, a_array.length);
-                let b_slice = std::slice::from_raw_parts(b_array.data, b_array.length);
-                
-                a_slice.iter().zip(b_slice.iter()).all(|(x, y)| x == y)
-            },
-            
-            (ValueData::Tuple(a), ValueData::Tuple(b)) => unsafe {
-                let a_array = a.as_ref();
-                let b_array = b.as_ref();
-                
-                if a_array.length != b_array.length {
-                    return false;
-                }
-                
-                if a_array.length == 0 {
-                    return true;
-                }
-                
-                // Validate pointers before creating slices
-                if a_array.data.is_null() || b_array.data.is_null() {
-                    return false;
-                }
-                
-                // Additional bounds check to prevent buffer overflows
-                if a_array.length > isize::MAX as usize || b_array.length > isize::MAX as usize {
-                    return false;
-                }
-                
-                let a_slice = std::slice::from_raw_parts(a_array.data, a_array.length);
-                let b_slice = std::slice::from_raw_parts(b_array.data, b_array.length);
-                
-                a_slice.iter().zip(b_slice.iter()).all(|(x, y)| x == y)
-            },
-            
-            (ValueData::Range(a), ValueData::Range(b)) => unsafe {
-                let a_range = a.as_ref();
-                let b_range = b.as_ref();
-                
-                a_range.start == b_range.start &&
-                a_range.end == b_range.end &&
-                a_range.inclusive == b_range.inclusive
-            },
+            (ValueData::String(a), ValueData::String(b)) => a == b,
+
+            (ValueData::List(a), ValueData::List(b)) => a == b,
+
+            (ValueData::Tuple(a), ValueData::Tuple(b)) => a == b,
+
+            (ValueData::Range(a), ValueData::Range(b)) => {
+                a.start == b.start && a.end == b.end && a.inclusive == b.inclusive
+            }
             
             (ValueData::Result { ok: a_ok, err: a_err }, ValueData::Result { ok: b_ok, err: b_err }) => {
                 match (a_ok, a_err, b_ok, b_err) {
@@ -681,16 +595,16 @@ impl PartialEq for OvmValue {
             },
             
             // For complex types, fall back to pointer comparison for now
-            (ValueData::Function(a), ValueData::Function(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            (ValueData::Struct(a), ValueData::Struct(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            (ValueData::Builtin(a), ValueData::Builtin(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            (ValueData::Promise(a), ValueData::Promise(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            (ValueData::Thunk(a), ValueData::Thunk(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            (ValueData::LazyList(a), ValueData::LazyList(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            (ValueData::Stream(a), ValueData::Stream(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            (ValueData::CompiledFunction(a), ValueData::CompiledFunction(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            (ValueData::OptimizedValue(a), ValueData::OptimizedValue(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            (ValueData::Error(a), ValueData::Error(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (ValueData::Function(a), ValueData::Function(b)) => Arc::ptr_eq(a, b),
+            (ValueData::Struct(a), ValueData::Struct(b)) => Arc::ptr_eq(a, b),
+            (ValueData::Builtin(a), ValueData::Builtin(b)) => Arc::ptr_eq(a, b),
+            (ValueData::Promise(a), ValueData::Promise(b)) => Arc::ptr_eq(a, b),
+            (ValueData::Thunk(a), ValueData::Thunk(b)) => Arc::ptr_eq(a, b),
+            (ValueData::LazyList(a), ValueData::LazyList(b)) => Arc::ptr_eq(a, b),
+            (ValueData::Stream(a), ValueData::Stream(b)) => Arc::ptr_eq(a, b),
+            (ValueData::CompiledFunction(a), ValueData::CompiledFunction(b)) => Arc::ptr_eq(a, b),
+            (ValueData::OptimizedValue(a), ValueData::OptimizedValue(b)) => Arc::ptr_eq(a, b),
+            (ValueData::Error(a), ValueData::Error(b)) => Arc::ptr_eq(a, b),
             
             // Different types are never equal
             _ => false,
@@ -751,20 +665,20 @@ impl OvmValue {
             ValueData::Float(f) => ValueData::Float(*f),
             ValueData::Boolean(b) => ValueData::Boolean(*b),
             ValueData::Unit => ValueData::Unit,
-            ValueData::String(p) => ValueData::String(*p),
-            ValueData::List(p) => ValueData::List(*p),
-            ValueData::Tuple(p) => ValueData::Tuple(*p),
-            ValueData::Function(p) => ValueData::Function(*p),
-            ValueData::Struct(p) => ValueData::Struct(*p),
-            ValueData::Range(p) => ValueData::Range(*p),
-            ValueData::Builtin(p) => ValueData::Builtin(*p),
-            ValueData::Thunk(p) => ValueData::Thunk(*p),
-            ValueData::Stream(p) => ValueData::Stream(*p),
-            ValueData::LazyList(p) => ValueData::LazyList(*p),
-            ValueData::Promise(p) => ValueData::Promise(*p),
-            ValueData::CompiledFunction(p) => ValueData::CompiledFunction(*p),
-            ValueData::OptimizedValue(p) => ValueData::OptimizedValue(*p),
-            ValueData::Error(p) => ValueData::Error(*p),
+            ValueData::String(p) => ValueData::String(p.clone()),
+            ValueData::List(p) => ValueData::List(p.clone()),
+            ValueData::Tuple(p) => ValueData::Tuple(p.clone()),
+            ValueData::Function(p) => ValueData::Function(p.clone()),
+            ValueData::Struct(p) => ValueData::Struct(p.clone()),
+            ValueData::Range(p) => ValueData::Range(p.clone()),
+            ValueData::Builtin(p) => ValueData::Builtin(p.clone()),
+            ValueData::Thunk(p) => ValueData::Thunk(p.clone()),
+            ValueData::Stream(p) => ValueData::Stream(p.clone()),
+            ValueData::LazyList(p) => ValueData::LazyList(p.clone()),
+            ValueData::Promise(p) => ValueData::Promise(p.clone()),
+            ValueData::CompiledFunction(p) => ValueData::CompiledFunction(p.clone()),
+            ValueData::OptimizedValue(p) => ValueData::OptimizedValue(p.clone()),
+            ValueData::Error(p) => ValueData::Error(p.clone()),
             ValueData::Result { ok, err } => ValueData::Result {
                 ok: ok.clone(),
                 err: err.clone(),
@@ -810,11 +724,11 @@ impl OvmValue {
                 // Extract the data temporarily to avoid borrowing issues
                 match &self.data {
                     ValueData::Thunk(thunk_ptr) => {
-                        let thunk_ptr_copy = GcPtr { ptr: thunk_ptr.ptr, generation: thunk_ptr.generation };
+                        let thunk_ptr_copy = thunk_ptr.clone();
                         self.force_thunk_impl(thunk_ptr_copy)?;
                     }
                     ValueData::LazyList(lazy_list_ptr) => {
-                        let lazy_list_ptr_copy = GcPtr { ptr: lazy_list_ptr.ptr, generation: lazy_list_ptr.generation };
+                        let lazy_list_ptr_copy = lazy_list_ptr.clone();
                         self.force_lazy_list_impl(lazy_list_ptr_copy)?;
                     }
                     _ => {}
@@ -823,7 +737,7 @@ impl OvmValue {
             LazyState::Stream => {
                 // Streams remain lazy but may buffer more data
                 if let ValueData::Stream(stream_ptr) = &self.data {
-                    let stream_ptr_copy = GcPtr { ptr: stream_ptr.ptr, generation: stream_ptr.generation };
+                    let stream_ptr_copy = stream_ptr.clone();
                     self.advance_stream_buffer_impl(stream_ptr_copy)?;
                 }
             }
@@ -833,7 +747,7 @@ impl OvmValue {
     }
 
     /// Force evaluation of a thunk with memoization
-    fn force_thunk_impl(&mut self, thunk_ptr: GcPtr<ThunkObject>) -> Result<(), RuntimeError> {
+    fn force_thunk_impl(&mut self, thunk_ptr: Arc<ThunkObject>) -> Result<(), RuntimeError> {
         // Prevent infinite recursion
         if self.header.lazy_state == LazyState::Forcing {
             return Err(RuntimeError::new("Circular thunk dependency detected"));
@@ -843,7 +757,7 @@ impl OvmValue {
         self.header.lazy_state = LazyState::Forcing;
 
         // Access the thunk safely
-        let thunk_ref = unsafe { thunk_ptr.as_ref() };
+        let thunk_ref = &*thunk_ptr;
         
         // Check if already memoized (with lock)
         {
@@ -890,11 +804,11 @@ impl OvmValue {
     }
 
     /// Force evaluation of a lazy list
-    fn force_lazy_list_impl(&mut self, lazy_list_ptr: GcPtr<LazyListObject>) -> Result<(), RuntimeError> {
+    fn force_lazy_list_impl(&mut self, lazy_list_ptr: Arc<LazyListObject>) -> Result<(), RuntimeError> {
         // For now, materialize a reasonable prefix of the lazy list
         let chunk_size = 100; // Configurable chunk size
         
-        let lazy_list_ref = unsafe { lazy_list_ptr.as_ref() };
+        let lazy_list_ref = &*lazy_list_ptr;
         
         // Use locks to safely access and modify the materialized data
         let mut materialized_guard = lazy_list_ref.materialized_prefix.lock()
@@ -908,14 +822,10 @@ impl OvmValue {
                 TransformationChain::Identity => {
                     // Copy from source - simplified implementation
                     if let ValueData::List(source_list) = &lazy_list_ref.source.data {
-                        let source_array = unsafe { source_list.as_ref() };
                         let mut materialized = 0;
-                        for i in 0..source_array.length.min(chunk_size) {
-                            unsafe {
-                                let item = source_array.data.add(i).read();
-                                materialized_guard.push(item);
-                                materialized += 1;
-                            }
+                        for item in source_list.iter().take(chunk_size) {
+                            materialized_guard.push(item.clone());
+                            materialized += 1;
                         }
                         *materialization_point_guard = materialized;
                     }
@@ -923,15 +833,10 @@ impl OvmValue {
                 TransformationChain::Map(_map_fn) => {
                     // Apply map transformation - simplified for now
                     if let ValueData::List(source_list) = &lazy_list_ref.source.data {
-                        let source_array = unsafe { source_list.as_ref() };
                         let mut materialized = 0;
-                        for i in 0..source_array.length.min(chunk_size) {
-                            unsafe {
-                                let item = source_array.data.add(i).read();
-                                // For now, just copy the item (would need interpreter context for actual function call)
-                                materialized_guard.push(item);
-                                materialized += 1;
-                            }
+                        for item in source_list.iter().take(chunk_size) {
+                            materialized_guard.push(item.clone());
+                            materialized += 1;
                         }
                         *materialization_point_guard = materialized;
                     }
@@ -939,18 +844,10 @@ impl OvmValue {
                 TransformationChain::Filter(_filter_fn) => {
                     // Apply filter transformation - simplified for now  
                     if let ValueData::List(source_list) = &lazy_list_ref.source.data {
-                        let source_array = unsafe { source_list.as_ref() };
                         let mut materialized = 0;
-                        for i in 0..source_array.length.min(chunk_size) {
-                            if materialized >= chunk_size {
-                                break;
-                            }
-                            unsafe {
-                                let item = source_array.data.add(i).read();
-                                // For now, include all items (would need interpreter context for actual predicate)
-                                materialized_guard.push(item);
-                                materialized += 1;
-                            }
+                        for item in source_list.iter().take(chunk_size) {
+                            materialized_guard.push(item.clone());
+                            materialized += 1;
                         }
                         *materialization_point_guard = materialized;
                     }
@@ -958,14 +855,10 @@ impl OvmValue {
                 TransformationChain::Chain(_first, _second) => {
                     // Apply chained transformations - simplified for now
                     if let ValueData::List(source_list) = &lazy_list_ref.source.data {
-                        let source_array = unsafe { source_list.as_ref() };
                         let mut materialized = 0;
-                        for i in 0..source_array.length.min(chunk_size) {
-                            unsafe {
-                                let item = source_array.data.add(i).read();
-                                materialized_guard.push(item);
-                                materialized += 1;
-                            }
+                        for item in source_list.iter().take(chunk_size) {
+                            materialized_guard.push(item.clone());
+                            materialized += 1;
                         }
                         *materialization_point_guard = materialized;
                     }
@@ -988,8 +881,8 @@ impl OvmValue {
     }
 
     /// Advance stream buffer for better performance
-    fn advance_stream_buffer_impl(&mut self, stream_ptr: GcPtr<StreamObject>) -> Result<(), RuntimeError> {
-        let stream_ref = unsafe { stream_ptr.as_ref() };
+    fn advance_stream_buffer_impl(&mut self, stream_ptr: Arc<StreamObject>) -> Result<(), RuntimeError> {
+        let stream_ref = &*stream_ptr;
         
         // Use locks to safely access and modify the stream data
         let mut buffer_guard = stream_ref.buffer.lock()
@@ -1078,9 +971,7 @@ impl OvmValue {
 
     /// Create a new string value using simplified GC allocation
     pub fn new_string(value: String) -> Self {
-        // Allocate string on heap and create GC pointer
-        let heap_string = Box::into_raw(Box::new(value));
-        let gc_ptr = GcPtr::new(heap_string);
+        let gc_ptr = Arc::new(value);
 
         Self {
             header: ValueHeader::new(
@@ -1092,28 +983,9 @@ impl OvmValue {
         }
     }
 
-    /// Create a new list value using simplified GC allocation
+    /// Create a new list value
     pub fn new_list(values: Vec<Self>) -> Self {
-        // Convert Vec<OvmValue> to raw array allocation
-        let len = values.len();
-        let cap = len;
-        let data_ptr = if len == 0 {
-            std::ptr::null_mut()
-        } else {
-            let mut boxed_values = values.into_boxed_slice();
-            let ptr = boxed_values.as_mut_ptr();
-            std::mem::forget(boxed_values); // Prevent deallocation
-            ptr
-        };
-
-        let value_array = ValueArray {
-            length: len,
-            capacity: cap,
-            data: data_ptr,
-        };
-
-        let heap_array = Box::into_raw(Box::new(value_array));
-        let gc_ptr = GcPtr::new(heap_array);
+        let gc_ptr = Arc::new(values);
 
         Self {
             header: ValueHeader::new(TypeTag::List, ExecutionTier::Interpreter, LazyState::Eager),
@@ -1131,8 +1003,7 @@ impl OvmValue {
 
         // For now, we'll use a placeholder pointer - in a real implementation,
         // this would be allocated through the GC
-        let ptr = Box::into_raw(Box::new(builtin_obj));
-        let gc_ptr = GcPtr::new(ptr);
+        let gc_ptr = Arc::new(builtin_obj);
 
         Self {
             header: ValueHeader::new(
@@ -1152,7 +1023,7 @@ impl OvmValue {
     /// Get builtin function name if this is a builtin
     pub fn get_builtin_name(&self) -> Option<&str> {
         match &self.data {
-            ValueData::Builtin(ptr) => unsafe { Some(&ptr.as_ref().name) },
+            ValueData::Builtin(ptr) => Some(&ptr.name),
             _ => None,
         }
     }
@@ -1160,7 +1031,7 @@ impl OvmValue {
     /// Execute builtin function if this value is a builtin
     pub fn execute_builtin(&self, args: &[OvmValue]) -> Result<OvmValue, RuntimeError> {
         match &self.data {
-            ValueData::Builtin(ptr) => unsafe { ptr.as_ref().execute(args) },
+            ValueData::Builtin(ptr) => ptr.execute(args),
             _ => Err(RuntimeError::TypeError {
                 expected: "builtin function".to_string(),
                 found: format!("{:?}", self.header.type_tag),
@@ -1209,8 +1080,7 @@ impl OvmValue {
                     optimization_data: OptimizationData::default(),
                 };
 
-                let ptr = Box::into_raw(Box::new(func_obj));
-                let gc_ptr = GcPtr::new(ptr);
+                let gc_ptr = Arc::new(func_obj);
 
                 Self {
                     header: ValueHeader::new(
@@ -1269,15 +1139,7 @@ impl OvmValue {
                     current_position: None, // Will be set during iteration
                 };
 
-                let boxed_range = match std::panic::catch_unwind(|| Box::new(range_obj)) {
-                    Ok(boxed) => boxed,
-                    Err(_) => {
-                        // Box allocation failed, create a simple range value instead
-                        return Self::new_unit(); // Fallback to unit value
-                    }
-                };
-                let ptr = Box::into_raw(boxed_range);
-                let gc_ptr = GcPtr::new(ptr);
+                let gc_ptr = Arc::new(range_obj);
 
                 Self {
                     header: ValueHeader::new(
@@ -1301,12 +1163,7 @@ impl OvmValue {
                     fields: struct_fields,
                 };
 
-                let boxed_struct = match std::panic::catch_unwind(|| Box::new(struct_obj)) {
-                    Ok(boxed) => boxed,
-                    Err(_) => return Self::new_unit(),
-                };
-                let ptr = Box::into_raw(boxed_struct);
-                let gc_ptr = GcPtr::new(ptr);
+                let gc_ptr = Arc::new(struct_obj);
 
                 Self {
                     header: ValueHeader::new(
@@ -1351,8 +1208,7 @@ impl OvmValue {
                     fields,
                 };
 
-                let ptr = Box::into_raw(Box::new(struct_obj));
-                let gc_ptr = GcPtr::new(ptr);
+                let gc_ptr = Arc::new(struct_obj);
 
                 Self {
                     header: ValueHeader::new(
@@ -1382,8 +1238,7 @@ impl OvmValue {
                     callbacks: Vec::new(),
                 };
 
-                let ptr = Box::into_raw(Box::new(promise_obj));
-                let gc_ptr = GcPtr::new(ptr);
+                let gc_ptr = Arc::new(promise_obj);
 
                 Self {
                     header: ValueHeader::new(
@@ -1408,8 +1263,7 @@ impl OvmValue {
                     fields,
                 };
 
-                let ptr = Box::into_raw(Box::new(struct_obj));
-                let gc_ptr = GcPtr::new(ptr);
+                let gc_ptr = Arc::new(struct_obj);
 
                 Self {
                     header: ValueHeader::new(
@@ -1446,13 +1300,9 @@ impl OvmValue {
         // Record allocation with safepoint manager
         let allocation_size = std::mem::size_of::<OvmValue>() + 
             match &ovm_value.data {
-                ValueData::String(s) => unsafe { s.as_ref().len() },
-                ValueData::List(gc_ptr) => {
-                    unsafe { (*gc_ptr.as_ptr()).length * std::mem::size_of::<OvmValue>() }
-                }
-                ValueData::Tuple(gc_ptr) => {
-                    unsafe { (*gc_ptr.as_ptr()).length * std::mem::size_of::<OvmValue>() }
-                }
+                ValueData::String(s) => s.len(),
+                ValueData::List(gc_ptr) => gc_ptr.len() * std::mem::size_of::<OvmValue>(),
+                ValueData::Tuple(gc_ptr) => gc_ptr.len() * std::mem::size_of::<OvmValue>(),
                 ValueData::Function(_) => std::mem::size_of::<FunctionObject>(),
                 ValueData::Struct(_) => std::mem::size_of::<StructObject>(),
                 ValueData::Range(_) => std::mem::size_of::<RangeObject>(),
@@ -1469,18 +1319,7 @@ impl OvmValue {
 
     /// Create a new tuple value
     pub fn new_tuple(values: Vec<Self>) -> Self {
-        let array = ValueArray {
-            length: values.len(),
-            capacity: values.len(),
-            data: {
-                let mut data = Vec::with_capacity(values.len());
-                data.extend(values);
-                Box::into_raw(data.into_boxed_slice()) as *mut Self
-            },
-        };
-
-        let ptr = Box::into_raw(Box::new(array));
-        let gc_ptr = GcPtr::new(ptr);
+        let gc_ptr = Arc::new(values);
 
         Self {
             header: ValueHeader::new(TypeTag::Tuple, ExecutionTier::Interpreter, LazyState::Eager),
@@ -1495,73 +1334,40 @@ impl OvmValue {
             ValueData::Float(f) => Ok(Value::Float(*f)),
             ValueData::Boolean(b) => Ok(Value::Boolean(*b)),
             ValueData::Unit => Ok(Value::Unit),
-            ValueData::String(gc_ptr) => {
-                // Convert GC string back to Arc<String>
-                unsafe {
-                    let string_ref = gc_ptr.as_ref();
-                    Ok(Value::String(std::sync::Arc::new(string_ref.clone())))
-                }
-            }
+            ValueData::String(gc_ptr) => Ok(Value::String(gc_ptr.clone())),
             ValueData::List(gc_ptr) => {
-                // Convert GC list back to Arc<[Value]>
-                unsafe {
-                    let array_ref = gc_ptr.as_ref();
-                    let mut ast_values = Vec::with_capacity(array_ref.length);
-
-                    if array_ref.length > 0 && !array_ref.data.is_null() && array_ref.length <= isize::MAX as usize {
-                        let data_slice =
-                            std::slice::from_raw_parts(array_ref.data, array_ref.length);
-                        for ovm_val in data_slice {
-                            ast_values.push(ovm_val.to_ast()?);
-                        }
-                    }
-
-                    Ok(Value::List(ast_values.into()))
+                let mut ast_values = Vec::with_capacity(gc_ptr.len());
+                for ovm_val in gc_ptr.iter() {
+                    ast_values.push(ovm_val.to_ast()?);
                 }
+                Ok(Value::List(ast_values.into()))
             }
             ValueData::Tuple(gc_ptr) => {
-                // Convert GC tuple back to Arc<Vec<Value>>
-                unsafe {
-                    let array_ref = gc_ptr.as_ref();
-                    let mut ast_values = Vec::with_capacity(array_ref.length);
-
-                    if array_ref.length > 0 && !array_ref.data.is_null() && array_ref.length <= isize::MAX as usize {
-                        let data_slice =
-                            std::slice::from_raw_parts(array_ref.data, array_ref.length);
-                        for ovm_val in data_slice {
-                            ast_values.push(ovm_val.to_ast()?);
-                        }
-                    }
-
-                    Ok(Value::Tuple(std::sync::Arc::new(ast_values)))
+                let mut ast_values = Vec::with_capacity(gc_ptr.len());
+                for ovm_val in gc_ptr.iter() {
+                    ast_values.push(ovm_val.to_ast()?);
                 }
+                Ok(Value::Tuple(std::sync::Arc::new(ast_values)))
             }
             ValueData::Function(_) => {
                 // Functions return unit for now
                 Ok(Value::Unit)
             }
-            ValueData::Struct(gc_ptr) => unsafe {
-                let struct_ref = gc_ptr.as_ref();
+            ValueData::Struct(gc_ptr) => {
                 let mut fields = HashMap::new();
-                for (name, val) in &struct_ref.fields {
+                for (name, val) in &gc_ptr.fields {
                     fields.insert(name.clone(), val.to_ast()?);
                 }
                 Ok(Value::Struct {
-                    type_name: struct_ref.type_name.clone(),
+                    type_name: gc_ptr.type_name.clone(),
                     fields,
                 })
-            },
-            ValueData::Range(gc_ptr) => {
-                // Convert Range back to AST Range
-                unsafe {
-                    let range_ref = gc_ptr.as_ref();
-                    Ok(Value::Range {
-                        start: range_ref.start,
-                        end: range_ref.end,
-                        inclusive: range_ref.inclusive,
-                    })
-                }
             }
+            ValueData::Range(gc_ptr) => Ok(Value::Range {
+                start: gc_ptr.start,
+                end: gc_ptr.end,
+                inclusive: gc_ptr.inclusive,
+            }),
             ValueData::Builtin(_) => {
                 // Builtins return unit for now
                 Ok(Value::Unit)
@@ -1590,12 +1396,9 @@ impl OvmValue {
                 // Optimized values return unit for now
                 Ok(Value::Unit)
             }
-            ValueData::Error(gc_ptr) => unsafe {
-                let error_ref = gc_ptr.as_ref();
-                Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(
-                    error_ref.message.clone(),
-                )))))
-            },
+            ValueData::Error(gc_ptr) => Ok(Value::Err(Box::new(Value::String(
+                std::sync::Arc::new(gc_ptr.message.clone()),
+            )))),
             ValueData::Result { ok, err } => {
                 if let Some(ok_val) = ok {
                     Ok(Value::Ok(Box::new(ok_val.to_ast()?)))
@@ -1640,40 +1443,6 @@ impl ValueHeader {
     }
 }
 
-impl<T> GcPtr<T> {
-    pub fn new(ptr: *mut T) -> Self {
-        Self {
-            ptr: NonNull::new(ptr).expect("GcPtr::new called with null pointer"),
-            generation: 0,
-        }
-    }
-    
-    pub fn try_new(ptr: *mut T) -> Result<Self, RuntimeError> {
-        Ok(Self {
-            ptr: NonNull::new(ptr).ok_or_else(|| RuntimeError::NullPointer)?,
-            generation: 0,
-        })
-    }
-    
-    pub fn new_unchecked(ptr: *mut T) -> Self {
-        Self {
-            ptr: unsafe { NonNull::new_unchecked(ptr) },
-            generation: 0,
-        }
-    }
-
-    pub fn as_ptr(&self) -> *mut T {
-        self.ptr.as_ptr()
-    }
-
-    pub unsafe fn as_ref(&self) -> &T {
-        self.ptr.as_ref()
-    }
-
-    pub unsafe fn as_mut(&mut self) -> &mut T {
-        self.ptr.as_mut()
-    }
-}
 
 impl fmt::Display for OvmValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1682,52 +1451,36 @@ impl fmt::Display for OvmValue {
             ValueData::Float(fl) => write!(f, "{}", fl),
             ValueData::Boolean(b) => write!(f, "{}", b),
             ValueData::Unit => write!(f, "()"),
-            ValueData::String(gc_ptr) => unsafe {
-                let string_ref = gc_ptr.as_ref();
-                write!(f, "\"{}\"", string_ref)
-            },
-            ValueData::List(gc_ptr) => unsafe {
-                let array_ref = gc_ptr.as_ref();
+            ValueData::String(gc_ptr) => write!(f, "\"{}\"", gc_ptr),
+            ValueData::List(gc_ptr) => {
                 write!(f, "[")?;
-
-                if array_ref.length > 0 && !array_ref.data.is_null() && array_ref.length <= isize::MAX as usize {
-                    let data_slice = std::slice::from_raw_parts(array_ref.data, array_ref.length);
-                    for (i, val) in data_slice.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{}", val)?;
+                for (i, val) in gc_ptr.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
                     }
+                    write!(f, "{}", val)?;
                 }
-
                 write!(f, "]")
-            },
-            ValueData::Tuple(gc_ptr) => unsafe {
-                let array_ref = gc_ptr.as_ref();
+            }
+            ValueData::Tuple(gc_ptr) => {
                 write!(f, "(")?;
-
-                if array_ref.length > 0 && !array_ref.data.is_null() && array_ref.length <= isize::MAX as usize {
-                    let data_slice = std::slice::from_raw_parts(array_ref.data, array_ref.length);
-                    for (i, val) in data_slice.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{}", val)?;
+                for (i, val) in gc_ptr.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
                     }
+                    write!(f, "{}", val)?;
                 }
-
                 write!(f, ")")
-            },
+            }
             ValueData::Function(_) => write!(f, "<function>"),
             ValueData::Struct(_) => write!(f, "<struct>"),
-            ValueData::Range(gc_ptr) => unsafe {
-                let range_ref = gc_ptr.as_ref();
-                if range_ref.inclusive {
-                    write!(f, "{}..={}", range_ref.start, range_ref.end)
+            ValueData::Range(gc_ptr) => {
+                if gc_ptr.inclusive {
+                    write!(f, "{}..={}", gc_ptr.start, gc_ptr.end)
                 } else {
-                    write!(f, "{}..{}", range_ref.start, range_ref.end)
+                    write!(f, "{}..{}", gc_ptr.start, gc_ptr.end)
                 }
-            },
+            }
             ValueData::Builtin(_) => write!(f, "<builtin>"),
             ValueData::Thunk(_) => write!(f, "<thunk>"),
             ValueData::Stream(_) => write!(f, "<stream>"),
@@ -1742,8 +1495,12 @@ impl fmt::Display for OvmValue {
 }
 
 // Unsafe implementations for Send/Sync (needed for multi-threading)
-unsafe impl Send for OvmValue {}
-unsafe impl Sync for OvmValue {}
+// OvmValue is Send + Sync automatically now that heap payloads are Arc-based;
+// assert it so a non-thread-safe field can't sneak back in.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<OvmValue>()
+};
 
 impl Default for ValueHeader {
     fn default() -> Self {
