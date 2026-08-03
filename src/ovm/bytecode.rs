@@ -90,6 +90,8 @@ pub struct BytecodeCompiler {
     local_variables: HashMap<String, Register>,
     /// Builtin names the VM implements (for compile-time callee validation)
     builtin_names: std::collections::HashSet<String>,
+    /// Enclosing loops, innermost last: (continue target, break target)
+    loop_targets: Vec<(Label, Label)>,
 
     // Label tracking for control flow
     _label_counter: u32,
@@ -277,6 +279,38 @@ pub enum Instruction {
         dst: Register,
         list: Register,
     },
+    /// Iteration count for a `for` loop source (a list or a range).
+    /// Ranges are not materialized — this is the count the interpreter's
+    /// loop would produce.
+    IterLen {
+        dst: Register,
+        src: Register,
+    },
+    /// The `idx`-th element of a `for` loop source (a list or a range).
+    IterGet {
+        dst: Register,
+        src: Register,
+        idx: Register,
+    },
+    /// Total equality used by pattern tests: operands of different types
+    /// compare unequal rather than raising a type error, because a pattern
+    /// that doesn't apply must simply not match.
+    PatternEq {
+        dst: Register,
+        value: Register,
+        other: Register,
+    },
+    /// Total range test for range patterns: a non-integer scrutinee compares
+    /// false rather than raising a type error.
+    PatternInRange {
+        dst: Register,
+        value: Register,
+        lo: i64,
+        hi: i64,
+        inclusive: bool,
+    },
+    /// No match arm applied to the scrutinee.
+    MatchFail,
     ListPush {
         list: Register,
         value: Register,
@@ -1013,6 +1047,59 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, length)?;
                 }
 
+                Instruction::IterLen { dst, src } => {
+                    let source = self.execution_state.register_ref(*src)?;
+                    let len = Self::iter_len(source)?;
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_integer(len))?;
+                }
+
+                Instruction::IterGet { dst, src, idx } => {
+                    let index = match &self.execution_state.register_ref(*idx)?.data {
+                        crate::ovm::value::ValueData::Integer(i) => *i,
+                        _ => {
+                            return Err(BytecodeError::TypeError(
+                                "Iteration index must be an integer".to_string(),
+                            ))
+                        }
+                    };
+                    let source = self.execution_state.register_ref(*src)?;
+                    let value = Self::iter_get(source, index)?;
+                    self.execution_state.set_register(*dst, value)?;
+                }
+
+                Instruction::PatternEq { dst, value, other } => {
+                    let (a, b) = self.execution_state.register_pair(*value, *other)?;
+                    let matches = Self::pattern_eq(a, b);
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_boolean(matches))?;
+                }
+
+                Instruction::PatternInRange {
+                    dst,
+                    value,
+                    lo,
+                    hi,
+                    inclusive,
+                } => {
+                    let matches = match &self.execution_state.register_ref(*value)?.data {
+                        crate::ovm::value::ValueData::Integer(n) => {
+                            *n >= *lo && if *inclusive { *n <= *hi } else { *n < *hi }
+                        }
+                        // A range pattern only matches integers; anything else
+                        // simply doesn't match
+                        _ => false,
+                    };
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_boolean(matches))?;
+                }
+
+                Instruction::MatchFail => {
+                    return Err(BytecodeError::RuntimeError(
+                        "Pattern match failed".to_string(),
+                    ));
+                }
+
                 Instruction::ListPush { list, value } => {
                     let list_value = self.execution_state.get_register(*list)?;
                     let new_value = self.execution_state.get_register(*value)?;
@@ -1453,6 +1540,67 @@ impl BytecodeVm {
         }
 
         Ok(OvmValue::from_ast(result))
+    }
+
+    /// Iteration count for a `for` loop source, matching the interpreter:
+    /// lists iterate by element, ranges by value without being materialized.
+    fn iter_len(source: &OvmValue) -> Result<i64, BytecodeError> {
+        use crate::ovm::value::ValueData;
+        match &source.data {
+            ValueData::List(items) => Ok(items.len() as i64),
+            ValueData::Range(range) => {
+                let span = if range.inclusive {
+                    (range.end as i128) - (range.start as i128) + 1
+                } else {
+                    (range.end as i128) - (range.start as i128)
+                };
+                Ok(span.max(0).min(i64::MAX as i128) as i64)
+            }
+            _ => Err(BytecodeError::TypeError(
+                "Cannot iterate over this value".to_string(),
+            )),
+        }
+    }
+
+    /// The `idx`-th element of a `for` loop source.
+    fn iter_get(source: &OvmValue, idx: i64) -> Result<OvmValue, BytecodeError> {
+        use crate::ovm::value::ValueData;
+        match &source.data {
+            ValueData::List(items) => items
+                .get(idx as usize)
+                .cloned()
+                .ok_or(BytecodeError::IndexOutOfBounds {
+                    index: idx,
+                    length: items.len(),
+                }),
+            ValueData::Range(range) => range
+                .start
+                .checked_add(idx)
+                .map(OvmValue::new_integer)
+                .ok_or_else(|| {
+                    BytecodeError::RuntimeError("Integer overflow iterating range".to_string())
+                }),
+            _ => Err(BytecodeError::TypeError(
+                "Cannot iterate over this value".to_string(),
+            )),
+        }
+    }
+
+    /// Total equality for pattern tests. Unlike the `Eq` instruction, operands
+    /// of different types compare unequal instead of raising a type error — a
+    /// literal pattern that doesn't apply must simply not match.
+    fn pattern_eq(a: &OvmValue, b: &OvmValue) -> bool {
+        use crate::ovm::value::ValueData;
+        match (&a.data, &b.data) {
+            (ValueData::Integer(x), ValueData::Integer(y)) => x == y,
+            (ValueData::Float(x), ValueData::Float(y)) => x == y,
+            (ValueData::Integer(x), ValueData::Float(y)) => (*x as f64) == *y,
+            (ValueData::Float(x), ValueData::Integer(y)) => *x == (*y as f64),
+            (ValueData::Boolean(x), ValueData::Boolean(y)) => x == y,
+            (ValueData::String(x), ValueData::String(y)) => x == y,
+            (ValueData::Unit, ValueData::Unit) => true,
+            _ => false,
+        }
     }
 
     /// Whether a value survives conversion to the OVM model and back.
@@ -2080,6 +2228,7 @@ impl BytecodeCompiler {
             optimizer: BytecodeOptimizer::new(),
             local_variables: HashMap::new(),
             builtin_names: std::collections::HashSet::new(),
+            loop_targets: Vec::new(),
             _label_counter: 0,
             function_registry: HashMap::new(),
         }
@@ -2094,6 +2243,7 @@ impl BytecodeCompiler {
         self.register_allocator.reset();
         self.emitter.reset();
         self.local_variables.clear();
+        self.loop_targets.clear();
 
         // Parameters occupy the first registers, in declaration order
         for param in &func.parameters {
@@ -2338,6 +2488,112 @@ impl BytecodeCompiler {
                 }
             }
 
+            Expr::Match { value, arms } => {
+                let scrutinee = self.compile_expression(value)?;
+                let result_reg = self.register_allocator.allocate_register();
+                let end_label = self.emitter.create_label();
+
+                for arm in arms.iter() {
+                    let next_arm = self.emitter.create_label();
+
+                    // Pattern test; jumps to next_arm when it doesn't apply
+                    self.compile_pattern_test(&arm.pattern, scrutinee, next_arm)?;
+
+                    // A guard may live on the arm or inside a Guarded pattern
+                    if let Some(guard) = &arm.guard {
+                        let guard_reg = self.compile_expression(guard)?;
+                        self.emitter.emit_branch_if_false(guard_reg, next_arm);
+                    }
+
+                    let body_reg = self.compile_expression(&arm.expression)?;
+                    self.emitter.emit_move(result_reg, body_reg);
+                    self.emitter.emit_jump(end_label);
+
+                    self.emitter.place_label(next_arm);
+                }
+
+                // Falling past every arm is the interpreter's PatternMatchFailed
+                self.emitter.instructions.push(Instruction::MatchFail);
+                self.emitter.place_label(end_label);
+                Ok(result_reg)
+            }
+
+            Expr::Break => {
+                let (_, break_target) = *self.loop_targets.last().ok_or_else(|| {
+                    BytecodeError::CompilationFailed("'break' outside of a loop".to_string())
+                })?;
+                self.emitter.emit_jump(break_target);
+                // Unreachable, but every expression must yield a register
+                self.unit_register()
+            }
+
+            Expr::Continue => {
+                let (continue_target, _) = *self.loop_targets.last().ok_or_else(|| {
+                    BytecodeError::CompilationFailed("'continue' outside of a loop".to_string())
+                })?;
+                self.emitter.emit_jump(continue_target);
+                self.unit_register()
+            }
+
+            Expr::ForLoop {
+                variable,
+                iterable,
+                body,
+            } => {
+                // Iterate by index over a list or range, matching the
+                // interpreter (which never materializes a range).
+                let source_reg = self.compile_expression(iterable)?;
+
+                let len_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::IterLen {
+                    dst: len_reg,
+                    src: source_reg,
+                });
+
+                let idx_reg = self.register_allocator.allocate_register();
+                let zero = self.emitter.add_constant(OvmValue::new_integer(0));
+                self.emitter.emit_load_const(idx_reg, zero);
+
+                let one_reg = self.register_allocator.allocate_register();
+                let one = self.emitter.add_constant(OvmValue::new_integer(1));
+                self.emitter.emit_load_const(one_reg, one);
+
+                // The loop variable gets its own register, rebound each pass
+                let var_reg = self.register_allocator.allocate_register();
+                self.local_variables.insert(variable.clone(), var_reg);
+
+                let loop_start = self.emitter.create_label();
+                let loop_step = self.emitter.create_label();
+                let loop_end = self.emitter.create_label();
+
+                self.emitter.place_label(loop_start);
+                let cond_reg = self.register_allocator.allocate_register();
+                self.emitter.emit_lt(cond_reg, idx_reg, len_reg);
+                self.emitter.emit_branch_if_false(cond_reg, loop_end);
+
+                self.emitter.instructions.push(Instruction::IterGet {
+                    dst: var_reg,
+                    src: source_reg,
+                    idx: idx_reg,
+                });
+
+                // `continue` jumps to the increment, not the test, so the
+                // loop still advances
+                self.loop_targets.push((loop_step, loop_end));
+                let body_result = self.compile_expression(body);
+                self.loop_targets.pop();
+                body_result?;
+
+                self.emitter.place_label(loop_step);
+                self.emitter.emit_add(idx_reg, idx_reg, one_reg);
+                self.emitter.emit_jump(loop_start);
+
+                self.emitter.place_label(loop_end);
+
+                // For loops evaluate to Unit
+                self.unit_register()
+            }
+
             Expr::Assignment { target, value } => {
                 let target_reg = match self.local_variables.get(target) {
                     Some(&reg) => reg,
@@ -2363,7 +2619,12 @@ impl BytecodeCompiler {
                 let condition_reg = self.compile_expression(condition)?;
                 self.emitter.emit_branch_if_false(condition_reg, loop_end);
 
-                self.compile_expression(body)?;
+                // `continue` re-tests the condition; `break` exits
+                self.loop_targets.push((loop_start, loop_end));
+                let body_result = self.compile_expression(body);
+                self.loop_targets.pop();
+                body_result?;
+
                 self.emitter.emit_jump(loop_start);
 
                 self.emitter.place_label(loop_end);
@@ -2385,6 +2646,136 @@ impl BytecodeCompiler {
                 )))
             }
         }
+    }
+
+    /// Emit a test for `pattern` against `value_reg`, jumping to `fail_label`
+    /// when it does not apply. Identifier patterns bind on the success path.
+    ///
+    /// Only the non-destructuring subset is supported; destructuring patterns
+    /// (Ok/Err, lists, tuples, structs, enums) are rejected so the function
+    /// stays on the interpreter rather than being miscompiled.
+    fn compile_pattern_test(
+        &mut self,
+        pattern: &crate::ast::Pattern,
+        value_reg: Register,
+        fail_label: Label,
+    ) -> Result<(), BytecodeError> {
+        use crate::ast::Pattern;
+
+        match pattern {
+            Pattern::Wildcard => Ok(()),
+
+            Pattern::Identifier(name) => {
+                // Bind the name to its own register so later assignment to it
+                // doesn't clobber the scrutinee
+                let var_reg = self.register_allocator.allocate_register();
+                self.emitter.emit_move(var_reg, value_reg);
+                self.local_variables.insert(name.clone(), var_reg);
+                Ok(())
+            }
+
+            Pattern::Literal(literal) => {
+                if !BytecodeVm::round_trips(literal) {
+                    return Err(BytecodeError::CompilationFailed(
+                        "Unsupported literal pattern in bytecode tier".to_string(),
+                    ));
+                }
+                let const_idx = self.emitter.add_constant(OvmValue::from_ast(literal.clone()));
+                let const_reg = self.register_allocator.allocate_register();
+                self.emitter.emit_load_const(const_reg, const_idx);
+
+                let test_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::PatternEq {
+                    dst: test_reg,
+                    value: value_reg,
+                    other: const_reg,
+                });
+                self.emitter.emit_branch_if_false(test_reg, fail_label);
+                Ok(())
+            }
+
+            Pattern::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let bound = |p: &Pattern| match p {
+                    Pattern::Literal(Value::Integer(n)) => Some(*n),
+                    _ => None,
+                };
+                match (bound(start), bound(end)) {
+                    (Some(lo), Some(hi)) => {
+                        let test_reg = self.register_allocator.allocate_register();
+                        self.emitter.instructions.push(Instruction::PatternInRange {
+                            dst: test_reg,
+                            value: value_reg,
+                            lo,
+                            hi,
+                            inclusive: *inclusive,
+                        });
+                        self.emitter.emit_branch_if_false(test_reg, fail_label);
+                        Ok(())
+                    }
+                    // Character ranges and anything non-literal stay interpreted
+                    _ => Err(BytecodeError::CompilationFailed(
+                        "Unsupported range pattern in bytecode tier".to_string(),
+                    )),
+                }
+            }
+
+            Pattern::Or { alternatives } => {
+                // Alternatives may not bind, so that the success path has the
+                // same bindings whichever one matched
+                if alternatives.iter().any(Self::pattern_binds) {
+                    return Err(BytecodeError::CompilationFailed(
+                        "Or-patterns that bind variables are not supported in the bytecode tier"
+                            .to_string(),
+                    ));
+                }
+
+                let matched = self.emitter.create_label();
+                for alternative in alternatives {
+                    let try_next = self.emitter.create_label();
+                    self.compile_pattern_test(alternative, value_reg, try_next)?;
+                    self.emitter.emit_jump(matched);
+                    self.emitter.place_label(try_next);
+                }
+                self.emitter.emit_jump(fail_label);
+                self.emitter.place_label(matched);
+                Ok(())
+            }
+
+            Pattern::Guarded { pattern, guard } => {
+                self.compile_pattern_test(pattern, value_reg, fail_label)?;
+                let guard_reg = self.compile_expression(guard)?;
+                self.emitter.emit_branch_if_false(guard_reg, fail_label);
+                Ok(())
+            }
+
+            other => Err(BytecodeError::CompilationFailed(format!(
+                "Unsupported pattern in bytecode tier: {:?}",
+                std::mem::discriminant(other)
+            ))),
+        }
+    }
+
+    /// Whether a pattern introduces bindings.
+    fn pattern_binds(pattern: &crate::ast::Pattern) -> bool {
+        use crate::ast::Pattern;
+        match pattern {
+            Pattern::Identifier(_) | Pattern::Rest(_) => true,
+            Pattern::Or { alternatives } => alternatives.iter().any(Self::pattern_binds),
+            Pattern::Guarded { pattern, .. } => Self::pattern_binds(pattern),
+            _ => false,
+        }
+    }
+
+    /// Allocate a register holding Unit.
+    fn unit_register(&mut self) -> Result<Register, BytecodeError> {
+        let const_idx = self.emitter.add_constant(OvmValue::new_unit());
+        let dst_reg = self.register_allocator.allocate_register();
+        self.emitter.emit_load_const(dst_reg, const_idx);
+        Ok(dst_reg)
     }
 
     /// Compile a statement inside a block, returning the register holding its

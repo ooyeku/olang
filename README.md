@@ -481,6 +481,7 @@ Apple Silicon laptop, release build:
 | `fib(20)` (recursive calls) | 837 ms | 6.9 ms | ~121x |
 | 100k-iteration `while` loop | 27.9 ms | 4.2 ms | ~6.6x |
 | 300k-iteration loop across 4 functions | 38.9 s | 0.40 s | ~97x |
+| 2M-iteration `for` loop with `match` | 55.8 s | 1.28 s | ~44x |
 
 End to end through the CLI, `fib(27)` runs in **23.6 s** interpreted and
 **0.20 s** with the tier enabled, producing identical output.
@@ -507,8 +508,9 @@ anything outside it stays on the interpreter. See
 - REPL with help system, tutorials, shell integration, and TAB completion
 
 ### Next Phase
-- **Widen the bytecode tier**: `match` and `for` support; cheaper builtin
-  calls (they currently round-trip through the AST value model)
+- **Widen the bytecode tier**: destructuring patterns (`Ok(v)`/`Err(e)`,
+  lists, tuples); cheaper builtin calls (they currently round-trip through
+  the AST value model)
 - **Enable the tier by default** once coverage justifies it
 - **Real JIT codegen** to replace the disabled Cranelift scaffolding
 - Package manager and ecosystem

@@ -286,8 +286,9 @@ fn unsupported_features_fail_compilation() {
     let cases = [
         // free variable / global
         ("fn f(x) = x + y", "f"),
-        // match expression
-        ("fn f(x) = match x { 1 => 2, _ => 3 }", "f"),
+        // destructuring patterns are not compiled
+        ("fn f(x) = match x { Ok(v) => v, Err(e) => 0 }", "f"),
+        ("fn f(x) = match x { [a, b] => a + b, _ => 0 }", "f"),
         // lambda
         ("fn f(x) = ((y) => y)(x)", "f"),
         // pipeline

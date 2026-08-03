@@ -135,13 +135,14 @@ offset(1) + offset(2) + offset(3)
 
 #[test]
 fn functions_using_unsupported_features_keep_working() {
+    // Map literals are not compiled; the function must fall back and still
+    // produce the right answer.
     let src = r#"
-fn classify(n) = match n % 3 {
-    0 => "zero",
-    1 => "one",
-    _ => "two"
+fn lookup(k) = {
+    let m = #{"a": 1, "b": 2}
+    map_get(m, k)
 }
-classify(1) + classify(2) + classify(3)
+to_string(lookup("a")) + to_string(lookup("b"))
 "#;
     assert_eq!(promotion_count(src, 1), 0);
     assert_tier_transparent(src);
@@ -448,5 +449,284 @@ first([])
 "#;
     assert!(eval(src, None).is_err());
     assert!(eval(src, Some(1)).is_err());
+    assert_tier_transparent(src);
+}
+
+// --- for loops, break, continue ---
+
+#[test]
+fn for_over_range_agrees() {
+    let src = r#"
+fn total(n) = {
+    let acc = 0
+    for i in 0..n {
+        acc = acc + i
+    }
+    acc
+}
+total(10) + total(100) + total(1000)
+"#;
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(45 + 4950 + 499500));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn for_over_inclusive_range_agrees() {
+    let src = r#"
+fn total(n) = {
+    let acc = 0
+    for i in 0..=n {
+        acc = acc + i
+    }
+    acc
+}
+total(10) + total(100)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn for_over_empty_and_reversed_ranges() {
+    let src = r#"
+fn total(a, b) = {
+    let acc = 0
+    for i in a..b {
+        acc = acc + i
+    }
+    acc
+}
+total(5, 5) + total(10, 1) + total(0, 3)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn for_over_list_agrees() {
+    let src = r#"
+fn total(xs) = {
+    let acc = 0
+    for x in xs {
+        acc = acc + x
+    }
+    acc
+}
+total([1, 2, 3]) + total([]) + total([10, 20])
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn break_exits_the_loop() {
+    let src = r#"
+fn first_big(n) = {
+    let found = 0
+    for i in 0..n {
+        if i * i > 50 => {
+            found = i
+            break
+        }
+    }
+    found
+}
+first_big(100) + first_big(3)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn continue_skips_iterations() {
+    let src = r#"
+fn odds(n) = {
+    let acc = 0
+    for i in 0..n {
+        if i % 2 == 0 => continue
+        acc = acc + i
+    }
+    acc
+}
+odds(10) + odds(21)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn break_and_continue_in_while_loops() {
+    let src = r#"
+fn work(n) = {
+    let acc = 0
+    let i = 0
+    while true {
+        i = i + 1
+        if i > n => break
+        if i % 3 == 0 => continue
+        acc = acc + i
+    }
+    acc
+}
+work(10) + work(30)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn nested_loops_with_break() {
+    // break must exit only the innermost loop
+    let src = r#"
+fn grid(n) = {
+    let acc = 0
+    for i in 0..n {
+        for j in 0..n {
+            if j > i => break
+            acc = acc + 1
+        }
+    }
+    acc
+}
+grid(5) + grid(10)
+"#;
+    assert_tier_transparent(src);
+}
+
+// --- match expressions ---
+
+#[test]
+fn match_on_literals_agrees() {
+    let src = r#"
+fn classify(n) = match n % 4 {
+    0 => "zero",
+    1 => "one",
+    2 => "two",
+    _ => "three"
+}
+classify(0) + classify(1) + classify(2) + classify(3) + classify(7)
+"#;
+    assert_tier_transparent(src);
+    assert_eq!(promotion_count(src, 2), 1, "classify should be promoted");
+}
+
+#[test]
+fn match_binding_pattern_agrees() {
+    let src = r#"
+fn describe(n) = match n {
+    0 => 0,
+    x => x * 2
+}
+describe(0) + describe(5) + describe(9)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn match_range_patterns_agree() {
+    let src = r#"
+fn band(n) = match n {
+    0 => "zero",
+    1..10 => "small",
+    10..100 => "medium",
+    _ => "large"
+}
+band(0) + band(5) + band(50) + band(500)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn match_guards_agree() {
+    let src = r#"
+fn sign(n) = match n {
+    x if x < 0 => 0 - 1,
+    0 => 0,
+    _ => 1
+}
+sign(0 - 5) + sign(0) + sign(5)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn match_or_patterns_agree() {
+    let src = r#"
+fn vowelish(n) = match n {
+    1 | 5 | 9 => "hit",
+    _ => "miss"
+}
+vowelish(1) + vowelish(2) + vowelish(5) + vowelish(9)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn match_on_strings_agrees() {
+    let src = r#"
+fn route(path) = match path {
+    "home" => 1,
+    "about" => 2,
+    _ => 0
+}
+route("home") + route("about") + route("other")
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn match_type_mismatch_does_not_error() {
+    // A literal pattern of a different type must simply not match, rather
+    // than raising the type error a plain equality would.
+    let src = r#"
+fn odd_one(n) = match n {
+    "text" => 1,
+    0 => 2,
+    _ => 3
+}
+odd_one(0) + odd_one(7)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn non_exhaustive_match_fails_the_same_way() {
+    let src = r#"
+fn only_zero(n) = match n {
+    0 => "zero"
+}
+only_zero(0)
+only_zero(1)
+"#;
+    assert!(eval(src, None).is_err());
+    assert!(eval(src, Some(1)).is_err());
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn destructuring_patterns_keep_working_interpreted() {
+    // Ok/Err and list patterns are not compiled; the function must fall back
+    // and still produce the right answer.
+    let src = r#"
+fn unwrap_or_zero(r) = match r {
+    Ok(v) => v,
+    Err(e) => 0
+}
+unwrap_or_zero(Ok(5)) + unwrap_or_zero(Err("x")) + unwrap_or_zero(Ok(7))
+"#;
+    assert_eq!(promotion_count(src, 1), 0);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn match_inside_a_loop_agrees() {
+    let src = r#"
+fn tally(n) = {
+    let acc = 0
+    for i in 0..n {
+        acc = acc + match i % 3 {
+            0 => 10,
+            1 => 100,
+            _ => 1
+        }
+    }
+    acc
+}
+tally(10) + tally(31)
+"#;
     assert_tier_transparent(src);
 }
