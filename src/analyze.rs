@@ -27,6 +27,11 @@ pub struct Analyzer {
     enum_definitions: HashMap<String, HashSet<String>>,
     /// Names pre-registered as builtins (excluded from unused-variable reports)
     builtin_names: HashSet<String>,
+    /// Outer-scope tracking entries shadowed by each open scope (parallel to
+    /// scopes[1..]), restored on scope exit. Without this, exiting a scope
+    /// that shadowed an outer variable deleted the outer entry too, silently
+    /// corrupting usage counts and unused-variable reports.
+    shadowed: Vec<Vec<(String, VariableInfo)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +85,7 @@ impl Analyzer {
             scopes,
             enum_definitions: HashMap::new(),
             builtin_names,
+            shadowed: Vec::new(),
         }
     }
     
@@ -91,6 +97,7 @@ impl Analyzer {
             scopes: vec![HashSet::new()],
             enum_definitions: HashMap::new(),
             builtin_names: HashSet::new(),
+            shadowed: Vec::new(),
         }
     }
 
@@ -122,9 +129,21 @@ impl Analyzer {
                     }
                 }
 
-                // Add all variables from the pattern to current scope
+                // Add all variables from the pattern to current scope, with a
+                // tracking entry — without one, usage counting silently
+                // no-ops for every let-bound variable and they can never
+                // appear in unused-variable reports
                 for var_name in pattern_variables {
-                    self.scopes[self.current_scope].insert(var_name);
+                    self.declare_in_scope(var_name.clone());
+                    self.variables.insert(
+                        var_name.clone(),
+                        VariableInfo {
+                            name: var_name,
+                            scope: self.current_scope,
+                            is_mutable: true,
+                            usage_count: 0,
+                        },
+                    );
                 }
                 Ok(())
             }
@@ -135,7 +154,7 @@ impl Analyzer {
                         name: func_decl.name.clone(),
                     });
                 }
-                self.scopes[self.current_scope].insert(func_decl.name.clone());
+                self.declare_in_scope(func_decl.name.clone());
                 
                 // Add function to variables map
                 self.variables.insert(
@@ -158,7 +177,7 @@ impl Analyzer {
                             name: param.name.clone(),
                         });
                     }
-                    self.scopes[self.current_scope].insert(param.name.clone());
+                    self.declare_in_scope(param.name.clone());
                     self.variables.insert(
                         param.name.clone(),
                         VariableInfo {
@@ -183,7 +202,7 @@ impl Analyzer {
                         name: type_decl.name.clone(),
                     });
                 }
-                self.scopes[self.current_scope].insert(type_decl.name.clone());
+                self.declare_in_scope(type_decl.name.clone());
                 
                 // Add type to variables map (types are treated as constants)
                 self.variables.insert(
@@ -242,7 +261,7 @@ impl Analyzer {
                         name: error_type_decl.name.clone(),
                     });
                 }
-                self.scopes[self.current_scope].insert(error_type_decl.name.clone());
+                self.declare_in_scope(error_type_decl.name.clone());
                 
                 // Add error type to variables map
                 self.variables.insert(
@@ -287,7 +306,7 @@ impl Analyzer {
                         name: async_func_decl.name.clone(),
                     });
                 }
-                self.scopes[self.current_scope].insert(async_func_decl.name.clone());
+                self.declare_in_scope(async_func_decl.name.clone());
                 
                 // Add async function to variables map
                 self.variables.insert(
@@ -310,7 +329,7 @@ impl Analyzer {
                             name: param.name.clone(),
                         });
                     }
-                    self.scopes[self.current_scope].insert(param.name.clone());
+                    self.declare_in_scope(param.name.clone());
                     self.variables.insert(
                         param.name.clone(),
                         VariableInfo {
@@ -375,7 +394,7 @@ impl Analyzer {
                             name: param.name.clone(),
                         });
                     }
-                    self.scopes[self.current_scope].insert(param.name.clone());
+                    self.declare_in_scope(param.name.clone());
                 }
                 self.analyze_expr(body)?;
                 self.exit_scope();
@@ -486,7 +505,7 @@ impl Analyzer {
                     // In some languages this would be an error, but in Olang it might be
                     // allowed to create variables through assignment
                     // For now, we'll add it to the current scope
-                    self.scopes[self.current_scope].insert(target.clone());
+                    self.declare_in_scope(target.clone());
                     
                     // Also add to variables map for tracking
                     self.variables.insert(
@@ -540,7 +559,7 @@ impl Analyzer {
                 self.enter_scope();
                 
                 // Add loop variable to scope
-                self.scopes[self.current_scope].insert(variable.clone());
+                self.declare_in_scope(variable.clone());
                 self.variables.insert(
                     variable.clone(),
                     VariableInfo {
@@ -641,7 +660,7 @@ impl Analyzer {
             // Extract and bind pattern variables
             let pattern_variables = self.extract_pattern_variables(&arm.pattern);
             for var_name in pattern_variables {
-                self.scopes[self.current_scope].insert(var_name);
+                self.declare_in_scope(var_name);
             }
             
             // Analyze the arm expression
@@ -686,6 +705,7 @@ impl Analyzer {
     fn enter_scope(&mut self) {
         self.current_scope += 1;
         self.scopes.push(HashSet::new());
+        self.shadowed.push(Vec::new());
     }
 
     fn exit_scope(&mut self) {
@@ -697,10 +717,27 @@ impl Analyzer {
                     self.variables.remove(&name);
                 }
             }
+            // Restore outer-scope entries this scope shadowed
+            if let Some(restored) = self.shadowed.pop() {
+                for (name, info) in restored {
+                    self.variables.insert(name, info);
+                }
+            }
             // Pop the scope and update current_scope index
             self.scopes.pop();
             self.current_scope -= 1;
         }
+    }
+
+    /// Insert a name into the current scope's set, first saving any
+    /// outer-scope tracking entry it shadows so exit_scope can restore it.
+    fn declare_in_scope(&mut self, name: String) {
+        if self.current_scope > 0 && !self.scopes[self.current_scope].contains(&name) {
+            if let Some(existing) = self.variables.get(&name) {
+                self.shadowed[self.current_scope - 1].push((name.clone(), existing.clone()));
+            }
+        }
+        self.scopes[self.current_scope].insert(name);
     }
 
     /// Extract all variable names from a pattern
@@ -1421,7 +1458,7 @@ impl Analyzer {
                         name: func_decl.name.clone(),
                     });
                 }
-                self.scopes[self.current_scope].insert(func_decl.name.clone());
+                self.declare_in_scope(func_decl.name.clone());
                 
                 // Add function to variables map
                 self.variables.insert(
@@ -1444,7 +1481,7 @@ impl Analyzer {
                             name: param.name.clone(),
                         });
                     }
-                    self.scopes[self.current_scope].insert(param.name.clone());
+                    self.declare_in_scope(param.name.clone());
                     self.variables.insert(
                         param.name.clone(),
                         VariableInfo {
@@ -1480,9 +1517,21 @@ impl Analyzer {
                     }
                 }
 
-                // Add all variables from the pattern to current scope
+                // Add all variables from the pattern to current scope, with a
+                // tracking entry — without one, usage counting silently
+                // no-ops for every let-bound variable and they can never
+                // appear in unused-variable reports
                 for var_name in pattern_variables {
-                    self.scopes[self.current_scope].insert(var_name);
+                    self.declare_in_scope(var_name.clone());
+                    self.variables.insert(
+                        var_name.clone(),
+                        VariableInfo {
+                            name: var_name,
+                            scope: self.current_scope,
+                            is_mutable: true,
+                            usage_count: 0,
+                        },
+                    );
                 }
                 Ok(())
             }
@@ -1493,7 +1542,7 @@ impl Analyzer {
                         name: type_decl.name.clone(),
                     });
                 }
-                self.scopes[self.current_scope].insert(type_decl.name.clone());
+                self.declare_in_scope(type_decl.name.clone());
                 
                 // Add type to variables map
                 self.variables.insert(
@@ -1549,7 +1598,7 @@ impl Analyzer {
                     }
                     
                     // Add imported symbol to current scope
-                    self.scopes[self.current_scope].insert(name.clone());
+                    self.declare_in_scope(name.clone());
                     
                     // Track in variables map
                     self.variables.insert(
@@ -1907,4 +1956,52 @@ enum PatternAnalysis {
     List,
     /// Mixed pattern types
     Mixed,
+}
+
+#[cfg(test)]
+mod shadowing_tests {
+    use super::*;
+    use crate::parser::Parser;
+
+    /// Exiting a scope that shadowed an outer variable must restore the
+    /// outer entry, not delete it — deletion silently corrupted usage
+    /// counts and unused-variable reports.
+    #[test]
+    fn shadowing_scope_restores_outer_variable_tracking() {
+        let parser = Parser::new();
+        // `x` is declared at top level and shadowed by the function
+        // parameter; after analysis the top-level `x` must still be tracked.
+        let program = parser
+            .parse("let x = 1\nfn f(x) = x + 1\nf(2)\nx")
+            .expect("parse");
+
+        let mut analyzer = Analyzer::new_empty();
+        analyzer.analyze_program(&program).expect("analyze");
+
+        assert!(
+            analyzer.variables.contains_key("x"),
+            "outer x should survive the shadowing function scope"
+        );
+        assert_eq!(
+            analyzer.variables["x"].scope, 0,
+            "the surviving entry should be the top-level one"
+        );
+    }
+
+    #[test]
+    fn shadowing_builtin_name_restores_builtin_entry() {
+        let parser = Parser::new();
+        let program = parser
+            .parse("fn apply(map) = map + 1\napply(1)")
+            .expect("parse");
+
+        let mut analyzer = Analyzer::new();
+        analyzer.analyze_program(&program).expect("analyze");
+
+        assert!(
+            analyzer.variables.contains_key("map"),
+            "builtin map's tracking entry should survive being shadowed"
+        );
+        assert_eq!(analyzer.variables["map"].scope, 0);
+    }
 }
