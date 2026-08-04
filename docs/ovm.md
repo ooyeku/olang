@@ -55,7 +55,9 @@ A function is eligible when its body uses only the subset the VM implements:
 - arithmetic, comparison, and logical operators
 - `if`/`else` expressions
 - `match` expressions over literals, wildcards, bindings, integer ranges,
-  or-patterns, and guards
+  or-patterns, guards, and destructuring of `Ok`/`Err`, lists (including
+  `...rest`), and tuples — nested to any depth
+- `Ok(..)` / `Err(..)` construction
 - blocks, `let` bindings, assignment to locals, `while` and `for` loops,
   `break`, and `continue`
 - calls to itself (recursion), to other user functions (compiled on demand,
@@ -65,8 +67,8 @@ Anything else causes the function to stay interpreted:
 
 - referencing a global or captured variable — the VM has no environment
 - lambdas, pipelines, structs, maps, async
-- destructuring patterns in `match` — `Ok(v)`/`Err(e)`, lists, tuples,
-  structs, enums — and or-patterns that bind variables
+- struct and enum patterns, and or-patterns that bind variables (each
+  alternative would otherwise leave different bindings on the success path)
 - calling a function that itself cannot be compiled (the rejection propagates
   to every caller)
 - default parameter values
@@ -88,7 +90,7 @@ rule is enforced by two test suites:
   recursion, loops, strings, lists, ranges, arity errors, and a set of
   aliasing cases specific to the register-window design. It also asserts the
   inverse: unsupported features must be *rejected*, never miscompiled.
-- `tests/bytecode_tier_test.rs` (46 tests) runs whole programs with and
+- `tests/bytecode_tier_test.rs` (60 tests) runs whole programs with and
   without the tier enabled and asserts the observable results match,
   including mixed programs where some functions are promoted and others are
   not, transitive and mutual recursion, and function redefinition.
@@ -139,6 +141,9 @@ A register machine. Key design points:
   and `IterGet`, which handle both lists and ranges. A range is never
   materialized, so iterating `0..10000000` costs no memory — matching the
   interpreter.
+- **Guarded extraction.** Destructuring emits a shape test before any
+  extraction, so an extractor can never see a value it doesn't fit. Nested
+  patterns recurse on the extracted register.
 - **Total pattern tests.** `match` uses `PatternEq` and `PatternInRange`
   rather than the ordinary comparison instructions, because a pattern of the
   wrong type must simply not match where an ordinary comparison would raise a
@@ -204,6 +209,7 @@ Measured on an Apple Silicon laptop, release build. Reproduce with
 | 300k-iteration loop across 4 functions | 38.9 s | 0.40 s | ~97× |
 | 100k-iteration loop dominated by `sum`/`range` | 23.2 s | 7.2 s | ~3.2× |
 | 2M-iteration `for` loop with `match` and `continue` | 55.8 s | 1.28 s | ~44× |
+| 1M-iteration loop over `Result` construction and matching | 64.0 s | 1.37 s | ~47× |
 
 The third row is the case transitive compilation unlocked: before it, a
 function calling a helper was rejected outright and saw no benefit at all. The
@@ -230,11 +236,8 @@ ten representative programs). Use it when changing the evaluator; use
 
 These are real gaps, not oversights:
 
-1. **Destructuring is not compiled.** `match` handles literals, ranges,
-   bindings, or-patterns, and guards, but `Ok(v)`/`Err(e)`, list, tuple,
-   struct, and enum patterns keep a function interpreted — which still
-   excludes a lot of idiomatic Result-handling code. Lambdas and pipelines
-   are also uncompiled.
+1. **Struct and enum patterns are not compiled**, nor are lambdas and
+   pipelines. `Ok`/`Err`, list, and tuple destructuring do compile.
 2. **Higher-order and map-returning builtins are unavailable** (see
    [Builtins](#builtins)). A function calling one stays interpreted, and so
    does every function that calls it.
