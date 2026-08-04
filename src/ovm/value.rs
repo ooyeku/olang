@@ -130,6 +130,11 @@ pub enum ValueData {
     List(Arc<Vec<OvmValue>>),
     Tuple(Arc<Vec<OvmValue>>),
     Function(Arc<FunctionObject>),
+    /// An interpreter function held verbatim, so it converts back losslessly.
+    /// Used for non-capturing lambdas the bytecode tier builds as constants
+    /// and hands to builtins; FunctionObject drops parameter metadata and
+    /// rewrites the closure, so it cannot round-trip.
+    AstFunction(Arc<crate::ast::Function>),
     Struct(Arc<StructObject>),
     Range(Arc<RangeObject>),
     Builtin(Arc<BuiltinObject>),
@@ -564,6 +569,7 @@ impl PartialEq for OvmValue {
             
             // For complex types, fall back to pointer comparison for now
             (ValueData::Function(a), ValueData::Function(b)) => Arc::ptr_eq(a, b),
+            (ValueData::AstFunction(a), ValueData::AstFunction(b)) => Arc::ptr_eq(a, b),
             (ValueData::Struct(a), ValueData::Struct(b)) => Arc::ptr_eq(a, b),
             (ValueData::Builtin(a), ValueData::Builtin(b)) => Arc::ptr_eq(a, b),
             (ValueData::Promise(a), ValueData::Promise(b)) => Arc::ptr_eq(a, b),
@@ -637,6 +643,7 @@ impl OvmValue {
             ValueData::List(p) => ValueData::List(p.clone()),
             ValueData::Tuple(p) => ValueData::Tuple(p.clone()),
             ValueData::Function(p) => ValueData::Function(p.clone()),
+            ValueData::AstFunction(p) => ValueData::AstFunction(p.clone()),
             ValueData::Struct(p) => ValueData::Struct(p.clone()),
             ValueData::Range(p) => ValueData::Range(p.clone()),
             ValueData::Builtin(p) => ValueData::Builtin(p.clone()),
@@ -1267,6 +1274,7 @@ impl OvmValue {
                 ValueData::List(gc_ptr) => gc_ptr.len() * std::mem::size_of::<OvmValue>(),
                 ValueData::Tuple(gc_ptr) => gc_ptr.len() * std::mem::size_of::<OvmValue>(),
                 ValueData::Function(_) => std::mem::size_of::<FunctionObject>(),
+            ValueData::AstFunction(_) => std::mem::size_of::<crate::ast::Function>(),
                 ValueData::Struct(_) => std::mem::size_of::<StructObject>(),
                 ValueData::Range(_) => std::mem::size_of::<RangeObject>(),
                 ValueData::Promise(_) => std::mem::size_of::<PromiseObject>(),
@@ -1278,6 +1286,18 @@ impl OvmValue {
         safepoint_manager.record_allocation(allocation_size);
         
         Ok(ovm_value)
+    }
+
+    /// Wrap an interpreter function verbatim so it converts back unchanged.
+    pub fn new_ast_function(func: crate::ast::Function) -> Self {
+        Self {
+            header: ValueHeader::new(
+                TypeTag::Function,
+                ExecutionTier::Interpreter,
+                LazyState::Eager,
+            ),
+            data: ValueData::AstFunction(Arc::new(func)),
+        }
     }
 
     /// Create an Ok/Err result value
@@ -1332,6 +1352,7 @@ impl OvmValue {
                 }
                 Ok(Value::Tuple(std::sync::Arc::new(ast_values)))
             }
+            ValueData::AstFunction(func) => Ok(Value::Function((**func).clone())),
             ValueData::Function(_) => {
                 // Functions return unit for now
                 Ok(Value::Unit)
@@ -1434,7 +1455,7 @@ impl fmt::Display for OvmValue {
                 }
                 write!(f, ")")
             }
-            ValueData::Function(_) => write!(f, "<function>"),
+            ValueData::Function(_) | ValueData::AstFunction(_) => write!(f, "<function>"),
             ValueData::Struct(_) => write!(f, "<struct>"),
             ValueData::Range(gc_ptr) => {
                 if gc_ptr.inclusive {

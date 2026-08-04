@@ -946,3 +946,119 @@ total(5) + total(0 - 3) + total(9)
 "#;
     assert_tier_transparent(src);
 }
+
+// --- non-capturing lambdas and pipelines ---
+
+#[test]
+fn pipeline_with_lambdas_is_promoted() {
+    let src = r#"
+fn process(n) = range(0, n)
+    |> map((x) => x * 3)
+    |> filter((x) => x % 2 == 0)
+    |> fold(0, (acc, x) => acc + x)
+process(10) + process(100) + process(50)
+"#;
+    assert_eq!(promotion_count(src, 2), 1, "should now be promoted");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn lambda_results_match_the_interpreter() {
+    let src = r#"
+fn doubled(xs) = map(xs, (x) => x * 2)
+fn evens(xs) = filter(xs, (x) => x % 2 == 0)
+fn total(xs) = fold(xs, 0, (acc, x) => acc + x)
+total(doubled([1, 2, 3])) + total(evens([1, 2, 3, 4]))
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn capturing_lambda_falls_back() {
+    // The lambda references `factor` from the enclosing scope, so it cannot
+    // be built with an empty closure — the function must stay interpreted
+    // and still be correct.
+    let src = r#"
+fn scale(xs, factor) = map(xs, (x) => x * factor)
+sum(scale([1, 2, 3], 10)) + sum(scale([1, 2], 5))
+"#;
+    assert_eq!(promotion_count(src, 1), 0);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn lambda_calling_a_function_falls_back() {
+    // A call inside a lambda needs a resolvable callee, which a
+    // non-capturing lambda's empty closure cannot provide.
+    let src = r#"
+fn square(n) = n * n
+fn squares(xs) = map(xs, (x) => square(x))
+sum(squares([1, 2, 3])) + sum(squares([4, 5]))
+"#;
+    // `square` itself is promotable, so one promotion is expected — but
+    // `squares` is not it: its lambda references a name it cannot resolve.
+    assert_eq!(promotion_count(src, 1), 1);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn lambda_with_a_block_body_agrees() {
+    let src = r#"
+fn work(xs) = map(xs, (x) => {
+    let doubled = x * 2
+    doubled + 1
+})
+sum(work([1, 2, 3])) + sum(work([4, 5]))
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn lambda_with_a_conditional_body_agrees() {
+    let src = r#"
+fn clip(xs) = map(xs, (x) => if x > 10 => 10 else => x)
+sum(clip([1, 20, 5, 30])) + sum(clip([]))
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn multi_parameter_lambdas_agree() {
+    let src = r#"
+fn combine(xs) = fold(xs, 0, (acc, x) => acc * 2 + x)
+combine([1, 2, 3]) + combine([4, 5])
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn pipeline_without_arguments_agrees() {
+    // `xs |> f` (no argument list) desugars to `f(xs)`
+    let src = r#"
+fn total(xs) = xs |> sum
+total([1, 2, 3]) + total([4, 5])
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn lambda_errors_propagate_identically() {
+    let src = r#"
+fn risky(xs) = map(xs, (x) => x / 0)
+risky([1])
+risky([2])
+"#;
+    assert!(eval(src, None).is_err());
+    assert!(eval(src, Some(1)).is_err());
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn nested_lambdas_fall_back_when_inner_captures() {
+    // The inner lambda captures the outer lambda's parameter
+    let src = r#"
+fn outer(xs) = map(xs, (x) => sum(map([1, 2], (y) => y * x)))
+sum(outer([1, 2])) + sum(outer([3]))
+"#;
+    assert_tier_transparent(src);
+}

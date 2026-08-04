@@ -685,6 +685,11 @@ impl BytecodeVm {
             "clamp",
             // output
             "print", "println",
+            // higher-order: reachable now that non-capturing lambdas compile
+            // to function values. group_by is still excluded because it
+            // returns a Map, which does not survive the round trip.
+            "map", "filter", "reduce", "fold", "find", "map_filtered",
+            "result_map", "result_map_err", "unwrap_or_else",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -2650,6 +2655,63 @@ impl BytecodeCompiler {
                 }
             }
 
+            Expr::Lambda {
+                parameters, body, ..
+            } => {
+                // Only lambdas that reference nothing but their own parameters.
+                // Such a lambda is a compile-time constant: with no free
+                // variables, an empty closure is equivalent to whatever the
+                // interpreter would have captured.
+                if parameters.iter().any(|p| p.default_value.is_some()) {
+                    return Err(BytecodeError::CompilationFailed(
+                        "Lambda with default parameter values is not supported in the bytecode tier"
+                            .to_string(),
+                    ));
+                }
+
+                let bound: std::collections::HashSet<String> =
+                    parameters.iter().map(|p| p.name.clone()).collect();
+                if !Self::is_closed_over(body, &bound) {
+                    return Err(BytecodeError::CompilationFailed(
+                        "Capturing lambda is not supported in the bytecode tier".to_string(),
+                    ));
+                }
+
+                let function = crate::ast::Function {
+                    name: None,
+                    parameters: parameters.clone(),
+                    body: std::sync::Arc::new((**body).clone()),
+                    closure: std::sync::Arc::new(HashMap::new()),
+                };
+
+                let const_idx = self
+                    .emitter
+                    .add_constant(OvmValue::new_ast_function(function));
+                let dst_reg = self.register_allocator.allocate_register();
+                self.emitter.emit_load_const(dst_reg, const_idx);
+                Ok(dst_reg)
+            }
+
+            Expr::Pipeline { left, right } => {
+                // `x |> f(a)` is `f(x, a)`; `x |> f` is `f(x)`
+                let desugared = match right.as_ref() {
+                    Expr::Call { callee, arguments } => {
+                        let mut args = Vec::with_capacity(arguments.len() + 1);
+                        args.push(crate::ast::Argument::Positional((**left).clone()));
+                        args.extend(arguments.iter().cloned());
+                        Expr::Call {
+                            callee: callee.clone(),
+                            arguments: args,
+                        }
+                    }
+                    other => Expr::Call {
+                        callee: Box::new(other.clone()),
+                        arguments: vec![crate::ast::Argument::Positional((**left).clone())],
+                    },
+                };
+                self.compile_expression(&desugared)
+            }
+
             Expr::ResultOk(inner) | Expr::ResultErr(inner) => {
                 let ok = matches!(expr, Expr::ResultOk(_));
                 let value_reg = self.compile_expression(inner)?;
@@ -3006,6 +3068,98 @@ impl BytecodeCompiler {
                 "Unsupported pattern in bytecode tier: {:?}",
                 std::mem::discriminant(other)
             ))),
+        }
+    }
+
+    /// Whether every free variable in `expr` is in `bound`.
+    ///
+    /// Deliberately a whitelist: any expression form not handled here counts
+    /// as capturing, so an unfamiliar construct makes the lambda ineligible
+    /// rather than being compiled with a closure that cannot satisfy it.
+    fn is_closed_over(expr: &Expr, bound: &std::collections::HashSet<String>) -> bool {
+
+        match expr {
+            Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::String(_)
+            | Expr::RawString(_)
+            | Expr::Boolean(_)
+            | Expr::Break
+            | Expr::Continue => true,
+
+            Expr::Identifier(name) => bound.contains(name),
+
+            Expr::BinaryOp { left, right, .. } | Expr::BitwiseOp { left, right, .. } => {
+                Self::is_closed_over(left, bound) && Self::is_closed_over(right, bound)
+            }
+            Expr::UnaryOp { operand, .. } => Self::is_closed_over(operand, bound),
+
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::is_closed_over(condition, bound)
+                    && Self::is_closed_over(then_branch, bound)
+                    && else_branch
+                        .as_ref()
+                        .map_or(true, |e| Self::is_closed_over(e, bound))
+            }
+
+            Expr::List(items) => items.iter().all(|e| Self::is_closed_over(e, bound)),
+            Expr::Tuple(items) => items.iter().all(|e| Self::is_closed_over(e, bound)),
+
+            Expr::Range { start, end, .. } => {
+                Self::is_closed_over(start, bound) && Self::is_closed_over(end, bound)
+            }
+
+            Expr::Index { object, index } => {
+                Self::is_closed_over(object, bound) && Self::is_closed_over(index, bound)
+            }
+
+            Expr::ResultOk(inner) | Expr::ResultErr(inner) => Self::is_closed_over(inner, bound),
+
+            Expr::Assignment { target, value } => {
+                bound.contains(target) && Self::is_closed_over(value, bound)
+            }
+
+            Expr::WhileLoop { condition, body } => {
+                Self::is_closed_over(condition, bound) && Self::is_closed_over(body, bound)
+            }
+
+            Expr::Block(statements) => {
+                // `let` inside the block extends the bound set for what follows
+                let mut scope = bound.clone();
+                for statement in statements {
+                    match statement {
+                        crate::ast::Statement::Expression(e) => {
+                            if !Self::is_closed_over(e, &scope) {
+                                return false;
+                            }
+                        }
+                        crate::ast::Statement::LetDecl(decl) => {
+                            if let Some(value) = &decl.value {
+                                if !Self::is_closed_over(value, &scope) {
+                                    return false;
+                                }
+                            }
+                            match &decl.pattern {
+                                crate::ast::Pattern::Identifier(name) => {
+                                    scope.insert(name.clone());
+                                }
+                                // Destructuring bindings are not tracked here
+                                _ => return false,
+                            }
+                        }
+                        _ => return false,
+                    }
+                }
+                true
+            }
+
+            // A call needs its callee resolvable from the lambda's closure,
+            // which a non-capturing lambda does not have
+            _ => false,
         }
     }
 

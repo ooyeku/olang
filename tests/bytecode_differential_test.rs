@@ -291,10 +291,14 @@ fn unsupported_features_fail_compilation() {
         // or-patterns that bind are rejected: alternatives would leave
         // different bindings on the success path
         ("fn f(x) = match x { Ok(a) | Err(a) => a, _ => 0 }", "f"),
-        // lambda
+        // immediately-invoked lambda: calling a lambda-valued expression is
+        // not compiled (only passing one to a builtin is)
         ("fn f(x) = ((y) => y)(x)", "f"),
-        // pipeline
-        ("fn f(x) = x |> to_string", "f"),
+        // capturing lambda: needs a closure the tier cannot build
+        ("fn f(x) = map([1, 2], (y) => y * x)", "f"),
+        // lambda calling a function: the callee is not resolvable from an
+        // empty closure
+        ("fn f(x) = map([1, 2], (y) => to_string(y))", "f"),
     ];
     for (src, target) in cases {
         let result = bytecode_result(src, target, &ints(&[1]));

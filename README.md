@@ -483,6 +483,7 @@ Apple Silicon laptop, release build:
 | 300k-iteration loop across 4 functions | 38.9 s | 0.40 s | ~97x |
 | 2M-iteration `for` loop with `match` | 55.8 s | 1.28 s | ~44x |
 | 1M-iteration loop over `Result` construction and matching | 64.0 s | 1.37 s | ~47x |
+| 2000 x 500-element `map`/`filter`/`fold` pipeline | 93.2 s | 3.58 s | ~26x |
 
 End to end through the CLI, `fib(27)` runs in **23.6 s** interpreted and
 **0.20 s** with the tier enabled, producing identical output.
@@ -509,9 +510,9 @@ anything outside it stays on the interpreter. See
 - REPL with help system, tutorials, shell integration, and TAB completion
 
 ### Next Phase
-- **Widen the bytecode tier**: struct and enum patterns, lambdas, pipelines;
-  cheaper builtin calls (they currently round-trip through the AST value
-  model)
+- **Widen the bytecode tier**: capturing lambdas (by attaching the enclosing
+  function's closure), struct and enum patterns; cheaper builtin calls (they
+  currently round-trip through the AST value model)
 - **Enable the tier by default** once coverage justifies it
 - **Real JIT codegen** to replace the disabled Cranelift scaffolding
 - Package manager and ecosystem
