@@ -1221,10 +1221,32 @@ impl Interpreter {
                     }),
                     Value::Promise {
                         state: crate::ast::PromiseState::Pending,
+                        value,
+                        resolve_at_epoch_ms: Some(deadline),
                         ..
                     } => {
-                        // In a full async implementation, this would wait for resolution
-                        // For now, we'll return an error but in real async this would suspend
+                        // A delayed promise: sleep whatever remains of the
+                        // delay, then yield the value. Work done between
+                        // creation and await counts against the delay, like a
+                        // real timer.
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(u64::MAX);
+                        if deadline > now {
+                            std::thread::sleep(std::time::Duration::from_millis(deadline - now));
+                        }
+                        match value {
+                            Some(v) => Ok(*v),
+                            None => Ok(Value::Unit),
+                        }
+                    }
+                    Value::Promise {
+                        state: crate::ast::PromiseState::Pending,
+                        ..
+                    } => {
+                        // Pending with no deadline: nothing will ever resolve
+                        // it in a synchronous interpreter — say so honestly
                         Err(InterpreterError::RuntimeError {
                             message: "Cannot await pending promise (async scheduling not implemented)".to_string(),
                         })
@@ -1248,8 +1270,24 @@ impl Interpreter {
                             let delay_value = self.eval_expr(delay_expr)?;
                             match delay_value {
                                 Value::Integer(ms) if ms >= 0 => {
-                                    let (_, delayed_promise) = self.async_runtime.create_delayed_promise(ms as u64, evaluated_value);
-                                    Ok(delayed_promise)
+                                    // The interpreter is synchronous — there is
+                                    // no scheduler to resolve this later. Carry
+                                    // the deadline in the value so `await` can
+                                    // sleep out the remainder; the old path
+                                    // registered with a runtime nothing drains,
+                                    // leaking an entry per delay and making
+                                    // every await of it error.
+                                    let deadline = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_millis() as u64)
+                                        .unwrap_or(0)
+                                        .saturating_add(ms as u64);
+                                    Ok(Value::Promise {
+                                        state: crate::ast::PromiseState::Pending,
+                                        value: Some(Box::new(evaluated_value)),
+                                        error: None,
+                                        resolve_at_epoch_ms: Some(deadline),
+                                    })
                                 }
                                 Value::Integer(_) => {
                                     Err(InterpreterError::RuntimeError {
@@ -1320,6 +1358,7 @@ impl Interpreter {
                         state: crate::ast::PromiseState::Pending,
                         value: None,
                         error: None,
+                        resolve_at_epoch_ms: None,
                     })
                 }
             }
@@ -1330,6 +1369,7 @@ impl Interpreter {
                         state: crate::ast::PromiseState::Pending,
                         value: None,
                         error: None,
+                        resolve_at_epoch_ms: None,
                     });
                 }
                 
@@ -1366,6 +1406,7 @@ impl Interpreter {
                     state: crate::ast::PromiseState::Pending,
                     value: None,
                     error: None,
+                    resolve_at_epoch_ms: None,
                 })
             }
             Expr::Spawn(expression) => {

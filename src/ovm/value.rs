@@ -1196,6 +1196,7 @@ impl OvmValue {
                 state,
                 value,
                 error,
+                ..
             } => {
                 let ovm_state = match state {
                     crate::ast::PromiseState::Pending => PromiseState::Pending,

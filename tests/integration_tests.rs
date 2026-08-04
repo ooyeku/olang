@@ -738,3 +738,49 @@ fn bare_identifier_patterns_still_bind() {
         Value::Integer(8)
     );
 }
+
+/// Promise.delay must be awaitable: the promise carries its deadline and
+/// await sleeps out the remainder. Previously every await of a delayed
+/// promise errored ("async scheduling not implemented") and each delay
+/// leaked an async-runtime registry entry.
+#[test]
+fn promise_delay_resolves_at_await() {
+    let parser = olang::Parser::new();
+    let mut interpreter = olang::Interpreter::new();
+
+    let program = parser
+        .parse(r#"await Promise.delay("done", 30)"#)
+        .expect("parse");
+    let start = std::time::Instant::now();
+    let result = interpreter.eval_program(program).expect("eval");
+    let elapsed = start.elapsed();
+
+    assert_eq!(result, olang::Value::String("done".to_string().into()));
+    assert!(
+        elapsed.as_millis() >= 25,
+        "await should sleep out the delay, took {:?}",
+        elapsed
+    );
+}
+
+#[test]
+fn promise_delay_counts_elapsed_work_against_the_delay() {
+    let parser = olang::Parser::new();
+    let mut interpreter = olang::Interpreter::new();
+
+    // The delay deadline is set at creation; by the time we await, most of
+    // it may already have passed.
+    let program = parser
+        .parse(
+            r#"
+let p = Promise.delay(42, 20)
+let x = await p
+x
+"#,
+        )
+        .expect("parse");
+    assert_eq!(
+        interpreter.eval_program(program).expect("eval"),
+        olang::Value::Integer(42)
+    );
+}

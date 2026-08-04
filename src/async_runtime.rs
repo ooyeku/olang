@@ -66,6 +66,7 @@ impl AsyncRuntime {
         let promise = Value::Promise {
             state: PromiseState::Pending,
             value: None,
+            resolve_at_epoch_ms: None,
             error: None,
         };
 
@@ -250,6 +251,7 @@ impl AsyncRuntime {
             state: PromiseState::Resolved,
             value: Some(Box::new(value)),
             error: None,
+            resolve_at_epoch_ms: None,
         }
     }
 
@@ -258,6 +260,7 @@ impl AsyncRuntime {
         Value::Promise {
             state: PromiseState::Rejected,
             value: None,
+            resolve_at_epoch_ms: None,
             error: Some(Box::new(error)),
         }
     }

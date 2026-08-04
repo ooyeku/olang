@@ -396,6 +396,12 @@ pub enum Value {
         state: PromiseState,
         value: Option<Box<Value>>,
         error: Option<Box<Value>>,
+        /// For `promise delay`: epoch millis when the value becomes ready.
+        /// `await` sleeps out the remainder. This is what makes a delayed
+        /// promise awaitable at all in a synchronous interpreter — there is
+        /// no scheduler to resolve it in the background.
+        #[serde(default)]
+        resolve_at_epoch_ms: Option<u64>,
     },
 
     // Type information for exported types
@@ -801,6 +807,7 @@ impl std::fmt::Display for Value {
                 state,
                 value,
                 error,
+                ..
             } => match state {
                 PromiseState::Pending => write!(f, "Promise<Pending>"),
                 PromiseState::Resolved => {
