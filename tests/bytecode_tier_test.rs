@@ -987,17 +987,18 @@ sum(scale([1, 2, 3], 10)) + sum(scale([1, 2], 5))
 }
 
 #[test]
-fn lambda_calling_a_function_falls_back() {
-    // A call inside a lambda needs a resolvable callee, which a
-    // non-capturing lambda's empty closure cannot provide.
+fn lambda_calling_a_function_is_now_compiled() {
+    // The lambda carries the enclosing function's declaration-time closure,
+    // so `square` resolves — this was the largest remaining rejection.
     let src = r#"
 fn square(n) = n * n
 fn squares(xs) = map(xs, (x) => square(x))
 sum(squares([1, 2, 3])) + sum(squares([4, 5]))
 "#;
-    // `square` itself is promotable, so one promotion is expected — but
-    // `squares` is not it: its lambda references a name it cannot resolve.
-    assert_eq!(promotion_count(src, 1), 1);
+    // Only `squares` promotes: `square` is called solely from inside the
+    // lambda, which executes in the interpreter, so its own call counter
+    // never advances at bytecode level.
+    assert_eq!(promotion_count(src, 1), 1, "squares itself promotes");
     assert_tier_transparent(src);
 }
 
@@ -1054,11 +1055,137 @@ risky([2])
 }
 
 #[test]
-fn nested_lambdas_fall_back_when_inner_captures() {
-    // The inner lambda captures the outer lambda's parameter
+fn nested_lambdas_agree() {
+    // The inner lambda captures the outer lambda's parameter — legal, since
+    // the outer lambda executes in the interpreter, which handles the inner
+    // capture naturally. The analysis just treats `x` as bound within the
+    // outer body.
     let src = r#"
 fn outer(xs) = map(xs, (x) => sum(map([1, 2], (y) => y * x)))
 sum(outer([1, 2])) + sum(outer([3]))
 "#;
+    assert_tier_transparent(src);
+}
+
+// --- closure attachment ---
+// A lambda carries the enclosing function's declaration-time closure. Free
+// variables resolving there compile; anything touching the enclosing
+// function's runtime state must still fall back.
+
+#[test]
+fn lambda_referencing_a_global_constant_agrees() {
+    let src = r#"
+let factor = 7
+fn scale(xs) = map(xs, (x) => x * factor)
+sum(scale([1, 2, 3])) + sum(scale([4, 5]))
+"#;
+    assert_eq!(promotion_count(src, 1), 1);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn global_mutation_after_declaration_agrees() {
+    // Both tiers must see the declaration-time snapshot: the interpreter
+    // layers the closure over the call-site chain, so the reassigned value
+    // never wins inside `scale` either way.
+    let src = r#"
+let factor = 7
+fn scale(xs) = map(xs, (x) => x * factor)
+factor = 100
+sum(scale([1, 2, 3]))
+"#;
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(42));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn lambda_capturing_enclosing_param_still_falls_back() {
+    let src = r#"
+fn scale(xs, k) = map(xs, (x) => x * k)
+sum(scale([1, 2, 3], 10)) + sum(scale([1, 2], 5))
+"#;
+    assert_eq!(promotion_count(src, 1), 0);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn lambda_capturing_enclosing_local_still_falls_back() {
+    let src = r#"
+fn work(xs) = {
+    let offset = 3
+    map(xs, (x) => x + offset)
+}
+sum(work([1, 2, 3]))
+"#;
+    assert_eq!(promotion_count(src, 1), 0);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn lambda_free_var_assigned_by_enclosing_fn_falls_back() {
+    // `acc` is a global in the closure, but the enclosing function assigns
+    // it, so the interpreter's lambda would capture the runtime value — the
+    // declaration-time snapshot cannot represent that.
+    let src = r#"
+let acc = 1
+fn f(xs) = {
+    acc = 5
+    map(xs, (x) => x * acc)
+}
+sum(f([1, 2]))
+"#;
+    assert_eq!(promotion_count(src, 1), 0);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn lambda_calling_a_builtin_agrees() {
+    let src = r#"
+fn stringify(xs) = map(xs, (x) => to_string(x * 2))
+join(stringify([1, 2, 3]), ",")
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn lambda_using_stdlib_module_agrees() {
+    // `math` resolves through the closure (prelude bindings)
+    let src = r#"
+fn powers(xs) = map(xs, (x) => math.pow(x, 2))
+sum(powers([1, 2, 3])) + sum(powers([4]))
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn transitive_helper_with_closure_lambda_agrees() {
+    // The lambda's callee is itself compiled transitively
+    let src = r#"
+fn double(n) = n * 2
+fn doubles(xs) = map(xs, (x) => double(x))
+fn run(n) = sum(doubles(range(0, n)))
+run(10) + run(100)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn lambda_with_match_body_agrees() {
+    let src = r#"
+fn classify(xs) = map(xs, (x) => match x % 2 { 0 => "even", _ => "odd" })
+join(classify([1, 2, 3]), "-")
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn recursive_reference_inside_lambda_falls_back() {
+    // `f` is not in its own declaration-time closure (the snapshot is taken
+    // before the name is defined), so a lambda referencing it is rejected.
+    let src = r#"
+fn f(n) = if n <= 0 => 0 else => sum(map([1], (x) => f(n - 1)))
+f(3)
+"#;
+    assert_eq!(promotion_count(src, 1), 0);
     assert_tier_transparent(src);
 }

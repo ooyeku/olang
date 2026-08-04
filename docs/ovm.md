@@ -59,8 +59,12 @@ A function is eligible when its body uses only the subset the VM implements:
   `...rest`), and tuples — nested to any depth
 - `Ok(..)` / `Err(..)` construction
 - pipelines (`|>`), desugared to the equivalent call
-- non-capturing lambdas — those referencing only their own parameters, which
-  makes them compile-time constants an empty closure satisfies
+- lambdas whose free variables all resolve in the enclosing function's
+  declaration-time closure — which covers lambdas calling other user
+  functions, builtins, and stdlib modules, and lambdas referencing global
+  constants. The lambda carries that closure verbatim (the same snapshot the
+  interpreter layers over the call-site chain), so resolution is identical in
+  both tiers
 - blocks, `let` bindings, assignment to locals, `while` and `for` loops,
   `break`, and `continue`
 - calls to itself (recursion), to other user functions (compiled on demand,
@@ -70,8 +74,10 @@ Anything else causes the function to stay interpreted:
 
 - referencing a global or captured variable — the VM has no environment
 - structs, maps, async
-- capturing lambdas, and lambdas that call anything (an empty closure cannot
-  resolve a callee); calling a lambda-valued expression directly
+- lambdas capturing the enclosing function's *runtime* state: a parameter,
+  a local, or any name the enclosing function assigns (the interpreter would
+  capture the runtime value, which a declaration-time snapshot cannot
+  represent); calling a lambda-valued expression directly
 - struct and enum patterns, and or-patterns that bind variables (each
   alternative would otherwise leave different bindings on the success path)
 - calling a function that itself cannot be compiled (the rejection propagates
@@ -95,7 +101,7 @@ rule is enforced by two test suites:
   recursion, loops, strings, lists, ranges, arity errors, and a set of
   aliasing cases specific to the register-window design. It also asserts the
   inverse: unsupported features must be *rejected*, never miscompiled.
-- `tests/bytecode_tier_test.rs` (70 tests) runs whole programs with and
+- `tests/bytecode_tier_test.rs` (80 tests) runs whole programs with and
   without the tier enabled and asserts the observable results match,
   including mixed programs where some functions are promoted and others are
   not, transitive and mutual recursion, and function redefinition.
@@ -247,11 +253,11 @@ ten representative programs). Use it when changing the evaluator; use
 
 These are real gaps, not oversights:
 
-1. **Only non-capturing lambdas compile.** A lambda referencing anything
-   beyond its own parameters — an enclosing variable, or any function it
-   calls — keeps its whole enclosing function interpreted. Attaching the
-   enclosing function's closure would lift most of this restriction and is
-   the natural next step. Struct and enum patterns are also uncompiled.
+1. **Lambdas capturing enclosing runtime state fall back.** A lambda
+   referencing an enclosing function's parameter or local — `(x) => x * k`
+   where `k` is a parameter — keeps its enclosing function interpreted.
+   Lifting this needs per-call closure construction at runtime. Struct and
+   enum patterns are also uncompiled.
 2. **Higher-order and map-returning builtins are unavailable** (see
    [Builtins](#builtins)). A function calling one stays interpreted, and so
    does every function that calls it.

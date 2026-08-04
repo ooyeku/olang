@@ -166,7 +166,10 @@ impl BytecodeTier {
                 }
             };
 
-            match self.vm.compile_function(func_id, &decl) {
+            match self
+                .vm
+                .compile_function_with_closure(func_id, &decl, func.closure.clone())
+            {
                 Ok(()) => {
                     self.compiled.insert(name.to_string(), func_id);
                     self.stats.promoted += 1;
