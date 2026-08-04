@@ -1280,6 +1280,26 @@ impl OvmValue {
         Ok(ovm_value)
     }
 
+    /// Create an Ok/Err result value
+    pub fn new_result(inner: Self, ok: bool) -> Self {
+        let (ok_slot, err_slot) = if ok {
+            (Some(Box::new(inner)), None)
+        } else {
+            (None, Some(Box::new(inner)))
+        };
+        Self {
+            header: ValueHeader::new(
+                TypeTag::Result,
+                ExecutionTier::Interpreter,
+                LazyState::Eager,
+            ),
+            data: ValueData::Result {
+                ok: ok_slot,
+                err: err_slot,
+            },
+        }
+    }
+
     /// Create a new tuple value
     pub fn new_tuple(values: Vec<Self>) -> Self {
         let gc_ptr = Arc::new(values);

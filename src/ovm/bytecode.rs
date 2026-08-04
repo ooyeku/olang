@@ -309,6 +309,51 @@ pub enum Instruction {
         hi: i64,
         inclusive: bool,
     },
+    /// Whether a value is an `Ok` (or `Err` when `want_ok` is false).
+    PatternTestResult {
+        dst: Register,
+        value: Register,
+        want_ok: bool,
+    },
+    /// The payload of an `Ok`/`Err`. Guarded by PatternTestResult, so a
+    /// mismatch here means miscompiled bytecode rather than a failed match.
+    ExtractResult {
+        dst: Register,
+        value: Register,
+        want_ok: bool,
+    },
+    /// Whether a value is a list of the required length (at least `min_len`
+    /// when `exact` is false, for patterns with a rest binding).
+    PatternTestList {
+        dst: Register,
+        value: Register,
+        min_len: usize,
+        exact: bool,
+    },
+    /// Whether a value is a tuple of exactly `len` elements.
+    PatternTestTuple {
+        dst: Register,
+        value: Register,
+        len: usize,
+    },
+    /// The `index`-th element of a list or tuple, for destructuring.
+    ExtractElement {
+        dst: Register,
+        value: Register,
+        index: usize,
+    },
+    /// The elements of a list from `from` onward, for `...rest` bindings.
+    ExtractRest {
+        dst: Register,
+        value: Register,
+        from: usize,
+    },
+    /// Construct an `Ok(value)` (or `Err(value)` when `ok` is false).
+    MakeResult {
+        dst: Register,
+        value: Register,
+        ok: bool,
+    },
     /// No match arm applied to the scrutinee.
     MatchFail,
     ListPush {
@@ -1094,6 +1139,122 @@ impl BytecodeVm {
                         .set_register(*dst, OvmValue::new_boolean(matches))?;
                 }
 
+                Instruction::PatternTestResult {
+                    dst,
+                    value,
+                    want_ok,
+                } => {
+                    use crate::ovm::value::ValueData;
+                    let matches = match &self.execution_state.register_ref(*value)?.data {
+                        ValueData::Result { ok, err } => {
+                            if *want_ok {
+                                ok.is_some()
+                            } else {
+                                err.is_some()
+                            }
+                        }
+                        _ => false,
+                    };
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_boolean(matches))?;
+                }
+
+                Instruction::ExtractResult {
+                    dst,
+                    value,
+                    want_ok,
+                } => {
+                    use crate::ovm::value::ValueData;
+                    let inner = match &self.execution_state.register_ref(*value)?.data {
+                        ValueData::Result { ok, err } => {
+                            let side = if *want_ok { ok } else { err };
+                            side.as_ref().map(|boxed| (**boxed).clone())
+                        }
+                        _ => None,
+                    };
+                    match inner {
+                        Some(v) => self.execution_state.set_register(*dst, v)?,
+                        None => {
+                            return Err(BytecodeError::RuntimeError(
+                                "Result payload extraction on a non-matching value".to_string(),
+                            ))
+                        }
+                    }
+                }
+
+                Instruction::PatternTestList {
+                    dst,
+                    value,
+                    min_len,
+                    exact,
+                } => {
+                    use crate::ovm::value::ValueData;
+                    let matches = match &self.execution_state.register_ref(*value)?.data {
+                        ValueData::List(items) => {
+                            if *exact {
+                                items.len() == *min_len
+                            } else {
+                                items.len() >= *min_len
+                            }
+                        }
+                        _ => false,
+                    };
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_boolean(matches))?;
+                }
+
+                Instruction::PatternTestTuple { dst, value, len } => {
+                    use crate::ovm::value::ValueData;
+                    let matches = match &self.execution_state.register_ref(*value)?.data {
+                        ValueData::Tuple(items) => items.len() == *len,
+                        _ => false,
+                    };
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_boolean(matches))?;
+                }
+
+                Instruction::ExtractElement { dst, value, index } => {
+                    use crate::ovm::value::ValueData;
+                    let element = match &self.execution_state.register_ref(*value)?.data {
+                        ValueData::List(items) | ValueData::Tuple(items) => items.get(*index).cloned(),
+                        _ => None,
+                    };
+                    match element {
+                        Some(v) => self.execution_state.set_register(*dst, v)?,
+                        None => {
+                            return Err(BytecodeError::RuntimeError(
+                                "Destructuring element out of bounds".to_string(),
+                            ))
+                        }
+                    }
+                }
+
+                Instruction::ExtractRest { dst, value, from } => {
+                    use crate::ovm::value::ValueData;
+                    let rest = match &self.execution_state.register_ref(*value)?.data {
+                        ValueData::List(items) => {
+                            Some(items.iter().skip(*from).cloned().collect::<Vec<_>>())
+                        }
+                        _ => None,
+                    };
+                    match rest {
+                        Some(values) => self
+                            .execution_state
+                            .set_register(*dst, OvmValue::new_list(values))?,
+                        None => {
+                            return Err(BytecodeError::RuntimeError(
+                                "Rest binding on a non-list value".to_string(),
+                            ))
+                        }
+                    }
+                }
+
+                Instruction::MakeResult { dst, value, ok } => {
+                    let inner = self.execution_state.get_register(*value)?;
+                    let result = OvmValue::new_result(inner, *ok);
+                    self.execution_state.set_register(*dst, result)?;
+                }
+
                 Instruction::MatchFail => {
                     return Err(BytecodeError::RuntimeError(
                         "Pattern match failed".to_string(),
@@ -1606,8 +1767,9 @@ impl BytecodeVm {
     /// Whether a value survives conversion to the OVM model and back.
     ///
     /// Maps, structs, enums, and functions do not: they either collapse to a
-    /// different type or to Unit.
-    fn round_trips(value: &Value) -> bool {
+    /// different type or to Unit. This is the single definition — the tier
+    /// uses it too, rather than keeping a second copy that can drift.
+    pub fn round_trips(value: &Value) -> bool {
         match value {
             Value::Integer(_)
             | Value::Float(_)
@@ -2488,6 +2650,18 @@ impl BytecodeCompiler {
                 }
             }
 
+            Expr::ResultOk(inner) | Expr::ResultErr(inner) => {
+                let ok = matches!(expr, Expr::ResultOk(_));
+                let value_reg = self.compile_expression(inner)?;
+                let dst_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::MakeResult {
+                    dst: dst_reg,
+                    value: value_reg,
+                    ok,
+                });
+                Ok(dst_reg)
+            }
+
             Expr::Match { value, arms } => {
                 let scrutinee = self.compile_expression(value)?;
                 let result_reg = self.register_allocator.allocate_register();
@@ -2752,6 +2926,82 @@ impl BytecodeCompiler {
                 Ok(())
             }
 
+            Pattern::Ok(inner) | Pattern::Err(inner) => {
+                let want_ok = matches!(pattern, Pattern::Ok(_));
+
+                let test_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::PatternTestResult {
+                    dst: test_reg,
+                    value: value_reg,
+                    want_ok,
+                });
+                self.emitter.emit_branch_if_false(test_reg, fail_label);
+
+                // Safe to extract now: the test above guarantees the shape
+                let payload_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::ExtractResult {
+                    dst: payload_reg,
+                    value: value_reg,
+                    want_ok,
+                });
+                self.compile_pattern_test(inner, payload_reg, fail_label)
+            }
+
+            Pattern::Tuple(patterns) => {
+                let test_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::PatternTestTuple {
+                    dst: test_reg,
+                    value: value_reg,
+                    len: patterns.len(),
+                });
+                self.emitter.emit_branch_if_false(test_reg, fail_label);
+
+                for (index, element) in patterns.iter().enumerate() {
+                    let element_reg = self.register_allocator.allocate_register();
+                    self.emitter.instructions.push(Instruction::ExtractElement {
+                        dst: element_reg,
+                        value: value_reg,
+                        index,
+                    });
+                    self.compile_pattern_test(element, element_reg, fail_label)?;
+                }
+                Ok(())
+            }
+
+            Pattern::List { patterns, rest } => {
+                // Without a rest binding the length must match exactly;
+                // with one, the explicit patterns are a prefix
+                let test_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::PatternTestList {
+                    dst: test_reg,
+                    value: value_reg,
+                    min_len: patterns.len(),
+                    exact: rest.is_none(),
+                });
+                self.emitter.emit_branch_if_false(test_reg, fail_label);
+
+                for (index, element) in patterns.iter().enumerate() {
+                    let element_reg = self.register_allocator.allocate_register();
+                    self.emitter.instructions.push(Instruction::ExtractElement {
+                        dst: element_reg,
+                        value: value_reg,
+                        index,
+                    });
+                    self.compile_pattern_test(element, element_reg, fail_label)?;
+                }
+
+                if let Some(rest_name) = rest {
+                    let rest_reg = self.register_allocator.allocate_register();
+                    self.emitter.instructions.push(Instruction::ExtractRest {
+                        dst: rest_reg,
+                        value: value_reg,
+                        from: patterns.len(),
+                    });
+                    self.local_variables.insert(rest_name.clone(), rest_reg);
+                }
+                Ok(())
+            }
+
             other => Err(BytecodeError::CompilationFailed(format!(
                 "Unsupported pattern in bytecode tier: {:?}",
                 std::mem::discriminant(other)
@@ -2766,6 +3016,11 @@ impl BytecodeCompiler {
             Pattern::Identifier(_) | Pattern::Rest(_) => true,
             Pattern::Or { alternatives } => alternatives.iter().any(Self::pattern_binds),
             Pattern::Guarded { pattern, .. } => Self::pattern_binds(pattern),
+            Pattern::Ok(inner) | Pattern::Err(inner) => Self::pattern_binds(inner),
+            Pattern::Tuple(patterns) => patterns.iter().any(Self::pattern_binds),
+            Pattern::List { patterns, rest } => {
+                rest.is_some() || patterns.iter().any(Self::pattern_binds)
+            }
             _ => false,
         }
     }

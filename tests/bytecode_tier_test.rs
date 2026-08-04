@@ -698,9 +698,9 @@ only_zero(1)
 }
 
 #[test]
-fn destructuring_patterns_keep_working_interpreted() {
-    // Ok/Err and list patterns are not compiled; the function must fall back
-    // and still produce the right answer.
+fn result_destructuring_is_now_compiled() {
+    // Superseded the earlier expectation that Ok/Err patterns force a
+    // fallback — they compile now, and must still agree.
     let src = r#"
 fn unwrap_or_zero(r) = match r {
     Ok(v) => v,
@@ -708,7 +708,7 @@ fn unwrap_or_zero(r) = match r {
 }
 unwrap_or_zero(Ok(5)) + unwrap_or_zero(Err("x")) + unwrap_or_zero(Ok(7))
 "#;
-    assert_eq!(promotion_count(src, 1), 0);
+    assert_eq!(promotion_count(src, 1), 1);
     assert_tier_transparent(src);
 }
 
@@ -727,6 +727,222 @@ fn tally(n) = {
     acc
 }
 tally(10) + tally(31)
+"#;
+    assert_tier_transparent(src);
+}
+
+// --- destructuring patterns ---
+
+#[test]
+fn result_patterns_agree() {
+    let src = r#"
+fn take(r) = match r {
+    Ok(v) => v,
+    Err(e) => 0 - 1
+}
+take(Ok(5)) + take(Err("boom")) + take(Ok(10))
+"#;
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(14));
+    assert_tier_transparent(src);
+    assert_eq!(promotion_count(src, 2), 1, "should now be promoted");
+}
+
+#[test]
+fn result_patterns_with_nested_literals() {
+    let src = r#"
+fn kind(r) = match r {
+    Ok(0) => "zero",
+    Ok(x) => "some",
+    Err(e) => "bad"
+}
+kind(Ok(0)) + kind(Ok(3)) + kind(Err("x"))
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn result_pattern_against_non_result_does_not_error() {
+    // An Ok(..) pattern must simply not match a plain integer
+    let src = r#"
+fn kind(v) = match v {
+    Ok(x) => 1,
+    Err(e) => 2,
+    _ => 3
+}
+kind(Ok(1)) + kind(Err("e")) + kind(42)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn tuple_patterns_agree() {
+    let src = r#"
+fn combine(t) = match t {
+    (a, b) => a * 10 + b,
+    _ => 0
+}
+combine((1, 2)) + combine((3, 4))
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn tuple_arity_must_match() {
+    let src = r#"
+fn shape(t) = match t {
+    (a, b) => 2,
+    (a, b, c) => 3,
+    _ => 0
+}
+shape((1, 2)) + shape((1, 2, 3)) + shape(9)
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn list_patterns_agree() {
+    let src = r#"
+fn describe(xs) = match xs {
+    [] => 0,
+    [a] => a,
+    [a, b] => a + b,
+    _ => 0 - 1
+}
+describe([]) + describe([5]) + describe([2, 3]) + describe([1, 2, 3])
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn list_rest_patterns_agree() {
+    let src = r#"
+fn total(xs) = match xs {
+    [] => 0,
+    [head, ...tail] => head + total(tail)
+}
+total([1, 2, 3, 4, 5])
+"#;
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(15));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn nested_destructuring_agrees() {
+    let src = r#"
+fn dig(r) = match r {
+    Ok([a, b]) => a + b,
+    Ok([a]) => a,
+    Ok(_) => 0,
+    Err(e) => 0 - 1
+}
+dig(Ok([1, 2])) + dig(Ok([7])) + dig(Ok([1,2,3])) + dig(Err("x"))
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn destructuring_with_guards_agrees() {
+    let src = r#"
+fn pick(r) = match r {
+    Ok(v) if v > 10 => "big",
+    Ok(v) => "small",
+    Err(e) => "bad"
+}
+pick(Ok(50)) + pick(Ok(1)) + pick(Err("e"))
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn destructuring_in_a_loop_agrees() {
+    let src = r#"
+fn sum_oks(xs) = {
+    let total = 0
+    for x in xs {
+        total = total + match x {
+            Ok(v) => v,
+            Err(e) => 0
+        }
+    }
+    total
+}
+sum_oks([Ok(1), Err("a"), Ok(2), Ok(3)])
+"#;
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn struct_patterns_still_fall_back() {
+    // Struct patterns are not compiled; the function must stay interpreted
+    // and still be correct.
+    let src = r#"
+type User = struct { name: String, age: Int }
+fn label(u) = match u {
+    User { name, age } => name
+}
+label(User { name: "ann", age: 30 })
+label(User { name: "bob", age: 40 })
+"#;
+    assert_eq!(promotion_count(src, 1), 0);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn result_constructing_functions_are_promoted() {
+    // Ok(..)/Err(..) construction compiles, so a function producing Results
+    // is eligible rather than forcing its whole call graph to interpret.
+    let src = r#"
+fn parse(n) = if n % 5 == 0 => Err("bad") else => Ok(n * 2)
+fn value(r) = match r {
+    Ok(v) => v,
+    Err(e) => 0
+}
+value(parse(1)) + value(parse(5)) + value(parse(7))
+"#;
+    assert_eq!(promotion_count(src, 2), 2, "both should be promoted");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn results_can_cross_the_tier_boundary_as_arguments() {
+    // A Result passed into a promoted function must reach the VM rather than
+    // forcing a fallback — Results round-trip through the value model.
+    let src = r#"
+fn value(r) = match r {
+    Ok(v) => v,
+    Err(e) => 0
+}
+fn run(limit) = {
+    let total = 0
+    for i in 0..limit {
+        total = total + value(Ok(i))
+    }
+    total
+}
+run(200)
+"#;
+    let parser = Parser::new();
+    let program = parser.parse(src).unwrap();
+    let mut interpreter = Interpreter::new();
+    interpreter.enable_bytecode_tier(2, false);
+    interpreter.eval_program(program).unwrap();
+    let stats = interpreter.bytecode_tier_stats().unwrap();
+    assert!(
+        stats.bytecode_calls > 0,
+        "promoted functions taking Result arguments should actually run on the VM"
+    );
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn results_round_trip_as_return_values() {
+    let src = r#"
+fn wrap(n) = if n > 0 => Ok(n) else => Err("neg")
+fn total(n) = match wrap(n) {
+    Ok(v) => v,
+    Err(e) => 0
+}
+total(5) + total(0 - 3) + total(9)
 "#;
     assert_tier_transparent(src);
 }

@@ -286,9 +286,11 @@ fn unsupported_features_fail_compilation() {
     let cases = [
         // free variable / global
         ("fn f(x) = x + y", "f"),
-        // destructuring patterns are not compiled
-        ("fn f(x) = match x { Ok(v) => v, Err(e) => 0 }", "f"),
-        ("fn f(x) = match x { [a, b] => a + b, _ => 0 }", "f"),
+        // struct patterns are not compiled
+        ("fn f(x) = match x { User { name, age } => name, _ => 0 }", "f"),
+        // or-patterns that bind are rejected: alternatives would leave
+        // different bindings on the success path
+        ("fn f(x) = match x { Ok(a) | Err(a) => a, _ => 0 }", "f"),
         // lambda
         ("fn f(x) = ((y) => y)(x)", "f"),
         // pipeline

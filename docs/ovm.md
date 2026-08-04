@@ -182,6 +182,12 @@ Two categories are deliberately excluded:
   as a `Struct`. `execute_builtin_call` checks representability and errors
   rather than silently returning a corrupted value.
 
+`BytecodeVm::round_trips` is the single definition of which values survive the
+boundary; the tier uses it to decide whether a call's arguments and result can
+cross. Keeping a second copy in the tier caused a silent regression once — it
+omitted `Ok`/`Err`, so every call passing a `Result` fell back to the
+interpreter despite Results converting fine.
+
 A user function shadows a builtin of the same name, matching the interpreter's
 environment lookup: declaring `fn clamp(...)` makes calls to `clamp` resolve to
 the user's definition in compiled code too.

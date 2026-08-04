@@ -268,20 +268,12 @@ impl BytecodeTier {
     }
 
     /// Values the OVM model round-trips losslessly.
+    ///
+    /// Defers to the VM's definition rather than keeping a second copy: an
+    /// earlier duplicate omitted Ok/Err, so every call passing a Result fell
+    /// back even though Results round-trip fine.
     fn is_representable(value: &Value) -> bool {
-        match value {
-            Value::Integer(_)
-            | Value::Float(_)
-            | Value::Boolean(_)
-            | Value::String(_)
-            | Value::Unit
-            | Value::Range { .. } => true,
-            Value::List(items) => items.iter().all(Self::is_representable),
-            Value::Tuple(items) => items.iter().all(Self::is_representable),
-            // Functions, structs, maps, promises and results either lose
-            // information or aren't usable inside the tier
-            _ => false,
-        }
+        BytecodeVm::round_trips(value)
     }
 }
 
