@@ -33,7 +33,6 @@ explicit list of what is and isn't implemented.
 
 ### Type System
 - **Union Types**: `Int | String | Bool`
-- **Intersection Types**: `Int & Comparable`
 - **Generic Types**: `List<T>`, `Map<K, V>`
 - **Result Types**: `Result<T, E>` for error handling
 - **Promise Types**: `Promise<T, E>` for async operations
@@ -116,7 +115,7 @@ olang
 
 Example REPL session:
 
-```olang
+```text
 olang> let inc = (x) => x + 1
 olang> inc(5)
 6
@@ -137,7 +136,7 @@ Run shell commands without leaving the REPL. `cd` changes the REPL's own
 working directory, so relative paths in `fs.` calls and later commands follow
 along:
 
-```
+```text
 olang> :pwd                        # print working directory
 olang> :cd src                     # change directory (supports ~)
 olang> :ls -la                     # list files
@@ -157,7 +156,7 @@ Press TAB to complete:
 
 #### Other REPL Commands
 
-```
+```text
 :env                 # show current environment
 :type <expr>         # inspect the type of an expression
 :history             # command history (:!<n> re-runs an entry)
@@ -212,22 +211,19 @@ fn add(x: Int, y: Int) -> Int = x + y
 // Function with default parameters
 fn greet(name: String = "World") = "Hello, " + name
 
-// Anonymous function
-nums |> map((n) => n * 2)
+// Anonymous functions (lambdas)
+let nums = [1, 2, 3]
+let doubled = nums |> map((n) => n * 2)
 
-// Multi-line function
-fn factorial(n: Int) -> Int = {
-    if n <= 1 => 1
-    else => n * factorial(n - 1)
-}
-
-// Named arguments
-let result = process_data("file.txt", format: "csv", compress: true)
+// Zero-parameter lambda
+let make_id = () => 42
 ```
 
 ### Pipeline Operator
 
 ```olang
+let data = range(1, 11)
+
 data
   |> filter((x) => x % 2 == 0)
   |> map((x) => x * x)
@@ -239,28 +235,26 @@ data
 
 ```olang
 // Result patterns (note: `error` is a reserved keyword, so bind another name)
+let result = Ok(42)
 match result {
   Ok(value) => println(value),
-  Err(e) => println(e),
+  Err(e) => println(e)
 }
 
 // List patterns with rest
+let list = [1, 2, 3]
 match list {
   [head, ...tail] => println(head),
-  [] => println("Empty list"),
-}
-
-// Struct patterns (every field must be named — there is no `..` rest form)
-match user {
-  User { name, age } => `${name} (${age})`,
+  [] => println("empty")
 }
 
 // Guards and ranges
+let n = 42
 match n {
-  0 => "zero",
-  1..10 => "small",
-  x if x > 100 => "large",
-  _ => "medium",
+  x if x < 0 => println("negative"),
+  0 => println("zero"),
+  1..100 => println("small"),
+  _ => println("large")
 }
 ```
 
@@ -273,12 +267,10 @@ let octal = 0o755        // 493
 let hex = 0xFF           // 255
 
 // String literals
+let name = "Alice"
 let regular = "Hello \"World\""
 let raw = r"C:\Users\Name\file.txt"
 let template = `Hello ${name}!`
-
-// Character literals (exactly one character; no escape sequences)
-let char = 'a'
 ```
 
 ### Type System
@@ -320,24 +312,22 @@ error NetworkError {
 ```olang
 // Async function
 async fn fetch_data(url: String) -> Promise<String, String> = {
-    // Implementation
-    Promise.resolve("data")
+    Promise.resolve("data from " + url)
 }
 
 // Await usage
 let data = await fetch_data("https://api.example.com")
 
-// Concurrent operations
-let results = await Promise.all([
-    fetch_user(1),
-    fetch_user(2),
-    fetch_user(3)
-])
+// Delayed promises: Promise.delay(value, ms); await sleeps out the remainder
+let slow = Promise.delay("done", 50)
+println(await slow)
 ```
 
 ### Testing
 
 ```olang
+fn add(a, b) = a + b
+
 test "addition test" {
     let result = add(2, 3)
     assert_eq(result, 5)
@@ -357,7 +347,7 @@ test "string concatenation" {
 
 ### File System Operations
 
-```olang
+```olang no-run
 // Read and write files
 let content = unwrap(fs.read_file("input.txt"))
 fs.write_file("output.txt", content)
@@ -369,7 +359,7 @@ println(len(files))
 
 ### HTTP Operations
 
-```olang
+```olang no-run
 // HTTP client
 let response = unwrap(http.get("https://api.example.com/data"))
 let data = unwrap(json.parse(response.body))
@@ -383,7 +373,7 @@ placeholder message rather than binding a port.
 
 ### Data Processing
 
-```olang
+```olang no-run
 // CSV processing — parse_with_headers takes CSV *text*, not a path
 let text = unwrap(fs.read_file("data.csv"))
 let rows = unwrap(csv.parse_with_headers(text))

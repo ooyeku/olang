@@ -847,15 +847,14 @@ impl Parser {
         let mut return_type = None;
         let mut body = None;
 
-        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing parameter list in lambda".to_string(),
-        })?;
-        if first_pair.as_rule() == Rule::param_list {
-            parameters = self.build_param_list(first_pair.into_inner())?;
-        }
-
-        for pair in pairs {
+        // The param list is optional (`() => 3` has none), so the first pair
+        // may already be the body — treat every pair uniformly rather than
+        // special-casing the first and silently discarding it
+        for pair in pairs.by_ref() {
             match pair.as_rule() {
+                Rule::param_list => {
+                    parameters = self.build_param_list(pair.into_inner())?;
+                }
                 Rule::type_annotation => {
                     return_type = Some(self.build_type_annotation(pair.into_inner())?);
                 }

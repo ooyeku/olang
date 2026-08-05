@@ -10,6 +10,26 @@ documented.
 
 ## [Unreleased]
 
+### Added
+
+- **Documentation examples are tested in CI** (`tests/doc_examples_test.rs`):
+  every ```olang block in README.md and docs/syntax.md must parse and run
+  (```olang no-run blocks — needing files, network, or modules — must at
+  least parse). 41 of the 61 documented examples were broken when this was
+  introduced; all are fixed. docs/syntax.md gains sections for character
+  literals, `Promise.all`/`Promise.race`/`spawn`, and the reserved-word
+  list.
+
+### Fixed
+
+- Zero-parameter lambdas (`() => 3`) parse — the grammar always allowed
+  them, but the parser discarded the body when no parameter list was
+  present.
+- Documentation no longer claims struct field shorthand, intersection
+  types, union type declarations, or error-variant payloads — none of
+  which parse. `Promise.delay`'s documented argument order was backwards
+  (it is `Promise.delay(value, ms)`).
+
 ### Removed
 
 - **~12,000 lines of dead execution machinery**: the `OlangVirtualMachine`

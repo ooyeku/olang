@@ -54,22 +54,18 @@ For how Olang executes code (interpreter, bytecode tier, performance), see
 
 ```olang
 // Regular strings
-"Hello"     // String literal
-"Hello \"World\""  // String with escaped quotes
-"Line 1\nLine 2"   // String with newlines
+let simple = "Hello"
+let quoted = "Hello \"World\""      // Escaped quotes
+let multiline = "Line 1\nLine 2"    // Newline escape
 
 // Raw strings (no escape processing)
-r"Raw string with \n literal backslash"
-r"Path: C:\Users\Name\file.txt"
+let raw = r"Raw string with \n literal backslash"
+let path = r"Path: C:\Users\Name\file.txt"
 
-// Template strings (string interpolation)
-`Hello ${name}!`
-`Sum: ${a + b}`
-`Multi-line template
- with ${interpolation}`
-
-// Character literals
-'a'         // Single character
+// Template strings with interpolation
+let name = "Alice"
+let greeting = `Hello ${name}!`     // "Hello Alice!"
+let math = `2 + 2 = ${2 + 2}`       // "2 + 2 = 4"
 ```
 
 ### String Escape Sequences
@@ -96,27 +92,33 @@ true        // Boolean true
 false       // Boolean false
 ```
 
+### Character Literals
+
+```olang
+let letter = 'a'
+let digit = '7'
+let space = ' '
+```
+
+Character literals are single characters in single quotes. They can be
+compared and used in range patterns (`'a'..'z'`) inside `match`.
+
 ### Collection Literals
 
 ```olang
 // Lists
-[1, 2, 3]      // List of integers
-["a", "b"]     // List of strings
-[]             // Empty list
+let ints = [1, 2, 3]           // List of integers
+let strs = ["a", "b"]          // List of strings
+let empty = []                 // Empty list
 
 // Tuples
-(1, 2)         // Tuple with two elements
-(1, "hello", true)  // Mixed type tuple
+let pair = (1, 2)              // Tuple with two elements
+let mixed = (1, "hello", true) // Mixed type tuple
 
 // Maps
-#{}                    // Empty map
-#{"key": "value"}      // String key-value map
-#{1: "one", 2: "two"}  // Integer key map
-#{                     // Multi-line map
-    "name": "Alice",
-    "age": 30,
-    "active": true
-}
+let none = #{}                     // Empty map
+let user = #{"key": "value"}       // String key-value map
+let ages = #{"ann": 30, "bob": 25} // Multiple entries
 ```
 
 ## Identifiers and Variables
@@ -150,27 +152,18 @@ let with_type: String;
 
 ```olang
 // Tuple destructuring
-let (x, y) = (1, 2);
-let (first, second, third) = (10, 20, 30);
+let (x, y) = (1, 2)
+let (first, second, third) = (10, 20, 30)
 
-// List destructuring
-let [head, tail] = [1, 2, 3, 4, 5];
-let [first, second, ...rest] = [1, 2, 3, 4, 5];
+// List destructuring — patterns match the exact length...
+let [a, b] = [1, 2]
+
+// ...or use ...rest to capture the remainder
+let [head, ...tail] = [1, 2, 3, 4, 5]   // head = 1, tail = [2, 3, 4, 5]
 
 // Nested destructuring
-let ((a, b), c) = ((1, 2), 3);
-let [first, [nested_a, nested_b]] = [10, [20, 30]];
-
-// Wildcard patterns
-let (x, _) = (42, "ignored");
-let [first, _, third] = [1, 2, 3];
-
-// Pattern matching with literals
-let (x, 2) = (42, 2);  // Matches when second element is 2
-
-// Struct destructuring
-let Point { x, y } = some_point;
-let User { name, age } = user_data;
+let ((p, q), r) = ((1, 2), 3)
+let [outer, [inner_a, inner_b]] = [10, [20, 30]]
 ```
 
 ### Variable Assignment
@@ -249,16 +242,17 @@ let nested = #{
 ### Map Operations
 
 ```olang
+let scores = #{"Alice": 95, "Bob": 87, "Charlie": 92}
+
 // Map access and manipulation
-let score = map_get(scores, "Alice");         // Get value -> 95
-let updated = map_set(scores, "David", 88);   // Returns new map
-let exists = map_has_key(scores, "Bob");      // Check existence -> true
-let all_keys = map_keys(scores);              // Get keys -> ["Alice", "Bob", "Charlie"]
-let all_values = map_values(scores);          // Get values -> [95, 87, 92]
-let size = map_len(scores);                   // Get size -> 3
-let removed = map_remove(scores, "Bob");      // Returns map without key
-let cleared = map_clear(scores);              // Returns empty map
-let merged = map_merge(scores, other_map);    // Merge maps (right overwrites left)
+let score = map_get(scores, "Alice")          // Get value -> 95
+let updated = map_set(scores, "David", 88)    // Returns new map
+let exists = map_has_key(scores, "Bob")       // Check existence -> true
+let all_keys = map_keys(scores)               // Get keys
+let all_values = map_values(scores)           // Get values
+let size = map_len(scores)                    // Get size -> 3
+let removed = map_remove(scores, "Bob")       // Returns map without key
+let merged = map_merge(scores, #{"Eve": 99})  // Combine maps
 ```
 
 ### Map Type Annotations
@@ -310,24 +304,19 @@ fn greet(name: String, age: Int) -> String =
 
 ```olang
 // Function with default values
-fn greet(name: String = "World") = "Hello, " + name;
+fn greet(name: String = "World") = "Hello, " + name
 
 // Multiple default parameters
 fn connect(host: String = "localhost", port: Int = 8080, timeout: Int = 30) = {
     "Connecting to " + host + ":" + to_string(port) + " (timeout: " + to_string(timeout) + "s)"
-};
-
-// Mixed required and default parameters
-fn create_user(name: String, email: String, role: String = "user", active: Bool = true) = {
-    User { name, email, role, active }
-};
+}
 
 // Function calls with defaults
-let result1 = greet();                    // Uses default: "Hello, World"
-let result2 = greet("Alice");             // "Hello, Alice"
-let result3 = connect();                  // Uses all defaults
-let result4 = connect("example.com");     // Custom host, default port/timeout
-let result5 = connect("example.com", 9000); // Custom host and port
+let result1 = greet()                     // Uses default: "Hello, World"
+let result2 = greet("Alice")              // "Hello, Alice"
+let result3 = connect()                   // Uses all defaults
+let result4 = connect("example.com")      // Custom host, default port/timeout
+let result5 = connect("example.com", 9000) // Custom host and port
 ```
 
 ### Named Arguments in Function Calls
@@ -371,20 +360,20 @@ let email_result = send_email("user@example.com", "Important Update",
 
 ```olang
 // Simple lambda
-let square = (x) => x * x;
+let square = (x) => x * x
 
 // Lambda with type annotation
-let divide: (Float, Float) -> Float = (x, y) => x / y;
+let divide: (Float, Float) -> Float = (x, y) => x / y
 
 // Lambda with no parameters
-let get_pi = () => 3.14159;
+let get_pi = () => 3.14159
 
 // Lambda with block body
 let complex_calc = (x) => {
-    let doubled = x * 2;
-    let squared = doubled * doubled;
+    let doubled = x * 2
+    let squared = doubled * doubled
     squared + 1
-};
+}
 ```
 
 ### Async Functions
@@ -408,18 +397,22 @@ let async_compute = async (x) => {
 ### Conditional Expressions
 
 ```olang
-// Simple if-else
-let result = if x > 0 => "positive" else => "non-positive";
+let x = 5
+let is_valid = true
+let score = 85
 
-// If without else
-let msg = if is_valid => "Valid input";
+// Simple if-else
+let result = if x > 0 => "positive" else => "non-positive"
+
+// If without else (evaluates to Unit when false)
+let msg = if is_valid => "Valid input"
 
 // If with block bodies
 let category = if score >= 90 => {
-    "Excellent"
+    "excellent"
 } else => {
-    if score >= 70 => "Good" else => "Needs improvement"
-};
+    "good"
+}
 ```
 
 ## Pattern Matching
@@ -427,47 +420,46 @@ let category = if score >= 90 => {
 ### Match Expressions
 
 ```olang
+let value = 2
+
 // Simple pattern matching
 let result = match value {
     1 => "one",
     2 => "two",
     _ => "other"
-};
+}
 
-// Pattern matching with variables
-let description = match person {
-    ("Alice", age) => "Alice is " + to_string(age),
-    (name, _) => "Person named " + name
-};
-
-// List pattern matching
-let head_tail = match numbers {
-    [] => "empty",
-    [x] => "single: " + to_string(x),
-    [first, second] => "pair: " + to_string(first) + ", " + to_string(second),
-    _ => "many"
-};
+// Pattern matching with variable binding
+let description = match value {
+    0 => "zero",
+    n => "the number " + to_string(n)
+}
 ```
 
 ### Result Pattern Matching
 
 ```olang
-// Result pattern matching
-let process_result = match operation_result {
+let operation_result = Ok(42)
+
+// Result pattern matching (`error` is a reserved word — use `err` or `e`)
+let processed = match operation_result {
     Ok(value) => "Success: " + to_string(value),
-    Err(error) => "Error: " + error
-};
+    Err(err) => "Error: " + err
+}
 ```
 
 ### Struct Pattern Matching
 
 ```olang
+type User = struct { name: String, age: Int }
+let user = User { name: "ann", age: 30 }
+
 // Struct pattern matching
 let info = match user {
     User { name: "admin" } => "Administrator",
     User { name, age } => name + " (" + to_string(age) + ")",
     _ => "Unknown user"
-};
+}
 ```
 
 ## Operators
@@ -475,38 +467,50 @@ let info = match user {
 ### Arithmetic Operators
 
 ```olang
+let a = 10
+let b = 3
+
 // Basic arithmetic
-let sum = a + b;
-let difference = a - b;
-let product = a * b;
-let quotient = a / b;
-let remainder = a % b;
+let sum = a + b
+let difference = a - b
+let product = a * b
+let quotient = a / b
+let remainder = a % b
 ```
 
 ### Comparison Operators
 
 ```olang
+let a = 10
+let b = 3
+
 // Comparison
-let equal = a == b;
-let not_equal = a != b;
-let less_than = a < b;
-let less_equal = a <= b;
-let greater_than = a > b;
-let greater_equal = a >= b;
+let equal = a == b
+let not_equal = a != b
+let less_than = a < b
+let less_equal = a <= b
+let greater_than = a > b
+let greater_equal = a >= b
 ```
 
 ### Logical Operators
 
 ```olang
+let a = true
+let b = false
+
 // Boolean logic
-let and_result = a && b;
-let or_result = a || b;
-let not_result = !a;
+let and_result = a && b
+let or_result = a || b
+let not_result = !a
 ```
 
 ### Bitwise Operators
 
 ```olang
+let a = 12
+let b = 10
+
 // Bitwise operations
 let and_result = a & b;    // Bitwise AND
 let or_result = a | b;     // Bitwise OR
@@ -518,25 +522,20 @@ let right_shift = a >> 1;  // Right shift by 1
 ### Pipeline Operator
 
 ```olang
+let data = range(1, 20)
+
 // Pipeline chaining
 let result = data
     |> map((x) => x * 2)
     |> filter((x) => x > 10)
-    |> sum();
+    |> sum()
 
-// Complex pipeline
-let processed = input
-    |> parse_json()
-    |> get_field("items")
-    |> map((item) => item.name)
-    |> filter((name) => len(name) > 5)
-    |> sort()
-    |> join(", ");
+// Piping into a partial call: the piped value fills the first parameter
+fn add(a, b) = a + b
+let bumped = 5 |> add(3)     // add(5, 3) = 8
 
-// Map operations in pipelines
-let user_names = users
-    |> map((user) => map_get(user, "name"))
-    |> filter((name) => len(name) > 3);
+// Piping a bare function
+let total = [1, 2, 3] |> sum
 ```
 
 ## Type System
@@ -545,38 +544,32 @@ let user_names = users
 
 ```olang
 // Basic types
-let count: Int = 42;
-let price: Float = 9.99;
-let name: String = "Alice";
-let active: Bool = true;
+let count: Int = 42
+let price: Float = 9.99
+let name: String = "Alice"
+let active: Bool = true
 
 // Container types
-let numbers: [Int] = [1, 2, 3];
-let coords: (Float, Float) = (10.5, 20.3);
-let user_data: Map<String, String> = #{"name": "Alice", "role": "admin"};
+let numbers: [Int] = [1, 2, 3]
+let coords: (Float, Float) = (10.5, 20.3)
+let user_data: Map<String, String> = #{"name": "Alice", "role": "admin"}
 
 // Function types
-let calculator: (Int, Int) -> Int = (a, b) => a + b;
+let calculator: (Int, Int) -> Int = (a, b) => a + b
 
 // Generic types
-let items: List<String> = ["a", "b", "c"];
+let items: List<String> = ["a", "b", "c"]
 
 // Result types
-let operation: Result<Int, String> = Ok(42);
+let operation: Result<Int, String> = Ok(42)
 
-// Promise types
-let async_data: Promise<String, String> = fetch_data("url");
-
-// Union types
-let flexible: Int | String = 42;
-let flexible2: Int | String = "hello";
-
-// Intersection types
-let numeric: Int & Comparable = 42;
+// Union types (as annotations)
+let flexible: Int | String = 42
+let flexible2: Int | String = "hello"
 
 // Literal types
-let specific: "admin" | "user" = "admin";
-let magic_number: 42 = 42;
+let specific: "admin" | "user" = "admin"
+let magic_number: 42 = 42
 ```
 
 ### Custom Types
@@ -587,7 +580,7 @@ type User = struct {
     name: String,
     age: Int,
     email: String
-};
+}
 
 // Enum definition
 type Color = enum {
@@ -595,26 +588,20 @@ type Color = enum {
     Green,
     Blue,
     RGB(Int, Int, Int)
-};
+}
 
 // Generic type definition
 type Maybe<T> = enum {
     Some(T),
     None
-};
+}
 
-// Union type definition
-type Flexible = Int | String | Bool;
-
-// Error type declaration
+// Error type declaration (variants are bare names)
 error NetworkError {
     Timeout,
-    ConnectionFailed: String,
-    InvalidResponse: {
-        status: Int,
-        message: String
-    }
-};
+    ConnectionFailed,
+    InvalidResponse
+}
 ```
 
 ## Async/Await
@@ -622,28 +609,34 @@ error NetworkError {
 ### Async Operations
 
 ```olang
-// Async function calls
-let data = await fetch_data("https://api.example.com");
-
 // Promise creation
-let promise1 = Promise.resolve(42);
-let promise2 = Promise.reject("Error message");
-let delayed = Promise.delay(1000, "Hello");
+let promise1 = Promise.resolve(42)
+let promise2 = Promise.reject("Error message")
 
-// Concurrent operations
-let results = await Promise.all([
-    fetch_user(1),
-    fetch_user(2),
-    fetch_user(3)
-]);
+// Promise.delay(value, milliseconds): resolves to the value; `await`
+// sleeps out whatever remains of the delay
+let delayed = Promise.delay("Hello", 100)
+let value = await delayed              // "Hello", after ~100ms
 
-let winner = await Promise.race([
-    fetch_from_cache(),
-    fetch_from_network()
-]);
+// Awaiting a resolved promise yields its value immediately
+let n = await promise1                 // 42
+```
 
-// Spawn operation
-let task = spawn async_computation(data);
+### Concurrency
+
+```olang
+// Promise.all: await every promise, collect results in order
+let results = await Promise.all([Promise.resolve(1), Promise.resolve(2)])
+// results = [1, 2]
+
+// Promise.race: the first settled promise wins
+let first = await Promise.race([Promise.resolve("fast"), Promise.delay("slow", 500)])
+// first = "fast"
+
+// spawn: run a function call, await its handle for the result
+fn work() = 42
+let handle = spawn work()
+let answer = await handle              // 42
 ```
 
 ## Loops
@@ -653,17 +646,19 @@ let task = spawn async_computation(data);
 ```olang
 // For loop over list
 for item in [1, 2, 3, 4] {
-    println(item);
+    println(item)
 }
 
 // For loop over range
 for i in 0..10 {
-    println("Number: " + to_string(i));
+    println("Number: " + to_string(i))
 }
 
-// For loop with variable
+let names = ["ann", "bob"]
+
+// For loop over a variable
 for name in names {
-    println("Hello, " + name);
+    println("Hello, " + name)
 }
 ```
 
@@ -721,7 +716,7 @@ for i in 0..5 {
 
 ### Share Declarations
 
-```olang
+```olang no-run
 // Share function
 share fn public_function() = "I'm public";
 
@@ -739,7 +734,7 @@ share use module { function1, function2 };
 
 ### Use Declarations
 
-```olang
+```olang no-run
 // Import specific items from module
 use module_name { function1, function2, type1 };
 
@@ -757,36 +752,45 @@ use utils.string { join, split };
 
 ```olang
 // Result creation
-let success: Result<Int, String> = Ok(42);
-let failure: Result<Int, String> = Err("Something went wrong");
+let success: Result<Int, String> = Ok(42)
+let failure: Result<Int, String> = Err("Something went wrong")
 
-// Result handling
-let processed = match result {
+// Result handling (`error` is a reserved word — use `err` or `e`)
+let processed = match success {
     Ok(value) => value * 2,
-    Err(error) => {
-        println("Error: " + error);
+    Err(err) => {
+        println("Error: " + err)
         0
     }
-};
+}
 ```
 
 ### Try-Catch
 
 ```olang
+fn risky_operation() = Err("boom")
+fn default_value() = 0
+
 // Try-catch expression
 let result = try {
     risky_operation()
-} catch (error) {
-    println("Caught error: " + error);
+} catch (e) {
+    println("Caught error: " + e)
     default_value()
-};
+}
 ```
 
 ### Try Operator
 
 ```olang
-// Try operator (postfix ?)
-let result = risky_operation()?;
+fn risky_operation() = Ok(21)
+
+// The postfix ? operator unwraps Ok or propagates Err to the caller
+fn doubled() = {
+    let value = risky_operation()?
+    Ok(value * 2)
+}
+let result = doubled()      // Ok(42)
 ```
 
 ## Testing
@@ -794,61 +798,63 @@ let result = risky_operation()?;
 ### Test Declarations
 
 ```olang
+fn add(a, b) = a + b
+
 // Basic test
 test "addition test" {
-    let result = add(2, 3);
-    assert_eq(result, 5);
+    let result = add(2, 3)
+    assert_eq(result, 5)
 }
 
 // Test with custom message
 test "string concatenation" {
-    let result = "Hello" + " " + "World";
-    assert_eq(result, "Hello World", "String concatenation failed");
+    let result = "Hello" + " " + "World"
+    assert_eq(result, "Hello World", "String concatenation failed")
 }
 
 // Test with assertions
 test "boolean operations" {
-    let value = true;
-    assert_true(value);
-    assert_false(!value);
-    assert(value == true);
+    let value = true
+    assert_true(value)
+    assert_false(!value)
+    assert(value == true)
 }
 
 // Test with inequality
 test "inequality test" {
-    let a = 10;
-    let b = 20;
-    assert_ne(a, b, "Values should not be equal");
+    let a = 10
+    let b = 20
+    assert_ne(a, b, "Values should not be equal")
 }
 ```
 
 ### Assertion Functions
 
 ```olang
-// Equality assertion
-assert_eq(actual, expected);
-assert_eq(actual, expected, "Custom message");
+let actual = 5
+let expected = 5
+let condition = true
+let expression = 1 < 2
 
-// Inequality assertion
-assert_ne(actual, expected);
-assert_ne(actual, expected, "Custom message");
+test "assertion forms" {
+    // Equality / inequality
+    assert_eq(actual, expected)
+    assert_eq(actual, expected, "Custom message")
+    assert_ne(actual, 99)
 
-// Boolean assertion
-assert(condition);
-assert(condition, "Custom message");
-
-// True/False assertions
-assert_true(expression);
-assert_true(expression, "Custom message");
-assert_false(expression);
-assert_false(expression, "Custom message");
+    // Boolean assertions
+    assert(condition)
+    assert(condition, "Custom message")
+    assert_true(expression)
+    assert_false(!expression)
+}
 ```
 
 ## Help System
 
 ### Enhanced Help Commands
 
-```olang
+```text
 // Basic help
 :help                    // Show general help
 :help println           // Show function help
@@ -872,7 +878,7 @@ assert_false(expression, "Custom message");
 The REPL can run shell commands and navigate the filesystem. `cd` changes the
 REPL's own working directory, so relative paths in `fs.` calls follow along:
 
-```olang
+```text
 :pwd                     // Print working directory
 :cd src                  // Change directory (supports ~)
 :ls -la                  // List files
@@ -1047,7 +1053,7 @@ test "comprehensive test" {
 
 #### Help System Testing
 
-```olang
+```text
 // REPL commands for testing help system
 :help map_get                    // Function help
 :help search json                // Search
