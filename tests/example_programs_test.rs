@@ -50,3 +50,4 @@ example_test!(algorithms, "03_algorithms.ol");
 example_test!(stdlib_showcase, "04_stdlib_showcase.ol");
 example_test!(text_processing, "05_text_processing.ol");
 example_test!(database, "06_database.ol");
+example_test!(algebraic_types, "07_algebraic_types.ol");

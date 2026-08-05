@@ -12,6 +12,11 @@ documented.
 
 ### Added
 
+- **`07_algebraic_types.ol`** example — a recursive expression-tree
+  evaluator, a generic Option combinator library, and a binary search tree,
+  all built on the enum sum types that now construct. A demonstration that
+  olang expresses real algebraic data types.
+
 - **Enums construct at runtime.** `type Color = enum { Red, RGB(Int, Int, Int) }`
   now binds its variants: unit variants (`Red`) are values, payload variants
   (`RGB(1, 2, 3)`) are constructor callables that build an `Enum` value. This

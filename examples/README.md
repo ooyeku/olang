@@ -20,6 +20,7 @@ are verified in CI by `tests/example_programs_test.rs`, so they cannot rot.
 | [`04_stdlib_showcase.ol`](04_stdlib_showcase.ol) | The batteries: SHA-256/HMAC hashing, bcrypt passwords, RSA sign/verify, math (stddev, trig identities), calendar arithmetic, and JSON |
 | [`05_text_processing.ol`](05_text_processing.ol) | Real text work with `str` and `re`: word frequency, log parsing via regex captures, email extraction, validation, a template engine, and slugification |
 | [`06_database.ol`](06_database.ol) | A SQLite-backed task tracker: schema, parameterized inserts, queries, group-by aggregates, updates — real persistence |
+| [`07_algebraic_types.ol`](07_algebraic_types.ol) | Enums as real sum types: a recursive expression-tree evaluator, generic Option combinators, and a binary search tree |
 
 ## Topic examples
 
