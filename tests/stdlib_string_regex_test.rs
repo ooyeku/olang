@@ -1,0 +1,148 @@
+//! Coverage for the `str` and `re` modules, and the stdlib return-type
+//! convention: total operations return bare values, fallible operations
+//! return an olang `Result`.
+
+use olang::{Interpreter, Parser, Value};
+
+fn eval(src: &str) -> Value {
+    let parser = Parser::new();
+    let program = parser.parse(src).expect("parse");
+    let mut interpreter = Interpreter::new();
+    interpreter.eval_program(program).expect("eval")
+}
+
+fn s(v: Value) -> String {
+    match v {
+        Value::String(s) => s.to_string(),
+        other => panic!("expected string, got {:?}", other),
+    }
+}
+
+// ── str: total operations return bare values ────────────────────────
+
+#[test]
+fn str_case_and_trim() {
+    assert_eq!(s(eval(r#"str.to_upper("abc")"#)), "ABC");
+    assert_eq!(s(eval(r#"str.to_lower("ABC")"#)), "abc");
+    assert_eq!(s(eval(r#"str.trim("  hi  ")"#)), "hi");
+    assert_eq!(s(eval(r#"str.capitalize("hello")"#)), "Hello");
+}
+
+#[test]
+fn str_search_and_slice() {
+    assert_eq!(eval(r#"str.index_of("hello", "llo")"#), Value::Integer(2));
+    assert_eq!(eval(r#"str.index_of("hello", "z")"#), Value::Integer(-1));
+    assert_eq!(s(eval(r#"str.substring("hello world", 6, 11)"#)), "world");
+    // substring clamps out-of-range indices rather than failing
+    assert_eq!(s(eval(r#"str.substring("hi", 0, 99)"#)), "hi");
+    assert_eq!(eval(r#"str.count("banana", "a")"#), Value::Integer(3));
+}
+
+#[test]
+fn str_transform() {
+    assert_eq!(s(eval(r#"str.replace("a-b-c", "-", "+")"#)), "a+b+c");
+    assert_eq!(s(eval(r#"str.replace_first("a-b-c", "-", "+")"#)), "a+b-c");
+    assert_eq!(s(eval(r#"str.repeat("ab", 3)"#)), "ababab");
+    assert_eq!(s(eval(r#"str.pad_start("7", 3, "0")"#)), "007");
+    assert_eq!(s(eval(r#"str.reverse("abc")"#)), "cba");
+    assert_eq!(s(eval(r#"str.join(["a", "b", "c"], "-")"#)), "a-b-c");
+}
+
+#[test]
+fn str_char_indexing_is_unicode() {
+    // "héllo": index 1 is the accented e; length counts characters
+    assert_eq!(eval(r#"str.length("héllo")"#), Value::Integer(5));
+    assert_eq!(s(eval(r#"str.char_at("héllo", 1)"#)), "é");
+    // out-of-range char_at yields empty string, not an error
+    assert_eq!(s(eval(r#"str.char_at("hi", 9)"#)), "");
+}
+
+// ── str: fallible operations return Result ──────────────────────────
+
+#[test]
+fn str_parse_returns_result() {
+    assert_eq!(eval(r#"unwrap(str.parse_int("42"))"#), Value::Integer(42));
+    assert_eq!(
+        eval(r#"match str.parse_int("nope") { Ok(_) => "ok", Err(_) => "err" }"#),
+        Value::String("err".to_string().into())
+    );
+    assert_eq!(eval(r#"unwrap(str.parse_float("3.5"))"#), Value::Float(3.5));
+}
+
+// ── re: every operation returns Result (fallible on bad pattern) ────
+
+#[test]
+fn re_matching() {
+    assert_eq!(
+        eval(r#"unwrap(re.is_match("^\\d+$", "123"))"#),
+        Value::Boolean(true)
+    );
+    assert_eq!(
+        eval(r#"unwrap(re.is_match("^\\d+$", "12a"))"#),
+        Value::Boolean(false)
+    );
+    assert_eq!(s(eval(r#"unwrap(re.find("\\d+", "abc123def"))"#)), "123");
+}
+
+#[test]
+fn re_find_all_and_split() {
+    let list = eval(r#"unwrap(re.find_all("\\d+", "a1b22c333"))"#);
+    match list {
+        Value::List(items) => {
+            let got: Vec<String> = items.iter().cloned().map(s).collect();
+            assert_eq!(got, vec!["1", "22", "333"]);
+        }
+        other => panic!("expected list, got {:?}", other),
+    }
+    assert_eq!(
+        s(eval(r#"unwrap(re.replace_all("\\s+", "a  b   c", "_"))"#)),
+        "a_b_c"
+    );
+}
+
+#[test]
+fn re_captures_groups() {
+    let groups = eval(r#"unwrap(re.captures("(\\w+)@(\\w+)", "user@host"))"#);
+    match groups {
+        Value::List(items) => {
+            let got: Vec<String> = items.iter().cloned().map(s).collect();
+            assert_eq!(got, vec!["user@host", "user", "host"]);
+        }
+        other => panic!("expected list, got {:?}", other),
+    }
+}
+
+#[test]
+fn re_bad_pattern_is_recoverable_err() {
+    // A malformed pattern is an olang Err, not a crash
+    assert_eq!(
+        eval(r#"match re.is_match("[unclosed", "x") { Ok(_) => "ok", Err(_) => "err" }"#),
+        Value::String("err".to_string().into())
+    );
+    // is_valid is total: it answers the question with a bare bool
+    assert_eq!(eval(r#"re.is_valid("[a-z]+")"#), Value::Boolean(true));
+    assert_eq!(eval(r#"re.is_valid("[bad")"#), Value::Boolean(false));
+}
+
+// ── convention: total vs fallible across the wider stdlib ───────────
+
+#[test]
+fn stdlib_convention_holds() {
+    // Total operations return bare values (no unwrap needed)
+    assert!(matches!(eval(r#"crypto.sha256("x")"#), Value::String(_)));
+    assert!(matches!(eval(r#"base64.encode("x")"#), Value::String(_)));
+    assert!(matches!(
+        eval(r#"dates.is_leap_year(2024)"#),
+        Value::Boolean(_)
+    ));
+
+    // Fallible operations return Result (Ok/Err)
+    assert!(matches!(eval(r#"crypto.hash_password("x")"#), Value::Ok(_)));
+    assert!(matches!(eval(r#"base64.decode("aGk=")"#), Value::Ok(_)));
+    assert!(matches!(
+        eval(r#"dates.add_days("2026-01-01", 5)"#),
+        Value::Ok(_)
+    ));
+    // A bad date is a recoverable Err, not a crash
+    assert!(matches!(eval(r#"dates.add_days("bad", 5)"#), Value::Err(_)));
+}

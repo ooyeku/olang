@@ -210,7 +210,7 @@ fn crypto_md5(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let result = Md5::digest(input);
     let hex_string = hex::encode(result);
 
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
+    Ok(Value::String(Arc::new(hex_string)))
 }
 
 /// Compute SHA1 hash of input
@@ -235,7 +235,7 @@ fn crypto_sha1(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let result = Sha1::digest(input);
     let hex_string = hex::encode(result);
 
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
+    Ok(Value::String(Arc::new(hex_string)))
 }
 
 /// Compute SHA256 hash of input
@@ -260,7 +260,7 @@ fn crypto_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     let result = Sha256::digest(input);
     let hex_string = hex::encode(result);
 
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
+    Ok(Value::String(Arc::new(hex_string)))
 }
 
 /// Compute SHA512 hash of input
@@ -285,7 +285,7 @@ fn crypto_sha512(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     let result = Sha512::digest(input);
     let hex_string = hex::encode(result);
 
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
+    Ok(Value::String(Arc::new(hex_string)))
 }
 
 /// Compute HMAC-SHA256
@@ -323,7 +323,7 @@ fn crypto_hmac_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
             mac.update(message);
             let result = mac.finalize();
             let hex_string = hex::encode(result.into_bytes());
-            Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
+            Ok(Value::String(Arc::new(hex_string)))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "HMAC error: {}",
@@ -367,7 +367,7 @@ fn crypto_hmac_sha512(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
             mac.update(message);
             let result = mac.finalize();
             let hex_string = hex::encode(result.into_bytes());
-            Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
+            Ok(Value::String(Arc::new(hex_string)))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "HMAC error: {}",
@@ -481,7 +481,7 @@ fn crypto_random_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Er
         .map(|b| Value::Integer(b as i64))
         .collect();
 
-    Ok(Value::Ok(Box::new(Value::List(byte_values.into()))))
+    Ok(Value::List(byte_values.into()))
 }
 
 /// Generate cryptographically secure random hex string
@@ -520,7 +520,7 @@ fn crypto_random_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
     thread_rng().fill_bytes(&mut bytes);
     let hex_string = hex::encode(bytes);
 
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
+    Ok(Value::String(Arc::new(hex_string)))
 }
 
 /// Encode bytes to hexadecimal string
@@ -612,13 +612,13 @@ fn crypto_secure_compare(args: Vec<Value>) -> Result<Value, Box<dyn std::error::
     let bytes2 = str2.as_bytes();
 
     if bytes1.len() != bytes2.len() {
-        Ok(Value::Ok(Box::new(Value::Boolean(false))))
+        Ok(Value::Boolean(false))
     } else {
         let mut result = 0u8;
         for i in 0..bytes1.len() {
             result |= bytes1[i] ^ bytes2[i];
         }
-        Ok(Value::Ok(Box::new(Value::Boolean(result == 0))))
+        Ok(Value::Boolean(result == 0))
     }
 }
 

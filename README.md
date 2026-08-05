@@ -388,14 +388,14 @@ let encoded = unwrap(json.stringify(user))
 
 ```olang
 // Hashing
-let hash = unwrap(crypto.sha256("password"))
+let hash = crypto.sha256("password")          // total: returns the hex string
 
 // Password hashing and verification
 let stored = unwrap(crypto.hash_password("secret"))
 let ok = unwrap(crypto.verify_password("secret", stored))
 
 // Encryption — the key is a 32-byte hex string
-let key = unwrap(crypto.random_hex(32))
+let key = crypto.random_hex(32)               // total: returns the hex string
 let encrypted = unwrap(crypto.encrypt_aes("secret data", key))
 let decrypted = unwrap(crypto.decrypt_aes(encrypted, key))
 

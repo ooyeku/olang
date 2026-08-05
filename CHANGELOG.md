@@ -12,6 +12,17 @@ documented.
 
 ### Added
 
+- **`str` module** — string manipulation: case conversion, trim, split/join,
+  replace, substring, pad, index/search, repeat, char access, lines/words,
+  and `parse_int`/`parse_float`. All indexing is by Unicode character.
+- **`re` module** — regular expressions backed by the `regex` crate:
+  `is_match`, `find`, `find_all`, `captures`, `split`, `replace`,
+  `replace_all`, and `is_valid`. A malformed pattern is a recoverable `Err`,
+  not a crash.
+- **`05_text_processing.ol`** example — word frequency, log parsing via
+  regex captures, email extraction, phone validation, a template engine,
+  record parsing, and slugification.
+
 - A curated example suite (`examples/01_language_tour.ol` through
   `04_stdlib_showcase.ol`, indexed in `examples/README.md`) that runs top to
   bottom and prints computed results — a language tour, a real analytics
@@ -63,6 +74,16 @@ documented.
   reference-counted; there is nothing to force).
 
 ### Changed
+
+- **Stdlib return-type convention unified**: total operations (which cannot
+  fail for correctly-typed input) return bare values; fallible operations
+  return an olang `Result`. Concretely: `crypto` hashes/HMAC/`secure_compare`
+  and `base64.encode` now return values directly instead of `Ok(...)`, and
+  the `dates` module now returns `Result` for every date-string operation
+  (parsing, arithmetic, formatting, component extraction) — a malformed date
+  is a recoverable `Err` instead of aborting the program. Total date
+  operations (`now`, `today`, `is_leap_year`, `days_in_month`) stay bare.
+  `docs/syntax.md` documents the convention and both new modules.
 
 - **Fast by default** — the bytecode tier is now enabled by default,
   promoting eligible functions on their *first* call (previously opt-in via

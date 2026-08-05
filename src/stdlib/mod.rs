@@ -12,6 +12,8 @@ pub mod json;
 pub mod math;
 pub mod os;
 pub mod random;
+pub mod regex_mod;
+pub mod string;
 pub mod testing;
 
 pub fn get_stdlib() -> HashMap<String, Value> {
@@ -27,6 +29,8 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("os".to_string(), os::create_os_module());
     stdlib.insert("random".to_string(), random::create_random_module());
     stdlib.insert("testing".to_string(), testing::create_testing_module());
+    stdlib.insert("str".to_string(), string::create_string_module());
+    stdlib.insert("re".to_string(), regex_mod::create_regex_module());
     stdlib
 }
 

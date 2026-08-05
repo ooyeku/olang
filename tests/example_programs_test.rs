@@ -48,3 +48,4 @@ example_test!(language_tour, "01_language_tour.ol");
 example_test!(data_pipeline, "02_data_pipeline.ol");
 example_test!(algorithms, "03_algorithms.ol");
 example_test!(stdlib_showcase, "04_stdlib_showcase.ol");
+example_test!(text_processing, "05_text_processing.ol");

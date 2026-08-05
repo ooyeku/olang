@@ -126,10 +126,38 @@ fn create_builtin_function(name: &str, arity: usize) -> Value {
 }
 
 /// Main dispatcher for dates function calls
+/// Total dates operations: no fallible input, so they return bare values.
+/// Everything else takes a date/time string (or produces one) and can fail,
+/// so it returns an olang `Result` — see `call_dates_function`.
+fn is_total(name: &str) -> bool {
+    matches!(
+        name,
+        "now" | "utc_now" | "today" | "is_leap_year" | "days_in_month"
+    )
+}
+
+/// Public entry point. Fallible operations (anything parsing or producing a
+/// date string) are wrapped into an olang `Result`: success becomes
+/// `Ok(value)` and any failure — a malformed date, an out-of-range
+/// component, arithmetic overflow, or a wrong-typed argument — becomes
+/// `Err(message)`, so a bad date never aborts the program. Total operations
+/// pass through as bare values.
 pub fn call_dates_function(
     name: &str,
     args: Vec<Value>,
 ) -> Result<Value, Box<dyn std::error::Error>> {
+    if is_total(name) {
+        return dispatch_dates(name, args);
+    }
+    match dispatch_dates(name, args) {
+        Ok(value) => Ok(Value::Ok(Box::new(value))),
+        Err(e) => Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(
+            e.to_string(),
+        ))))),
+    }
+}
+
+fn dispatch_dates(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     match name {
         "now" => dates_now(args),
         "utc_now" => dates_utc_now(args),

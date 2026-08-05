@@ -850,6 +850,95 @@ test "assertion forms" {
 }
 ```
 
+## Standard Library
+
+olang ships with modules for common tasks. Access a module function with
+dot syntax: `math.sqrt(2.0)`, `str.trim(text)`, `re.find_all(pattern, text)`.
+
+### Return-type convention
+
+Stdlib functions follow one rule:
+
+- **Total** operations — those that cannot fail for a correctly-typed
+  argument — return the value directly. `crypto.sha256("x")` returns the hex
+  string; `str.to_upper("hi")` returns `"HI"`; `math.sqrt(2.0)` returns the
+  root.
+- **Fallible** operations — parsing, I/O, decoding, network, or anything that
+  can fail on the *value* of its input — return a `Result`. Handle it with
+  `match`, `unwrap`, `unwrap_or`, or the `?` operator.
+
+```olang
+// total: use the value directly
+let h = crypto.sha256("password")
+let upper = str.to_upper("hello")
+
+// fallible: handle the Result
+let parsed = match str.parse_int("42") {
+    Ok(n) => n,
+    Err(e) => 0
+}
+let day = unwrap(dates.add_days("2026-08-05", 90))
+```
+
+### Modules
+
+| Module | Purpose |
+|---|---|
+| `str` | String manipulation (case, trim, split, replace, pad, search, parse) |
+| `re` | Regular expressions (match, find, captures, split, replace) |
+| `math` | Numeric functions and constants |
+| `crypto` | Hashing, HMAC, bcrypt passwords, AES, RSA signatures |
+| `dates` | Calendar arithmetic, parsing, formatting, components |
+| `json` | Parse, query, and transform JSON text |
+| `csv` | Read and write CSV |
+| `base64` | Base64 encode/decode |
+| `random` | Random numbers, choices, strings |
+| `fs` | File system operations |
+| `http` | HTTP client |
+| `os` | Environment, process, and system info |
+
+### str
+
+Character-indexed string operations. Total operations return the value;
+`parse_int` / `parse_float` return a `Result`.
+
+```olang
+str.to_upper("hi")                  // "HI"
+str.to_lower("HI")                  // "hi"
+str.trim("  x  ")                   // "x"
+str.replace("a-b-c", "-", "+")      // "a+b+c"
+str.split("a,b,c", ",")             // ["a", "b", "c"]
+str.join(["a", "b"], "-")           // "a-b"
+str.substring("hello", 0, 3)        // "hel" (indices clamp; never fails)
+str.index_of("hello", "llo")        // 2 (-1 if absent)
+str.repeat("ab", 3)                 // "ababab"
+str.pad_start("7", 3, "0")          // "007"
+str.reverse("abc")                  // "cba"
+str.capitalize("hi")                // "Hi"
+str.words("  a  b ")                // ["a", "b"]
+str.lines("a\nb")                  // ["a", "b"]
+str.count("banana", "a")            // 3
+str.char_at("héllo", 1)            // "é" (by character; "" if out of range)
+str.length("héllo")                // 5 (characters, not bytes)
+unwrap(str.parse_int("42"))         // 42
+unwrap(str.parse_float("3.5"))      // 3.5
+```
+
+### re
+
+Regular expressions. Every operation but `is_valid` returns a `Result` —
+a malformed pattern is a recoverable `Err`, not a crash.
+
+```olang
+re.is_valid("[a-z]+")                          // true (total)
+unwrap(re.is_match("^\\d+$", "123"))            // true
+unwrap(re.find("\\d+", "abc123"))               // "123" ("" if no match)
+unwrap(re.find_all("\\d+", "a1b22c333"))        // ["1", "22", "333"]
+unwrap(re.captures("(\\w+)@(\\w+)", "u@h"))    // ["u@h", "u", "h"]
+unwrap(re.split(",\\s*", "a, b,c"))             // ["a", "b", "c"]
+unwrap(re.replace_all("\\s+", "a  b", "_"))     // "a_b"
+```
+
 ## Help System
 
 ### Enhanced Help Commands

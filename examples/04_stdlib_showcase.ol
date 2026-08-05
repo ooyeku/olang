@@ -8,9 +8,9 @@ println("═══ stdlib showcase ═══")
 
 // ── crypto: hashing ─────────────────────────────────────────────────
 println("── hashing ──")
-println(`sha256("olang") = ${unwrap(crypto.sha256("olang"))}`)
-println(`md5("olang")    = ${unwrap(crypto.md5("olang"))}`)
-let mac = unwrap(crypto.hmac_sha256("payload", "secret-key"))
+println(`sha256("olang") = ${crypto.sha256("olang")}`)
+println(`md5("olang")    = ${crypto.md5("olang")}`)
+let mac = crypto.hmac_sha256("payload", "secret-key")
 println(`hmac_sha256     = ${mac}`)
 
 // ── crypto: password hashing (bcrypt) ───────────────────────────────
@@ -59,10 +59,10 @@ println(`sin^2(0.7) + cos^2(0.7) = ${identity}`)
 println("── dates ──")
 let launch = "2026-08-05"
 println(`launch date:       ${launch}`)
-println(`+ 90 days:         ${dates.add_days(launch, 90)}`)
-println(`+ 2 months:        ${dates.add_months(launch, 2)}`)
-println(`weekday (0=Sun):   ${dates.weekday(launch)}`)
-println(`days since 2026-01-01: ${dates.diff_days(launch, "2026-01-01")}`)
+println(`+ 90 days:         ${unwrap(dates.add_days(launch, 90))}`)
+println(`+ 2 months:        ${unwrap(dates.add_months(launch, 2))}`)
+println(`weekday (0=Sun):   ${unwrap(dates.weekday(launch))}`)
+println(`days since 2026-01-01: ${unwrap(dates.diff_days(launch, "2026-01-01"))}`)
 println(`2024 a leap year?  ${dates.is_leap_year(2024)}`)
 println(`2026 a leap year?  ${dates.is_leap_year(2026)}`)
 println(`days in Feb 2024:  ${dates.days_in_month(2024, 2)}`)

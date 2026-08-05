@@ -615,6 +615,24 @@ impl BuiltinFunctions {
                 });
         }
 
+        // Handle str functions
+        if let Some(str_function) = name.strip_prefix("str.") {
+            return crate::stdlib::string::call_string_function(str_function, arguments).map_err(
+                |e| InterpreterError::RuntimeError {
+                    message: e.to_string(),
+                },
+            );
+        }
+
+        // Handle re functions
+        if let Some(re_function) = name.strip_prefix("re.") {
+            return crate::stdlib::regex_mod::call_regex_function(re_function, arguments).map_err(
+                |e| InterpreterError::RuntimeError {
+                    message: e.to_string(),
+                },
+            );
+        }
+
         // Handle testing functions
         if let Some(testing_function) = name.strip_prefix("testing.") {
             // Remove "testing." prefix

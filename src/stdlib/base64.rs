@@ -114,7 +114,7 @@ fn base64_encode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     };
 
     let encoded = general_purpose::STANDARD.encode(input);
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(encoded)))))
+    Ok(Value::String(Arc::new(encoded)))
 }
 
 /// Decode a base64 string
@@ -171,7 +171,7 @@ fn base64_encode_url_safe(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
     };
 
     let encoded = general_purpose::URL_SAFE.encode(input);
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(encoded)))))
+    Ok(Value::String(Arc::new(encoded)))
 }
 
 /// Decode a URL-safe base64 string
@@ -257,7 +257,7 @@ fn base64_encode_no_pad(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
     };
 
     let encoded = general_purpose::STANDARD_NO_PAD.encode(input);
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(encoded)))))
+    Ok(Value::String(Arc::new(encoded)))
 }
 
 /// Decode a base64 string without padding
@@ -312,12 +312,13 @@ mod tests {
     }
 
     // Helper function to assert Ok result and extract inner value
+    // Unwraps a fallible result, or passes a total (bare) value through.
+    // encode operations return bare values now; decode still returns Result.
     fn assert_ok(result: &Value) -> &Value {
         match result {
             Value::Ok(inner) => inner,
-            _ => {
-                panic!("Expected Ok result, got: {:?}", result)
-            }
+            Value::Err(e) => panic!("Expected Ok result, got Err: {:?}", e),
+            bare => bare,
         }
     }
 

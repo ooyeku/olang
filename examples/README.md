@@ -18,6 +18,7 @@ are verified in CI by `tests/example_programs_test.rs`, so they cannot rot.
 | [`02_data_pipeline.ol`](02_data_pipeline.ol) | Real analytics — totals, filtering, group-by via fold, leaderboards, derived metrics — the pipeline sweet spot |
 | [`03_algorithms.ol`](03_algorithms.ol) | Recursion, memoization, quicksort, binary search, the prime sieve, function composition, and the strategy pattern via closures |
 | [`04_stdlib_showcase.ol`](04_stdlib_showcase.ol) | The batteries: SHA-256/HMAC hashing, bcrypt passwords, RSA sign/verify, math (stddev, trig identities), calendar arithmetic, and JSON |
+| [`05_text_processing.ol`](05_text_processing.ol) | Real text work with `str` and `re`: word frequency, log parsing via regex captures, email extraction, validation, a template engine, and slugification |
 
 ## Topic examples
 
