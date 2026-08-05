@@ -476,6 +476,12 @@ impl Default for ModuleDebugConfig {
 #[derive(Clone)]
 pub struct Environment {
     variables: Arc<ImHashMap<String, Value>>,
+    /// Call-frame bindings (the function's own name and its parameters),
+    /// probed by string compare before the map. Defining these into the
+    /// persistent map cost a copy-on-write clone of the shared closure map
+    /// plus hashed HAMT inserts on every single call; a handful of linear
+    /// compares is far cheaper at call-frame sizes.
+    locals: Vec<(String, Value)>,
     parent: Option<Arc<Environment>>,
 }
 
@@ -489,6 +495,7 @@ impl Environment {
     pub fn new() -> Self {
         Self {
             variables: Arc::new(ImHashMap::new()),
+            locals: Vec::new(),
             parent: None,
         }
     }
@@ -497,6 +504,7 @@ impl Environment {
     pub fn with_parent(parent: Environment) -> Self {
         Self {
             variables: Arc::new(ImHashMap::new()),
+            locals: Vec::new(),
             parent: Some(Arc::new(parent)),
         }
     }
@@ -505,17 +513,31 @@ impl Environment {
     pub fn with_parent_arc(parent: Arc<Environment>) -> Self {
         Self {
             variables: Arc::new(ImHashMap::new()),
+            locals: Vec::new(),
             parent: Some(parent),
         }
     }
 
     /// Define a variable - uses copy-on-write semantics
     pub fn define(&mut self, name: String, value: Value) {
+        // A later binding must shadow a call-frame local of the same name
+        if let Some(slot) = self.locals.iter_mut().rev().find(|(n, _)| *n == name) {
+            slot.1 = value;
+            return;
+        }
         Arc::make_mut(&mut self.variables).insert(name, value);
     }
 
+    /// Define a call-frame binding (a parameter or the function's own name)
+    /// without touching the shared persistent map.
+    pub fn define_local(&mut self, name: String, value: Value) {
+        self.locals.push((name, value));
+    }
+
     pub fn get(&self, name: &str) -> Option<Value> {
-        if let Some(value) = self.variables.get(name) {
+        if let Some((_, value)) = self.locals.iter().rev().find(|(n, _)| n == name) {
+            Some(value.clone())
+        } else if let Some(value) = self.variables.get(name) {
             Some(value.clone())
         } else if let Some(parent) = &self.parent {
             parent.get(name)
@@ -525,7 +547,10 @@ impl Environment {
     }
 
     pub fn set(&mut self, name: &str, value: Value) -> Result<(), InterpreterError> {
-        if self.variables.contains_key(name) {
+        if let Some(slot) = self.locals.iter_mut().rev().find(|(n, _)| n == name) {
+            slot.1 = value;
+            Ok(())
+        } else if self.variables.contains_key(name) {
             Arc::make_mut(&mut self.variables).insert(name.to_string(), value);
             Ok(())
         } else if let Some(parent) = &mut self.parent {
@@ -543,9 +568,23 @@ impl Environment {
     /// Get all variables in this environment (excluding parent environments)
     /// Returns a clone for compatibility with existing code
     pub fn get_all_variables(&self) -> HashMap<String, Value> {
-        self.variables.iter()
+        let mut all: HashMap<String, Value> = self.variables.iter()
             .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()
+            .collect();
+        for (name, value) in &self.locals {
+            all.insert(name.clone(), value.clone());
+        }
+        all
+    }
+
+    /// This environment's own bindings as a persistent map: the flat map
+    /// with call-frame locals overlaid. O(1) when there are no locals.
+    fn flat_snapshot(&self) -> ImHashMap<String, Value> {
+        let mut snapshot = (*self.variables).clone();
+        for (name, value) in &self.locals {
+            snapshot.insert(name.clone(), value.clone());
+        }
+        snapshot
     }
 
     /// Reserve capacity - no-op for ImHashMap (it grows automatically)
@@ -555,6 +594,7 @@ impl Environment {
 
     /// Remove a variable from this environment (for scoped cleanup)
     pub fn remove_variable(&mut self, name: &str) {
+        self.locals.retain(|(n, _)| n != name);
         Arc::make_mut(&mut self.variables).remove(name);
     }
 
@@ -804,9 +844,8 @@ impl Interpreter {
 
     fn eval_function_decl(&mut self, func_decl: FunctionDecl) -> Result<Value, InterpreterError> {
         // Convert ImHashMap to regular HashMap for closure storage
-        let closure: HashMap<String, Value> = self.environment.variables.iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        // O(1): the environment's flat map is persistent, adopt it directly
+        let closure = self.environment.flat_snapshot();
         let function = Function {
             name: Some(func_decl.name.clone()),
             parameters: func_decl.parameters,
@@ -1190,9 +1229,8 @@ impl Interpreter {
             } => {
                 // Create async function with enhanced async capabilities
                 // Convert ImHashMap to regular HashMap for closure storage
-                let closure: HashMap<String, Value> = self.environment.variables.iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
+                // O(1): adopt the persistent flat map directly
+                let closure = self.environment.flat_snapshot();
                 let function = Function {
                     name: None,
                     parameters: parameters.clone(),
@@ -1480,9 +1518,8 @@ impl Interpreter {
         // For now, treat async functions like regular functions
         // In full implementation, would mark as async
         // Convert ImHashMap to regular HashMap for closure storage
-        let closure: HashMap<String, Value> = self.environment.variables.iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        // O(1): the environment's flat map is persistent, adopt it directly
+        let closure = self.environment.flat_snapshot();
         let function = Function {
             name: Some(async_func_decl.name.clone()),
             parameters: async_func_decl.parameters,
@@ -1574,23 +1611,22 @@ impl Interpreter {
 
                 // Create new environment with current environment as parent
                 let mut new_env = Environment::with_parent(self.environment.clone());
-                
-                // Add closure variables to the new environment (only if not empty) - MEMORY OPTIMIZED
+
+                // Adopt the closure as the environment's flat map in O(1) —
+                // the persistent map is shared, not copied. This was a loop
+                // defining every closure entry (the whole prelude, ~200
+                // entries) on every single call.
                 if !func.closure.is_empty() {
-                    // Reserve capacity to avoid reallocations
-                    new_env.reserve(func.closure.len());
-                    for (k, v) in func.closure.iter() {
-                        new_env.define(k.clone(), v.clone());
-                    }
+                    new_env.variables = func.closure.clone();
                 }
 
                 // If this is a named function, add it to its own scope for recursion
                 if let Some(name) = &func.name {
-                    new_env.define(name.clone(), Value::Function(func.clone()));
+                    new_env.define_local(name.clone(), Value::Function(func.clone()));
                 }
 
-                // Add parameters to environment - MEMORY OPTIMIZED
-                new_env.reserve(func.parameters.len()); // Reserve space for parameters
+                // Parameters are defined over the shared map; copy-on-write
+                // clones only the touched structure
                 for (i, param) in func.parameters.iter().enumerate() {
                     let value = if i < arguments.len() {
                         arguments[i].clone()
@@ -1602,7 +1638,7 @@ impl Interpreter {
                         });
                     };
                     
-                    new_env.define(param.name.clone(), value);
+                    new_env.define_local(param.name.clone(), value);
                 }
 
                 // MEMORY OPTIMIZED: Use scoped evaluation instead of environment replacement
@@ -1721,36 +1757,15 @@ impl Interpreter {
     /// MEMORY OPTIMIZED: Evaluate expression with scoped variables instead of environment replacement
     /// This completely avoids expensive environment moving operations
     fn eval_expr_with_env(&mut self, expr: &Expr, temp_env: Environment) -> Result<Value, InterpreterError> {
-        // Instead of replacing environments, temporarily add variables to current environment
-        let mut added_vars = Vec::new();
-        
-        // Add all variables from temp_env to current environment, tracking what we added
-        for (name, value) in temp_env.into_variables() {
-            // Check if variable already exists (to restore later)
-            let existing = self.environment.get(&name);
-            added_vars.push((name.clone(), existing));
-            
-            // Add/override the variable
-            self.environment.define(name, value);
-        }
-        
-        // Evaluate expression with the temporary variables in place
+        // Swap the environment in and out. temp_env's parent already chains
+        // to the caller's environment, so name resolution is identical to the
+        // previous overlay approach (locals -> closure -> caller chain) —
+        // but without iterating every closure entry twice per call, which
+        // was a full lookup + clone + define + restore of ~200 prelude
+        // entries on every single function call.
+        let saved = std::mem::replace(&mut self.environment, temp_env);
         let result = self.eval_expr(expr);
-        
-        // Restore original environment state
-        for (name, original_value) in added_vars.into_iter().rev() {
-            match original_value {
-                Some(value) => {
-                    // Restore original value
-                    self.environment.define(name, value);
-                }
-                None => {
-                    // Variable didn't exist before, remove it
-                    self.environment.remove_variable(&name);
-                }
-            }
-        }
-        
+        self.environment = saved;
         result
     }
 
@@ -2610,25 +2625,32 @@ impl Interpreter {
     }
 
     /// Collect all accessible variables from the current environment and its parent chain
-    fn collect_all_accessible_variables(&self) -> HashMap<String, Value> {
-        let mut all_variables = HashMap::new();
+    fn collect_all_accessible_variables(&self) -> ImHashMap<String, Value> {
+        // Union the chain innermost-first: im's union prefers entries from
+        // self on collision, so inner scopes shadow outer ones. Structural
+        // sharing makes this near-O(1) for the common shallow chains,
+        // versus copying every entry of every scope.
+        // NOTE: im::HashMap::union is unusable here — its collision bias
+        // depends on which map is LARGER (it swaps sides internally as a
+        // size optimization), so "inner scope wins" silently became
+        // "bigger scope wins" and a captured variable could resolve to an
+        // ancestor frame's stale value. Insert explicitly instead: existing
+        // entries always win, so inner scopes shadow outer ones.
+        let mut all_variables = self.environment.flat_snapshot();
         let mut current_env = &self.environment;
-
-        // Traverse the environment chain from parent to current
-        // This ensures that current environment variables override parent ones
-        let mut env_chain = Vec::new();
-        while let Some(env) = current_env.parent.as_ref() {
-            env_chain.push(current_env);
-            current_env = env;
-        }
-        env_chain.push(current_env); // Add the root environment
-
-        // Add variables from root to current (parents first, current last)
-        for env in env_chain.iter().rev() {
-            // Iterate over Arc<ImHashMap> by dereferencing
-            for (name, value) in env.variables.iter() {
-                all_variables.insert(name.clone(), value.clone());
+        while let Some(parent) = current_env.parent.as_ref() {
+            // Within a scope, call-frame locals shadow its flat map
+            for (name, value) in parent.locals.iter().rev() {
+                if !all_variables.contains_key(name) {
+                    all_variables.insert(name.clone(), value.clone());
+                }
             }
+            for (name, value) in parent.variables.iter() {
+                if !all_variables.contains_key(name) {
+                    all_variables.insert(name.clone(), value.clone());
+                }
+            }
+            current_env = parent;
         }
 
         all_variables

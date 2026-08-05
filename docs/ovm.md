@@ -216,34 +216,32 @@ the user's definition in compiled code too.
 ## Performance
 
 Measured on an Apple Silicon laptop, release build. Reproduce with
-`cargo run --release --example tier_compare`.
+`cargo run --release --example tier_compare` and the workloads described in
+the benchmark suite.
 
-| Workload | Interpreter | Bytecode tier | Speedup |
+The 0.23 cycle changed the performance story twice. First the bytecode tier
+delivered 26–120× over the interpreter on call-heavy code. Then a rewrite of
+the interpreter's call path — swapping environments instead of overlaying and
+restoring every closure entry on each call, adopting closures as persistent
+maps in O(1), and keeping call-frame bindings in a probed vector — made the
+*interpreter* 50–90× faster on those same workloads, collapsing the tier's
+relative advantage:
+
+| Workload | Interpreter | Bytecode tier | Tier speedup |
 |---|---|---|---|
-| `fib(20)` (recursive calls) | 837 ms | 6.9 ms | ~121× |
-| 100k-iteration `while` loop | 27.9 ms | 4.2 ms | ~6.6× |
-| 300k-iteration loop across 4 functions | 38.9 s | 0.40 s | ~97× |
-| 100k-iteration loop dominated by `sum`/`range` | 23.2 s | 7.2 s | ~3.2× |
-| 2M-iteration `for` loop with `match` and `continue` | 55.8 s | 1.28 s | ~44× |
-| 1M-iteration loop over `Result` construction and matching | 64.0 s | 1.37 s | ~47× |
-| 2000 × 500-element `map`/`filter`/`fold` pipeline | 93.2 s | 3.58 s | ~26× |
+| `fib(27)` (recursive calls) | 0.27 s | 0.18 s | ~1.5× |
+| 100k-iteration `while` loop | 26.6 ms | 3.5 ms | ~7.5× |
+| 1M-iteration `Result` construct + match loop | 1.32 s | 1.11 s | ~1.2× |
+| 2000 × 500-element `map`/`filter`/`fold` pipeline | 1.25 s | 1.01 s | ~1.2× |
 
-The third row is the case transitive compilation unlocked: before it, a
-function calling a helper was rejected outright and saw no benefit at all. The
-fourth shows the ceiling on builtin-heavy code — those functions can now be
-promoted at all (previously they were rejected), but each builtin call still
-round-trips through the AST value model.
+(For scale: before the call-path rewrite the interpreter took 23.6 s, 64 s,
+and 93 s on the first, third, and fourth rows.)
 
-End to end through the CLI, `fib(27)`:
-
-```
-olang -b --no-ovm program.ol              # 23.6 s
-olang -b --no-ovm --ovm-tier program.ol   #  0.20 s
-```
-
-Call-heavy code benefits most, because a promoted recursive function runs its
-entire call tree inside the VM. Loop-heavy code benefits less: the remaining
-overhead is per-instruction dispatch and value copies.
+The honest summary: the tier's headline numbers were largely measuring
+interpreter overhead that is now gone. Loop-heavy code still benefits
+meaningfully (~7.5×) because the VM avoids per-iteration AST dispatch;
+call-heavy code benefits modestly. Per-call interpreter cost is now ~0.65 µs
+(down from ~33 µs).
 
 `cargo bench` measures the interpreter itself (`benches/interpreter_bench.rs`,
 ten representative programs). Use it when changing the evaluator; use

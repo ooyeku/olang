@@ -426,7 +426,10 @@ pub struct Function {
     // Arc so cloning a function value (every call/env lookup) is cheap
     // instead of deep-copying the body AST and captured environment
     pub body: Arc<Expr>,
-    pub closure: Arc<HashMap<String, Value>>,
+    // Persistent map so a call can adopt the whole closure as its
+    // environment in O(1) instead of copying every entry per call —
+    // with the prelude captured, that was ~200 inserts on every call
+    pub closure: Arc<im::HashMap<String, Value>>,
 }
 
 /// Built-in function

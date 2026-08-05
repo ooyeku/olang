@@ -137,7 +137,7 @@ use std::sync::{Arc, Mutex};
                 op: crate::ast::BinaryOp::Multiply,
                 right: Box::new(crate::ast::Expr::Integer(2)),
             }),
-            closure: std::sync::Arc::new(HashMap::new()),
+            closure: std::sync::Arc::new(im::HashMap::new()),
         };
 
         let source_list = Value::List(Arc::from(vec![
@@ -187,7 +187,7 @@ use std::sync::{Arc, Mutex};
                 op: crate::ast::BinaryOp::Equal,
                 right: Box::new(crate::ast::Expr::Integer(0)),
             }),
-            closure: std::sync::Arc::new(HashMap::new()),
+            closure: std::sync::Arc::new(im::HashMap::new()),
         };
 
         let source_list = Value::List(Arc::from(vec![
@@ -432,7 +432,7 @@ use std::sync::{Arc, Mutex};
                 op: crate::ast::BinaryOp::Multiply,
                 right: Box::new(crate::ast::Expr::Integer(2)),
             }),
-            closure: std::sync::Arc::new(HashMap::new()),
+            closure: std::sync::Arc::new(im::HashMap::new()),
         };
 
         let predicate = Function {
@@ -451,7 +451,7 @@ use std::sync::{Arc, Mutex};
                 op: crate::ast::BinaryOp::Equal,
                 right: Box::new(crate::ast::Expr::Integer(0)),
             }),
-            closure: std::sync::Arc::new(HashMap::new()),
+            closure: std::sync::Arc::new(im::HashMap::new()),
         };
 
         let lazy_map_filtered = LazyValue::MapFiltered {
@@ -499,7 +499,7 @@ use std::sync::{Arc, Mutex};
                 op: crate::ast::BinaryOp::Multiply,
                 right: Box::new(crate::ast::Expr::Integer(2)),
             }),
-            closure: std::sync::Arc::new(HashMap::new()),
+            closure: std::sync::Arc::new(im::HashMap::new()),
         };
 
         let predicate = Function {
@@ -518,7 +518,7 @@ use std::sync::{Arc, Mutex};
                 op: crate::ast::BinaryOp::Equal,
                 right: Box::new(crate::ast::Expr::Integer(0)),
             }),
-            closure: std::sync::Arc::new(HashMap::new()),
+            closure: std::sync::Arc::new(im::HashMap::new()),
         };
 
         let lazy_map_filtered = LazyValue::MapFiltered {

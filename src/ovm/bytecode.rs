@@ -95,7 +95,7 @@ pub struct BytecodeCompiler {
     /// The enclosing function's declaration-time closure. Lambdas whose free
     /// variables all resolve here can carry it verbatim, which is exactly the
     /// snapshot the interpreter layers over the call-site chain.
-    enclosing_closure: std::sync::Arc<HashMap<String, Value>>,
+    enclosing_closure: std::sync::Arc<im::HashMap<String, Value>>,
     /// Every name the enclosing function ever binds or assigns (params, lets,
     /// loop variables, match bindings, assignment targets). A lambda free
     /// variable in this set is a capture of runtime state, not of the
@@ -761,7 +761,7 @@ impl BytecodeVm {
         func_id: FunctionId,
         func: &FunctionDecl,
     ) -> Result<(), BytecodeError> {
-        self.compile_function_with_closure(func_id, func, std::sync::Arc::new(HashMap::new()))
+        self.compile_function_with_closure(func_id, func, std::sync::Arc::new(im::HashMap::new()))
     }
 
     /// Compile function to bytecode, with the function's declaration-time
@@ -770,7 +770,7 @@ impl BytecodeVm {
         &mut self,
         func_id: FunctionId,
         func: &FunctionDecl,
-        closure: std::sync::Arc<HashMap<String, Value>>,
+        closure: std::sync::Arc<im::HashMap<String, Value>>,
     ) -> Result<(), BytecodeError> {
         let start_time = std::time::Instant::now();
 
@@ -2419,7 +2419,7 @@ impl BytecodeCompiler {
             local_variables: HashMap::new(),
             builtin_names: std::collections::HashSet::new(),
             loop_targets: Vec::new(),
-            enclosing_closure: std::sync::Arc::new(HashMap::new()),
+            enclosing_closure: std::sync::Arc::new(im::HashMap::new()),
             enclosing_bound_names: std::collections::HashSet::new(),
             _label_counter: 0,
             function_registry: HashMap::new(),
@@ -2736,7 +2736,7 @@ impl BytecodeCompiler {
                 // Attaching the full closure would defeat call_function's
                 // empty-closure fast path: every call of a trivial lambda
                 // would materialize the entire prelude into its environment.
-                let captured: HashMap<String, Value> = free
+                let captured: im::HashMap<String, Value> = free
                     .iter()
                     .filter_map(|name| {
                         self.enclosing_closure

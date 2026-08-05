@@ -66,7 +66,7 @@ rand_distr = "0.4"  # Random distributions (normal, etc.)
 # Collections and data structures
 indexmap = "2.0"
 dashmap = "5.5"
-im = "15.1"  # Persistent/immutable collections for O(1) environment cloning
+im = { version = "15.1", features = ["serde"] }  # Persistent/immutable collections for O(1) environment cloning
 
 # Parallelization
 rayon = "1.8"          # Data parallelism library

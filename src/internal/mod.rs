@@ -11,7 +11,7 @@ pub(crate) struct ThreadSafeFunction {
     pub name: Option<String>,
     pub parameters: Vec<crate::ast::Parameter>,
     pub body_code: String, // Store as string to avoid Rc<> issues
-    pub closure: std::collections::HashMap<String, Value>,
+    pub closure: im::HashMap<String, Value>,
 }
 
 impl ThreadSafeFunction {

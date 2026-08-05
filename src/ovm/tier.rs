@@ -304,7 +304,7 @@ mod tests {
                 op: BinaryOp::Multiply,
                 right: Box::new(Expr::Integer(2)),
             }),
-            closure: Arc::new(HashMap::new()),
+            closure: Arc::new(im::HashMap::new()),
         }
     }
 
@@ -333,7 +333,7 @@ mod tests {
         // Every user function captures the prelude; that must not stop a
         // self-contained function from being promoted.
         let mut tier = BytecodeTier::new(1);
-        let mut closure = HashMap::new();
+        let mut closure = im::HashMap::new();
         closure.insert("println".to_string(), Value::Unit);
         let func = Function {
             closure: Arc::new(closure),
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn body_referencing_a_capture_is_rejected() {
         let mut tier = BytecodeTier::new(1);
-        let mut closure = HashMap::new();
+        let mut closure = im::HashMap::new();
         closure.insert("captured".to_string(), Value::Integer(1));
         let func = Function {
             name: Some("uses_capture".to_string()),
@@ -390,7 +390,7 @@ mod tests {
             name: Some("bad".to_string()),
             parameters: vec![param("x")],
             body: Arc::new(Expr::Identifier("nonexistent_global".to_string())),
-            closure: Arc::new(HashMap::new()),
+            closure: Arc::new(im::HashMap::new()),
         };
 
         for _ in 0..5 {
@@ -425,7 +425,7 @@ mod tests {
                 op: BinaryOp::Divide,
                 right: Box::new(Expr::Identifier("b".to_string())),
             }),
-            closure: Arc::new(HashMap::new()),
+            closure: Arc::new(im::HashMap::new()),
         };
 
         match tier.try_call(&func, &[Value::Integer(1), Value::Integer(0)]) {

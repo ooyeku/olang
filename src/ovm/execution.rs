@@ -418,7 +418,7 @@ impl ExecutionEngine {
             name: Some(func_decl.name.clone()),
             parameters: func_decl.parameters.clone(),
             body: std::sync::Arc::new(func_decl.body.clone()),
-            closure: std::sync::Arc::new(HashMap::new()),
+            closure: std::sync::Arc::new(im::HashMap::new()),
         });
 
         // Call the function

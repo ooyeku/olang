@@ -461,36 +461,21 @@ cargo fmt
 cargo clippy
 ```
 
-### Performance Testing
+### Performance
 
-```bash
-# Compare execution tiers
-cargo run --release --example tier_compare
+The interpreter's call path is fast in its own right (~0.65 µs per function
+call), and `--ovm-tier` promotes hot functions to the bytecode VM for
+additional gains on loop-heavy code. Measured on an Apple Silicon laptop,
+release build:
 
-# Inspect tier promotions in a real program
-olang --ovm-tier --ovm-stats examples/benchmark.ol
-```
-
-## Performance
-
-Enabling `--ovm-tier` promotes hot functions to the bytecode VM. Measured on an
-Apple Silicon laptop, release build:
-
-| Workload | Interpreter | Bytecode tier | Speedup |
+| Workload | Interpreter | Bytecode tier | Tier speedup |
 |---|---|---|---|
-| `fib(20)` (recursive calls) | 837 ms | 6.9 ms | ~121x |
-| 100k-iteration `while` loop | 27.9 ms | 4.2 ms | ~6.6x |
-| 300k-iteration loop across 4 functions | 38.9 s | 0.40 s | ~97x |
-| 2M-iteration `for` loop with `match` | 55.8 s | 1.28 s | ~44x |
-| 1M-iteration loop over `Result` construction and matching | 64.0 s | 1.37 s | ~47x |
-| 2000 x 500-element `map`/`filter`/`fold` pipeline | 93.2 s | 3.58 s | ~26x |
+| `fib(27)` (recursive calls) | 0.27 s | 0.18 s | ~1.5x |
+| 100k-iteration `while` loop | 26.6 ms | 3.5 ms | ~7.5x |
+| 1M-iteration `Result` loop | 1.32 s | 1.11 s | ~1.2x |
+| 2000 x 500-element pipeline | 1.25 s | 1.01 s | ~1.2x |
 
-End to end through the CLI, `fib(27)` runs in **23.6 s** interpreted and
-**0.20 s** with the tier enabled, producing identical output.
-
-Reproduce with `cargo run --release --example tier_compare`. Call-heavy code
-benefits most, because a promoted recursive function runs its whole call tree
-inside the VM.
+Reproduce with `cargo run --release --example tier_compare`.
 
 Not every function qualifies — the VM supports a subset of the language, and
 anything outside it stays on the interpreter. See

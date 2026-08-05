@@ -784,3 +784,46 @@ x
         olang::Value::Integer(42)
     );
 }
+
+/// Recursion through a captured lambda: each frame's lambda must capture
+/// that frame's own values, not an ancestor frame's. This broke once via
+/// im::HashMap::union, whose collision bias depends on which map is larger —
+/// the captured `n` resolved to the outermost frame's value and the
+/// recursion never terminated.
+#[test]
+fn lambda_capture_prefers_innermost_frame() {
+    let parser = olang::Parser::new();
+    let mut interpreter = olang::Interpreter::new();
+    let program = parser
+        .parse(
+            r#"
+fn f(n) = if n <= 0 => 0 else => sum(map([1], (x) => f(n - 1)))
+f(5)
+"#,
+        )
+        .expect("parse");
+    assert_eq!(
+        interpreter.eval_program(program).expect("eval"),
+        olang::Value::Integer(0)
+    );
+}
+
+/// Nested frames capturing the same variable name at different depths must
+/// each see their own value.
+#[test]
+fn nested_captures_see_their_own_frames() {
+    let parser = olang::Parser::new();
+    let mut interpreter = olang::Interpreter::new();
+    let program = parser
+        .parse(
+            r#"
+fn depth_label(n) = if n <= 0 => [] else => concat(map([0], (i) => n * 10), depth_label(n - 1))
+depth_label(3)
+"#,
+        )
+        .expect("parse");
+    let result = interpreter.eval_program(program).expect("eval");
+    assert_eq!(format!("{:?}", result).contains("30"), true);
+    assert_eq!(format!("{:?}", result).contains("20"), true);
+    assert_eq!(format!("{:?}", result).contains("10"), true);
+}

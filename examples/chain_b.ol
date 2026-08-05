@@ -9,4 +9,8 @@ share use chain_a { chain_a_func, multiply_by_2 }
 // Add new functionality
 share fn chain_b_func() = "Function from Chain B that uses: " + chain_a_func()
 
-share fn multiply_by_4(x: Int) = multiply_by_2(multiply_by_2(x)) 
+share fn multiply_by_4(x: Int) = multiply_by_2(multiply_by_2(x))
+
+println("")
+println(chain_b_func())
+println(multiply_by_2(multiply_by_4(4)))

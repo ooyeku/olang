@@ -10,3 +10,20 @@ share use chain_b { chain_a_func, multiply_by_2 }
 share fn chain_c_func() = "Function from Chain C that uses: " + chain_b_func()
 
 share fn multiply_by_8(x: Int) = multiply_by_4(multiply_by_2(x)) 
+
+for i in 1..100 {
+    println(multiply_by_8(i))
+    println(chain_c_func())
+    println(chain_a_func())
+    println(chain_b_func())
+    println(multiply_by_2(i))
+    println(multiply_by_4(i))
+    for i in 1..100 {
+    println(multiply_by_8(i))
+    println(chain_c_func())
+    println(chain_a_func())
+    println(chain_b_func())
+    println(multiply_by_2(i))
+    println(multiply_by_4(i))
+}
+}

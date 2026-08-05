@@ -10,6 +10,27 @@ documented.
 
 ## [Unreleased]
 
+### Changed
+
+- **Interpreter call path rewritten** — function calls are ~50x cheaper
+  (~0.65 µs, down from ~33 µs). Three changes: the call environment adopts
+  the function's closure as a shared persistent map in O(1) instead of
+  copying every entry; body evaluation swaps environments instead of
+  overlaying and then restoring every closure entry around each call; and
+  call-frame bindings (parameters, the function's own name) live in a
+  probed vector instead of being hashed into the persistent map.
+  `recursive_fib_13` benchmark: 24.5 ms → 0.31 ms. This collapses the
+  bytecode tier's relative advantage on call-heavy code (its headline
+  numbers were largely measuring interpreter overhead); loop-heavy code
+  still benefits ~7.5x from the tier.
+
+### Fixed
+
+- Lambda capture no longer depends on `im::HashMap::union`, whose collision
+  bias depends on which map is larger — a captured variable could resolve to
+  an ancestor call frame's stale value, sending recursion through a captured
+  lambda into infinite loops.
+
 ## [0.23.0] - 2026-08-04
 
 First stabilized release after a substantial correctness and performance
