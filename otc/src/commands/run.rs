@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use olang::{ovm_integration::{IntegrationConfig, OvmInterpreter}, ovm::OvmConfig, parser::Parser};
+use olang::{parser::Parser, Interpreter};
 use std::path::Path;
 
 pub fn execute(file_path: Option<String>, verbose: bool) -> Result<()> {
@@ -15,42 +15,12 @@ pub fn execute(file_path: Option<String>, verbose: bool) -> Result<()> {
         .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
     let parser = Parser::new();
-    
-    // Use OVM interpreter with JIT compilation by default
-    let integration_config = IntegrationConfig {
-        use_ovm_by_default: true,
-        ovm_complexity_threshold: 1,
-        auto_compile_functions: true,
-        enable_ovm_lazy_eval: true,
-        fallback_on_error: true,
-        enable_ovm_builtins: true,
-        ovm_cache_enabled: true,
-        enable_parallel: std::env::var("OVM_ENABLE_PARALLEL").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(true),
-        max_parallelism: std::env::var("OVM_PARALLELISM").ok().and_then(|s| s.parse::<usize>().ok()),
-        ovm_preferred_builtins: vec![
-            "len".to_string(),
-            "typeof".to_string(),
-            "to_string".to_string(),
-            "sum".to_string(),
-            "average".to_string(),
-            "min".to_string(),
-            "max".to_string(),
-            "reverse".to_string(),
-            "sort".to_string(),
-            "contains".to_string(),
-        ],
-    };
 
-    let mut interpreter = OvmInterpreter::with_config(integration_config);
-    
-    // Initialize OVM with default configuration
-    let ovm_config = OvmConfig::default();
-    interpreter.initialize_ovm(ovm_config)
-        .with_context(|| "Failed to initialize OVM")?;
-
-    if verbose {
-        println!("OVM initialized with JIT compilation enabled");
-    }
+    // The interpreter with the bytecode tier: eligible functions compile on
+    // their first call (same execution model as the olang CLI default)
+    let mut interpreter = Interpreter::new();
+    interpreter.enable_bytecode_tier(1, verbose);
+    interpreter.set_current_file(&path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
 
     let ast = parser
         .parse(&source)
@@ -62,16 +32,13 @@ pub fn execute(file_path: Option<String>, verbose: bool) -> Result<()> {
 
     if verbose {
         println!("Result: {:?}", result);
-        
-        // Show OVM performance statistics
-        let stats = interpreter.get_stats();
-        println!("\nOVM Performance Statistics:");
-        println!("  Classic executions: {}", stats.classic_executions);
-        println!("  OVM executions: {}", stats.ovm_executions);
-        println!("  Fallback executions: {}", stats.fallback_executions);
-        println!("  Compilations: {}", stats.compilation_count);
-        println!("  Average classic time: {:.2}ms", stats.average_classic_time_ms);
-        println!("  Average OVM time: {:.2}ms", stats.average_ovm_time_ms);
+
+        if let Some(tier) = interpreter.bytecode_tier_stats() {
+            println!("\nBytecode tier statistics:");
+            println!("  Functions promoted: {}", tier.promoted);
+            println!("  Functions rejected: {}", tier.rejected);
+            println!("  Bytecode calls:     {}", tier.bytecode_calls);
+        }
     }
 
     Ok(())

@@ -11,7 +11,13 @@ share fn create_sales_data() = {
         { product: "Mouse", amount: 50.0, category: "Electronics", rep: "Bob" },
         { product: "Chair", amount: 300.0, category: "Furniture", rep: "Carol" },
         { product: "Desk", amount: 800.0, category: "Furniture", rep: "Alice" },
-        { product: "Monitor", amount: 400.0, category: "Electronics", rep: "Bob" }
+        { product: "Monitor", amount: 400.0, category: "Electronics", rep: "Bob" },
+        { product: "Pen", amount: 10.0, category: "Office", rep: "Carol" },
+        { product: "Table", amount: 100.0, category: "Furniture", rep: "Bob" },
+        { product: "Car", amount: 200.0, category: "Electronics", rep: "Alice" },
+        { product: "Furniture", amount: 100.0, category: "Furniture", rep: "Carol" },
+        { product: "Furniture", amount: 200.0, category: "Furniture", rep: "Alice" },
+        { product: "Furniture", amount: 450.0, category: "Furniture", rep: "Bob" }
     ]
 }
 
@@ -72,6 +78,11 @@ share fn run_analysis() = {
         furniture_revenue: furniture_total,
         average_transaction: avg_transaction
     }
+    println("total_revenue: " + to_string(total) + "")
+    println("total_transactions: " + to_string(transactions) + "")
+    println("electronics_revenue: " + to_string(electronics_total) + "")
+    println("furniture_revenue: " + to_string(furniture_total) + "")
+    println("average_transaction: " + to_string(math.round(avg_transaction)) + "")
 }
 
 // Run the analysis
