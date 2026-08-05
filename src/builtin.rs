@@ -615,6 +615,15 @@ impl BuiltinFunctions {
                 });
         }
 
+        // Handle db (SQLite) functions
+        if let Some(db_function) = name.strip_prefix("db.") {
+            return crate::stdlib::db::call_db_function(db_function, arguments).map_err(|e| {
+                InterpreterError::RuntimeError {
+                    message: e.to_string(),
+                }
+            });
+        }
+
         // Handle col (collections) functions — higher-order, so they take
         // the interpreter to invoke their function arguments
         if let Some(col_function) = name.strip_prefix("col.") {

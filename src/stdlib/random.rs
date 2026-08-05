@@ -1089,7 +1089,7 @@ mod tests {
             int_val(42),
             string_val("hello"),
             bool_val(true),
-            float_val(3.14),
+            float_val(2.5),
         ]);
 
         // Test choice

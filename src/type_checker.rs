@@ -2204,7 +2204,7 @@ mod tests {
                 },
                 FieldValue {
                     name: "y".to_string(),
-                    value: Expr::Float(3.14),
+                    value: Expr::Float(2.5),
                 },
             ],
         });

@@ -7,6 +7,7 @@ pub mod collections;
 pub mod crypto;
 pub mod csv;
 pub mod dates;
+pub mod db;
 pub mod fs;
 pub mod http;
 pub mod json;
@@ -22,6 +23,7 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("base64".to_string(), base64::create_base64_module());
     stdlib.insert("col".to_string(), collections::create_collections_module());
     stdlib.insert("crypto".to_string(), crypto::create_crypto_module());
+    stdlib.insert("db".to_string(), db::create_db_module());
     stdlib.insert("csv".to_string(), csv::create_csv_module());
     stdlib.insert("dates".to_string(), dates::create_dates_module());
     stdlib.insert("fs".to_string(), fs::create_fs_module());

@@ -12,6 +12,19 @@ documented.
 
 ### Added
 
+- **`db` module** — an embedded SQLite database via the bundled `rusqlite`
+  (compiled from source, so the single-binary story holds — no system
+  dependency). `db.open` (`:memory:` or a file path), `db.execute` (rows
+  affected), `db.query` (list of column-name maps), `db.query_one`, and
+  `db.close`. Query parameters bind to `?` placeholders — the safe path is
+  the default. Open connections live in a global registry keyed by id (the
+  pattern the RNG and promise registries already use), returned as a
+  `Connection` handle. SQLite types map to olang as NULL→unit,
+  INTEGER→Int, REAL→Float, TEXT→String.
+- **`06_database.ol`** example — a SQLite-backed task tracker: schema,
+  parameterized seeding, filtered queries, group-by aggregates, and
+  updates. Registered in the example harness and documented.
+
 - **`col` module** — the first higher-order stdlib module: `min_by`,
   `max_by`, `sort_by`, `count_by`, `frequencies`, `partition`, `flat_map`,
   `take_while`, `drop_while`, `all`, `any`, `sum_by`, `unique`, `window`,

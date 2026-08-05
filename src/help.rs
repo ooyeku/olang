@@ -1424,6 +1424,9 @@ impl HelpSystem {
         // === Collections Functions (stdlib) ===
         self.add_collections_functions();
 
+        // === Database Functions (stdlib) ===
+        self.add_db_functions();
+
         // === Result Type Functions ===
         self.add_result_functions();
 
@@ -1436,6 +1439,64 @@ impl HelpSystem {
     }
 
     /// Add filesystem function documentation
+    fn add_db_functions(&mut self) {
+        self.add_function(FunctionDoc {
+            name: "db.open".to_string(),
+            description: "Open a SQLite database. Use \":memory:\" for an in-memory database. Returns a Connection.".to_string(),
+            syntax: "db.open(path)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["let c = unwrap(db.open(\":memory:\"))".to_string()],
+            category: "Database".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "db.execute".to_string(),
+            description: "Run a statement that changes data (CREATE/INSERT/UPDATE/DELETE). Returns rows affected. Bind values with ? placeholders.".to_string(),
+            syntax: "db.execute(conn, sql[, params])".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["unwrap(db.execute(c, \"INSERT INTO t VALUES (?, ?)\", [1, \"ann\"]))".to_string()],
+            category: "Database".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "db.query".to_string(),
+            description:
+                "Run a SELECT. Returns a list of rows, each a map from column name to value."
+                    .to_string(),
+            syntax: "db.query(conn, sql[, params])".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec![
+                "unwrap(db.query(c, \"SELECT * FROM t WHERE age >= ?\", [18]))".to_string(),
+            ],
+            category: "Database".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "db.query_one".to_string(),
+            description: "Like query but returns the first row (a map), or unit if none."
+                .to_string(),
+            syntax: "db.query_one(conn, sql[, params])".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["unwrap(db.query_one(c, \"SELECT COUNT(*) AS n FROM t\"))".to_string()],
+            category: "Database".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "db.close".to_string(),
+            description: "Close a connection and release it.".to_string(),
+            syntax: "db.close(conn)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["unwrap(db.close(c))".to_string()],
+            category: "Database".to_string(),
+            see_also: vec![],
+        });
+    }
+
     fn add_string_functions(&mut self) {
         self.add_function(FunctionDoc {
             name: "str.to_upper".to_string(),

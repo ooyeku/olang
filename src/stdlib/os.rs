@@ -716,9 +716,9 @@ mod tests {
         assert_eq!(env::var(test_var).unwrap(), "42");
 
         // Test with float
-        let result = os_set_env(vec![string_val(test_var), float_val(3.14)]).unwrap();
+        let result = os_set_env(vec![string_val(test_var), float_val(2.5)]).unwrap();
         assert_ok(&result);
-        assert_eq!(env::var(test_var).unwrap(), "3.14");
+        assert_eq!(env::var(test_var).unwrap(), "2.5");
 
         // Test with boolean
         let result = os_set_env(vec![string_val(test_var), bool_val(true)]).unwrap();
@@ -967,7 +967,7 @@ mod tests {
         assert_err(&result);
 
         // Test remove_env with non-string argument
-        let result = os_remove_env(vec![float_val(3.14)]).unwrap();
+        let result = os_remove_env(vec![float_val(2.5)]).unwrap();
         assert_err(&result);
 
         // Test chdir with non-string argument

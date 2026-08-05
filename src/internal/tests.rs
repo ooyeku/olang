@@ -739,7 +739,7 @@ mod tests {
         assert_eq!(handle.estimate_value_size(&Value::Unit), 0);
         assert_eq!(handle.estimate_value_size(&Value::Boolean(true)), 1);
         assert_eq!(handle.estimate_value_size(&Value::Integer(42)), 8);
-        assert_eq!(handle.estimate_value_size(&Value::Float(3.14)), 8);
+        assert_eq!(handle.estimate_value_size(&Value::Float(2.5)), 8);
 
         let string_value = Value::String("hello".to_string().into());
         assert_eq!(handle.estimate_value_size(&string_value), 20); // 5 * 4

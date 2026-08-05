@@ -887,6 +887,7 @@ let day = unwrap(dates.add_days("2026-08-05", 90))
 | `str` | String manipulation (case, trim, split, replace, pad, search, parse) |
 | `re` | Regular expressions (match, find, captures, split, replace) |
 | `col` | Higher-order list operations (min_by, sort_by, group/count, partition, unique, window, ...) |
+| `db` | SQLite database: open, execute, query with bound parameters |
 | `math` | Numeric functions and constants |
 | `crypto` | Hashing, HMAC, bcrypt passwords, AES, RSA signatures |
 | `dates` | Calendar arithmetic, parsing, formatting, components |
@@ -966,6 +967,32 @@ col.last([7, 8, 9])                    // 9
 
 The core operations — `map`, `filter`, `fold`, `reduce`, `group_by`, `find`,
 `zip`, `sort` — are top-level builtins, callable without a module prefix.
+
+### db
+
+An embedded SQLite database (bundled — no system dependency). Every
+operation returns a `Result`. Bind values with `?` placeholders rather than
+splicing them into SQL, so untrusted input is always safe.
+
+```olang no-run
+let c = unwrap(db.open(":memory:"))          // or a file path to persist
+
+unwrap(db.execute(c, "CREATE TABLE users (name TEXT, age INTEGER)"))
+unwrap(db.execute(c, "INSERT INTO users VALUES (?, ?)", ["Ann", 30]))
+
+// query -> list of rows; each row is a map from column name to value
+let rows = unwrap(db.query(c, "SELECT name, age FROM users WHERE age >= ?", [18]))
+for row in rows {
+    println(map_get(row, "name"))
+}
+
+// query_one -> the first row (a map), or unit when there is none
+let count = unwrap(db.query_one(c, "SELECT COUNT(*) AS n FROM users"))
+
+unwrap(db.close(c))
+```
+
+SQLite types map to olang as: NULL→unit, INTEGER→Int, REAL→Float, TEXT→String.
 
 ## Help System
 
