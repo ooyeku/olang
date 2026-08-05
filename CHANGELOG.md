@@ -12,6 +12,14 @@ documented.
 
 ### Added
 
+- A curated example suite (`examples/01_language_tour.ol` through
+  `04_stdlib_showcase.ol`, indexed in `examples/README.md`) that runs top to
+  bottom and prints computed results — a language tour, a real analytics
+  pipeline, classic algorithms, and a stdlib showcase (SHA-256/HMAC, bcrypt,
+  RSA sign/verify, math, calendar arithmetic, JSON). Verified in CI by
+  `tests/example_programs_test.rs`, so the examples cannot rot. Retired four
+  stale examples tied to deleted subsystems (three SIMD demos, one GC memory
+  test).
 - Formatting and clippy are blocking CI gates: the tree is rustfmt-clean and
   clippy-clean at zero warnings (`-D warnings`). The one deliberate allowance
   is `clippy::result_large_err` — boxing the interpreter's error enum is a
@@ -27,6 +35,12 @@ documented.
   list.
 
 ### Fixed
+
+- `to_int` and `to_float` are callable as plain identifiers. They were
+  handled by the builtin dispatcher but never registered in the builtin
+  function map, so `to_float(x)` failed with "undefined variable" outside
+  the bytecode tier — a real bug surfaced while writing the example
+  programs.
 
 - Zero-parameter lambdas (`() => 3`) parse — the grammar always allowed
   them, but the parser discarded the body when no parameter list was

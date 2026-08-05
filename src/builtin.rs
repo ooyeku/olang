@@ -109,6 +109,24 @@ impl BuiltinFunctions {
             },
         );
 
+        // to_int / to_float were dispatched in call() but never registered
+        // here, so they worked from the tier but were "undefined variable"
+        // as plain identifiers
+        functions.insert(
+            "to_int".to_string(),
+            BuiltinFunction {
+                name: "to_int".to_string(),
+                arity: 1,
+            },
+        );
+        functions.insert(
+            "to_float".to_string(),
+            BuiltinFunction {
+                name: "to_float".to_string(),
+                arity: 1,
+            },
+        );
+
         // Utility functions
         functions.insert(
             "range".to_string(),
