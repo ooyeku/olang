@@ -476,12 +476,18 @@ impl Default for ModuleDebugConfig {
 #[derive(Clone)]
 pub struct Environment {
     variables: Arc<ImHashMap<String, Value>>,
-    /// Call-frame bindings (the function's own name and its parameters),
-    /// probed by string compare before the map. Defining these into the
-    /// persistent map cost a copy-on-write clone of the shared closure map
-    /// plus hashed HAMT inserts on every single call; a handful of linear
-    /// compares is far cheaper at call-frame sizes.
+    /// Frame bindings (parameters, the function's own name, and — in frame
+    /// environments — every runtime binding), probed by string compare
+    /// before the map. Hashed HAMT traffic was the dominant interpreter
+    /// cost twice over: closure copies per call, then let/assignment
+    /// inserts per loop iteration.
     locals: Vec<(String, Value)>,
+    /// Whether this is a transient frame (function call, loop body, match
+    /// arm, catch block). Frames store new bindings in `locals` — a push
+    /// and in-place overwrites — instead of the persistent map. The root
+    /// environment is not a frame: top-level definitions go to the map so
+    /// they persist and are cheap to snapshot into closures.
+    is_frame: bool,
     parent: Option<Arc<Environment>>,
 }
 
@@ -496,6 +502,7 @@ impl Environment {
         Self {
             variables: Arc::new(ImHashMap::new()),
             locals: Vec::new(),
+            is_frame: false,
             parent: None,
         }
     }
@@ -505,6 +512,7 @@ impl Environment {
         Self {
             variables: Arc::new(ImHashMap::new()),
             locals: Vec::new(),
+            is_frame: true,
             parent: Some(Arc::new(parent)),
         }
     }
@@ -514,15 +522,22 @@ impl Environment {
         Self {
             variables: Arc::new(ImHashMap::new()),
             locals: Vec::new(),
+            is_frame: true,
             parent: Some(parent),
         }
     }
 
-    /// Define a variable - uses copy-on-write semantics
+    /// Define a variable. In a frame, bindings live in the probed locals
+    /// vector (in-place overwrite on rebind, e.g. a `let` re-executed each
+    /// loop iteration); at the root they go to the persistent map.
     pub fn define(&mut self, name: String, value: Value) {
-        // A later binding must shadow a call-frame local of the same name
+        // A later binding must shadow an existing frame local of the same name
         if let Some(slot) = self.locals.iter_mut().rev().find(|(n, _)| *n == name) {
             slot.1 = value;
+            return;
+        }
+        if self.is_frame {
+            self.locals.push((name, value));
             return;
         }
         Arc::make_mut(&mut self.variables).insert(name, value);
@@ -2668,6 +2683,7 @@ impl Interpreter {
             Value::List(items) => {
                 let parent_env = std::mem::replace(&mut self.environment, Environment::new());
                 self.environment.parent = Some(Arc::new(parent_env));
+                self.environment.is_frame = true;
 
                 let result = self.run_loop_body(body, items.iter().cloned(), Some(variable));
 
@@ -2686,6 +2702,7 @@ impl Interpreter {
             } => {
                 let parent_env = std::mem::replace(&mut self.environment, Environment::new());
                 self.environment.parent = Some(Arc::new(parent_env));
+                self.environment.is_frame = true;
 
                 let items = RangeIter {
                     next: start,

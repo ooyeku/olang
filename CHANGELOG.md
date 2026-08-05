@@ -12,6 +12,14 @@ documented.
 
 ### Changed
 
+- **Frame-based environments** — environments created for function calls,
+  loop bodies, match arms, and catch blocks are now frames: every binding
+  they create (`let`, loop variables, match bindings) lives in the probed
+  locals vector with in-place rebinding, instead of being hashed into the
+  persistent map. Only the root environment keeps map storage, so top-level
+  definitions still persist across REPL inputs and snapshot into closures in
+  O(1). A 3M-iteration loop with three `let`s per iteration runs ~33%
+  faster; `for` iteration ~19% faster.
 - **Interpreter call path rewritten** — function calls are ~50x cheaper
   (~0.65 µs, down from ~33 µs). Three changes: the call environment adopts
   the function's closure as a shared persistent map in O(1) instead of
