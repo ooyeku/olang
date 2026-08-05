@@ -103,8 +103,8 @@ impl LockFile {
     pub fn save_to_path<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref();
 
-        let content = toml::to_string_pretty(self)
-            .with_context(|| "Failed to serialize lock file")?;
+        let content =
+            toml::to_string_pretty(self).with_context(|| "Failed to serialize lock file")?;
 
         fs::write(path, content)
             .with_context(|| format!("Failed to write lock file: {}", path.display()))?;
@@ -187,14 +187,16 @@ impl LockFile {
             if !package.commit.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Err(anyhow::anyhow!(
                     "Invalid commit hash format for package {}: {}",
-                    name, package.commit
+                    name,
+                    package.commit
                 ));
             }
 
             if package.commit.len() < 7 {
                 return Err(anyhow::anyhow!(
                     "Commit hash too short for package {}: {}",
-                    name, package.commit
+                    name,
+                    package.commit
                 ));
             }
         }
@@ -231,7 +233,7 @@ impl LockFile {
         let toml_modified = fs::metadata(olang_toml_path)?
             .modified()
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        
+
         let lock_modified = fs::metadata(&lock_path)?
             .modified()
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
@@ -247,7 +249,7 @@ impl LockFile {
         }
 
         let mut summary = format!("Locked {} packages:", self.package_count());
-        
+
         for (name, package) in &self.packages {
             summary.push_str(&format!(
                 "\n  {} {} ({})",
@@ -328,7 +330,7 @@ mod tests {
     #[test]
     fn test_add_remove_package() {
         let mut lock_file = LockFile::new();
-        
+
         let package = LockedPackage::new(
             "https://github.com/user/test.git".to_string(),
             "abc123def456".to_string(),
@@ -349,7 +351,7 @@ mod tests {
     #[test]
     fn test_lock_file_serialization() {
         let mut lock_file = LockFile::new();
-        
+
         let package = LockedPackage::new(
             "https://github.com/user/test.git".to_string(),
             "abc123def456".to_string(),
@@ -360,7 +362,7 @@ mod tests {
 
         let serialized = toml::to_string_pretty(&lock_file).unwrap();
         let deserialized: LockFile = toml::from_str(&serialized).unwrap();
-        
+
         assert_eq!(lock_file.package_count(), deserialized.package_count());
         assert!(deserialized.is_package_locked("test-package"));
     }
@@ -368,7 +370,7 @@ mod tests {
     #[test]
     fn test_lock_file_validation() {
         let mut lock_file = LockFile::new();
-        
+
         // Valid package
         let valid_package = LockedPackage::new(
             "https://github.com/user/test.git".to_string(),
@@ -376,7 +378,7 @@ mod tests {
             "v1.0.0".to_string(),
         );
         lock_file.add_package("valid-package".to_string(), valid_package);
-        
+
         assert!(lock_file.validate().is_ok());
 
         // Invalid package with empty commit
@@ -388,7 +390,7 @@ mod tests {
             dependencies: HashMap::new(),
         };
         lock_file.add_package("invalid-package".to_string(), invalid_package);
-        
+
         assert!(lock_file.validate().is_err());
     }
 
@@ -414,4 +416,4 @@ mod tests {
         assert_eq!(original.package_count(), loaded.package_count());
         assert!(loaded.is_package_locked("test-package"));
     }
-} 
+}

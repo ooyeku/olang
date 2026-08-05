@@ -1,8 +1,8 @@
 use crate::ast::{Function, Value};
 use crate::interpreter::{Interpreter, InterpreterError};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
-use std::collections::HashSet;
 
 /// Thread-safe version of Function for lazy evaluation
 /// This avoids the Rc<> issues in the original Function struct
@@ -123,10 +123,10 @@ impl ValueHandle {
         context: &mut LazyEvaluationContext,
     ) -> Result<Value, InterpreterError> {
         context.check_timeout()?;
-        
+
         // Optimize memory usage before evaluation
         context.optimize_memory_usage()?;
-        
+
         // Use try_lock to avoid deadlocks
         if context.config.thread_safety_checks {
             // Create a copy of the lock manager to avoid borrow conflicts
@@ -151,11 +151,15 @@ impl ValueHandle {
                                         // If recovery is enabled, try to recover
                                         if context.can_recover() {
                                             context.attempt_recovery();
-                                            
+
                                             // Try force evaluation as recovery
-                                            if let Ok(forced_value) = lazy.try_force_evaluation(interpreter, context) {
-                                                if self.should_cache(&context.config, &forced_value) {
-                                                    *guard = InternalValue::Eager(forced_value.clone());
+                                            if let Ok(forced_value) =
+                                                lazy.try_force_evaluation(interpreter, context)
+                                            {
+                                                if self.should_cache(&context.config, &forced_value)
+                                                {
+                                                    *guard =
+                                                        InternalValue::Eager(forced_value.clone());
                                                 }
                                                 Ok(forced_value)
                                             } else {
@@ -216,7 +220,7 @@ impl ValueHandle {
         context: &mut LazyEvaluationContext,
     ) -> Result<Value, InterpreterError> {
         context.check_timeout()?;
-        
+
         let guard = self.inner.lock().unwrap();
         match &*guard {
             InternalValue::Eager(value) => Ok(value.clone()),
@@ -253,7 +257,9 @@ impl ValueHandle {
                 // Aggressive: always evaluate and cache
                 true
             }
-            MemoryStrategy::Adaptive { low_memory_threshold_mb } => {
+            MemoryStrategy::Adaptive {
+                low_memory_threshold_mb,
+            } => {
                 // Adaptive: switch strategy based on available memory
                 if get_estimated_memory_usage() < *low_memory_threshold_mb {
                     true // Behave like aggressive when memory is plentiful
@@ -273,7 +279,7 @@ impl ValueHandle {
 
         // Estimate the memory footprint of the value
         let value_size = self.estimate_value_size(value);
-        
+
         // Don't cache very large values if memory pressure is high
         if check_memory_pressure(config.memory_threshold_mb) && value_size > 1024 * 1024 {
             return false;
@@ -312,15 +318,22 @@ impl ValueHandle {
             Value::Float(_) => 8,
             Value::String(s) => s.len() * 4, // Rough estimate for UTF-8
             Value::List(items) => {
-                items.iter().map(|item| self.estimate_value_size(item)).sum::<usize>() + items.len() * 8
+                items
+                    .iter()
+                    .map(|item| self.estimate_value_size(item))
+                    .sum::<usize>()
+                    + items.len() * 8
             }
             Value::Map(map) => {
-                map.iter().map(|(k, v)| k.len() * 4 + self.estimate_value_size(v)).sum::<usize>() + map.len() * 16
+                map.iter()
+                    .map(|(k, v)| k.len() * 4 + self.estimate_value_size(v))
+                    .sum::<usize>()
+                    + map.len() * 16
             }
             Value::Function(_) => 256, // Rough estimate for function objects
             Value::Builtin(_) => 64,   // Builtin functions are lighter
             Value::Struct { .. } => 128, // Rough estimate for struct objects
-            _ => 128, // Default estimate for other types
+            _ => 128,                  // Default estimate for other types
         }
     }
 
@@ -405,19 +418,19 @@ impl LazyValue {
     ) -> Result<Value, InterpreterError> {
         // Check timeout before evaluation
         context.check_timeout()?;
-        
+
         // Check memory pressure
         context.check_memory_pressure()?;
-        
+
         // Increment evaluation depth
         context.increment_depth()?;
 
         // Attempt evaluation with recovery
         let result = self.try_evaluate_with_recovery(interpreter, context);
-        
+
         // Decrement depth after evaluation
         context.evaluation_depth = context.evaluation_depth.saturating_sub(1);
-        
+
         result
     }
 
@@ -434,27 +447,29 @@ impl LazyValue {
                     // Check if we can recover from this error
                     if context.can_recover() && self.is_recoverable_error(&error) {
                         context.attempt_recovery();
-                        
+
                         // For certain errors, try forcing evaluation
                         if context.config.force_evaluation_on_error {
-                            if let Ok(forced_value) = self.try_force_evaluation(interpreter, context) {
+                            if let Ok(forced_value) =
+                                self.try_force_evaluation(interpreter, context)
+                            {
                                 return Ok(forced_value);
                             }
                         }
-                        
+
                         // For timeout errors, extend timeout and retry
                         if matches!(error, InterpreterError::LazyEvaluationTimeout { .. }) {
                             context.extend_timeout_for_recovery();
                             continue;
                         }
-                        
+
                         // For memory pressure, try garbage collection
                         if matches!(error, InterpreterError::MemoryLimitExceeded { .. }) {
                             // In a real implementation, this would trigger GC
                             std::hint::spin_loop(); // Placeholder
                             continue;
                         }
-                        
+
                         // For circular dependencies, try to break the cycle and retry
                         if matches!(error, InterpreterError::CircularDependency { .. }) {
                             if let Ok(()) = context.try_break_cycle("unknown") {
@@ -462,7 +477,7 @@ impl LazyValue {
                             }
                         }
                     }
-                    
+
                     // If we can't recover, wrap the error
                     return Err(if context.recovery_attempts > 0 {
                         InterpreterError::RecoveryFailed {
@@ -487,14 +502,14 @@ impl LazyValue {
                 // Check circular dependency for thunks
                 let thunk_id = format!("thunk_{:p}", thunk.as_ref() as *const _);
                 context.check_circular_dependency(&thunk_id)?;
-                
+
                 // Evaluate thunk with timeout check
                 context.check_operation_timeout("thunk")?;
                 let result = thunk(interpreter);
-                
+
                 // Remove from visited set after successful evaluation
                 context.visited_thunks.write().unwrap().remove(&thunk_id);
-                
+
                 result.map_err(|e| InterpreterError::LazyEvaluationError {
                     message: format!("Thunk evaluation failed: {}", e),
                 })
@@ -518,7 +533,13 @@ impl LazyValue {
                 source,
                 mapper,
                 predicate,
-            } => self.evaluate_map_filtered_with_context(source, mapper, predicate, interpreter, context),
+            } => self.evaluate_map_filtered_with_context(
+                source,
+                mapper,
+                predicate,
+                interpreter,
+                context,
+            ),
         }
     }
 
@@ -543,7 +564,7 @@ impl LazyValue {
         let mut force_context = LazyEvaluationContext::new(context.config.clone());
         force_context.config.timeout_ms = 5000; // Shorter timeout for forced evaluation
         force_context.config.max_evaluation_depth = 100; // Shallow depth for forcing
-        
+
         self.evaluate_internal(interpreter, &mut force_context)
             .map_err(|e| InterpreterError::ForceEvaluationFailed {
                 reason: e.to_string(),
@@ -573,11 +594,14 @@ impl LazyValue {
         if step > 0 {
             while current < end || (inclusive && current == end) {
                 context.check_operation_timeout("range")?;
-                
+
                 iterations += 1;
                 if iterations > MAX_ITERATIONS {
                     return Err(InterpreterError::LazyEvaluationError {
-                        message: format!("Range evaluation exceeded maximum iterations: {}", MAX_ITERATIONS),
+                        message: format!(
+                            "Range evaluation exceeded maximum iterations: {}",
+                            MAX_ITERATIONS
+                        ),
                     });
                 }
 
@@ -585,24 +609,27 @@ impl LazyValue {
                 if current == end && inclusive {
                     break;
                 }
-                
+
                 // Check for overflow
                 if current > i64::MAX - step {
                     return Err(InterpreterError::LazyEvaluationError {
                         message: "Range evaluation would overflow".to_string(),
                     });
                 }
-                
+
                 current += step;
             }
         } else if step < 0 {
             while current > end || (inclusive && current == end) {
                 context.check_operation_timeout("range")?;
-                
+
                 iterations += 1;
                 if iterations > MAX_ITERATIONS {
                     return Err(InterpreterError::LazyEvaluationError {
-                        message: format!("Range evaluation exceeded maximum iterations: {}", MAX_ITERATIONS),
+                        message: format!(
+                            "Range evaluation exceeded maximum iterations: {}",
+                            MAX_ITERATIONS
+                        ),
                     });
                 }
 
@@ -610,14 +637,14 @@ impl LazyValue {
                 if current == end && inclusive {
                     break;
                 }
-                
+
                 // Check for underflow
                 if current < i64::MIN - step {
                     return Err(InterpreterError::LazyEvaluationError {
                         message: "Range evaluation would underflow".to_string(),
                     });
                 }
-                
+
                 current += step;
             }
         }
@@ -634,7 +661,7 @@ impl LazyValue {
         context: &mut LazyEvaluationContext,
     ) -> Result<Value, InterpreterError> {
         context.check_operation_timeout("map")?;
-        
+
         // First force the source to get the actual list
         let source_value = InternalValue::force_with_context(source, interpreter, context)?;
 
@@ -643,14 +670,16 @@ impl LazyValue {
                 let mut results = Vec::new();
                 for (index, item) in items.iter().enumerate() {
                     context.check_timeout()?;
-                    
-                    let result = interpreter.call_function(
-                        Value::Function((**mapper).to_function()),
-                        vec![item.clone()],
-                    ).map_err(|e| InterpreterError::LazyEvaluationError {
-                        message: format!("Map function failed at index {}: {}", index, e),
-                    })?;
-                    
+
+                    let result = interpreter
+                        .call_function(
+                            Value::Function((**mapper).to_function()),
+                            vec![item.clone()],
+                        )
+                        .map_err(|e| InterpreterError::LazyEvaluationError {
+                            message: format!("Map function failed at index {}: {}", index, e),
+                        })?;
+
                     results.push(result);
                 }
                 Ok(Value::List(Arc::from(results)))
@@ -663,17 +692,19 @@ impl LazyValue {
                 // Convert range to vector and map
                 let end_val = if inclusive { end + 1 } else { end };
                 let mut results = Vec::new();
-                
+
                 for i in start..end_val {
                     context.check_timeout()?;
-                    
-                    let result = interpreter.call_function(
-                        Value::Function((**mapper).to_function()),
-                        vec![Value::Integer(i)],
-                    ).map_err(|e| InterpreterError::LazyEvaluationError {
-                        message: format!("Map function failed at value {}: {}", i, e),
-                    })?;
-                    
+
+                    let result = interpreter
+                        .call_function(
+                            Value::Function((**mapper).to_function()),
+                            vec![Value::Integer(i)],
+                        )
+                        .map_err(|e| InterpreterError::LazyEvaluationError {
+                            message: format!("Map function failed at value {}: {}", i, e),
+                        })?;
+
                     results.push(result);
                 }
                 Ok(Value::List(Arc::from(results)))
@@ -693,7 +724,7 @@ impl LazyValue {
         context: &mut LazyEvaluationContext,
     ) -> Result<Value, InterpreterError> {
         context.check_operation_timeout("filter")?;
-        
+
         let source_value = InternalValue::force_with_context(source, interpreter, context)?;
 
         match source_value {
@@ -701,19 +732,24 @@ impl LazyValue {
                 let mut results = Vec::new();
                 for (index, item) in items.iter().enumerate() {
                     context.check_timeout()?;
-                    
-                    let pred_result = interpreter.call_function(
-                        Value::Function((**predicate).to_function()),
-                        vec![item.clone()],
-                    ).map_err(|e| InterpreterError::LazyEvaluationError {
-                        message: format!("Filter predicate failed at index {}: {}", index, e),
-                    })?;
+
+                    let pred_result = interpreter
+                        .call_function(
+                            Value::Function((**predicate).to_function()),
+                            vec![item.clone()],
+                        )
+                        .map_err(|e| InterpreterError::LazyEvaluationError {
+                            message: format!("Filter predicate failed at index {}: {}", index, e),
+                        })?;
 
                     if let Value::Boolean(true) = pred_result {
                         results.push(item.clone());
                     } else if !matches!(pred_result, Value::Boolean(false)) {
                         return Err(InterpreterError::LazyEvaluationError {
-                            message: format!("Filter predicate must return boolean, got: {:?}", pred_result),
+                            message: format!(
+                                "Filter predicate must return boolean, got: {:?}",
+                                pred_result
+                            ),
                         });
                     }
                 }
@@ -727,23 +763,28 @@ impl LazyValue {
                 // Convert range to vector and filter
                 let end_val = if inclusive { end + 1 } else { end };
                 let mut results = Vec::new();
-                
+
                 for i in start..end_val {
                     context.check_timeout()?;
-                    
+
                     let item = Value::Integer(i);
-                    let pred_result = interpreter.call_function(
-                        Value::Function((**predicate).to_function()),
-                        vec![item.clone()],
-                    ).map_err(|e| InterpreterError::LazyEvaluationError {
-                        message: format!("Filter predicate failed at value {}: {}", i, e),
-                    })?;
+                    let pred_result = interpreter
+                        .call_function(
+                            Value::Function((**predicate).to_function()),
+                            vec![item.clone()],
+                        )
+                        .map_err(|e| InterpreterError::LazyEvaluationError {
+                            message: format!("Filter predicate failed at value {}: {}", i, e),
+                        })?;
 
                     if let Value::Boolean(true) = pred_result {
                         results.push(item);
                     } else if !matches!(pred_result, Value::Boolean(false)) {
                         return Err(InterpreterError::LazyEvaluationError {
-                            message: format!("Filter predicate must return boolean, got: {:?}", pred_result),
+                            message: format!(
+                                "Filter predicate must return boolean, got: {:?}",
+                                pred_result
+                            ),
                         });
                     }
                 }
@@ -764,7 +805,7 @@ impl LazyValue {
         context: &mut LazyEvaluationContext,
     ) -> Result<Value, InterpreterError> {
         context.check_operation_timeout("concat")?;
-        
+
         let first_value = InternalValue::force_with_context(first, interpreter, context)?;
         let second_value = InternalValue::force_with_context(second, interpreter, context)?;
 
@@ -790,7 +831,7 @@ impl LazyValue {
         context: &mut LazyEvaluationContext,
     ) -> Result<Value, InterpreterError> {
         context.check_timeout()?;
-        
+
         let source_value = InternalValue::force_with_context(source, interpreter, context)?;
 
         match source_value {
@@ -801,27 +842,37 @@ impl LazyValue {
 
                     // Filter on the original item first, then map — matching
                     // the sequential map_filtered semantics
-                    let pred_result = interpreter.call_function(
-                        Value::Function((**predicate).to_function()),
-                        vec![item.clone()],
-                    ).map_err(|e| InterpreterError::LazyEvaluationError {
-                        message: format!("Filter predicate failed at index {}: {}", index, e),
-                    })?;
+                    let pred_result = interpreter
+                        .call_function(
+                            Value::Function((**predicate).to_function()),
+                            vec![item.clone()],
+                        )
+                        .map_err(|e| InterpreterError::LazyEvaluationError {
+                            message: format!("Filter predicate failed at index {}: {}", index, e),
+                        })?;
 
                     match pred_result {
                         Value::Boolean(true) => {
-                            let mapped_result = interpreter.call_function(
-                                Value::Function((**mapper).to_function()),
-                                vec![item.clone()],
-                            ).map_err(|e| InterpreterError::LazyEvaluationError {
-                                message: format!("Map function failed at index {}: {}", index, e),
-                            })?;
+                            let mapped_result = interpreter
+                                .call_function(
+                                    Value::Function((**mapper).to_function()),
+                                    vec![item.clone()],
+                                )
+                                .map_err(|e| InterpreterError::LazyEvaluationError {
+                                    message: format!(
+                                        "Map function failed at index {}: {}",
+                                        index, e
+                                    ),
+                                })?;
                             results.push(mapped_result);
                         }
                         Value::Boolean(false) => {}
                         other => {
                             return Err(InterpreterError::LazyEvaluationError {
-                                message: format!("Filter predicate must return boolean, got: {:?}", other),
+                                message: format!(
+                                    "Filter predicate must return boolean, got: {:?}",
+                                    other
+                                ),
                             });
                         }
                     }
@@ -833,7 +884,11 @@ impl LazyValue {
                 end,
                 inclusive,
             } => {
-                let end_val = if inclusive { end.saturating_add(1) } else { end };
+                let end_val = if inclusive {
+                    end.saturating_add(1)
+                } else {
+                    end
+                };
                 let mut results = Vec::new();
 
                 for i in start..end_val {
@@ -842,27 +897,34 @@ impl LazyValue {
                     let item = Value::Integer(i);
                     // Filter on the original item first, then map — matching
                     // the sequential map_filtered semantics
-                    let pred_result = interpreter.call_function(
-                        Value::Function((**predicate).to_function()),
-                        vec![item.clone()],
-                    ).map_err(|e| InterpreterError::LazyEvaluationError {
-                        message: format!("Filter predicate failed at value {}: {}", i, e),
-                    })?;
+                    let pred_result = interpreter
+                        .call_function(
+                            Value::Function((**predicate).to_function()),
+                            vec![item.clone()],
+                        )
+                        .map_err(|e| InterpreterError::LazyEvaluationError {
+                            message: format!("Filter predicate failed at value {}: {}", i, e),
+                        })?;
 
                     match pred_result {
                         Value::Boolean(true) => {
-                            let mapped_result = interpreter.call_function(
-                                Value::Function((**mapper).to_function()),
-                                vec![item],
-                            ).map_err(|e| InterpreterError::LazyEvaluationError {
-                                message: format!("Map function failed at value {}: {}", i, e),
-                            })?;
+                            let mapped_result = interpreter
+                                .call_function(
+                                    Value::Function((**mapper).to_function()),
+                                    vec![item],
+                                )
+                                .map_err(|e| InterpreterError::LazyEvaluationError {
+                                    message: format!("Map function failed at value {}: {}", i, e),
+                                })?;
                             results.push(mapped_result);
                         }
                         Value::Boolean(false) => {}
                         other => {
                             return Err(InterpreterError::LazyEvaluationError {
-                                message: format!("Filter predicate must return boolean, got: {:?}", other),
+                                message: format!(
+                                    "Filter predicate must return boolean, got: {:?}",
+                                    other
+                                ),
                             });
                         }
                     }
@@ -920,12 +982,12 @@ impl InternalValue {
     ) -> Result<Value, InterpreterError> {
         context.check_timeout()?;
         context.increment_depth()?;
-        
+
         let result = match internal.as_ref() {
             InternalValue::Eager(value) => Ok(value.clone()),
             InternalValue::Lazy(lazy) => lazy.evaluate_with_context(interpreter, context),
         };
-        
+
         context.evaluation_depth = context.evaluation_depth.saturating_sub(1);
         result
     }
@@ -952,7 +1014,11 @@ pub enum TimeoutStrategy {
     /// Adaptive timeout - adjust based on operation complexity
     Adaptive { base_ms: u64, scaling_factor: f64 },
     /// Progressive timeout - start with short timeout and increase
-    Progressive { initial_ms: u64, max_ms: u64, multiplier: f64 },
+    Progressive {
+        initial_ms: u64,
+        max_ms: u64,
+        multiplier: f64,
+    },
     /// Per-operation timeout - different timeouts for different operations
     PerOperation {
         map_ms: u64,
@@ -980,7 +1046,7 @@ pub struct LazyConfig {
     pub chunk_size: usize,
     pub memory_threshold_mb: usize,
     pub fusion_enabled: bool,
-    
+
     // Enhanced configuration for edge cases
     pub timeout_ms: u64,
     pub timeout_strategy: TimeoutStrategy,
@@ -992,7 +1058,7 @@ pub struct LazyConfig {
     pub force_evaluation_on_error: bool,
     pub timeout_monitoring_enabled: bool,
     pub timeout_warning_threshold: f64, // Warn when using X% of timeout
-    
+
     // Memory optimization configuration
     pub memory_strategy: MemoryStrategy,
     pub auto_cleanup_enabled: bool,
@@ -1009,7 +1075,7 @@ impl Default for LazyConfig {
             chunk_size: 1024,
             memory_threshold_mb: 100,
             fusion_enabled: true,
-            
+
             // Enhanced defaults for edge cases
             timeout_ms: 30000, // 30 seconds
             timeout_strategy: TimeoutStrategy::default(),
@@ -1021,7 +1087,7 @@ impl Default for LazyConfig {
             force_evaluation_on_error: false,
             timeout_monitoring_enabled: true,
             timeout_warning_threshold: 0.8, // Warn at 80% of timeout
-            
+
             // Memory optimization defaults
             memory_strategy: MemoryStrategy::default(),
             auto_cleanup_enabled: true,
@@ -1035,29 +1101,29 @@ impl Default for LazyConfig {
 /// Check if memory pressure suggests forcing lazy values
 pub(crate) fn check_memory_pressure(threshold_mb: usize) -> bool {
     // Enhanced memory pressure check with better heuristics
-    
+
     // Check system memory usage (simplified simulation)
     // In a real implementation, this would use proper system calls
     let estimated_system_memory_mb = get_estimated_memory_usage();
     let memory_pressure_ratio = estimated_system_memory_mb as f64 / threshold_mb as f64;
-    
+
     // Consider memory pressure high if we're using > 90% of threshold
     // This is more conservative to avoid false positives in tests
     if memory_pressure_ratio > 0.9 {
         return true;
     }
-    
+
     // Check lazy evaluation specific memory usage
     let lazy_memory_mb = get_lazy_evaluation_memory_usage();
     if lazy_memory_mb > threshold_mb * 3 / 4 {
         return true;
     }
-    
+
     // Check for memory fragmentation indicators
     if is_memory_fragmented() {
         return true;
     }
-    
+
     false
 }
 
@@ -1352,20 +1418,19 @@ impl LazyEvaluationContext {
     pub fn check_timeout(&self) -> Result<(), InterpreterError> {
         let elapsed = self.start_time.elapsed();
         let timeout_ms = self.get_effective_timeout();
-        
+
         // Check for timeout warning
         if self.config.timeout_monitoring_enabled {
-            let warning_threshold = (timeout_ms as f64 * self.config.timeout_warning_threshold) as u64;
+            let warning_threshold =
+                (timeout_ms as f64 * self.config.timeout_warning_threshold) as u64;
             if elapsed.as_millis() > warning_threshold as u128 {
                 // In a real implementation, this would log a warning
                 // For now, we'll just continue - the warning would be logged elsewhere
             }
         }
-        
+
         if elapsed.as_millis() > timeout_ms as u128 {
-            return Err(InterpreterError::LazyEvaluationTimeout {
-                timeout_ms,
-            });
+            return Err(InterpreterError::LazyEvaluationTimeout { timeout_ms });
         }
         Ok(())
     }
@@ -1377,11 +1442,12 @@ impl LazyEvaluationContext {
 
         // Use read lock for checking
         let visited = if self.config.thread_safety_checks {
-            self.lock_manager.try_acquire_read_lock(&self.visited_thunks)?
+            self.lock_manager
+                .try_acquire_read_lock(&self.visited_thunks)?
         } else {
             self.visited_thunks.read().unwrap()
         };
-        
+
         if visited.contains(thunk_id) {
             // Enhanced cycle detection: provide the full cycle path
             let cycle_path = self.build_cycle_path(&visited, thunk_id);
@@ -1389,17 +1455,18 @@ impl LazyEvaluationContext {
                 cycle: format!("Circular dependency detected: {}", cycle_path),
             });
         }
-        
+
         // Drop read lock before acquiring write lock
         drop(visited);
-        
+
         // Use write lock for inserting
         let mut visited_write = if self.config.thread_safety_checks {
-            self.lock_manager.try_acquire_write_lock(&self.visited_thunks)?
+            self.lock_manager
+                .try_acquire_write_lock(&self.visited_thunks)?
         } else {
             self.visited_thunks.write().unwrap()
         };
-        
+
         visited_write.insert(thunk_id.to_string());
         Ok(())
     }
@@ -1407,20 +1474,21 @@ impl LazyEvaluationContext {
     /// Build a descriptive cycle path for better error reporting
     fn build_cycle_path(&self, visited: &HashSet<String>, current_thunk: &str) -> String {
         let mut cycle_nodes = Vec::new();
-        
+
         // In a real implementation, we would track the actual dependency chain
         // For now, we'll create a simplified representation
         cycle_nodes.push(current_thunk.to_string());
-        
+
         // Add a few nodes from the visited set to show the cycle
         for (i, visited_thunk) in visited.iter().enumerate() {
-            if i >= 3 { // Limit to prevent very long error messages
+            if i >= 3 {
+                // Limit to prevent very long error messages
                 cycle_nodes.push("...".to_string());
                 break;
             }
             cycle_nodes.push(visited_thunk.clone());
         }
-        
+
         cycle_nodes.push(current_thunk.to_string()); // Complete the cycle
         cycle_nodes.join(" -> ")
     }
@@ -1428,7 +1496,10 @@ impl LazyEvaluationContext {
     /// Clear circular dependency tracking for a specific thunk
     pub fn clear_thunk_dependency(&self, thunk_id: &str) {
         if self.config.thread_safety_checks {
-            if let Ok(mut visited) = self.lock_manager.try_acquire_write_lock(&self.visited_thunks) {
+            if let Ok(mut visited) = self
+                .lock_manager
+                .try_acquire_write_lock(&self.visited_thunks)
+            {
                 visited.remove(thunk_id);
             }
         } else {
@@ -1445,11 +1516,12 @@ impl LazyEvaluationContext {
         }
 
         let visited = if self.config.thread_safety_checks {
-            self.lock_manager.try_acquire_read_lock(&self.visited_thunks)?
+            self.lock_manager
+                .try_acquire_read_lock(&self.visited_thunks)?
         } else {
             self.visited_thunks.read().unwrap()
         };
-        
+
         // Check if any of the dependencies are already in the visited set
         for dep in dependencies {
             if visited.contains(dep) {
@@ -1458,7 +1530,7 @@ impl LazyEvaluationContext {
                 });
             }
         }
-        
+
         Ok(())
     }
 
@@ -1472,7 +1544,10 @@ impl LazyEvaluationContext {
 
         // Clear the visited thunks to break the cycle
         if self.config.thread_safety_checks {
-            if let Ok(mut visited) = self.lock_manager.try_acquire_write_lock(&self.visited_thunks) {
+            if let Ok(mut visited) = self
+                .lock_manager
+                .try_acquire_write_lock(&self.visited_thunks)
+            {
                 visited.clear();
             }
         } else {
@@ -1490,7 +1565,8 @@ impl LazyEvaluationContext {
     /// Get statistics about circular dependency detection
     pub fn get_cycle_detection_stats(&self) -> (usize, usize) {
         let visited_count = if self.config.thread_safety_checks {
-            self.lock_manager.try_acquire_read_lock(&self.visited_thunks)
+            self.lock_manager
+                .try_acquire_read_lock(&self.visited_thunks)
                 .map(|v| v.len())
                 .unwrap_or(0)
         } else {
@@ -1502,16 +1578,17 @@ impl LazyEvaluationContext {
     pub fn check_memory_pressure(&self) -> Result<(), InterpreterError> {
         if check_memory_pressure(self.config.memory_threshold_mb) {
             let estimated_memory_mb = get_estimated_memory_usage();
-            
+
             if estimated_memory_mb > self.config.memory_threshold_mb {
                 return Err(InterpreterError::MemoryLimitExceeded {
                     current_mb: estimated_memory_mb,
                     limit_mb: self.config.memory_threshold_mb,
                 });
             }
-            
+
             // Check if we're approaching the limit
-            let memory_usage_ratio = estimated_memory_mb as f64 / self.config.memory_threshold_mb as f64;
+            let memory_usage_ratio =
+                estimated_memory_mb as f64 / self.config.memory_threshold_mb as f64;
             if memory_usage_ratio > self.config.memory_pressure_threshold {
                 // Try to trigger cleanup
                 self.suggest_memory_cleanup();
@@ -1532,14 +1609,23 @@ impl LazyEvaluationContext {
     pub fn get_effective_timeout(&self) -> u64 {
         match &self.config.timeout_strategy {
             TimeoutStrategy::Fixed(timeout) => *timeout,
-            TimeoutStrategy::Adaptive { base_ms, scaling_factor } => {
+            TimeoutStrategy::Adaptive {
+                base_ms,
+                scaling_factor,
+            } => {
                 // Scale timeout based on evaluation depth
-                let scaled_timeout = *base_ms as f64 * scaling_factor.powf(self.evaluation_depth as f64);
+                let scaled_timeout =
+                    *base_ms as f64 * scaling_factor.powf(self.evaluation_depth as f64);
                 scaled_timeout.min(self.config.timeout_ms as f64 * 2.0) as u64 // Cap at 2x base timeout
             }
-            TimeoutStrategy::Progressive { initial_ms, max_ms, multiplier } => {
+            TimeoutStrategy::Progressive {
+                initial_ms,
+                max_ms,
+                multiplier,
+            } => {
                 // Progressive timeout increases with recovery attempts
-                let progressive_timeout = *initial_ms as f64 * multiplier.powf(self.recovery_attempts as f64);
+                let progressive_timeout =
+                    *initial_ms as f64 * multiplier.powf(self.recovery_attempts as f64);
                 progressive_timeout.min(*max_ms as f64) as u64
             }
             TimeoutStrategy::PerOperation { .. } => {
@@ -1552,16 +1638,20 @@ impl LazyEvaluationContext {
     /// Get timeout for a specific operation type
     pub fn get_operation_timeout(&self, operation: &str) -> u64 {
         match &self.config.timeout_strategy {
-            TimeoutStrategy::PerOperation { map_ms, filter_ms, range_ms, concat_ms, thunk_ms } => {
-                match operation {
-                    "map" => *map_ms,
-                    "filter" => *filter_ms,
-                    "range" => *range_ms,
-                    "concat" => *concat_ms,
-                    "thunk" => *thunk_ms,
-                    _ => self.config.timeout_ms,
-                }
-            }
+            TimeoutStrategy::PerOperation {
+                map_ms,
+                filter_ms,
+                range_ms,
+                concat_ms,
+                thunk_ms,
+            } => match operation {
+                "map" => *map_ms,
+                "filter" => *filter_ms,
+                "range" => *range_ms,
+                "concat" => *concat_ms,
+                "thunk" => *thunk_ms,
+                _ => self.config.timeout_ms,
+            },
             _ => self.get_effective_timeout(),
         }
     }
@@ -1570,11 +1660,9 @@ impl LazyEvaluationContext {
     pub fn check_operation_timeout(&self, operation: &str) -> Result<(), InterpreterError> {
         let elapsed = self.start_time.elapsed();
         let timeout_ms = self.get_operation_timeout(operation);
-        
+
         if elapsed.as_millis() > timeout_ms as u128 {
-            return Err(InterpreterError::LazyEvaluationTimeout {
-                timeout_ms,
-            });
+            return Err(InterpreterError::LazyEvaluationTimeout { timeout_ms });
         }
         Ok(())
     }
@@ -1591,7 +1679,13 @@ impl LazyEvaluationContext {
             TimeoutStrategy::Progressive { max_ms, .. } => {
                 *max_ms *= 2; // Double the max timeout
             }
-            TimeoutStrategy::PerOperation { map_ms, filter_ms, range_ms, concat_ms, thunk_ms } => {
+            TimeoutStrategy::PerOperation {
+                map_ms,
+                filter_ms,
+                range_ms,
+                concat_ms,
+                thunk_ms,
+            } => {
                 *map_ms *= 2;
                 *filter_ms *= 2;
                 *range_ms *= 2;
@@ -1608,7 +1702,7 @@ impl LazyEvaluationContext {
         // 2. Clear unnecessary caches
         // 3. Trigger garbage collection
         // 4. Compact memory layouts
-        
+
         // For now, just a placeholder
     }
     #[allow(dead_code)]
@@ -1617,7 +1711,7 @@ impl LazyEvaluationContext {
         if !self.config.lazy_by_default {
             return false;
         }
-        
+
         // If memory pressure is high, be more conservative about lazy evaluation
         if check_memory_pressure(self.config.memory_threshold_mb) {
             // Under memory pressure, only use lazy evaluation for very large operations
@@ -1633,25 +1727,30 @@ impl LazyEvaluationContext {
         // Clear circular dependency tracking if memory is tight
         if check_memory_pressure(self.config.memory_threshold_mb) {
             if self.config.thread_safety_checks {
-                if let Ok(mut visited) = self.lock_manager.try_acquire_write_lock(&self.visited_thunks) {
-                    if visited.len() > 100 { // Arbitrary threshold
+                if let Ok(mut visited) = self
+                    .lock_manager
+                    .try_acquire_write_lock(&self.visited_thunks)
+                {
+                    if visited.len() > 100 {
+                        // Arbitrary threshold
                         visited.clear();
                     }
                 }
             } else {
                 if let Ok(mut visited) = self.visited_thunks.write() {
-                    if visited.len() > 100 { // Arbitrary threshold
+                    if visited.len() > 100 {
+                        // Arbitrary threshold
                         visited.clear();
                     }
                 }
             }
         }
-        
+
         // Reduce evaluation depth limit under memory pressure
         if get_estimated_memory_usage() > self.config.memory_threshold_mb * 3 / 4 {
             self.config.max_evaluation_depth = self.config.max_evaluation_depth.min(500);
         }
-        
+
         Ok(())
     }
 }
@@ -1674,14 +1773,20 @@ impl Default for LockManager {
 
 impl LockManager {
     /// Try to acquire a lock with timeout and retry logic
-    pub fn try_acquire_lock<'a, T>(&self, mutex: &'a Mutex<T>) -> Result<std::sync::MutexGuard<'a, T>, InterpreterError> {
+    pub fn try_acquire_lock<'a, T>(
+        &self,
+        mutex: &'a Mutex<T>,
+    ) -> Result<std::sync::MutexGuard<'a, T>, InterpreterError> {
         for attempt in 0..self.max_lock_attempts {
             match mutex.try_lock() {
                 Ok(guard) => return Ok(guard),
                 Err(std::sync::TryLockError::WouldBlock) => {
                     if attempt == self.max_lock_attempts - 1 {
                         return Err(InterpreterError::ThreadSafetyViolation {
-                            details: format!("Failed to acquire lock after {} attempts", self.max_lock_attempts),
+                            details: format!(
+                                "Failed to acquire lock after {} attempts",
+                                self.max_lock_attempts
+                            ),
                         });
                     }
                     std::thread::sleep(self.lock_timeout);
@@ -1697,14 +1802,20 @@ impl LockManager {
     }
 
     /// Try to acquire a read lock with timeout
-    pub fn try_acquire_read_lock<'a, T>(&self, rwlock: &'a RwLock<T>) -> Result<std::sync::RwLockReadGuard<'a, T>, InterpreterError> {
+    pub fn try_acquire_read_lock<'a, T>(
+        &self,
+        rwlock: &'a RwLock<T>,
+    ) -> Result<std::sync::RwLockReadGuard<'a, T>, InterpreterError> {
         for attempt in 0..self.max_lock_attempts {
             match rwlock.try_read() {
                 Ok(guard) => return Ok(guard),
                 Err(std::sync::TryLockError::WouldBlock) => {
                     if attempt == self.max_lock_attempts - 1 {
                         return Err(InterpreterError::ThreadSafetyViolation {
-                            details: format!("Failed to acquire read lock after {} attempts", self.max_lock_attempts),
+                            details: format!(
+                                "Failed to acquire read lock after {} attempts",
+                                self.max_lock_attempts
+                            ),
                         });
                     }
                     std::thread::sleep(self.lock_timeout);
@@ -1720,14 +1831,20 @@ impl LockManager {
     }
 
     /// Try to acquire a write lock with timeout
-    pub fn try_acquire_write_lock<'a, T>(&self, rwlock: &'a RwLock<T>) -> Result<std::sync::RwLockWriteGuard<'a, T>, InterpreterError> {
+    pub fn try_acquire_write_lock<'a, T>(
+        &self,
+        rwlock: &'a RwLock<T>,
+    ) -> Result<std::sync::RwLockWriteGuard<'a, T>, InterpreterError> {
         for attempt in 0..self.max_lock_attempts {
             match rwlock.try_write() {
                 Ok(guard) => return Ok(guard),
                 Err(std::sync::TryLockError::WouldBlock) => {
                     if attempt == self.max_lock_attempts - 1 {
                         return Err(InterpreterError::ThreadSafetyViolation {
-                            details: format!("Failed to acquire write lock after {} attempts", self.max_lock_attempts),
+                            details: format!(
+                                "Failed to acquire write lock after {} attempts",
+                                self.max_lock_attempts
+                            ),
                         });
                     }
                     std::thread::sleep(self.lock_timeout);

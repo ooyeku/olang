@@ -64,10 +64,18 @@ impl GitPackageManager {
         let metadata_dir = cache_dir.join("metadata");
 
         // Create directories
-        fs::create_dir_all(&packages_dir)
-            .with_context(|| format!("Failed to create packages directory: {}", packages_dir.display()))?;
-        fs::create_dir_all(&metadata_dir)
-            .with_context(|| format!("Failed to create metadata directory: {}", metadata_dir.display()))?;
+        fs::create_dir_all(&packages_dir).with_context(|| {
+            format!(
+                "Failed to create packages directory: {}",
+                packages_dir.display()
+            )
+        })?;
+        fs::create_dir_all(&metadata_dir).with_context(|| {
+            format!(
+                "Failed to create metadata directory: {}",
+                metadata_dir.display()
+            )
+        })?;
 
         Ok(Self {
             cache_dir,
@@ -85,15 +93,18 @@ impl GitPackageManager {
         // Parse the git URL
         let git_url = parse_git_url(url)?;
         if verbose {
-            println!("Parsed package: {} from {}/{}", git_url.package_name, git_url.owner, git_url.repo);
+            println!(
+                "Parsed package: {} from {}/{}",
+                git_url.package_name, git_url.owner, git_url.repo
+            );
         }
 
         // Create package-specific directory
         let package_cache_dir = self.create_package_cache_dir(&git_url)?;
-        
+
         // Clone or update the repository
         let repo_dir = self.clone_repository(&git_url, &package_cache_dir, verbose)?;
-        
+
         // Get the current commit hash
         let commit_hash = get_commit_hash(&repo_dir)?;
         if verbose {
@@ -102,7 +113,7 @@ impl GitPackageManager {
 
         // Validate package structure
         let manifest = self.validate_package(&repo_dir, &git_url)?;
-        
+
         // Create installation metadata
         let install_result = InstallResult {
             package_name: git_url.package_name.clone(),
@@ -116,7 +127,10 @@ impl GitPackageManager {
         self.save_package_metadata(&install_result)?;
 
         if verbose {
-            println!("Package '{}' installed successfully", install_result.package_name);
+            println!(
+                "Package '{}' installed successfully",
+                install_result.package_name
+            );
         }
 
         Ok(install_result)
@@ -125,7 +139,7 @@ impl GitPackageManager {
     /// List installed packages
     pub fn list_packages(&self) -> Result<Vec<(String, PackageManifest)>> {
         let mut packages = Vec::new();
-        
+
         if !self.metadata_dir.exists() {
             return Ok(packages);
         }
@@ -133,12 +147,15 @@ impl GitPackageManager {
         for entry in fs::read_dir(&self.metadata_dir)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
                 if let Some(package_name) = path.file_stem().and_then(|s| s.to_str()) {
                     match self.load_package_metadata(package_name) {
                         Ok(manifest) => packages.push((package_name.to_string(), manifest)),
-                        Err(e) => eprintln!("Warning: Failed to load metadata for {}: {}", package_name, e),
+                        Err(e) => eprintln!(
+                            "Warning: Failed to load metadata for {}: {}",
+                            package_name, e
+                        ),
                     }
                 }
             }
@@ -159,9 +176,12 @@ impl GitPackageManager {
             if let Ok(entries) = fs::read_dir(&self.packages_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.is_dir() && path.file_name()
-                        .and_then(|n| n.to_str())
-                        .map_or(false, |n| n.contains(name)) {
+                    if path.is_dir()
+                        && path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .map_or(false, |n| n.contains(name))
+                    {
                         return Some(path);
                     }
                 }
@@ -181,8 +201,12 @@ impl GitPackageManager {
             if verbose {
                 println!("Removing package directory: {}", package_path.display());
             }
-            fs::remove_dir_all(&package_path)
-                .with_context(|| format!("Failed to remove package directory: {}", package_path.display()))?;
+            fs::remove_dir_all(&package_path).with_context(|| {
+                format!(
+                    "Failed to remove package directory: {}",
+                    package_path.display()
+                )
+            })?;
         }
 
         // Remove metadata
@@ -191,8 +215,12 @@ impl GitPackageManager {
             if verbose {
                 println!("Removing package metadata: {}", metadata_path.display());
             }
-            fs::remove_file(&metadata_path)
-                .with_context(|| format!("Failed to remove package metadata: {}", metadata_path.display()))?;
+            fs::remove_file(&metadata_path).with_context(|| {
+                format!(
+                    "Failed to remove package metadata: {}",
+                    metadata_path.display()
+                )
+            })?;
         }
 
         if verbose {
@@ -205,21 +233,31 @@ impl GitPackageManager {
     /// Create package-specific cache directory
     fn create_package_cache_dir(&self, git_url: &GitPackageUrl) -> Result<PathBuf> {
         // Create a safe directory name from the URL
-        let dir_name = format!("{}_{}_{}",
+        let dir_name = format!(
+            "{}_{}_{}",
             git_url.host.replace('.', "_"),
             git_url.owner,
             git_url.repo
         );
-        
+
         let package_dir = self.cache_dir.join("packages").join(dir_name);
-        fs::create_dir_all(&package_dir)
-            .with_context(|| format!("Failed to create package directory: {}", package_dir.display()))?;
-        
+        fs::create_dir_all(&package_dir).with_context(|| {
+            format!(
+                "Failed to create package directory: {}",
+                package_dir.display()
+            )
+        })?;
+
         Ok(package_dir)
     }
 
     /// Clone or update repository
-    fn clone_repository(&self, git_url: &GitPackageUrl, cache_dir: &Path, verbose: bool) -> Result<PathBuf> {
+    fn clone_repository(
+        &self,
+        git_url: &GitPackageUrl,
+        cache_dir: &Path,
+        verbose: bool,
+    ) -> Result<PathBuf> {
         let repo_dir = cache_dir.join(&git_url.repo);
 
         if repo_dir.exists() {
@@ -248,12 +286,13 @@ impl GitPackageManager {
     fn clone_fresh_repository(&self, url: &str, target_dir: &Path, verbose: bool) -> Result<()> {
         let mut cmd = Command::new("git");
         cmd.args(["clone", url, target_dir.to_str().unwrap()]);
-        
+
         if !verbose {
             cmd.args(["--quiet"]);
         }
 
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .with_context(|| "Failed to execute git clone command")?;
 
         if !output.status.success() {
@@ -265,10 +304,15 @@ impl GitPackageManager {
     }
 
     /// Update existing repository
-    fn update_repository(&self, repo_dir: &Path, git_url: &GitPackageUrl, verbose: bool) -> Result<()> {
+    fn update_repository(
+        &self,
+        repo_dir: &Path,
+        git_url: &GitPackageUrl,
+        verbose: bool,
+    ) -> Result<()> {
         let mut cmd = Command::new("git");
         cmd.args(["-C", repo_dir.to_str().unwrap(), "pull", "origin"]);
-        
+
         // Determine the branch to pull
         let branch = git_url.version.as_deref().unwrap_or("main");
         cmd.arg(branch);
@@ -277,7 +321,8 @@ impl GitPackageManager {
             cmd.args(["--quiet"]);
         }
 
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .with_context(|| "Failed to execute git pull command")?;
 
         if !output.status.success() {
@@ -299,24 +344,33 @@ impl GitPackageManager {
 
         let mut cmd = Command::new("git");
         cmd.args(["-C", repo_dir.to_str().unwrap(), "checkout", version]);
-        
+
         if !verbose {
             cmd.args(["--quiet"]);
         }
 
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .with_context(|| format!("Failed to checkout version {}", version))?;
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Git checkout failed for version '{}': {}", version, error));
+            return Err(anyhow::anyhow!(
+                "Git checkout failed for version '{}': {}",
+                version,
+                error
+            ));
         }
 
         Ok(())
     }
 
     /// Validate package structure and load manifest
-    fn validate_package(&self, repo_dir: &Path, git_url: &GitPackageUrl) -> Result<PackageManifest> {
+    fn validate_package(
+        &self,
+        repo_dir: &Path,
+        git_url: &GitPackageUrl,
+    ) -> Result<PackageManifest> {
         // Check for olang.toml
         let manifest_path = repo_dir.join("olang.toml");
         if !manifest_path.exists() {
@@ -327,17 +381,27 @@ impl GitPackageManager {
         }
 
         // Load and parse manifest
-        let manifest_content = fs::read_to_string(&manifest_path)
-            .with_context(|| format!("Failed to read package manifest: {}", manifest_path.display()))?;
+        let manifest_content = fs::read_to_string(&manifest_path).with_context(|| {
+            format!(
+                "Failed to read package manifest: {}",
+                manifest_path.display()
+            )
+        })?;
 
-        let manifest: PackageManifest = toml::from_str(&manifest_content)
-            .with_context(|| format!("Invalid package manifest format: {}", manifest_path.display()))?;
+        let manifest: PackageManifest = toml::from_str(&manifest_content).with_context(|| {
+            format!(
+                "Invalid package manifest format: {}",
+                manifest_path.display()
+            )
+        })?;
 
         // Validate package name matches expected
         let expected_name = &git_url.package_name;
         if manifest.package.name != *expected_name {
-            eprintln!("Warning: Package name '{}' in manifest doesn't match expected name '{}'", 
-                manifest.package.name, expected_name);
+            eprintln!(
+                "Warning: Package name '{}' in manifest doesn't match expected name '{}'",
+                manifest.package.name, expected_name
+            );
         }
 
         Ok(manifest)
@@ -345,13 +409,19 @@ impl GitPackageManager {
 
     /// Save package metadata
     fn save_package_metadata(&self, install_result: &InstallResult) -> Result<()> {
-        let metadata_path = self.metadata_dir.join(format!("{}.toml", install_result.package_name));
-        
+        let metadata_path = self
+            .metadata_dir
+            .join(format!("{}.toml", install_result.package_name));
+
         let metadata_content = toml::to_string_pretty(&install_result.manifest)
             .with_context(|| "Failed to serialize package metadata")?;
-        
-        fs::write(&metadata_path, metadata_content)
-            .with_context(|| format!("Failed to save package metadata: {}", metadata_path.display()))?;
+
+        fs::write(&metadata_path, metadata_content).with_context(|| {
+            format!(
+                "Failed to save package metadata: {}",
+                metadata_path.display()
+            )
+        })?;
 
         Ok(())
     }
@@ -359,13 +429,21 @@ impl GitPackageManager {
     /// Load package metadata
     fn load_package_metadata(&self, package_name: &str) -> Result<PackageManifest> {
         let metadata_path = self.metadata_dir.join(format!("{}.toml", package_name));
-        
-        let metadata_content = fs::read_to_string(&metadata_path)
-            .with_context(|| format!("Failed to read package metadata: {}", metadata_path.display()))?;
-        
-        let manifest: PackageManifest = toml::from_str(&metadata_content)
-            .with_context(|| format!("Failed to parse package metadata: {}", metadata_path.display()))?;
-        
+
+        let metadata_content = fs::read_to_string(&metadata_path).with_context(|| {
+            format!(
+                "Failed to read package metadata: {}",
+                metadata_path.display()
+            )
+        })?;
+
+        let manifest: PackageManifest = toml::from_str(&metadata_content).with_context(|| {
+            format!(
+                "Failed to parse package metadata: {}",
+                metadata_path.display()
+            )
+        })?;
+
         Ok(manifest)
     }
 }
@@ -399,7 +477,8 @@ pub fn parse_git_url(url: &str) -> Result<GitPackageUrl> {
             Supported formats:\n\
             - HTTPS: https://github.com/user/repo.git\n\
             - SSH: git@github.com:user/repo.git\n\
-            - Local: /path/to/repo", url
+            - Local: /path/to/repo",
+            url
         ))
     }
 }
@@ -408,7 +487,7 @@ pub fn parse_git_url(url: &str) -> Result<GitPackageUrl> {
 fn parse_https_url(url: &str, version: Option<String>) -> Result<GitPackageUrl> {
     // Remove .git suffix if present
     let clean_url = url.strip_suffix(".git").unwrap_or(url);
-    
+
     // Parse URL: https://host/owner/repo
     let parts: Vec<&str> = clean_url.split('/').collect();
     if parts.len() < 5 {
@@ -439,11 +518,11 @@ fn parse_ssh_url(url: &str, version: Option<String>) -> Result<GitPackageUrl> {
 
     let (user_host, path) = url.split_once(':').unwrap();
     let host = user_host.strip_prefix("git@").unwrap_or(user_host);
-    
+
     // Remove .git suffix if present
     let clean_path = path.strip_suffix(".git").unwrap_or(path);
     let parts: Vec<&str> = clean_path.split('/').collect();
-    
+
     if parts.len() < 2 {
         return Err(anyhow::anyhow!("Invalid SSH URL format: {}", url));
     }
@@ -465,7 +544,8 @@ fn parse_ssh_url(url: &str, version: Option<String>) -> Result<GitPackageUrl> {
 /// Parse local git URL
 fn parse_local_url(url: &str, version: Option<String>) -> Result<GitPackageUrl> {
     let path = Path::new(url);
-    let repo = path.file_name()
+    let repo = path
+        .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("Invalid local path: {}", url))?;
 
@@ -508,7 +588,9 @@ pub fn check_git_available() -> Result<()> {
     let output = Command::new("git")
         .args(["--version"])
         .output()
-        .with_context(|| "Git command not found. Please install git and ensure it's in your PATH")?;
+        .with_context(|| {
+            "Git command not found. Please install git and ensure it's in your PATH"
+        })?;
 
     if !output.status.success() {
         return Err(anyhow::anyhow!("Git is not working properly"));
@@ -525,7 +607,7 @@ mod tests {
     fn test_parse_https_url() {
         let url = "https://github.com/user/math-utils.git";
         let parsed = parse_git_url(url).unwrap();
-        
+
         assert_eq!(parsed.host, "github.com");
         assert_eq!(parsed.owner, "user");
         assert_eq!(parsed.repo, "math-utils");
@@ -537,7 +619,7 @@ mod tests {
     fn test_parse_https_url_with_version() {
         let url = "https://github.com/user/math-utils.git@v1.2.0";
         let parsed = parse_git_url(url).unwrap();
-        
+
         assert_eq!(parsed.version, Some("v1.2.0".to_string()));
     }
 
@@ -545,7 +627,7 @@ mod tests {
     fn test_parse_ssh_url() {
         let url = "git@github.com:user/math-utils.git";
         let parsed = parse_git_url(url).unwrap();
-        
+
         assert_eq!(parsed.host, "github.com");
         assert_eq!(parsed.owner, "user");
         assert_eq!(parsed.repo, "math-utils");
@@ -555,7 +637,7 @@ mod tests {
     fn test_parse_local_url() {
         let url = "/local/path/to/package";
         let parsed = parse_git_url(url).unwrap();
-        
+
         assert_eq!(parsed.host, "localhost");
         assert_eq!(parsed.owner, "local");
         assert_eq!(parsed.repo, "package");
@@ -566,4 +648,4 @@ mod tests {
         let url = "invalid-url";
         assert!(parse_git_url(url).is_err());
     }
-} 
+}

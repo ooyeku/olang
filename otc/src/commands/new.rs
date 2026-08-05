@@ -3,8 +3,8 @@
 //! Simple, reliable project scaffold that always generates working code.
 //! Replaces the complex template system with a single, validated approach.
 
+use crate::config::{ensure_project_directory, OlangProject};
 use anyhow::{Context, Result};
-use crate::config::{OlangProject, ensure_project_directory};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -21,10 +21,10 @@ pub fn execute(name: String, _is_lib: bool, _template: String, verbose: bool) ->
 
     // Create simple, reliable project structure
     create_simple_project(&name, verbose)?;
-    
+
     // Validate that the generated code works
     validate_generated_project(&name, verbose)?;
-    
+
     println!("Created new Olang project: {}", name);
     println!();
     println!("Project structure:");
@@ -38,7 +38,7 @@ pub fn execute(name: String, _is_lib: bool, _template: String, verbose: bool) ->
     println!("Get started:");
     println!("   cd {}", name);
     println!("   otc run src/main.ol");
-    
+
     Ok(())
 }
 
@@ -47,7 +47,7 @@ fn create_simple_project(name: &str, verbose: bool) -> Result<()> {
     // Create root directory
     fs::create_dir(name)
         .with_context(|| format!("Failed to create project directory: {}", name))?;
-    
+
     if verbose {
         println!("Created directory: {}", name);
     }
@@ -56,7 +56,7 @@ fn create_simple_project(name: &str, verbose: bool) -> Result<()> {
     let src_dir = format!("{}/src", name);
     fs::create_dir(&src_dir)
         .with_context(|| format!("Failed to create src directory: {}", src_dir))?;
-    
+
     if verbose {
         println!("Created directory: {}", src_dir);
     }
@@ -72,7 +72,8 @@ fn create_simple_project(name: &str, verbose: bool) -> Result<()> {
 
 /// Create a simple, valid olang.toml file
 fn create_olang_toml(name: &str, verbose: bool) -> Result<()> {
-    let toml_content = format!(r#"[project]
+    let toml_content = format!(
+        r#"[project]
 name = "{}"
 type = "application"
 version = "0.1.0"
@@ -82,12 +83,14 @@ authors = ["Your Name <you@example.com>"]
 [dependencies]
 # Add dependencies here
 # Example: math-utils = "https://github.com/user/math-utils.git"
-"#, name);
+"#,
+        name
+    );
 
     let toml_path = format!("{}/olang.toml", name);
     fs::write(&toml_path, toml_content)
         .with_context(|| format!("Failed to create olang.toml: {}", toml_path))?;
-    
+
     if verbose {
         println!("Created file: {}", toml_path);
     }
@@ -97,7 +100,8 @@ authors = ["Your Name <you@example.com>"]
 
 /// Create a simple main.ol file that is guaranteed to parse and run
 fn create_main_ol(name: &str, verbose: bool) -> Result<()> {
-    let main_content = format!(r#"// A simple, working Olang program
+    let main_content = format!(
+        r#"// A simple, working Olang program
 println("Hello from Olang!")
 println("Project: {}")
 
@@ -119,12 +123,14 @@ let result = 5 + 3
 println("5 + 3 = ", result)
 
 println("Project setup complete!")
-"#, name);
+"#,
+        name
+    );
 
     let main_path = format!("{}/src/main.ol", name);
     fs::write(&main_path, main_content)
         .with_context(|| format!("Failed to create src/main.ol: {}", main_path))?;
-    
+
     if verbose {
         println!("Created file: {}", main_path);
     }
@@ -134,7 +140,8 @@ println("Project setup complete!")
 
 /// Create a helpful README.md file
 fn create_readme_md(name: &str, verbose: bool) -> Result<()> {
-    let readme_content = format!(r#"# {}
+    let readme_content = format!(
+        r#"# {}
 
 A new Olang project.
 
@@ -190,12 +197,14 @@ fn main() {{
 
 - [Olang Documentation](https://github.com/ooyeku/olang)
 - [Olang Examples](https://github.com/ooyeku/olang/tree/main/examples)
-"#, name, name);
+"#,
+        name, name
+    );
 
     let readme_path = format!("{}/README.md", name);
     fs::write(&readme_path, readme_content)
         .with_context(|| format!("Failed to create README.md: {}", readme_path))?;
-    
+
     if verbose {
         println!("Created file: {}", readme_path);
     }
@@ -236,7 +245,7 @@ temp/
     let gitignore_path = format!("{}/.gitignore", name);
     fs::write(&gitignore_path, gitignore_content)
         .with_context(|| format!("Failed to create .gitignore: {}", gitignore_path))?;
-    
+
     if verbose {
         println!("Created file: {}", gitignore_path);
     }
@@ -252,10 +261,10 @@ fn validate_generated_project(name: &str, verbose: bool) -> Result<()> {
 
     // Validate that olang.toml is syntactically correct
     validate_toml_file(name, verbose)?;
-    
+
     // Validate that the Olang code parses correctly
     validate_olang_code(name, verbose)?;
-    
+
     if verbose {
         println!("Project validation completed successfully");
     }
@@ -266,22 +275,26 @@ fn validate_generated_project(name: &str, verbose: bool) -> Result<()> {
 /// Validate that the olang.toml file is syntactically correct
 fn validate_toml_file(name: &str, verbose: bool) -> Result<()> {
     let toml_path = format!("{}/olang.toml", name);
-    
+
     if verbose {
         println!("Validating {}", toml_path);
     }
 
     // Try to parse the TOML file we just created
-    let toml_content = fs::read_to_string(&toml_path)
-        .with_context(|| format!("Failed to read {}", toml_path))?;
-    
+    let toml_content =
+        fs::read_to_string(&toml_path).with_context(|| format!("Failed to read {}", toml_path))?;
+
     // Parse it to ensure it's valid TOML
     let _: toml::Value = toml::from_str(&toml_content)
         .with_context(|| format!("Generated olang.toml is not valid TOML: {}", toml_path))?;
-    
+
     // Also try to parse it as an OlangProject to ensure it's compatible
-    OlangProject::parse_from_str(&toml_content)
-        .with_context(|| format!("Generated olang.toml is not a valid Olang project file: {}", toml_path))?;
+    OlangProject::parse_from_str(&toml_content).with_context(|| {
+        format!(
+            "Generated olang.toml is not a valid Olang project file: {}",
+            toml_path
+        )
+    })?;
 
     if verbose {
         println!("✓ olang.toml validation passed");
@@ -293,15 +306,15 @@ fn validate_toml_file(name: &str, verbose: bool) -> Result<()> {
 /// Validate that the generated Olang code parses correctly
 fn validate_olang_code(name: &str, verbose: bool) -> Result<()> {
     let main_path = format!("{}/src/main.ol", name);
-    
+
     if verbose {
         println!("Validating {}", main_path);
     }
 
     // Read the generated Olang code
-    let code_content = fs::read_to_string(&main_path)
-        .with_context(|| format!("Failed to read {}", main_path))?;
-    
+    let code_content =
+        fs::read_to_string(&main_path).with_context(|| format!("Failed to read {}", main_path))?;
+
     // Try to parse it with the Olang parser
     let parser = olang::parser::Parser::new();
     match parser.parse(&code_content) {
@@ -312,8 +325,8 @@ fn validate_olang_code(name: &str, verbose: bool) -> Result<()> {
         }
         Err(parse_error) => {
             return Err(anyhow::anyhow!(
-                "Generated Olang code failed to parse: {}\nError: {:?}", 
-                main_path, 
+                "Generated Olang code failed to parse: {}\nError: {:?}",
+                main_path,
                 parse_error
             ));
         }
@@ -327,7 +340,7 @@ pub fn build_project(release: bool, verbose: bool) -> Result<()> {
     // Check if we're in an Olang project and load configuration
     ensure_project_directory()?;
     let config = OlangProject::load_current()?;
-    
+
     // Validate configuration
     config.validate()?;
 
@@ -338,15 +351,15 @@ pub fn build_project(release: bool, verbose: bool) -> Result<()> {
     }
 
     // Create output directory
-    let output_dir = if release { 
-        format!("{}/release", config.get_output_dir()) 
-    } else { 
-        format!("{}/debug", config.get_output_dir()) 
+    let output_dir = if release {
+        format!("{}/release", config.get_output_dir())
+    } else {
+        format!("{}/debug", config.get_output_dir())
     };
     fs::create_dir_all(&output_dir)?;
 
     let entry_point = config.get_entry_point();
-    
+
     if !Path::new(entry_point).exists() {
         return Err(anyhow::anyhow!("Entry point not found: {}", entry_point));
     }
@@ -372,10 +385,10 @@ fn copy_source_files(entry_point: &str, output_dir: &str, verbose: bool) -> Resu
     let entry_name = Path::new(entry_point)
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("Invalid entry point"))?;
-    
+
     let output_path = Path::new(output_dir).join(entry_name);
     fs::copy(entry_point, &output_path)?;
-    
+
     if verbose {
         println!("Copied: {} -> {}", entry_point, output_path.display());
     }
@@ -391,7 +404,7 @@ fn copy_source_files(entry_point: &str, output_dir: &str, verbose: bool) -> Resu
 /// Copy a directory recursively
 fn copy_directory(src: &str, dst: &str, verbose: bool) -> Result<()> {
     fs::create_dir_all(dst)?;
-    
+
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
@@ -421,7 +434,7 @@ pub fn test_project(filter: Option<String>, verbose: bool) -> Result<()> {
     // Check if we're in an Olang project and load configuration
     ensure_project_directory()?;
     let config = OlangProject::load_current()?;
-    
+
     // Validate configuration
     config.validate()?;
 
@@ -434,7 +447,7 @@ pub fn test_project(filter: Option<String>, verbose: bool) -> Result<()> {
 
     // Find test files
     let test_files = find_test_files(filter.as_deref())?;
-    
+
     if test_files.is_empty() {
         println!("No test files found");
         return Ok(());
@@ -481,13 +494,13 @@ pub fn test_project(filter: Option<String>, verbose: bool) -> Result<()> {
 #[allow(dead_code)]
 fn find_test_files(filter: Option<&str>) -> Result<Vec<PathBuf>> {
     let mut test_files = Vec::new();
-    
+
     // Look in tests directory
     if Path::new("tests").exists() {
         for entry in fs::read_dir("tests")? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_file() && path.extension().map_or(false, |ext| ext == "ol") {
                 if let Some(filter) = filter {
                     if path.to_string_lossy().contains(filter) {
@@ -508,9 +521,7 @@ fn find_test_files(filter: Option<&str>) -> Result<Vec<PathBuf>> {
 fn run_test_file(test_file: &Path) -> Result<()> {
     use std::process::Command;
 
-    let output = Command::new("olang")
-        .arg(test_file)
-        .output();
+    let output = Command::new("olang").arg(test_file).output();
 
     match output {
         Ok(output) => {
@@ -538,5 +549,3 @@ fn run_test_file(test_file: &Path) -> Result<()> {
         }
     }
 }
-
- 

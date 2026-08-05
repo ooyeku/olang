@@ -18,9 +18,11 @@ fn test_basic_template_interpolation() {
         let age = 25;
         `Hello ${name}! You are ${age} years old.`
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -38,9 +40,11 @@ fn test_template_interpolation_with_math() {
         let y = 5;
         `Math: ${x} + ${y} = ${x + y}, ${x} * ${y} = ${x * y}`
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -57,9 +61,11 @@ fn test_template_interpolation_with_objects() {
         let user = { name: "Bob", score: 1250 };
         `Player ${user.name} has ${user.score} points!`
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -76,9 +82,11 @@ fn test_template_interpolation_nested_expressions() {
         let items = [1, 2, 3];
         `List has ${len(items)} items: ${items[0]}, ${items[1]}, ${items[2]}`
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -92,9 +100,11 @@ fn test_hex_escape_sequences() {
     let mut interpreter = Interpreter::new();
 
     let source = r#""Hex chars: \x41\x42\x43""#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -108,9 +118,11 @@ fn test_unicode_escape_sequences() {
     let mut interpreter = Interpreter::new();
 
     let source = r#""Unicode: \u{1F600} \u{03B1}\u{03B2}\u{03B3}""#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -124,15 +136,14 @@ fn test_null_escape_sequence() {
     let mut interpreter = Interpreter::new();
 
     let source = r#""Null char: \0 here""#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     let expected = format!("Null char: {} here", '\0');
-    assert_eq!(
-        result,
-        olang::ast::Value::String(expected.into())
-    );
+    assert_eq!(result, olang::ast::Value::String(expected.into()));
 }
 
 #[test]
@@ -141,9 +152,11 @@ fn test_raw_strings() {
     let mut interpreter = Interpreter::new();
 
     let source = r#"r"C:\Users\Alice\Documents\file.txt""#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -163,9 +176,11 @@ fn test_raw_strings_with_quotes() {
     // and a newline escape sequence. The outer Rust raw string allows us to
     // embed the double quotes without additional escaping.
     let source = r#"r"String with \"quotes\" and \n newlines""#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -181,9 +196,11 @@ fn test_empty_template_interpolation() {
     let mut interpreter = Interpreter::new();
 
     let source = r#"`Empty: ${""} End`"#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -208,9 +225,11 @@ fn test_integer_range_patterns() {
             _ => "large number"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -231,9 +250,11 @@ fn test_character_range_patterns() {
             _ => "other"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -253,9 +274,11 @@ fn test_range_pattern_boundaries() {
             _ => "out of range"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -277,9 +300,11 @@ fn test_guard_clauses_with_age() {
             _ => "child"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -302,9 +327,11 @@ fn test_guard_clauses_with_lists() {
             _ => "other"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -327,9 +354,11 @@ fn test_complex_range_and_guard_combination() {
             _ => "Below C"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -348,9 +377,11 @@ fn test_or_patterns_with_results() {
             _ => "other"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -372,9 +403,11 @@ fn test_nested_pattern_matching() {
             _ => "unknown status"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -400,9 +433,11 @@ fn test_literal_type_patterns() {
             _ => "Unknown status"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -424,9 +459,11 @@ fn test_union_type_api_response_pattern() {
             _ => "Invalid response format"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -448,9 +485,11 @@ fn test_union_type_error_response_pattern() {
             _ => "Invalid response format"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -475,9 +514,11 @@ fn test_http_method_union_types() {
         };
         handle_request("POST")
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -502,9 +543,11 @@ fn test_log_level_union_types() {
         };
         log_message("WARN", "This is a warning")
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -540,9 +583,11 @@ fn test_user_management_system_comprehensive() {
             _ => "Unknown validation result"
         }
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,
@@ -566,9 +611,11 @@ fn test_data_processing_pipeline_v013() {
         
         process_item("order")
     "#;
-    
+
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
 
     assert_eq!(
         result,

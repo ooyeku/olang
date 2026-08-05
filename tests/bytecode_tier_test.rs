@@ -116,7 +116,10 @@ fn sum_to(n) = {
 }
 sum_to(10) + sum_to(100) + sum_to(1000)
 "#;
-    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(55 + 5050 + 500500));
+    assert_eq!(
+        eval(src, Some(1)).unwrap(),
+        Value::Integer(55 + 5050 + 500500)
+    );
     assert_tier_transparent(src);
 }
 
@@ -466,7 +469,10 @@ fn total(n) = {
 }
 total(10) + total(100) + total(1000)
 "#;
-    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(45 + 4950 + 499500));
+    assert_eq!(
+        eval(src, Some(1)).unwrap(),
+        Value::Integer(45 + 4950 + 499500)
+    );
     assert_tier_transparent(src);
 }
 

@@ -1,5 +1,5 @@
-use std::fmt;
 use std::env;
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogLevel {
@@ -34,11 +34,11 @@ impl Default for Logger {
             .unwrap_or_else(|_| "WARN".to_string())
             .parse()
             .unwrap_or(LogLevel::Warn);
-            
+
         let show_timestamp = env::var("OLANG_LOG_TIMESTAMP")
             .map(|v| v.to_lowercase() == "true")
             .unwrap_or(false);
-            
+
         let show_module = env::var("OLANG_LOG_MODULE")
             .map(|v| v.to_lowercase() == "true")
             .unwrap_or(false);
@@ -211,4 +211,4 @@ mod tests {
         assert!(logger.show_timestamp);
         assert!(logger.show_module);
     }
-} 
+}

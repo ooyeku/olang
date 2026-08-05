@@ -15,7 +15,7 @@ pub struct ParallelConfig {
 impl Default for ParallelConfig {
     fn default() -> Self {
         Self {
-            min_parallel_size: 1000, 
+            min_parallel_size: 1000,
             max_threads: num_cpus::get(),
             enabled: true,
         }

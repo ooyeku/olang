@@ -46,13 +46,15 @@ pub mod error_utils {
     }
 
     /// Create a standardized type error
-    pub fn type_error(function_name: &str, argument_name: &str, expected_type: &str, actual_type: &str) -> Value {
+    pub fn type_error(
+        function_name: &str,
+        argument_name: &str,
+        expected_type: &str,
+        actual_type: &str,
+    ) -> Value {
         Value::Err(Box::new(Value::String(Arc::new(format!(
             "{}: {} must be {}, got {}",
-            function_name,
-            argument_name,
-            expected_type,
-            actual_type
+            function_name, argument_name, expected_type, actual_type
         )))))
     }
 
@@ -60,8 +62,7 @@ pub mod error_utils {
     pub fn validation_error(function_name: &str, message: &str) -> Value {
         Value::Err(Box::new(Value::String(Arc::new(format!(
             "{}: {}",
-            function_name,
-            message
+            function_name, message
         )))))
     }
 
@@ -69,9 +70,7 @@ pub mod error_utils {
     pub fn operation_error(function_name: &str, operation: &str, details: &str) -> Value {
         Value::Err(Box::new(Value::String(Arc::new(format!(
             "{} failed to {}: {}",
-            function_name,
-            operation,
-            details
+            function_name, operation, details
         )))))
     }
 
@@ -79,9 +78,7 @@ pub mod error_utils {
     pub fn not_found_error(function_name: &str, item_type: &str, identifier: &str) -> Value {
         Value::Err(Box::new(Value::String(Arc::new(format!(
             "{}: {} '{}' not found",
-            function_name,
-            item_type,
-            identifier
+            function_name, item_type, identifier
         )))))
     }
 
@@ -94,7 +91,7 @@ pub mod error_utils {
     pub fn get_type_name(value: &Value) -> &'static str {
         match value {
             Value::Integer(_) => "integer",
-            Value::Float(_) => "float", 
+            Value::Float(_) => "float",
             Value::String(_) => "string",
             Value::Boolean(_) => "boolean",
             Value::List(_) => "list",

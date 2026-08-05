@@ -2,10 +2,10 @@
 //!
 //! Provides package installation from git repositories using the Simple Git Package System.
 
-use anyhow::{Context, Result};
-use crate::git_package::{GitPackageManager, check_git_available, validate_git_url};
+use crate::git_package::{check_git_available, validate_git_url, GitPackageManager};
 use crate::global::GlobalOtc;
 use crate::lock_file::{LockFile, LockedPackage};
+use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -19,8 +19,7 @@ pub fn execute(url: Option<String>, verbose: bool) -> Result<()> {
 pub fn execute_with_options(url: Option<String>, verbose: bool, offline: bool) -> Result<()> {
     // Check git availability (unless in offline mode)
     if !offline {
-        check_git_available()
-            .with_context(|| "Git is required for package installation")?;
+        check_git_available().with_context(|| "Git is required for package installation")?;
     }
 
     if let Some(package_url) = url {
@@ -43,8 +42,7 @@ fn install_from_url(url: &str, verbose: bool, offline: bool) -> Result<()> {
     }
 
     // Validate URL format first
-    validate_git_url(url)
-        .with_context(|| format!("Invalid git URL: {}", url))?;
+    validate_git_url(url).with_context(|| format!("Invalid git URL: {}", url))?;
 
     // In offline mode, check if package is already available in cache
     if offline {
@@ -60,13 +58,13 @@ fn install_from_url(url: &str, verbose: bool, offline: bool) -> Result<()> {
     let package_manager = GitPackageManager::new(&cache_dir)?;
 
     // Install the package
-    let install_result = package_manager.install_package(url, verbose)
+    let install_result = package_manager
+        .install_package(url, verbose)
         .with_context(|| format!("Failed to install package from {}", url))?;
 
     // Update or create lock file for single package installs
     if Path::new("olang.toml").exists() {
-        let mut lock_file = LockFile::load()
-            .with_context(|| "Failed to load lock file")?;
+        let mut lock_file = LockFile::load().with_context(|| "Failed to load lock file")?;
 
         let locked_package = LockedPackage::with_dependencies(
             url.to_string(),
@@ -76,7 +74,8 @@ fn install_from_url(url: &str, verbose: bool, offline: bool) -> Result<()> {
         );
 
         lock_file.add_package(install_result.package_name.clone(), locked_package);
-        lock_file.save()
+        lock_file
+            .save()
             .with_context(|| "Failed to save lock file")?;
 
         if verbose {
@@ -96,7 +95,10 @@ fn install_from_url(url: &str, verbose: bool, offline: bool) -> Result<()> {
     }
 
     if !install_result.manifest.dependencies.is_empty() {
-        println!("  Dependencies: {}", install_result.manifest.dependencies.len());
+        println!(
+            "  Dependencies: {}",
+            install_result.manifest.dependencies.len()
+        );
         if verbose {
             for (name, url) in &install_result.manifest.dependencies {
                 println!("    {} -> {}", name, url);
@@ -134,14 +136,16 @@ fn install_from_manifest(verbose: bool, offline: bool) -> Result<()> {
     }
 
     // Load or create lock file
-    let mut lock_file = LockFile::load()
-        .with_context(|| "Failed to load lock file")?;
+    let mut lock_file = LockFile::load().with_context(|| "Failed to load lock file")?;
 
     if verbose {
         if lock_file.is_empty() {
             println!("No lock file found, will create new one");
         } else {
-            println!("Using existing lock file with {} packages", lock_file.package_count());
+            println!(
+                "Using existing lock file with {} packages",
+                lock_file.package_count()
+            );
         }
     }
 
@@ -152,7 +156,7 @@ fn install_from_manifest(verbose: bool, offline: bool) -> Result<()> {
 
     // Perform dependency resolution
     let resolved_deps = resolve_dependencies(&project_config.dependencies, verbose)?;
-    
+
     println!("Installing {} total dependencies...", resolved_deps.len());
 
     let mut installed_count = 0;
@@ -171,8 +175,11 @@ fn install_from_manifest(verbose: bool, offline: bool) -> Result<()> {
         if let Some(locked_pkg) = lock_file.get_package(name) {
             if offline {
                 if verbose {
-                    println!("Using locked version {} ({})", 
-                        locked_pkg.version, locked_pkg.short_commit());
+                    println!(
+                        "Using locked version {} ({})",
+                        locked_pkg.version,
+                        locked_pkg.short_commit()
+                    );
                 } else {
                     println!("✓ {} (locked)", locked_pkg.version);
                 }
@@ -202,7 +209,7 @@ fn install_from_manifest(verbose: bool, offline: bool) -> Result<()> {
                     install_result.version.clone(),
                     install_result.manifest.dependencies.clone(),
                 );
-                
+
                 lock_file.add_package(name.clone(), locked_package);
                 updated_lock = true;
                 installed_count += 1;
@@ -219,9 +226,10 @@ fn install_from_manifest(verbose: bool, offline: bool) -> Result<()> {
 
     // Save lock file if updated
     if updated_lock {
-        lock_file.save()
+        lock_file
+            .save()
             .with_context(|| "Failed to save lock file")?;
-        
+
         if verbose {
             println!("Updated lock file");
         }
@@ -232,7 +240,10 @@ fn install_from_manifest(verbose: bool, offline: bool) -> Result<()> {
     println!("  Installed: {}", installed_count);
     if failed_count > 0 {
         println!("  Failed: {}", failed_count);
-        return Err(anyhow::anyhow!("{} packages failed to install", failed_count));
+        return Err(anyhow::anyhow!(
+            "{} packages failed to install",
+            failed_count
+        ));
     }
 
     println!("  Lock file: olang.lock");
@@ -240,7 +251,10 @@ fn install_from_manifest(verbose: bool, offline: bool) -> Result<()> {
 }
 
 /// Perform recursive dependency resolution
-fn resolve_dependencies(root_deps: &HashMap<String, String>, verbose: bool) -> Result<HashMap<String, String>> {
+fn resolve_dependencies(
+    root_deps: &HashMap<String, String>,
+    verbose: bool,
+) -> Result<HashMap<String, String>> {
     let mut resolved = HashMap::new();
     let mut visited = HashSet::new();
     let mut stack = Vec::new();
@@ -275,7 +289,7 @@ fn resolve_dependencies(root_deps: &HashMap<String, String>, verbose: bool) -> R
         // 1. Parse the git URL to get package metadata
         // 2. Check the package's olang.toml for its dependencies
         // 3. Add those dependencies to the stack
-        
+
         // This is a simplified implementation for Feature 4
         // A complete implementation would require downloading and parsing each package's manifest
     }
@@ -293,7 +307,8 @@ pub fn list(verbose: bool) -> Result<()> {
     let cache_dir = global_otc.cache_dir();
     let package_manager = GitPackageManager::new(&cache_dir)?;
 
-    let packages = package_manager.list_packages()
+    let packages = package_manager
+        .list_packages()
         .with_context(|| "Failed to list packages")?;
 
     if packages.is_empty() {
@@ -327,19 +342,20 @@ pub fn remove(name: String, verbose: bool) -> Result<()> {
     let package_manager = GitPackageManager::new(&cache_dir)?;
 
     // Remove from package cache
-    package_manager.remove_package(&name, verbose)
+    package_manager
+        .remove_package(&name, verbose)
         .with_context(|| format!("Failed to remove package: {}", name))?;
 
     // Update lock file if we're in a project
     if Path::new("olang.toml").exists() {
-        let mut lock_file = LockFile::load()
-            .with_context(|| "Failed to load lock file")?;
+        let mut lock_file = LockFile::load().with_context(|| "Failed to load lock file")?;
 
         if lock_file.is_package_locked(&name) {
             lock_file.remove_package(&name);
-            lock_file.save()
+            lock_file
+                .save()
                 .with_context(|| "Failed to save lock file")?;
-            
+
             if verbose {
                 println!("Updated lock file");
             }
@@ -360,8 +376,7 @@ pub fn update(verbose: bool) -> Result<()> {
     }
 
     // Load lock file to get current package information
-    let lock_file = LockFile::load()
-        .with_context(|| "Failed to load lock file")?;
+    let lock_file = LockFile::load().with_context(|| "Failed to load lock file")?;
 
     if lock_file.is_empty() {
         println!("No packages to update (no lock file found)");
@@ -399,12 +414,14 @@ pub fn update(verbose: bool) -> Result<()> {
 
                 if new_commit != old_commit {
                     if !verbose {
-                        println!("✓ {} -> {} ({})", 
-                            locked_pkg.version, 
+                        println!(
+                            "✓ {} -> {} ({})",
+                            locked_pkg.version,
                             install_result.version,
-                            &new_commit[..8]);
+                            &new_commit[..8]
+                        );
                     }
-                    
+
                     // Add updated package to new lock file
                     let updated_package = LockedPackage::with_dependencies(
                         locked_pkg.url.clone(),
@@ -412,17 +429,17 @@ pub fn update(verbose: bool) -> Result<()> {
                         install_result.version,
                         install_result.manifest.dependencies,
                     );
-                    
+
                     new_lock_file.add_package(name.clone(), updated_package);
                 } else {
                     if !verbose {
                         println!("✓ {} (up to date)", locked_pkg.version);
                     }
-                    
+
                     // Keep existing package in lock file
                     new_lock_file.add_package(name.clone(), locked_pkg.clone());
                 }
-                
+
                 updated_count += 1;
             }
             Err(e) => {
@@ -430,7 +447,7 @@ pub fn update(verbose: bool) -> Result<()> {
                     println!("✗ failed");
                 }
                 eprintln!("Failed to update {}: {}", name, e);
-                
+
                 // Keep existing package in lock file on failure
                 new_lock_file.add_package(name.clone(), locked_pkg.clone());
                 failed_count += 1;
@@ -439,7 +456,8 @@ pub fn update(verbose: bool) -> Result<()> {
     }
 
     // Save updated lock file
-    new_lock_file.save()
+    new_lock_file
+        .save()
         .with_context(|| "Failed to save updated lock file")?;
 
     println!("\nUpdate complete:");
@@ -477,8 +495,7 @@ pub fn validate(url: String, verbose: bool) -> Result<()> {
     }
 
     // Check git availability
-    check_git_available()
-        .with_context(|| "Git is required for package validation")?;
+    check_git_available().with_context(|| "Git is required for package validation")?;
 
     // Validate URL format
     let git_url = crate::git_package::parse_git_url(&url)
@@ -520,7 +537,7 @@ pub fn info(url: String, verbose: bool) -> Result<()> {
     println!("  Owner: {}", git_url.owner);
     println!("  Repository: {}", git_url.repo);
     println!("  Package name: {}", git_url.package_name);
-    
+
     if let Some(version) = &git_url.version {
         println!("  Requested version: {}", version);
     } else {
@@ -545,4 +562,4 @@ pub fn info(url: String, verbose: bool) -> Result<()> {
     println!("  otc install {}", url);
 
     Ok(())
-} 
+}

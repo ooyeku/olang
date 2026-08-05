@@ -247,7 +247,11 @@ fn random_choice(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
             end,
             inclusive,
         } => {
-            let empty = if *inclusive { start > end } else { start >= end };
+            let empty = if *inclusive {
+                start > end
+            } else {
+                start >= end
+            };
             if empty {
                 return Err("choice: cannot choose from empty range".into());
             }
@@ -300,7 +304,11 @@ fn random_choices(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
             end,
             inclusive,
         } => {
-            let empty = if *inclusive { start > end } else { start >= end };
+            let empty = if *inclusive {
+                start > end
+            } else {
+                start >= end
+            };
             if empty {
                 return Err("choices: cannot choose from empty range".into());
             }
@@ -667,13 +675,21 @@ mod tests {
                 if let Value::Builtin(builtin) = &fields[func_name] {
                     assert_eq!(builtin.name, format!("random.{}", func_name));
                 } else {
-                    assert!(false, "Expected builtin function for {}, got: {:?}", func_name, fields[func_name]);
+                    assert!(
+                        false,
+                        "Expected builtin function for {}, got: {:?}",
+                        func_name, fields[func_name]
+                    );
                 }
             }
 
             assert_eq!(fields.len(), 14, "Expected 14 functions in random module");
         } else {
-            assert!(false, "Expected struct for random module, got: {:?}", module);
+            assert!(
+                false,
+                "Expected struct for random module, got: {:?}",
+                module
+            );
         }
     }
 
@@ -767,7 +783,11 @@ mod tests {
                 ));
             }
         } else {
-            assert!(false, "Expected list result from choices, got: {:?}", result);
+            assert!(
+                false,
+                "Expected list result from choices, got: {:?}",
+                result
+            );
         }
     }
 
@@ -838,7 +858,11 @@ mod tests {
                 assert!(ch.is_alphanumeric());
             }
         } else {
-            assert!(false, "Expected string from randstr_alnum, got: {:?}", result);
+            assert!(
+                false,
+                "Expected string from randstr_alnum, got: {:?}",
+                result
+            );
         }
 
         // Test empty strings
@@ -874,7 +898,11 @@ mod tests {
                 }
             }
         } else {
-            assert!(false, "Expected list result from shuffle, got: {:?}", result);
+            assert!(
+                false,
+                "Expected list result from shuffle, got: {:?}",
+                result
+            );
         }
     }
 
@@ -991,7 +1019,11 @@ mod tests {
         if let Value::List(items) = result {
             assert_eq!(items.len(), 0);
         } else {
-            assert!(false, "Expected empty list for choices with k=0, got: {:?}", result);
+            assert!(
+                false,
+                "Expected empty list for choices with k=0, got: {:?}",
+                result
+            );
         }
 
         // Test sample with k=0
@@ -1000,7 +1032,11 @@ mod tests {
         if let Value::List(items) = result {
             assert_eq!(items.len(), 0);
         } else {
-            assert!(false, "Expected empty list for sample with k=0, got: {:?}", result);
+            assert!(
+                false,
+                "Expected empty list for sample with k=0, got: {:?}",
+                result
+            );
         }
     }
 

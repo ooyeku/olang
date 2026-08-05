@@ -1,21 +1,26 @@
 use crate::ast::Value;
+use aes_gcm::aead::{Aead, AeadCore};
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+use argon2::Argon2;
+use base64::{engine::general_purpose, Engine as _};
 use bcrypt;
 use hex;
 use hmac::{Hmac, Mac};
 use md5::Md5;
 use rand::{thread_rng, RngCore};
+use rsa::pkcs1v15::{
+    Signature as RsaSignature, SigningKey as RsaSigningKey, VerifyingKey as RsaVerifyingKey,
+};
+use rsa::signature::{SignatureEncoding, Signer, Verifier};
+use rsa::Pkcs1v15Encrypt;
+use rsa::{
+    pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding},
+    RsaPrivateKey, RsaPublicKey,
+};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::HashMap;
 use std::sync::Arc;
-use aes_gcm::{Aes256Gcm, Nonce, KeyInit};
-use aes_gcm::aead::{Aead, AeadCore};
-use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::{EncodePublicKey, DecodePublicKey, DecodePrivateKey, EncodePrivateKey, LineEnding}};
-use rsa::Pkcs1v15Encrypt;
-use rsa::pkcs1v15::{Signature as RsaSignature, SigningKey as RsaSigningKey, VerifyingKey as RsaVerifyingKey};
-use rsa::signature::{SignatureEncoding, Signer, Verifier};
-use argon2::Argon2;
-use base64::{Engine as _, engine::general_purpose};
 
 /// Error types for Crypto operations
 #[derive(Debug, thiserror::Error)]
@@ -313,7 +318,7 @@ fn crypto_hmac_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
 
     type HmacSha256 = Hmac<Sha256>;
 
-    match <HmacSha256 as Mac>::new_from_slice(key) { 
+    match <HmacSha256 as Mac>::new_from_slice(key) {
         Ok(mut mac) => {
             mac.update(message);
             let result = mac.finalize();
@@ -674,7 +679,7 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
 
     // Generate random nonce
     let nonce = Aes256Gcm::generate_nonce(&mut thread_rng());
-    
+
     let ciphertext = match cipher.encrypt(&nonce, data) {
         Ok(ct) => ct,
         Err(e) => {
@@ -688,7 +693,7 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     // Prepend nonce to ciphertext for storage
     let mut result = nonce.to_vec();
     result.extend_from_slice(&ciphertext);
-    
+
     let hex_result = hex::encode(result);
     Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_result)))))
 }
@@ -798,7 +803,7 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     };
 
     let nonce = Nonce::from_slice(&nonce_bytes);
-    
+
     let plaintext = match cipher.decrypt(nonce, ciphertext_bytes.as_ref()) {
         Ok(pt) => pt,
         Err(e) => {
@@ -997,10 +1002,10 @@ fn crypto_derive_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
 
     // Use salt as raw bytes instead of parsing as base64
     let salt_bytes = salt.as_bytes();
-    
+
     let argon2 = Argon2::default();
     let mut key = vec![0u8; key_length];
-    
+
     match argon2.hash_password_into(password.as_bytes(), salt_bytes, &mut key) {
         Ok(_) => {
             let result = hex::encode(key);
@@ -1056,8 +1061,14 @@ fn crypto_generate_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
     };
 
     let mut key_pair = HashMap::new();
-    key_pair.insert("private_key".to_string(), Value::String(Arc::new(private_key_pem.to_string())));
-    key_pair.insert("public_key".to_string(), Value::String(Arc::new(public_key_pem)));
+    key_pair.insert(
+        "private_key".to_string(),
+        Value::String(Arc::new(private_key_pem.to_string())),
+    );
+    key_pair.insert(
+        "public_key".to_string(),
+        Value::String(Arc::new(public_key_pem)),
+    );
 
     Ok(Value::Ok(Box::new(Value::Struct {
         type_name: "KeyPair".to_string(),
@@ -1099,7 +1110,9 @@ fn crypto_export_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         }
     };
 
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(public_key.to_string())))))
+    Ok(Value::Ok(Box::new(Value::String(Arc::new(
+        public_key.to_string(),
+    )))))
 }
 
 /// Import a public key from PEM format
@@ -1125,7 +1138,10 @@ fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
     match RsaPublicKey::from_public_key_pem(pem_string) {
         Ok(_) => {
             let mut key_struct = HashMap::new();
-            key_struct.insert("pem".to_string(), Value::String(Arc::new(pem_string.to_string())));
+            key_struct.insert(
+                "pem".to_string(),
+                Value::String(Arc::new(pem_string.to_string())),
+            );
 
             Ok(Value::Ok(Box::new(Value::Struct {
                 type_name: "PublicKey".to_string(),

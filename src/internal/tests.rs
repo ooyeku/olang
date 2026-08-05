@@ -2,14 +2,12 @@
 mod tests {
     use crate::ast::{Function, Parameter, Value};
     use crate::internal::{
-    check_memory_pressure,
-    is_force_point, is_lazy_function, InternalValue, LazyConfig,
-    LazyValue, ValueHandle,
-    LazyEvaluationContext, MemoryStrategy, TimeoutStrategy, LockManager,
-    get_estimated_memory_usage, get_lazy_evaluation_memory_usage,
-};
+        check_memory_pressure, get_estimated_memory_usage, get_lazy_evaluation_memory_usage,
+        is_force_point, is_lazy_function, InternalValue, LazyConfig, LazyEvaluationContext,
+        LazyValue, LockManager, MemoryStrategy, TimeoutStrategy, ValueHandle,
+    };
     use crate::interpreter::{Interpreter, InterpreterError};
-use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_lazy_config_default() {
@@ -229,7 +227,10 @@ use std::sync::{Arc, Mutex};
         let left = Arc::new(InternalValue::Eager(left_list));
         let right = Arc::new(InternalValue::Eager(right_list));
 
-        let lazy_concat = LazyValue::ConcatList { first: left, second: right };
+        let lazy_concat = LazyValue::ConcatList {
+            first: left,
+            second: right,
+        };
 
         let mut interpreter = Interpreter::new();
         let result = lazy_concat.evaluate(&mut interpreter).unwrap();
@@ -456,7 +457,9 @@ use std::sync::{Arc, Mutex};
         let lazy_map_filtered = LazyValue::MapFiltered {
             source: Arc::new(InternalValue::Eager(source_list)),
             mapper: Arc::new(crate::internal::ThreadSafeFunction::from_function(&mapper)),
-            predicate: Arc::new(crate::internal::ThreadSafeFunction::from_function(&predicate)),
+            predicate: Arc::new(crate::internal::ThreadSafeFunction::from_function(
+                &predicate,
+            )),
         };
 
         let mut interpreter = Interpreter::new();
@@ -523,7 +526,9 @@ use std::sync::{Arc, Mutex};
         let lazy_map_filtered = LazyValue::MapFiltered {
             source: Arc::new(InternalValue::Eager(source_list)),
             mapper: Arc::new(crate::internal::ThreadSafeFunction::from_function(&mapper)),
-            predicate: Arc::new(crate::internal::ThreadSafeFunction::from_function(&predicate)),
+            predicate: Arc::new(crate::internal::ThreadSafeFunction::from_function(
+                &predicate,
+            )),
         };
 
         // Check that the structure is correct
@@ -533,7 +538,11 @@ use std::sync::{Arc, Mutex};
                 assert!(true, "Fusion optimization structure is correct");
             }
             _ => {
-                assert!(false, "Fusion did not produce MapFiltered, got: {:?}", lazy_map_filtered);
+                assert!(
+                    false,
+                    "Fusion did not produce MapFiltered, got: {:?}",
+                    lazy_map_filtered
+                );
             }
         }
     }
@@ -561,25 +570,38 @@ use std::sync::{Arc, Mutex};
     #[test]
     fn test_fused_pipeline_creation() {
         use crate::ast::{Function, Parameter, Value};
-        use crate::internal::{create_lazy_map, try_fuse_operations, ValueHandle, InternalValue, LazyValue};
+        use crate::internal::{
+            create_lazy_map, try_fuse_operations, InternalValue, LazyValue, ValueHandle,
+        };
         use std::sync::Arc;
 
         // Dummy function for map
         let map_fn = Function {
             name: Some("map_fn".to_string()),
-            parameters: vec![Parameter { name: "x".to_string(), type_annotation: None, default_value: None }],
+            parameters: vec![Parameter {
+                name: "x".to_string(),
+                type_annotation: None,
+                default_value: None,
+            }],
             body: std::sync::Arc::new(crate::ast::Expr::Identifier("x".to_string())),
             closure: Default::default(),
         };
         // Dummy function for filter
         let filter_fn = Function {
             name: Some("filter_fn".to_string()),
-            parameters: vec![Parameter { name: "x".to_string(), type_annotation: None, default_value: None }],
+            parameters: vec![Parameter {
+                name: "x".to_string(),
+                type_annotation: None,
+                default_value: None,
+            }],
             body: std::sync::Arc::new(crate::ast::Expr::Identifier("x".to_string())),
             closure: Default::default(),
         };
         // Source list
-        let source = ValueHandle::new_eager(Value::List(Arc::from(vec![Value::Integer(1), Value::Integer(2)])));
+        let source = ValueHandle::new_eager(Value::List(Arc::from(vec![
+            Value::Integer(1),
+            Value::Integer(2),
+        ])));
         // Create lazy map
         let lazy_map = create_lazy_map(source.clone(), map_fn.clone());
         // Wrap as InternalValue (clone lazy_map so it can be used below)
@@ -597,20 +619,23 @@ use std::sync::{Arc, Mutex};
     #[test]
     fn test_lazy_evaluation_timeout() {
         let config = LazyConfig {
-            timeout_ms: 10, // Very short timeout
+            timeout_ms: 10,                               // Very short timeout
             timeout_strategy: TimeoutStrategy::Fixed(10), // Use fixed timeout to ensure it's used
-            enable_recovery: false, // Disable recovery for this test
+            enable_recovery: false,                       // Disable recovery for this test
             ..Default::default()
         };
         let context = LazyEvaluationContext::new(config);
-        
+
         // Sleep to exceed timeout
         std::thread::sleep(std::time::Duration::from_millis(20));
-        
+
         // Should timeout
         let result = context.check_timeout();
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), InterpreterError::LazyEvaluationTimeout { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            InterpreterError::LazyEvaluationTimeout { .. }
+        ));
     }
 
     #[test]
@@ -623,10 +648,10 @@ use std::sync::{Arc, Mutex};
             ..Default::default()
         };
         let mut context = LazyEvaluationContext::new(config);
-        
+
         // Initial timeout should be base
         assert_eq!(context.get_effective_timeout(), 1000);
-        
+
         // Increase depth
         context.evaluation_depth = 2;
         let scaled_timeout = context.get_effective_timeout();
@@ -644,10 +669,10 @@ use std::sync::{Arc, Mutex};
             ..Default::default()
         };
         let mut context = LazyEvaluationContext::new(config);
-        
+
         // Initial timeout
         assert_eq!(context.get_effective_timeout(), 500);
-        
+
         // After recovery attempt
         context.attempt_recovery();
         let progressive_timeout = context.get_effective_timeout();
@@ -667,7 +692,7 @@ use std::sync::{Arc, Mutex};
             ..Default::default()
         };
         let context = LazyEvaluationContext::new(config);
-        
+
         assert_eq!(context.get_operation_timeout("map"), 1000);
         assert_eq!(context.get_operation_timeout("filter"), 2000);
         assert_eq!(context.get_operation_timeout("range"), 3000);
@@ -682,11 +707,11 @@ use std::sync::{Arc, Mutex};
             ..Default::default()
         };
         let handle = ValueHandle::new_eager(Value::Integer(42));
-        
+
         // Should only cache small values
         let small_value = Value::String("small".to_string().into());
         assert!(handle.should_cache(&config, &small_value));
-        
+
         // Should not cache large values
         let large_string = "x".repeat(100_000);
         let large_value = Value::String(large_string.into());
@@ -700,7 +725,7 @@ use std::sync::{Arc, Mutex};
             ..Default::default()
         };
         let handle = ValueHandle::new_eager(Value::Integer(42));
-        
+
         // Should cache everything
         let large_string = "x".repeat(100_000);
         let large_value = Value::String(large_string.into());
@@ -710,16 +735,16 @@ use std::sync::{Arc, Mutex};
     #[test]
     fn test_memory_estimation() {
         let handle = ValueHandle::new_eager(Value::Integer(42));
-        
+
         // Test various value sizes
         assert_eq!(handle.estimate_value_size(&Value::Unit), 0);
         assert_eq!(handle.estimate_value_size(&Value::Boolean(true)), 1);
         assert_eq!(handle.estimate_value_size(&Value::Integer(42)), 8);
         assert_eq!(handle.estimate_value_size(&Value::Float(3.14)), 8);
-        
+
         let string_value = Value::String("hello".to_string().into());
         assert_eq!(handle.estimate_value_size(&string_value), 20); // 5 * 4
-        
+
         let list_value = Value::List(Arc::from(vec![
             Value::Integer(1),
             Value::Integer(2),
@@ -733,14 +758,17 @@ use std::sync::{Arc, Mutex};
     fn test_circular_dependency_detection() {
         let config = LazyConfig::default();
         let context = LazyEvaluationContext::new(config);
-        
+
         // First access should succeed
         assert!(context.check_circular_dependency("thunk_1").is_ok());
-        
+
         // Second access to same thunk should fail
         let result = context.check_circular_dependency("thunk_1");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), InterpreterError::CircularDependency { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            InterpreterError::CircularDependency { .. }
+        ));
     }
 
     #[test]
@@ -749,15 +777,15 @@ use std::sync::{Arc, Mutex};
             enable_recovery: true,
             ..Default::default()
         };
-        
+
         let mut context = LazyEvaluationContext::new(config);
-        
+
         // Create circular dependency
         context.check_circular_dependency("thunk_1").unwrap();
-        
+
         // Break the cycle
         assert!(context.try_break_cycle("thunk_1").is_ok());
-        
+
         // Should be able to access again
         assert!(context.check_circular_dependency("thunk_1").is_ok());
     }
@@ -766,15 +794,18 @@ use std::sync::{Arc, Mutex};
     fn test_potential_cycle_detection() {
         let config = LazyConfig::default();
         let context = LazyEvaluationContext::new(config);
-        
+
         // Add a thunk to visited
         context.check_circular_dependency("thunk_1").unwrap();
-        
+
         // Check for potential cycle
         let dependencies = vec!["thunk_1".to_string(), "thunk_2".to_string()];
         let result = context.check_potential_cycle(&dependencies);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), InterpreterError::CircularDependency { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            InterpreterError::CircularDependency { .. }
+        ));
     }
 
     #[test]
@@ -784,15 +815,18 @@ use std::sync::{Arc, Mutex};
             ..Default::default()
         };
         let mut context = LazyEvaluationContext::new(config);
-        
+
         // Should succeed within limit
         assert!(context.increment_depth().is_ok());
         assert!(context.increment_depth().is_ok());
-        
+
         // Should fail when exceeding limit
         let result = context.increment_depth();
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), InterpreterError::EvaluationChainTooDeep { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            InterpreterError::EvaluationChainTooDeep { .. }
+        ));
     }
 
     #[test]
@@ -802,10 +836,10 @@ use std::sync::{Arc, Mutex};
             ..Default::default()
         };
         let context = LazyEvaluationContext::new(config);
-        
+
         // Thread safety check should pass on same thread
         assert!(context.check_thread_safety().is_ok());
-        
+
         // Test thread ID tracking
         assert!(context.thread_id.is_some());
         assert_eq!(context.thread_id.unwrap(), std::thread::current().id());
@@ -815,14 +849,14 @@ use std::sync::{Arc, Mutex};
     fn test_lock_manager_timeout() {
         let lock_manager = LockManager::default();
         let mutex = Arc::new(Mutex::new(42));
-        
+
         // Should succeed immediately
         let guard = lock_manager.try_acquire_lock(&mutex);
         assert!(guard.is_ok());
-        
+
         // Drop the guard to release the lock
         drop(guard);
-        
+
         // Should succeed again
         let guard2 = lock_manager.try_acquire_lock(&mutex);
         assert!(guard2.is_ok());
@@ -834,9 +868,9 @@ use std::sync::{Arc, Mutex};
             timeout_ms: 1000, // Short timeout for testing
             ..Default::default()
         };
-        
+
         let mut context = LazyEvaluationContext::new(config);
-        
+
         // Test zero step (should error)
         let range = LazyValue::Range {
             start: 1,
@@ -844,17 +878,20 @@ use std::sync::{Arc, Mutex};
             step: 0,
             inclusive: false,
         };
-        
+
         let result = range.evaluate_range_with_context(1, 10, 0, false, &mut context);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), InterpreterError::LazyEvaluationError { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            InterpreterError::LazyEvaluationError { .. }
+        ));
     }
 
     #[test]
     fn test_range_overflow_protection() {
         let config = LazyConfig::default();
         let mut context = LazyEvaluationContext::new(config);
-        
+
         // Test overflow protection
         let range = LazyValue::Range {
             start: i64::MAX - 1,
@@ -862,20 +899,24 @@ use std::sync::{Arc, Mutex};
             step: 2,
             inclusive: false,
         };
-        let result = range.evaluate_range_with_context(i64::MAX - 1, i64::MAX, 2, false, &mut context);
+        let result =
+            range.evaluate_range_with_context(i64::MAX - 1, i64::MAX, 2, false, &mut context);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), InterpreterError::LazyEvaluationError { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            InterpreterError::LazyEvaluationError { .. }
+        ));
     }
 
     #[test]
     fn test_enhanced_memory_pressure_detection() {
         // Test the enhanced memory pressure detection
         assert!(!check_memory_pressure(1000)); // High threshold should not trigger
-        
+
         // Test memory usage estimation
         let usage = get_estimated_memory_usage();
         assert!(usage > 0); // Should return some positive value
-        
+
         let lazy_usage = get_lazy_evaluation_memory_usage();
         assert!(lazy_usage > 0); // Should return some positive value
     }
@@ -888,7 +929,7 @@ use std::sync::{Arc, Mutex};
             ..Default::default()
         };
         let mut context = LazyEvaluationContext::new(config);
-        
+
         // Test memory optimization
         assert!(context.optimize_memory_usage().is_ok());
     }
@@ -902,7 +943,7 @@ use std::sync::{Arc, Mutex};
         };
         let mut interpreter = Interpreter::new();
         let mut context = LazyEvaluationContext::new(config);
-        
+
         // Create a simple range that should succeed
         let range = LazyValue::Range {
             start: 1,
@@ -910,10 +951,10 @@ use std::sync::{Arc, Mutex};
             step: 1,
             inclusive: false,
         };
-        
+
         let result = range.evaluate_with_context(&mut interpreter, &mut context);
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             Value::List(items) => {
                 assert_eq!(items.len(), 4);
@@ -927,7 +968,7 @@ use std::sync::{Arc, Mutex};
     #[test]
     fn test_lazy_config_comprehensive() {
         let config = LazyConfig::default();
-        
+
         // Test all configuration options are set
         assert!(config.lazy_by_default);
         assert_eq!(config.lazy_threshold, 100);
@@ -955,16 +996,16 @@ use std::sync::{Arc, Mutex};
             memory_strategy: MemoryStrategy::Balanced,
             ..Default::default()
         };
-        
+
         let handle = ValueHandle::new_eager(Value::Integer(42));
-        
+
         // Test caching decisions
         let small_value = Value::Integer(1);
         assert!(handle.should_cache(&config, &small_value));
-        
+
         let medium_value = Value::String("x".repeat(1000).into());
         assert!(handle.should_cache(&config, &medium_value));
-        
+
         let large_value = Value::String("x".repeat(1_000_000).into());
         assert!(!handle.should_cache(&config, &large_value));
     }
@@ -976,16 +1017,16 @@ use std::sync::{Arc, Mutex};
             timeout_ms: 50, // Short timeout
             ..Default::default()
         };
-        
+
         let mut context = LazyEvaluationContext::new(config.clone());
-        
+
         // Test that recovery attempts are tracked
         assert_eq!(context.recovery_attempts, 0);
         assert!(context.can_recover());
-        
+
         context.attempt_recovery();
         assert_eq!(context.recovery_attempts, 1);
-        
+
         context.attempt_recovery();
         context.attempt_recovery();
         context.attempt_recovery(); // Max attempts reached
@@ -1006,16 +1047,22 @@ use std::sync::{Arc, Mutex};
             ..Default::default()
         };
         let context = LazyEvaluationContext::new(config);
-        
+
         // Test cycle detection stats
         let (visited_count, recovery_count) = context.get_cycle_detection_stats();
         assert_eq!(visited_count, 0);
         assert_eq!(recovery_count, 0);
-        
+
         // Test timeout strategies
-        assert!(matches!(context.config.timeout_strategy, TimeoutStrategy::Adaptive { .. }));
-        
+        assert!(matches!(
+            context.config.timeout_strategy,
+            TimeoutStrategy::Adaptive { .. }
+        ));
+
         // Test memory strategies
-        assert!(matches!(context.config.memory_strategy, MemoryStrategy::Balanced));
+        assert!(matches!(
+            context.config.memory_strategy,
+            MemoryStrategy::Balanced
+        ));
     }
 }

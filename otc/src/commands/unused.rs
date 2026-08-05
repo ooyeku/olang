@@ -7,7 +7,10 @@ pub fn execute(dir_path: String, verbose: bool) -> Result<()> {
     let path = Path::new(&dir_path);
 
     if verbose {
-        println!("Scanning for unused shared functions in: {}", path.display());
+        println!(
+            "Scanning for unused shared functions in: {}",
+            path.display()
+        );
     }
 
     let analysis = analyze_unused_functions(path)?;
@@ -55,7 +58,7 @@ fn analyze_unused_functions(dir_path: &Path) -> Result<UnusedAnalysis> {
             .filter(|func| !used_functions.contains(*func))
             .cloned()
             .collect();
-        
+
         if !unused.is_empty() {
             unused_functions.insert(file.clone(), unused);
         }
@@ -70,7 +73,7 @@ fn analyze_unused_functions(dir_path: &Path) -> Result<UnusedAnalysis> {
 
 fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
-    
+
     if dir_path.is_file() && dir_path.extension().map_or(false, |ext| ext == "ol") {
         files.push(dir_path.to_path_buf());
         return Ok(files);
@@ -80,7 +83,7 @@ fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
         for entry in std::fs::read_dir(dir_path)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_file() && path.extension().map_or(false, |ext| ext == "ol") {
                 files.push(path);
             } else if path.is_dir() {
@@ -147,7 +150,7 @@ fn display_unused_analysis(analysis: &UnusedAnalysis, verbose: bool) {
     }
 
     println!("Unused shared functions:");
-    
+
     for (file, functions) in &analysis.unused_functions {
         println!("\n{}:", file);
         for func in functions {
@@ -157,16 +160,24 @@ fn display_unused_analysis(analysis: &UnusedAnalysis, verbose: bool) {
 
     if verbose {
         println!("\n=== Analysis Summary ===");
-        let total_shared = analysis.shared_functions.values().map(|v| v.len()).sum::<usize>();
-        let total_unused = analysis.unused_functions.values().map(|v| v.len()).sum::<usize>();
-        
+        let total_shared = analysis
+            .shared_functions
+            .values()
+            .map(|v| v.len())
+            .sum::<usize>();
+        let total_unused = analysis
+            .unused_functions
+            .values()
+            .map(|v| v.len())
+            .sum::<usize>();
+
         println!("Total shared functions: {}", total_shared);
         println!("Total used functions: {}", analysis.used_functions.len());
         println!("Total unused functions: {}", total_unused);
-        
+
         if total_shared > 0 {
             let usage_rate = ((total_shared - total_unused) as f32 / total_shared as f32) * 100.0;
             println!("Usage rate: {:.1}%", usage_rate);
         }
     }
-} 
+}

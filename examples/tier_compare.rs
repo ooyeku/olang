@@ -18,7 +18,12 @@ fn main() {
         // Interpreter
         let mut interpreter = Interpreter::new();
         interpreter.eval_program(program.clone()).unwrap();
-        let callee = interpreter.get_user_variables().get(name).cloned().cloned().unwrap();
+        let callee = interpreter
+            .get_user_variables()
+            .get(name)
+            .cloned()
+            .cloned()
+            .unwrap();
         let start = Instant::now();
         let interp_val = interpreter.call_function(callee, args.clone()).unwrap();
         let interp_time = start.elapsed();
@@ -36,7 +41,11 @@ fn main() {
         }
         let ovm_args: Vec<OvmValue> = args.iter().map(|v| OvmValue::from_ast(v.clone())).collect();
         let start = Instant::now();
-        let vm_val = vm.execute(id.unwrap(), &ovm_args).unwrap().to_ast().unwrap();
+        let vm_val = vm
+            .execute(id.unwrap(), &ovm_args)
+            .unwrap()
+            .to_ast()
+            .unwrap();
         let vm_time = start.elapsed();
 
         assert_eq!(interp_val, vm_val, "results must agree");

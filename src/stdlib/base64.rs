@@ -385,11 +385,19 @@ mod tests {
                     assert_eq!(builtin.name, format!("base64.{}", func_name));
                     assert_eq!(builtin.arity, 1); // All base64 functions take 1 argument
                 } else {
-                    assert!(false, "Expected builtin function for {}, got: {:?}", func_name, fields[func_name]);
+                    assert!(
+                        false,
+                        "Expected builtin function for {}, got: {:?}",
+                        func_name, fields[func_name]
+                    );
                 }
             }
         } else {
-            assert!(false, "Expected struct for base64 module, got: {:?}", module);
+            assert!(
+                false,
+                "Expected struct for base64 module, got: {:?}",
+                module
+            );
         }
     }
 

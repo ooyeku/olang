@@ -6,8 +6,8 @@
 //! program results (see the differential tests in tests/).
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use std::time::Duration;
 use olang::{Interpreter, Parser};
+use std::time::Duration;
 
 /// Parse once, evaluate per-iteration on a shared interpreter.
 fn bench_program(c: &mut Criterion, name: &str, source: &str) {

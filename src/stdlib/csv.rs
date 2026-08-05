@@ -754,7 +754,7 @@ fn csv_add_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
                 )))))
             }
         };
-        
+
         if i == 0 {
             // Add header to first row
             new_row.push(Value::String(Arc::new(header.to_string())));
@@ -878,15 +878,16 @@ fn csv_set_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
     }
 
     let mut new_csv: Vec<Value> = csv_data.iter().cloned().collect();
-    
+
     // Replace first row with headers
-    let header_values: Vec<Value> = headers.iter().map(|h| {
-        match h {
+    let header_values: Vec<Value> = headers
+        .iter()
+        .map(|h| match h {
             Value::String(s) => Value::String(s.clone()),
             _ => Value::String(Arc::new("".to_string())),
-        }
-    }).collect();
-    
+        })
+        .collect();
+
     new_csv[0] = Value::List(header_values.into());
 
     Ok(Value::Ok(Box::new(Value::List(new_csv.into()))))
@@ -932,12 +933,12 @@ fn csv_filter_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
     };
 
     let mut filtered_rows = Vec::new();
-    
+
     // Always preserve the header row (first row)
     if !csv_data.is_empty() {
         filtered_rows.push(csv_data[0].clone());
     }
-    
+
     // Filter data rows (starting from row 1)
     for row in csv_data.iter().skip(1) {
         let row_data = match row {
@@ -1006,13 +1007,13 @@ fn csv_sort_by_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     }
 
     let mut sorted_rows: Vec<Value> = csv_data.iter().skip(1).cloned().collect();
-    
+
     sorted_rows.sort_by(|a, b| {
         let a_row = match a {
             Value::List(row_data) => row_data,
             _ => return std::cmp::Ordering::Equal,
         };
-        
+
         let b_row = match b {
             Value::List(row_data) => row_data,
             _ => return std::cmp::Ordering::Equal,
@@ -1028,7 +1029,9 @@ fn csv_sort_by_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         let comparison = match (a_val, b_val) {
             (Value::String(a_str), Value::String(b_str)) => a_str.cmp(b_str),
             (Value::Integer(a_int), Value::Integer(b_int)) => a_int.cmp(b_int),
-            (Value::Float(a_float), Value::Float(b_float)) => a_float.partial_cmp(b_float).unwrap_or(std::cmp::Ordering::Equal),
+            (Value::Float(a_float), Value::Float(b_float)) => a_float
+                .partial_cmp(b_float)
+                .unwrap_or(std::cmp::Ordering::Equal),
             _ => std::cmp::Ordering::Equal,
         };
 
@@ -1076,27 +1079,36 @@ fn csv_to_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
 
     if csv_data.is_empty() {
-        return Ok(Value::Ok(Box::new(Value::String(Arc::new("[]".to_string())))));
+        return Ok(Value::Ok(Box::new(Value::String(Arc::new(
+            "[]".to_string(),
+        )))));
     }
 
     let mut json_objects = Vec::new();
     let headers = if include_headers && !csv_data.is_empty() {
         match &csv_data[0] {
-            Value::List(header_row) => header_row.iter().map(|h| {
-                match h {
+            Value::List(header_row) => header_row
+                .iter()
+                .map(|h| match h {
                     Value::String(s) => s.as_ref(),
                     _ => "",
-                }
-            }).collect::<Vec<&str>>(),
-            _ => return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "to_json: invalid CSV data structure".to_string(),
-            ))))),
+                })
+                .collect::<Vec<&str>>(),
+            _ => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    "to_json: invalid CSV data structure".to_string(),
+                )))))
+            }
         }
     } else {
         Vec::new()
     };
 
-    let start_row = if include_headers && !csv_data.is_empty() { 1 } else { 0 };
+    let start_row = if include_headers && !csv_data.is_empty() {
+        1
+    } else {
+        0
+    };
 
     for row in &csv_data[start_row..] {
         let row_data = match row {
@@ -1182,12 +1194,13 @@ fn csv_from_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     let mut csv_rows = Vec::new();
 
     // Add header row
-    let header_row: Vec<Value> = headers.iter().map(|h| {
-        match h {
+    let header_row: Vec<Value> = headers
+        .iter()
+        .map(|h| match h {
             Value::String(s) => Value::String(s.clone()),
             _ => Value::String(Arc::new("".to_string())),
-        }
-    }).collect();
+        })
+        .collect();
     csv_rows.push(Value::List(header_row.into()));
 
     for obj in objects {
@@ -1343,7 +1356,11 @@ mod tests {
                 if let Value::Builtin(builtin) = &fields[func_name] {
                     assert_eq!(builtin.name, format!("csv.{}", func_name));
                 } else {
-                    assert!(false, "Expected builtin function for {}, got: {:?}", func_name, fields[func_name]);
+                    assert!(
+                        false,
+                        "Expected builtin function for {}, got: {:?}",
+                        func_name, fields[func_name]
+                    );
                 }
             }
         } else {
@@ -1697,12 +1714,12 @@ mod tests {
             list_val(vec![string_val("name"), string_val("age")]),
             list_val(vec![string_val("Alice"), string_val("30")]),
         ]);
-        
+
         let new_row = list_val(vec![string_val("Bob"), string_val("25")]);
         let result = csv_add_row(vec![csv_data.clone(), new_row]).unwrap();
         let result_csv = assert_ok(&result);
         let rows = extract_list(result_csv);
-        
+
         assert_eq!(rows.len(), 3);
         let last_row = extract_list(&rows[2]);
         assert_eq!(extract_string(&last_row[0]), "Bob");
@@ -1711,7 +1728,7 @@ mod tests {
         // Test error conditions
         let result = csv_add_row(vec![string_val("not csv")]).unwrap();
         assert_err(&result);
-        
+
         let result = csv_add_row(vec![csv_data, string_val("not a row")]).unwrap();
         assert_err(&result);
     }
@@ -1724,21 +1741,25 @@ mod tests {
             list_val(vec![string_val("Alice"), string_val("30")]),
             list_val(vec![string_val("Bob"), string_val("25")]),
         ]);
-        
-        let column_data = list_val(vec![string_val("city"), string_val("NYC"), string_val("LA")]);
+
+        let column_data = list_val(vec![
+            string_val("city"),
+            string_val("NYC"),
+            string_val("LA"),
+        ]);
         let header = string_val("location");
-        
+
         let result = csv_add_column(vec![csv_data.clone(), column_data, header.clone()]).unwrap();
         let result_csv = assert_ok(&result);
         let rows = extract_list(result_csv);
-        
+
         assert_eq!(rows.len(), 3);
-        
+
         // Check header row
         let header_row = extract_list(&rows[0]);
         assert_eq!(header_row.len(), 3);
         assert_eq!(extract_string(&header_row[2]), "location");
-        
+
         // Check data rows
         let first_data_row = extract_list(&rows[1]);
         assert_eq!(first_data_row.len(), 3);
@@ -1747,7 +1768,7 @@ mod tests {
         // Test error conditions
         let result = csv_add_column(vec![string_val("not csv")]).unwrap();
         assert_err(&result);
-        
+
         let wrong_length_column = list_val(vec![string_val("city")]);
         let result = csv_add_column(vec![csv_data, wrong_length_column, header]).unwrap();
         assert_err(&result);
@@ -1760,19 +1781,32 @@ mod tests {
             list_val(vec![string_val("name"), string_val("age")]),
             list_val(vec![string_val("Alice"), string_val("30")]),
         ]);
-        
-        let result = csv_set_cell(vec![csv_data.clone(), int_val(1), int_val(1), string_val("31")]).unwrap();
+
+        let result = csv_set_cell(vec![
+            csv_data.clone(),
+            int_val(1),
+            int_val(1),
+            string_val("31"),
+        ])
+        .unwrap();
         let result_csv = assert_ok(&result);
         let rows = extract_list(result_csv);
-        
+
         let modified_row = extract_list(&rows[1]);
         assert_eq!(extract_string(&modified_row[1]), "31");
 
         // Test error conditions
-        let result = csv_set_cell(vec![csv_data.clone(), int_val(10), int_val(0), string_val("test")]).unwrap();
+        let result = csv_set_cell(vec![
+            csv_data.clone(),
+            int_val(10),
+            int_val(0),
+            string_val("test"),
+        ])
+        .unwrap();
         assert_err(&result); // Row index out of bounds
-        
-        let result = csv_set_cell(vec![csv_data, int_val(0), int_val(10), string_val("test")]).unwrap();
+
+        let result =
+            csv_set_cell(vec![csv_data, int_val(0), int_val(10), string_val("test")]).unwrap();
         assert_err(&result); // Column index out of bounds
     }
 
@@ -1783,12 +1817,12 @@ mod tests {
             list_val(vec![string_val("old1"), string_val("old2")]),
             list_val(vec![string_val("Alice"), string_val("30")]),
         ]);
-        
+
         let new_headers = list_val(vec![string_val("name"), string_val("age")]);
         let result = csv_set_headers(vec![csv_data, new_headers.clone()]).unwrap();
         let result_csv = assert_ok(&result);
         let rows = extract_list(result_csv);
-        
+
         let header_row = extract_list(&rows[0]);
         assert_eq!(extract_string(&header_row[0]), "name");
         assert_eq!(extract_string(&header_row[1]), "age");
@@ -1808,11 +1842,11 @@ mod tests {
             list_val(vec![string_val("Bob"), string_val("25")]),
             list_val(vec![string_val("Charlie"), string_val("30")]),
         ]);
-        
+
         let result = csv_filter_rows(vec![csv_data.clone(), int_val(1), string_val("30")]).unwrap();
         let filtered_csv = assert_ok(&result);
         let rows = extract_list(filtered_csv);
-        
+
         assert_eq!(rows.len(), 3); // Header + 2 matching rows
         let first_match = extract_list(&rows[1]);
         assert_eq!(extract_string(&first_match[0]), "Alice");
@@ -1835,12 +1869,13 @@ mod tests {
             list_val(vec![string_val("Alice"), string_val("30")]),
             list_val(vec![string_val("Bob"), string_val("20")]),
         ]);
-        
+
         // Sort by age ascending
-        let result = csv_sort_by_column(vec![csv_data.clone(), int_val(1), bool_val(true)]).unwrap();
+        let result =
+            csv_sort_by_column(vec![csv_data.clone(), int_val(1), bool_val(true)]).unwrap();
         let sorted_csv = assert_ok(&result);
         let rows = extract_list(sorted_csv);
-        
+
         // Check that ages are in ascending order
         let first_data_row = extract_list(&rows[1]);
         assert_eq!(extract_string(&first_data_row[1]), "20"); // Bob
@@ -1853,7 +1888,7 @@ mod tests {
         let result = csv_sort_by_column(vec![csv_data, int_val(1), bool_val(false)]).unwrap();
         let sorted_csv = assert_ok(&result);
         let rows = extract_list(sorted_csv);
-        
+
         // Check that ages are in descending order
         let first_data_row = extract_list(&rows[1]);
         assert_eq!(extract_string(&first_data_row[1]), "30"); // Alice
@@ -1867,11 +1902,11 @@ mod tests {
             list_val(vec![string_val("Alice"), string_val("30")]),
             list_val(vec![string_val("Bob"), string_val("25")]),
         ]);
-        
+
         // Convert with headers
         let result = csv_to_json(vec![csv_data.clone(), bool_val(true)]).unwrap();
         let json_str = extract_string(assert_ok(&result));
-        
+
         assert!(json_str.contains("\"name\":\"Alice\""));
         assert!(json_str.contains("\"age\":\"30\""));
         assert!(json_str.contains("\"name\":\"Bob\""));
@@ -1880,7 +1915,7 @@ mod tests {
         // Convert without headers
         let result = csv_to_json(vec![csv_data, bool_val(false)]).unwrap();
         let json_str = extract_string(assert_ok(&result));
-        
+
         assert!(json_str.contains("\"column_0\":\"name\""));
         assert!(json_str.contains("\"column_1\":\"age\""));
 
@@ -1896,17 +1931,17 @@ mod tests {
         // Test successful JSON to CSV conversion
         let json_data = string_val(r#"[{"name":"Alice","age":"30"},{"name":"Bob","age":"25"}]"#);
         let headers = list_val(vec![string_val("name"), string_val("age")]);
-        
+
         let result = csv_from_json(vec![json_data, headers.clone()]).unwrap();
         let csv_data = assert_ok(&result);
         let rows = extract_list(csv_data);
-        
+
         assert_eq!(rows.len(), 3); // Headers + 2 data rows
-        
+
         let header_row = extract_list(&rows[0]);
         assert_eq!(extract_string(&header_row[0]), "name");
         assert_eq!(extract_string(&header_row[1]), "age");
-        
+
         let first_data_row = extract_list(&rows[1]);
         assert_eq!(extract_string(&first_data_row[0]), "Alice");
         assert_eq!(extract_string(&first_data_row[1]), "30");
@@ -1932,24 +1967,30 @@ mod tests {
             list_val(vec![string_val("Alice"), string_val("30")]),
             list_val(vec![string_val("Bob"), string_val("25")]),
         ]);
-        
+
         // Add a new column
-        let column_data = list_val(vec![string_val("city"), string_val("NYC"), string_val("LA")]);
+        let column_data = list_val(vec![
+            string_val("city"),
+            string_val("NYC"),
+            string_val("LA"),
+        ]);
         let result = csv_add_column(vec![csv_data, column_data, string_val("location")]).unwrap();
         let csv_with_column = assert_ok(&result);
-        
+
         // Filter rows
-        let result = csv_filter_rows(vec![csv_with_column.clone(), int_val(2), string_val("NYC")]).unwrap();
+        let result =
+            csv_filter_rows(vec![csv_with_column.clone(), int_val(2), string_val("NYC")]).unwrap();
         let filtered_csv = assert_ok(&result);
-        
+
         // Sort by age
-        let result = csv_sort_by_column(vec![filtered_csv.clone(), int_val(1), bool_val(true)]).unwrap();
+        let result =
+            csv_sort_by_column(vec![filtered_csv.clone(), int_val(1), bool_val(true)]).unwrap();
         let sorted_csv = assert_ok(&result);
-        
+
         // Convert to JSON
         let result = csv_to_json(vec![sorted_csv.clone(), bool_val(true)]).unwrap();
         let json_str = extract_string(assert_ok(&result));
-        
+
         assert!(json_str.contains("\"name\":\"Alice\""));
         assert!(json_str.contains("\"location\":\"NYC\""));
     }

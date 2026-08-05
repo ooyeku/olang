@@ -479,7 +479,7 @@ impl BuiltinFunctions {
                 })
                 .collect();
             let arguments = forced_args?;
-            
+
             // Continue with the original function call logic
             return Self::call_internal(builtins, name, arguments, interpreter);
         }
@@ -727,9 +727,13 @@ impl BuiltinFunctions {
                 inclusive,
             } => {
                 // For ranges, we still need to materialize, but only once
-                let end_val = if *inclusive { end.saturating_add(1) } else { *end };
+                let end_val = if *inclusive {
+                    end.saturating_add(1)
+                } else {
+                    *end
+                };
                 let range_size = end_val.saturating_sub(*start).max(0) as usize;
-                
+
                 // MEMORY MONITORING: Check if range is too large before creating
                 if range_size > 10_000_000 {
                     return Err(InterpreterError::RuntimeError {
@@ -739,14 +743,14 @@ impl BuiltinFunctions {
                         ),
                     });
                 }
-                
+
                 let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
-                
+
                 // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large range operations
                 if range_size > 50 {
                     interpreter.force_memory_cleanup();
                 }
-                
+
                 return Self::process_map_range(range_vec, function, interpreter);
             }
             _ => {
@@ -761,11 +765,18 @@ impl BuiltinFunctions {
         if config.lazy_by_default && list_ref.len() > config.lazy_threshold {
             if let Value::Function(func) = function {
                 let source_handle = crate::internal::utils::value_to_handle(list.clone(), config);
-                let mut lazy_val = crate::internal::create_lazy_map(source_handle.clone(), func.clone());
+                let mut lazy_val =
+                    crate::internal::create_lazy_map(source_handle.clone(), func.clone());
                 // Fusion logic: if the source is already a lazy value, try to fuse
                 if config.fusion_enabled {
-                    if let crate::internal::InternalValue::Lazy(ref prev_lazy) = *source_handle.get_internal() {
-                        if let Some(fused) = crate::internal::try_fuse_operations(prev_lazy, "map", Some(func.clone())) {
+                    if let crate::internal::InternalValue::Lazy(ref prev_lazy) =
+                        *source_handle.get_internal()
+                    {
+                        if let Some(fused) = crate::internal::try_fuse_operations(
+                            prev_lazy,
+                            "map",
+                            Some(func.clone()),
+                        ) {
                             lazy_val = fused;
                         }
                     }
@@ -782,7 +793,7 @@ impl BuiltinFunctions {
             let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
             result.push(value);
         }
-        
+
         Ok(Value::List(result.into()))
     }
 
@@ -840,9 +851,13 @@ impl BuiltinFunctions {
                 inclusive,
             } => {
                 // For ranges, we still need to materialize, but only once
-                let end_val = if *inclusive { end.saturating_add(1) } else { *end };
+                let end_val = if *inclusive {
+                    end.saturating_add(1)
+                } else {
+                    *end
+                };
                 let range_size = end_val.saturating_sub(*start).max(0) as usize;
-                
+
                 // MEMORY MONITORING: Check if range is too large before creating
                 if range_size > 10_000_000 {
                     return Err(InterpreterError::RuntimeError {
@@ -852,14 +867,14 @@ impl BuiltinFunctions {
                         ),
                     });
                 }
-                
+
                 let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
-                
+
                 // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large range operations
                 if range_size > 50 {
                     interpreter.force_memory_cleanup();
                 }
-                
+
                 return Self::process_filter_range(range_vec, function, interpreter);
             }
             _ => {
@@ -874,11 +889,18 @@ impl BuiltinFunctions {
         if config.lazy_by_default && list_ref.len() > config.lazy_threshold {
             if let Value::Function(func) = function {
                 let source_handle = crate::internal::utils::value_to_handle(list.clone(), config);
-                let mut lazy_val = crate::internal::create_lazy_filter(source_handle.clone(), func.clone());
+                let mut lazy_val =
+                    crate::internal::create_lazy_filter(source_handle.clone(), func.clone());
                 // Fusion logic: if the source is already a lazy value, try to fuse
                 if config.fusion_enabled {
-                    if let crate::internal::InternalValue::Lazy(ref prev_lazy) = *source_handle.get_internal() {
-                        if let Some(fused) = crate::internal::try_fuse_operations(prev_lazy, "filter", Some(func.clone())) {
+                    if let crate::internal::InternalValue::Lazy(ref prev_lazy) =
+                        *source_handle.get_internal()
+                    {
+                        if let Some(fused) = crate::internal::try_fuse_operations(
+                            prev_lazy,
+                            "filter",
+                            Some(func.clone()),
+                        ) {
                             lazy_val = fused;
                         }
                     }
@@ -896,7 +918,7 @@ impl BuiltinFunctions {
                 result.push(item.clone())
             }
         }
-        
+
         Ok(Value::List(result.into()))
     }
 
@@ -1109,7 +1131,13 @@ impl BuiltinFunctions {
                     // For large ranges, this could be made lazy in the future
                     // For now, still generate eagerly but with a warning for very large ranges
                     if end > 100000 {
-                        crate::log::get_logger().warn("builtin", &format!("Generating very large range ({}), consider using lazy evaluation", end));
+                        crate::log::get_logger().warn(
+                            "builtin",
+                            &format!(
+                                "Generating very large range ({}), consider using lazy evaluation",
+                                end
+                            ),
+                        );
                     }
                     let mut result = Vec::new();
                     for i in 0..end {
@@ -1461,7 +1489,11 @@ impl BuiltinFunctions {
                 inclusive,
             } => {
                 // Convert range to vector of integers
-                let end_val = if *inclusive { end.saturating_add(1) } else { *end };
+                let end_val = if *inclusive {
+                    end.saturating_add(1)
+                } else {
+                    *end
+                };
                 let values: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
                 let use_parallel = should_parallelize(values.len());
                 (values, use_parallel)
@@ -1960,7 +1992,8 @@ impl BuiltinFunctions {
             // Use the existing utility for take
             let source_internal = source_handle.get_internal();
             crate::internal::LazyValue::Thunk(std::sync::Arc::new(move |interpreter| {
-                let source_value = crate::internal::InternalValue::force(&source_internal, interpreter)?;
+                let source_value =
+                    crate::internal::InternalValue::force(&source_internal, interpreter)?;
                 match source_value {
                     Value::List(items) => {
                         let taken: Vec<_> = items.iter().take(n).cloned().collect();
@@ -1974,7 +2007,9 @@ impl BuiltinFunctions {
         };
         // Fusion logic
         if config.fusion_enabled {
-            if let crate::internal::InternalValue::Lazy(ref prev_lazy) = *source_handle.get_internal() {
+            if let crate::internal::InternalValue::Lazy(ref prev_lazy) =
+                *source_handle.get_internal()
+            {
                 if let Some(fused) = crate::internal::try_fuse_operations(prev_lazy, "take", None) {
                     lazy_val = fused;
                 }
@@ -2010,7 +2045,8 @@ impl BuiltinFunctions {
             // Use the existing utility for skip
             let source_internal = source_handle.get_internal();
             crate::internal::LazyValue::Thunk(std::sync::Arc::new(move |interpreter| {
-                let source_value = crate::internal::InternalValue::force(&source_internal, interpreter)?;
+                let source_value =
+                    crate::internal::InternalValue::force(&source_internal, interpreter)?;
                 match source_value {
                     Value::List(items) => {
                         let skipped: Vec<_> = items.iter().skip(n).cloned().collect();
@@ -2024,7 +2060,9 @@ impl BuiltinFunctions {
         };
         // Fusion logic
         if config.fusion_enabled {
-            if let crate::internal::InternalValue::Lazy(ref prev_lazy) = *source_handle.get_internal() {
+            if let crate::internal::InternalValue::Lazy(ref prev_lazy) =
+                *source_handle.get_internal()
+            {
                 if let Some(fused) = crate::internal::try_fuse_operations(prev_lazy, "skip", None) {
                     lazy_val = fused;
                 }
@@ -2145,7 +2183,11 @@ impl BuiltinFunctions {
                 inclusive,
             } => {
                 // Convert range to vector of integers
-                let end_val = if *inclusive { end.saturating_add(1) } else { *end };
+                let end_val = if *inclusive {
+                    end.saturating_add(1)
+                } else {
+                    *end
+                };
                 (*start..end_val).map(Value::Integer).collect()
             }
             _ => {
@@ -2160,11 +2202,21 @@ impl BuiltinFunctions {
         if config.lazy_by_default && list_values.len() > config.lazy_threshold {
             if let (Value::Function(func), Value::Function(pred)) = (function, predicate) {
                 let source_handle = crate::internal::utils::value_to_handle(list.clone(), config);
-                let mut lazy_val = crate::internal::create_lazy_map_filtered(source_handle.clone(), func.clone(), pred.clone());
+                let mut lazy_val = crate::internal::create_lazy_map_filtered(
+                    source_handle.clone(),
+                    func.clone(),
+                    pred.clone(),
+                );
                 // Fusion logic: if the source is already a lazy value, try to fuse
                 if config.fusion_enabled {
-                    if let crate::internal::InternalValue::Lazy(ref prev_lazy) = *source_handle.get_internal() {
-                        if let Some(fused) = crate::internal::try_fuse_operations(prev_lazy, "map_filtered", Some(func.clone())) {
+                    if let crate::internal::InternalValue::Lazy(ref prev_lazy) =
+                        *source_handle.get_internal()
+                    {
+                        if let Some(fused) = crate::internal::try_fuse_operations(
+                            prev_lazy,
+                            "map_filtered",
+                            Some(func.clone()),
+                        ) {
                             lazy_val = fused;
                         }
                     }
@@ -2280,7 +2332,8 @@ impl BuiltinFunctions {
             Value::Boolean(b) => &b.to_string(),
             _ => {
                 return Err(InterpreterError::TypeError {
-                    message: "map_has_key: key must be string, integer, float, or boolean".to_string(),
+                    message: "map_has_key: key must be string, integer, float, or boolean"
+                        .to_string(),
                 })
             }
         };
@@ -2359,7 +2412,8 @@ impl BuiltinFunctions {
             Value::Boolean(b) => &b.to_string(),
             _ => {
                 return Err(InterpreterError::TypeError {
-                    message: "map_remove: key must be string, integer, float, or boolean".to_string(),
+                    message: "map_remove: key must be string, integer, float, or boolean"
+                        .to_string(),
                 })
             }
         };
@@ -2402,7 +2456,9 @@ impl BuiltinFunctions {
         match &args[0] {
             Value::Map(_) => {
                 // Return an empty map
-                Ok(Value::Map(std::sync::Arc::new(std::collections::HashMap::new())))
+                Ok(Value::Map(std::sync::Arc::new(
+                    std::collections::HashMap::new(),
+                )))
             }
             _ => Err(InterpreterError::TypeError {
                 message: "map_clear: argument must be a map".to_string(),
@@ -2508,7 +2564,8 @@ impl BuiltinFunctions {
                 interpreter.call_function(handler.clone(), vec![*err.clone()])
             }
             _ => Err(InterpreterError::TypeError {
-                message: "unwrap_or_else: first argument must be a Result type (Ok or Err)".to_string(),
+                message: "unwrap_or_else: first argument must be a Result type (Ok or Err)"
+                    .to_string(),
             }),
         }
     }
@@ -2569,7 +2626,8 @@ impl BuiltinFunctions {
 
         match &args[0] {
             Value::Ok(inner) => {
-                let mapped_value = interpreter.call_function(function.clone(), vec![*inner.clone()])?;
+                let mapped_value =
+                    interpreter.call_function(function.clone(), vec![*inner.clone()])?;
                 Ok(Value::Ok(Box::new(mapped_value)))
             }
             Value::Err(err) => Ok(Value::Err(err.clone())),
@@ -2598,16 +2656,16 @@ impl BuiltinFunctions {
         match &args[0] {
             Value::Ok(inner) => Ok(Value::Ok(inner.clone())),
             Value::Err(err) => {
-                let mapped_error = interpreter.call_function(function.clone(), vec![*err.clone()])?;
+                let mapped_error =
+                    interpreter.call_function(function.clone(), vec![*err.clone()])?;
                 Ok(Value::Err(Box::new(mapped_error)))
             }
             _ => Err(InterpreterError::TypeError {
-                message: "result_map_err: first argument must be a Result type (Ok or Err)".to_string(),
+                message: "result_map_err: first argument must be a Result type (Ok or Err)"
+                    .to_string(),
             }),
         }
     }
-
-
 }
 
 impl Clone for BuiltinFunctions {

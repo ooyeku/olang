@@ -650,7 +650,11 @@ mod tests {
                     assert_eq!(builtin.name, format!("os.{}", func_name));
                     assert_eq!(builtin.arity, expected_arity);
                 } else {
-                    assert!(false, "Expected builtin function for {}, got: {:?}", func_name, fields[func_name]);
+                    assert!(
+                        false,
+                        "Expected builtin function for {}, got: {:?}",
+                        func_name, fields[func_name]
+                    );
                 }
             }
         } else {
@@ -752,7 +756,8 @@ mod tests {
         for (key, value) in fields {
             match value {
                 Value::String(_) => {} // Expected
-                _ => assert!(false, 
+                _ => assert!(
+                    false,
                     "All env values should be strings, but {} has type {:?}",
                     key, value
                 ),
@@ -826,7 +831,11 @@ mod tests {
         if let Value::String(first_arg) = &args_list[0] {
             assert!(!first_arg.is_empty(), "First argument should not be empty");
         } else {
-            assert!(false, "First argument should be a string, got: {:?}", args_list[0]);
+            assert!(
+                false,
+                "First argument should be a string, got: {:?}",
+                args_list[0]
+            );
         }
 
         // Test exe_path
@@ -924,7 +933,8 @@ mod tests {
             let result = call_os_function(func_name, vec![string_val("extra")]);
             match result {
                 Ok(Value::Err(_)) => {} // Expected error
-                Ok(other) => assert!(false,
+                Ok(other) => assert!(
+                    false,
                     "Expected error for {} with extra arg, got: {:?}",
                     func_name, other
                 ),
@@ -1084,7 +1094,11 @@ mod tests {
                 "Unix systems should use / as path separator"
             ),
             "windows" => assert_eq!(separator, "\\", "Windows should use \\ as path separator"),
-            _ => assert!(false, "Unknown OS family for path separator test: {}", family),
+            _ => assert!(
+                false,
+                "Unknown OS family for path separator test: {}",
+                family
+            ),
         }
     }
 }

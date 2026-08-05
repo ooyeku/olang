@@ -186,9 +186,9 @@ fn parse_date_flexible(s: &str) -> Result<NaiveDate, Box<dyn std::error::Error>>
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
         return Ok(d);
     }
-    parse_datetime_flexible(s).map(|dt| dt.date()).map_err(|_| {
-        format!("Cannot parse date: '{}'. Expected format: YYYY-MM-DD", s).into()
-    })
+    parse_datetime_flexible(s)
+        .map(|dt| dt.date())
+        .map_err(|_| format!("Cannot parse date: '{}'. Expected format: YYYY-MM-DD", s).into())
 }
 
 /// Current local date and time

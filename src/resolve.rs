@@ -176,9 +176,7 @@ impl Resolver {
                 // have unguaranteed runtime pushes
                 self.current().conditional_depth += 1;
                 let then_branch = Box::new(self.resolve_expr(then_branch));
-                let else_branch = else_branch
-                    .as_ref()
-                    .map(|e| Box::new(self.resolve_expr(e)));
+                let else_branch = else_branch.as_ref().map(|e| Box::new(self.resolve_expr(e)));
                 self.current().conditional_depth -= 1;
                 Expr::If {
                     condition,
@@ -245,10 +243,7 @@ impl Resolver {
                             scope.poisoned.push(name);
                         }
                         self.frames.push(scope);
-                        let guard = arm
-                            .guard
-                            .as_ref()
-                            .map(|g| Box::new(self.resolve_expr(g)));
+                        let guard = arm.guard.as_ref().map(|g| Box::new(self.resolve_expr(g)));
                         let expression = self.resolve_expr(&arm.expression);
                         self.frames.pop();
                         MatchArm {
@@ -457,7 +452,8 @@ impl Resolver {
                     Self::pattern_names(p, names);
                 }
             }
-            Pattern::Struct { field_patterns, .. } | Pattern::AnonymousStruct { field_patterns } => {
+            Pattern::Struct { field_patterns, .. }
+            | Pattern::AnonymousStruct { field_patterns } => {
                 for (_, p) in field_patterns {
                     Self::pattern_names(p, names);
                 }

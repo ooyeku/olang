@@ -278,36 +278,65 @@ fn main() {
     olang::parallel::set_parallel_threshold(10);
 
     let result = match cli.command {
-        Commands::New { name, lib, template } => commands::new::execute(name, lib, template, verbose),
+        Commands::New {
+            name,
+            lib,
+            template,
+        } => commands::new::execute(name, lib, template, verbose),
         Commands::Build { release } => commands::new::build_project(release, verbose),
         Commands::Run { file } => commands::run::execute(file, verbose),
         Commands::Check { file } => commands::check::execute(file, verbose),
-        Commands::Test { filter, dir, watch, threads } => commands::test::execute(filter, dir, watch, threads, verbose),
+        Commands::Test {
+            filter,
+            dir,
+            watch,
+            threads,
+        } => commands::test::execute(filter, dir, watch, threads, verbose),
         Commands::Repl => commands::repl::execute(verbose),
         Commands::Ovm(ovm_cmd) => ovm_cmd.execute(),
         Commands::Deps { file } => commands::deps::execute(file, verbose),
         Commands::Unused { dir } => commands::unused::execute(dir, verbose),
         Commands::Tree { dir } => commands::tree::execute(dir, verbose),
         Commands::Organize { dir } => commands::organize::execute(dir, verbose),
-        Commands::MoveFn { function, from, to } => commands::refactor::move_function(function, from, to, verbose),
-        Commands::RenameFn { old_name, new_name, dir } => commands::refactor::rename_function(old_name, new_name, dir, verbose),
-        Commands::ExtractFile { functions, from, to } => commands::refactor::extract_file(functions, from, to, verbose),
-        Commands::MergeFiles { file1, file2, output } => commands::refactor::merge_files(file1, file2, output, verbose),
+        Commands::MoveFn { function, from, to } => {
+            commands::refactor::move_function(function, from, to, verbose)
+        }
+        Commands::RenameFn {
+            old_name,
+            new_name,
+            dir,
+        } => commands::refactor::rename_function(old_name, new_name, dir, verbose),
+        Commands::ExtractFile {
+            functions,
+            from,
+            to,
+        } => commands::refactor::extract_file(functions, from, to, verbose),
+        Commands::MergeFiles {
+            file1,
+            file2,
+            output,
+        } => commands::refactor::merge_files(file1, file2, output, verbose),
         Commands::FixImports { dir } => commands::refactor::fix_imports(dir, verbose),
-        
+
         // Git Package Management Commands
-        Commands::Install { url, global, offline } => {
+        Commands::Install {
+            url,
+            global,
+            offline,
+        } => {
             if global {
                 if let Some(url) = url {
                     commands::global::install_global(url, verbose)
                 } else {
-                    Err(anyhow::anyhow!("URL required for global package installation"))
+                    Err(anyhow::anyhow!(
+                        "URL required for global package installation"
+                    ))
                 }
             } else {
                 // Use the new Simple Git Package System
                 commands::install::execute_with_options(url, verbose, offline)
             }
-        },
+        }
         Commands::List { global, cached: _ } => {
             if global {
                 commands::global::list_global(verbose)
@@ -315,7 +344,7 @@ fn main() {
                 // Use the new Simple Git Package System
                 commands::install::list(verbose)
             }
-        },
+        }
         Commands::Update { global } => {
             if global {
                 Err(anyhow::anyhow!("Global package update not yet implemented"))
@@ -323,7 +352,7 @@ fn main() {
                 // Use the new Simple Git Package System
                 commands::install::update(verbose)
             }
-        },
+        }
         Commands::Remove { name, global } => {
             if global {
                 commands::global::remove_global(name, verbose)
@@ -331,11 +360,11 @@ fn main() {
                 // Use the new Simple Git Package System
                 commands::install::remove(name, verbose)
             }
-        },
+        }
         Commands::Clean => {
             // Use the new Simple Git Package System
             commands::install::clean(verbose)
-        },
+        }
         Commands::Info { package, global } => {
             if global {
                 commands::global::info_global(package, verbose)
@@ -343,37 +372,31 @@ fn main() {
                 // Use the new Simple Git Package System for URL info
                 commands::install::info(package, verbose)
             }
-        },
-        
+        }
+
         // Configuration Management Commands
-        Commands::Config { action } => {
-            match action {
-                ConfigAction::Set { key, value } => commands::global::config_set(key, value, verbose),
-                ConfigAction::Get { key } => commands::global::config_get(key, verbose),
-                ConfigAction::List => commands::global::config_list(verbose),
-            }
+        Commands::Config { action } => match action {
+            ConfigAction::Set { key, value } => commands::global::config_set(key, value, verbose),
+            ConfigAction::Get { key } => commands::global::config_get(key, verbose),
+            ConfigAction::List => commands::global::config_list(verbose),
         },
-        
+
         // Cache Management Commands
-        Commands::Cache { action } => {
-            match action {
-                CacheAction::Status => commands::global::cache_status(verbose),
-                CacheAction::Clean => commands::global::cache_clean(verbose),
-                CacheAction::Clear => commands::global::cache_clear(verbose),
-                CacheAction::Repair => commands::global::cache_repair(verbose),
-            }
+        Commands::Cache { action } => match action {
+            CacheAction::Status => commands::global::cache_status(verbose),
+            CacheAction::Clean => commands::global::cache_clean(verbose),
+            CacheAction::Clear => commands::global::cache_clear(verbose),
+            CacheAction::Repair => commands::global::cache_repair(verbose),
         },
-        
+
         // Self Management Commands
-        Commands::SelfCmd { action } => {
-            match action {
-                SelfAction::Update => commands::global::update_self(verbose),
-                SelfAction::Migrate => commands::global::migrate(verbose),
-                SelfAction::CleanLegacy => commands::global::clean_legacy(verbose),
-                SelfAction::Uninstall => commands::global::uninstall_self(verbose),
-            }
+        Commands::SelfCmd { action } => match action {
+            SelfAction::Update => commands::global::update_self(verbose),
+            SelfAction::Migrate => commands::global::migrate(verbose),
+            SelfAction::CleanLegacy => commands::global::clean_legacy(verbose),
+            SelfAction::Uninstall => commands::global::uninstall_self(verbose),
         },
-        
+
         // System Commands
         Commands::SystemInfo => commands::global::system_info(verbose),
         Commands::Doctor => commands::global::doctor(verbose),

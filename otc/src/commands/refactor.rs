@@ -3,9 +3,17 @@ use olang::parser::Parser;
 use std::path::{Path, PathBuf};
 
 /// Move a shared function from one file to another
-pub fn move_function(function_name: String, from_path: String, to_path: String, verbose: bool) -> Result<()> {
+pub fn move_function(
+    function_name: String,
+    from_path: String,
+    to_path: String,
+    verbose: bool,
+) -> Result<()> {
     if verbose {
-        println!("Moving function '{}' from '{}' to '{}'", function_name, from_path, to_path);
+        println!(
+            "Moving function '{}' from '{}' to '{}'",
+            function_name, from_path, to_path
+        );
     }
 
     let refactoring = FunctionMover::new(function_name, from_path, to_path);
@@ -13,9 +21,17 @@ pub fn move_function(function_name: String, from_path: String, to_path: String, 
 }
 
 /// Rename a function across all usage sites in a directory
-pub fn rename_function(old_name: String, new_name: String, dir_path: String, verbose: bool) -> Result<()> {
+pub fn rename_function(
+    old_name: String,
+    new_name: String,
+    dir_path: String,
+    verbose: bool,
+) -> Result<()> {
     if verbose {
-        println!("Renaming function '{}' to '{}' in directory '{}'", old_name, new_name, dir_path);
+        println!(
+            "Renaming function '{}' to '{}' in directory '{}'",
+            old_name, new_name, dir_path
+        );
     }
 
     let refactoring = FunctionRenamer::new(old_name, new_name, dir_path);
@@ -23,11 +39,19 @@ pub fn rename_function(old_name: String, new_name: String, dir_path: String, ver
 }
 
 /// Extract functions into a new file
-pub fn extract_file(functions: String, from_path: String, to_path: String, verbose: bool) -> Result<()> {
+pub fn extract_file(
+    functions: String,
+    from_path: String,
+    to_path: String,
+    verbose: bool,
+) -> Result<()> {
     let function_names: Vec<String> = functions.split(',').map(|s| s.trim().to_string()).collect();
-    
+
     if verbose {
-        println!("Extracting functions {:?} from '{}' to '{}'", function_names, from_path, to_path);
+        println!(
+            "Extracting functions {:?} from '{}' to '{}'",
+            function_names, from_path, to_path
+        );
     }
 
     let refactoring = FileExtractor::new(function_names, from_path, to_path);
@@ -35,9 +59,17 @@ pub fn extract_file(functions: String, from_path: String, to_path: String, verbo
 }
 
 /// Merge two files together
-pub fn merge_files(file1_path: String, file2_path: String, output_path: String, verbose: bool) -> Result<()> {
+pub fn merge_files(
+    file1_path: String,
+    file2_path: String,
+    output_path: String,
+    verbose: bool,
+) -> Result<()> {
     if verbose {
-        println!("Merging '{}' and '{}' into '{}'", file1_path, file2_path, output_path);
+        println!(
+            "Merging '{}' and '{}' into '{}'",
+            file1_path, file2_path, output_path
+        );
     }
 
     let refactoring = FileMerger::new(file1_path, file2_path, output_path);
@@ -122,25 +154,27 @@ impl FunctionMover {
 
     fn execute(&self, verbose: bool) -> Result<()> {
         let mut validation = RefactoringValidation::new();
-        
+
         // Validate operation
         self.validate(&mut validation)?;
-        
+
         if validation.has_errors() {
             validation.report(verbose);
             return Err(anyhow::anyhow!("Validation failed"));
         }
-        
+
         // Perform the move
         let function_def = self.extract_function()?;
         self.add_function_to_target(&function_def)?;
         self.remove_function_from_source()?;
         self.update_imports(&function_def, verbose)?;
-        
+
         validation.report(verbose);
-        println!("Function '{}' successfully moved from '{}' to '{}'", 
-                 self.function_name, self.from_path, self.to_path);
-        
+        println!(
+            "Function '{}' successfully moved from '{}' to '{}'",
+            self.function_name, self.from_path, self.to_path
+        );
+
         Ok(())
     }
 
@@ -166,8 +200,10 @@ impl FunctionMover {
                     }
                 }
                 if !function_found {
-                    validation.add_error(format!("Function '{}' not found in source file '{}'", 
-                                                self.function_name, self.from_path));
+                    validation.add_error(format!(
+                        "Function '{}' not found in source file '{}'",
+                        self.function_name, self.from_path
+                    ));
                 }
             }
         }
@@ -182,8 +218,10 @@ impl FunctionMover {
                         if let olang::ast::Statement::ShareDecl(share_decl) = statement {
                             if let olang::ast::ShareDecl::Function(func) = share_decl {
                                 if func.name == self.function_name {
-                                    validation.add_error(format!("Function '{}' already exists in target file '{}'", 
-                                                                self.function_name, self.to_path));
+                                    validation.add_error(format!(
+                                        "Function '{}' already exists in target file '{}'",
+                                        self.function_name, self.to_path
+                                    ));
                                 }
                             }
                         }
@@ -203,7 +241,8 @@ impl FunctionMover {
             .with_context(|| format!("Failed to read source file: {}", self.from_path))?;
 
         let parser = Parser::new();
-        let ast = parser.parse(&source)
+        let ast = parser
+            .parse(&source)
             .with_context(|| format!("Failed to parse source file: {}", self.from_path))?;
 
         // Find the function and extract its source code
@@ -220,7 +259,10 @@ impl FunctionMover {
             }
         }
 
-        Err(anyhow::anyhow!("Function '{}' not found in source file", self.function_name))
+        Err(anyhow::anyhow!(
+            "Function '{}' not found in source file",
+            self.function_name
+        ))
     }
 
     fn add_function_to_target(&self, function_def: &str) -> Result<()> {
@@ -244,12 +286,14 @@ impl FunctionMover {
 
     fn remove_function_from_source(&self) -> Result<()> {
         let source = std::fs::read_to_string(&self.from_path)?;
-        
+
         // For now, just add a comment indicating the function was moved
         // In a real implementation, we'd parse and remove the actual function
-        let updated_source = format!("{}\n\n// Function '{}' moved to '{}'\n", 
-                                   source, self.function_name, self.to_path);
-        
+        let updated_source = format!(
+            "{}\n\n// Function '{}' moved to '{}'\n",
+            source, self.function_name, self.to_path
+        );
+
         std::fs::write(&self.from_path, updated_source)
             .with_context(|| format!("Failed to update source file: {}", self.from_path))?;
 
@@ -260,11 +304,11 @@ impl FunctionMover {
         if verbose {
             println!("Updating import statements across project...");
         }
-        
+
         // In a real implementation, we'd scan all files and update use statements
         // For now, just log that this step would happen
         println!("Import statements would be updated to reflect the moved function");
-        
+
         Ok(())
     }
 }
@@ -290,10 +334,10 @@ impl FunctionRenamer {
 
     fn execute(&self, verbose: bool) -> Result<()> {
         let mut validation = RefactoringValidation::new();
-        
+
         // Find all files that need updating
         let files_to_update = self.find_files_with_function(&mut validation)?;
-        
+
         if validation.has_errors() {
             validation.report(verbose);
             return Err(anyhow::anyhow!("Validation failed"));
@@ -305,13 +349,20 @@ impl FunctionRenamer {
         }
 
         validation.report(verbose);
-        println!("Function '{}' successfully renamed to '{}' in {} files", 
-                 self.old_name, self.new_name, files_to_update.len());
+        println!(
+            "Function '{}' successfully renamed to '{}' in {} files",
+            self.old_name,
+            self.new_name,
+            files_to_update.len()
+        );
 
         Ok(())
     }
 
-    fn find_files_with_function(&self, validation: &mut RefactoringValidation) -> Result<Vec<PathBuf>> {
+    fn find_files_with_function(
+        &self,
+        validation: &mut RefactoringValidation,
+    ) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
         let ol_files = find_ol_files(Path::new(&self.dir_path))?;
 
@@ -324,7 +375,10 @@ impl FunctionRenamer {
         }
 
         if files.is_empty() {
-            validation.add_warning(format!("No files found containing function '{}'", self.old_name));
+            validation.add_warning(format!(
+                "No files found containing function '{}'",
+                self.old_name
+            ));
         }
 
         Ok(files)
@@ -337,7 +391,7 @@ impl FunctionRenamer {
 
         let content = std::fs::read_to_string(file_path)?;
         let updated_content = content.replace(&self.old_name, &self.new_name);
-        
+
         std::fs::write(file_path, updated_content)?;
         Ok(())
     }
@@ -364,10 +418,10 @@ impl FileExtractor {
 
     fn execute(&self, verbose: bool) -> Result<()> {
         let mut validation = RefactoringValidation::new();
-        
+
         // Validate operation
         self.validate(&mut validation)?;
-        
+
         if validation.has_errors() {
             validation.report(verbose);
             return Err(anyhow::anyhow!("Validation failed"));
@@ -380,8 +434,12 @@ impl FileExtractor {
         self.update_imports_for_extraction(verbose)?;
 
         validation.report(verbose);
-        println!("Successfully extracted {} functions from '{}' to '{}'", 
-                 self.function_names.len(), self.from_path, self.to_path);
+        println!(
+            "Successfully extracted {} functions from '{}' to '{}'",
+            self.function_names.len(),
+            self.from_path,
+            self.to_path
+        );
 
         Ok(())
     }
@@ -407,7 +465,7 @@ impl FileExtractor {
 
     fn extract_functions(&self) -> Result<String> {
         let mut extracted = String::new();
-        
+
         for function_name in &self.function_names {
             extracted.push_str(&format!("share fn {}() = {{\n    // Extracted function: {}\n    println(\"Extracted: {}\")\n}}\n\n", 
                                        function_name, function_name, function_name));
@@ -417,15 +475,20 @@ impl FileExtractor {
     }
 
     fn create_new_file(&self, content: &str) -> Result<()> {
-        let file_content = format!("// Extracted functions from '{}'\n\n{}", self.from_path, content);
+        let file_content = format!(
+            "// Extracted functions from '{}'\n\n{}",
+            self.from_path, content
+        );
         std::fs::write(&self.to_path, file_content)?;
         Ok(())
     }
 
     fn remove_functions_from_source(&self) -> Result<()> {
         let source = std::fs::read_to_string(&self.from_path)?;
-        let updated_source = format!("{}\n\n// Functions {:?} extracted to '{}'\n", 
-                                   source, self.function_names, self.to_path);
+        let updated_source = format!(
+            "{}\n\n// Functions {:?} extracted to '{}'\n",
+            source, self.function_names, self.to_path
+        );
         std::fs::write(&self.from_path, updated_source)?;
         Ok(())
     }
@@ -460,10 +523,10 @@ impl FileMerger {
 
     fn execute(&self, verbose: bool) -> Result<()> {
         let mut validation = RefactoringValidation::new();
-        
+
         // Validate operation
         self.validate(&mut validation)?;
-        
+
         if validation.has_errors() {
             validation.report(verbose);
             return Err(anyhow::anyhow!("Validation failed"));
@@ -474,8 +537,10 @@ impl FileMerger {
         self.write_merged_file(&merged_content)?;
 
         validation.report(verbose);
-        println!("Successfully merged '{}' and '{}' into '{}'", 
-                 self.file1_path, self.file2_path, self.output_path);
+        println!(
+            "Successfully merged '{}' and '{}' into '{}'",
+            self.file1_path, self.file2_path, self.output_path
+        );
 
         Ok(())
     }
@@ -551,7 +616,7 @@ impl ImportFixer {
     fn fix_imports_in_file(&self, file_path: &Path, verbose: bool) -> Result<bool> {
         let content = std::fs::read_to_string(file_path)?;
         let parser = Parser::new();
-        
+
         // Try to parse the file to detect import issues
         match parser.parse(&content) {
             Ok(_) => {
@@ -562,7 +627,10 @@ impl ImportFixer {
             }
             Err(_) => {
                 if verbose {
-                    println!("Potential import issues detected in {}", file_path.display());
+                    println!(
+                        "Potential import issues detected in {}",
+                        file_path.display()
+                    );
                 }
                 // In a real implementation, we'd attempt to fix the imports
                 Ok(false) // No changes made for now
@@ -577,7 +645,7 @@ impl ImportFixer {
 
 fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
-    
+
     if dir_path.is_file() && dir_path.extension().map_or(false, |ext| ext == "ol") {
         files.push(dir_path.to_path_buf());
         return Ok(files);
@@ -587,7 +655,7 @@ fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
         for entry in std::fs::read_dir(dir_path)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_file() && path.extension().map_or(false, |ext| ext == "ol") {
                 files.push(path);
             } else if path.is_dir() {
@@ -597,4 +665,4 @@ fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
     }
 
     Ok(files)
-} 
+}

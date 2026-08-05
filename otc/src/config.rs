@@ -173,15 +173,14 @@ impl OlangProject {
         let path = path.as_ref();
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
-        
+
         Self::parse_from_str(&content)
             .with_context(|| format!("Failed to parse config file: {}", path.display()))
     }
 
     /// Parse project configuration from TOML string
     pub fn parse_from_str(content: &str) -> Result<Self> {
-        toml::from_str(content)
-            .with_context(|| "Invalid TOML syntax in project configuration")
+        toml::from_str(content).with_context(|| "Invalid TOML syntax in project configuration")
     }
 
     /// Load configuration from current directory (olang.toml)
@@ -194,7 +193,7 @@ impl OlangProject {
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let content = toml::to_string_pretty(self)
             .with_context(|| "Failed to serialize project configuration")?;
-        
+
         fs::write(path.as_ref(), content)
             .with_context(|| format!("Failed to write config file: {}", path.as_ref().display()))
     }
@@ -206,7 +205,12 @@ impl OlangProject {
             return Err(anyhow::anyhow!("Project name cannot be empty"));
         }
 
-        if !self.project.name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        if !self
+            .project
+            .name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
             return Err(anyhow::anyhow!(
                 "Project name '{}' contains invalid characters. Use only alphanumeric, '_', and '-'",
                 self.project.name
@@ -243,7 +247,9 @@ impl OlangProject {
         match self.project.project_type.as_str() {
             "web" => {
                 if self.web.is_none() {
-                    return Err(anyhow::anyhow!("Web projects require [web] configuration section"));
+                    return Err(anyhow::anyhow!(
+                        "Web projects require [web] configuration section"
+                    ));
                 }
                 if let Some(web_config) = &self.web {
                     if web_config.port == 0 {
@@ -253,16 +259,22 @@ impl OlangProject {
             }
             "cli" => {
                 if self.cli.is_none() {
-                    return Err(anyhow::anyhow!("CLI projects require [cli] configuration section"));
+                    return Err(anyhow::anyhow!(
+                        "CLI projects require [cli] configuration section"
+                    ));
                 }
             }
             "library" => {
                 if self.library.is_none() {
-                    return Err(anyhow::anyhow!("Library projects require [library] configuration section"));
+                    return Err(anyhow::anyhow!(
+                        "Library projects require [library] configuration section"
+                    ));
                 }
                 if let Some(lib_config) = &self.library {
                     if lib_config.export_modules.is_empty() {
-                        return Err(anyhow::anyhow!("Library projects must specify export_modules"));
+                        return Err(anyhow::anyhow!(
+                            "Library projects must specify export_modules"
+                        ));
                     }
                 }
             }
@@ -341,7 +353,7 @@ fn is_valid_semver(version: &str) -> bool {
     if parts.len() != 3 {
         return false;
     }
-    
+
     parts.iter().all(|part| part.parse::<u32>().is_ok())
 }
 
@@ -432,4 +444,4 @@ template_dir = "views"
         assert!(!is_valid_semver("1.0.0.0"));
         assert!(!is_valid_semver("1.0.a"));
     }
-} 
+}

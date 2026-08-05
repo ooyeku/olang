@@ -1,7 +1,7 @@
 //! Register-based bytecode VM for intermediate-tier execution between interpreter and JIT
 
-use crate::builtin::BuiltinFunctions;
 use crate::ast::{BinaryOp, Expr, FunctionDecl, UnaryOp, Value};
+use crate::builtin::BuiltinFunctions;
 use crate::ovm::{FunctionId, OvmValue};
 use std::collections::HashMap;
 use std::fmt;
@@ -532,7 +532,6 @@ pub struct ExecutionState {
 
     // Exception state
     exception: Option<VmException>,
-
     // Current bytecode being executed
 }
 
@@ -680,25 +679,58 @@ impl BytecodeVm {
         // the round trip back to an AST value.
         let builtin_names: std::collections::HashSet<String> = [
             // conversion and inspection
-            "to_string", "to_int", "to_float", "typeof", "len",
+            "to_string",
+            "to_int",
+            "to_float",
+            "typeof",
+            "len",
             // list access and construction
-            "head", "tail", "cons", "concat", "reverse", "sort", "take", "skip",
-            "flatten", "zip", "enumerate", "chunk", "range",
+            "head",
+            "tail",
+            "cons",
+            "concat",
+            "reverse",
+            "sort",
+            "take",
+            "skip",
+            "flatten",
+            "zip",
+            "enumerate",
+            "chunk",
+            "range",
             // aggregation
-            "sum", "min", "max", "average", "contains",
+            "sum",
+            "min",
+            "max",
+            "average",
+            "contains",
             // strings
-            "split", "join", "starts_with", "ends_with",
+            "split",
+            "join",
+            "starts_with",
+            "ends_with",
             // results
-            "is_ok", "is_err", "unwrap", "unwrap_or",
+            "is_ok",
+            "is_err",
+            "unwrap",
+            "unwrap_or",
             // numeric
             "clamp",
             // output
-            "print", "println",
+            "print",
+            "println",
             // higher-order: reachable now that non-capturing lambdas compile
             // to function values. group_by is still excluded because it
             // returns a Map, which does not survive the round trip.
-            "map", "filter", "reduce", "fold", "find", "map_filtered",
-            "result_map", "result_map_err", "unwrap_or_else",
+            "map",
+            "filter",
+            "reduce",
+            "fold",
+            "find",
+            "map_filtered",
+            "result_map",
+            "result_map_err",
+            "unwrap_or_else",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -915,9 +947,10 @@ impl BytecodeVm {
                 }
 
                 Instruction::Neg { dst, src } => {
-                    let result = self
-
-                        .execute_unary_op(self.execution_state.register_ref(*src)?, UnaryOp::Negate)?;
+                    let result = self.execute_unary_op(
+                        self.execution_state.register_ref(*src)?,
+                        UnaryOp::Negate,
+                    )?;
 
                     self.execution_state.set_register(*dst, result)?;
                 }
@@ -990,7 +1023,6 @@ impl BytecodeVm {
 
                 Instruction::Not { dst, src } => {
                     let result = self
-
                         .execute_unary_op(self.execution_state.register_ref(*src)?, UnaryOp::Not)?;
 
                     self.execution_state.set_register(*dst, result)?;
@@ -1075,21 +1107,34 @@ impl BytecodeVm {
                         .set_register(*dst, OvmValue::new_list(list_values))?;
                 }
 
-                Instruction::MakeRange { dst, start, end, inclusive } => {
+                Instruction::MakeRange {
+                    dst,
+                    start,
+                    end,
+                    inclusive,
+                } => {
                     let start_val = self.execution_state.get_register(*start)?;
                     let end_val = self.execution_state.get_register(*end)?;
-                    
+
                     // Extract integer values for the range
                     let start_int = match &start_val.data {
                         crate::ovm::value::ValueData::Integer(i) => *i,
-                        _ => return Err(BytecodeError::RuntimeError("Range start must be integer".to_string())),
+                        _ => {
+                            return Err(BytecodeError::RuntimeError(
+                                "Range start must be integer".to_string(),
+                            ))
+                        }
                     };
-                    
+
                     let end_int = match &end_val.data {
                         crate::ovm::value::ValueData::Integer(i) => *i,
-                        _ => return Err(BytecodeError::RuntimeError("Range end must be integer".to_string())),
+                        _ => {
+                            return Err(BytecodeError::RuntimeError(
+                                "Range end must be integer".to_string(),
+                            ))
+                        }
                     };
-                    
+
                     let range_value = Value::Range {
                         start: start_int,
                         end: end_int,
@@ -1244,7 +1289,9 @@ impl BytecodeVm {
                 Instruction::ExtractElement { dst, value, index } => {
                     use crate::ovm::value::ValueData;
                     let element = match &self.execution_state.register_ref(*value)?.data {
-                        ValueData::List(items) | ValueData::Tuple(items) => items.get(*index).cloned(),
+                        ValueData::List(items) | ValueData::Tuple(items) => {
+                            items.get(*index).cloned()
+                        }
                         _ => None,
                     };
                     match element {
@@ -1523,12 +1570,18 @@ impl BytecodeVm {
                 BinaryOp::Add => OvmValue::new_integer(a.checked_add(*b).ok_or_else(|| {
                     BytecodeError::RuntimeError("Integer overflow in addition".to_string())
                 })?),
-                BinaryOp::Subtract => OvmValue::new_integer(a.checked_sub(*b).ok_or_else(|| {
-                    BytecodeError::RuntimeError("Integer overflow in subtraction".to_string())
-                })?),
-                BinaryOp::Multiply => OvmValue::new_integer(a.checked_mul(*b).ok_or_else(|| {
-                    BytecodeError::RuntimeError("Integer overflow in multiplication".to_string())
-                })?),
+                BinaryOp::Subtract => {
+                    OvmValue::new_integer(a.checked_sub(*b).ok_or_else(|| {
+                        BytecodeError::RuntimeError("Integer overflow in subtraction".to_string())
+                    })?)
+                }
+                BinaryOp::Multiply => {
+                    OvmValue::new_integer(a.checked_mul(*b).ok_or_else(|| {
+                        BytecodeError::RuntimeError(
+                            "Integer overflow in multiplication".to_string(),
+                        )
+                    })?)
+                }
                 BinaryOp::Divide => {
                     if *b == 0 {
                         return Err(BytecodeError::DivisionByZero);
@@ -1607,7 +1660,12 @@ impl BytecodeVm {
 
     /// Float arithmetic shared by the Float/Float and mixed Int/Float paths,
     /// mirroring the interpreter's coercion semantics
-    fn execute_float_binary_op(&self, a: f64, b: f64, op: BinaryOp) -> Result<OvmValue, BytecodeError> {
+    fn execute_float_binary_op(
+        &self,
+        a: f64,
+        b: f64,
+        op: BinaryOp,
+    ) -> Result<OvmValue, BytecodeError> {
         Ok(match op {
             BinaryOp::Add => OvmValue::new_float(a + b),
             BinaryOp::Subtract => OvmValue::new_float(a - b),
@@ -1755,13 +1813,15 @@ impl BytecodeVm {
     fn iter_get(source: &OvmValue, idx: i64) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
         match &source.data {
-            ValueData::List(items) => items
-                .get(idx as usize)
-                .cloned()
-                .ok_or(BytecodeError::IndexOutOfBounds {
-                    index: idx,
-                    length: items.len(),
-                }),
+            ValueData::List(items) => {
+                items
+                    .get(idx as usize)
+                    .cloned()
+                    .ok_or(BytecodeError::IndexOutOfBounds {
+                        index: idx,
+                        length: items.len(),
+                    })
+            }
             ValueData::Range(range) => range
                 .start
                 .checked_add(idx)
@@ -1945,7 +2005,9 @@ impl BytecodeVm {
 
                 let mut list_vec = list.to_vec();
                 let popped = list_vec.pop().ok_or_else(|| {
-                    BytecodeError::RuntimeError("List became empty during pop operation".to_string())
+                    BytecodeError::RuntimeError(
+                        "List became empty during pop operation".to_string(),
+                    )
                 })?;
                 Ok((
                     OvmValue::from_ast(Value::List(list_vec.into())),
@@ -2039,7 +2101,7 @@ impl BytecodeVm {
                 // Return a static string for enum types
                 // In a real implementation, we might want to cache type names
                 "enum"
-            },
+            }
             Ok(Value::Promise { .. }) => "promise",
             Ok(Value::Map(_)) => "map",
             Err(_) => "unknown",
@@ -2097,7 +2159,10 @@ impl BytecodeVm {
                 let start_idx = start_idx.max(0) as usize;
                 let end_idx = end_idx.max(0) as usize;
                 let slice: String = if end_idx > start_idx {
-                    s.chars().skip(start_idx).take(end_idx - start_idx).collect()
+                    s.chars()
+                        .skip(start_idx)
+                        .take(end_idx - start_idx)
+                        .collect()
                 } else {
                     String::new()
                 };
@@ -2524,15 +2589,11 @@ impl BytecodeCompiler {
 
             // A slot-resolved reference from the interpreter's resolver is
             // just a named identifier here — the VM has its own registers
-            Expr::LocalRef { name, .. } => {
-                self.compile_expression(&Expr::Identifier(name.clone()))
-            }
-            Expr::LocalAssign { name, value, .. } => {
-                self.compile_expression(&Expr::Assignment {
-                    target: name.clone(),
-                    value: value.clone(),
-                })
-            }
+            Expr::LocalRef { name, .. } => self.compile_expression(&Expr::Identifier(name.clone())),
+            Expr::LocalAssign { name, value, .. } => self.compile_expression(&Expr::Assignment {
+                target: name.clone(),
+                value: value.clone(),
+            }),
 
             Expr::Identifier(name) => {
                 if let Some(&reg) = self.local_variables.get(name) {
@@ -2590,24 +2651,28 @@ impl BytecodeCompiler {
                 Ok(dst_reg)
             }
 
-            Expr::If { condition, then_branch, else_branch } => {
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 // Compile condition
                 let condition_reg = self.compile_expression(condition)?;
-                
+
                 // Create labels for branches
                 let _then_label = self.emitter.create_label();
                 let else_label = self.emitter.create_label();
                 let end_label = self.emitter.create_label();
-                
+
                 // Branch on condition
                 self.emitter.emit_branch_if_false(condition_reg, else_label);
-                
+
                 // Compile then branch
                 let then_reg = self.compile_expression(then_branch)?;
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter.emit_move(dst_reg, then_reg);
                 self.emitter.emit_jump(end_label);
-                
+
                 // Else branch
                 self.emitter.place_label(else_label);
                 if let Some(else_expr) = else_branch {
@@ -2618,20 +2683,25 @@ impl BytecodeCompiler {
                     let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));
                     self.emitter.emit_load_const(dst_reg, const_idx);
                 }
-                
+
                 self.emitter.place_label(end_label);
                 Ok(dst_reg)
             }
 
-            Expr::Range { start, end, inclusive } => {
+            Expr::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 // Compile start and end expressions
                 let start_reg = self.compile_expression(start)?;
                 let end_reg = self.compile_expression(end)?;
-                
+
                 // Create range value - for now, we'll create a constant range
                 // In a full implementation, this would handle dynamic ranges
                 let dst_reg = self.register_allocator.allocate_register();
-                self.emitter.emit_make_range(dst_reg, start_reg, end_reg, *inclusive);
+                self.emitter
+                    .emit_make_range(dst_reg, start_reg, end_reg, *inclusive);
                 Ok(dst_reg)
             }
 
@@ -2719,8 +2789,7 @@ impl BytecodeCompiler {
                 let mut free = std::collections::HashSet::new();
                 if !Self::collect_free_vars(body, &bound, &mut free) {
                     return Err(BytecodeError::CompilationFailed(
-                        "Lambda body uses constructs the bytecode tier cannot analyze"
-                            .to_string(),
+                        "Lambda body uses constructs the bytecode tier cannot analyze".to_string(),
                     ));
                 }
 
@@ -2999,7 +3068,9 @@ impl BytecodeCompiler {
                         "Unsupported literal pattern in bytecode tier".to_string(),
                     ));
                 }
-                let const_idx = self.emitter.add_constant(OvmValue::from_ast(literal.clone()));
+                let const_idx = self
+                    .emitter
+                    .add_constant(OvmValue::from_ast(literal.clone()));
                 let const_reg = self.register_allocator.allocate_register();
                 self.emitter.emit_load_const(const_reg, const_idx);
 
@@ -3075,11 +3146,13 @@ impl BytecodeCompiler {
                 let want_ok = matches!(pattern, Pattern::Ok(_));
 
                 let test_reg = self.register_allocator.allocate_register();
-                self.emitter.instructions.push(Instruction::PatternTestResult {
-                    dst: test_reg,
-                    value: value_reg,
-                    want_ok,
-                });
+                self.emitter
+                    .instructions
+                    .push(Instruction::PatternTestResult {
+                        dst: test_reg,
+                        value: value_reg,
+                        want_ok,
+                    });
                 self.emitter.emit_branch_if_false(test_reg, fail_label);
 
                 // Safe to extract now: the test above guarantees the shape
@@ -3094,11 +3167,13 @@ impl BytecodeCompiler {
 
             Pattern::Tuple(patterns) => {
                 let test_reg = self.register_allocator.allocate_register();
-                self.emitter.instructions.push(Instruction::PatternTestTuple {
-                    dst: test_reg,
-                    value: value_reg,
-                    len: patterns.len(),
-                });
+                self.emitter
+                    .instructions
+                    .push(Instruction::PatternTestTuple {
+                        dst: test_reg,
+                        value: value_reg,
+                        len: patterns.len(),
+                    });
                 self.emitter.emit_branch_if_false(test_reg, fail_label);
 
                 for (index, element) in patterns.iter().enumerate() {
@@ -3117,12 +3192,14 @@ impl BytecodeCompiler {
                 // Without a rest binding the length must match exactly;
                 // with one, the explicit patterns are a prefix
                 let test_reg = self.register_allocator.allocate_register();
-                self.emitter.instructions.push(Instruction::PatternTestList {
-                    dst: test_reg,
-                    value: value_reg,
-                    min_len: patterns.len(),
-                    exact: rest.is_none(),
-                });
+                self.emitter
+                    .instructions
+                    .push(Instruction::PatternTestList {
+                        dst: test_reg,
+                        value: value_reg,
+                        min_len: patterns.len(),
+                        exact: rest.is_none(),
+                    });
                 self.emitter.emit_branch_if_false(test_reg, fail_label);
 
                 for (index, element) in patterns.iter().enumerate() {
@@ -3702,7 +3779,8 @@ impl InstructionEmitter {
     }
 
     pub fn emit_branch_if_false(&mut self, condition: Register, target: Label) {
-        self.instructions.push(Instruction::JumpIfFalse { condition, target });
+        self.instructions
+            .push(Instruction::JumpIfFalse { condition, target });
     }
 
     pub fn emit_jump(&mut self, target: Label) {
@@ -3713,8 +3791,19 @@ impl InstructionEmitter {
         self.instructions.push(Instruction::Move { dst, src });
     }
 
-    pub fn emit_make_range(&mut self, dst: Register, start: Register, end: Register, inclusive: bool) {
-        self.instructions.push(Instruction::MakeRange { dst, start, end, inclusive });
+    pub fn emit_make_range(
+        &mut self,
+        dst: Register,
+        start: Register,
+        end: Register,
+        inclusive: bool,
+    ) {
+        self.instructions.push(Instruction::MakeRange {
+            dst,
+            start,
+            end,
+            inclusive,
+        });
     }
 
     pub fn create_label(&mut self) -> Label {
@@ -3725,15 +3814,16 @@ impl InstructionEmitter {
 
     /// Bind a label to the current instruction offset.
     pub fn place_label(&mut self, label: Label) {
-        self.label_positions.insert(label.0, self.instructions.len());
+        self.label_positions
+            .insert(label.0, self.instructions.len());
     }
 
     /// Patch every jump target from a label id to the instruction offset the
     /// label was placed at. Must run after emission, before execution — a
     /// label id is meaningless as a program counter.
     pub fn resolve_labels(&mut self) -> Result<(), BytecodeError> {
-        let resolve = |target: &mut Label, positions: &HashMap<u32, usize>| {
-            match positions.get(&target.0) {
+        let resolve =
+            |target: &mut Label, positions: &HashMap<u32, usize>| match positions.get(&target.0) {
                 Some(&offset) => {
                     *target = Label(offset as u32);
                     Ok(())
@@ -3742,8 +3832,7 @@ impl InstructionEmitter {
                     "Jump references unplaced label {}",
                     target.0
                 ))),
-            }
-        };
+            };
 
         for instruction in &mut self.instructions {
             match instruction {
@@ -4036,7 +4125,9 @@ mod tests {
         fields.insert("a".to_string(), Value::Integer(1));
         assert!(!BytecodeVm::round_trips(&Value::Map(Arc::new(fields))));
         assert!(BytecodeVm::round_trips(&Value::Integer(1)));
-        assert!(BytecodeVm::round_trips(&Value::Ok(Box::new(Value::Integer(1)))));
+        assert!(BytecodeVm::round_trips(&Value::Ok(Box::new(
+            Value::Integer(1)
+        ))));
         // sanity: the delegation path still works for a representable result
         assert!(vm
             .execute_builtin_call("to_string", &[OvmValue::new_integer(7)])
@@ -4103,13 +4194,21 @@ mod tests {
 
         // Compile the function
         let result = vm.compile_function(func_id, &func);
-        assert!(result.is_ok(), "Function compilation should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Function compilation should succeed: {:?}",
+            result.err()
+        );
 
         // Execute the function with no arguments
         let args = vec![];
 
         let result = vm.execute(func_id, &args);
-        assert!(result.is_ok(), "Function execution should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Function execution should succeed: {:?}",
+            result.err()
+        );
 
         let result_value = result.unwrap();
         if let crate::ovm::value::ValueData::Integer(val) = result_value.data {
@@ -4188,7 +4287,7 @@ mod tests {
         let args = vec![];
         let result = vm.execute(func_id, &args);
         assert!(result.is_ok(), "Function execution should succeed");
-        
+
         let result_value = result.unwrap();
         if let crate::ovm::value::ValueData::Integer(val) = result_value.data {
             assert_eq!(val, 10, "if 10 > 5 then 10 else 5 should return 10");
@@ -4234,7 +4333,7 @@ mod tests {
         }
     }
 
-    #[test] 
+    #[test]
     fn test_bytecode_execution_stats() {
         let mut vm = BytecodeVm::new();
         let func_id = FunctionId::new();
@@ -4250,15 +4349,21 @@ mod tests {
 
         // Compile and execute multiple times to generate stats
         vm.compile_function(func_id, &func).unwrap();
-        
+
         for _ in 0..5 {
             let _ = vm.execute(func_id, &[]);
         }
 
         // Check that statistics are being tracked
         let stats = vm.get_stats();
-        assert!(stats.instructions_executed > 0, "Should have executed instructions");
-        assert!(stats.function_calls >= 5, "Should have recorded function calls");
+        assert!(
+            stats.instructions_executed > 0,
+            "Should have executed instructions"
+        );
+        assert!(
+            stats.function_calls >= 5,
+            "Should have recorded function calls"
+        );
     }
 
     #[test]
@@ -4268,7 +4373,10 @@ mod tests {
 
         // Try to execute a function that doesn't exist
         let result = vm.execute(invalid_func_id, &[]);
-        assert!(result.is_err(), "Should fail to execute non-existent function");
+        assert!(
+            result.is_err(),
+            "Should fail to execute non-existent function"
+        );
 
         // Try to execute with wrong number of arguments
         let func_id = FunctionId::new();
@@ -4276,13 +4384,13 @@ mod tests {
             name: "two_param".to_string(),
             type_params: vec![],
             parameters: vec![
-                crate::ast::Parameter { 
-                    name: "x".to_string(), 
+                crate::ast::Parameter {
+                    name: "x".to_string(),
                     type_annotation: None,
                     default_value: None,
                 },
-                crate::ast::Parameter { 
-                    name: "y".to_string(), 
+                crate::ast::Parameter {
+                    name: "y".to_string(),
                     type_annotation: None,
                     default_value: None,
                 },
@@ -4292,9 +4400,12 @@ mod tests {
         };
 
         vm.compile_function(func_id, &func).unwrap();
-        
+
         // Execute with wrong number of args
         let result = vm.execute(func_id, &[OvmValue::new_integer(1)]); // Should need 2 args
-        assert!(result.is_err(), "Should fail with wrong number of arguments");
+        assert!(
+            result.is_err(),
+            "Should fail with wrong number of arguments"
+        );
     }
 }

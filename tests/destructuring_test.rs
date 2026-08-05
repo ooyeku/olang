@@ -1,5 +1,5 @@
-use olang::{Interpreter, Parser};
 use olang::interpreter::InterpreterError;
+use olang::{Interpreter, Parser};
 
 #[test]
 fn test_simple_tuple_destructuring() {
@@ -11,10 +11,12 @@ fn test_simple_tuple_destructuring() {
         let (x, y) = (1, 2);
         x + y
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "3");
 }
 
@@ -28,10 +30,12 @@ fn test_nested_tuple_destructuring() {
         let ((a, b), c) = ((1, 2), 3);
         a + b + c
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "6");
 }
 
@@ -45,10 +49,12 @@ fn test_list_destructuring() {
         let [first, second] = [10, 20];
         first + second
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "30");
 }
 
@@ -62,10 +68,12 @@ fn test_list_destructuring_with_rest() {
         let [first, ...rest] = [1, 2, 3, 4, 5];
         first
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "1");
 }
 
@@ -79,10 +87,12 @@ fn test_mixed_destructuring() {
         let (x, [y, z]) = (10, [20, 30]);
         x + y + z
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "60");
 }
 
@@ -96,10 +106,12 @@ fn test_wildcard_pattern() {
         let (x, _) = (42, "ignored");
         x
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "42");
 }
 
@@ -113,10 +125,12 @@ fn test_destructuring_with_type_annotation() {
         let (x, y): (Int, Int) = (100, 200);
         x * y
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "20000");
 }
 
@@ -130,10 +144,12 @@ fn test_destructuring_strings() {
         let (name, greeting) = ("Alice", "Hello");
         greeting + ", " + name
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "\"Hello, Alice\"");
 }
 
@@ -147,10 +163,12 @@ fn test_destructuring_booleans() {
         let (flag1, flag2) = (true, false);
         flag1 && !flag2
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "true");
 }
 
@@ -166,10 +184,12 @@ fn test_backwards_compatibility() {
         let z = true;
         x + 10
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "52");
 }
 
@@ -185,10 +205,12 @@ fn test_destructuring_in_multiple_statements() {
         let (e, f) = (a + c, b + d);
         e * f
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "24");
 }
 
@@ -202,10 +224,10 @@ fn test_pattern_match_failure() {
         let (x, y, z) = (1, 2);
         x
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
     let result = interpreter.eval_program(program);
-    
+
     // Should fail with pattern match error
     assert!(result.is_err());
     if let Err(InterpreterError::PatternMatchFailed) = result {
@@ -225,9 +247,11 @@ fn test_destructuring_complex_expressions() {
         let (x, y) = (10 + 5, 20 * 2);
         x + y
     "#;
-    
+
     let program = parser.parse(input).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("Failed to evaluate");
-    
+    let result = interpreter
+        .eval_program(program)
+        .expect("Failed to evaluate");
+
     assert_eq!(result.to_string(), "55");
-} 
+}

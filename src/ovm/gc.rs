@@ -117,11 +117,13 @@ impl GarbageCollector {
 
     pub fn record_allocation(&self, size: usize) {
         self.objects_allocated.fetch_add(1, Ordering::Relaxed);
-        self.bytes_allocated.fetch_add(size as u64, Ordering::Relaxed);
+        self.bytes_allocated
+            .fetch_add(size as u64, Ordering::Relaxed);
     }
 
     pub fn record_deallocation(&self, size: usize) {
-        self.bytes_deallocated.fetch_add(size as u64, Ordering::Relaxed);
+        self.bytes_deallocated
+            .fetch_add(size as u64, Ordering::Relaxed);
     }
 
     /// (objects allocated, bytes allocated, collections requested)

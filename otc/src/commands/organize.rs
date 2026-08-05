@@ -78,9 +78,9 @@ fn analyze_organization(dir_path: &Path) -> Result<OrganizationAnalysis> {
         let module_name = path_to_module_name(&file_path, dir_path);
         let shared_functions = extract_shared_functions(&file_path)?;
         let dependencies = extract_dependencies(&file_path)?;
-        
+
         dependency_graph.insert(module_name.clone(), dependencies.clone());
-        
+
         files.push(FileAnalysis {
             path: file_path.clone(),
             module_name,
@@ -111,7 +111,7 @@ fn analyze_organization(dir_path: &Path) -> Result<OrganizationAnalysis> {
 
     // Generate suggestions
     let suggestions = generate_suggestions(&files, &dependency_graph);
-    
+
     // Calculate metrics
     let metrics = calculate_metrics(&files, &dependency_graph);
 
@@ -124,7 +124,7 @@ fn analyze_organization(dir_path: &Path) -> Result<OrganizationAnalysis> {
 
 fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
-    
+
     if dir_path.is_file() && dir_path.extension().map_or(false, |ext| ext == "ol") {
         files.push(dir_path.to_path_buf());
         return Ok(files);
@@ -134,7 +134,7 @@ fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
         for entry in std::fs::read_dir(dir_path)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_file() && path.extension().map_or(false, |ext| ext == "ol") {
                 files.push(path);
             } else if path.is_dir() {
@@ -149,7 +149,7 @@ fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
 fn path_to_module_name(file_path: &Path, root: &Path) -> String {
     let relative = file_path.strip_prefix(root).unwrap_or(file_path);
     let without_ext = relative.with_extension("");
-    
+
     without_ext
         .components()
         .map(|c| c.as_os_str().to_string_lossy())
@@ -203,7 +203,7 @@ fn extract_dependencies(file_path: &Path) -> Result<Vec<String>> {
 fn calculate_coupling_score(file: &FileAnalysis, all_files: &[FileAnalysis]) -> f32 {
     let total_connections = file.dependencies.len() + file.dependents.len();
     let max_possible = all_files.len().saturating_sub(1);
-    
+
     if max_possible == 0 {
         0.0
     } else {
@@ -214,11 +214,11 @@ fn calculate_coupling_score(file: &FileAnalysis, all_files: &[FileAnalysis]) -> 
 fn calculate_cohesion_score(file: &FileAnalysis) -> f32 {
     // Simple cohesion metric based on function count and naming patterns
     let function_count = file.shared_functions.len();
-    
+
     if function_count == 0 {
         return 1.0;
     }
-    
+
     // Check for common prefixes/themes in function names
     let common_prefixes = find_common_prefixes(&file.shared_functions);
     let prefix_score = if common_prefixes.is_empty() {
@@ -226,7 +226,7 @@ fn calculate_cohesion_score(file: &FileAnalysis) -> f32 {
     } else {
         common_prefixes.len() as f32 / function_count as f32
     };
-    
+
     // Lower score for too many functions (suggests low cohesion)
     let size_penalty = if function_count > 10 {
         0.5
@@ -235,19 +235,19 @@ fn calculate_cohesion_score(file: &FileAnalysis) -> f32 {
     } else {
         1.0
     };
-    
+
     (prefix_score + size_penalty) / 2.0
 }
 
 fn find_common_prefixes(functions: &[String]) -> Vec<String> {
     let mut prefixes = HashSet::new();
-    
+
     for func in functions {
         if let Some(underscore_pos) = func.find('_') {
             prefixes.insert(func[..underscore_pos].to_string());
         }
     }
-    
+
     prefixes.into_iter().collect()
 }
 
@@ -256,7 +256,7 @@ fn generate_suggestions(
     dependency_graph: &HashMap<String, Vec<String>>,
 ) -> Vec<OrganizationSuggestion> {
     let mut suggestions = Vec::new();
-    
+
     // Check for circular dependencies and suggest fixes
     for (module, deps) in dependency_graph {
         for dep in deps {
@@ -265,7 +265,7 @@ fn generate_suggestions(
                     suggestions.push(OrganizationSuggestion {
                         suggestion_type: SuggestionType::BreakCircularDep,
                         description: format!(
-                            "Break circular dependency between '{}' and '{}'", 
+                            "Break circular dependency between '{}' and '{}'",
                             module, dep
                         ),
                         files_involved: vec![module.clone(), dep.clone()],
@@ -312,7 +312,7 @@ fn generate_suggestions(
         .iter()
         .filter(|f| f.shared_functions.len() <= 2 && !f.dependencies.is_empty())
         .collect();
-    
+
     for small_file in small_files {
         for dep in &small_file.dependencies {
             if let Some(dep_file) = files.iter().find(|f| &f.module_name == dep) {
@@ -321,8 +321,7 @@ fn generate_suggestions(
                         suggestion_type: SuggestionType::MergeFiles,
                         description: format!(
                             "Consider merging '{}' and '{}' (both are small and related)",
-                            small_file.module_name,
-                            dep
+                            small_file.module_name, dep
                         ),
                         files_involved: vec![small_file.module_name.clone(), dep.clone()],
                         priority: Priority::Low,
@@ -337,7 +336,9 @@ fn generate_suggestions(
     for file in files {
         if let Some(dir) = file.module_name.rfind('.') {
             let dir_name = &file.module_name[..dir];
-            *dirs_with_multiple_files.entry(dir_name.to_string()).or_insert(0) += 1;
+            *dirs_with_multiple_files
+                .entry(dir_name.to_string())
+                .or_insert(0) += 1;
         }
     }
 
@@ -368,18 +369,21 @@ fn calculate_metrics(
     } else {
         0.0
     };
-    
+
     let avg_cohesion = if total_files > 0 {
         files.iter().map(|f| f.cohesion_score).sum::<f32>() / total_files as f32
     } else {
         0.0
     };
-    
-    let large_files = files.iter().filter(|f| f.shared_functions.len() > 8).count();
-    
+
+    let large_files = files
+        .iter()
+        .filter(|f| f.shared_functions.len() > 8)
+        .count();
+
     // Detect circular dependencies
     let circular_deps = detect_circular_dependencies(dependency_graph);
-    
+
     // Simple organization score (higher is better)
     let organization_score = (avg_cohesion * 0.6 + (1.0 - avg_coupling) * 0.4) * 100.0;
 
@@ -397,7 +401,7 @@ fn detect_circular_dependencies(dependency_graph: &HashMap<String, Vec<String>>)
     let mut cycles = 0;
     let mut visited = HashSet::new();
     let mut rec_stack = HashSet::new();
-    
+
     for module in dependency_graph.keys() {
         if !visited.contains(module) {
             if has_cycle_dfs(module, dependency_graph, &mut visited, &mut rec_stack) {
@@ -405,7 +409,7 @@ fn detect_circular_dependencies(dependency_graph: &HashMap<String, Vec<String>>)
             }
         }
     }
-    
+
     cycles
 }
 
@@ -417,7 +421,7 @@ fn has_cycle_dfs(
 ) -> bool {
     visited.insert(module.to_string());
     rec_stack.insert(module.to_string());
-    
+
     if let Some(dependencies) = graph.get(module) {
         for dep in dependencies {
             if !visited.contains(dep) {
@@ -429,7 +433,7 @@ fn has_cycle_dfs(
             }
         }
     }
-    
+
     rec_stack.remove(module);
     false
 }
@@ -444,9 +448,18 @@ fn display_organization_suggestions(analysis: &OrganizationAnalysis, verbose: bo
     println!("  Files: {}", analysis.metrics.total_files);
     println!("  Average coupling: {:.2}", analysis.metrics.avg_coupling);
     println!("  Average cohesion: {:.2}", analysis.metrics.avg_cohesion);
-    println!("  Circular dependencies: {}", analysis.metrics.circular_deps);
-    println!("  Large files (>8 functions): {}", analysis.metrics.large_files);
-    println!("  Organization score: {:.1}/100", analysis.metrics.organization_score);
+    println!(
+        "  Circular dependencies: {}",
+        analysis.metrics.circular_deps
+    );
+    println!(
+        "  Large files (>8 functions): {}",
+        analysis.metrics.large_files
+    );
+    println!(
+        "  Organization score: {:.1}/100",
+        analysis.metrics.organization_score
+    );
     println!();
 
     if analysis.suggestions.is_empty() {
@@ -455,14 +468,20 @@ fn display_organization_suggestions(analysis: &OrganizationAnalysis, verbose: bo
     }
 
     println!("Suggestions:");
-    
-    let high_priority: Vec<_> = analysis.suggestions.iter()
+
+    let high_priority: Vec<_> = analysis
+        .suggestions
+        .iter()
         .filter(|s| matches!(s.priority, Priority::High))
         .collect();
-    let medium_priority: Vec<_> = analysis.suggestions.iter()
+    let medium_priority: Vec<_> = analysis
+        .suggestions
+        .iter()
         .filter(|s| matches!(s.priority, Priority::Medium))
         .collect();
-    let low_priority: Vec<_> = analysis.suggestions.iter()
+    let low_priority: Vec<_> = analysis
+        .suggestions
+        .iter()
         .filter(|s| matches!(s.priority, Priority::Low))
         .collect();
 
@@ -503,17 +522,25 @@ fn display_organization_suggestions(analysis: &OrganizationAnalysis, verbose: bo
     if !verbose && (has_low_priority || !medium_priority.is_empty()) {
         println!("\nUse --verbose to see all suggestions and detailed file information");
     }
-    
+
     // Show detailed file analysis in verbose mode
     if verbose && !analysis.files.is_empty() {
         println!("\n=== Detailed File Analysis ===");
         for file in &analysis.files {
             println!("\nFile: {} ({})", file.module_name, file.path.display());
             println!("  Functions: {}", file.shared_functions.len());
-            println!("  Dependencies: {} -> [{}]", file.dependencies.len(), file.dependencies.join(", "));
-            println!("  Dependents: {} <- [{}]", file.dependents.len(), file.dependents.join(", "));
+            println!(
+                "  Dependencies: {} -> [{}]",
+                file.dependencies.len(),
+                file.dependencies.join(", ")
+            );
+            println!(
+                "  Dependents: {} <- [{}]",
+                file.dependents.len(),
+                file.dependents.join(", ")
+            );
             println!("  Coupling: {:.2}", file.coupling_score);
             println!("  Cohesion: {:.2}", file.cohesion_score);
         }
     }
-} 
+}

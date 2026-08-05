@@ -1,6 +1,6 @@
 use crate::ast::{Statement, TestDecl};
 use crate::interpreter::{Interpreter, InterpreterError};
-use crate::parser::{Parser, ParseError};
+use crate::parser::{ParseError, Parser};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -96,14 +96,15 @@ impl TestRunner {
 
     fn is_test_file(&self, file_path: &Path) -> Result<bool, TestError> {
         let content = fs::read_to_string(file_path)?;
-        
+
         // Simple heuristic: check if file contains test declarations
         // In a more sophisticated implementation, we could parse and check for test blocks
-        Ok(content.contains("test \"") || 
-           file_path.file_name()
-               .and_then(|name| name.to_str())
-               .map(|name| name.contains("test"))
-               .unwrap_or(false))
+        Ok(content.contains("test \"")
+            || file_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.contains("test"))
+                .unwrap_or(false))
     }
 
     fn load_test_file(&mut self, file_path: &Path) -> Result<(), TestError> {
@@ -156,7 +157,7 @@ impl TestRunner {
 
         let tests = test_suite.tests.clone();
         let file_path = test_suite.file_path.clone();
-        
+
         for test in &tests {
             let result = self.run_single_test(test, &file_path);
             self.test_suites[index].results.push(result);
@@ -201,7 +202,11 @@ impl TestRunner {
         }
     }
 
-    fn load_test_context(&self, interpreter: &mut Interpreter, file_path: &Path) -> Result<(), TestError> {
+    fn load_test_context(
+        &self,
+        interpreter: &mut Interpreter,
+        file_path: &Path,
+    ) -> Result<(), TestError> {
         let content = fs::read_to_string(file_path)?;
         let parser = Parser::new();
         let program = parser.parse(&content)?;
@@ -216,7 +221,11 @@ impl TestRunner {
         Ok(())
     }
 
-    fn execute_test_body(&self, interpreter: &mut Interpreter, test_body: &[Statement]) -> Result<(), InterpreterError> {
+    fn execute_test_body(
+        &self,
+        interpreter: &mut Interpreter,
+        test_body: &[Statement],
+    ) -> Result<(), InterpreterError> {
         for statement in test_body {
             interpreter.eval_statement(statement)?;
         }
@@ -260,7 +269,10 @@ impl TestRunner {
 
     /// Run tests and watch for file changes (for continuous testing)
     pub fn run_watch_mode(&mut self, directory: &Path) -> Result<(), TestError> {
-        println!(" Starting test watch mode for directory: {}", directory.display());
+        println!(
+            " Starting test watch mode for directory: {}",
+            directory.display()
+        );
         println!("Press Ctrl+C to stop...\n");
 
         // Initial test run
@@ -283,13 +295,13 @@ impl TestRunner {
         println!("Total tests: {}", self.total_tests);
         println!("Passed: {} ✓", self.passed_tests);
         println!("Failed: {} ✗", self.failed_tests);
-        
+
         if self.skipped_tests > 0 {
             println!("Skipped: {} -", self.skipped_tests);
         }
-        
+
         println!("Duration: {:.2}s", self.total_duration.as_secs_f64());
-        
+
         if self.total_tests > 0 {
             let success_rate = (self.passed_tests as f64 / self.total_tests as f64) * 100.0;
             println!("Success rate: {:.1}%", success_rate);
@@ -334,4 +346,4 @@ impl ColorExt for str {
     fn red(&self) -> String {
         format!("\x1b[31m{}\x1b[0m", self)
     }
-} 
+}

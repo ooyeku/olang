@@ -43,7 +43,7 @@ fn extract_use_statements(ast: &olang::ast::Program, dependencies: &mut Vec<Stri
 
 fn display_dependencies(file_path: &str, dependencies: &[String], verbose: bool) {
     println!("Dependencies for {}:", file_path);
-    
+
     if dependencies.is_empty() {
         println!("  No dependencies found");
         return;
@@ -60,4 +60,4 @@ fn display_dependencies(file_path: &str, dependencies: &[String], verbose: bool)
     if verbose {
         println!("\nTotal dependencies: {}", dependencies.len());
     }
-} 
+}

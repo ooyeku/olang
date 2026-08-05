@@ -1,5 +1,5 @@
 use crate::ast::Value;
-use crate::help::{HelpSystem, HelpContext, SearchFilters, Colors};
+use crate::help::{Colors, HelpContext, HelpSystem, SearchFilters};
 use crate::interpreter::InterpreterError;
 use crate::parser::{ErrorSuggestion, ParseError, Parser, SuggestionSeverity};
 use crate::version::VERSION;
@@ -70,13 +70,13 @@ impl CallFrame {
             file_name: None,
         }
     }
-    
+
     pub fn with_location(mut self, line: usize, file: Option<String>) -> Self {
         self.line_number = Some(line);
         self.file_name = file;
         self
     }
-    
+
     pub fn add_variable(&mut self, name: String, value: Value) {
         self.local_variables.insert(name, value);
     }
@@ -87,22 +87,22 @@ impl CallFrame {
 pub struct InteractiveDebugger {
     /// Variables being watched for changes
     watched_variables: HashSet<String>,
-    
+
     /// Call stack for stack traces and debugging
     call_stack: Vec<CallFrame>,
-    
+
     /// Whether step-through debugging is enabled
     debug_mode: bool,
-    
+
     /// Breakpoints set by the user
     breakpoints: HashSet<String>,
-    
+
     /// Function calls being traced
     traced_functions: HashSet<String>,
-    
+
     /// Previous variable values for change detection
     variable_history: HashMap<String, Value>,
-    
+
     /// Profiling data for performance analysis
     profiling_data: HashMap<String, Vec<f64>>,
 }
@@ -125,66 +125,69 @@ impl InteractiveDebugger {
             profiling_data: HashMap::new(),
         }
     }
-    
+
     pub fn watch_variable(&mut self, name: String) {
         self.watched_variables.insert(name);
     }
-    
+
     pub fn unwatch_variable(&mut self, name: &str) {
         self.watched_variables.remove(name);
     }
-    
+
     pub fn is_watching(&self, name: &str) -> bool {
         self.watched_variables.contains(name)
     }
-    
+
     pub fn add_breakpoint(&mut self, location: String) {
         self.breakpoints.insert(location);
     }
-    
+
     pub fn remove_breakpoint(&mut self, location: &str) {
         self.breakpoints.remove(location);
     }
-    
+
     pub fn trace_function(&mut self, name: String) {
         self.traced_functions.insert(name);
     }
-    
+
     pub fn untrace_function(&mut self, name: &str) {
         self.traced_functions.remove(name);
     }
-    
+
     pub fn push_call_frame(&mut self, frame: CallFrame) {
         self.call_stack.push(frame);
     }
-    
+
     pub fn pop_call_frame(&mut self) -> Option<CallFrame> {
         self.call_stack.pop()
     }
-    
+
     pub fn get_call_stack(&self) -> &[CallFrame] {
         &self.call_stack
     }
-    
+
     pub fn update_variable_history(&mut self, name: String, value: Value) {
         self.variable_history.insert(name, value);
     }
-    
+
     pub fn record_profiling_data(&mut self, expression: String, time_ms: f64) {
-        self.profiling_data.entry(expression).or_insert_with(Vec::new).push(time_ms);
+        self.profiling_data
+            .entry(expression)
+            .or_insert_with(Vec::new)
+            .push(time_ms);
     }
-    
+
     pub fn get_profiling_data(&self, expression: &str) -> Option<&Vec<f64>> {
         self.profiling_data.get(expression)
     }
-    
+
     pub fn clear_profiling_data(&mut self) {
         self.profiling_data.clear();
     }
-    
+
     pub fn check_watched_variables(&self, current_vars: &HashMap<String, Value>) -> Vec<String> {
         let mut changes = Vec::new();
-        
+
         for var_name in &self.watched_variables {
             if let Some(current_value) = current_vars.get(var_name) {
                 if let Some(previous_value) = self.variable_history.get(var_name) {
@@ -204,24 +207,47 @@ impl InteractiveDebugger {
                     ));
                 }
             } else if self.variable_history.contains_key(var_name) {
-                changes.push(format!(
-                    "Variable '{}' removed",
-                    var_name.bright_yellow()
-                ));
+                changes.push(format!("Variable '{}' removed", var_name.bright_yellow()));
             }
         }
-        
+
         changes
     }
 }
 
 /// All REPL colon-commands, used for TAB completion of the command word.
 const REPL_COMMANDS: &[&str] = &[
-    ":help", ":quit", ":env", ":clear", ":ovm", ":version", ":history",
-    ":type", ":time", ":memory", ":stats", ":parallel", ":run", ":debug",
-    ":watch", ":inspect", ":trace", ":set", ":stack", ":profile", ":config",
-    ":benchmark", ":search", ":tutorial", ":tutorial_run", ":contextual_help",
-    ":help_advanced", ":sh", ":cd", ":pwd", ":ls",
+    ":help",
+    ":quit",
+    ":env",
+    ":clear",
+    ":ovm",
+    ":version",
+    ":history",
+    ":type",
+    ":time",
+    ":memory",
+    ":stats",
+    ":parallel",
+    ":run",
+    ":debug",
+    ":watch",
+    ":inspect",
+    ":trace",
+    ":set",
+    ":stack",
+    ":profile",
+    ":config",
+    ":benchmark",
+    ":search",
+    ":tutorial",
+    ":tutorial_run",
+    ":contextual_help",
+    ":help_advanced",
+    ":sh",
+    ":cd",
+    ":pwd",
+    ":ls",
 ];
 
 /// Commands whose arguments are file paths (get filename completion).
@@ -493,7 +519,6 @@ impl Repl {
                 continue;
             }
 
-
             if self.multiline_mode {
                 if line == ":end" {
                     self.multiline_mode = false;
@@ -507,7 +532,11 @@ impl Repl {
                         Ok(value) => {
                             if value != Value::Unit {
                                 if self.config.show_types {
-                                    println!("{} : {}", repl_format(&value), Self::get_type_name(&value));
+                                    println!(
+                                        "{} : {}",
+                                        repl_format(&value),
+                                        Self::get_type_name(&value)
+                                    );
                                 } else {
                                     repl_print(&value);
                                 }
@@ -517,7 +546,7 @@ impl Repl {
                             self.show_enhanced_error(&e);
                         }
                     }
-                    
+
                     // Clean up module cache to prevent memory accumulation
                     self.interpreter.clear_module_cache();
                 } else {
@@ -566,7 +595,11 @@ impl Repl {
                         let duration = start.elapsed();
                         if value != Value::Unit {
                             if self.config.show_types {
-                                println!("{} : {}", repl_format(&value), Self::get_type_name(&value));
+                                println!(
+                                    "{} : {}",
+                                    repl_format(&value),
+                                    Self::get_type_name(&value)
+                                );
                             } else {
                                 repl_print(&value);
                             }
@@ -584,7 +617,7 @@ impl Repl {
                     self.show_enhanced_error(&e);
                 }
             }
-            
+
             // Clean up module cache to prevent memory accumulation
             self.interpreter.clear_module_cache();
         }
@@ -627,7 +660,11 @@ impl Repl {
         }
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        match std::process::Command::new(&shell).arg("-c").arg(cmd).status() {
+        match std::process::Command::new(&shell)
+            .arg("-c")
+            .arg(cmd)
+            .status()
+        {
             Ok(status) => {
                 if !status.success() {
                     match status.code() {
@@ -681,7 +718,8 @@ impl Repl {
                         "tutorial" => {
                             if parts.len() > 2 {
                                 let tutorial_name = parts[2];
-                                if let Some(tutorial) = self.help_system.get_tutorial(tutorial_name) {
+                                if let Some(tutorial) = self.help_system.get_tutorial(tutorial_name)
+                                {
                                     println!("{}", self.help_system.format_tutorial(tutorial));
                                 } else {
                                     println!("Tutorial '{}' not found. Use ':help tutorials' to see available tutorials.", tutorial_name);
@@ -713,7 +751,10 @@ impl Repl {
                                 // Try advanced search if direct lookup fails
                                 let results = self.help_system.search(topic, None);
                                 if !results.is_empty() {
-                                    println!("{}", self.help_system.format_search_results(&results));
+                                    println!(
+                                        "{}",
+                                        self.help_system.format_search_results(&results)
+                                    );
                                 } else {
                                     println!("No help found for '{}'. Try 'help search {}' for advanced search.", topic, topic);
                                 }
@@ -774,13 +815,21 @@ impl Repl {
                 println!("\n{}", "=== Bytecode Tier ===".bright_cyan().bold());
                 match self.interpreter.bytecode_tier_stats() {
                     Some(tier) => {
-                        println!("  Status: {}", "enabled (functions compile on first call)".bright_green());
-                        println!("  Promoted: {}  Rejected: {}  Bytecode calls: {}",
+                        println!(
+                            "  Status: {}",
+                            "enabled (functions compile on first call)".bright_green()
+                        );
+                        println!(
+                            "  Promoted: {}  Rejected: {}  Bytecode calls: {}",
                             tier.promoted.to_string().bright_white(),
                             tier.rejected.to_string().bright_white(),
-                            tier.bytecode_calls.to_string().bright_white());
+                            tier.bytecode_calls.to_string().bright_white()
+                        );
                     }
-                    None => println!("  Status: {} (restart without --no-ovm to enable)", "disabled".bright_yellow()),
+                    None => println!(
+                        "  Status: {} (restart without --no-ovm to enable)",
+                        "disabled".bright_yellow()
+                    ),
                 }
             }
             ":version" | "version" => {
@@ -868,9 +917,18 @@ impl Repl {
                 match self.interpreter.bytecode_tier_stats() {
                     Some(tier) => {
                         println!("  Bytecode tier: {}", "enabled".bright_green());
-                        println!("  Functions promoted: {}", tier.promoted.to_string().bright_white());
-                        println!("  Functions rejected:  {}", tier.rejected.to_string().bright_white());
-                        println!("  Bytecode calls:      {}", tier.bytecode_calls.to_string().bright_white());
+                        println!(
+                            "  Functions promoted: {}",
+                            tier.promoted.to_string().bright_white()
+                        );
+                        println!(
+                            "  Functions rejected:  {}",
+                            tier.rejected.to_string().bright_white()
+                        );
+                        println!(
+                            "  Bytecode calls:      {}",
+                            tier.bytecode_calls.to_string().bright_white()
+                        );
                     }
                     None => println!("  Bytecode tier: {}", "disabled".bright_yellow()),
                 }
@@ -920,7 +978,7 @@ impl Repl {
                             if parts.len() > 2 {
                                 if let Ok(threshold) = parts[2].parse::<usize>() {
                                     crate::parallel::set_parallel_threshold(threshold);
-                                        println!("Parallel threshold set to {} items", threshold);
+                                    println!("Parallel threshold set to {} items", threshold);
                                 } else {
                                     println!("Error: Invalid threshold value");
                                 }
@@ -961,9 +1019,7 @@ impl Repl {
                             let absolute_path = if file_path.is_absolute() {
                                 file_path.to_path_buf()
                             } else {
-                                std::env::current_dir()
-                                    .unwrap_or_default()
-                                    .join(file_path)
+                                std::env::current_dir().unwrap_or_default().join(file_path)
                             };
                             self.interpreter.set_current_file(&absolute_path);
 
@@ -988,8 +1044,7 @@ impl Repl {
 
                             // 2. Values are reference-counted; clearing the
                             // environment above already released them
-                            {
-                            }
+                            {}
                         }
                         Err(e) => {
                             eprintln!("Error reading file '{}': {}", filename, e);
@@ -1035,11 +1090,12 @@ impl Repl {
                     } else {
                         self.debugger.watch_variable(var_name.clone());
                         println!("Now watching variable: {}", var_name.bright_yellow());
-                        
+
                         // Store current value for change detection
                         let user_vars = self.interpreter.get_user_variables();
                         if let Some(value) = user_vars.get(&var_name) {
-                            self.debugger.update_variable_history(var_name, (*value).clone());
+                            self.debugger
+                                .update_variable_history(var_name, (*value).clone());
                         }
                     }
                 } else {
@@ -1164,7 +1220,7 @@ impl Repl {
                     if !times.is_empty() {
                         let total: std::time::Duration = times.iter().sum();
                         let avg = total / times.len() as u32;
-                        
+
                         // Safe handling of min/max without unwrap
                         match (times.iter().min(), times.iter().max()) {
                             (Some(min), Some(max)) => {
@@ -1185,42 +1241,56 @@ impl Repl {
             ":search" => {
                 if parts.len() > 1 {
                     let query = parts[1..].join(" ");
-                    
+
                     // Parse advanced search options
                     let mut filters = SearchFilters::default();
                     let mut search_query = query.clone();
-                    
+
                     // Check for category filter
                     if query.contains("category:") {
                         if let Some(category_part) = query.split("category:").nth(1) {
                             let category = category_part.split_whitespace().next().unwrap_or("");
                             filters.category = Some(category.to_string());
-                            search_query = query.replace(&format!("category:{}", category), "").trim().to_string();
+                            search_query = query
+                                .replace(&format!("category:{}", category), "")
+                                .trim()
+                                .to_string();
                         }
                     }
-                    
+
                     // Check for return type filter
                     if query.contains("returns:") {
                         if let Some(return_part) = query.split("returns:").nth(1) {
                             let return_type = return_part.split_whitespace().next().unwrap_or("");
                             filters.return_type = Some(return_type.to_string());
-                            search_query = query.replace(&format!("returns:{}", return_type), "").trim().to_string();
+                            search_query = query
+                                .replace(&format!("returns:{}", return_type), "")
+                                .trim()
+                                .to_string();
                         }
                     }
-                    
+
                     // Check for max results filter
                     if query.contains("limit:") {
                         if let Some(limit_part) = query.split("limit:").nth(1) {
-                            if let Ok(limit) = limit_part.split_whitespace().next().unwrap_or("").parse::<usize>() {
+                            if let Ok(limit) = limit_part
+                                .split_whitespace()
+                                .next()
+                                .unwrap_or("")
+                                .parse::<usize>()
+                            {
                                 filters.max_results = limit;
-                                search_query = query.replace(&format!("limit:{}", limit), "").trim().to_string();
+                                search_query = query
+                                    .replace(&format!("limit:{}", limit), "")
+                                    .trim()
+                                    .to_string();
                             }
                         }
                     }
-                    
+
                     let results = self.help_system.search(&search_query, Some(filters));
                     println!("{}", self.help_system.format_search_results(&results));
-                    
+
                     // Show search tips
                     if results.is_empty() {
                         println!("\n{}Search Tips:{}", Colors::CYAN, Colors::RESET);
@@ -1229,7 +1299,7 @@ impl Repl {
                         println!("  • Use return type filters: 'returns:List filter'");
                         println!("  • Use fuzzy search: 'lst' will match 'list' functions");
                         println!("  • Search in descriptions: 'transform' finds map, filter, etc.");
-                        
+
                         // Show suggestions based on partial input
                         let suggestions = self.help_system.get_suggestions(&search_query);
                         if !suggestions.is_empty() {
@@ -1241,10 +1311,26 @@ impl Repl {
                     }
                 } else {
                     println!("Usage: :search <query> [filters]");
-                    println!("\n{}Advanced Search Options:{}", Colors::CYAN, Colors::RESET);
-                    println!("  {}category:<name>{} - Filter by category", Colors::BLUE, Colors::RESET);
-                    println!("  {}returns:<type>{} - Filter by return type", Colors::BLUE, Colors::RESET);
-                    println!("  {}limit:<num>{} - Limit number of results", Colors::BLUE, Colors::RESET);
+                    println!(
+                        "\n{}Advanced Search Options:{}",
+                        Colors::CYAN,
+                        Colors::RESET
+                    );
+                    println!(
+                        "  {}category:<name>{} - Filter by category",
+                        Colors::BLUE,
+                        Colors::RESET
+                    );
+                    println!(
+                        "  {}returns:<type>{} - Filter by return type",
+                        Colors::BLUE,
+                        Colors::RESET
+                    );
+                    println!(
+                        "  {}limit:<num>{} - Limit number of results",
+                        Colors::BLUE,
+                        Colors::RESET
+                    );
                     println!("\n{}Examples:{}", Colors::GREEN, Colors::RESET);
                     println!("  :search map category:List");
                     println!("  :search returns:Bool");
@@ -1257,11 +1343,14 @@ impl Repl {
                     let tutorial_name = parts[1];
                     if let Some(tutorial) = self.help_system.get_tutorial(tutorial_name) {
                         println!("{}", self.help_system.format_tutorial(tutorial));
-                        
+
                         // Offer interactive mode
                         println!("\n{}Interactive Mode:{}", Colors::CYAN, Colors::RESET);
                         println!("  Would you like to try the tutorial interactively?");
-                        println!("  Use ':tutorial_run {}' to start interactive mode", tutorial_name);
+                        println!(
+                            "  Use ':tutorial_run {}' to start interactive mode",
+                            tutorial_name
+                        );
                     } else {
                         println!("Tutorial '{}' not found.", tutorial_name);
                         println!("{}", self.help_system.format_tutorial_list());
@@ -1270,51 +1359,107 @@ impl Repl {
                     println!("{}", self.help_system.format_tutorial_list());
                 }
             }
-                         ":tutorial_run" => {
-                 if parts.len() > 1 {
-                     let tutorial_name = parts[1];
-                     if let Some(tutorial) = self.help_system.get_tutorial(tutorial_name).cloned() {
-                         self.run_interactive_tutorial(&tutorial)?;
-                     } else {
-                         println!("Tutorial '{}' not found.", tutorial_name);
-                     }
-                 } else {
-                     println!("Usage: :tutorial_run <tutorial_name>");
-                 }
-             }
+            ":tutorial_run" => {
+                if parts.len() > 1 {
+                    let tutorial_name = parts[1];
+                    if let Some(tutorial) = self.help_system.get_tutorial(tutorial_name).cloned() {
+                        self.run_interactive_tutorial(&tutorial)?;
+                    } else {
+                        println!("Tutorial '{}' not found.", tutorial_name);
+                    }
+                } else {
+                    println!("Usage: :tutorial_run <tutorial_name>");
+                }
+            }
             ":contextual_help" => {
                 let context = self.build_help_context();
                 println!("{}", self.help_system.format_contextual_help(&context));
             }
             ":help_advanced" => {
-                println!("\n{}=== Advanced Help Features ==={}", Colors::BOLD, Colors::RESET);
+                println!(
+                    "\n{}=== Advanced Help Features ==={}",
+                    Colors::BOLD,
+                    Colors::RESET
+                );
                 println!("\n{}Advanced Search:{}", Colors::CYAN, Colors::RESET);
-                println!("  {}:search <query>{} - Fuzzy search with relevance scoring", Colors::BLUE, Colors::RESET);
-                println!("  {}help search <query>{} - Same as :search", Colors::BLUE, Colors::RESET);
-                println!("  {}category:<name>{} - Filter by category", Colors::GREEN, Colors::RESET);
-                println!("  {}returns:<type>{} - Filter by return type", Colors::GREEN, Colors::RESET);
-                println!("  {}limit:<num>{} - Limit results", Colors::GREEN, Colors::RESET);
-                
+                println!(
+                    "  {}:search <query>{} - Fuzzy search with relevance scoring",
+                    Colors::BLUE,
+                    Colors::RESET
+                );
+                println!(
+                    "  {}help search <query>{} - Same as :search",
+                    Colors::BLUE,
+                    Colors::RESET
+                );
+                println!(
+                    "  {}category:<name>{} - Filter by category",
+                    Colors::GREEN,
+                    Colors::RESET
+                );
+                println!(
+                    "  {}returns:<type>{} - Filter by return type",
+                    Colors::GREEN,
+                    Colors::RESET
+                );
+                println!(
+                    "  {}limit:<num>{} - Limit results",
+                    Colors::GREEN,
+                    Colors::RESET
+                );
+
                 println!("\n{}Interactive Tutorials:{}", Colors::CYAN, Colors::RESET);
-                println!("  {}help tutorials{} - List all available tutorials", Colors::BLUE, Colors::RESET);
-                println!("  {}help tutorial <name>{} - View specific tutorial", Colors::BLUE, Colors::RESET);
-                println!("  {}:tutorial <name>{} - View tutorial with interactive options", Colors::BLUE, Colors::RESET);
-                println!("  {}:tutorial_run <name>{} - Start interactive tutorial mode", Colors::BLUE, Colors::RESET);
-                
+                println!(
+                    "  {}help tutorials{} - List all available tutorials",
+                    Colors::BLUE,
+                    Colors::RESET
+                );
+                println!(
+                    "  {}help tutorial <name>{} - View specific tutorial",
+                    Colors::BLUE,
+                    Colors::RESET
+                );
+                println!(
+                    "  {}:tutorial <name>{} - View tutorial with interactive options",
+                    Colors::BLUE,
+                    Colors::RESET
+                );
+                println!(
+                    "  {}:tutorial_run <name>{} - Start interactive tutorial mode",
+                    Colors::BLUE,
+                    Colors::RESET
+                );
+
                 println!("\n{}Context-Sensitive Help:{}", Colors::CYAN, Colors::RESET);
-                println!("  {}:contextual_help{} - Get suggestions based on recent activity", Colors::BLUE, Colors::RESET);
-                println!("  {}help contextual{} - Same as :contextual_help", Colors::BLUE, Colors::RESET);
+                println!(
+                    "  {}:contextual_help{} - Get suggestions based on recent activity",
+                    Colors::BLUE,
+                    Colors::RESET
+                );
+                println!(
+                    "  {}help contextual{} - Same as :contextual_help",
+                    Colors::BLUE,
+                    Colors::RESET
+                );
                 println!("  Automatic suggestions based on:");
                 println!("    • Recent commands and patterns");
                 println!("    • Last error messages");
                 println!("    • Current variables and types");
                 println!("    • Working category context");
-                
+
                 println!("\n{}Enhanced Examples:{}", Colors::CYAN, Colors::RESET);
-                println!("  {}:examples <function>{} - Interactive examples with execution", Colors::BLUE, Colors::RESET);
-                println!("  {}help examples{} - Comprehensive example gallery", Colors::BLUE, Colors::RESET);
+                println!(
+                    "  {}:examples <function>{} - Interactive examples with execution",
+                    Colors::BLUE,
+                    Colors::RESET
+                );
+                println!(
+                    "  {}help examples{} - Comprehensive example gallery",
+                    Colors::BLUE,
+                    Colors::RESET
+                );
                 println!("  All examples are runnable and include explanations");
-                
+
                 println!("\n{}Search Result Types:{}", Colors::CYAN, Colors::RESET);
                 println!("  Exact name matches (highest priority)");
                 println!("  Fuzzy name matches");
@@ -1365,7 +1510,8 @@ impl Repl {
             let vars = self.interpreter.get_user_variables();
             for (name, value) in &vars {
                 if self.debugger.is_watching(name) {
-                    self.debugger.update_variable_history(name.clone(), (*value).clone());
+                    self.debugger
+                        .update_variable_history(name.clone(), (*value).clone());
                 }
             }
         }
@@ -1378,33 +1524,34 @@ impl Repl {
 
         // Periodic OVM health check (every 10 evaluations)
         self.ovm_health_check_counter += 1;
-        if self.ovm_health_check_counter % 10 == 0 {
-        }
+        if self.ovm_health_check_counter % 10 == 0 {}
 
         let result = self.interpreter.eval_program(program)?;
 
         // Check for watched variable changes after execution
         if watching_vars {
             let user_vars_after = self.interpreter.get_user_variables();
-            
+
             // Convert HashMap<String, &Value> to HashMap<String, Value> for compatibility
-            let user_vars_owned: HashMap<String, Value> = user_vars_after.iter()
+            let user_vars_owned: HashMap<String, Value> = user_vars_after
+                .iter()
                 .map(|(k, v)| (k.clone(), (*v).clone()))
                 .collect();
-            
+
             let changes = self.debugger.check_watched_variables(&user_vars_owned);
-            
+
             if !changes.is_empty() {
                 println!("\n{}", "Watched variable changes:".bright_yellow().bold());
                 for change in changes {
                     println!("  {}", change);
                 }
             }
-            
+
             // Update variable history
             for (name, value) in &user_vars_after {
                 if self.debugger.is_watching(name) {
-                    self.debugger.update_variable_history(name.clone(), (*value).clone());
+                    self.debugger
+                        .update_variable_history(name.clone(), (*value).clone());
                 }
             }
         }
@@ -1473,9 +1620,7 @@ impl Repl {
             println!("  {}", "(none)".bright_black());
         } else {
             // Get user variables again (after releasing previous borrow)
-            let user_vars = self
-                .interpreter
-                .get_user_variables();
+            let user_vars = self.interpreter.get_user_variables();
             for (name, value) in &user_vars {
                 let type_name = Self::get_type_name(value);
                 let value_str = Self::format_value_preview(value);
@@ -1509,7 +1654,7 @@ impl Repl {
             Value::Enum { type_name: _, .. } => {
                 // Use a static string for REPL display
                 "enum"
-            },
+            }
             Value::Promise { .. } => "promise",
             Value::Map(_) => "map",
             Value::TypeInfo { .. } => "type",
@@ -1580,80 +1725,114 @@ impl Repl {
 
     /// Enhanced debugging methods
     fn show_debug_help(&self) {
-        println!("\n{}", "=== Interactive Debugging Commands ===".bright_cyan().bold());
-        println!("  {}  - Step through expression evaluation", ":debug <expression>".bright_blue());
-        println!("  {}     - Toggle variable watching", ":watch <variable>".bright_blue());
-        println!("  {}   - Detailed variable inspection", ":inspect <variable>".bright_blue());
-        println!("  {}     - Trace function calls", ":trace <function>".bright_blue());
-        println!("  {}      - Modify variable values", ":set <var> <value>".bright_blue());
+        println!(
+            "\n{}",
+            "=== Interactive Debugging Commands ==="
+                .bright_cyan()
+                .bold()
+        );
+        println!(
+            "  {}  - Step through expression evaluation",
+            ":debug <expression>".bright_blue()
+        );
+        println!(
+            "  {}     - Toggle variable watching",
+            ":watch <variable>".bright_blue()
+        );
+        println!(
+            "  {}   - Detailed variable inspection",
+            ":inspect <variable>".bright_blue()
+        );
+        println!(
+            "  {}     - Trace function calls",
+            ":trace <function>".bright_blue()
+        );
+        println!(
+            "  {}      - Modify variable values",
+            ":set <var> <value>".bright_blue()
+        );
         println!("  {}           - Show call stack", ":stack".bright_blue());
-        println!("  {}    - Profile expression performance", ":profile <expression>".bright_blue());
-        println!("  {}       - Enable/disable debug mode", ":debug [on|off]".bright_blue());
+        println!(
+            "  {}    - Profile expression performance",
+            ":profile <expression>".bright_blue()
+        );
+        println!(
+            "  {}       - Enable/disable debug mode",
+            ":debug [on|off]".bright_blue()
+        );
         println!();
     }
 
     fn debug_evaluate_expression(&mut self, expr: &str) -> Result<(), ReplError> {
         println!("{}", format!("Debugging: {}", expr).bright_cyan().bold());
-        
+
         // Check for watched variables before execution
         let user_vars_before = self.interpreter.get_user_variables();
         for (name, value) in &user_vars_before {
             if self.debugger.is_watching(name) {
-                self.debugger.update_variable_history(name.clone(), (*value).clone());
+                self.debugger
+                    .update_variable_history(name.clone(), (*value).clone());
             }
         }
-        
+
         // Parse and show AST if in debug mode
         match self.parser.parse(expr) {
             Ok(program) => {
                 if self.debugger.debug_mode {
                     println!("  {}: {:?}", "Parsed AST".bright_green(), program);
                 }
-                
+
                 // Execute with timing
                 let start = Instant::now();
                 match self.eval_line(expr) {
                     Ok(value) => {
                         let duration = start.elapsed();
                         let time_ms = duration.as_secs_f64() * 1000.0;
-                        
+
                         if value != Value::Unit {
                             println!("  {}: {}", "Result".bright_green(), value);
                         }
                         println!("  {}: {:.2}ms", "Execution time".bright_blue(), time_ms);
-                        
+
                         // Record profiling data
-                        self.debugger.record_profiling_data(expr.to_string(), time_ms);
-                        
+                        self.debugger
+                            .record_profiling_data(expr.to_string(), time_ms);
+
                         // Check for watched variable changes
                         let user_vars_after = self.interpreter.get_user_variables();
-                        
+
                         // Convert HashMap<String, &Value> to HashMap<String, Value> for compatibility
-                        let user_vars_owned: HashMap<String, Value> = user_vars_after.iter()
+                        let user_vars_owned: HashMap<String, Value> = user_vars_after
+                            .iter()
                             .map(|(k, v)| (k.clone(), (*v).clone()))
                             .collect();
-                        
+
                         let changes = self.debugger.check_watched_variables(&user_vars_owned);
-                        
+
                         if !changes.is_empty() {
                             println!("  {}:", "Variable changes".bright_yellow().bold());
                             for change in changes {
                                 println!("    {}", change);
                             }
                         }
-                        
+
                         // Update variable history
                         for (name, value) in &user_vars_after {
                             if self.debugger.is_watching(name) {
-                                self.debugger.update_variable_history(name.clone(), (*value).clone());
+                                self.debugger
+                                    .update_variable_history(name.clone(), (*value).clone());
                             }
                         }
                     }
                     Err(e) => {
                         let duration = start.elapsed();
                         println!("  {}: {}", "Error".bright_red(), e);
-                        println!("  {}: {:.2}ms", "Time to error".bright_blue(), duration.as_secs_f64() * 1000.0);
-                        
+                        println!(
+                            "  {}: {:.2}ms",
+                            "Time to error".bright_blue(),
+                            duration.as_secs_f64() * 1000.0
+                        );
+
                         // Enhanced error context
                         self.show_enhanced_error(&e);
                     }
@@ -1663,18 +1842,27 @@ impl Repl {
                 println!("  {}: {}", "Parse error".bright_red(), e);
             }
         }
-        
+
         Ok(())
     }
 
     fn inspect_variable(&mut self, var_name: &str) -> Result<(), ReplError> {
         let user_vars = self.interpreter.get_user_variables();
-        
+
         if let Some(value) = user_vars.get(var_name) {
-            println!("\n{}", format!("=== Variable Inspection: {} ===", var_name).bright_cyan().bold());
-            println!("  {}: {}", "Type".bright_yellow(), Self::get_type_name(value));
+            println!(
+                "\n{}",
+                format!("=== Variable Inspection: {} ===", var_name)
+                    .bright_cyan()
+                    .bold()
+            );
+            println!(
+                "  {}: {}",
+                "Type".bright_yellow(),
+                Self::get_type_name(value)
+            );
             println!("  {}: {}", "Value".bright_green(), value);
-            
+
             // Additional type-specific information
             match value {
                 Value::String(s) => {
@@ -1687,7 +1875,9 @@ impl Repl {
                     println!("  {}: {} items", "Length".bright_blue(), items.len());
                     if !items.is_empty() {
                         let first_type = Self::get_type_name(&items[0]);
-                        let all_same_type = items.iter().all(|item| Self::get_type_name(item) == first_type);
+                        let all_same_type = items
+                            .iter()
+                            .all(|item| Self::get_type_name(item) == first_type);
                         if all_same_type {
                             println!("  {}: {}", "Element type".bright_blue(), first_type);
                         } else {
@@ -1699,36 +1889,55 @@ impl Repl {
                     println!("  {}: {}", "Struct type".bright_blue(), type_name);
                     println!("  {}: {} fields", "Field count".bright_blue(), fields.len());
                     for (field_name, field_value) in fields {
-                        println!("    {}: {} = {}", 
-                            field_name.bright_magenta(), 
+                        println!(
+                            "    {}: {} = {}",
+                            field_name.bright_magenta(),
                             Self::get_type_name(field_value),
                             Self::format_value_preview(field_value)
                         );
                     }
                 }
                 Value::Function(func) => {
-                    println!("  {}: {} parameters", "Arity".bright_blue(), func.parameters.len());
+                    println!(
+                        "  {}: {} parameters",
+                        "Arity".bright_blue(),
+                        func.parameters.len()
+                    );
                     if !func.parameters.is_empty() {
-                        println!("  {}: {}", "Parameters".bright_blue(), 
-                            func.parameters.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ")
+                        println!(
+                            "  {}: {}",
+                            "Parameters".bright_blue(),
+                            func.parameters
+                                .iter()
+                                .map(|p| p.name.clone())
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         );
                     }
                 }
                 _ => {}
             }
-            
+
             // Show if variable is being watched
             if self.debugger.is_watching(var_name) {
-                println!("  {}: {}", "Status".bright_green(), "Being watched".bright_green());
+                println!(
+                    "  {}: {}",
+                    "Status".bright_green(),
+                    "Being watched".bright_green()
+                );
             }
-            
         } else {
             // Check if it's a builtin function
             let builtins = self.interpreter.get_builtin_functions();
             if let Some(_builtin) = builtins.get(var_name) {
-                println!("\n{}", format!("=== Builtin Function: {} ===", var_name).bright_cyan().bold());
+                println!(
+                    "\n{}",
+                    format!("=== Builtin Function: {} ===", var_name)
+                        .bright_cyan()
+                        .bold()
+                );
                 println!("  {}: builtin function", "Type".bright_yellow());
-                
+
                 // Show help if available
                 if self.help_system.has_function(var_name) {
                     println!("\n{}", self.help_system.show_function_help(var_name));
@@ -1736,10 +1945,13 @@ impl Repl {
                     println!("  {}: No documentation available", "Help".bright_blue());
                 }
             } else {
-                return Err(ReplError::Debug(format!("Variable '{}' not found", var_name)));
+                return Err(ReplError::Debug(format!(
+                    "Variable '{}' not found",
+                    var_name
+                )));
             }
         }
-        
+
         Ok(())
     }
 
@@ -1750,44 +1962,57 @@ impl Repl {
                 // Check if variable exists
                 let user_vars = self.interpreter.get_user_variables();
                 let existed = user_vars.contains_key(&var_name);
-                
+
                 // Set the variable
-                self.interpreter.define_variable(var_name.clone(), value.clone());
-                
+                self.interpreter
+                    .define_variable(var_name.clone(), value.clone());
+
                 if existed {
-                    println!("Variable '{}' updated to: {}", var_name.bright_yellow(), value);
+                    println!(
+                        "Variable '{}' updated to: {}",
+                        var_name.bright_yellow(),
+                        value
+                    );
                 } else {
-                    println!("Variable '{}' created with value: {}", var_name.bright_yellow(), value);
+                    println!(
+                        "Variable '{}' created with value: {}",
+                        var_name.bright_yellow(),
+                        value
+                    );
                 }
-                
+
                 // Update variable history if being watched
                 if self.debugger.is_watching(&var_name) {
                     self.debugger.update_variable_history(var_name, value);
                 }
             }
             Err(e) => {
-                return Err(ReplError::Debug(format!("Failed to evaluate value expression '{}': {}", value_expr, e)));
+                return Err(ReplError::Debug(format!(
+                    "Failed to evaluate value expression '{}': {}",
+                    value_expr, e
+                )));
             }
         }
-        
+
         Ok(())
     }
 
     fn show_call_stack(&self) {
         println!("\n{}", "=== Call Stack ===".bright_cyan().bold());
-        
+
         let stack = self.debugger.get_call_stack();
-        
+
         if stack.is_empty() {
             println!("  {}", "(empty - no active function calls)".bright_black());
         } else {
             for (i, frame) in stack.iter().enumerate().rev() {
                 let frame_num = stack.len() - i - 1;
-                println!("  #{}: {}", 
+                println!(
+                    "  #{}: {}",
                     frame_num.to_string().bright_white(),
                     frame.function_name.bright_blue()
                 );
-                
+
                 if let Some(line) = frame.line_number {
                     print!("      at line {}", line.to_string().bright_cyan());
                     if let Some(file) = &frame.file_name {
@@ -1795,11 +2020,12 @@ impl Repl {
                     }
                     println!();
                 }
-                
+
                 if !frame.local_variables.is_empty() {
                     println!("      local variables:");
                     for (name, value) in &frame.local_variables {
-                        println!("        {} = {}", 
+                        println!(
+                            "        {} = {}",
                             name.bright_yellow(),
                             Self::format_value_preview(value)
                         );
@@ -1807,16 +2033,16 @@ impl Repl {
                 }
             }
         }
-        
+
         println!();
     }
 
     fn profile_expression(&mut self, expr: &str) -> Result<(), ReplError> {
         println!("{}", format!("Profiling: {}", expr).bright_cyan().bold());
-        
+
         let iterations = 5;
         let mut times = Vec::new();
-        
+
         for i in 1..=iterations {
             let start = Instant::now();
             match self.eval_line(expr) {
@@ -1832,31 +2058,31 @@ impl Repl {
                 }
             }
         }
-        
+
         if !times.is_empty() {
             let sum: f64 = times.iter().sum();
             let avg = sum / times.len() as f64;
             let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
             let max = times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            
+
             println!("\n  {}:", "Profile Results".bright_green().bold());
             println!("    Average: {:.2}ms", avg);
             println!("    Min: {:.2}ms", min);
             println!("    Max: {:.2}ms", max);
             println!("    Total: {:.2}ms", sum);
-            
+
             // Record profiling data
             for time in times {
                 self.debugger.record_profiling_data(expr.to_string(), time);
             }
         }
-        
+
         Ok(())
     }
 
     fn show_profiling_summary(&self) {
         println!("\n{}", "=== Profiling Summary ===".bright_cyan().bold());
-        
+
         if self.debugger.profiling_data.is_empty() {
             println!("  {}", "No profiling data available".bright_black());
             println!("  Use :profile <expression> to collect performance data");
@@ -1867,7 +2093,7 @@ impl Repl {
                     let avg = sum / times.len() as f64;
                     let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
                     let max = times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-                    
+
                     println!("\n  {}: {}", "Expression".bright_blue(), expr);
                     println!("    Runs: {}", times.len());
                     println!("    Average: {:.2}ms", avg);
@@ -1876,13 +2102,13 @@ impl Repl {
                 }
             }
         }
-        
+
         println!();
     }
 
     fn show_enhanced_error(&mut self, error: &ReplError) {
         println!("\n{}", "═══ Error Details ═══".bright_red().bold());
-        
+
         match error {
             ReplError::Parse(parse_error) => {
                 self.show_parse_error(parse_error);
@@ -1900,32 +2126,55 @@ impl Repl {
                 println!("  {}: {}", "Debug Error".bright_red(), debug_error);
             }
         }
-        
+
         println!();
     }
-    
+
     fn show_parse_error(&mut self, parse_error: &ParseError) {
         // Display the main error message with enhanced formatting
         match parse_error {
-            ParseError::InvalidSyntaxWithPosition { message, line, column, snippet } => {
-                println!("  {}: {}", "Parse Error".bright_red().bold(), message.bright_white());
+            ParseError::InvalidSyntaxWithPosition {
+                message,
+                line,
+                column,
+                snippet,
+            } => {
+                println!(
+                    "  {}: {}",
+                    "Parse Error".bright_red().bold(),
+                    message.bright_white()
+                );
                 println!("\n  {}", "Location:".bright_yellow().bold());
-                println!("    Line {}, Column {}", line.to_string().bright_cyan(), column.to_string().bright_cyan());
-                
+                println!(
+                    "    Line {}, Column {}",
+                    line.to_string().bright_cyan(),
+                    column.to_string().bright_cyan()
+                );
+
                 // Show the formatted code snippet with highlighting
                 if !snippet.trim().is_empty() {
                     println!("\n  {}", "Code Context:".bright_blue().bold());
                     self.show_highlighted_snippet(snippet);
                 }
             }
-            ParseError::UnexpectedTokenWithPosition { token, line, column, snippet } => {
-                println!("  {}: Unexpected token '{}'", 
-                    "Parse Error".bright_red().bold(), 
+            ParseError::UnexpectedTokenWithPosition {
+                token,
+                line,
+                column,
+                snippet,
+            } => {
+                println!(
+                    "  {}: Unexpected token '{}'",
+                    "Parse Error".bright_red().bold(),
                     token.bright_yellow().bold()
                 );
-     
-                println!("    Line {}, Column {}", line.to_string().bright_cyan(), column.to_string().bright_cyan());
-                
+
+                println!(
+                    "    Line {}, Column {}",
+                    line.to_string().bright_cyan(),
+                    column.to_string().bright_cyan()
+                );
+
                 if !snippet.trim().is_empty() {
                     println!("\n  {}", "Code Context:".bright_blue().bold());
                     self.show_highlighted_snippet(snippet);
@@ -1935,34 +2184,34 @@ impl Repl {
                 println!("  {}: {}", "Parse Error".bright_red().bold(), parse_error);
             }
         }
-        
+
         // Get the last command for context
         let empty_string = String::new();
         let last_command = self.command_history.last().unwrap_or(&empty_string).clone();
-        
+
         // Get suggestions from the parser
         let suggestions = self.parser.get_suggestions(parse_error, &last_command);
-        
+
         if !suggestions.is_empty() {
             println!("\n  {}", "Suggestions:".bright_cyan().bold());
             for suggestion in suggestions {
                 self.show_suggestion(&suggestion);
             }
         }
-        
+
         // Show related help if available
         self.show_contextual_help(parse_error, &last_command);
     }
-    
+
     fn show_highlighted_snippet(&self, snippet: &str) {
         // Parse and display the snippet with syntax highlighting
         let lines: Vec<&str> = snippet.lines().collect();
-        
+
         for line in lines {
             if line.trim().is_empty() {
                 continue;
             }
-            
+
             // Check if this line contains a caret pointer
             if line.contains("^") {
                 // This is the error pointer line - highlight it specially
@@ -1970,7 +2219,8 @@ impl Repl {
                 if parts.len() >= 2 {
                     let line_num = parts[0].trim();
                     let pointer = parts[1];
-                    println!("    {}{}│{}{}", 
+                    println!(
+                        "    {}{}│{}{}",
                         line_num.bright_black(),
                         " ".repeat(4 - line_num.len().min(4)),
                         " ",
@@ -1983,11 +2233,12 @@ impl Repl {
                 if parts.len() >= 2 {
                     let line_num = parts[0].trim();
                     let code = parts[1];
-                    
+
                     // Basic syntax highlighting
                     let highlighted_code = self.apply_basic_highlighting(code);
-                    
-                    println!("    {}{}│ {}", 
+
+                    println!(
+                        "    {}{}│ {}",
                         line_num.bright_blue(),
                         " ".repeat(4 - line_num.len().min(4)),
                         highlighted_code
@@ -1996,12 +2247,12 @@ impl Repl {
             }
         }
     }
-    
+
     fn apply_basic_highlighting(&self, code: &str) -> String {
         let mut result = String::new();
         let mut chars = code.chars().peekable();
         let mut current_word = String::new();
-        
+
         while let Some(ch) = chars.next() {
             match ch {
                 // String literals
@@ -2011,7 +2262,7 @@ impl Repl {
                         current_word.clear();
                     }
                     result.push_str(&format!("{}", "\"".bright_green()));
-                    
+
                     // Consume the string content
                     while let Some(str_ch) = chars.next() {
                         if str_ch == '"' {
@@ -2030,7 +2281,7 @@ impl Repl {
                 // Numbers
                 c if c.is_ascii_digit() => {
                     current_word.push(c);
-                    
+
                     // Look ahead to consume the full number
                     while let Some(&next_ch) = chars.peek() {
                         if next_ch.is_ascii_digit() || next_ch == '.' || next_ch == '_' {
@@ -2052,16 +2303,17 @@ impl Repl {
                         result.push_str(&self.highlight_word(&current_word));
                         current_word.clear();
                     }
-                    
+
                     // Look ahead for compound operators
                     let mut op = ch.to_string();
                     if let Some(&next_ch) = chars.peek() {
-                        if (ch == '=' && next_ch == '=') ||
-                           (ch == '!' && next_ch == '=') ||
-                           (ch == '<' && next_ch == '=') ||
-                           (ch == '>' && next_ch == '=') ||
-                           (ch == '&' && next_ch == '&') ||
-                           (ch == '|' && next_ch == '|') {
+                        if (ch == '=' && next_ch == '=')
+                            || (ch == '!' && next_ch == '=')
+                            || (ch == '<' && next_ch == '=')
+                            || (ch == '>' && next_ch == '=')
+                            || (ch == '&' && next_ch == '&')
+                            || (ch == '|' && next_ch == '|')
+                        {
                             op.push(chars.next().unwrap());
                         }
                     }
@@ -2085,104 +2337,112 @@ impl Repl {
                 }
             }
         }
-        
+
         // Handle any remaining word
         if !current_word.is_empty() {
             result.push_str(&self.highlight_word(&current_word));
         }
-        
+
         result
     }
-    
+
     fn highlight_word(&self, word: &str) -> String {
         match word {
             // Keywords
-            "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" |
-            "true" | "false" | "async" | "await" | "try" | "catch" | "import" | "export" | "type" => {
+            "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | "break"
+            | "continue" | "true" | "false" | "async" | "await" | "try" | "catch" | "import"
+            | "export" | "type" => {
                 format!("{}", word.bright_blue().bold())
             }
             // Types
-            "Int" | "Float" | "String" | "Bool" | "List" | "Map" | "Unit" | "Result" | "Ok" | "Err" => {
+            "Int" | "Float" | "String" | "Bool" | "List" | "Map" | "Unit" | "Result" | "Ok"
+            | "Err" => {
                 format!("{}", word.bright_magenta())
             }
             // Built-in functions (common ones)
-            "println" | "print" | "map" | "filter" | "reduce" | "range" | "len" | "head" | "tail" => {
+            "println" | "print" | "map" | "filter" | "reduce" | "range" | "len" | "head"
+            | "tail" => {
                 format!("{}", word.bright_cyan())
             }
             _ => word.to_string(),
         }
     }
-    
+
     fn show_contextual_help(&mut self, parse_error: &ParseError, input: &str) {
         // Extract keywords from the error and input to suggest relevant help
         let error_msg = format!("{:?}", parse_error);
         let mut help_topics = HashSet::new();
-        
+
         // Suggest error-specific help topics
         if error_msg.contains("InvalidSyntax") || error_msg.contains("UnexpectedToken") {
             help_topics.insert("error.syntax");
         }
-        
+
         // Check for specific syntax issues
-        if error_msg.contains("bracket") || error_msg.contains("parenthesis") || error_msg.contains("brace") {
+        if error_msg.contains("bracket")
+            || error_msg.contains("parenthesis")
+            || error_msg.contains("brace")
+        {
             help_topics.insert("error.syntax");
         }
-        
+
         if error_msg.contains("quote") || error_msg.contains("string") {
             help_topics.insert("error.syntax");
         }
-        
+
         // Check for function-related errors
         if error_msg.contains("fn") || input.contains("fn") {
             help_topics.insert("functions");
             help_topics.insert("error.syntax");
         }
-        
+
         // Check for let-related errors
         if error_msg.contains("let") || input.contains("let") {
             help_topics.insert("variables");
             help_topics.insert("error.scope");
         }
-        
+
         // Check for match-related errors
         if error_msg.contains("match") || input.contains("match") {
             help_topics.insert("pattern_matching");
             help_topics.insert("error.types");
         }
-        
+
         // Check for type-related errors
         if error_msg.contains("type") || input.contains(": ") {
             help_topics.insert("types");
             help_topics.insert("error.types");
         }
-        
+
         // Check for common language migration issues
         if input.contains("console.log") || input.contains("printf") || input.contains(";") {
             help_topics.insert("error.differences");
         }
-        
+
         // Check for assignment/comparison confusion
         if input.contains("=") && !input.contains("==") && !input.contains("let") {
             help_topics.insert("error.syntax");
             help_topics.insert("error.differences");
         }
-        
+
         if !help_topics.is_empty() {
             println!("\n  {}", "Related Help Topics:".bright_cyan().bold());
             let has_error_topics = help_topics.iter().any(|t| t.starts_with("error."));
-            
+
             for topic in &help_topics {
                 if self.help_system.has_function(topic) || self.help_system.has_category(topic) {
-                    println!("    • Type {} for help on {}", 
+                    println!(
+                        "    • Type {} for help on {}",
                         format!("help {}", topic).bright_cyan(),
                         topic.replace("error.", "").replace("_", " ").bright_white()
                     );
                 }
             }
-            
+
             // Always suggest the general error help
             if has_error_topics {
-                println!("    • Type {} for comprehensive error guidance", 
+                println!(
+                    "    • Type {} for comprehensive error guidance",
                     "help error.fixes".bright_cyan()
                 );
             }
@@ -2192,114 +2452,146 @@ impl Repl {
     fn show_interpreter_error(&mut self, interpreter_error: &InterpreterError) {
         match interpreter_error {
             InterpreterError::UndefinedVariable { name } => {
-                println!("  {}: Variable '{}' is not defined", 
-                    "Undefined Variable".bright_red().bold(), 
+                println!(
+                    "  {}: Variable '{}' is not defined",
+                    "Undefined Variable".bright_red().bold(),
                     name.bright_yellow()
                 );
-                
+
                 // Suggest similar variables
                 let user_vars = self.interpreter.get_user_variables();
                 let mut suggestions = Vec::new();
-                
+
                 for var_name in user_vars.keys() {
                     if Self::is_similar_name(name, var_name) {
                         suggestions.push(var_name.clone());
                     }
                 }
-                
+
                 if !suggestions.is_empty() {
                     println!("\n  {}", "Did you mean:".bright_cyan().bold());
                     for suggestion in suggestions {
                         println!("    • {}", suggestion.bright_green());
                     }
                 } else {
-                    println!("\n  {}: Use {} to see available variables", 
-                        "Hint".bright_blue().bold(), 
+                    println!(
+                        "\n  {}: Use {} to see available variables",
+                        "Hint".bright_blue().bold(),
                         ":env".bright_cyan()
                     );
                 }
             }
             InterpreterError::TypeError { message } => {
                 println!("  {}: {}", "Type Error".bright_red().bold(), message);
-                
+
                 // Type-specific suggestions
                 if message.contains("division by zero") {
-                    println!("\n  {}: Check that denominators are not zero before division", 
-                        "Hint".bright_blue().bold());
+                    println!(
+                        "\n  {}: Check that denominators are not zero before division",
+                        "Hint".bright_blue().bold()
+                    );
                 } else if message.contains("cannot convert") {
-                    println!("\n  {}: Use type conversion functions like {} or {}", 
+                    println!(
+                        "\n  {}: Use type conversion functions like {} or {}",
                         "Hint".bright_blue().bold(),
                         "to_int()".bright_cyan(),
                         "to_float()".bright_cyan()
                     );
                 } else if message.contains("invalid binary operation") {
-                    println!("\n  {}: Check that operands are compatible types", 
-                        "Hint".bright_blue().bold());
-                    println!("    • Numbers: {} with {}", "42".bright_green(), "3.14".bright_green());
-                    println!("    • Strings: {} with {}", "\"hello\"".bright_green(), "\"world\"".bright_green());
-                    println!("    • Booleans: {} with {}", "true".bright_green(), "false".bright_green());
+                    println!(
+                        "\n  {}: Check that operands are compatible types",
+                        "Hint".bright_blue().bold()
+                    );
+                    println!(
+                        "    • Numbers: {} with {}",
+                        "42".bright_green(),
+                        "3.14".bright_green()
+                    );
+                    println!(
+                        "    • Strings: {} with {}",
+                        "\"hello\"".bright_green(),
+                        "\"world\"".bright_green()
+                    );
+                    println!(
+                        "    • Booleans: {} with {}",
+                        "true".bright_green(),
+                        "false".bright_green()
+                    );
                 }
             }
             InterpreterError::RuntimeError { message } => {
                 println!("  {}: {}", "Runtime Error".bright_red().bold(), message);
-                
+
                 // Runtime-specific suggestions
                 if message.contains("break") {
-                    println!("\n  {}: {} can only be used inside loops", 
+                    println!(
+                        "\n  {}: {} can only be used inside loops",
                         "Hint".bright_blue().bold(),
                         "break".bright_cyan()
                     );
                 } else if message.contains("continue") {
-                    println!("\n  {}: {} can only be used inside loops", 
+                    println!(
+                        "\n  {}: {} can only be used inside loops",
                         "Hint".bright_blue().bold(),
                         "continue".bright_cyan()
                     );
                 }
             }
             InterpreterError::ArityMismatch { expected, got } => {
-                println!("  {}: Expected {} arguments, got {}", 
-                    "Arity Mismatch".bright_red().bold(), 
+                println!(
+                    "  {}: Expected {} arguments, got {}",
+                    "Arity Mismatch".bright_red().bold(),
                     expected.to_string().bright_cyan(),
                     got.to_string().bright_yellow()
                 );
-                
+
                 println!("\n  {}: Check the function signature and provide the correct number of arguments", 
                     "Hint".bright_blue().bold());
             }
             InterpreterError::PatternMatchFailed => {
-                println!("  {}: Pattern matching failed", 
-                    "Pattern Match Error".bright_red().bold());
-                
-                println!("\n  {}: Ensure the pattern matches the structure of the value", 
-                    "Hint".bright_blue().bold());
+                println!(
+                    "  {}: Pattern matching failed",
+                    "Pattern Match Error".bright_red().bold()
+                );
+
+                println!(
+                    "\n  {}: Ensure the pattern matches the structure of the value",
+                    "Hint".bright_blue().bold()
+                );
                 println!("    • Use {} to match any value", "_".bright_cyan());
-                println!("    • Use {} or {} for Result types", "Ok(value)".bright_cyan(), "Err(error)".bright_cyan());
+                println!(
+                    "    • Use {} or {} for Result types",
+                    "Ok(value)".bright_cyan(),
+                    "Err(error)".bright_cyan()
+                );
             }
             _ => {
                 // Handle all other error types (lazy evaluation errors, etc.)
                 println!("  {}: {}", "Error".bright_red().bold(), interpreter_error);
-                
-                println!("\n  {}: This appears to be a system-level error", 
-                    "Hint".bright_blue().bold());
+
+                println!(
+                    "\n  {}: This appears to be a system-level error",
+                    "Hint".bright_blue().bold()
+                );
             }
         }
     }
-    
+
     fn is_similar_name(target: &str, candidate: &str) -> bool {
         // Simple similarity check - could be enhanced with edit distance
         if target.len() < 3 || candidate.len() < 3 {
             return false;
         }
-        
+
         // Check if one contains the other
         if target.contains(candidate) || candidate.contains(target) {
             return true;
         }
-        
+
         // Check for common prefixes/suffixes
         let target_lower = target.to_lowercase();
         let candidate_lower = candidate.to_lowercase();
-        
+
         // Compare 2-char prefixes/suffixes by chars — byte slicing panics on
         // multibyte identifiers (e.g. `xé`)
         let target_chars: Vec<char> = target_lower.chars().collect();
@@ -2320,7 +2612,7 @@ impl Repl {
 
         false
     }
-    
+
     fn show_suggestion(&self, suggestion: &ErrorSuggestion) {
         let severity_icon = match suggestion.severity {
             SuggestionSeverity::Error => "ERROR",
@@ -2328,28 +2620,34 @@ impl Repl {
             SuggestionSeverity::Hint => "HINT",
             SuggestionSeverity::Info => "INFO",
         };
-        
+
         let severity_color = match suggestion.severity {
             SuggestionSeverity::Error => "red",
             SuggestionSeverity::Warning => "yellow",
             SuggestionSeverity::Hint => "cyan",
             SuggestionSeverity::Info => "blue",
         };
-        
-        println!("    {} {}", severity_icon, suggestion.message.color(severity_color).bold());
-        
+
+        println!(
+            "    {} {}",
+            severity_icon,
+            suggestion.message.color(severity_color).bold()
+        );
+
         if let Some(fix) = &suggestion.fix {
             println!("      {}: {}", "Fix".bright_green().bold(), fix);
         }
-        
+
         if let Some(help) = &suggestion.help {
             println!("      {}: {}", "Help".bright_blue().bold(), help);
         }
     }
-    
+
     /// Build help context from current REPL state
     fn build_help_context(&mut self) -> HelpContext {
-        let recent_commands = self.command_history.iter()
+        let recent_commands = self
+            .command_history
+            .iter()
             .rev()
             .take(5)
             .cloned()
@@ -2357,18 +2655,20 @@ impl Repl {
             .into_iter()
             .rev()
             .collect::<Vec<_>>();
-        
-        let current_variables = self.interpreter.get_user_variables()
+
+        let current_variables = self
+            .interpreter
+            .get_user_variables()
             .keys()
             .cloned()
             .collect();
-        
+
         // Get last error from debug state if available
         let last_error = None; // TODO: Implement error tracking
-        
+
         // Determine working category from recent commands
         let current_working_category = self.determine_working_category(&recent_commands);
-        
+
         HelpContext {
             recent_commands,
             current_variables,
@@ -2376,7 +2676,7 @@ impl Repl {
             current_working_category,
         }
     }
-    
+
     /// Determine the current working category based on recent commands
     fn determine_working_category(&self, recent_commands: &[String]) -> Option<String> {
         for command in recent_commands {
@@ -2401,56 +2701,93 @@ impl Repl {
         }
         None
     }
-    
+
     /// Run an interactive tutorial
-    fn run_interactive_tutorial(&mut self, tutorial: &crate::help::Tutorial) -> Result<(), ReplError> {
-        println!("\n{}Starting Interactive Tutorial: {}{}", Colors::BOLD, tutorial.name, Colors::RESET);
+    fn run_interactive_tutorial(
+        &mut self,
+        tutorial: &crate::help::Tutorial,
+    ) -> Result<(), ReplError> {
+        println!(
+            "\n{}Starting Interactive Tutorial: {}{}",
+            Colors::BOLD,
+            tutorial.name,
+            Colors::RESET
+        );
         println!("{}", tutorial.description);
-        println!("{}Difficulty: {} | Estimated Time: {}{}", Colors::DIM, tutorial.difficulty, tutorial.estimated_time, Colors::RESET);
+        println!(
+            "{}Difficulty: {} | Estimated Time: {}{}",
+            Colors::DIM,
+            tutorial.difficulty,
+            tutorial.estimated_time,
+            Colors::RESET
+        );
         println!();
-        
+
         for (i, step) in tutorial.steps.iter().enumerate() {
-            println!("{}=== Step {}/{}: {} ==={}", Colors::CYAN, i + 1, tutorial.steps.len(), step.title, Colors::RESET);
+            println!(
+                "{}=== Step {}/{}: {} ==={}",
+                Colors::CYAN,
+                i + 1,
+                tutorial.steps.len(),
+                step.title,
+                Colors::RESET
+            );
             println!("{}", step.description);
             println!();
-            
+
             // Show the code to try
             println!("{}Code to try:{}", Colors::MAGENTA, Colors::RESET);
             println!("{}{}{}", Colors::BLUE, step.code, Colors::RESET);
             println!();
-            
+
             // Show expected output
-                            println!("{}Expected output:{}", Colors::GREEN, Colors::RESET);
+            println!("{}Expected output:{}", Colors::GREEN, Colors::RESET);
             println!("{}{}{}", Colors::GREEN, step.expected_output, Colors::RESET);
             println!();
-            
+
             // Interactive prompt
             println!("{}Options:{}", Colors::YELLOW, Colors::RESET);
-            println!("  {}r{} - Run the code automatically", Colors::BLUE, Colors::RESET);
-            println!("  {}t{} - Try it yourself (enter your own code)", Colors::BLUE, Colors::RESET);
+            println!(
+                "  {}r{} - Run the code automatically",
+                Colors::BLUE,
+                Colors::RESET
+            );
+            println!(
+                "  {}t{} - Try it yourself (enter your own code)",
+                Colors::BLUE,
+                Colors::RESET
+            );
             println!("  {}e{} - Show explanation", Colors::BLUE, Colors::RESET);
             println!("  {}h{} - Show hints", Colors::BLUE, Colors::RESET);
             println!("  {}n{} - Next step", Colors::BLUE, Colors::RESET);
             println!("  {}q{} - Quit tutorial", Colors::BLUE, Colors::RESET);
-            
+
             loop {
                 print!("{}Tutorial> {}", Colors::CYAN, Colors::RESET);
                 std::io::stdout().flush().unwrap();
-                
+
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input).unwrap();
                 let input = input.trim();
-                
+
                 match input {
                     "r" => {
                         // Run the tutorial code
-                        println!("{}Running tutorial code...{}", Colors::YELLOW, Colors::RESET);
+                        println!(
+                            "{}Running tutorial code...{}",
+                            Colors::YELLOW,
+                            Colors::RESET
+                        );
                         match self.eval_line(&step.code) {
                             Ok(value) => {
                                 if value != Value::Unit {
                                     repl_print(&value);
                                 }
-                                println!("{}Code executed successfully!{}", Colors::GREEN, Colors::RESET);
+                                println!(
+                                    "{}Code executed successfully!{}",
+                                    Colors::GREEN,
+                                    Colors::RESET
+                                );
                             }
                             Err(e) => {
                                 println!("{}ERROR executing code:{}", Colors::RED, Colors::RESET);
@@ -2460,7 +2797,11 @@ impl Repl {
                         break;
                     }
                     "t" => {
-                        println!("{}Enter your code (press Enter twice to execute):{}", Colors::YELLOW, Colors::RESET);
+                        println!(
+                            "{}Enter your code (press Enter twice to execute):{}",
+                            Colors::YELLOW,
+                            Colors::RESET
+                        );
                         let mut user_code = String::new();
                         loop {
                             let mut line = String::new();
@@ -2470,7 +2811,7 @@ impl Repl {
                             }
                             user_code.push_str(&line);
                         }
-                        
+
                         if !user_code.trim().is_empty() {
                             match self.eval_line(&user_code) {
                                 Ok(value) => {
@@ -2482,7 +2823,11 @@ impl Repl {
                                 Err(e) => {
                                     println!("{}Error:{}", Colors::RED, Colors::RESET);
                                     println!("{}", e);
-                                    println!("{} Try again or use 'r' to run the tutorial code{}", Colors::YELLOW, Colors::RESET);
+                                    println!(
+                                        "{} Try again or use 'r' to run the tutorial code{}",
+                                        Colors::YELLOW,
+                                        Colors::RESET
+                                    );
                                     continue;
                                 }
                             }
@@ -2501,7 +2846,11 @@ impl Repl {
                                 println!("  • {}", hint);
                             }
                         } else {
-                            println!("{}No hints available for this step.{}", Colors::DIM, Colors::RESET);
+                            println!(
+                                "{}No hints available for this step.{}",
+                                Colors::DIM,
+                                Colors::RESET
+                            );
                         }
                         println!();
                     }
@@ -2510,36 +2859,56 @@ impl Repl {
                         break;
                     }
                     "q" => {
-                        println!("{}Exiting tutorial. Progress saved.{}", Colors::YELLOW, Colors::RESET);
+                        println!(
+                            "{}Exiting tutorial. Progress saved.{}",
+                            Colors::YELLOW,
+                            Colors::RESET
+                        );
                         return Ok(());
                     }
                     _ => {
-                        println!("{}Invalid option. Use r/t/e/h/n/q{}", Colors::RED, Colors::RESET);
+                        println!(
+                            "{}Invalid option. Use r/t/e/h/n/q{}",
+                            Colors::RED,
+                            Colors::RESET
+                        );
                     }
                 }
             }
-            
+
             println!();
         }
-        
+
         // Tutorial completion
-        println!("{}Congratulations! You've completed the '{}' tutorial!{}", Colors::GREEN, tutorial.name, Colors::RESET);
+        println!(
+            "{}Congratulations! You've completed the '{}' tutorial!{}",
+            Colors::GREEN,
+            tutorial.name,
+            Colors::RESET
+        );
         println!("{}You've learned:{}", Colors::YELLOW, Colors::RESET);
         for step in &tutorial.steps {
             println!("  {}", step.title);
         }
-        
+
         // Suggest next steps
         if !tutorial.prerequisites.is_empty() {
-            println!("\n{}Consider these related tutorials:{}", Colors::CYAN, Colors::RESET);
+            println!(
+                "\n{}Consider these related tutorials:{}",
+                Colors::CYAN,
+                Colors::RESET
+            );
             let all_tutorials = self.help_system.get_tutorials();
             for other_tutorial in all_tutorials {
                 if other_tutorial.prerequisites.contains(&tutorial.name) {
-                    println!("  • {} ({})", other_tutorial.name, other_tutorial.difficulty);
+                    println!(
+                        "  • {} ({})",
+                        other_tutorial.name, other_tutorial.difficulty
+                    );
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -2564,7 +2933,6 @@ impl ReplExt for Repl {
         None // Simplified for now
     }
 }
-
 
 // Pretty-print helpers for REPL output to avoid quoted strings
 fn repl_format(value: &Value) -> String {

@@ -103,13 +103,13 @@ impl GlobalOtc {
     /// Initialize the global OTC system
     pub fn new() -> Result<Self> {
         let base_dir = get_global_base_dir()?;
-        
+
         // Create directory structure if it doesn't exist
         create_global_directories(&base_dir)?;
-        
+
         // Load or create configuration
         let config = load_or_create_config(&base_dir)?;
-        
+
         Ok(Self { base_dir, config })
     }
 
@@ -148,10 +148,10 @@ impl GlobalOtc {
     pub fn save_config(&self) -> Result<()> {
         let config_content = toml::to_string_pretty(&self.config)
             .context("Failed to serialize global configuration")?;
-        
+
         fs::write(self.config_file(), config_content)
             .context("Failed to write global configuration file")?;
-        
+
         Ok(())
     }
 
@@ -159,51 +159,51 @@ impl GlobalOtc {
     pub fn set_config_value(&mut self, key: &str, value: &str) -> Result<()> {
         match key {
             "cache.max_size_gb" => {
-                self.config.cache.max_size_gb = value.parse()
-                    .context("Invalid max_size_gb value")?;
+                self.config.cache.max_size_gb =
+                    value.parse().context("Invalid max_size_gb value")?;
             }
             "cache.auto_cleanup" => {
-                self.config.cache.auto_cleanup = value.parse()
-                    .context("Invalid auto_cleanup value")?;
+                self.config.cache.auto_cleanup =
+                    value.parse().context("Invalid auto_cleanup value")?;
             }
             "packages.prefer_global" => {
-                self.config.packages.prefer_global = value.parse()
-                    .context("Invalid prefer_global value")?;
+                self.config.packages.prefer_global =
+                    value.parse().context("Invalid prefer_global value")?;
             }
             "packages.allow_global_fallback" => {
-                self.config.packages.allow_global_fallback = value.parse()
+                self.config.packages.allow_global_fallback = value
+                    .parse()
                     .context("Invalid allow_global_fallback value")?;
             }
             "network.timeout_seconds" => {
-                self.config.network.timeout_seconds = value.parse()
-                    .context("Invalid timeout_seconds value")?;
+                self.config.network.timeout_seconds =
+                    value.parse().context("Invalid timeout_seconds value")?;
             }
             "network.retries" => {
-                self.config.network.retries = value.parse()
-                    .context("Invalid retries value")?;
+                self.config.network.retries = value.parse().context("Invalid retries value")?;
             }
             "network.offline_mode" => {
-                self.config.network.offline_mode = value.parse()
-                    .context("Invalid offline_mode value")?;
+                self.config.network.offline_mode =
+                    value.parse().context("Invalid offline_mode value")?;
             }
             "ui.color" => {
                 if matches!(value, "auto" | "always" | "never") {
                     self.config.ui.color = value.to_string();
                 } else {
-                    return Err(anyhow::anyhow!("Invalid color value. Use: auto, always, never"));
+                    return Err(anyhow::anyhow!(
+                        "Invalid color value. Use: auto, always, never"
+                    ));
                 }
             }
             "ui.progress" => {
-                self.config.ui.progress = value.parse()
-                    .context("Invalid progress value")?;
+                self.config.ui.progress = value.parse().context("Invalid progress value")?;
             }
             "ui.verbose" => {
-                self.config.ui.verbose = value.parse()
-                    .context("Invalid verbose value")?;
+                self.config.ui.verbose = value.parse().context("Invalid verbose value")?;
             }
             _ => return Err(anyhow::anyhow!("Unknown configuration key: {}", key)),
         }
-        
+
         self.save_config()?;
         Ok(())
     }
@@ -214,10 +214,14 @@ impl GlobalOtc {
             "cache.directory" => Some(self.config.cache.directory.clone()),
             "cache.max_size_gb" => Some(self.config.cache.max_size_gb.to_string()),
             "cache.auto_cleanup" => Some(self.config.cache.auto_cleanup.to_string()),
-            "cache.cleanup_interval_days" => Some(self.config.cache.cleanup_interval_days.to_string()),
+            "cache.cleanup_interval_days" => {
+                Some(self.config.cache.cleanup_interval_days.to_string())
+            }
             "packages.global_directory" => Some(self.config.packages.global_directory.clone()),
             "packages.prefer_global" => Some(self.config.packages.prefer_global.to_string()),
-            "packages.allow_global_fallback" => Some(self.config.packages.allow_global_fallback.to_string()),
+            "packages.allow_global_fallback" => {
+                Some(self.config.packages.allow_global_fallback.to_string())
+            }
             "network.timeout_seconds" => Some(self.config.network.timeout_seconds.to_string()),
             "network.retries" => Some(self.config.network.retries.to_string()),
             "network.offline_mode" => Some(self.config.network.offline_mode.to_string()),
@@ -231,7 +235,7 @@ impl GlobalOtc {
     /// Load the global package registry
     pub fn load_registry(&self) -> Result<GlobalRegistry> {
         let registry_file = self.registry_file();
-        
+
         if !registry_file.exists() {
             // Create empty registry
             let registry = GlobalRegistry {
@@ -241,30 +245,36 @@ impl GlobalOtc {
             return Ok(registry);
         }
 
-        let content = fs::read_to_string(&registry_file)
-            .context("Failed to read global registry file")?;
-        
-        let registry: GlobalRegistry = toml::from_str(&content)
-            .context("Failed to parse global registry file")?;
-        
+        let content =
+            fs::read_to_string(&registry_file).context("Failed to read global registry file")?;
+
+        let registry: GlobalRegistry =
+            toml::from_str(&content).context("Failed to parse global registry file")?;
+
         Ok(registry)
     }
 
     /// Save the global package registry
     pub fn save_registry(&self, registry: &GlobalRegistry) -> Result<()> {
-        let registry_content = toml::to_string_pretty(registry)
-            .context("Failed to serialize global registry")?;
-        
+        let registry_content =
+            toml::to_string_pretty(registry).context("Failed to serialize global registry")?;
+
         fs::write(self.registry_file(), registry_content)
             .context("Failed to write global registry file")?;
-        
+
         Ok(())
     }
 
     /// Install a package globally
-    pub fn install_global_package(&self, name: &str, url: &str, version: &str, commit: &str) -> Result<()> {
+    pub fn install_global_package(
+        &self,
+        name: &str,
+        url: &str,
+        version: &str,
+        commit: &str,
+    ) -> Result<()> {
         let mut registry = self.load_registry()?;
-        
+
         let package = GlobalPackage {
             version: version.to_string(),
             url: url.to_string(),
@@ -275,7 +285,7 @@ impl GlobalOtc {
 
         registry.packages.insert(name.to_string(), package);
         self.save_registry(&registry)?;
-        
+
         println!("Installed global package: {} ({})", name, version);
         Ok(())
     }
@@ -283,22 +293,24 @@ impl GlobalOtc {
     /// Remove a global package
     pub fn remove_global_package(&self, name: &str) -> Result<()> {
         let mut registry = self.load_registry()?;
-        
+
         if registry.packages.remove(name).is_some() {
             self.save_registry(&registry)?;
-            
+
             // Remove package directory
             let package_dir = self.packages_dir().join("lib").join(name);
             if package_dir.exists() {
-                fs::remove_dir_all(&package_dir)
-                    .context("Failed to remove package directory")?;
+                fs::remove_dir_all(&package_dir).context("Failed to remove package directory")?;
             }
-            
+
             println!("Removed global package: {}", name);
         } else {
-            return Err(anyhow::anyhow!("Package '{}' is not installed globally", name));
+            return Err(anyhow::anyhow!(
+                "Package '{}' is not installed globally",
+                name
+            ));
         }
-        
+
         Ok(())
     }
 
@@ -314,10 +326,10 @@ impl GlobalOtc {
     pub fn cache_status(&self) -> Result<CacheStatus> {
         let cache_dir = self.cache_dir();
         let packages_dir = cache_dir.join("packages");
-        
+
         let mut total_size = 0u64;
         let mut package_count = 0usize;
-        
+
         if packages_dir.exists() {
             for entry in fs::read_dir(&packages_dir)? {
                 let entry = entry?;
@@ -338,7 +350,7 @@ impl GlobalOtc {
     /// Clean unused cached packages
     pub fn clean_cache(&self, verbose: bool) -> Result<()> {
         let cache_dir = self.cache_dir().join("packages");
-        
+
         if !cache_dir.exists() {
             if verbose {
                 println!("Cache directory does not exist");
@@ -354,7 +366,7 @@ impl GlobalOtc {
         for entry in fs::read_dir(&cache_dir)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_dir() {
                 // Check if package is old (simple heuristic for now)
                 if let Ok(metadata) = fs::metadata(&path) {
@@ -362,18 +374,18 @@ impl GlobalOtc {
                         let age = std::time::SystemTime::now()
                             .duration_since(modified)
                             .unwrap_or_default();
-                        
+
                         // Remove packages older than cleanup interval
                         let cleanup_duration = std::time::Duration::from_secs(
-                            self.config.cache.cleanup_interval_days * 24 * 60 * 60
+                            self.config.cache.cleanup_interval_days * 24 * 60 * 60,
                         );
-                        
+
                         if age > cleanup_duration {
                             let size = calculate_dir_size(&path)?;
                             fs::remove_dir_all(&path)?;
                             cleaned_count += 1;
                             freed_bytes += size;
-                            
+
                             if verbose {
                                 println!("Removed: {}", path.display());
                             }
@@ -386,19 +398,19 @@ impl GlobalOtc {
         println!("Cache cleanup completed:");
         println!("  Removed {} packages", cleaned_count);
         println!("  Freed {} bytes", freed_bytes);
-        
+
         Ok(())
     }
 
     /// Clear all cached packages
     pub fn clear_cache(&self, verbose: bool) -> Result<()> {
         let cache_dir = self.cache_dir().join("packages");
-        
+
         if cache_dir.exists() {
             let size_before = calculate_dir_size(&cache_dir)?;
             fs::remove_dir_all(&cache_dir)?;
             fs::create_dir_all(&cache_dir)?;
-            
+
             if verbose {
                 println!("Cleared cache directory: {}", cache_dir.display());
                 println!("Freed {} bytes", size_before);
@@ -408,17 +420,17 @@ impl GlobalOtc {
         } else {
             println!("Cache directory does not exist");
         }
-        
+
         Ok(())
     }
 
     /// Repair cache integrity
     pub fn repair_cache(&self, verbose: bool) -> Result<()> {
         let cache_dir = self.cache_dir();
-        
+
         // Ensure all required directories exist
         create_cache_directories(&cache_dir)?;
-        
+
         if verbose {
             println!("Cache directories verified");
         }
@@ -427,7 +439,7 @@ impl GlobalOtc {
         // - Check for corrupted git repositories
         // - Validate metadata files
         // - Repair incomplete downloads
-        
+
         println!("Cache repair completed");
         Ok(())
     }
@@ -450,7 +462,7 @@ impl GlobalOtc {
             println!("Running OTC system health check...");
             println!("Base directory: {}", self.base_dir.display());
         }
-        
+
         let mut issues = Vec::new();
 
         // Check directory structure
@@ -459,19 +471,19 @@ impl GlobalOtc {
         } else if verbose {
             println!("✓ Global base directory exists");
         }
-        
+
         if !self.otc_dir().exists() {
             issues.push("OTC directory does not exist".to_string());
         } else if verbose {
             println!("✓ OTC directory exists");
         }
-        
+
         if !self.cache_dir().exists() {
             issues.push("Cache directory does not exist".to_string());
         } else if verbose {
             println!("✓ Cache directory exists");
         }
-        
+
         if !self.packages_dir().exists() {
             issues.push("Packages directory does not exist".to_string());
         } else if verbose {
@@ -504,7 +516,7 @@ impl GlobalOtc {
             // Attempt to fix issues
             println!("\nAttempting to fix issues...");
             create_global_directories(&self.base_dir)?;
-            
+
             if !self.config_file().exists() {
                 let default_config = create_default_config(&self.base_dir)?;
                 let config_content = toml::to_string_pretty(&default_config)?;
@@ -569,9 +581,9 @@ pub fn create_global_directories(base_dir: &Path) -> Result<()> {
     fs::create_dir_all(base_dir.join("otc/bin"))?;
     fs::create_dir_all(base_dir.join("otc/logs"))?;
     fs::create_dir_all(base_dir.join("otc/cache"))?;
-    
+
     create_cache_directories(&base_dir.join("local"))?;
-    
+
     fs::create_dir_all(base_dir.join("share"))?;
     fs::create_dir_all(base_dir.join("share/bin"))?;
     fs::create_dir_all(base_dir.join("share/lib"))?;
@@ -599,22 +611,21 @@ pub fn create_cache_directories(cache_dir: &Path) -> Result<()> {
 /// Load or create the global configuration
 pub fn load_or_create_config(base_dir: &Path) -> Result<GlobalConfig> {
     let config_file = base_dir.join("otc/config.toml");
-    
+
     if config_file.exists() {
-        let content = fs::read_to_string(&config_file)
-            .context("Failed to read global configuration file")?;
-        
-        toml::from_str(&content)
-            .context("Failed to parse global configuration file")
+        let content =
+            fs::read_to_string(&config_file).context("Failed to read global configuration file")?;
+
+        toml::from_str(&content).context("Failed to parse global configuration file")
     } else {
         let config = create_default_config(base_dir)?;
-        
-        let config_content = toml::to_string_pretty(&config)
-            .context("Failed to serialize default configuration")?;
-        
+
+        let config_content =
+            toml::to_string_pretty(&config).context("Failed to serialize default configuration")?;
+
         fs::write(&config_file, config_content)
             .context("Failed to write default configuration file")?;
-        
+
         Ok(config)
     }
 }
@@ -654,12 +665,12 @@ pub fn create_default_config(base_dir: &Path) -> Result<GlobalConfig> {
 /// Calculate directory size recursively
 fn calculate_dir_size(dir: &Path) -> Result<u64> {
     let mut total_size = 0u64;
-    
+
     if dir.is_dir() {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_dir() {
                 total_size += calculate_dir_size(&path)?;
             } else {
@@ -667,7 +678,7 @@ fn calculate_dir_size(dir: &Path) -> Result<u64> {
             }
         }
     }
-    
+
     Ok(total_size)
 }
 
@@ -693,9 +704,9 @@ mod tests {
     fn test_create_global_directories() {
         let temp_dir = TempDir::new().unwrap();
         let base_dir = temp_dir.path();
-        
+
         create_global_directories(base_dir).unwrap();
-        
+
         assert!(base_dir.join("otc").exists());
         assert!(base_dir.join("otc/bin").exists());
         assert!(base_dir.join("otc/logs").exists());
@@ -707,9 +718,9 @@ mod tests {
     fn test_default_config_creation() {
         let temp_dir = TempDir::new().unwrap();
         let base_dir = temp_dir.path();
-        
+
         let config = create_default_config(base_dir).unwrap();
-        
+
         assert_eq!(config.cache.max_size_gb, 10);
         assert_eq!(config.network.timeout_seconds, 30);
         assert_eq!(config.ui.color, "auto");
@@ -719,12 +730,15 @@ mod tests {
     fn test_config_serialization() {
         let temp_dir = TempDir::new().unwrap();
         let base_dir = temp_dir.path();
-        
+
         let config = create_default_config(base_dir).unwrap();
         let serialized = toml::to_string_pretty(&config).unwrap();
         let deserialized: GlobalConfig = toml::from_str(&serialized).unwrap();
-        
+
         assert_eq!(config.cache.max_size_gb, deserialized.cache.max_size_gb);
-        assert_eq!(config.network.timeout_seconds, deserialized.network.timeout_seconds);
+        assert_eq!(
+            config.network.timeout_seconds,
+            deserialized.network.timeout_seconds
+        );
     }
-} 
+}

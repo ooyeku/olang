@@ -743,7 +743,11 @@ mod tests {
                 if let Value::Builtin(builtin) = &fields[func_name] {
                     assert_eq!(builtin.name, format!("http.{}", func_name));
                 } else {
-                    assert!(false, "Expected builtin function for {}, got: {:?}", func_name, fields[func_name]);
+                    assert!(
+                        false,
+                        "Expected builtin function for {}, got: {:?}",
+                        func_name, fields[func_name]
+                    );
                 }
             }
 
@@ -795,7 +799,11 @@ mod tests {
                 );
                 assert_eq!(header_fields["X-Custom-Header"], string_val("test-value"));
             } else {
-                assert!(false, "Expected headers struct, got: {:?}", &fields["headers"]);
+                assert!(
+                    false,
+                    "Expected headers struct, got: {:?}",
+                    &fields["headers"]
+                );
             }
         } else {
             assert!(false, "Expected HttpResponse struct, got: {:?}", result);
@@ -838,7 +846,11 @@ mod tests {
                 assert_eq!(fields["query"], string_val(expected.4));
                 assert_eq!(fields["fragment"], string_val(expected.5));
             } else {
-                assert!(false, "Expected UrlInfo struct for URL: {}, got: {:?}", url, result);
+                assert!(
+                    false,
+                    "Expected UrlInfo struct for URL: {}, got: {:?}",
+                    url, result
+                );
             }
         }
     }
@@ -878,7 +890,11 @@ mod tests {
             assert!(query.contains("score=85.5"));
             assert!(query.chars().filter(|&c| c == '&').count() == 3); // 4 params = 3 separators
         } else {
-            assert!(false, "Expected string result from encode_query, got: {:?}", result);
+            assert!(
+                false,
+                "Expected string result from encode_query, got: {:?}",
+                result
+            );
         }
     }
 
@@ -894,7 +910,11 @@ mod tests {
             assert_eq!(fields["city"], string_val("New York"));
             assert_eq!(fields["active"], string_val("true"));
         } else {
-            assert!(false, "Expected QueryParams struct from decode_query, got: {:?}", result);
+            assert!(
+                false,
+                "Expected QueryParams struct from decode_query, got: {:?}",
+                result
+            );
         }
     }
 
@@ -906,7 +926,11 @@ mod tests {
         if let Value::Struct { fields, .. } = decoded {
             assert!(fields.is_empty());
         } else {
-            assert!(false, "Expected empty QueryParams struct, got: {:?}", result);
+            assert!(
+                false,
+                "Expected empty QueryParams struct, got: {:?}",
+                result
+            );
         }
     }
 
@@ -920,7 +944,11 @@ mod tests {
             assert!(message.contains("HTTP server would start on port 8080"));
             assert!(message.contains("placeholder implementation"));
         } else {
-            assert!(false, "Expected string response from serve, got: {:?}", result);
+            assert!(
+                false,
+                "Expected string response from serve, got: {:?}",
+                result
+            );
         }
     }
 
@@ -1080,7 +1108,11 @@ mod tests {
             assert!(query.contains("test%40example.com")); // URL-encoded "test@example.com"
             assert!(query.contains("%2Fpath%2Fwith%20spaces")); // URL-encoded "/path/with spaces"
         } else {
-            assert!(false, "Expected string result from encode_query, got: {:?}", encoded);
+            assert!(
+                false,
+                "Expected string result from encode_query, got: {:?}",
+                encoded
+            );
         }
     }
 
@@ -1096,7 +1128,11 @@ mod tests {
             assert_eq!(fields["email"], string_val("test@example.com"));
             assert_eq!(fields["path"], string_val("/path/with spaces"));
         } else {
-            assert!(false, "Expected QueryParams struct from decode_query, got: {:?}", decoded);
+            assert!(
+                false,
+                "Expected QueryParams struct from decode_query, got: {:?}",
+                decoded
+            );
         }
     }
 
@@ -1122,7 +1158,11 @@ mod tests {
             assert_eq!(fields["age"], string_val("25")); // Numbers become strings in decode
             assert_eq!(fields["active"], string_val("true")); // Booleans become strings in decode
         } else {
-            assert!(false, "Expected QueryParams struct from roundtrip, got: {:?}", decoded);
+            assert!(
+                false,
+                "Expected QueryParams struct from roundtrip, got: {:?}",
+                decoded
+            );
         }
     }
 
@@ -1152,7 +1192,11 @@ mod tests {
             assert!(!query.contains("complex_struct"));
             assert!(!query.contains("list"));
         } else {
-            assert!(false, "Expected string result from encode_query, got: {:?}", encoded);
+            assert!(
+                false,
+                "Expected string result from encode_query, got: {:?}",
+                encoded
+            );
         }
     }
 }

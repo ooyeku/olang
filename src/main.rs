@@ -1,12 +1,12 @@
 use clap::Parser;
+use colored::*;
 use std::path::PathBuf;
 use std::process;
-use colored::*;
 
 use olang::{
     log::{init_logger, Logger},
     parallel::{initialize_parallelization, set_parallel_threshold},
-    parser::{Parser as OlangParser, ErrorSuggestion, SuggestionSeverity},
+    parser::{ErrorSuggestion, Parser as OlangParser, SuggestionSeverity},
     repl::Repl,
 };
 
@@ -72,19 +72,25 @@ fn main() {
 
 fn run() -> i32 {
     let cli = Cli::parse();
-    
+
     // Initialize logger
     let logger = init_logger();
 
     // Initialize parallelization early for optimal performance
     if let Err(e) = initialize_parallelization(cli.ovm_parallelism) {
         if cli.verbose {
-            logger.warn("main", &format!("Failed to initialize parallel processing: {}", e));
+            logger.warn(
+                "main",
+                &format!("Failed to initialize parallel processing: {}", e),
+            );
         }
     } else if cli.verbose {
         logger.info(
             "main",
-            &format!("Multi-threading enabled: {} CPU cores detected, using aggressive parallelization", num_cpus::get())
+            &format!(
+                "Multi-threading enabled: {} CPU cores detected, using aggressive parallelization",
+                num_cpus::get()
+            ),
         );
     }
 
@@ -103,7 +109,10 @@ fn run() -> i32 {
     if cli.verbose {
         logger.info(
             "main",
-            &format!("Automatic parallelization: Lists with 10+ items will use all {} cores", num_cpus::get())
+            &format!(
+                "Automatic parallelization: Lists with 10+ items will use all {} cores",
+                num_cpus::get()
+            ),
         );
     }
 
@@ -119,7 +128,14 @@ fn run() -> i32 {
 
     if let Some(file_path) = cli.file {
         // Execute file in batch mode
-        if let Err(e) = execute_file(&file_path, cli.verbose, cli.no_ovm, cli.ovm_stats, cli.ovm_tier, logger) {
+        if let Err(e) = execute_file(
+            &file_path,
+            cli.verbose,
+            cli.no_ovm,
+            cli.ovm_stats,
+            cli.ovm_tier,
+            logger,
+        ) {
             logger.error("main", &format!("Error executing file: {}", e));
             return 1;
         }
@@ -137,24 +153,54 @@ fn run() -> i32 {
 /// Enhanced error display for file execution
 fn show_file_parse_error(error: &olang::parser::ParseError, file_path: &PathBuf, source: &str) {
     println!("\n{}", "═══ Parse Error ═══".bright_red().bold());
-    println!("  {}: {}", "File".bright_blue().bold(), file_path.display().to_string().bright_white());
-    
+    println!(
+        "  {}: {}",
+        "File".bright_blue().bold(),
+        file_path.display().to_string().bright_white()
+    );
+
     match error {
-        olang::parser::ParseError::InvalidSyntaxWithPosition { message, line, column, snippet } => {
-            println!("  {}: {}", "Error".bright_red().bold(), message.bright_white());
-            println!("  {}: Line {}, Column {}", "Location".bright_yellow().bold(), 
-                line.to_string().bright_cyan(), column.to_string().bright_cyan());
-            
+        olang::parser::ParseError::InvalidSyntaxWithPosition {
+            message,
+            line,
+            column,
+            snippet,
+        } => {
+            println!(
+                "  {}: {}",
+                "Error".bright_red().bold(),
+                message.bright_white()
+            );
+            println!(
+                "  {}: Line {}, Column {}",
+                "Location".bright_yellow().bold(),
+                line.to_string().bright_cyan(),
+                column.to_string().bright_cyan()
+            );
+
             if !snippet.trim().is_empty() {
                 println!("\n  {}", "Code Context:".bright_blue().bold());
                 show_highlighted_snippet(snippet);
             }
         }
-        olang::parser::ParseError::UnexpectedTokenWithPosition { token, line, column, snippet } => {
-            println!("  {}: Unexpected token '{}'", "Error".bright_red().bold(), token.bright_yellow().bold());
-            println!("  {}: Line {}, Column {}", "Location".bright_yellow().bold(), 
-                line.to_string().bright_cyan(), column.to_string().bright_cyan());
-            
+        olang::parser::ParseError::UnexpectedTokenWithPosition {
+            token,
+            line,
+            column,
+            snippet,
+        } => {
+            println!(
+                "  {}: Unexpected token '{}'",
+                "Error".bright_red().bold(),
+                token.bright_yellow().bold()
+            );
+            println!(
+                "  {}: Line {}, Column {}",
+                "Location".bright_yellow().bold(),
+                line.to_string().bright_cyan(),
+                column.to_string().bright_cyan()
+            );
+
             if !snippet.trim().is_empty() {
                 println!("\n  {}", "Code Context:".bright_blue().bold());
                 show_highlighted_snippet(snippet);
@@ -164,46 +210,57 @@ fn show_file_parse_error(error: &olang::parser::ParseError, file_path: &PathBuf,
             println!("  {}: {}", "Error".bright_red().bold(), error);
         }
     }
-    
+
     // Get suggestions
     let parser = OlangParser::new();
     let suggestions = parser.get_suggestions(error, source);
-    
+
     if !suggestions.is_empty() {
         println!("\n  {}", "Suggestions:".bright_cyan().bold());
         for suggestion in suggestions {
             show_suggestion(&suggestion);
         }
     }
-    
+
     // Show help topics
     println!("\n  {}", "Help:".bright_cyan().bold());
     println!("    • Type {} for syntax help", "olang -h".bright_cyan());
-    println!("    • Use {} for interactive mode with better error messages", "olang".bright_cyan());
+    println!(
+        "    • Use {} for interactive mode with better error messages",
+        "olang".bright_cyan()
+    );
     println!();
 }
 
 /// Feature 9: Show classic interpreter errors with enhanced context and suggestions
-fn show_classic_interpreter_error(error: &olang::interpreter::InterpreterError, file_path: &PathBuf, interpreter: &olang::interpreter::Interpreter) {
+fn show_classic_interpreter_error(
+    error: &olang::interpreter::InterpreterError,
+    file_path: &PathBuf,
+    interpreter: &olang::interpreter::Interpreter,
+) {
     println!("\n{}", "═══ Execution Error ═══".bright_red().bold());
-    println!("  {}: {}", "File".bright_blue().bold(), file_path.display().to_string().bright_white());
-    
+    println!(
+        "  {}: {}",
+        "File".bright_blue().bold(),
+        file_path.display().to_string().bright_white()
+    );
+
     // Use the enhanced error formatter
     let formatted_error = interpreter.format_error(error);
     println!("\n{}", formatted_error);
-    
+
     println!();
 }
 
 /// Feature 9: Show interpreter errors with enhanced context and suggestions
 fn show_highlighted_snippet(snippet: &str) {
     let lines: Vec<&str> = snippet.lines().collect();
-    
+
     for line in lines {
         if line.trim().is_empty() {
             continue;
         }
-        
+
         // Check if this line contains a caret pointer
         if line.contains("^") {
             // This is the error pointer line - highlight it specially
@@ -211,7 +268,8 @@ fn show_highlighted_snippet(snippet: &str) {
             if parts.len() >= 2 {
                 let line_num = parts[0].trim();
                 let pointer = parts[1];
-                println!("    {}{}│{}{}", 
+                println!(
+                    "    {}{}│{}{}",
                     line_num.bright_black(),
                     " ".repeat(4 - line_num.len().min(4)),
                     " ",
@@ -224,11 +282,12 @@ fn show_highlighted_snippet(snippet: &str) {
             if parts.len() >= 2 {
                 let line_num = parts[0].trim();
                 let code = parts[1];
-                
+
                 // Basic syntax highlighting
                 let highlighted_code = apply_basic_highlighting(code);
-                
-                println!("    {}{}│ {}", 
+
+                println!(
+                    "    {}{}│ {}",
                     line_num.bright_blue(),
                     " ".repeat(4 - line_num.len().min(4)),
                     highlighted_code
@@ -242,7 +301,7 @@ fn apply_basic_highlighting(code: &str) -> String {
     let mut result = String::new();
     let mut chars = code.chars().peekable();
     let mut current_word = String::new();
-    
+
     while let Some(ch) = chars.next() {
         match ch {
             // String literals
@@ -252,7 +311,7 @@ fn apply_basic_highlighting(code: &str) -> String {
                     current_word.clear();
                 }
                 result.push_str(&format!("{}", "\"".bright_green()));
-                
+
                 // Consume the string content
                 while let Some(str_ch) = chars.next() {
                     if str_ch == '"' {
@@ -271,7 +330,7 @@ fn apply_basic_highlighting(code: &str) -> String {
             // Numbers
             c if c.is_ascii_digit() => {
                 current_word.push(c);
-                
+
                 // Look ahead to consume the full number
                 while let Some(&next_ch) = chars.peek() {
                     if next_ch.is_ascii_digit() || next_ch == '.' || next_ch == '_' {
@@ -280,7 +339,7 @@ fn apply_basic_highlighting(code: &str) -> String {
                         break;
                     }
                 }
-                
+
                 result.push_str(&format!("{}", current_word.bright_magenta()));
                 current_word.clear();
             }
@@ -294,16 +353,17 @@ fn apply_basic_highlighting(code: &str) -> String {
                     result.push_str(&highlight_word(&current_word));
                     current_word.clear();
                 }
-                
+
                 // Look ahead for compound operators
                 let mut op = ch.to_string();
                 if let Some(&next_ch) = chars.peek() {
-                    if (ch == '=' && next_ch == '=') ||
-                       (ch == '!' && next_ch == '=') ||
-                       (ch == '<' && next_ch == '=') ||
-                       (ch == '>' && next_ch == '=') ||
-                       (ch == '&' && next_ch == '&') ||
-                       (ch == '|' && next_ch == '|') {
+                    if (ch == '=' && next_ch == '=')
+                        || (ch == '!' && next_ch == '=')
+                        || (ch == '<' && next_ch == '=')
+                        || (ch == '>' && next_ch == '=')
+                        || (ch == '&' && next_ch == '&')
+                        || (ch == '|' && next_ch == '|')
+                    {
                         op.push(chars.next().unwrap());
                     }
                 }
@@ -327,20 +387,21 @@ fn apply_basic_highlighting(code: &str) -> String {
             }
         }
     }
-    
+
     // Handle any remaining word
     if !current_word.is_empty() {
         result.push_str(&highlight_word(&current_word));
     }
-    
+
     result
 }
 
 fn highlight_word(word: &str) -> String {
     match word {
         // Keywords
-        "let" | "fn" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" |
-        "true" | "false" | "import" | "export" | "type" | "async" | "await" | "try" | "catch" => {
+        "let" | "fn" | "if" | "else" | "match" | "for" | "while" | "loop" | "break"
+        | "continue" | "true" | "false" | "import" | "export" | "type" | "async" | "await"
+        | "try" | "catch" => {
             format!("{}", word.bright_blue().bold())
         }
         // Built-in functions
@@ -363,26 +424,37 @@ fn show_suggestion(suggestion: &ErrorSuggestion) {
         SuggestionSeverity::Hint => "HINT",
         SuggestionSeverity::Info => "INFO",
     };
-    
+
     let severity_color = match suggestion.severity {
         SuggestionSeverity::Error => "red",
         SuggestionSeverity::Warning => "yellow",
         SuggestionSeverity::Hint => "cyan",
         SuggestionSeverity::Info => "blue",
     };
-    
-    println!("    {} {}", severity_icon, suggestion.message.color(severity_color).bold());
-    
+
+    println!(
+        "    {} {}",
+        severity_icon,
+        suggestion.message.color(severity_color).bold()
+    );
+
     if let Some(fix) = &suggestion.fix {
         println!("      {}: {}", "Fix".bright_green().bold(), fix);
     }
-    
+
     if let Some(help) = &suggestion.help {
         println!("      {}: {}", "Help".bright_blue().bold(), help);
     }
 }
 
-fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: bool, ovm_tier: Option<u32>, logger: &Logger) -> anyhow::Result<()> {
+fn execute_file(
+    file_path: &PathBuf,
+    verbose: bool,
+    no_ovm: bool,
+    ovm_stats: bool,
+    ovm_tier: Option<u32>,
+    logger: &Logger,
+) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file_path)?;
     let parser = OlangParser::new();
 
@@ -390,9 +462,7 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
     let absolute_path = if file_path.is_absolute() {
         file_path.clone()
     } else {
-        std::env::current_dir()
-            .unwrap_or_default()
-            .join(file_path)
+        std::env::current_dir().unwrap_or_default().join(file_path)
     };
 
     // One execution model: the interpreter with the bytecode tier enabled,
@@ -410,29 +480,27 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
     interpreter.set_current_file(&absolute_path);
 
     match parser.parse(&source) {
-        Ok(ast) => {
-            match interpreter.eval_program(ast) {
-                Ok(result) => {
-                    if verbose {
-                        logger.info("main", &format!("Result: {:?}", result));
-                    }
-                    if ovm_stats {
-                        match interpreter.bytecode_tier_stats() {
-                            Some(tier) => println!(
-                                "Bytecode tier: {} promoted, {} rejected, {} bytecode calls",
-                                tier.promoted, tier.rejected, tier.bytecode_calls
-                            ),
-                            None => println!("Bytecode tier: disabled (--no-ovm)"),
-                        }
-                    }
-                    Ok(())
+        Ok(ast) => match interpreter.eval_program(ast) {
+            Ok(result) => {
+                if verbose {
+                    logger.info("main", &format!("Result: {:?}", result));
                 }
-                Err(e) => {
-                    show_classic_interpreter_error(&e, file_path, &interpreter);
-                    Err(anyhow::anyhow!("Execution failed"))
+                if ovm_stats {
+                    match interpreter.bytecode_tier_stats() {
+                        Some(tier) => println!(
+                            "Bytecode tier: {} promoted, {} rejected, {} bytecode calls",
+                            tier.promoted, tier.rejected, tier.bytecode_calls
+                        ),
+                        None => println!("Bytecode tier: disabled (--no-ovm)"),
+                    }
                 }
+                Ok(())
             }
-        }
+            Err(e) => {
+                show_classic_interpreter_error(&e, file_path, &interpreter);
+                Err(anyhow::anyhow!("Execution failed"))
+            }
+        },
         Err(e) => {
             show_file_parse_error(&e, file_path, &source);
             Err(anyhow::anyhow!("Parse failed"))

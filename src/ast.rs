@@ -267,10 +267,7 @@ pub enum Expr {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Argument {
     Positional(Expr),
-    Named {
-        name: String,
-        value: Expr,
-    },
+    Named { name: String, value: Expr },
 }
 
 /// Promise types for Promise expressions
@@ -370,9 +367,9 @@ pub enum PromiseState {
 /// Enum variant data for proper enum value representation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum EnumVariantData {
-    Unit,                              // Simple variant: Red
-    Tuple(Vec<Value>),                // Tuple variant: Point(x, y)
-    Struct(HashMap<String, Value>),   // Struct variant: Person { name, age }
+    Unit,                           // Simple variant: Red
+    Tuple(Vec<Value>),              // Tuple variant: Point(x, y)
+    Struct(HashMap<String, Value>), // Struct variant: Person { name, age }
 }
 
 /// Runtime values

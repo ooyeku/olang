@@ -323,7 +323,10 @@ mod tests {
 
         match tier.try_call(&func, &[Value::Integer(5)]) {
             TierOutcome::Ran(Ok(Value::Integer(10))) => {}
-            other => panic!("expected bytecode result 10, got {:?}", matches!(other, TierOutcome::Fallback)),
+            other => panic!(
+                "expected bytecode result 10, got {:?}",
+                matches!(other, TierOutcome::Fallback)
+            ),
         }
         assert_eq!(tier.stats().promoted, 1);
     }

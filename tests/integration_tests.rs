@@ -657,7 +657,9 @@ fn test_default_parameters_error_too_many_args() {
 
     assert!(result.is_err());
     if let Err(e) = result {
-        assert!(e.to_string().contains("ArityMismatch") || e.to_string().contains("Arity mismatch"));
+        assert!(
+            e.to_string().contains("ArityMismatch") || e.to_string().contains("Arity mismatch")
+        );
     }
 }
 
@@ -677,9 +679,7 @@ await Promise.all([double(1), double(2), double(3)])
     let result = interpreter.eval_program(program).expect("should evaluate");
     assert_eq!(
         result,
-        Value::List(
-            vec![Value::Integer(2), Value::Integer(4), Value::Integer(6)].into()
-        )
+        Value::List(vec![Value::Integer(2), Value::Integer(4), Value::Integer(6)].into())
     );
 }
 
@@ -731,7 +731,9 @@ fn bare_identifier_patterns_still_bind() {
     // Guard against the above fix turning binding patterns into variant
     // patterns, which would stop them matching anything.
     let parser = Parser::new();
-    let program = parser.parse("match 7 { n => n + 1 }").expect("should parse");
+    let program = parser
+        .parse("match 7 { n => n + 1 }")
+        .expect("should parse");
     let mut interpreter = Interpreter::new();
     assert_eq!(
         interpreter.eval_program(program).expect("should evaluate"),

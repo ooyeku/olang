@@ -278,7 +278,9 @@ fn exists(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    Ok(Value::Ok(Box::new(Value::Boolean(Path::new(path_str).exists()))))
+    Ok(Value::Ok(Box::new(Value::Boolean(
+        Path::new(path_str).exists(),
+    ))))
 }
 
 /// Check if path is a file
@@ -300,7 +302,9 @@ fn is_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    Ok(Value::Ok(Box::new(Value::Boolean(Path::new(path_str).is_file()))))
+    Ok(Value::Ok(Box::new(Value::Boolean(
+        Path::new(path_str).is_file(),
+    ))))
 }
 
 /// Check if path is a directory
@@ -322,7 +326,9 @@ fn is_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    Ok(Value::Ok(Box::new(Value::Boolean(Path::new(path_str).is_dir()))))
+    Ok(Value::Ok(Box::new(Value::Boolean(
+        Path::new(path_str).is_dir(),
+    ))))
 }
 
 /// List directory contents
@@ -733,7 +739,11 @@ mod tests {
                 }
             },
             _ => {
-                assert!(false, "Expected boolean value or Ok(Boolean), got: {:?}", value);
+                assert!(
+                    false,
+                    "Expected boolean value or Ok(Boolean), got: {:?}",
+                    value
+                );
                 unreachable!()
             }
         }

@@ -230,10 +230,10 @@ impl RangeObject {
         if self.start > self.end {
             return Vec::new();
         }
-        
+
         let mut result = Vec::new();
         let mut current = self.start;
-        
+
         if self.inclusive {
             while current <= self.end {
                 result.push(current);
@@ -245,7 +245,7 @@ impl RangeObject {
                 current += 1;
             }
         }
-        
+
         result
     }
 }
@@ -547,7 +547,7 @@ impl PartialEq for OvmValue {
             (ValueData::Float(a), ValueData::Float(b)) => a == b,
             (ValueData::Boolean(a), ValueData::Boolean(b)) => a == b,
             (ValueData::Unit, ValueData::Unit) => true,
-            
+
             (ValueData::String(a), ValueData::String(b)) => a == b,
 
             (ValueData::List(a), ValueData::List(b)) => a == b,
@@ -557,16 +557,23 @@ impl PartialEq for OvmValue {
             (ValueData::Range(a), ValueData::Range(b)) => {
                 a.start == b.start && a.end == b.end && a.inclusive == b.inclusive
             }
-            
-            (ValueData::Result { ok: a_ok, err: a_err }, ValueData::Result { ok: b_ok, err: b_err }) => {
-                match (a_ok, a_err, b_ok, b_err) {
-                    (Some(a_val), None, Some(b_val), None) => a_val.as_ref() == b_val.as_ref(),
-                    (None, Some(a_val), None, Some(b_val)) => a_val.as_ref() == b_val.as_ref(),
-                    (None, None, None, None) => true,
-                    _ => false,
-                }
+
+            (
+                ValueData::Result {
+                    ok: a_ok,
+                    err: a_err,
+                },
+                ValueData::Result {
+                    ok: b_ok,
+                    err: b_err,
+                },
+            ) => match (a_ok, a_err, b_ok, b_err) {
+                (Some(a_val), None, Some(b_val), None) => a_val.as_ref() == b_val.as_ref(),
+                (None, Some(a_val), None, Some(b_val)) => a_val.as_ref() == b_val.as_ref(),
+                (None, None, None, None) => true,
+                _ => false,
             },
-            
+
             // For complex types, fall back to pointer comparison for now
             (ValueData::Function(a), ValueData::Function(b)) => Arc::ptr_eq(a, b),
             (ValueData::AstFunction(a), ValueData::AstFunction(b)) => Arc::ptr_eq(a, b),
@@ -579,7 +586,7 @@ impl PartialEq for OvmValue {
             (ValueData::CompiledFunction(a), ValueData::CompiledFunction(b)) => Arc::ptr_eq(a, b),
             (ValueData::OptimizedValue(a), ValueData::OptimizedValue(b)) => Arc::ptr_eq(a, b),
             (ValueData::Error(a), ValueData::Error(b)) => Arc::ptr_eq(a, b),
-            
+
             // Different types are never equal
             _ => false,
         }
@@ -730,12 +737,13 @@ impl OvmValue {
 
         // Access the thunk safely
         let thunk_ref = &*thunk_ptr;
-        
+
         // Check if already memoized (with lock)
         {
-            let memoized_guard = thunk_ref.memoized_value.lock()
-                .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire thunk lock".to_string()))?;
-            
+            let memoized_guard = thunk_ref.memoized_value.lock().map_err(|_| {
+                RuntimeError::ConcurrencyError("Failed to acquire thunk lock".to_string())
+            })?;
+
             if let Some(memoized) = &*memoized_guard {
                 // Use memoized value - create a simple copy instead of clone
                 match &memoized.data {
@@ -756,8 +764,9 @@ impl OvmValue {
 
         // Memoize the result in the thunk (with lock)
         {
-            let mut memoized_guard = thunk_ref.memoized_value.lock()
-                .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire thunk lock".to_string()))?;
+            let mut memoized_guard = thunk_ref.memoized_value.lock().map_err(|_| {
+                RuntimeError::ConcurrencyError("Failed to acquire thunk lock".to_string())
+            })?;
             *memoized_guard = Some(evaluated_value.clone_simple());
         }
 
@@ -776,18 +785,26 @@ impl OvmValue {
     }
 
     /// Force evaluation of a lazy list
-    fn force_lazy_list_impl(&mut self, lazy_list_ptr: Arc<LazyListObject>) -> Result<(), RuntimeError> {
+    fn force_lazy_list_impl(
+        &mut self,
+        lazy_list_ptr: Arc<LazyListObject>,
+    ) -> Result<(), RuntimeError> {
         // For now, materialize a reasonable prefix of the lazy list
         let chunk_size = 100; // Configurable chunk size
-        
+
         let lazy_list_ref = &*lazy_list_ptr;
-        
+
         // Use locks to safely access and modify the materialized data
-        let mut materialized_guard = lazy_list_ref.materialized_prefix.lock()
-            .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire lazy list lock".to_string()))?;
-        let mut materialization_point_guard = lazy_list_ref.materialization_point.lock()
-            .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire materialization point lock".to_string()))?;
-        
+        let mut materialized_guard = lazy_list_ref.materialized_prefix.lock().map_err(|_| {
+            RuntimeError::ConcurrencyError("Failed to acquire lazy list lock".to_string())
+        })?;
+        let mut materialization_point_guard =
+            lazy_list_ref.materialization_point.lock().map_err(|_| {
+                RuntimeError::ConcurrencyError(
+                    "Failed to acquire materialization point lock".to_string(),
+                )
+            })?;
+
         // If we haven't materialized anything yet, start materializing
         if materialized_guard.is_empty() {
             match &lazy_list_ref.transformation {
@@ -814,7 +831,7 @@ impl OvmValue {
                     }
                 }
                 TransformationChain::Filter(_filter_fn) => {
-                    // Apply filter transformation - simplified for now  
+                    // Apply filter transformation - simplified for now
                     if let ValueData::List(source_list) = &lazy_list_ref.source.data {
                         let mut materialized = 0;
                         for item in source_list.iter().take(chunk_size) {
@@ -853,28 +870,38 @@ impl OvmValue {
     }
 
     /// Advance stream buffer for better performance
-    fn advance_stream_buffer_impl(&mut self, stream_ptr: Arc<StreamObject>) -> Result<(), RuntimeError> {
+    fn advance_stream_buffer_impl(
+        &mut self,
+        stream_ptr: Arc<StreamObject>,
+    ) -> Result<(), RuntimeError> {
         let stream_ref = &*stream_ptr;
-        
+
         // Use locks to safely access and modify the stream data
-        let mut buffer_guard = stream_ref.buffer.lock()
-            .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire stream buffer lock".to_string()))?;
-        let position_guard = stream_ref.buffer_position.lock()
-            .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire stream position lock".to_string()))?;
-        let mut generator_guard = stream_ref.generator.lock()
-            .map_err(|_| RuntimeError::ConcurrencyError("Failed to acquire stream generator lock".to_string()))?;
-        
+        let mut buffer_guard = stream_ref.buffer.lock().map_err(|_| {
+            RuntimeError::ConcurrencyError("Failed to acquire stream buffer lock".to_string())
+        })?;
+        let position_guard = stream_ref.buffer_position.lock().map_err(|_| {
+            RuntimeError::ConcurrencyError("Failed to acquire stream position lock".to_string())
+        })?;
+        let mut generator_guard = stream_ref.generator.lock().map_err(|_| {
+            RuntimeError::ConcurrencyError("Failed to acquire stream generator lock".to_string())
+        })?;
+
         // Buffer more items if buffer is getting low
         let buffer_threshold = stream_ref.chunk_size / 2;
         if buffer_guard.len() - *position_guard < buffer_threshold {
             let items_to_generate = stream_ref.chunk_size;
-            
+
             for _ in 0..items_to_generate {
                 match &mut *generator_guard {
                     GeneratorFunction::Range { start, end, step } => {
                         // Honor the step direction — a descending range
                         // (negative step) never satisfies `start < end`
-                        let in_range = if *step >= 0 { *start < *end } else { *start > *end };
+                        let in_range = if *step >= 0 {
+                            *start < *end
+                        } else {
+                            *start > *end
+                        };
                         if in_range {
                             let value = OvmValue::new_integer(*start);
                             buffer_guard.push(value);
@@ -883,22 +910,30 @@ impl OvmValue {
                             break; // End of range
                         }
                     }
-                    GeneratorFunction::Map { source: _source, function: _function } => {
+                    GeneratorFunction::Map {
+                        source: _source,
+                        function: _function,
+                    } => {
                         // Simplified - would need interpreter context for function calls
                         break;
                     }
-                    GeneratorFunction::Filter { source: _source, predicate: _predicate } => {
+                    GeneratorFunction::Filter {
+                        source: _source,
+                        predicate: _predicate,
+                    } => {
                         // Simplified - would need interpreter context for predicate calls
                         break;
                     }
-                    GeneratorFunction::Custom { function: _function } => {
+                    GeneratorFunction::Custom {
+                        function: _function,
+                    } => {
                         // Simplified - would need interpreter context for function calls
                         break;
                     }
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -1155,7 +1190,10 @@ impl OvmValue {
                 // For now, create a simple struct-like representation for enums
                 // In a full implementation, we would have proper enum value support
                 let mut fields = HashMap::new();
-                fields.insert("__variant".to_string(), Self::new_string(variant_name.clone()));
+                fields.insert(
+                    "__variant".to_string(),
+                    Self::new_string(variant_name.clone()),
+                );
 
                 match variant_data {
                     crate::ast::EnumVariantData::Unit => {
@@ -1257,25 +1295,25 @@ impl OvmValue {
 
     /// Create OVM value from AST value with GC integration and safepoint coordination
     pub fn from_ast_with_gc(
-        ast_value: Value, 
-        safepoint_manager: &Arc<crate::ovm::gc::SafepointManager>
+        ast_value: Value,
+        safepoint_manager: &Arc<crate::ovm::gc::SafepointManager>,
     ) -> Result<Self, RuntimeError> {
         // First check for safepoint before allocation
         safepoint_manager.check_safepoint();
-        
+
         // Convert from AST using the standard method
         let mut ovm_value = Self::from_ast(ast_value);
-        
+
         ovm_value.header.tier = ExecutionTier::Interpreter; // Start at interpreter tier
-        
+
         // Record allocation with safepoint manager
-        let allocation_size = std::mem::size_of::<OvmValue>() + 
-            match &ovm_value.data {
+        let allocation_size = std::mem::size_of::<OvmValue>()
+            + match &ovm_value.data {
                 ValueData::String(s) => s.len(),
                 ValueData::List(gc_ptr) => gc_ptr.len() * std::mem::size_of::<OvmValue>(),
                 ValueData::Tuple(gc_ptr) => gc_ptr.len() * std::mem::size_of::<OvmValue>(),
                 ValueData::Function(_) => std::mem::size_of::<FunctionObject>(),
-            ValueData::AstFunction(_) => std::mem::size_of::<crate::ast::Function>(),
+                ValueData::AstFunction(_) => std::mem::size_of::<crate::ast::Function>(),
                 ValueData::Struct(_) => std::mem::size_of::<StructObject>(),
                 ValueData::Range(_) => std::mem::size_of::<RangeObject>(),
                 ValueData::Promise(_) => std::mem::size_of::<PromiseObject>(),
@@ -1283,9 +1321,9 @@ impl OvmValue {
                 ValueData::LazyList(_) => std::mem::size_of::<LazyListObject>(),
                 _ => 0,
             };
-        
+
         safepoint_manager.record_allocation(allocation_size);
-        
+
         Ok(ovm_value)
     }
 
@@ -1427,7 +1465,6 @@ impl ValueHeader {
     }
 }
 
-
 impl fmt::Display for OvmValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.data {
@@ -1488,11 +1525,7 @@ const _: () = {
 
 impl Default for ValueHeader {
     fn default() -> Self {
-        Self::new(
-            TypeTag::Unit,
-            ExecutionTier::Interpreter,
-            LazyState::Eager,
-        )
+        Self::new(TypeTag::Unit, ExecutionTier::Interpreter, LazyState::Eager)
     }
 }
 
