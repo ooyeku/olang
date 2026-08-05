@@ -2079,6 +2079,7 @@ impl BytecodeVm {
                 // In a real implementation, we might want to cache type names
                 "enum"
             }
+            Ok(Value::EnumConstructor { .. }) => "enum_constructor",
             Ok(Value::Promise { .. }) => "promise",
             Ok(Value::Map(_)) => "map",
             Err(_) => "unknown",

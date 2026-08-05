@@ -1661,6 +1661,7 @@ impl Repl {
             Value::Unit => "unit",
             Value::Ok(_) => "result",
             Value::Err(_) => "result",
+            Value::EnumConstructor { .. } => "enum_constructor",
             Value::Enum { type_name: _, .. } => {
                 // Use a static string for REPL display
                 "enum"

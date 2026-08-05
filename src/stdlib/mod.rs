@@ -112,6 +112,7 @@ pub mod error_utils {
             Value::Ok(_) => "Ok",
             Value::Err(_) => "Err",
             Value::Enum { .. } => "enum",
+            Value::EnumConstructor { .. } => "enum_constructor",
             Value::Promise { .. } => "promise",
             Value::Map(_) => "map",
             Value::TypeInfo { .. } => "type",

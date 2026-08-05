@@ -1290,6 +1290,9 @@ impl OvmValue {
                 // For now, represent types as string names
                 Self::new_string(name)
             }
+            // A constructor is a callable; it never actually crosses into the
+            // VM (round_trips excludes it), so a placeholder unit is fine
+            Value::EnumConstructor { .. } => Self::new_unit(),
         }
     }
 

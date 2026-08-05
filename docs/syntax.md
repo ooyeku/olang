@@ -590,7 +590,7 @@ type Color = enum {
     RGB(Int, Int, Int)
 }
 
-// Generic type definition
+// Generic type definition (type parameters are erased at runtime)
 type Maybe<T> = enum {
     Some(T),
     None
@@ -603,6 +603,31 @@ error NetworkError {
     InvalidResponse
 }
 ```
+
+### Constructing and matching enums
+
+Unit variants (`Red`) are values; payload variants (`Circle(2.0)`) are
+constructed by applying them like a function. Match binds the payloads:
+
+```olang
+type Shape = enum { Circle(Float), Rect(Float, Float), Empty }
+
+let c = Circle(2.0)            // a Shape value
+let r = Rect(3.0, 4.0)
+
+fn area(s) = match s {
+    Circle(radius)   => 3.14159 * radius * radius,
+    Rect(w, h)       => w * h,
+    Empty            => 0.0
+}
+
+println(area(c))               // 12.56636
+```
+
+Enum values compare structurally (`Circle(2.0) == Circle(2.0)` is `true`),
+and `typeof` returns the enum's name (`"Shape"`). A generic enum like
+`Maybe<T>` constructs for any payload — the type parameter is checked
+statically (when type checking is on) and erased at runtime.
 
 ## Async/Await
 

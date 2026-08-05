@@ -406,6 +406,15 @@ pub enum Value {
         variant_data: EnumVariantData,
     },
 
+    // A tuple-variant constructor, e.g. `Circle` in `Circle(radius)`. Unit
+    // variants are `Enum` values directly; payload variants are callables
+    // that build an `Enum` when applied. Defined by `eval_type_decl`.
+    EnumConstructor {
+        type_name: String,
+        variant_name: String,
+        arity: usize,
+    },
+
     // Promise values for async operations
     Promise {
         state: PromiseState,
@@ -821,6 +830,11 @@ impl std::fmt::Display for Value {
                     write!(f, " }}")
                 }
             },
+            Value::EnumConstructor {
+                type_name,
+                variant_name,
+                ..
+            } => write!(f, "{}.{}", type_name, variant_name),
             Value::Promise {
                 state,
                 value,
@@ -867,6 +881,7 @@ impl Value {
             Value::Err(_) => "Result".to_string(),
             Value::Unit => "Unit".to_string(),
             Value::Enum { type_name, .. } => type_name.clone(),
+            Value::EnumConstructor { type_name, .. } => type_name.clone(),
             Value::Promise { .. } => "Promise".to_string(),
             Value::TypeInfo { .. } => "Type".to_string(),
         }

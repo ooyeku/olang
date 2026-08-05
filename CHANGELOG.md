@@ -12,6 +12,16 @@ documented.
 
 ### Added
 
+- **Enums construct at runtime.** `type Color = enum { Red, RGB(Int, Int, Int) }`
+  now binds its variants: unit variants (`Red`) are values, payload variants
+  (`RGB(1, 2, 3)`) are constructor callables that build an `Enum` value. This
+  makes olang's algebraic data types real — previously `enum` declarations
+  parsed and could be pattern-matched, but the variants were undefined at
+  runtime, so examples worked around them with string-tagged structs. Enum
+  values compare structurally, `typeof` returns the enum name, and generic
+  enums (`Maybe<T>`) construct for any payload (type parameters are erased at
+  runtime).
+
 - **`db` module** — an embedded SQLite database via the bundled `rusqlite`
   (compiled from source, so the single-binary story holds — no system
   dependency). `db.open` (`:memory:` or a file path), `db.execute` (rows
@@ -74,6 +84,11 @@ documented.
   list.
 
 ### Fixed
+
+- **Unit-variant patterns dispatch correctly.** A bare name in a `match`
+  arm that resolves to a unit enum variant is now matched as a variant, not
+  bound as a catch-all — previously the first such arm (`North => ...`)
+  captured every case.
 
 - `to_int` and `to_float` are callable as plain identifiers. They were
   handled by the builtin dispatcher but never registered in the builtin

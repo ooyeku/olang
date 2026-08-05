@@ -1849,6 +1849,26 @@ impl Interpreter {
                 let builtin_functions = self.builtin_functions.clone();
                 BuiltinFunctions::call(&builtin_functions, &name, arguments, self)
             }
+            // Applying a tuple-variant constructor builds the enum value
+            Value::EnumConstructor {
+                type_name,
+                variant_name,
+                arity,
+            } => {
+                // call_depth is only incremented in the Function arm, so
+                // there is nothing to unwind here
+                if arguments.len() != arity {
+                    return Err(InterpreterError::ArityMismatch {
+                        expected: arity,
+                        got: arguments.len(),
+                    });
+                }
+                Ok(Value::Enum {
+                    type_name,
+                    variant_name,
+                    variant_data: crate::ast::EnumVariantData::Tuple(arguments),
+                })
+            }
             _ => Err(InterpreterError::TypeError {
                 message: "Cannot call non-function value".to_string(),
             }),
@@ -2067,6 +2087,22 @@ impl Interpreter {
         match (pattern, value) {
             (Pattern::Literal(lit), val) => Ok(lit == val),
             (Pattern::Identifier(name), val) => {
+                // A bare name that resolves to a unit enum variant is a
+                // variant pattern — match it by equality — rather than a
+                // fresh binding that captures everything. Without this,
+                // `match dir { North => .., East => .. }` would have `North`
+                // bind and shadow every other arm.
+                if let Some(variant @ Value::Enum { .. }) = self.environment.get(name) {
+                    if matches!(
+                        variant,
+                        Value::Enum {
+                            variant_data: EnumVariantData::Unit,
+                            ..
+                        }
+                    ) {
+                        return Ok(&variant == val);
+                    }
+                }
                 bindings.insert(name.clone(), val.clone());
                 Ok(true)
             }
@@ -2432,6 +2468,16 @@ impl Interpreter {
             (Value::Float(a), BinaryOp::Equal, Value::Float(b)) => Ok(Value::Boolean(a == b)),
             (Value::String(a), BinaryOp::Equal, Value::String(b)) => Ok(Value::Boolean(*a == *b)),
             (Value::Boolean(a), BinaryOp::Equal, Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
+            // Enum values compare structurally: same variant and payloads.
+            // Value derives PartialEq, so this is the natural equality.
+            (left @ Value::Enum { .. }, BinaryOp::Equal, right @ Value::Enum { .. }) => {
+                Ok(Value::Boolean(left == right))
+            }
+            (left @ Value::Enum { .. }, BinaryOp::NotEqual, right @ Value::Enum { .. }) => {
+                Ok(Value::Boolean(left != right))
+            }
+            (Value::Unit, BinaryOp::Equal, Value::Unit) => Ok(Value::Boolean(true)),
+            (Value::Unit, BinaryOp::NotEqual, Value::Unit) => Ok(Value::Boolean(false)),
             (Value::Integer(a), BinaryOp::NotEqual, Value::Integer(b)) => {
                 Ok(Value::Boolean(a != b))
             }
@@ -2604,10 +2650,37 @@ impl Interpreter {
 
     fn eval_type_decl(
         &mut self,
-        _type_decl: crate::ast::TypeDecl,
+        type_decl: crate::ast::TypeDecl,
     ) -> Result<Value, InterpreterError> {
-        // For now, type declarations don't produce runtime values
-        // In a full implementation, we'd store type information for later use
+        use crate::ast::{EnumVariantData, TypeDefinition};
+
+        // Enum declarations bind each variant into scope so it can be
+        // constructed. Unit variants become `Enum` values directly; tuple
+        // variants become constructor callables (`Circle(radius)`).
+        //
+        // Type parameters (`enum Option<T>`) are erased at runtime — the
+        // language is dynamically typed, so a generic variant constructs for
+        // any argument type. The static side is the type checker's concern.
+        if let TypeDefinition::Enum { variants } = &type_decl.definition {
+            for variant in variants {
+                let value = match &variant.data {
+                    None => Value::Enum {
+                        type_name: type_decl.name.clone(),
+                        variant_name: variant.name.clone(),
+                        variant_data: EnumVariantData::Unit,
+                    },
+                    Some(fields) => Value::EnumConstructor {
+                        type_name: type_decl.name.clone(),
+                        variant_name: variant.name.clone(),
+                        arity: fields.len(),
+                    },
+                };
+                self.environment.define(variant.name.clone(), value);
+            }
+        }
+
+        // Struct and union declarations don't yet produce runtime bindings;
+        // struct values are built via struct-literal syntax.
         Ok(Value::Unit)
     }
 

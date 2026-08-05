@@ -99,21 +99,30 @@ println(`sum of odd squares 1..10: ${report}`)
 fn add3(a, b) = a + b
 println(`partial pipe: ${5 |> add3(3)}`)      // piped value fills the first slot
 
-// ── Structs and tagged-union dispatch ───────────────────────────────
-// Structs carry named fields. `enum` types declare but a discriminated
-// union is expressed at runtime as a tagged struct + match on the tag.
+// ── Structs and enums ───────────────────────────────────────────────
+// Structs carry named fields; enums are real sum types with variants you
+// construct and match on (unit variants like North, payload variants like
+// Circle(r)).
 type Point = struct { x: Int, y: Int }
+type Direction = enum { North, South, East, West }
 
 let here = Point { x: 3, y: 4 }
-fn step(p, direction) = match direction {
-    "north" => Point { x: p.x, y: p.y + 1 },
-    "south" => Point { x: p.x, y: p.y - 1 },
-    "east" => Point { x: p.x + 1, y: p.y },
-    "west" => Point { x: p.x - 1, y: p.y },
-    _ => p
+fn step(p, dir) = match dir {
+    North => Point { x: p.x, y: p.y + 1 },
+    South => Point { x: p.x, y: p.y - 1 },
+    East => Point { x: p.x + 1, y: p.y },
+    West => Point { x: p.x - 1, y: p.y }
 }
-let there = step(step(here, "north"), "east")
+let there = step(step(here, North), East)
 println(`walked from (${here.x},${here.y}) to (${there.x},${there.y})`)
+
+// Payload variants carry data — a classic algebraic data type
+type Shape = enum { Circle(Float), Rect(Float, Float) }
+fn area(s) = match s {
+    Circle(r) => 3.14159 * r * r,
+    Rect(w, h) => w * h
+}
+println(`circle area ${area(Circle(2.0))}, rect area ${area(Rect(3.0, 4.0))}`)
 
 // ── Error handling: Result, ?, try/catch ────────────────────────────
 fn safe_div(a, b) = if b == 0 => Err("division by zero") else => Ok(a / b)
