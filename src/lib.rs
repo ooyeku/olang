@@ -10,9 +10,7 @@ pub mod builtin;
 pub mod help;
 pub mod interpreter;
 pub mod log;
-pub mod ovm; // Olang Virtual Machine
-pub mod ovm_integration; // OVM Integration Layer
-pub mod ovm_repl; // Enhanced REPL with OVM support
+pub mod ovm; // Bytecode execution tier
 pub mod parallel;
 pub mod parser;
 pub mod repl;
@@ -28,9 +26,7 @@ pub(crate) mod internal;
 // Re-export commonly used types
 pub use ast::{Expr, Program, Value};
 pub use interpreter::Interpreter;
-pub use ovm::{OlangVirtualMachine, OvmConfig, OvmValue};
-pub use ovm_integration::{ExecutionStats, IntegrationConfig, OvmInterpreter};
-pub use ovm_repl::{ExecutionMode, OvmRepl};
+pub use ovm::OvmValue;
 pub use parser::Parser;
 pub use repl::Repl;
 pub use type_checker::{TypeChecker, TypeClass};

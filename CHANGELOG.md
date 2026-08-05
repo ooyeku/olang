@@ -10,6 +10,18 @@ documented.
 
 ## [Unreleased]
 
+### Removed
+
+- **~12,000 lines of dead execution machinery**: the `OlangVirtualMachine`
+  routing layer and `ovm_integration` (the pre-0.24 default path, measured
+  ~70% slower than the plain interpreter), `ovm_repl`, the placeholder JIT
+  module, the tracing-GC/region-allocator remnants, and the pipeline, SIMD,
+  lazy, fusion, and adaptive engines — none wired into execution. The OVM
+  directory now contains exactly what runs: the bytecode VM, the tier, the
+  value model, and safepoint flags. REPL commands `:ovm`, `:stats`, and
+  `:memory` now report bytecode-tier statistics; `:gc` is gone (values are
+  reference-counted; there is nothing to force).
+
 ### Changed
 
 - **Fast by default** — the bytecode tier is now enabled by default,

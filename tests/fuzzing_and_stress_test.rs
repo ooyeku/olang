@@ -7,7 +7,6 @@
 use olang::{
     ast::{Expr, Statement, Value},
     interpreter::{Interpreter, InterpreterError},
-    ovm_integration::OvmInterpreter,
     parser::{ParseError, Parser},
     type_checker::TypeChecker,
 };
@@ -267,7 +266,7 @@ impl ParserFuzzer {
 /// Interpreter stress testing framework
 pub struct InterpreterStressTester {
     interpreter: Interpreter,
-    ovm_interpreter: OvmInterpreter,
+    tiered_interpreter: Interpreter,
     parser: Parser,
 }
 
@@ -275,7 +274,11 @@ impl InterpreterStressTester {
     pub fn new() -> Self {
         Self {
             interpreter: Interpreter::new(),
-            ovm_interpreter: OvmInterpreter::new(),
+            tiered_interpreter: {
+                let mut interpreter = Interpreter::new();
+                interpreter.enable_bytecode_tier(1, false);
+                interpreter
+            },
             parser: Parser::new(),
         }
     }
@@ -380,7 +383,7 @@ impl InterpreterStressTester {
         
         // Test OVM interpreter
         let start = Instant::now();
-        let _ = self.ovm_interpreter.eval_program(program)?;
+        let _ = self.tiered_interpreter.eval_program(program)?;
         let ovm_time = start.elapsed();
         
         Ok((classic_time, ovm_time))

@@ -1,7 +1,6 @@
 use crate::ast::Value;
 use crate::help::{HelpSystem, HelpContext, SearchFilters, Colors};
 use crate::interpreter::InterpreterError;
-use crate::ovm_integration::{IntegrationConfig, IntegrationError, OvmInterpreter};
 use crate::parser::{ErrorSuggestion, ParseError, Parser, SuggestionSeverity};
 use crate::version::VERSION;
 use colored::*;
@@ -24,8 +23,6 @@ pub enum ReplError {
     Parse(#[from] ParseError),
     #[error("Interpreter error: {0}")]
     Interpreter(#[from] InterpreterError),
-    #[error("Integration error: {0}")]
-    Integration(#[from] IntegrationError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Debug error: {0}")]
@@ -220,7 +217,7 @@ impl InteractiveDebugger {
 
 /// All REPL colon-commands, used for TAB completion of the command word.
 const REPL_COMMANDS: &[&str] = &[
-    ":help", ":quit", ":gc", ":env", ":clear", ":ovm", ":version", ":history",
+    ":help", ":quit", ":env", ":clear", ":ovm", ":version", ":history",
     ":type", ":time", ":memory", ":stats", ":parallel", ":run", ":debug",
     ":watch", ":inspect", ":trace", ":set", ":stack", ":profile", ":config",
     ":benchmark", ":search", ":tutorial", ":tutorial_run", ":contextual_help",
@@ -362,8 +359,9 @@ impl Helper for ReplHelper {}
 
 pub struct Repl {
     editor: Editor<ReplHelper, DefaultHistory>,
-    ovm_interpreter: OvmInterpreter,
+    interpreter: crate::interpreter::Interpreter,
     parser: Parser,
+    #[allow(dead_code)] // consumed at construction; kept for future diagnostics
     verbose: bool,
     history_file: String,
     help_system: HelpSystem,
@@ -433,56 +431,16 @@ impl Repl {
         }
 
         // Create OVM configuration with auto mode (OVM ENABLED by default for performance)
-        let integration_config = IntegrationConfig {
-            // The expression-routing layer measured ~70% slower than the
-            // plain interpreter; the bytecode tier below is the fast path
-            use_ovm_by_default: false,
-            ovm_complexity_threshold: 1,
-            auto_compile_functions: true,
-            enable_ovm_lazy_eval: true,
-            fallback_on_error: true,
-            enable_ovm_builtins: true,
-            ovm_cache_enabled: true,
-            enable_parallel: std::env::var("OVM_ENABLE_PARALLEL").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(true),
-            max_parallelism: std::env::var("OVM_PARALLELISM").ok().and_then(|s| s.parse::<usize>().ok()),
-            ovm_preferred_builtins: vec![
-                "len".to_string(),
-                "typeof".to_string(),
-                "to_string".to_string(),
-                "sum".to_string(),
-                "average".to_string(),
-                "min".to_string(),
-                "max".to_string(),
-                "reverse".to_string(),
-                "sort".to_string(),
-                "contains".to_string(),
-            ],
-        };
-
-        let mut ovm_interpreter = OvmInterpreter::with_config(integration_config);
+        let mut interpreter = crate::interpreter::Interpreter::new();
 
         if enable_tier {
             // Promote eligible functions to bytecode on their first call
-            ovm_interpreter
-                .get_classic_interpreter()
-                .enable_bytecode_tier(1, verbose);
-        }
-
-        // Initialize OVM with default configuration
-        if let Err(e) = ovm_interpreter.initialize_ovm_default() {
-            if verbose {
-                eprintln!(
-                    "OVM initialization failed, falling back to classic interpreter: {}",
-                    e
-                );
-            }
-        } else if verbose {
-            println!("OVM initialized successfully - enhanced performance enabled");
+            interpreter.enable_bytecode_tier(1, verbose);
         }
 
         Ok(Self {
             editor,
-            ovm_interpreter,
+            interpreter,
             parser: Parser::new(),
             verbose,
             history_file,
@@ -561,9 +519,7 @@ impl Repl {
                     }
                     
                     // Clean up module cache to prevent memory accumulation
-                    self.ovm_interpreter.get_classic_interpreter().clear_module_cache();
-                    
-                    let _ = self.ovm_interpreter.force_gc();
+                    self.interpreter.clear_module_cache();
                 } else {
                     if !self.multiline_buffer.is_empty() {
                         self.multiline_buffer.push('\n');
@@ -584,7 +540,6 @@ impl Repl {
                 if let Err(e) = self.handle_command(line) {
                     eprintln!("Command error: {}", e);
                 }
-                let _ = self.ovm_interpreter.force_gc();
                 continue;
             }
 
@@ -631,9 +586,7 @@ impl Repl {
             }
             
             // Clean up module cache to prevent memory accumulation
-            self.ovm_interpreter.get_classic_interpreter().clear_module_cache();
-            
-            let _ = self.ovm_interpreter.force_gc();
+            self.interpreter.clear_module_cache();
         }
 
         // Save history
@@ -648,8 +601,7 @@ impl Repl {
     /// variables and functions.
     fn refresh_completions(&mut self) {
         let names: Vec<String> = self
-            .ovm_interpreter
-            .get_classic_interpreter()
+            .interpreter
             .get_user_variables()
             .keys()
             .cloned()
@@ -790,18 +742,7 @@ impl Repl {
                 let args = command[":ls".len()..].trim();
                 self.run_shell_command(&format!("ls {}", args));
             }
-            ":gc" => {
-                if self.ovm_interpreter.is_ovm_available() {
-                    println!("Forcing garbage collection...");
-                    if let Err(e) = self.ovm_interpreter.force_gc() {
-                        eprintln!("GC failed: {}", e);
-                    } else {
-                        println!("Garbage collection completed successfully");
-                    }
-                } else {
-                    println!("OVM is not available, cannot run GC.");
-                }
-            }
+
             ":env" => {
                 if parts.len() > 1 && parts[1] == "--full" {
                     self.show_environment(true);
@@ -813,9 +754,7 @@ impl Repl {
                 if parts.len() > 1 {
                     match parts[1] {
                         "env" => {
-                            self.ovm_interpreter
-                                .get_classic_interpreter()
-                                .clear_user_environment();
+                            self.interpreter.clear_user_environment();
                             println!("User environment cleared.");
                         }
                         "history" => {
@@ -832,127 +771,16 @@ impl Repl {
                 }
             }
             ":ovm" => {
-                if parts.len() > 1 {
-                    match parts[1] {
-                        "status" => {
-                            println!("=== OVM Status ===");
-                            let ovm_status = self.ovm_interpreter.get_ovm_status();
-                            println!(
-                                "  Initialized: {}",
-                                ovm_status.initialized.to_string().bright_green()
-                            );
-                            println!(
-                                "  Running: {}",
-                                ovm_status.running.to_string().bright_green()
-                            );
-                            println!(
-                                "  Healthy: {}",
-                                self.ovm_interpreter
-                                    .is_ovm_healthy()
-                                    .to_string()
-                                    .bright_green()
-                            );
-
-                            println!("\n=== Execution Statistics ===");
-                            let stats = self.ovm_interpreter.get_stats();
-                            let total_executions = stats.ovm_executions + stats.classic_executions;
-
-                            println!(
-                                "  Total executions: {}",
-                                total_executions.to_string().bright_white()
-                            );
-                            if total_executions > 0 {
-                                let ovm_percentage =
-                                    (stats.ovm_executions as f64 / total_executions as f64) * 100.0;
-                                let classic_percentage = (stats.classic_executions as f64
-                                    / total_executions as f64)
-                                    * 100.0;
-
-                                println!(
-                                    "  OVM executions: {} ({:.1}%)",
-                                    stats.ovm_executions.to_string().bright_cyan(),
-                                    ovm_percentage.to_string().bright_cyan()
-                                );
-                                println!(
-                                    "  Classic executions: {} ({:.1}%)",
-                                    stats.classic_executions.to_string().bright_yellow(),
-                                    classic_percentage.to_string().bright_yellow()
-                                );
-                            } else {
-                                println!(
-                                    "  OVM executions: {}",
-                                    stats.ovm_executions.to_string().bright_cyan()
-                                );
-                                println!(
-                                    "  Classic executions: {}",
-                                    stats.classic_executions.to_string().bright_yellow()
-                                );
-                            }
-                            println!(
-                                "  Fallback executions: {}",
-                                stats.fallback_executions.to_string().bright_red()
-                            );
-                            println!(
-                                "  Function compilations: {}",
-                                stats.compilation_count.to_string().bright_blue()
-                            );
-
-                            if stats.average_ovm_time_ms > 0.0 {
-                                println!("  Avg OVM time: {:.2}ms", stats.average_ovm_time_ms);
-                            }
-                            if stats.average_classic_time_ms > 0.0 {
-                                println!(
-                                    "  Avg classic time: {:.2}ms",
-                                    stats.average_classic_time_ms
-                                );
-                            }
-
-                            if ovm_status.running {
-                                println!(
-                                    "\n{}",
-                                    "OVM is actively optimizing your code in the background"
-                                        .bright_green()
-                                );
-                            } else {
-                                println!(
-                                    "\n{}",
-                                    "OVM is not running - falling back to classic interpreter"
-                                        .bright_yellow()
-                                );
-                            }
-                        }
-                        "gc" => {
-                            if let Err(e) = self.ovm_interpreter.force_gc() {
-                                eprintln!("GC failed: {}", e);
-                            } else {
-                                println!("Garbage collection completed successfully");
-                            }
-                        }
-                        "restart" => match self.ovm_interpreter.ensure_ovm_running() {
-                            Ok(()) => println!("OVM restarted successfully"),
-                            Err(e) => eprintln!("Failed to restart OVM: {}", e),
-                        },
-                        _ => {
-                            println!("Usage: :ovm [status|gc|restart]");
-                        }
+                println!("\n{}", "=== Bytecode Tier ===".bright_cyan().bold());
+                match self.interpreter.bytecode_tier_stats() {
+                    Some(tier) => {
+                        println!("  Status: {}", "enabled (functions compile on first call)".bright_green());
+                        println!("  Promoted: {}  Rejected: {}  Bytecode calls: {}",
+                            tier.promoted.to_string().bright_white(),
+                            tier.rejected.to_string().bright_white(),
+                            tier.bytecode_calls.to_string().bright_white());
                     }
-                } else {
-                    let available = self.ovm_interpreter.is_ovm_available();
-                    let healthy = self.ovm_interpreter.is_ovm_healthy();
-                    println!(
-                        "OVM available: {} | Healthy: {}",
-                        available.to_string().bright_green(),
-                        healthy.to_string().bright_green()
-                    );
-                    if available && healthy {
-                        println!("{}", "OVM is running in the background".bright_green());
-                    } else {
-                        println!(
-                            "{}",
-                            "OVM may need attention - use ':ovm status' for details"
-                                .bright_yellow()
-                        );
-                    }
+                    None => println!("  Status: {} (restart without --no-ovm to enable)", "disabled".bright_yellow()),
                 }
             }
             ":version" | "version" => {
@@ -1030,75 +858,21 @@ impl Repl {
                 }
             }
             ":memory" => {
-                println!("Memory Usage Statistics:");
-                println!("  Command history entries: {}", self.command_history.len());
-
-                let user_vars = self
-                    .ovm_interpreter
-                    .get_classic_interpreter()
-                    .get_user_variables();
-                println!("  User variables: {}", user_vars.len());
-
-                if self.ovm_interpreter.is_ovm_available() {
-                    let stats = self.ovm_interpreter.get_stats();
-                    println!("  OVM executions: {}", stats.ovm_executions);
-                    println!("  Classic executions: {}", stats.classic_executions);
-                    println!("  Fallback executions: {}", stats.fallback_executions);
-                }
-
-                // Try to get system memory info (simplified)
-                println!("  Note: Detailed memory profiling requires OVM performance monitoring");
+                println!("\n{}", "=== Memory ===".bright_cyan().bold());
+                println!("  Values are reference-counted and reclaimed deterministically.");
+                let user_vars = self.interpreter.get_user_variables().len();
+                println!("  User bindings: {}", user_vars.to_string().bright_white());
             }
             ":stats" => {
-                println!("Execution Statistics:");
-
-                if self.ovm_interpreter.is_ovm_available() {
-                    let stats = self.ovm_interpreter.get_stats();
-                    let total_executions = stats.ovm_executions + stats.classic_executions;
-
-                    println!("  Total expressions executed: {}", total_executions);
-
-                    if total_executions > 0 {
-                        let ovm_percentage =
-                            (stats.ovm_executions as f64 / total_executions as f64) * 100.0;
-                        let classic_percentage =
-                            (stats.classic_executions as f64 / total_executions as f64) * 100.0;
-
-                        println!(
-                            "  OVM executions: {} ({:.1}%)",
-                            stats.ovm_executions, ovm_percentage
-                        );
-                        println!(
-                            "  Classic interpreter executions: {} ({:.1}%)",
-                            stats.classic_executions, classic_percentage
-                        );
-                    } else {
-                        println!("  OVM executions: {}", stats.ovm_executions);
-                        println!(
-                            "  Classic interpreter executions: {}",
-                            stats.classic_executions
-                        );
+                println!("\n{}", "=== Execution Statistics ===".bright_cyan().bold());
+                match self.interpreter.bytecode_tier_stats() {
+                    Some(tier) => {
+                        println!("  Bytecode tier: {}", "enabled".bright_green());
+                        println!("  Functions promoted: {}", tier.promoted.to_string().bright_white());
+                        println!("  Functions rejected:  {}", tier.rejected.to_string().bright_white());
+                        println!("  Bytecode calls:      {}", tier.bytecode_calls.to_string().bright_white());
                     }
-
-                    println!("  Fallback executions: {}", stats.fallback_executions);
-
-                    if stats.average_ovm_time_ms > 0.0 {
-                        println!(
-                            "  Average OVM execution time: {:.2}ms",
-                            stats.average_ovm_time_ms
-                        );
-                    }
-                    if stats.average_classic_time_ms > 0.0 {
-                        println!(
-                            "  Average classic execution time: {:.2}ms",
-                            stats.average_classic_time_ms
-                        );
-                    }
-
-                    println!("  Performance: OVM is actively optimizing your code");
-                } else {
-                    println!("  Classic interpreter mode");
-                    println!("  Note: Enable OVM for detailed performance statistics");
+                    None => println!("  Bytecode tier: {}", "disabled".bright_yellow()),
                 }
             }
             ":parallel" => {
@@ -1191,9 +965,7 @@ impl Repl {
                                     .unwrap_or_default()
                                     .join(file_path)
                             };
-                            self.ovm_interpreter
-                                .get_classic_interpreter()
-                                .set_current_file(&absolute_path);
+                            self.interpreter.set_current_file(&absolute_path);
 
                             match self.eval_line(&content) {
                                 Ok(value) => {
@@ -1208,26 +980,15 @@ impl Repl {
                             }
 
                             // Clear file context after execution
-                            self.ovm_interpreter
-                                .get_classic_interpreter()
-                                .clear_current_file();
+                            self.interpreter.clear_current_file();
 
                             // Aggressive cleanup after script execution
                             // 1. Clear user environment to free variables
-                            self.ovm_interpreter
-                                .get_classic_interpreter()
-                                .clear_user_environment();
+                            self.interpreter.clear_user_environment();
 
-                            // 2. Force garbage collection multiple times
-                            if self.ovm_interpreter.is_ovm_available() {
-                                for _ in 0..3 {
-                                    if let Err(e) = self.ovm_interpreter.force_gc() {
-                                        if self.verbose {
-                                            eprintln!("GC after script execution failed: {}", e);
-                                        }
-                                        break;
-                                    }
-                                }
+                            // 2. Values are reference-counted; clearing the
+                            // environment above already released them
+                            {
                             }
                         }
                         Err(e) => {
@@ -1276,7 +1037,7 @@ impl Repl {
                         println!("Now watching variable: {}", var_name.bright_yellow());
                         
                         // Store current value for change detection
-                        let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+                        let user_vars = self.interpreter.get_user_variables();
                         if let Some(value) = user_vars.get(&var_name) {
                             self.debugger.update_variable_history(var_name, (*value).clone());
                         }
@@ -1601,7 +1362,7 @@ impl Repl {
         // Check for watched variables before execution
         let watching_vars = !self.debugger.watched_variables.is_empty();
         if watching_vars {
-            let vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+            let vars = self.interpreter.get_user_variables();
             for (name, value) in &vars {
                 if self.debugger.is_watching(name) {
                     self.debugger.update_variable_history(name.clone(), (*value).clone());
@@ -1618,18 +1379,13 @@ impl Repl {
         // Periodic OVM health check (every 10 evaluations)
         self.ovm_health_check_counter += 1;
         if self.ovm_health_check_counter % 10 == 0 {
-            if let Err(e) = self.ovm_interpreter.ensure_ovm_running() {
-                if self.verbose {
-                    eprintln!("Warning: OVM health check failed: {}", e);
-                }
-            }
         }
 
-        let result = self.ovm_interpreter.eval_program(program)?;
+        let result = self.interpreter.eval_program(program)?;
 
         // Check for watched variable changes after execution
         if watching_vars {
-            let user_vars_after = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+            let user_vars_after = self.interpreter.get_user_variables();
             
             // Convert HashMap<String, &Value> to HashMap<String, Value> for compatibility
             let user_vars_owned: HashMap<String, Value> = user_vars_after.iter()
@@ -1662,7 +1418,7 @@ impl Repl {
 
         // Collect data first to avoid borrow conflicts
         let (builtin_count, builtin_names, user_var_count) = {
-            let classic_interpreter = self.ovm_interpreter.get_classic_interpreter();
+            let classic_interpreter = &mut self.interpreter;
             let builtins = classic_interpreter.get_builtin_functions();
             let user_vars = classic_interpreter.get_user_variables();
 
@@ -1718,8 +1474,7 @@ impl Repl {
         } else {
             // Get user variables again (after releasing previous borrow)
             let user_vars = self
-                .ovm_interpreter
-                .get_classic_interpreter()
+                .interpreter
                 .get_user_variables();
             for (name, value) in &user_vars {
                 let type_name = Self::get_type_name(value);
@@ -1841,7 +1596,7 @@ impl Repl {
         println!("{}", format!("Debugging: {}", expr).bright_cyan().bold());
         
         // Check for watched variables before execution
-        let user_vars_before = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+        let user_vars_before = self.interpreter.get_user_variables();
         for (name, value) in &user_vars_before {
             if self.debugger.is_watching(name) {
                 self.debugger.update_variable_history(name.clone(), (*value).clone());
@@ -1871,7 +1626,7 @@ impl Repl {
                         self.debugger.record_profiling_data(expr.to_string(), time_ms);
                         
                         // Check for watched variable changes
-                        let user_vars_after = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+                        let user_vars_after = self.interpreter.get_user_variables();
                         
                         // Convert HashMap<String, &Value> to HashMap<String, Value> for compatibility
                         let user_vars_owned: HashMap<String, Value> = user_vars_after.iter()
@@ -1913,7 +1668,7 @@ impl Repl {
     }
 
     fn inspect_variable(&mut self, var_name: &str) -> Result<(), ReplError> {
-        let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+        let user_vars = self.interpreter.get_user_variables();
         
         if let Some(value) = user_vars.get(var_name) {
             println!("\n{}", format!("=== Variable Inspection: {} ===", var_name).bright_cyan().bold());
@@ -1969,7 +1724,7 @@ impl Repl {
             
         } else {
             // Check if it's a builtin function
-            let builtins = self.ovm_interpreter.get_classic_interpreter().get_builtin_functions();
+            let builtins = self.interpreter.get_builtin_functions();
             if let Some(_builtin) = builtins.get(var_name) {
                 println!("\n{}", format!("=== Builtin Function: {} ===", var_name).bright_cyan().bold());
                 println!("  {}: builtin function", "Type".bright_yellow());
@@ -1993,13 +1748,11 @@ impl Repl {
         match self.eval_line(&value_expr) {
             Ok(value) => {
                 // Check if variable exists
-                let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+                let user_vars = self.interpreter.get_user_variables();
                 let existed = user_vars.contains_key(&var_name);
                 
                 // Set the variable
-                self.ovm_interpreter
-                    .get_classic_interpreter()
-                    .define_variable(var_name.clone(), value.clone());
+                self.interpreter.define_variable(var_name.clone(), value.clone());
                 
                 if existed {
                     println!("Variable '{}' updated to: {}", var_name.bright_yellow(), value);
@@ -2136,9 +1889,6 @@ impl Repl {
             }
             ReplError::Interpreter(interpreter_error) => {
                 self.show_interpreter_error(interpreter_error);
-            }
-            ReplError::Integration(integration_error) => {
-                println!("  {}: {}", "Integration Error".bright_red(), integration_error);
             }
             ReplError::Readline(readline_error) => {
                 println!("  {}: {}", "Input Error".bright_red(), readline_error);
@@ -2448,7 +2198,7 @@ impl Repl {
                 );
                 
                 // Suggest similar variables
-                let user_vars = self.ovm_interpreter.get_classic_interpreter().get_user_variables();
+                let user_vars = self.interpreter.get_user_variables();
                 let mut suggestions = Vec::new();
                 
                 for var_name in user_vars.keys() {
@@ -2608,9 +2358,7 @@ impl Repl {
             .rev()
             .collect::<Vec<_>>();
         
-        let current_variables = self.ovm_interpreter
-            .get_classic_interpreter()
-            .get_user_variables()
+        let current_variables = self.interpreter.get_user_variables()
             .keys()
             .cloned()
             .collect();
@@ -2808,9 +2556,7 @@ impl ReplExt for Repl {
     }
 
     fn define_variable(&mut self, name: &str, value: Value) {
-        self.ovm_interpreter
-            .get_classic_interpreter()
-            .define_variable(name.to_string(), value);
+        self.interpreter.define_variable(name.to_string(), value);
     }
 
     fn get_variable(&self, _name: &str) -> Option<Value> {

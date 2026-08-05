@@ -270,31 +270,30 @@ These are real gaps, not oversights:
 
 ## Not implemented
 
-Named here because earlier documentation claimed otherwise:
-
-- **JIT compilation.** `src/ovm/optimization.rs` contains Cranelift
-  scaffolding, but the code generation emits placeholder functions that return
-  constant integers cast to pointers. Executing them would be undefined
-  behavior, so the tier is disabled: `has_compiled_function` returns `false`
-  and execution falls back to bytecode or the interpreter. Cranelift remains a
-  dependency for the eventual real implementation.
-- **Concurrent generational garbage collection.** Removed. See
-  [Value model](#value-model).
-- **Automatic SIMD vectorization.** `src/ovm/simd.rs` pattern-matches specific
-  closure shapes; it is not wired into the execution path.
-- **Fusion, lazy, pipeline, and adaptive engines.** Present as modules,
-  bypassed by the execution path.
+- **JIT compilation.** There is no native-code tier. The earlier Cranelift
+  scaffolding emitted placeholder functions whose execution would have been
+  undefined behavior; it was disabled in 0.23 and deleted in 0.24. A real
+  JIT would be a fresh implementation compiling from bytecode.
+- **Tracing garbage collection.** Memory is reference-counted; `gc.rs` holds
+  only the safepoint flags the interpreter polls.
+- **Automatic SIMD vectorization** and pipeline fusion: the speculative
+  engines were deleted rather than finished — explicit bulk stdlib
+  operations are the honest route if vectorization matters later.
 
 ## Source map
 
 | File | Role |
 |---|---|
 | `src/interpreter.rs` | Tree-walking evaluator; the semantics reference |
+| `src/resolve.rs` | Slot resolution for function bodies |
 | `src/ovm/tier.rs` | Promotion decisions and eligibility |
 | `src/ovm/bytecode.rs` | Compiler, instruction set, and dispatch loop |
 | `src/ovm/value.rs` | `OvmValue`, the reference-counted value model |
-| `src/ovm/gc.rs` | Safepoint flags and allocation accounting |
-| `src/ovm/memory.rs` | Memory statistics and lifecycle |
-| `src/ovm/execution.rs` | Tiered execution engine and tier transitions |
-| `src/ovm_integration.rs` | Routing between the interpreter and the OVM |
-| `src/ovm/optimization.rs` | JIT scaffolding (disabled) |
+| `src/ovm/gc.rs` | Safepoint flags the interpreter polls in loops |
+
+Deleted in the 0.24 cleanup (~12,000 lines): the `OlangVirtualMachine`
+routing layer and `ovm_integration` (measured ~70% slower than the plain
+interpreter, and the default path until 0.24), the placeholder JIT
+scaffolding, the tracing-GC/region-allocator remnants, and the pipeline,
+SIMD, lazy, fusion, and adaptive engines — none of which were wired into
+execution.
