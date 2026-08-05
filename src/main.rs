@@ -5,11 +5,9 @@ use colored::*;
 
 use olang::{
     log::{init_logger, Logger},
-    ovm_integration::{IntegrationConfig, OvmInterpreter},
     parallel::{initialize_parallelization, set_parallel_threshold},
     parser::{Parser as OlangParser, ErrorSuggestion, SuggestionSeverity},
     repl::Repl,
-    OvmConfig,
 };
 
 #[derive(Parser)]
@@ -198,33 +196,6 @@ fn show_classic_interpreter_error(error: &olang::interpreter::InterpreterError, 
 }
 
 /// Feature 9: Show interpreter errors with enhanced context and suggestions
-fn show_file_interpreter_error(error: &olang::ovm_integration::IntegrationError, file_path: &PathBuf, ovm_interpreter: &mut olang::ovm_integration::OvmInterpreter) {
-    println!("\n{}", "═══ Execution Error ═══".bright_red().bold());
-    println!("  {}: {}", "File".bright_blue().bold(), file_path.display().to_string().bright_white());
-    
-    // Extract the underlying interpreter error if possible
-    match error {
-        olang::ovm_integration::IntegrationError::ClassicInterpreterError(interpreter_error) => {
-            // Use the enhanced error formatter
-            let classic_interpreter = ovm_interpreter.get_classic_interpreter();
-            let formatted_error = classic_interpreter.format_error(interpreter_error);
-            println!("\n{}", formatted_error);
-        }
-        _ => {
-            // Fallback for other error types
-            println!("  {}: {}", "Error".bright_red().bold(), error);
-            
-            // Show helpful context
-            println!("\n  {}", "Help:".bright_cyan().bold());
-            println!("    • Check your import statements and module paths");
-            println!("    • Ensure all referenced functions exist and are shared");
-            println!("    • Use {} for interactive mode with better error messages", "olang".bright_cyan());
-        }
-    }
-    
-    println!();
-}
-
 fn show_highlighted_snippet(snippet: &str) {
     let lines: Vec<&str> = snippet.lines().collect();
     
@@ -414,7 +385,7 @@ fn show_suggestion(suggestion: &ErrorSuggestion) {
 fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: bool, ovm_tier: Option<u32>, logger: &Logger) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file_path)?;
     let parser = OlangParser::new();
-    
+
     // Get absolute path for module resolution
     let absolute_path = if file_path.is_absolute() {
         file_path.clone()
@@ -423,160 +394,54 @@ fn execute_file(file_path: &PathBuf, verbose: bool, no_ovm: bool, ovm_stats: boo
             .unwrap_or_default()
             .join(file_path)
     };
-    
-    if no_ovm {
-        // Use classic interpreter
-        let mut interpreter = olang::interpreter::Interpreter::new();
 
-        if let Some(threshold) = ovm_tier {
-            interpreter.enable_bytecode_tier(threshold, verbose);
-        }
+    // One execution model: the interpreter with the bytecode tier enabled,
+    // promoting eligible functions on their first call. --no-ovm disables
+    // the tier for a pure tree-walk (debugging / semantics reference);
+    // --ovm-tier=N raises the promotion threshold.
+    let mut interpreter = olang::interpreter::Interpreter::new();
 
-        // Set file context for proper module resolution
-        interpreter.set_current_file(&absolute_path);
-        
-        match parser.parse(&source) {
-            Ok(ast) => {
-                match interpreter.eval_program(ast) {
-                    Ok(result) => {
-                        if verbose {
-                            logger.info("main", &format!("Result: {:?}", result));
-                        }
-                        if ovm_stats {
-                            match interpreter.bytecode_tier_stats() {
-                                Some(tier) => println!(
-                                    "Bytecode tier: {} promoted, {} rejected, {} bytecode calls",
-                                    tier.promoted, tier.rejected, tier.bytecode_calls
-                                ),
-                                None => println!(
-                                    "Bytecode tier: disabled (enable with --ovm-tier)"
-                                ),
-                            }
-                        }
-                        Ok(())
+    if !no_ovm {
+        let threshold = ovm_tier.unwrap_or(1);
+        interpreter.enable_bytecode_tier(threshold, verbose);
+    }
+
+    // Set file context for proper module resolution
+    interpreter.set_current_file(&absolute_path);
+
+    match parser.parse(&source) {
+        Ok(ast) => {
+            match interpreter.eval_program(ast) {
+                Ok(result) => {
+                    if verbose {
+                        logger.info("main", &format!("Result: {:?}", result));
                     }
-                    Err(e) => {
-                        show_classic_interpreter_error(&e, file_path, &interpreter);
-                        Err(anyhow::anyhow!("Execution failed"))
+                    if ovm_stats {
+                        match interpreter.bytecode_tier_stats() {
+                            Some(tier) => println!(
+                                "Bytecode tier: {} promoted, {} rejected, {} bytecode calls",
+                                tier.promoted, tier.rejected, tier.bytecode_calls
+                            ),
+                            None => println!("Bytecode tier: disabled (--no-ovm)"),
+                        }
                     }
+                    Ok(())
+                }
+                Err(e) => {
+                    show_classic_interpreter_error(&e, file_path, &interpreter);
+                    Err(anyhow::anyhow!("Execution failed"))
                 }
             }
-            Err(e) => {
-                show_file_parse_error(&e, file_path, &source);
-                Err(anyhow::anyhow!("Parse failed"))
-            }
         }
-    } else {
-        // Use OVM integration
-        let config = IntegrationConfig::default();
-        let mut ovm_interpreter = OvmInterpreter::with_config(config);
-
-        if let Some(threshold) = ovm_tier {
-            ovm_interpreter
-                .get_classic_interpreter()
-                .enable_bytecode_tier(threshold, verbose);
-        }
-        
-        // Set file context for proper module resolution
-        ovm_interpreter.get_classic_interpreter().set_current_file(&absolute_path);
-        
-        // Initialize OVM
-        if let Err(e) = ovm_interpreter.initialize_ovm_default() {
-            if verbose {
-                logger.warn("main", &format!("OVM initialization failed, falling back to classic: {}", e));
-            }
-        }
-        
-        match parser.parse(&source) {
-            Ok(ast) => {
-                match ovm_interpreter.eval_program(ast) {
-                    Ok(result) => {
-                        if verbose {
-                            logger.info("main", &format!("Execution result: {:?}", result));
-                        }
-                        
-                        if ovm_stats {
-                            // Statistics are explicitly requested output, not
-                            // logging — going through logger.info() meant the
-                            // flag printed nothing at the default log level.
-                            let stats = ovm_interpreter.get_stats();
-                            println!("OVM Performance Statistics:");
-                            println!("  Classic executions: {}", stats.classic_executions);
-                            println!("  OVM executions: {}", stats.ovm_executions);
-                            println!("  Fallback executions: {}", stats.fallback_executions);
-                            println!("  Compilations: {}", stats.compilation_count);
-                            println!("  Average classic time: {:.2}ms", stats.average_classic_time_ms);
-                            println!("  Average OVM time: {:.2}ms", stats.average_ovm_time_ms);
-                            if let Some(tier) =
-                                ovm_interpreter.get_classic_interpreter().bytecode_tier_stats()
-                            {
-                                println!(
-                                    "  Bytecode tier: {} promoted, {} rejected, {} bytecode calls",
-                                    tier.promoted, tier.rejected, tier.bytecode_calls
-                                );
-                            }
-                        }
-                        
-                        Ok(())
-                    }
-                    Err(e) => {
-                        show_file_interpreter_error(&e, file_path, &mut ovm_interpreter);
-                        Err(anyhow::anyhow!("Execution failed"))
-                    }
-                }
-            }
-            Err(e) => {
-                show_file_parse_error(&e, file_path, &source);
-                Err(anyhow::anyhow!("Parse failed"))
-            }
+        Err(e) => {
+            show_file_parse_error(&e, file_path, &source);
+            Err(anyhow::anyhow!("Parse failed"))
         }
     }
 }
-
-fn start_repl(verbose: bool, no_ovm: bool, logger: &Logger) -> anyhow::Result<()> {
-    if no_ovm {
-        // Use classic REPL
-        let mut repl = Repl::new(verbose)?;
-        Ok(repl.run()?)
-    } else {
-        // Use OVM-enhanced REPL
-        let integration_config = IntegrationConfig {
-            use_ovm_by_default: true,
-            ovm_complexity_threshold: 1,
-            auto_compile_functions: true,
-            enable_ovm_lazy_eval: true,
-            fallback_on_error: true,
-            enable_ovm_builtins: true,
-            ovm_cache_enabled: true,
-            enable_parallel: std::env::var("OVM_ENABLE_PARALLEL").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(true),
-            max_parallelism: std::env::var("OVM_PARALLELISM").ok().and_then(|s| s.parse::<usize>().ok()),
-            ovm_preferred_builtins: vec![
-                "len".to_string(),
-                "typeof".to_string(),
-                "to_string".to_string(),
-                "sum".to_string(),
-                "average".to_string(),
-                "min".to_string(),
-                "max".to_string(),
-                "reverse".to_string(),
-                "sort".to_string(),
-                "contains".to_string(),
-            ],
-        };
-
-        let mut interpreter = OvmInterpreter::with_config(integration_config);
-        
-        // Initialize OVM
-        let ovm_config = OvmConfig::default();
-        interpreter.initialize_ovm(ovm_config)?;
-
-        if verbose {
-            logger.info("main", "OVM REPL initialized with JIT compilation enabled");
-        }
-
-        // For now, use classic REPL but with OVM interpreter
-        // TODO: Create OVM-enhanced REPL
-        let mut repl = Repl::new(verbose)?;
-        Ok(repl.run()?)
-    }
+fn start_repl(verbose: bool, no_ovm: bool, _logger: &Logger) -> anyhow::Result<()> {
+    // One REPL: the interpreter with the bytecode tier enabled by default;
+    // --no-ovm gives the pure tree-walker.
+    let mut repl = Repl::with_tier(verbose, !no_ovm)?;
+    Ok(repl.run()?)
 }

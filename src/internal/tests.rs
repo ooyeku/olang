@@ -9,7 +9,6 @@ mod tests {
     get_estimated_memory_usage, get_lazy_evaluation_memory_usage,
 };
     use crate::interpreter::{Interpreter, InterpreterError};
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
     #[test]

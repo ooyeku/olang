@@ -22,21 +22,23 @@ There is no JIT tier in operation. See [Not implemented](#not-implemented).
 
 ### Promotion
 
-With `--ovm-tier[=N]`, the interpreter counts calls to each named user
-function. On the Nth call (default 50) it tries to compile the function to
-bytecode. If compilation succeeds, that and all later calls execute on the VM;
-if it fails, the function is marked permanently ineligible and keeps running on
-the interpreter.
+The tier is **on by default**: eligible functions are compiled to bytecode
+on their first call, so a hot loop inside a function called once still runs
+on the VM. There is nothing to configure.
 
 ```bash
-olang --ovm-tier program.ol        # promote after 50 calls
-olang --ovm-tier=10 program.ol     # promote sooner
-olang --ovm-tier --ovm-stats p.ol  # report promoted / rejected / call counts
-olang --ovm-tier -v program.ol     # log each promotion decision
+olang program.ol                   # fast by default
+olang --ovm-stats program.ol       # report promoted / rejected / call counts
+olang -v program.ol                # log each promotion decision
+olang --ovm-tier=50 program.ol     # raise the promotion threshold
+olang --no-ovm program.ol          # pure tree-walking interpreter
 ```
 
-Note that `--ovm-tier` takes its value with `=` (`--ovm-tier=10`), so that a
-bare `--ovm-tier` doesn't swallow the following filename.
+`--no-ovm` is the escape hatch and the semantics reference: it disables the
+tier entirely. `--ovm-tier=N` delays promotion until the Nth call (its value
+needs the `=` so a bare flag doesn't swallow the filename). A function that
+fails compilation is marked ineligible and keeps running on the interpreter —
+which is why the default can never change program behavior.
 
 When a function calls another user function, the compiler reports the
 unresolved callee rather than giving up; the tier compiles that callee and

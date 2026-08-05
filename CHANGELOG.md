@@ -12,6 +12,15 @@ documented.
 
 ### Changed
 
+- **Fast by default** — the bytecode tier is now enabled by default,
+  promoting eligible functions on their *first* call (previously opt-in via
+  `--ovm-tier` with a 50-call threshold, which also meant a hot loop inside
+  a function called once never promoted). The slow "OVM routing" layer is
+  no longer the default execution path — it measured ~70% slower than the
+  plain interpreter, meaning the out-of-the-box configuration was the
+  slowest available. Zero-flag results: fib(32) 4.5 s → 2.1 s; a
+  3M-iteration loop 1.30 s → 0.29 s. `--no-ovm` remains the pure
+  tree-walking escape hatch; `--ovm-tier=N` raises the threshold.
 - **Slot resolution** — identifiers in function and lambda bodies are
   resolved to frame-slot indices once at declaration time (`src/resolve.rs`),
   so the hot path indexes into the frame instead of probing names. Every

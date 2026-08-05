@@ -11,7 +11,7 @@ share fn chain_c_func() = "Function from Chain C that uses: " + chain_b_func()
 
 share fn multiply_by_8(x: Int) = multiply_by_4(multiply_by_2(x)) 
 
-for i in 1..100 {
+for i in 1..1000 {
     println(multiply_by_8(i))
     println(chain_c_func())
     println(chain_a_func())

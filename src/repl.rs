@@ -377,6 +377,10 @@ pub struct Repl {
 
 impl Repl {
     pub fn new(verbose: bool) -> Result<Self, ReplError> {
+        Self::with_tier(verbose, true)
+    }
+
+    pub fn with_tier(verbose: bool, enable_tier: bool) -> Result<Self, ReplError> {
         // Initialize parallelization for optimal performance
         if let Err(e) = crate::parallel::initialize_parallelization(None) {
             if verbose {
@@ -430,7 +434,9 @@ impl Repl {
 
         // Create OVM configuration with auto mode (OVM ENABLED by default for performance)
         let integration_config = IntegrationConfig {
-            use_ovm_by_default: true,
+            // The expression-routing layer measured ~70% slower than the
+            // plain interpreter; the bytecode tier below is the fast path
+            use_ovm_by_default: false,
             ovm_complexity_threshold: 1,
             auto_compile_functions: true,
             enable_ovm_lazy_eval: true,
@@ -454,6 +460,13 @@ impl Repl {
         };
 
         let mut ovm_interpreter = OvmInterpreter::with_config(integration_config);
+
+        if enable_tier {
+            // Promote eligible functions to bytecode on their first call
+            ovm_interpreter
+                .get_classic_interpreter()
+                .enable_bytecode_tier(1, verbose);
+        }
 
         // Initialize OVM with default configuration
         if let Err(e) = ovm_interpreter.initialize_ovm_default() {

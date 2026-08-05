@@ -19,9 +19,10 @@ Current Status: Very early/Experimental.
 - **Advanced Literals**: Binary (`0b1010`), octal (`0o755`), hex (`0xFF`), raw strings (`r"..."`), character literals (`'a'`)
 
 ### Execution
-- **Tiered Execution**: A tree-walking interpreter plus an opt-in register-based
-  bytecode VM that hot functions are promoted to (`--ovm-tier`). Promotion is
-  transparent: anything the VM can't compile keeps running on the interpreter
+- **Tiered Execution**: A tree-walking interpreter plus a register-based
+  bytecode VM, on by default — eligible functions compile on first call.
+  Promotion is transparent: anything the VM can't compile keeps running on
+  the interpreter, so it can never change program behavior
 - **Lazy Evaluation**: Lazy list operations for large datasets
 - **Parallel Processing**: Multi-threaded list operations
 - **Reference Counting**: Deterministic memory reclamation
@@ -182,12 +183,11 @@ olang --batch script.ol
 # Verbose output
 olang --verbose
 
-# Compile hot functions to bytecode after 50 calls (or --ovm-tier=N).
-# Note the '=': a bare --ovm-tier would otherwise swallow the filename.
-olang --ovm-tier script.ol
-olang --ovm-tier=10 script.ol
+# The bytecode tier is on by default (eligible functions compile on
+# first call). Raise the promotion threshold if desired:
+olang --ovm-tier=50 script.ol
 
-# Disable OVM (use classic interpreter only)
+# Pure tree-walking interpreter (the semantics reference)
 olang --no-ovm script.ol
 
 # Show execution statistics, including tier promotions
