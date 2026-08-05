@@ -12,6 +12,21 @@ documented.
 
 ### Added
 
+- **`col` module** — the first higher-order stdlib module: `min_by`,
+  `max_by`, `sort_by`, `count_by`, `frequencies`, `partition`, `flat_map`,
+  `take_while`, `drop_while`, `all`, `any`, `sum_by`, `unique`, `window`,
+  `zip_with`, `last`. These take function arguments and call back into the
+  interpreter (dispatched through `BuiltinFunctions::call`, which has the
+  interpreter), so a stdlib module can now be higher-order. The core
+  operations (`map`, `filter`, `fold`, `group_by`, ...) remain top-level
+  builtins.
+- **REPL completeness for all stdlib modules**: TAB completion now
+  enumerates every registered module, so `str.`, `re.`, `col.`, and every
+  existing `module.function` complete automatically (a new module is picked
+  up with no manual list). Help docs added for all `str` (29), `re` (8),
+  and `col` (16) functions — `:help str.trim`, `:help col.min_by`, and the
+  `String`/`Regex`/`Collections` category listings all resolve.
+
 - **`str` module** — string manipulation: case conversion, trim, split/join,
   replace, substring, pad, index/search, repeat, char access, lines/words,
   and `parse_int`/`parse_float`. All indexing is by Unicode character.

@@ -615,6 +615,16 @@ impl BuiltinFunctions {
                 });
         }
 
+        // Handle col (collections) functions — higher-order, so they take
+        // the interpreter to invoke their function arguments
+        if let Some(col_function) = name.strip_prefix("col.") {
+            return crate::stdlib::collections::call_collections_function(
+                col_function,
+                arguments,
+                interpreter,
+            );
+        }
+
         // Handle str functions
         if let Some(str_function) = name.strip_prefix("str.") {
             return crate::stdlib::string::call_string_function(str_function, arguments).map_err(

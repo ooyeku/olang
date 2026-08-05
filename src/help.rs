@@ -1415,6 +1415,15 @@ impl HelpSystem {
         // === Base64 Functions (stdlib) ===
         self.add_base64_functions();
 
+        // === String Functions (stdlib) ===
+        self.add_string_functions();
+
+        // === Regex Functions (stdlib) ===
+        self.add_regex_functions();
+
+        // === Collections Functions (stdlib) ===
+        self.add_collections_functions();
+
         // === Result Type Functions ===
         self.add_result_functions();
 
@@ -1427,6 +1436,546 @@ impl HelpSystem {
     }
 
     /// Add filesystem function documentation
+    fn add_string_functions(&mut self) {
+        self.add_function(FunctionDoc {
+            name: "str.to_upper".to_string(),
+            description: "Uppercase a string.".to_string(),
+            syntax: "str.to_upper(s)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.to_upper(\"hi\") -> \"HI\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.to_lower".to_string(),
+            description: "Lowercase a string.".to_string(),
+            syntax: "str.to_lower(s)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.to_lower(\"HI\") -> \"hi\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.trim".to_string(),
+            description: "Remove leading and trailing whitespace.".to_string(),
+            syntax: "str.trim(s)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.trim(\"  x  \") -> \"x\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.trim_start".to_string(),
+            description: "Remove leading whitespace.".to_string(),
+            syntax: "str.trim_start(s)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.trim_start(\"  x\") -> \"x\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.trim_end".to_string(),
+            description: "Remove trailing whitespace.".to_string(),
+            syntax: "str.trim_end(s)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.trim_end(\"x  \") -> \"x\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.replace".to_string(),
+            description: "Replace every occurrence of a substring.".to_string(),
+            syntax: "str.replace(s, from, to)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.replace(\"a-b-c\", \"-\", \"+\") -> \"a+b+c\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.replace_first".to_string(),
+            description: "Replace the first occurrence only.".to_string(),
+            syntax: "str.replace_first(s, from, to)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.replace_first(\"a-b\", \"-\", \"+\") -> \"a+b\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.split".to_string(),
+            description: "Split a string on a separator.".to_string(),
+            syntax: "str.split(s, sep)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["str.split(\"a,b,c\", \",\") -> [\"a\",\"b\",\"c\"]".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.join".to_string(),
+            description: "Join a list of strings with a separator.".to_string(),
+            syntax: "str.join(list, sep)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.join([\"a\",\"b\"], \"-\") -> \"a-b\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.substring".to_string(),
+            description: "Character-indexed slice; indices clamp to bounds.".to_string(),
+            syntax: "str.substring(s, start, end)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.substring(\"hello\", 0, 3) -> \"hel\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.index_of".to_string(),
+            description: "Character index of the first match, or -1.".to_string(),
+            syntax: "str.index_of(s, sub)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.index_of(\"hello\", \"llo\") -> 2".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.last_index_of".to_string(),
+            description: "Character index of the last match, or -1.".to_string(),
+            syntax: "str.last_index_of(s, sub)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.last_index_of(\"a-a\", \"a\") -> 2".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.contains".to_string(),
+            description: "Whether the string contains a substring.".to_string(),
+            syntax: "str.contains(s, sub)".to_string(),
+            parameters: vec![],
+            return_type: "Bool".to_string(),
+            examples: vec!["str.contains(\"hello\", \"ell\") -> true".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.starts_with".to_string(),
+            description: "Whether the string starts with a prefix.".to_string(),
+            syntax: "str.starts_with(s, prefix)".to_string(),
+            parameters: vec![],
+            return_type: "Bool".to_string(),
+            examples: vec!["str.starts_with(\"hello\", \"he\") -> true".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.ends_with".to_string(),
+            description: "Whether the string ends with a suffix.".to_string(),
+            syntax: "str.ends_with(s, suffix)".to_string(),
+            parameters: vec![],
+            return_type: "Bool".to_string(),
+            examples: vec!["str.ends_with(\"hello\", \"lo\") -> true".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.repeat".to_string(),
+            description: "Repeat a string n times.".to_string(),
+            syntax: "str.repeat(s, n)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.repeat(\"ab\", 3) -> \"ababab\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.count".to_string(),
+            description: "Count non-overlapping occurrences of a substring.".to_string(),
+            syntax: "str.count(s, sub)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.count(\"banana\", \"a\") -> 3".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.char_at".to_string(),
+            description: "Character at index i (empty if out of range).".to_string(),
+            syntax: "str.char_at(s, i)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.char_at(\"hello\", 1) -> \"e\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.reverse".to_string(),
+            description: "Reverse a string by character.".to_string(),
+            syntax: "str.reverse(s)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.reverse(\"abc\") -> \"cba\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.capitalize".to_string(),
+            description: "Uppercase the first character.".to_string(),
+            syntax: "str.capitalize(s)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.capitalize(\"hi\") -> \"Hi\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.chars".to_string(),
+            description: "Split into a list of single-character strings.".to_string(),
+            syntax: "str.chars(s)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["str.chars(\"ab\") -> [\"a\",\"b\"]".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.lines".to_string(),
+            description: "Split into a list of lines.".to_string(),
+            syntax: "str.lines(s)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["str.lines(text)".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.words".to_string(),
+            description: "Split on whitespace, dropping empties.".to_string(),
+            syntax: "str.words(s)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["str.words(\"  a b \") -> [\"a\",\"b\"]".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.pad_start".to_string(),
+            description: "Left-pad to a target length.".to_string(),
+            syntax: "str.pad_start(s, len, pad)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.pad_start(\"7\", 3, \"0\") -> \"007\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.pad_end".to_string(),
+            description: "Right-pad to a target length.".to_string(),
+            syntax: "str.pad_end(s, len, pad)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.pad_end(\"7\", 3, \"0\") -> \"700\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.is_empty".to_string(),
+            description: "Whether the string is empty.".to_string(),
+            syntax: "str.is_empty(s)".to_string(),
+            parameters: vec![],
+            return_type: "Bool".to_string(),
+            examples: vec!["str.is_empty(\"\") -> true".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.length".to_string(),
+            description: "Length in characters.".to_string(),
+            syntax: "str.length(s)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.length(\"hello\") -> 5".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.parse_int".to_string(),
+            description: "Parse an integer; Ok(n) or Err.".to_string(),
+            syntax: "str.parse_int(s)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["unwrap(str.parse_int(\"42\")) -> 42".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.parse_float".to_string(),
+            description: "Parse a float; Ok(f) or Err.".to_string(),
+            syntax: "str.parse_float(s)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["unwrap(str.parse_float(\"3.5\")) -> 3.5".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+    }
+
+    fn add_regex_functions(&mut self) {
+        self.add_function(FunctionDoc {
+            name: "re.is_valid".to_string(),
+            description: "Whether a regex pattern compiles.".to_string(),
+            syntax: "re.is_valid(pattern)".to_string(),
+            parameters: vec![],
+            return_type: "Bool".to_string(),
+            examples: vec!["re.is_valid(\"[a-z]+\") -> true".to_string()],
+            category: "Regex".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "re.is_match".to_string(),
+            description: "Whether the pattern matches anywhere in text.".to_string(),
+            syntax: "re.is_match(pattern, text)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["re.is_match(\"[0-9]+\", \"a1\")".to_string()],
+            category: "Regex".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "re.find".to_string(),
+            description: "First match as a string, or empty if none.".to_string(),
+            syntax: "re.find(pattern, text)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["re.find(\"[0-9]+\", \"a12\")".to_string()],
+            category: "Regex".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "re.find_all".to_string(),
+            description: "All non-overlapping matches as a list.".to_string(),
+            syntax: "re.find_all(pattern, text)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["re.find_all(\"[0-9]+\", \"a1b22\")".to_string()],
+            category: "Regex".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "re.captures".to_string(),
+            description: "Capture groups of the first match; index 0 is the whole match."
+                .to_string(),
+            syntax: "re.captures(pattern, text)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["re.captures(\"(a)(b)\", \"ab\")".to_string()],
+            category: "Regex".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "re.split".to_string(),
+            description: "Split text on a pattern.".to_string(),
+            syntax: "re.split(pattern, text)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["re.split(\", *\", \"a, b,c\")".to_string()],
+            category: "Regex".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "re.replace".to_string(),
+            description: "Replace the first match.".to_string(),
+            syntax: "re.replace(pattern, text, rep)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["re.replace(\"[0-9]\", \"a1b1\", \"X\")".to_string()],
+            category: "Regex".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "re.replace_all".to_string(),
+            description: "Replace all matches.".to_string(),
+            syntax: "re.replace_all(pattern, text, rep)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["re.replace_all(\" +\", \"a  b\", \"_\")".to_string()],
+            category: "Regex".to_string(),
+            see_also: vec![],
+        });
+    }
+
+    fn add_collections_functions(&mut self) {
+        self.add_function(FunctionDoc {
+            name: "col.min_by".to_string(),
+            description: "Element with the smallest key.".to_string(),
+            syntax: "col.min_by(list, key_fn)".to_string(),
+            parameters: vec![],
+            return_type: "Any".to_string(),
+            examples: vec!["col.min_by(people, (p) => p.age)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.max_by".to_string(),
+            description: "Element with the largest key.".to_string(),
+            syntax: "col.max_by(list, key_fn)".to_string(),
+            parameters: vec![],
+            return_type: "Any".to_string(),
+            examples: vec!["col.max_by(people, (p) => p.age)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.sort_by".to_string(),
+            description: "Sort ascending by a key function.".to_string(),
+            syntax: "col.sort_by(list, key_fn)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["col.sort_by([3,1,2], (x) => x)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.count_by".to_string(),
+            description: "Count elements per key.".to_string(),
+            syntax: "col.count_by(list, key_fn)".to_string(),
+            parameters: vec![],
+            return_type: "Map".to_string(),
+            examples: vec!["col.count_by(people, (p) => p.team)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.frequencies".to_string(),
+            description: "Count occurrences of each value.".to_string(),
+            syntax: "col.frequencies(list)".to_string(),
+            parameters: vec![],
+            return_type: "Map".to_string(),
+            examples: vec!["col.frequencies([1,2,2])".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.partition".to_string(),
+            description: "Split into (matching, non-matching).".to_string(),
+            syntax: "col.partition(list, pred)".to_string(),
+            parameters: vec![],
+            return_type: "Tuple".to_string(),
+            examples: vec!["col.partition([1,2,3], (x) => x > 1)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.flat_map".to_string(),
+            description: "Map then flatten one level.".to_string(),
+            syntax: "col.flat_map(list, fn)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["col.flat_map([1,2], (x) => [x, x])".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.take_while".to_string(),
+            description: "Longest prefix satisfying the predicate.".to_string(),
+            syntax: "col.take_while(list, pred)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["col.take_while([1,2,9], (x) => x < 5)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.drop_while".to_string(),
+            description: "Drop the leading prefix satisfying the predicate.".to_string(),
+            syntax: "col.drop_while(list, pred)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["col.drop_while([1,2,9], (x) => x < 5)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.all".to_string(),
+            description: "Whether every element satisfies the predicate.".to_string(),
+            syntax: "col.all(list, pred)".to_string(),
+            parameters: vec![],
+            return_type: "Bool".to_string(),
+            examples: vec!["col.all([2,4], (x) => x % 2 == 0)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.any".to_string(),
+            description: "Whether any element satisfies the predicate.".to_string(),
+            syntax: "col.any(list, pred)".to_string(),
+            parameters: vec![],
+            return_type: "Bool".to_string(),
+            examples: vec!["col.any([1,2], (x) => x % 2 == 0)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.sum_by".to_string(),
+            description: "Sum a projection over the list.".to_string(),
+            syntax: "col.sum_by(list, fn)".to_string(),
+            parameters: vec![],
+            return_type: "Number".to_string(),
+            examples: vec!["col.sum_by(items, (x) => x.price)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.unique".to_string(),
+            description: "Deduplicate, preserving first-seen order.".to_string(),
+            syntax: "col.unique(list)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["col.unique([1,1,2])".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.window".to_string(),
+            description: "Sliding windows of a fixed size.".to_string(),
+            syntax: "col.window(list, size)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["col.window([1,2,3], 2)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.zip_with".to_string(),
+            description: "Combine two lists element-wise.".to_string(),
+            syntax: "col.zip_with(a, b, fn)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["col.zip_with([1,2],[3,4],(a,b)=>a+b)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.last".to_string(),
+            description: "The last element of a list.".to_string(),
+            syntax: "col.last(list)".to_string(),
+            parameters: vec![],
+            return_type: "Any".to_string(),
+            examples: vec!["col.last([7,8,9]) -> 9".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+    }
+
     fn add_fs_functions(&mut self) {
         // File I/O operations
         self.add_function(FunctionDoc {

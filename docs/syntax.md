@@ -886,6 +886,7 @@ let day = unwrap(dates.add_days("2026-08-05", 90))
 |---|---|
 | `str` | String manipulation (case, trim, split, replace, pad, search, parse) |
 | `re` | Regular expressions (match, find, captures, split, replace) |
+| `col` | Higher-order list operations (min_by, sort_by, group/count, partition, unique, window, ...) |
 | `math` | Numeric functions and constants |
 | `crypto` | Hashing, HMAC, bcrypt passwords, AES, RSA signatures |
 | `dates` | Calendar arithmetic, parsing, formatting, components |
@@ -938,6 +939,33 @@ unwrap(re.captures("(\\w+)@(\\w+)", "u@h"))    // ["u@h", "u", "h"]
 unwrap(re.split(",\\s*", "a, b,c"))             // ["a", "b", "c"]
 unwrap(re.replace_all("\\s+", "a  b", "_"))     // "a_b"
 ```
+
+### col
+
+Higher-order list operations — the ones you would otherwise write by hand
+with `fold`. Key functions and predicates are ordinary olang functions.
+
+```olang no-run
+col.min_by(people, (p) => p.age)       // element with the smallest key
+col.max_by(people, (p) => p.age)       // element with the largest key
+col.sort_by([3, 1, 2], (x) => x)       // [1, 2, 3]
+col.count_by(people, (p) => p.team)    // {team: count, ...}
+col.frequencies([1, 2, 2, 3])          // {1: 1, 2: 2, 3: 1}
+col.partition([1,2,3,4], (x)=>x%2==0)  // ([2, 4], [1, 3])
+col.flat_map([1, 2], (x) => [x, x])    // [1, 1, 2, 2]
+col.take_while([1,2,9,1], (x)=>x<5)    // [1, 2]
+col.drop_while([1,2,9,1], (x)=>x<5)    // [9, 1]
+col.all([2, 4], (x) => x % 2 == 0)     // true
+col.any([1, 2], (x) => x % 2 == 0)     // true
+col.sum_by(items, (x) => x.price)      // total of a projection
+col.unique([1, 1, 2, 3, 3])            // [1, 2, 3]
+col.window([1, 2, 3, 4], 2)            // [[1,2], [2,3], [3,4]]
+col.zip_with([1,2], [3,4], (a,b)=>a+b) // [4, 6]
+col.last([7, 8, 9])                    // 9
+```
+
+The core operations — `map`, `filter`, `fold`, `reduce`, `group_by`, `find`,
+`zip`, `sort` — are top-level builtins, callable without a module prefix.
 
 ## Help System
 

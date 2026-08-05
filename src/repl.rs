@@ -442,6 +442,22 @@ impl Repl {
                 .keys()
                 .cloned(),
         );
+        // Enumerate every registered stdlib module so `module.function` names
+        // (str.trim, re.find_all, col.min_by, ...) complete without a manual
+        // list — a new module is picked up automatically.
+        for (module_name, module_value) in crate::stdlib::get_stdlib() {
+            function_names.push(module_name.clone());
+            if let Value::Struct { fields, .. } = module_value {
+                for field in fields.values() {
+                    if let Value::Builtin(func) = field {
+                        // func.name is already "module.function"
+                        function_names.push(func.name.clone());
+                    }
+                }
+            }
+        }
+        function_names.sort();
+        function_names.dedup();
         editor.set_helper(Some(ReplHelper::new(function_names)));
 
         // Load history if available
