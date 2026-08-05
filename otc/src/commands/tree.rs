@@ -78,7 +78,7 @@ fn analyze_project_structure(dir_path: &Path) -> Result<ProjectTree> {
 fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
 
-    if dir_path.is_file() && dir_path.extension().map_or(false, |ext| ext == "ol") {
+    if dir_path.is_file() && dir_path.extension().is_some_and(|ext| ext == "ol") {
         files.push(dir_path.to_path_buf());
         return Ok(files);
     }
@@ -88,7 +88,7 @@ fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "ol") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "ol") {
                 files.push(path);
             } else if path.is_dir() {
                 files.extend(find_ol_files(&path)?);
@@ -124,10 +124,8 @@ fn extract_functions(file_path: &Path) -> Result<(Vec<String>, Vec<String>)> {
 
     for statement in &ast.statements {
         match statement {
-            olang::ast::Statement::ShareDecl(share_decl) => {
-                if let olang::ast::ShareDecl::Function(func) = share_decl {
-                    shared_functions.push(func.name.clone());
-                }
+            olang::ast::Statement::ShareDecl(olang::ast::ShareDecl::Function(func)) => {
+                shared_functions.push(func.name.clone());
             }
             olang::ast::Statement::FunctionDecl(func) => {
                 private_functions.push(func.name.clone());

@@ -12,6 +12,12 @@ documented.
 
 ### Added
 
+- Formatting and clippy are blocking CI gates: the tree is rustfmt-clean and
+  clippy-clean at zero warnings (`-D warnings`). The one deliberate allowance
+  is `clippy::result_large_err` — boxing the interpreter's error enum is a
+  worthwhile future refactor tracked in `src/lib.rs`. The whole-tree reformat
+  commit is listed in `.git-blame-ignore-revs`.
+
 - **Documentation examples are tested in CI** (`tests/doc_examples_test.rs`):
   every ```olang block in README.md and docs/syntax.md must parse and run
   (```olang no-run blocks — needing files, network, or modules — must at

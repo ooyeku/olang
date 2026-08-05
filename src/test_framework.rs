@@ -52,6 +52,12 @@ pub struct TestRunner {
     pub total_duration: Duration,
 }
 
+impl Default for TestRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TestRunner {
     pub fn new() -> Self {
         Self {

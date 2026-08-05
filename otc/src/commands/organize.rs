@@ -75,9 +75,9 @@ fn analyze_organization(dir_path: &Path) -> Result<OrganizationAnalysis> {
 
     // Analyze each file
     for file_path in &ol_files {
-        let module_name = path_to_module_name(&file_path, dir_path);
-        let shared_functions = extract_shared_functions(&file_path)?;
-        let dependencies = extract_dependencies(&file_path)?;
+        let module_name = path_to_module_name(file_path, dir_path);
+        let shared_functions = extract_shared_functions(file_path)?;
+        let dependencies = extract_dependencies(file_path)?;
 
         dependency_graph.insert(module_name.clone(), dependencies.clone());
 
@@ -125,7 +125,7 @@ fn analyze_organization(dir_path: &Path) -> Result<OrganizationAnalysis> {
 fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
 
-    if dir_path.is_file() && dir_path.extension().map_or(false, |ext| ext == "ol") {
+    if dir_path.is_file() && dir_path.extension().is_some_and(|ext| ext == "ol") {
         files.push(dir_path.to_path_buf());
         return Ok(files);
     }
@@ -135,7 +135,7 @@ fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "ol") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "ol") {
                 files.push(path);
             } else if path.is_dir() {
                 files.extend(find_ol_files(&path)?);
@@ -169,10 +169,8 @@ fn extract_shared_functions(file_path: &Path) -> Result<Vec<String>> {
     let mut functions = Vec::new();
 
     for statement in &ast.statements {
-        if let olang::ast::Statement::ShareDecl(share_decl) = statement {
-            if let olang::ast::ShareDecl::Function(func) = share_decl {
-                functions.push(func.name.clone());
-            }
+        if let olang::ast::Statement::ShareDecl(olang::ast::ShareDecl::Function(func)) = statement {
+            functions.push(func.name.clone());
         }
     }
 
@@ -403,10 +401,10 @@ fn detect_circular_dependencies(dependency_graph: &HashMap<String, Vec<String>>)
     let mut rec_stack = HashSet::new();
 
     for module in dependency_graph.keys() {
-        if !visited.contains(module) {
-            if has_cycle_dfs(module, dependency_graph, &mut visited, &mut rec_stack) {
-                cycles += 1;
-            }
+        if !visited.contains(module)
+            && has_cycle_dfs(module, dependency_graph, &mut visited, &mut rec_stack)
+        {
+            cycles += 1;
         }
     }
 

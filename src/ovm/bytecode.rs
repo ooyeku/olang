@@ -489,15 +489,15 @@ pub enum Instruction {
 }
 
 /// Register identifier
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Register(pub u32);
 
 /// Label identifier for jumps
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Label(pub u32);
 
 /// Debug information for bytecode
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BytecodeDebugInfo {
     pub instruction_to_source: HashMap<usize, SourceLocation>,
     pub register_names: HashMap<Register, String>,
@@ -646,29 +646,6 @@ pub enum VmException {
 }
 
 // Default implementations
-impl Default for BytecodeDebugInfo {
-    fn default() -> Self {
-        Self {
-            instruction_to_source: HashMap::new(),
-            register_names: HashMap::new(),
-            function_name: None,
-            local_variables: HashMap::new(),
-            line_table: Vec::new(),
-        }
-    }
-}
-
-impl Default for Register {
-    fn default() -> Self {
-        Register(0)
-    }
-}
-
-impl Default for Label {
-    fn default() -> Self {
-        Label(0)
-    }
-}
 
 impl BytecodeVm {
     pub fn new() -> Self {
@@ -849,7 +826,7 @@ impl BytecodeVm {
         // Give this call its own frame: nested calls (e.g. recursion through
         // CallNamed) re-enter execute(), and sharing one ExecutionState would
         // clobber the caller's registers and locals.
-        let caller_state = std::mem::replace(&mut self.execution_state, ExecutionState::new());
+        let caller_state = std::mem::take(&mut self.execution_state);
 
         let result = (|| {
             self.execution_state
@@ -1050,7 +1027,7 @@ impl BytecodeVm {
 
                 Instruction::Return { value } => {
                     if let Some(reg) = value {
-                        return Ok(self.execution_state.get_register(*reg)?);
+                        return self.execution_state.get_register(*reg);
                     } else {
                         return Ok(OvmValue::new_unit());
                     }
@@ -1410,7 +1387,7 @@ impl BytecodeVm {
                 Instruction::ProfileEnter { function_id } => {
                     // Record function entry for profiling
                     self.stats.function_calls += 1;
-                    if self.stats.function_calls % 1000 == 0 {
+                    if self.stats.function_calls.is_multiple_of(1000) {
                         println!(
                             "[PROFILE] Function {:?} entered (total calls: {})",
                             function_id, self.stats.function_calls
@@ -2180,19 +2157,19 @@ impl BytecodeVm {
             .to_ast()
             .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
 
-        let matches = match (type_id, ast_value) {
-            (0, Value::Integer(_)) => true,
-            (1, Value::Float(_)) => true,
-            (2, Value::Boolean(_)) => true,
-            (3, Value::String(_)) => true,
-            (4, Value::List(_)) => true,
-            (5, Value::Tuple(_)) => true,
-            (6, Value::Function(_)) => true,
-            (7, Value::Unit) => true,
-            (8, Value::Struct { .. }) => true,
-            (9, Value::Range { .. }) => true,
-            _ => false,
-        };
+        let matches = matches!(
+            (type_id, ast_value),
+            (0, Value::Integer(_))
+                | (1, Value::Float(_))
+                | (2, Value::Boolean(_))
+                | (3, Value::String(_))
+                | (4, Value::List(_))
+                | (5, Value::Tuple(_))
+                | (6, Value::Function(_))
+                | (7, Value::Unit)
+                | (8, Value::Struct { .. })
+                | (9, Value::Range { .. })
+        );
 
         Ok(matches)
     }
@@ -2371,6 +2348,12 @@ impl BytecodeVm {
     }
 }
 
+impl Default for ExecutionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExecutionState {
     pub fn new() -> Self {
         Self {
@@ -2475,6 +2458,12 @@ impl ExecutionState {
 }
 
 // Compiler and optimization implementations
+impl Default for BytecodeCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BytecodeCompiler {
     pub fn new() -> Self {
         Self {
@@ -3404,7 +3393,7 @@ impl BytecodeCompiler {
                     && Self::collect_free_vars(then_branch, bound, free)
                     && else_branch
                         .as_ref()
-                        .map_or(true, |e| Self::collect_free_vars(e, bound, free))
+                        .is_none_or(|e| Self::collect_free_vars(e, bound, free))
             }
 
             Expr::List(items) => items
@@ -3497,7 +3486,7 @@ impl BytecodeCompiler {
                     Self::pattern_binding_names(&arm.pattern, &mut scope);
                     arm.guard
                         .as_ref()
-                        .map_or(true, |g| Self::collect_free_vars(g, &scope, free))
+                        .is_none_or(|g| Self::collect_free_vars(g, &scope, free))
                         && Self::collect_free_vars(&arm.expression, &scope, free)
                 })
             }
@@ -3646,6 +3635,12 @@ impl BytecodeCompiler {
 }
 
 // Implementation stubs for optimization components
+impl Default for RegisterAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RegisterAllocator {
     pub fn new() -> Self {
         Self {
@@ -3678,6 +3673,12 @@ impl RegisterAllocator {
 
     pub fn max_register_used(&self) -> u32 {
         self.max_registers
+    }
+}
+
+impl Default for InstructionEmitter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -3863,6 +3864,12 @@ impl InstructionEmitter {
 
     pub fn take_constants(&mut self) -> Vec<OvmValue> {
         std::mem::take(&mut self.constants)
+    }
+}
+
+impl Default for BytecodeOptimizer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -4327,7 +4334,7 @@ mod tests {
         if let crate::ovm::value::ValueData::Range(range) = &result_value.data {
             assert_eq!(range.start, 1, "Range start should be 1");
             assert_eq!(range.end, 10, "Range end should be 10");
-            assert_eq!(range.inclusive, false, "Range should not be inclusive");
+            assert!(!range.inclusive, "Range should not be inclusive");
         } else {
             panic!("Expected range result, got: {:?}", result_value);
         }

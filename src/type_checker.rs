@@ -2156,7 +2156,7 @@ mod tests {
             } => {
                 assert_eq!(*start, TypeAnnotation::Int);
                 assert_eq!(*end, TypeAnnotation::Int);
-                assert_eq!(inclusive, true);
+                assert!(inclusive);
             }
             _ => panic!("Expected Range type annotation"),
         }

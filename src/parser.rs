@@ -1077,7 +1077,7 @@ impl Parser {
         let mut default_value = None;
 
         // Parse optional type annotation and default value
-        while let Some(pair) = pairs.next() {
+        for pair in pairs {
             match pair.as_rule() {
                 Rule::type_annotation => {
                     type_annotation = Some(self.build_type_annotation(pair.into_inner())?);
@@ -1103,17 +1103,17 @@ impl Parser {
 
         match pair.as_rule() {
             Rule::union_type => {
-                let mut inner = pair.into_inner();
+                let inner = pair.into_inner();
                 let mut types = Vec::new();
-                while let Some(type_pair) = inner.next() {
+                for type_pair in inner {
                     types.push(self.build_type_annotation(type_pair.into_inner())?);
                 }
                 Ok(TypeAnnotation::Union { types })
             }
             Rule::intersection_type => {
-                let mut inner = pair.into_inner();
+                let inner = pair.into_inner();
                 let mut types = Vec::new();
-                while let Some(type_pair) = inner.next() {
+                for type_pair in inner {
                     types.push(self.build_type_annotation(type_pair.into_inner())?);
                 }
                 Ok(TypeAnnotation::Intersection { types })
@@ -1627,24 +1627,21 @@ impl Parser {
                 let mut rest = None;
 
                 for p in pair.into_inner() {
-                    match p.as_rule() {
-                        Rule::list_pattern_inner => {
-                            for inner_p in p.into_inner() {
-                                match inner_p.as_rule() {
-                                    Rule::pattern => {
-                                        patterns.push(self.build_pattern(inner_p.into_inner())?);
-                                    }
-                                    Rule::rest_pattern => {
-                                        let mut rest_inner = inner_p.into_inner();
-                                        if let Some(identifier) = rest_inner.next() {
-                                            rest = Some(identifier.as_str().to_string());
-                                        }
-                                    }
-                                    _ => {}
+                    if p.as_rule() == Rule::list_pattern_inner {
+                        for inner_p in p.into_inner() {
+                            match inner_p.as_rule() {
+                                Rule::pattern => {
+                                    patterns.push(self.build_pattern(inner_p.into_inner())?);
                                 }
+                                Rule::rest_pattern => {
+                                    let mut rest_inner = inner_p.into_inner();
+                                    if let Some(identifier) = rest_inner.next() {
+                                        rest = Some(identifier.as_str().to_string());
+                                    }
+                                }
+                                _ => {}
                             }
                         }
-                        _ => {}
                     }
                 }
 
@@ -1963,24 +1960,21 @@ impl Parser {
                 let mut rest = None;
 
                 for p in pair.into_inner() {
-                    match p.as_rule() {
-                        Rule::list_pattern_inner => {
-                            for inner_p in p.into_inner() {
-                                match inner_p.as_rule() {
-                                    Rule::pattern => {
-                                        patterns.push(self.build_pattern(inner_p.into_inner())?);
-                                    }
-                                    Rule::rest_pattern => {
-                                        let mut rest_inner = inner_p.into_inner();
-                                        if let Some(identifier) = rest_inner.next() {
-                                            rest = Some(identifier.as_str().to_string());
-                                        }
-                                    }
-                                    _ => {}
+                    if p.as_rule() == Rule::list_pattern_inner {
+                        for inner_p in p.into_inner() {
+                            match inner_p.as_rule() {
+                                Rule::pattern => {
+                                    patterns.push(self.build_pattern(inner_p.into_inner())?);
                                 }
+                                Rule::rest_pattern => {
+                                    let mut rest_inner = inner_p.into_inner();
+                                    if let Some(identifier) = rest_inner.next() {
+                                        rest = Some(identifier.as_str().to_string());
+                                    }
+                                }
+                                _ => {}
                             }
                         }
-                        _ => {}
                     }
                 }
 
@@ -2150,10 +2144,10 @@ impl Parser {
             }
             Rule::binary => {
                 let raw = pair.as_str().replace('_', "");
-                let (sign, digits) = if raw.starts_with("-0b") {
-                    (-1i64, &raw[3..])
-                } else if raw.starts_with("+0b") {
-                    (1i64, &raw[3..])
+                let (sign, digits) = if let Some(rest) = raw.strip_prefix("-0b") {
+                    (-1i64, rest)
+                } else if let Some(rest) = raw.strip_prefix("+0b") {
+                    (1i64, rest)
                 } else {
                     (1i64, &raw[2..])
                 };
@@ -2167,10 +2161,10 @@ impl Parser {
             }
             Rule::octal => {
                 let raw = pair.as_str().replace('_', "");
-                let (sign, digits) = if raw.starts_with("-0o") {
-                    (-1i64, &raw[3..])
-                } else if raw.starts_with("+0o") {
-                    (1i64, &raw[3..])
+                let (sign, digits) = if let Some(rest) = raw.strip_prefix("-0o") {
+                    (-1i64, rest)
+                } else if let Some(rest) = raw.strip_prefix("+0o") {
+                    (1i64, rest)
                 } else {
                     (1i64, &raw[2..])
                 };
@@ -2184,10 +2178,10 @@ impl Parser {
             }
             Rule::hex => {
                 let raw = pair.as_str().replace('_', "");
-                let (sign, digits) = if raw.starts_with("-0x") {
-                    (-1i64, &raw[3..])
-                } else if raw.starts_with("+0x") {
-                    (1i64, &raw[3..])
+                let (sign, digits) = if let Some(rest) = raw.strip_prefix("-0x") {
+                    (-1i64, rest)
+                } else if let Some(rest) = raw.strip_prefix("+0x") {
+                    (1i64, rest)
                 } else {
                     (1i64, &raw[2..])
                 };
@@ -2820,7 +2814,7 @@ impl Parser {
                 let mut in_string = false;
                 let mut prev_escape = false;
 
-                while let Some(ch) = chars.next() {
+                for ch in chars.by_ref() {
                     if in_string {
                         if prev_escape {
                             prev_escape = false;
@@ -2954,7 +2948,7 @@ impl Parser {
                             let mut unicode_digits = String::new();
                             let mut brace_count = 1;
 
-                            while let Some(ch) = chars.next() {
+                            for ch in chars.by_ref() {
                                 if ch == '{' {
                                     brace_count += 1;
                                 } else if ch == '}' {
@@ -3240,6 +3234,12 @@ pub struct ErrorSuggestionEngine {
     // Common patterns and their suggestions
 }
 
+impl Default for ErrorSuggestionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ErrorSuggestionEngine {
     pub fn new() -> Self {
         Self {}
@@ -3451,18 +3451,13 @@ impl ErrorSuggestionEngine {
         if column > 0 && column <= line_content.len() {
             let char_at_pos = line_content.chars().nth(column - 1);
             if let Some(ch) = char_at_pos {
-                match ch {
-                    ';' => {
-                        suggestions.push(ErrorSuggestion {
-                            message: "Semicolons are not used in Olang".to_string(),
-                            fix: Some("Remove the semicolon".to_string()),
-                            help: Some(
-                                "Olang uses newlines and expression-based syntax".to_string(),
-                            ),
-                            severity: SuggestionSeverity::Error,
-                        });
-                    }
-                    _ => {}
+                if ch == ';' {
+                    suggestions.push(ErrorSuggestion {
+                        message: "Semicolons are not used in Olang".to_string(),
+                        fix: Some("Remove the semicolon".to_string()),
+                        help: Some("Olang uses newlines and expression-based syntax".to_string()),
+                        severity: SuggestionSeverity::Error,
+                    });
                 }
             }
         }

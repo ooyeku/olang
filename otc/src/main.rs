@@ -1,3 +1,6 @@
+// otc surfaces olang's interpreter Results; the large-error refactor is
+// tracked in the olang crate (see olang/src/lib.rs).
+#![allow(clippy::result_large_err)]
 use clap::{Parser, Subcommand};
 use std::process;
 

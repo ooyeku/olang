@@ -190,12 +190,12 @@ impl FunctionMover {
             if let Ok(ast) = parser.parse(&source) {
                 let mut function_found = false;
                 for statement in &ast.statements {
-                    if let olang::ast::Statement::ShareDecl(share_decl) = statement {
-                        if let olang::ast::ShareDecl::Function(func) = share_decl {
-                            if func.name == self.function_name {
-                                function_found = true;
-                                break;
-                            }
+                    if let olang::ast::Statement::ShareDecl(olang::ast::ShareDecl::Function(func)) =
+                        statement
+                    {
+                        if func.name == self.function_name {
+                            function_found = true;
+                            break;
                         }
                     }
                 }
@@ -215,8 +215,11 @@ impl FunctionMover {
                 let parser = Parser::new();
                 if let Ok(ast) = parser.parse(&target_content) {
                     for statement in &ast.statements {
-                        if let olang::ast::Statement::ShareDecl(share_decl) = statement {
-                            if let olang::ast::ShareDecl::Function(func) = share_decl {
+                        if let olang::ast::Statement::ShareDecl(olang::ast::ShareDecl::Function(
+                            func,
+                        )) = statement
+                        {
+                            {
                                 if func.name == self.function_name {
                                     validation.add_error(format!(
                                         "Function '{}' already exists in target file '{}'",
@@ -247,8 +250,10 @@ impl FunctionMover {
 
         // Find the function and extract its source code
         for statement in &ast.statements {
-            if let olang::ast::Statement::ShareDecl(share_decl) = statement {
-                if let olang::ast::ShareDecl::Function(func) = share_decl {
+            if let olang::ast::Statement::ShareDecl(olang::ast::ShareDecl::Function(func)) =
+                statement
+            {
+                {
                     if func.name == self.function_name {
                         // For now, return a simplified version
                         // In a real implementation, we'd need to track source positions
@@ -646,7 +651,7 @@ impl ImportFixer {
 fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
 
-    if dir_path.is_file() && dir_path.extension().map_or(false, |ext| ext == "ol") {
+    if dir_path.is_file() && dir_path.extension().is_some_and(|ext| ext == "ol") {
         files.push(dir_path.to_path_buf());
         return Ok(files);
     }
@@ -656,7 +661,7 @@ fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "ol") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "ol") {
                 files.push(path);
             } else if path.is_dir() {
                 files.extend(find_ol_files(&path)?);

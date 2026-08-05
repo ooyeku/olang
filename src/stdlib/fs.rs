@@ -688,8 +688,7 @@ mod tests {
         match result {
             Value::Ok(inner) => inner,
             _ => {
-                assert!(false, "Expected Ok result, got: {:?}", result);
-                unreachable!()
+                panic!("Expected Ok result, got: {:?}", result)
             }
         }
     }
@@ -699,8 +698,7 @@ mod tests {
         match result {
             Value::Err(inner) => inner,
             _ => {
-                assert!(false, "Expected Err result, got: {:?}", result);
-                unreachable!()
+                panic!("Expected Err result, got: {:?}", result)
             }
         }
     }
@@ -710,8 +708,7 @@ mod tests {
         match value {
             Value::String(s) => s,
             _ => {
-                assert!(false, "Expected string value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected string value, got: {:?}", value)
             }
         }
     }
@@ -721,8 +718,7 @@ mod tests {
         match value {
             Value::Integer(i) => *i,
             _ => {
-                assert!(false, "Expected integer value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected integer value, got: {:?}", value)
             }
         }
     }
@@ -734,17 +730,11 @@ mod tests {
             Value::Ok(inner) => match inner.as_ref() {
                 Value::Boolean(b) => *b,
                 _ => {
-                    assert!(false, "Expected Ok(Boolean), got: Ok({:?})", inner);
-                    unreachable!()
+                    panic!("Expected Ok(Boolean), got: Ok({:?})", inner)
                 }
             },
             _ => {
-                assert!(
-                    false,
-                    "Expected boolean value or Ok(Boolean), got: {:?}",
-                    value
-                );
-                unreachable!()
+                panic!("Expected boolean value or Ok(Boolean), got: {:?}", value)
             }
         }
     }
@@ -790,7 +780,7 @@ mod tests {
                 }
             }
         } else {
-            assert!(false, "Expected struct for fs module, got: {:?}", module);
+            panic!("Expected struct for fs module, got: {:?}", module);
         }
     }
 
@@ -997,7 +987,7 @@ mod tests {
 
             assert_eq!(names, vec!["file1.txt", "file2.txt", "subdir"]);
         } else {
-            assert!(false, "Expected list result, got: {:?}", file_list);
+            panic!("Expected list result, got: {:?}", file_list);
         }
 
         // Test error conditions
@@ -1136,7 +1126,7 @@ mod tests {
             assert!(!extract_bool(&fields["is_dir"]));
             // readonly can be true or false depending on platform
         } else {
-            assert!(false, "Expected FileInfo struct, got: {:?}", info_value);
+            panic!("Expected FileInfo struct, got: {:?}", info_value);
         }
 
         // Test with directory
@@ -1150,7 +1140,7 @@ mod tests {
             assert!(!extract_bool(&fields["is_file"]));
             assert!(extract_bool(&fields["is_dir"]));
         } else {
-            assert!(false, "Expected FileInfo struct, got: {:?}", info_value);
+            panic!("Expected FileInfo struct, got: {:?}", info_value);
         }
 
         // Test error conditions

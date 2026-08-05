@@ -297,7 +297,7 @@ impl IntuitiveErrorFormatter {
         }
 
         // Show import context
-        result.push_str(&format!("\nIn import statement:\n"));
+        result.push_str("\nIn import statement:\n");
         result.push_str(&format!("  use {} {{ {} }}\n", module_path, function_name));
         result.push_str(&format!(
             "             {}\n",
@@ -351,10 +351,10 @@ impl IntuitiveErrorFormatter {
 
         // Location information
         if let Some(col) = column {
-            result.push_str(&format!("Error: Import failed\n"));
+            result.push_str("Error: Import failed\n");
             result.push_str(&format!("  --> {}:{}:{}\n", safe_path, line, col));
         } else {
-            result.push_str(&format!("Error: Import failed\n"));
+            result.push_str("Error: Import failed\n");
             result.push_str(&format!("  --> {}:{}\n", safe_path, line));
         }
 
@@ -453,6 +453,7 @@ impl IntuitiveErrorFormatter {
     }
 
     /// Calculate Levenshtein distance for "did you mean" suggestions
+    #[allow(clippy::needless_range_loop)] // matrix DP is clearest indexed
     pub fn levenshtein_distance(a: &str, b: &str) -> usize {
         let len_a = a.len();
         let len_b = b.len();
@@ -1217,14 +1218,14 @@ impl Interpreter {
                 variable,
                 iterable,
                 body,
-            } => self.eval_for_loop(&variable, &iterable, &body),
-            Expr::WhileLoop { condition, body } => self.eval_while_loop(&condition, &body),
-            Expr::Loop { body } => self.eval_loop(&body),
+            } => self.eval_for_loop(variable, iterable, body),
+            Expr::WhileLoop { condition, body } => self.eval_while_loop(condition, body),
+            Expr::Loop { body } => self.eval_loop(body),
             Expr::Break => Err(InterpreterError::BreakSignal),
             Expr::Continue => Err(InterpreterError::ContinueSignal),
             Expr::Assignment { target, value } => {
                 let val = self.eval_expr(value)?;
-                self.environment.set(&target, val.clone()).or_else(|_| {
+                self.environment.set(target, val.clone()).or_else(|_| {
                     // If variable not defined, define it
                     self.environment.define(target.clone(), val.clone());
                     Ok(())
@@ -1236,7 +1237,7 @@ impl Interpreter {
                 let mut result = String::new();
                 for part in parts {
                     match part {
-                        crate::ast::TemplatePart::Literal(s) => result.push_str(&s),
+                        crate::ast::TemplatePart::Literal(s) => result.push_str(s),
                         crate::ast::TemplatePart::Interpolation(expr) => {
                             let val = self.eval_expr(expr)?;
                             // For template interpolation, we want raw values without quotes
@@ -2875,7 +2876,7 @@ impl Interpreter {
 
         match iterable_value {
             Value::List(items) => {
-                let parent_env = std::mem::replace(&mut self.environment, Environment::new());
+                let parent_env = std::mem::take(&mut self.environment);
                 self.environment.parent = Some(Arc::new(parent_env));
                 self.environment.is_frame = true;
 
@@ -2894,7 +2895,7 @@ impl Interpreter {
                 end,
                 inclusive,
             } => {
-                let parent_env = std::mem::replace(&mut self.environment, Environment::new());
+                let parent_env = std::mem::take(&mut self.environment);
                 self.environment.parent = Some(Arc::new(parent_env));
                 self.environment.is_frame = true;
 
@@ -3185,7 +3186,7 @@ impl Interpreter {
                 // Fallback to timestamp validation
                 if let Ok(metadata) = std::fs::metadata(file_path) {
                     if let Ok(modified) = metadata.modified() {
-                        Ok(entry.last_modified.map_or(false, |lm| modified <= lm))
+                        Ok(entry.last_modified.is_some_and(|lm| modified <= lm))
                     } else {
                         Ok(false)
                     }
@@ -3219,6 +3220,7 @@ impl Interpreter {
     }
 
     /// Feature 8: Enhanced cache_module with smart caching options
+    #[allow(clippy::too_many_arguments)] // caching knobs; a config struct is future work
     fn cache_module_with_options(
         &mut self,
         module_path: String,
@@ -3390,7 +3392,7 @@ impl Interpreter {
 
                                 // Collect available functions from the module
                                 if let Value::Struct { fields, .. } = module {
-                                    available_functions.extend(fields.keys().map(|k| k.clone()));
+                                    available_functions.extend(fields.keys().cloned());
                                 }
 
                                 // Generate suggestions for the missing function
@@ -3401,8 +3403,7 @@ impl Interpreter {
                                 // Get the module path from the current context
                                 let module_path = self
                                     .current_module_path
-                                    .as_ref()
-                                    .map(|p| p.clone())
+                                    .clone()
                                     .unwrap_or_else(|| "unknown_module".to_string());
 
                                 return Err(InterpreterError::FunctionNotFoundInModule {
@@ -3436,7 +3437,7 @@ impl Interpreter {
 
         // Optionally clear persistent cache
         if let Some(ref mut cache_manager) = self.persistent_cache_manager {
-            if let Ok(_) = cache_manager.cleanup_cache() {
+            if cache_manager.cleanup_cache().is_ok() {
                 crate::log::get_logger().debug("interpreter", "Persistent cache cleaned up");
             }
         }
@@ -3509,11 +3510,7 @@ impl Interpreter {
 
             // Remove least important entries
             let target_entries = max_entries * 80 / 100; // Keep 80% of max
-            let entries_to_remove = if current_entries > target_entries {
-                current_entries - target_entries
-            } else {
-                0
-            };
+            let entries_to_remove = current_entries.saturating_sub(target_entries);
 
             for (module_path, _score, memory_size) in
                 entries_with_scores.iter().take(entries_to_remove)
@@ -4044,8 +4041,8 @@ impl Interpreter {
         }
 
         // Check for std.* prefix
-        if module_path.starts_with("std.") {
-            let stdlib_name = &module_path[4..]; // Remove "std." prefix
+        if let Some(stdlib_name) = module_path.strip_prefix("std.") {
+            // Remove "std." prefix
             if stdlib.contains_key(stdlib_name) {
                 return Ok(std::path::PathBuf::from(format!(
                     "__stdlib__/{}",
@@ -4336,7 +4333,7 @@ impl Interpreter {
             ));
         }
 
-        index_content.push_str("\n");
+        index_content.push('\n');
         index_content.push_str("// All exports are automatically available through the individual module imports above\n");
         index_content.push_str(
             "// This allows 'use utils { function_name }' to work by importing from this index\n",
@@ -4370,8 +4367,8 @@ impl Interpreter {
         let mut exports = Vec::new();
 
         for statement in program.statements {
-            match statement {
-                crate::ast::Statement::ShareDecl(share_decl) => {
+            if let crate::ast::Statement::ShareDecl(share_decl) = statement {
+                {
                     match share_decl {
                         ShareDecl::Function(func_decl) => {
                             exports.push(func_decl.name);
@@ -4401,7 +4398,6 @@ impl Interpreter {
                         }
                     }
                 }
-                _ => {} // Ignore non-share declarations
             }
         }
 
@@ -4513,6 +4509,12 @@ pub struct ModuleDependencyTracker {
     pub dependency_graph_hash: String,                      // hash of entire dependency graph
 }
 
+impl Default for ModuleDependencyTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModuleDependencyTracker {
     pub fn new() -> Self {
         Self {
@@ -4528,12 +4530,9 @@ impl ModuleDependencyTracker {
     pub fn add_dependency(&mut self, module: String, dependency: String) {
         self.dependencies
             .entry(module.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(dependency.clone());
-        self.dependents
-            .entry(dependency)
-            .or_insert_with(Vec::new)
-            .push(module);
+        self.dependents.entry(dependency).or_default().push(module);
     }
 
     pub fn check_circular_dependency(&self, module: &str, dependency: &str) -> bool {
@@ -4803,10 +4802,10 @@ impl PersistentCacheManager {
 
         // Actually remove the files
         for file in files_to_remove {
-            if let Ok(metadata) = std::fs::metadata(&file) {
+            if let Ok(metadata) = std::fs::metadata(file) {
                 stats.bytes_freed += metadata.len() as usize;
             }
-            if std::fs::remove_file(&file).is_ok() {
+            if std::fs::remove_file(file).is_ok() {
                 stats.files_removed += 1;
             }
         }

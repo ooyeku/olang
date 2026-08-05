@@ -1482,12 +1482,10 @@ impl Analyzer {
                 ..
             } => {
                 // If is terminating if both branches are terminating
-                if let Some(else_branch) = else_branch {
+                else_branch.as_ref().is_some_and(|else_branch| {
                     self.is_terminating_expression(then_branch)
                         && self.is_terminating_expression(else_branch)
-                } else {
-                    false
-                }
+                })
             }
             Expr::Match { arms, .. } => {
                 // Match is terminating if all arms are terminating
@@ -2018,12 +2016,10 @@ impl DeadCodeDetector {
                 ..
             } => {
                 // If is terminating if both branches are terminating
-                if let Some(else_branch) = else_branch {
+                else_branch.as_ref().is_some_and(|else_branch| {
                     self.is_terminating_expression(then_branch)
                         && self.is_terminating_expression(else_branch)
-                } else {
-                    false
-                }
+                })
             }
             Expr::Match { arms, .. } => {
                 // Match is terminating if all arms are terminating

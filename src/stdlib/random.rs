@@ -196,7 +196,8 @@ fn random_gauss(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => return Err("gauss: second argument (std_dev) must be a number".into()),
     };
 
-    if !(std_dev > 0.0) || !std_dev.is_finite() || !mean.is_finite() {
+    // is_finite() rejects NaN and infinities in one check
+    if !std_dev.is_finite() || std_dev <= 0.0 || !mean.is_finite() {
         return Err("gauss: standard deviation must be a positive finite number".into());
     }
 
@@ -411,7 +412,7 @@ fn random_sample(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
                 Ok(Value::List(result.into()))
             }
         }
-        _ => return Err("sample: first argument must be a list or range".into()),
+        _ => Err("sample: first argument must be a list or range".into()),
     }
 }
 
@@ -616,7 +617,7 @@ mod tests {
                     max
                 );
             }
-            _ => assert!(false, "Expected numeric value, got {:?}", value),
+            _ => panic!("Expected numeric value, got {:?}", value),
         }
     }
 
@@ -640,7 +641,7 @@ mod tests {
                     );
                 }
             }
-            _ => assert!(false, "Expected string value, got {:?}", value),
+            _ => panic!("Expected string value, got {:?}", value),
         }
     }
 
@@ -675,8 +676,7 @@ mod tests {
                 if let Value::Builtin(builtin) = &fields[func_name] {
                     assert_eq!(builtin.name, format!("random.{}", func_name));
                 } else {
-                    assert!(
-                        false,
+                    panic!(
                         "Expected builtin function for {}, got: {:?}",
                         func_name, fields[func_name]
                     );
@@ -685,11 +685,7 @@ mod tests {
 
             assert_eq!(fields.len(), 14, "Expected 14 functions in random module");
         } else {
-            assert!(
-                false,
-                "Expected struct for random module, got: {:?}",
-                module
-            );
+            panic!("Expected struct for random module, got: {:?}", module);
         }
     }
 
@@ -783,11 +779,7 @@ mod tests {
                 ));
             }
         } else {
-            assert!(
-                false,
-                "Expected list result from choices, got: {:?}",
-                result
-            );
+            panic!("Expected list result from choices, got: {:?}", result);
         }
     }
 
@@ -820,7 +812,7 @@ mod tests {
                 ));
             }
         } else {
-            assert!(false, "Expected list result from sample, got: {:?}", result);
+            panic!("Expected list result from sample, got: {:?}", result);
         }
     }
 
@@ -835,7 +827,7 @@ mod tests {
                 assert!(ch.is_alphanumeric());
             }
         } else {
-            assert!(false, "Expected string from randstr, got: {:?}", result);
+            panic!("Expected string from randstr, got: {:?}", result);
         }
 
         // Test randstr_alpha
@@ -858,11 +850,7 @@ mod tests {
                 assert!(ch.is_alphanumeric());
             }
         } else {
-            assert!(
-                false,
-                "Expected string from randstr_alnum, got: {:?}",
-                result
-            );
+            panic!("Expected string from randstr_alnum, got: {:?}", result);
         }
 
         // Test empty strings
@@ -898,11 +886,7 @@ mod tests {
                 }
             }
         } else {
-            assert!(
-                false,
-                "Expected list result from shuffle, got: {:?}",
-                result
-            );
+            panic!("Expected list result from shuffle, got: {:?}", result);
         }
     }
 
@@ -1019,8 +1003,7 @@ mod tests {
         if let Value::List(items) = result {
             assert_eq!(items.len(), 0);
         } else {
-            assert!(
-                false,
+            panic!(
                 "Expected empty list for choices with k=0, got: {:?}",
                 result
             );
@@ -1032,11 +1015,7 @@ mod tests {
         if let Value::List(items) = result {
             assert_eq!(items.len(), 0);
         } else {
-            assert!(
-                false,
-                "Expected empty list for sample with k=0, got: {:?}",
-                result
-            );
+            panic!("Expected empty list for sample with k=0, got: {:?}", result);
         }
     }
 
@@ -1126,7 +1105,7 @@ mod tests {
         if let Value::List(shuffled) = result {
             assert_eq!(shuffled.len(), 4);
         } else {
-            assert!(false, "Expected list from shuffle, got: {:?}", result);
+            panic!("Expected list from shuffle, got: {:?}", result);
         }
 
         // Test sample
@@ -1134,7 +1113,7 @@ mod tests {
         if let Value::List(sampled) = result {
             assert_eq!(sampled.len(), 2);
         } else {
-            assert!(false, "Expected list from sample, got: {:?}", result);
+            panic!("Expected list from sample, got: {:?}", result);
         }
     }
 }

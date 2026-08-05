@@ -501,7 +501,7 @@ fn find_test_files(filter: Option<&str>) -> Result<Vec<PathBuf>> {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "ol") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "ol") {
                 if let Some(filter) = filter {
                     if path.to_string_lossy().contains(filter) {
                         test_files.push(path);

@@ -135,7 +135,7 @@ impl HelpSystem {
         let filters = filters.unwrap_or_default();
         let mut results = Vec::new();
 
-        for (_, function) in &self.functions {
+        for function in self.functions.values() {
             // Skip REPL commands if not included
             if !filters.include_repl_commands && function.name.starts_with(':') {
                 continue;
@@ -390,8 +390,6 @@ impl HelpSystem {
         };
         self.search(return_type, Some(filters))
     }
-
-    /// Get suggestions based on partial input
 
     /// Initialize interactive tutorials
     fn initialize_tutorials(&mut self) {
@@ -666,7 +664,7 @@ impl HelpSystem {
             ));
         }
 
-        output.push_str("\n");
+        output.push('\n');
 
         for (i, step) in tutorial.steps.iter().enumerate() {
             output.push_str(&format!(
@@ -3277,8 +3275,6 @@ Type '{}:help list{}' to see all functions organized by category.
         )
     }
 
-    /// Show detailed help for a specific function
-
     /// Format detailed documentation for a function
     fn format_function_documentation(&self, func: &FunctionDoc) -> String {
         let mut output = format!(
@@ -3548,8 +3544,6 @@ For function-specific syntax, use: {}:help <function_name>{}",
     pub fn get_category_names(&self) -> Vec<String> {
         self.categories.keys().cloned().collect()
     }
-
-    /// Check if a function exists
 
     /// Add CSV functions to the help system  
     fn add_csv_functions(&mut self) {
@@ -5311,6 +5305,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
     }
 
     /// Enhanced fuzzy matching with Levenshtein distance
+    #[allow(clippy::needless_range_loop)] // matrix DP is clearest indexed
     fn levenshtein_distance(&self, a: &str, b: &str) -> usize {
         let a_chars: Vec<char> = a.chars().collect();
         let b_chars: Vec<char> = b.chars().collect();

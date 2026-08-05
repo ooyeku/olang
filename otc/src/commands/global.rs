@@ -400,7 +400,7 @@ fn extract_package_name_from_url(url: &str) -> Result<String> {
 
     let name = if url.contains("github.com") || url.contains("gitlab.com") {
         // Extract from URLs like: https://github.com/user/package.git or without .git
-        let last = url.split('/').last().unwrap_or("unknown");
+        let last = url.split('/').next_back().unwrap_or("unknown");
         // Remove .git suffix if present
         if let Some(stripped) = last.strip_suffix(".git") {
             stripped.to_string()
@@ -409,7 +409,7 @@ fn extract_package_name_from_url(url: &str) -> Result<String> {
         }
     } else if url.starts_with('/') || url.contains(':') {
         // Local path or SSH URL
-        url.split('/').last().unwrap_or("unknown").to_string()
+        url.split('/').next_back().unwrap_or("unknown").to_string()
     } else {
         return Err(anyhow::anyhow!(
             "Unable to extract package name from URL: {}",

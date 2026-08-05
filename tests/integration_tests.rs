@@ -208,7 +208,7 @@ fn test_list_creation() {
             assert_eq!(items[1], olang::ast::Value::Integer(2));
             assert_eq!(items[2], olang::ast::Value::Integer(3));
         }
-        _ => assert!(false, "Expected list result, got: {:?}", result),
+        _ => panic!("Expected list result, got: {:?}", result),
     }
 }
 
@@ -233,7 +233,7 @@ fn test_tuple_creation() {
             );
             assert_eq!(items[2], olang::ast::Value::Boolean(true));
         }
-        _ => assert!(false, "Expected tuple result, got: {:?}", result),
+        _ => panic!("Expected tuple result, got: {:?}", result),
     }
 }
 
@@ -279,7 +279,7 @@ fn test_error_handling_result_creation() {
         olang::ast::Value::Ok(inner) => {
             assert_eq!(*inner, olang::ast::Value::Integer(42));
         }
-        _ => assert!(false, "Expected Ok result, got: {:?}", result),
+        _ => panic!("Expected Ok result, got: {:?}", result),
     }
 
     // Test Err creation
@@ -296,7 +296,7 @@ fn test_error_handling_result_creation() {
                 olang::ast::Value::String("something went wrong".to_string().into())
             );
         }
-        _ => assert!(false, "Expected Err result, got: {:?}", result),
+        _ => panic!("Expected Err result, got: {:?}", result),
     }
 }
 
@@ -825,7 +825,7 @@ depth_label(3)
         )
         .expect("parse");
     let result = interpreter.eval_program(program).expect("eval");
-    assert_eq!(format!("{:?}", result).contains("30"), true);
-    assert_eq!(format!("{:?}", result).contains("20"), true);
-    assert_eq!(format!("{:?}", result).contains("10"), true);
+    assert!(format!("{:?}", result).contains("30"));
+    assert!(format!("{:?}", result).contains("20"));
+    assert!(format!("{:?}", result).contains("10"));
 }

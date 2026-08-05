@@ -316,8 +316,7 @@ mod tests {
         match result {
             Value::Ok(inner) => inner,
             _ => {
-                assert!(false, "Expected Ok result, got: {:?}", result);
-                unreachable!()
+                panic!("Expected Ok result, got: {:?}", result)
             }
         }
     }
@@ -327,8 +326,7 @@ mod tests {
         match result {
             Value::Err(inner) => inner,
             _ => {
-                assert!(false, "Expected Err result, got: {:?}", result);
-                unreachable!()
+                panic!("Expected Err result, got: {:?}", result)
             }
         }
     }
@@ -338,8 +336,7 @@ mod tests {
         match value {
             Value::String(s) => s,
             _ => {
-                assert!(false, "Expected string value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected string value, got: {:?}", value)
             }
         }
     }
@@ -349,8 +346,7 @@ mod tests {
         match value {
             Value::Boolean(b) => *b,
             _ => {
-                assert!(false, "Expected boolean value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected boolean value, got: {:?}", value)
             }
         }
     }
@@ -385,19 +381,14 @@ mod tests {
                     assert_eq!(builtin.name, format!("base64.{}", func_name));
                     assert_eq!(builtin.arity, 1); // All base64 functions take 1 argument
                 } else {
-                    assert!(
-                        false,
+                    panic!(
                         "Expected builtin function for {}, got: {:?}",
                         func_name, fields[func_name]
                     );
                 }
             }
         } else {
-            assert!(
-                false,
-                "Expected struct for base64 module, got: {:?}",
-                module
-            );
+            panic!("Expected struct for base64 module, got: {:?}", module);
         }
     }
 

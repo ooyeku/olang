@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)] // file is internal/tests.rs, so mod tests is apt
 mod tests {
     use crate::ast::{Function, Parameter, Value};
     use crate::internal::{
@@ -26,7 +27,7 @@ mod tests {
 
         match internal {
             InternalValue::Eager(v) => assert_eq!(v, value),
-            InternalValue::Lazy(_) => assert!(false, "Expected eager value, got lazy"),
+            InternalValue::Lazy(_) => panic!("Expected eager value, got lazy"),
         }
     }
 
@@ -65,7 +66,7 @@ mod tests {
                 assert_eq!(items[2], Value::Integer(3));
                 assert_eq!(items[3], Value::Integer(4));
             }
-            _ => assert!(false, "Expected list value, got: {:?}", result),
+            _ => panic!("Expected list value, got: {:?}", result),
         }
 
         // After evaluation, the handle should still appear lazy since that's the internal representation
@@ -91,7 +92,7 @@ mod tests {
                 assert_eq!(items[1], Value::Integer(2));
                 assert_eq!(items[2], Value::Integer(3));
             }
-            _ => assert!(false, "Expected list value, got: {:?}", result),
+            _ => panic!("Expected list value, got: {:?}", result),
         }
     }
 
@@ -115,7 +116,7 @@ mod tests {
                 assert_eq!(items[2], Value::Integer(3));
                 assert_eq!(items[3], Value::Integer(2));
             }
-            _ => assert!(false, "Expected list value, got: {:?}", result),
+            _ => panic!("Expected list value, got: {:?}", result),
         }
     }
 
@@ -160,7 +161,7 @@ mod tests {
                 assert_eq!(items[1], Value::Integer(4));
                 assert_eq!(items[2], Value::Integer(6));
             }
-            _ => assert!(false, "Expected list value, got: {:?}", result),
+            _ => panic!("Expected list value, got: {:?}", result),
         }
     }
 
@@ -215,7 +216,7 @@ mod tests {
                 assert_eq!(items[2], Value::Integer(3));
                 assert_eq!(items[3], Value::Integer(4));
             }
-            _ => assert!(false, "Expected list value, got: {:?}", result),
+            _ => panic!("Expected list value, got: {:?}", result),
         }
     }
 
@@ -243,7 +244,7 @@ mod tests {
                 assert_eq!(items[2], Value::Integer(3));
                 assert_eq!(items[3], Value::Integer(4));
             }
-            _ => assert!(false, "Expected list value, got: {:?}", result),
+            _ => panic!("Expected list value, got: {:?}", result),
         }
     }
 
@@ -382,7 +383,7 @@ mod tests {
                 assert_eq!(items[3], Value::Integer(6));
                 assert_eq!(items[4], Value::Integer(8));
             }
-            _ => assert!(false, "Expected LazyValue::Range, got: {:?}", result),
+            _ => panic!("Expected LazyValue::Range, got: {:?}", result),
         }
     }
 
@@ -407,7 +408,7 @@ mod tests {
                 assert_eq!(items[2], Value::Integer(3));
                 assert_eq!(items[3], Value::Integer(4));
             }
-            _ => assert!(false, "Expected LazyValue::ConcatList, got: {:?}", result),
+            _ => panic!("Expected LazyValue::ConcatList, got: {:?}", result),
         }
     }
 
@@ -474,7 +475,7 @@ mod tests {
                 assert_eq!(items[0], Value::Integer(4)); // 2 * 2 = 4
                 assert_eq!(items[1], Value::Integer(8)); // 4 * 2 = 8
             }
-            _ => assert!(false, "Expected LazyValue::MapFiltered, got: {:?}", result),
+            _ => panic!("Expected LazyValue::MapFiltered, got: {:?}", result),
         }
     }
 
@@ -534,12 +535,10 @@ mod tests {
         // Check that the structure is correct
         match lazy_map_filtered {
             LazyValue::MapFiltered { .. } => {
-                // This confirms the fusion optimization structure is in place
-                assert!(true, "Fusion optimization structure is correct");
+                // This arm confirms the fusion optimization structure is in place
             }
             _ => {
-                assert!(
-                    false,
+                panic!(
                     "Fusion did not produce MapFiltered, got: {:?}",
                     lazy_map_filtered
                 );

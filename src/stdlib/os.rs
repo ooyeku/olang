@@ -537,8 +537,7 @@ mod tests {
         match result {
             Value::Ok(inner) => inner,
             _ => {
-                assert!(false, "Expected Ok result, got: {:?}", result);
-                unreachable!()
+                panic!("Expected Ok result, got: {:?}", result)
             }
         }
     }
@@ -548,8 +547,7 @@ mod tests {
         match result {
             Value::Err(inner) => inner,
             _ => {
-                assert!(false, "Expected Err result, got: {:?}", result);
-                unreachable!()
+                panic!("Expected Err result, got: {:?}", result)
             }
         }
     }
@@ -559,8 +557,7 @@ mod tests {
         match value {
             Value::String(s) => s,
             _ => {
-                assert!(false, "Expected string value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected string value, got: {:?}", value)
             }
         }
     }
@@ -570,8 +567,7 @@ mod tests {
         match value {
             Value::Boolean(b) => *b,
             _ => {
-                assert!(false, "Expected boolean value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected boolean value, got: {:?}", value)
             }
         }
     }
@@ -581,8 +577,7 @@ mod tests {
         match value {
             Value::Integer(i) => *i,
             _ => {
-                assert!(false, "Expected integer value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected integer value, got: {:?}", value)
             }
         }
     }
@@ -592,8 +587,7 @@ mod tests {
         match value {
             Value::List(items) => items,
             _ => {
-                assert!(false, "Expected list value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected list value, got: {:?}", value)
             }
         }
     }
@@ -603,8 +597,7 @@ mod tests {
         match value {
             Value::Struct { fields, .. } => fields,
             _ => {
-                assert!(false, "Expected struct value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected struct value, got: {:?}", value)
             }
         }
     }
@@ -650,15 +643,14 @@ mod tests {
                     assert_eq!(builtin.name, format!("os.{}", func_name));
                     assert_eq!(builtin.arity, expected_arity);
                 } else {
-                    assert!(
-                        false,
+                    panic!(
                         "Expected builtin function for {}, got: {:?}",
                         func_name, fields[func_name]
                     );
                 }
             }
         } else {
-            assert!(false, "Expected struct for os module, got: {:?}", module);
+            panic!("Expected struct for os module, got: {:?}", module);
         }
     }
 
@@ -756,8 +748,7 @@ mod tests {
         for (key, value) in fields {
             match value {
                 Value::String(_) => {} // Expected
-                _ => assert!(
-                    false,
+                _ => panic!(
                     "All env values should be strings, but {} has type {:?}",
                     key, value
                 ),
@@ -831,11 +822,7 @@ mod tests {
         if let Value::String(first_arg) = &args_list[0] {
             assert!(!first_arg.is_empty(), "First argument should not be empty");
         } else {
-            assert!(
-                false,
-                "First argument should be a string, got: {:?}",
-                args_list[0]
-            );
+            panic!("First argument should be a string, got: {:?}", args_list[0]);
         }
 
         // Test exe_path
@@ -933,12 +920,11 @@ mod tests {
             let result = call_os_function(func_name, vec![string_val("extra")]);
             match result {
                 Ok(Value::Err(_)) => {} // Expected error
-                Ok(other) => assert!(
-                    false,
+                Ok(other) => panic!(
                     "Expected error for {} with extra arg, got: {:?}",
                     func_name, other
                 ),
-                Err(e) => assert!(false, "Unexpected error for {}: {}", func_name, e),
+                Err(e) => panic!("Unexpected error for {}: {}", func_name, e),
             }
         }
 
@@ -1075,7 +1061,7 @@ mod tests {
                 os_type, "windows",
                 "Windows family should have windows OS type"
             ),
-            _ => assert!(false, "Unknown OS family: {}", family),
+            _ => panic!("Unknown OS family: {}", family),
         }
     }
 
@@ -1094,11 +1080,7 @@ mod tests {
                 "Unix systems should use / as path separator"
             ),
             "windows" => assert_eq!(separator, "\\", "Windows should use \\ as path separator"),
-            _ => assert!(
-                false,
-                "Unknown OS family for path separator test: {}",
-                family
-            ),
+            _ => panic!("Unknown OS family for path separator test: {}", family),
         }
     }
 }

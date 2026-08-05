@@ -680,14 +680,14 @@ mod tests {
                     (f - expected).abs()
                 );
             }
-            _ => assert!(false, "Expected float value, got {:?}", actual),
+            _ => panic!("Expected float value, got {:?}", actual),
         }
     }
 
     fn assert_int_eq(actual: &Value, expected: i64) {
         match actual {
             Value::Integer(i) => assert_eq!(*i, expected),
-            _ => assert!(false, "Expected integer value, got {:?}", actual),
+            _ => panic!("Expected integer value, got {:?}", actual),
         }
     }
 
@@ -705,7 +705,7 @@ mod tests {
             assert_float_eq(fields.get("LOG2_E").unwrap(), consts::LOG2_E, 1e-15);
             assert_float_eq(fields.get("LOG10_E").unwrap(), consts::LOG10_E, 1e-15);
         } else {
-            assert!(false, "Expected struct for math module, got: {:?}", module);
+            panic!("Expected struct for math module, got: {:?}", module);
         }
     }
 
@@ -796,7 +796,7 @@ mod tests {
                 "Expected NaN for negative base with fractional exponent"
             );
         } else {
-            assert!(false, "Expected float result, got: {:?}", result);
+            panic!("Expected float result, got: {:?}", result);
         }
     }
 

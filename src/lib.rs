@@ -1,3 +1,9 @@
+// InterpreterError is a large enum returned pervasively; boxing it is a
+// worthwhile future refactor (smaller Results are faster), but it touches
+// every eval signature — deferred rather than half-done. Tracked in
+// CHANGELOG's unreleased notes.
+#![allow(clippy::result_large_err)]
+
 //! Olang - A minimal, expressive language with first-class functions and pipelines
 //!
 //! This crate provides the core implementation of the Olang programming language,

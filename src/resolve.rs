@@ -402,7 +402,7 @@ impl Resolver {
                         Self::pattern_names(other, &mut names);
                         for name in names {
                             let scope = self.current();
-                            if !scope.poisoned.iter().any(|n| *n == name) {
+                            if !scope.poisoned.contains(&name) {
                                 scope.poisoned.push(name);
                             }
                         }

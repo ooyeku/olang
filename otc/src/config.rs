@@ -257,12 +257,10 @@ impl OlangProject {
                     }
                 }
             }
-            "cli" => {
-                if self.cli.is_none() {
-                    return Err(anyhow::anyhow!(
-                        "CLI projects require [cli] configuration section"
-                    ));
-                }
+            "cli" if self.cli.is_none() => {
+                return Err(anyhow::anyhow!(
+                    "CLI projects require [cli] configuration section"
+                ));
             }
             "library" => {
                 if self.library.is_none() {

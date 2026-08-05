@@ -129,7 +129,7 @@ use std::sync::OnceLock;
 static LOGGER: OnceLock<Logger> = OnceLock::new();
 
 pub fn init_logger() -> &'static Logger {
-    LOGGER.get_or_init(|| Logger::default())
+    LOGGER.get_or_init(Logger::default)
 }
 
 pub fn get_logger() -> &'static Logger {

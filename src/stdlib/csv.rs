@@ -1267,8 +1267,7 @@ mod tests {
         match result {
             Value::Ok(inner) => inner,
             _ => {
-                assert!(false, "Expected Ok result, got: {:?}", result);
-                unreachable!()
+                panic!("Expected Ok result, got: {:?}", result)
             }
         }
     }
@@ -1278,8 +1277,7 @@ mod tests {
         match result {
             Value::Err(inner) => inner,
             _ => {
-                assert!(false, "Expected Err result, got: {:?}", result);
-                unreachable!()
+                panic!("Expected Err result, got: {:?}", result)
             }
         }
     }
@@ -1289,8 +1287,7 @@ mod tests {
         match value {
             Value::String(s) => s,
             _ => {
-                assert!(false, "Expected string value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected string value, got: {:?}", value)
             }
         }
     }
@@ -1300,8 +1297,7 @@ mod tests {
         match value {
             Value::Integer(i) => *i,
             _ => {
-                assert!(false, "Expected integer value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected integer value, got: {:?}", value)
             }
         }
     }
@@ -1311,8 +1307,7 @@ mod tests {
         match value {
             Value::List(list) => list,
             _ => {
-                assert!(false, "Expected list value, got: {:?}", value);
-                unreachable!()
+                panic!("Expected list value, got: {:?}", value)
             }
         }
     }
@@ -1356,15 +1351,14 @@ mod tests {
                 if let Value::Builtin(builtin) = &fields[func_name] {
                     assert_eq!(builtin.name, format!("csv.{}", func_name));
                 } else {
-                    assert!(
-                        false,
+                    panic!(
                         "Expected builtin function for {}, got: {:?}",
                         func_name, fields[func_name]
                     );
                 }
             }
         } else {
-            assert!(false, "Expected struct for csv module, got: {:?}", module);
+            panic!("Expected struct for csv module, got: {:?}", module);
         }
     }
 
@@ -1417,7 +1411,7 @@ mod tests {
             assert_eq!(extract_string(fields.get("name").unwrap()), "Alice");
             assert_eq!(extract_string(fields.get("age").unwrap()), "30");
         } else {
-            assert!(false, "Expected struct for CSV row, got: {:?}", result);
+            panic!("Expected struct for CSV row, got: {:?}", result);
         }
 
         // Test with empty CSV - should return empty list, not error

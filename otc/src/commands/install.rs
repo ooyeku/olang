@@ -87,7 +87,7 @@ fn install_from_url(url: &str, verbose: bool, offline: bool) -> Result<()> {
     println!("Package installed successfully:");
     println!("  Name: {}", install_result.package_name);
     println!("  Version: {}", install_result.version);
-    println!("  Commit: {}", install_result.commit_hash[..8].to_string());
+    println!("  Commit: {}", &install_result.commit_hash[..8]);
     println!("  Location: {}", install_result.install_path.display());
 
     if let Some(description) = &install_result.manifest.package.description {

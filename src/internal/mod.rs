@@ -52,10 +52,14 @@ pub(crate) enum InternalValue {
 }
 
 /// Lazy value variants for different types of deferred computation
+/// A deferred computation over the interpreter
+pub(crate) type ThunkFn =
+    Arc<dyn Fn(&mut Interpreter) -> Result<Value, InterpreterError> + Send + Sync>;
+
 #[derive(Clone)]
 pub(crate) enum LazyValue {
     /// A generic thunk that can be evaluated later
-    Thunk(Arc<dyn Fn(&mut Interpreter) -> Result<Value, InterpreterError> + Send + Sync>),
+    Thunk(ThunkFn),
     /// Lazy range generation
     #[allow(dead_code)]
     Range {
@@ -1152,22 +1156,17 @@ fn is_memory_fragmented() -> bool {
 }
 
 /// Memory optimization strategies
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum MemoryStrategy {
     /// Conservative - prefer memory efficiency over speed
     Conservative,
     /// Balanced - balance memory and performance
+    #[default]
     Balanced,
     /// Aggressive - prefer speed over memory efficiency
     Aggressive,
     /// Adaptive - adjust strategy based on available memory
     Adaptive { low_memory_threshold_mb: usize },
-}
-
-impl Default for MemoryStrategy {
-    fn default() -> Self {
-        MemoryStrategy::Balanced
-    }
 }
 
 /// Force point functions - these functions require eager evaluation

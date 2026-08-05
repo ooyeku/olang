@@ -148,7 +148,7 @@ impl GitPackageManager {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "toml") {
                 if let Some(package_name) = path.file_stem().and_then(|s| s.to_str()) {
                     match self.load_package_metadata(package_name) {
                         Ok(manifest) => packages.push((package_name.to_string(), manifest)),
@@ -180,7 +180,7 @@ impl GitPackageManager {
                         && path
                             .file_name()
                             .and_then(|n| n.to_str())
-                            .map_or(false, |n| n.contains(name))
+                            .is_some_and(|n| n.contains(name))
                     {
                         return Some(path);
                     }

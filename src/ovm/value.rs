@@ -667,7 +667,7 @@ impl OvmValue {
             },
         };
         Self {
-            header: self.header.clone(),
+            header: self.header,
             data,
         }
     }

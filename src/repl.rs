@@ -173,7 +173,7 @@ impl InteractiveDebugger {
     pub fn record_profiling_data(&mut self, expression: String, time_ms: f64) {
         self.profiling_data
             .entry(expression)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(time_ms);
     }
 
@@ -395,7 +395,6 @@ pub struct Repl {
     multiline_mode: bool,
     multiline_buffer: String,
     command_history: Vec<String>,
-    ovm_health_check_counter: u32,
     debugger: InteractiveDebugger,
 }
 
@@ -475,7 +474,6 @@ impl Repl {
             multiline_mode: false,
             multiline_buffer: String::new(),
             command_history: Vec::new(),
-            ovm_health_check_counter: 0,
             debugger: InteractiveDebugger::new(),
         })
     }
@@ -1522,10 +1520,6 @@ impl Repl {
             return Ok(Value::Unit);
         }
 
-        // Periodic OVM health check (every 10 evaluations)
-        self.ovm_health_check_counter += 1;
-        if self.ovm_health_check_counter % 10 == 0 {}
-
         let result = self.interpreter.eval_program(program)?;
 
         // Check for watched variable changes after execution
@@ -2220,10 +2214,9 @@ impl Repl {
                     let line_num = parts[0].trim();
                     let pointer = parts[1];
                     println!(
-                        "    {}{}│{}{}",
+                        "    {}{}│ {}",
                         line_num.bright_black(),
                         " ".repeat(4 - line_num.len().min(4)),
-                        " ",
                         pointer.bright_red().bold()
                     );
                 }
@@ -2307,10 +2300,7 @@ impl Repl {
                     // Look ahead for compound operators
                     let mut op = ch.to_string();
                     if let Some(&next_ch) = chars.peek() {
-                        if (ch == '=' && next_ch == '=')
-                            || (ch == '!' && next_ch == '=')
-                            || (ch == '<' && next_ch == '=')
-                            || (ch == '>' && next_ch == '=')
+                        if (next_ch == '=' && matches!(ch, '=' | '!' | '<' | '>'))
                             || (ch == '&' && next_ch == '&')
                             || (ch == '|' && next_ch == '|')
                         {

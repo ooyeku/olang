@@ -151,7 +151,11 @@ fn run() -> i32 {
 }
 
 /// Enhanced error display for file execution
-fn show_file_parse_error(error: &olang::parser::ParseError, file_path: &PathBuf, source: &str) {
+fn show_file_parse_error(
+    error: &olang::parser::ParseError,
+    file_path: &std::path::Path,
+    source: &str,
+) {
     println!("\n{}", "═══ Parse Error ═══".bright_red().bold());
     println!(
         "  {}: {}",
@@ -235,7 +239,7 @@ fn show_file_parse_error(error: &olang::parser::ParseError, file_path: &PathBuf,
 /// Feature 9: Show classic interpreter errors with enhanced context and suggestions
 fn show_classic_interpreter_error(
     error: &olang::interpreter::InterpreterError,
-    file_path: &PathBuf,
+    file_path: &std::path::Path,
     interpreter: &olang::interpreter::Interpreter,
 ) {
     println!("\n{}", "═══ Execution Error ═══".bright_red().bold());
@@ -269,10 +273,9 @@ fn show_highlighted_snippet(snippet: &str) {
                 let line_num = parts[0].trim();
                 let pointer = parts[1];
                 println!(
-                    "    {}{}│{}{}",
+                    "    {}{}│ {}",
                     line_num.bright_black(),
                     " ".repeat(4 - line_num.len().min(4)),
-                    " ",
                     pointer.bright_red().bold()
                 );
             }
@@ -357,10 +360,7 @@ fn apply_basic_highlighting(code: &str) -> String {
                 // Look ahead for compound operators
                 let mut op = ch.to_string();
                 if let Some(&next_ch) = chars.peek() {
-                    if (ch == '=' && next_ch == '=')
-                        || (ch == '!' && next_ch == '=')
-                        || (ch == '<' && next_ch == '=')
-                        || (ch == '>' && next_ch == '=')
+                    if (next_ch == '=' && matches!(ch, '=' | '!' | '<' | '>'))
                         || (ch == '&' && next_ch == '&')
                         || (ch == '|' && next_ch == '|')
                     {

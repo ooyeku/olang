@@ -1,3 +1,6 @@
+// Test helpers return interpreter Results directly; boxing the error enum
+// is tracked as a future refactor (see lib.rs).
+#![allow(clippy::result_large_err)]
 //! Fuzzing and Stress Testing Infrastructure for Olang
 //!
 //! This module implements Enhancement 11: Fuzzing and Stress Testing
@@ -30,6 +33,12 @@ pub struct PropertyTester {
     _rng: Arc<Mutex<ChaCha8Rng>>,
 }
 
+impl Default for PropertyTester {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PropertyTester {
     pub fn new() -> Self {
         Self {
@@ -55,10 +64,7 @@ impl PropertyTester {
             }
             Err(_) => {
                 // If it fails once, it should fail consistently
-                match self.parser.parse(source) {
-                    Ok(_) => false, // Inconsistent - failed first time but succeeded second time
-                    Err(_) => true, // Consistently fails, which is acceptable
-                }
+                self.parser.parse(source).is_err()
             }
         }
     }
@@ -72,11 +78,7 @@ impl PropertyTester {
                 let result2 = self.type_checker.check_program(&program);
 
                 // Results should be identical
-                match (result1, result2) {
-                    (Ok(_), Ok(_)) => true,
-                    (Err(_), Err(_)) => true,
-                    _ => false,
-                }
+                matches!((result1, result2), (Ok(_), Ok(_)) | (Err(_), Err(_)))
             }
             Err(_) => true,
         }
@@ -115,6 +117,12 @@ pub struct ParserFuzzer {
     _stress_patterns: Vec<String>,
 }
 
+impl Default for ParserFuzzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParserFuzzer {
     pub fn new() -> Self {
         Self {
@@ -129,7 +137,7 @@ impl ParserFuzzer {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
         // Generate various types of malformed inputs
-        let patterns = vec![
+        let patterns = [
             self.generate_unbalanced_parens(&mut rng),
             self.generate_invalid_strings(&mut rng),
             self.generate_malformed_numbers(&mut rng),
@@ -153,7 +161,7 @@ impl ParserFuzzer {
     }
 
     fn generate_invalid_strings(&self, rng: &mut ChaCha8Rng) -> String {
-        let patterns = vec![
+        let patterns = [
             "\"unclosed string",
             "\"string with \\invalid escape\"",
             "\"string with null\\0byte\"",
@@ -164,7 +172,7 @@ impl ParserFuzzer {
     }
 
     fn generate_malformed_numbers(&self, rng: &mut ChaCha8Rng) -> String {
-        let patterns = vec![
+        let patterns = [
             "123.456.789",
             "0xGHIJKL",
             "1e+++5",
@@ -177,7 +185,7 @@ impl ParserFuzzer {
     }
 
     fn generate_incomplete_expressions(&self, rng: &mut ChaCha8Rng) -> String {
-        let patterns = vec![
+        let patterns = [
             "let x = ",
             "fn incomplete(",
             "if true =>",
@@ -270,6 +278,12 @@ pub struct InterpreterStressTester {
     interpreter: Interpreter,
     tiered_interpreter: Interpreter,
     parser: Parser,
+}
+
+impl Default for InterpreterStressTester {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl InterpreterStressTester {
