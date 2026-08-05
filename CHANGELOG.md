@@ -12,6 +12,15 @@ documented.
 
 ### Added
 
+- **Traits with runtime dispatch.** `trait Show { fn show(self) -> String }`
+  declares a set of methods (with optional default bodies); `impl Show for
+  Point { ... }` provides them for a type. A method call `value.method(args)`
+  dispatches on the runtime type of `value`, passed as `self` — single-
+  dispatch polymorphism (protocols / interfaces). Default methods, methods
+  with arguments, and traits over both structs and enums all work; struct
+  fields take precedence over methods of the same name. This gives olang
+  interface-based polymorphism without static typing.
+
 - **`07_algebraic_types.ol`** example — a recursive expression-tree
   evaluator, a generic Option combinator library, and a binary search tree,
   all built on the enum sum types that now construct. A demonstration that

@@ -124,6 +124,20 @@ fn area(s) = match s {
 }
 println(`circle area ${area(Circle(2.0))}, rect area ${area(Rect(3.0, 4.0))}`)
 
+// ── Traits: runtime-dispatched methods ──────────────────────────────
+// A trait names methods; impl blocks provide them per type. `value.m()`
+// dispatches on value's runtime type, passed as self.
+trait Describe {
+    fn describe(self) -> String
+    fn loud(self) -> String = self.describe() + "!"     // default method
+}
+impl Describe for Point {
+    fn describe(self) = `point (${self.x}, ${self.y})`
+}
+let d = Point { x: 7, y: 8 }
+println(d.describe())        // Point's impl
+println(d.loud())           // trait default, calling back into describe
+
 // ── Error handling: Result, ?, try/catch ────────────────────────────
 fn safe_div(a, b) = if b == 0 => Err("division by zero") else => Ok(a / b)
 

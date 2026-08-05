@@ -629,6 +629,60 @@ and `typeof` returns the enum's name (`"Shape"`). A generic enum like
 `Maybe<T>` constructs for any payload — the type parameter is checked
 statically (when type checking is on) and erased at runtime.
 
+## Traits
+
+A trait is a named set of methods; an `impl` block provides them for a
+specific type. A method call `value.method(args)` dispatches on the
+*runtime type* of `value`, which is passed as `self`. This is
+single-dispatch polymorphism (protocols / interfaces), resolved at runtime.
+
+```olang
+trait Show {
+    fn show(self) -> String
+    // a default method — used unless an impl overrides it
+    fn shout(self) -> String = self.show() + "!"
+}
+
+type Point = struct { x: Int, y: Int }
+type Circle = struct { r: Int }
+
+impl Show for Point {
+    fn show(self) = "(" + to_string(self.x) + ", " + to_string(self.y) + ")"
+}
+impl Show for Circle {
+    fn show(self) = "Circle(" + to_string(self.r) + ")"
+}
+
+let p = Point { x: 3, y: 4 }
+println(p.show())        // "(3, 4)"      — Point's impl
+println(p.shout())       // "(3, 4)!"     — trait default, calls back into show
+
+// Polymorphism: one call site, dispatched per element type
+let shapes = [Point { x: 1, y: 1 }, Circle { r: 2 }]
+for s in shapes {
+    println(s.show())
+}
+```
+
+Traits work over enums too, and methods can take arguments:
+
+```olang
+type Shape = enum { Sq(Int), Tri(Int, Int) }
+trait Area { fn area(self) -> Int }
+impl Area for Shape {
+    fn area(self) = match self {
+        Sq(s)    => s * s,
+        Tri(b, h) => b * h / 2
+    }
+}
+println(Sq(4).area())        // 16
+println(Tri(6, 4).area())    // 12
+```
+
+Struct fields take precedence over methods of the same name, so field
+access is never shadowed. A call to a method no `impl` provides is a
+runtime error.
+
 ## Async/Await
 
 ### Async Operations

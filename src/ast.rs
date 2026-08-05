@@ -21,6 +21,32 @@ pub enum Statement {
     ShareDecl(ShareDecl),
     UseDecl(UseDecl),
     TestDecl(TestDecl),
+    TraitDecl(TraitDecl),
+    ImplDecl(ImplDecl),
+}
+
+/// A trait declaration: a named set of methods, each optionally with a
+/// default body. Dispatch is on the runtime type of the receiver (`self`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TraitDecl {
+    pub name: String,
+    pub methods: Vec<TraitMethod>,
+}
+
+/// A method signature in a trait, with an optional default implementation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TraitMethod {
+    pub name: String,
+    pub parameters: Vec<Parameter>,
+    pub default_body: Option<Expr>,
+}
+
+/// An `impl Trait for Type { ... }` block providing method bodies.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ImplDecl {
+    pub trait_name: String,
+    pub type_name: String,
+    pub methods: Vec<FunctionDecl>,
 }
 
 /// Error type declaration

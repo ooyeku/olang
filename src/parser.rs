@@ -229,6 +229,12 @@ impl Parser {
             Rule::test_decl => Ok(Statement::TestDecl(
                 self.build_test_decl(pair.into_inner())?,
             )),
+            Rule::trait_decl => Ok(Statement::TraitDecl(
+                self.build_trait_decl(pair.into_inner())?,
+            )),
+            Rule::impl_decl => Ok(Statement::ImplDecl(
+                self.build_impl_decl(pair.into_inner())?,
+            )),
             Rule::expr => Ok(Statement::Expression(self.build_expr(pair.into_inner())?)),
             // `test_statement` wraps a plain `statement`, so unwrap one level
             // rather than rejecting (this blocked `let` inside test blocks)
@@ -2312,6 +2318,85 @@ impl Parser {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch),
             else_branch,
+        })
+    }
+
+    fn build_trait_decl(
+        &self,
+        mut pairs: Pairs<Rule>,
+    ) -> Result<crate::ast::TraitDecl, ParseError> {
+        let name = pairs
+            .next()
+            .ok_or_else(|| ParseError::InvalidSyntax {
+                message: "Missing trait name".to_string(),
+            })?
+            .as_str()
+            .to_string();
+
+        let mut methods = Vec::new();
+        for pair in pairs {
+            if pair.as_rule() == Rule::trait_method {
+                methods.push(self.build_trait_method(pair.into_inner())?);
+            }
+        }
+        Ok(crate::ast::TraitDecl { name, methods })
+    }
+
+    fn build_trait_method(
+        &self,
+        mut pairs: Pairs<Rule>,
+    ) -> Result<crate::ast::TraitMethod, ParseError> {
+        let name = pairs
+            .next()
+            .ok_or_else(|| ParseError::InvalidSyntax {
+                message: "Missing trait method name".to_string(),
+            })?
+            .as_str()
+            .to_string();
+
+        let mut parameters = Vec::new();
+        let mut default_body = None;
+        for pair in pairs {
+            match pair.as_rule() {
+                Rule::param_list => parameters = self.build_param_list(pair.into_inner())?,
+                Rule::expr => default_body = Some(self.build_expr(pair.into_inner())?),
+                // return-type annotation is accepted but not retained at runtime
+                _ => {}
+            }
+        }
+        Ok(crate::ast::TraitMethod {
+            name,
+            parameters,
+            default_body,
+        })
+    }
+
+    fn build_impl_decl(&self, mut pairs: Pairs<Rule>) -> Result<crate::ast::ImplDecl, ParseError> {
+        let trait_name = pairs
+            .next()
+            .ok_or_else(|| ParseError::InvalidSyntax {
+                message: "Missing trait name in impl".to_string(),
+            })?
+            .as_str()
+            .to_string();
+        let type_name = pairs
+            .next()
+            .ok_or_else(|| ParseError::InvalidSyntax {
+                message: "Missing type name in impl".to_string(),
+            })?
+            .as_str()
+            .to_string();
+
+        let mut methods = Vec::new();
+        for pair in pairs {
+            if pair.as_rule() == Rule::function_decl {
+                methods.push(self.build_function_decl(pair.into_inner())?);
+            }
+        }
+        Ok(crate::ast::ImplDecl {
+            trait_name,
+            type_name,
+            methods,
         })
     }
 

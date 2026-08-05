@@ -249,6 +249,7 @@ impl TypeChecker {
     /// Type check a statement
     pub fn check_statement(&mut self, statement: &Statement) -> Result<TypeAnnotation, TypeError> {
         match statement {
+            Statement::TraitDecl(_) | Statement::ImplDecl(_) => Ok(TypeAnnotation::Unknown),
             Statement::Expression(expr) => self.infer_type(expr),
             Statement::LetDecl(let_decl) => self.check_let_decl(let_decl),
             Statement::FunctionDecl(func_decl) => self.check_function_decl(func_decl),

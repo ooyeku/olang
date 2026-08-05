@@ -762,6 +762,17 @@ pub struct Interpreter {
     /// Optional bytecode tier: hot functions are compiled and executed on the
     /// OVM instead of walking the AST. Disabled unless explicitly enabled.
     bytecode_tier: Option<crate::ovm::tier::BytecodeTier>,
+
+    /// Trait method implementations, keyed by (type name, method name) ->
+    /// the concrete function. Populated by `impl` blocks; consulted when a
+    /// `value.method(args)` call's field isn't a struct field.
+    trait_impls: HashMap<(String, String), Function>,
+    /// Default method bodies from `trait` declarations, keyed by
+    /// (trait name, method name). Used when an impl doesn't override them.
+    trait_defaults: HashMap<(String, String), Function>,
+    /// Which traits each type implements, so a type can reach its trait's
+    /// default methods: type name -> set of trait names.
+    type_traits: HashMap<String, Vec<String>>,
 }
 
 impl Default for Interpreter {
@@ -813,6 +824,9 @@ impl Interpreter {
             large_allocation_count: 0,
             last_cleanup_operation: 0,
             bytecode_tier: None,
+            trait_impls: HashMap::new(),
+            trait_defaults: HashMap::new(),
+            type_traits: HashMap::new(),
         };
 
         // Register built-in functions
@@ -928,7 +942,80 @@ impl Interpreter {
             Statement::ShareDecl(share_decl) => self.eval_share_decl(share_decl.clone()),
             Statement::UseDecl(use_decl) => self.eval_use_decl(use_decl.clone()),
             Statement::TestDecl(test_decl) => self.eval_test_decl(test_decl.clone()),
+            Statement::TraitDecl(trait_decl) => self.eval_trait_decl(trait_decl.clone()),
+            Statement::ImplDecl(impl_decl) => self.eval_impl_decl(impl_decl.clone()),
         }
+    }
+
+    /// Record a trait's default method bodies. The trait itself introduces no
+    /// runtime binding; it is a contract that `impl` blocks fulfil.
+    fn eval_trait_decl(
+        &mut self,
+        trait_decl: crate::ast::TraitDecl,
+    ) -> Result<Value, InterpreterError> {
+        let closure = self.environment.flat_snapshot();
+        for method in &trait_decl.methods {
+            if let Some(body) = &method.default_body {
+                let function = Function {
+                    name: Some(method.name.clone()),
+                    parameters: method.parameters.clone(),
+                    body: Arc::new(body.clone()),
+                    closure: Arc::new(closure.clone()),
+                };
+                self.trait_defaults
+                    .insert((trait_decl.name.clone(), method.name.clone()), function);
+            }
+        }
+        Ok(Value::Unit)
+    }
+
+    /// Register the methods of an `impl Trait for Type` block for runtime
+    /// dispatch, and note that Type implements Trait.
+    fn eval_impl_decl(
+        &mut self,
+        impl_decl: crate::ast::ImplDecl,
+    ) -> Result<Value, InterpreterError> {
+        let closure = self.environment.flat_snapshot();
+        for method in &impl_decl.methods {
+            let function = Function {
+                name: Some(method.name.clone()),
+                parameters: method.parameters.clone(),
+                body: Arc::new(method.body.clone()),
+                closure: Arc::new(closure.clone()),
+            };
+            self.trait_impls
+                .insert((impl_decl.type_name.clone(), method.name.clone()), function);
+        }
+        let traits = self
+            .type_traits
+            .entry(impl_decl.type_name.clone())
+            .or_default();
+        if !traits.contains(&impl_decl.trait_name) {
+            traits.push(impl_decl.trait_name.clone());
+        }
+        Ok(Value::Unit)
+    }
+
+    /// Resolve a method for `type_name`: a concrete impl first, then any
+    /// default from a trait that type implements.
+    fn lookup_method(&self, type_name: &str, method: &str) -> Option<Function> {
+        if let Some(f) = self
+            .trait_impls
+            .get(&(type_name.to_string(), method.to_string()))
+        {
+            return Some(f.clone());
+        }
+        if let Some(traits) = self.type_traits.get(type_name) {
+            for trait_name in traits {
+                if let Some(f) = self
+                    .trait_defaults
+                    .get(&(trait_name.clone(), method.to_string()))
+                {
+                    return Some(f.clone());
+                }
+            }
+        }
+        None
     }
 
     fn eval_error_type_decl(
@@ -1056,6 +1143,32 @@ impl Interpreter {
                 }
             }
             Expr::Call { callee, arguments } => {
+                // Method-call dispatch: `receiver.method(args)` where `method`
+                // is not a struct field resolves to a trait implementation for
+                // the receiver's runtime type, with the receiver passed as
+                // `self`. Struct fields take precedence, preserving field
+                // access that happens to hold a callable.
+                if let Expr::FieldAccess { object, field } = callee.as_ref() {
+                    let receiver = self.eval_expr(object)?;
+                    let is_struct_field = matches!(
+                        &receiver,
+                        Value::Struct { fields, .. } if fields.contains_key(field)
+                    );
+                    if !is_struct_field {
+                        if let Some(method) = self.lookup_method(&receiver.type_name(), field) {
+                            let mut arg_values = vec![receiver];
+                            for arg in arguments {
+                                let expr = match arg {
+                                    Argument::Positional(e) => e,
+                                    Argument::Named { value, .. } => value,
+                                };
+                                arg_values.push(self.eval_expr(expr)?);
+                            }
+                            return self.call_function(Value::Function(method), arg_values);
+                        }
+                    }
+                }
+
                 let callee_value = self.eval_expr(callee)?;
 
                 // Enhanced named argument resolution
@@ -1924,6 +2037,9 @@ impl Interpreter {
 
             // Each thread profiles independently; the VM is not shared
             bytecode_tier: None,
+            trait_impls: self.trait_impls.clone(),
+            trait_defaults: self.trait_defaults.clone(),
+            type_traits: self.type_traits.clone(),
         }
     }
 

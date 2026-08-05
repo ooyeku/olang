@@ -2358,7 +2358,7 @@ impl Repl {
             // Keywords
             "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | "break"
             | "continue" | "true" | "false" | "async" | "await" | "try" | "catch" | "import"
-            | "export" | "type" => {
+            | "export" | "type" | "trait" | "impl" | "struct" | "enum" => {
                 format!("{}", word.bright_blue().bold())
             }
             // Types

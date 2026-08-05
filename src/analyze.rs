@@ -113,6 +113,7 @@ impl Analyzer {
 
     fn analyze_statement(&mut self, statement: &Statement) -> Result<(), AnalysisError> {
         match statement {
+            Statement::TraitDecl(_) | Statement::ImplDecl(_) => Ok(()),
             Statement::Expression(expr) => self.analyze_expr(expr),
             Statement::LetDecl(let_decl) => {
                 // Analyze the value expression if present
@@ -1210,6 +1211,7 @@ impl Analyzer {
     /// Mark a statement and its contained expressions as reachable
     fn mark_statement_reachable(&mut self, statement: &Statement, reachable: &mut HashSet<usize>) {
         match statement {
+            Statement::TraitDecl(_) | Statement::ImplDecl(_) => {}
             Statement::Expression(expr) => {
                 self.mark_expression_reachable(expr, reachable);
             }
@@ -1857,6 +1859,7 @@ impl DeadCodeDetector {
     /// Mark a statement and its contained expressions as reachable
     fn mark_statement_reachable(&mut self, statement: &Statement) {
         match statement {
+            Statement::TraitDecl(_) | Statement::ImplDecl(_) => {}
             Statement::Expression(expr) => {
                 self.mark_expression_reachable(expr);
             }
