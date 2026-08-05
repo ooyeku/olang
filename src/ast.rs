@@ -79,6 +79,24 @@ pub enum Expr {
 
     // Variables and calls
     Identifier(String),
+    /// An identifier resolved to a frame slot at function-declaration time.
+    /// `depth` counts environment frames outward from the innermost; the
+    /// name is kept so the runtime can verify the slot holds the expected
+    /// binding and fall back to a name lookup when it doesn't — resolution
+    /// can therefore never change semantics, only speed.
+    LocalRef {
+        name: String,
+        depth: u16,
+        slot: u16,
+    },
+    /// An assignment target resolved to a frame slot, same contract as
+    /// LocalRef.
+    LocalAssign {
+        name: String,
+        depth: u16,
+        slot: u16,
+        value: Box<Expr>,
+    },
     Call {
         callee: Box<Expr>,
         arguments: Vec<Argument>,

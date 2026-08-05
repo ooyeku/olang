@@ -12,6 +12,15 @@ documented.
 
 ### Changed
 
+- **Slot resolution** — identifiers in function and lambda bodies are
+  resolved to frame-slot indices once at declaration time (`src/resolve.rs`),
+  so the hot path indexes into the frame instead of probing names. Every
+  resolved reference keeps its name and the runtime verifies the slot before
+  using it, falling back to a normal lookup on mismatch — a stale static
+  model (e.g. a `let` inside a conditional shifting later slots) costs
+  speed, never correctness. 5–9% across call- and loop-heavy benchmarks.
+  Stale bytecode-cache files from older AST shapes are now removed quietly
+  instead of warning on every startup.
 - **Frame-based environments** — environments created for function calls,
   loop bodies, match arms, and catch blocks are now frames: every binding
   they create (`let`, loop variables, match bindings) lives in the probed

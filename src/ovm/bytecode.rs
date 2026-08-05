@@ -2522,6 +2522,18 @@ impl BytecodeCompiler {
                 Ok(dst_reg)
             }
 
+            // A slot-resolved reference from the interpreter's resolver is
+            // just a named identifier here — the VM has its own registers
+            Expr::LocalRef { name, .. } => {
+                self.compile_expression(&Expr::Identifier(name.clone()))
+            }
+            Expr::LocalAssign { name, value, .. } => {
+                self.compile_expression(&Expr::Assignment {
+                    target: name.clone(),
+                    value: value.clone(),
+                })
+            }
+
             Expr::Identifier(name) => {
                 if let Some(&reg) = self.local_variables.get(name) {
                     // The variable already lives in a register — nothing to emit
@@ -2628,7 +2640,8 @@ impl BytecodeCompiler {
                 // the callee is resolved by name at runtime through the VM's
                 // registries (which also makes recursion work).
                 let function_name = match callee.as_ref() {
-                    Expr::Identifier(name) => name.clone(),
+                    // A slot-resolved callee is still a call by name here
+                    Expr::Identifier(name) | Expr::LocalRef { name, .. } => name.clone(),
                     other => {
                         return Err(BytecodeError::CompilationFailed(format!(
                             "Unsupported callee in bytecode tier: {:?}",
@@ -3153,6 +3166,10 @@ impl BytecodeCompiler {
                 names.insert(target.clone());
                 Self::collect_bound_names(value, names);
             }
+            Expr::LocalAssign { name, value, .. } => {
+                names.insert(name.clone());
+                Self::collect_bound_names(value, names);
+            }
             Expr::Block(statements) => {
                 for statement in statements {
                     match statement {
@@ -3284,11 +3301,15 @@ impl BytecodeCompiler {
             | Expr::Break
             | Expr::Continue => true,
 
-            Expr::Identifier(name) => {
+            Expr::Identifier(name) | Expr::LocalRef { name, .. } => {
                 if !bound.contains(name) {
                     free.insert(name.clone());
                 }
                 true
+            }
+
+            Expr::LocalAssign { name, value, .. } => {
+                bound.contains(name) && Self::collect_free_vars(value, bound, free)
             }
 
             Expr::BinaryOp { left, right, .. } | Expr::BitwiseOp { left, right, .. } => {

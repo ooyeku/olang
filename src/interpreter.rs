@@ -549,6 +549,49 @@ impl Environment {
         self.locals.push((name, value));
     }
 
+    /// Fetch a resolved slot: hop `depth` parents, verify the slot holds
+    /// `name`, and fall back to a normal lookup on any mismatch — static
+    /// resolution can be stale (e.g. a conditionally-executed `let` shifted
+    /// later slots), and the fallback keeps that a performance event, not a
+    /// correctness event.
+    pub fn get_slot(&self, name: &str, depth: u16, slot: u16) -> Option<Value> {
+        let mut env = self;
+        for _ in 0..depth {
+            env = env.parent.as_deref()?;
+        }
+        if let Some((slot_name, value)) = env.locals.get(slot as usize) {
+            if slot_name == name {
+                return Some(value.clone());
+            }
+        }
+        self.get(name)
+    }
+
+    /// Assign through a resolved slot, with the same verify-and-fall-back
+    /// contract as get_slot.
+    pub fn set_slot(
+        &mut self,
+        name: &str,
+        depth: u16,
+        slot: u16,
+        value: Value,
+    ) -> Result<(), InterpreterError> {
+        // Walk mutably: hop through Arc parents with make_mut
+        if depth == 0 {
+            if let Some((slot_name, slot_value)) = self.locals.get_mut(slot as usize) {
+                if slot_name == name {
+                    *slot_value = value;
+                    return Ok(());
+                }
+            }
+            return self.set(name, value);
+        }
+        let Some(parent) = self.parent.as_mut() else {
+            return self.set(name, value);
+        };
+        Arc::make_mut(parent).set_slot(name, depth - 1, slot, value)
+    }
+
     pub fn get(&self, name: &str) -> Option<Value> {
         if let Some((_, value)) = self.locals.iter().rev().find(|(n, _)| n == name) {
             Some(value.clone())
@@ -861,10 +904,25 @@ impl Interpreter {
         // Convert ImHashMap to regular HashMap for closure storage
         // O(1): the environment's flat map is persistent, adopt it directly
         let closure = self.environment.flat_snapshot();
+
+        // Resolve identifiers to frame slots once, at declaration — the
+        // call path then indexes instead of probing names (with per-use
+        // verification and name fallback, so this can never change results)
+        let param_names: Vec<String> = func_decl
+            .parameters
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+        let resolved_body = crate::resolve::Resolver::resolve_function_body(
+            &func_decl.body,
+            Some(&func_decl.name),
+            &param_names,
+        );
+
         let function = Function {
             name: Some(func_decl.name.clone()),
             parameters: func_decl.parameters,
-            body: Arc::new(func_decl.body),
+            body: Arc::new(resolved_body),
             closure: Arc::new(closure),
         };
 
@@ -916,6 +974,26 @@ impl Interpreter {
                 .environment
                 .get(name)
                 .ok_or_else(|| InterpreterError::UndefinedVariable { name: name.clone() }),
+            Expr::LocalRef { name, depth, slot } => self
+                .environment
+                .get_slot(name, *depth, *slot)
+                .ok_or_else(|| InterpreterError::UndefinedVariable { name: name.clone() }),
+            Expr::LocalAssign {
+                name,
+                depth,
+                slot,
+                value,
+            } => {
+                let val = self.eval_expr(value)?;
+                match self.environment.set_slot(name, *depth, *slot, val.clone()) {
+                    Ok(()) => Ok(val),
+                    Err(_) => {
+                        // Same behavior as unresolved assignment to a new name
+                        self.environment.define(name.clone(), val.clone());
+                        Ok(val)
+                    }
+                }
+            }
             Expr::Call { callee, arguments } => {
                 let callee_value = self.eval_expr(callee)?;
                 
@@ -928,10 +1006,14 @@ impl Interpreter {
             } => {
                 // Capture all accessible variables from the environment chain
                 let closure = self.collect_all_accessible_variables();
+                let param_names: Vec<String> =
+                    parameters.iter().map(|p| p.name.clone()).collect();
+                let resolved_body =
+                    crate::resolve::Resolver::resolve_function_body(body, None, &param_names);
                 Ok(Value::Function(Function {
                     name: None,
                     parameters: parameters.clone(),
-                    body: Arc::new((**body).clone()),
+                    body: Arc::new(resolved_body),
                     closure: Arc::new(closure),
                 }))
             }

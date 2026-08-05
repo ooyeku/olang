@@ -1378,6 +1378,13 @@ impl Analyzer {
             Expr::RawString(_) | Expr::Identifier(_) | Expr::Break | Expr::Continue => {
                 // These don't contain sub-expressions
             }
+            // Resolved forms only appear in declaration-resolved function
+            // bodies, which the analyzer never sees (it runs on parse
+            // output) — handled for exhaustiveness
+            Expr::LocalRef { .. } => {}
+            Expr::LocalAssign { value, .. } => {
+                self.mark_expression_reachable(value, reachable);
+            }
         }
     }
 

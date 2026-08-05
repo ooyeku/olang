@@ -16,6 +16,7 @@ pub mod ovm_repl; // Enhanced REPL with OVM support
 pub mod parallel;
 pub mod parser;
 pub mod repl;
+pub mod resolve;
 pub mod stdlib;
 pub mod test_framework;
 pub mod type_checker;

@@ -653,12 +653,18 @@ impl OvmInterpreter {
                                         loaded += 1;
                                     }
                                 }
-                                Err(e) => {
-                                    crate::log::get_logger().warn(
+                                Err(_) => {
+                                    // A cache file from an older build whose
+                                    // AST shape has since changed (bincode is
+                                    // not self-describing). Stale caches are
+                                    // regenerated on demand — remove quietly
+                                    // instead of warning on every startup.
+                                    let _ = fs::remove_file(&path);
+                                    crate::log::get_logger().debug(
                                         "ovm_cache",
                                         &format!(
-                                            "Failed to deserialize cache file {}: {:?}",
-                                            path.display(), e
+                                            "Removed stale cache file {}",
+                                            path.display()
                                         ),
                                     );
                                 }
