@@ -12,7 +12,7 @@ Olang has two execution tiers.
 | Tier | What it is | When it runs |
 |---|---|---|
 | **Interpreter** | Tree-walking evaluator over the AST | Always; the default and the semantics reference |
-| **Bytecode** | Register-based VM (`src/ovm/bytecode.rs`) | Hot functions, when `--ovm-tier` is enabled |
+| **Bytecode** | Register-based VM (`src/ovm/bytecode.rs`) | Eligible functions, on by default (compiled at first call) |
 
 The interpreter is the source of truth. The bytecode tier is an optimization
 that must be **observationally identical** to it — see
@@ -122,10 +122,10 @@ tuple, function, struct, range, thunk, stream) hold `Arc` payloads.
 Values are reclaimed deterministically when the last reference drops, which
 suits a language whose values are overwhelmingly immutable and acyclic.
 
-`src/ovm/gc.rs` and `src/ovm/memory.rs` are accounting layers only —
-allocation statistics, safepoint flags, and lifecycle for the `:gc` REPL
-command and `--ovm-stats`. `GarbageCollector::force_collection` reports stats;
-it does not trace or sweep.
+`src/ovm/gc.rs` holds only the safepoint flags the interpreter polls in
+loops; the former tracing-GC machinery, region allocator, and the `:gc` REPL
+command were deleted in the 0.24 cleanup — with reference counting there is
+nothing to force.
 
 The value header carries only a type tag, execution tier, and lazy state. It
 is deliberately small and `Copy`, because it is cloned on every register read
@@ -157,11 +157,13 @@ A register machine. Key design points:
 - **Guarded extraction.** Destructuring emits a shape test before any
   extraction, so an extractor can never see a value it doesn't fit. Nested
   patterns recurse on the extracted register.
-- **Lambdas as constants.** A non-capturing lambda has no runtime
-  dependencies, so it is built once at compile time and stored in the
-  constant pool as an `AstFunction` — an interpreter function held verbatim,
-  which converts back losslessly. `FunctionObject` cannot serve here: it
-  drops parameter metadata and rewrites the closure.
+- **Lambdas as constants.** A lambda whose free variables all resolve in
+  the enclosing function's declaration-time closure is built once at compile
+  time and stored in the constant pool as an `AstFunction` — an interpreter
+  function held verbatim, which converts back losslessly. It carries a
+  closure filtered to exactly its free set: attaching the full snapshot
+  would defeat the interpreter's empty-closure fast path on every trivial
+  lambda call.
 - **Total pattern tests.** `match` uses `PatternEq` and `PatternInRange`
   rather than the ordinary comparison instructions, because a pattern of the
   wrong type must simply not match where an ordinary comparison would raise a
@@ -182,24 +184,23 @@ implementations through `BuiltinFunctions::call`. Reimplementation would be a
 second source of truth that could drift from the semantics the differential
 tests hold the VM to; delegating makes them identical by construction.
 
-34 builtins are enabled:
+43 builtins are enabled:
 
 | Group | Builtins |
 |---|---|
 | Conversion | `to_string`, `to_int`, `to_float`, `typeof`, `len` |
 | List access | `head`, `tail`, `cons`, `concat`, `reverse`, `sort`, `take`, `skip`, `flatten`, `zip`, `enumerate`, `chunk`, `range` |
 | Aggregation | `sum`, `min`, `max`, `average`, `contains` |
+| Higher-order | `map`, `filter`, `reduce`, `fold`, `find`, `map_filtered`, `result_map`, `result_map_err`, `unwrap_or_else` |
 | Strings | `split`, `join`, `starts_with`, `ends_with` |
 | Results | `is_ok`, `is_err`, `unwrap`, `unwrap_or` |
 | Numeric | `clamp` |
 | Output | `print`, `println` |
 
-Two categories are deliberately excluded:
+The higher-order builtins became available when compiled lambdas gained
+closures: a lambda the VM builds itself can be handed to a delegated builtin
+as a function value. One category remains deliberately excluded:
 
-- **Higher-order builtins** (`map`, `filter`, `reduce`, `fold`, `find`,
-  `group_by`, ...) take a function argument, and function values cannot cross
-  into the VM. A call passing a named function is rejected at compile time
-  anyway, since the callee is not a local.
 - **Map-returning builtins** (`map_set`, `group_by`, ...) produce values that
   do not survive the round trip back to an AST value — a `Map` would come back
   as a `Struct`. `execute_builtin_call` checks representability and errors
@@ -245,6 +246,11 @@ meaningfully (~7.5×) because the VM avoids per-iteration AST dispatch;
 call-heavy code benefits modestly. Per-call interpreter cost is now ~0.65 µs
 (down from ~33 µs).
 
+Since the tier is on by default, these are the numbers a plain `olang
+program.ol` gets — no flags. `otc ovm --compare <file>` runs a program both
+ways, verifies the results agree, and reports the timings and promotion
+statistics.
+
 `cargo bench` measures the interpreter itself (`benches/interpreter_bench.rs`,
 ten representative programs). Use it when changing the evaluator; use
 `tier_compare` when changing the VM.
@@ -258,15 +264,15 @@ These are real gaps, not oversights:
    where `k` is a parameter — keeps its enclosing function interpreted.
    Lifting this needs per-call closure construction at runtime. Struct and
    enum patterns are also uncompiled.
-2. **Higher-order and map-returning builtins are unavailable** (see
-   [Builtins](#builtins)). A function calling one stays interpreted, and so
-   does every function that calls it.
+2. **Map-returning builtins are unavailable** (see [Builtins](#builtins)).
+   A function calling one stays interpreted, and so does every function that
+   calls it.
 3. **Builtin calls cost a value round trip.** Delegation converts arguments
    and results between the OVM and AST value models, so a function dominated
    by builtin work sees a much smaller speedup than one dominated by
-   arithmetic and control flow.
-4. **The tier is opt-in.** It should default to on once coverage is wide
-   enough that the check is worth paying on every call.
+   arithmetic and control flow. Delegated lambdas also execute their bodies
+   in the interpreter — the VM accelerates the code *around* a pipeline, not
+   inside its lambdas.
 
 ## Not implemented
 
