@@ -3576,6 +3576,14 @@ impl Interpreter {
     fn calculate_file_hash(&self, file_path: &std::path::Path) -> Result<String, InterpreterError> {
         use std::io::Read;
 
+        // Virtual modules (embedded olang builtins, native stdlib structs)
+        // have no file on disk. Their source is fixed for the life of the
+        // binary, so hash the path — a stable, always-available identity.
+        let as_str = file_path.to_string_lossy();
+        if as_str.starts_with("__embedded__/") || as_str.starts_with("__stdlib__/") {
+            return Ok(self.calculate_string_hash(&as_str));
+        }
+
         let mut file =
             std::fs::File::open(file_path).map_err(|e| InterpreterError::RuntimeError {
                 message: format!("Failed to open file for hashing: {}", e),
@@ -4045,11 +4053,23 @@ impl Interpreter {
         // Feature 8: Start timing for compilation metrics
         let start_time = Instant::now();
 
-        // Read and parse the module file
-        let content =
+        // The module source is either an embedded olang builtin (compiled into
+        // the binary) or a file on disk.
+        let content = if let Some(name) = file_path
+            .to_string_lossy()
+            .strip_prefix("__embedded__/")
+            .map(|s| s.to_string())
+        {
+            crate::stdlib::embedded::source(&name)
+                .ok_or_else(|| InterpreterError::RuntimeError {
+                    message: format!("Embedded module '{}' not found", name),
+                })?
+                .to_string()
+        } else {
             std::fs::read_to_string(&file_path).map_err(|e| InterpreterError::RuntimeError {
                 message: format!("Failed to read module file {}: {}", file_path.display(), e),
-            })?;
+            })?
+        };
 
         // Parse the module
         let parser = crate::parser::Parser::new();
@@ -4248,6 +4268,15 @@ impl Interpreter {
                     module_path
                 ),
             );
+        }
+
+        // Embedded olang-source stdlib modules (builtin packages compiled
+        // into the binary) resolve to a special path handled below.
+        if crate::stdlib::embedded::is_embedded(module_path) {
+            return Ok(std::path::PathBuf::from(format!(
+                "__embedded__/{}",
+                module_path
+            )));
         }
 
         // Package dependencies win first: `use foo.bar` where `foo` is a

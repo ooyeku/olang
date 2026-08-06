@@ -8,6 +8,7 @@ pub mod crypto;
 pub mod csv;
 pub mod dates;
 pub mod db;
+pub mod embedded;
 pub mod fs;
 pub mod http;
 pub mod json;

@@ -24,6 +24,19 @@ documented.
 
 ### Added
 
+- **Embedded olang-source stdlib modules ("builtin packages").** A stdlib
+  module can now be written in olang and compiled into the binary via
+  `include_str!`, resolving like a package (`use colx { ... }`) with no file
+  on disk. This proves the pure (non-FFI) parts of the stdlib can be
+  self-hosted while native primitives (fs, http, crypto, db, ...) stay Rust.
+  The first embedded module, `colx`, mirrors part of the native `col`
+  collections module and is differential-tested against it — every
+  olang-implemented function must agree with its Rust counterpart. (That
+  test immediately caught a bug: `take_while` relied on mutating a
+  closure-captured flag, which olang closures don't propagate; it now
+  threads state through the fold accumulator purely.)
+
+
 - **Package manager.** olang projects are now packages: an `olang.toml`
   manifest plus a directory of `.ol` files. Dependencies come as source in
   three forms — local `path`, `git` (tag/rev/branch), and registry version
