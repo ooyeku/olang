@@ -4174,6 +4174,22 @@ impl Interpreter {
             }
 
             // Create module struct
+            // Re-close every exported function over the *complete* module
+            // environment. A function's closure is snapshotted when it is
+            // declared, so a shared function that calls a private helper
+            // declared later in the file wouldn't otherwise see it. After the
+            // whole module has run, module_env holds every binding (shared and
+            // private); rebinding exported functions' closures to it gives them
+            // full visibility of their siblings — matching how top-level
+            // functions in a single file can call one another regardless of
+            // order.
+            let module_scope = self.environment.flat_snapshot();
+            for value in exports.values_mut() {
+                if let Value::Function(func) = value {
+                    func.closure = Arc::new(module_scope.clone());
+                }
+            }
+
             let module = Value::Struct {
                 type_name: "Module".to_string(),
                 fields: exports,

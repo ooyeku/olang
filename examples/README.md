@@ -22,6 +22,20 @@ are verified in CI by `tests/example_programs_test.rs`, so they cannot rot.
 | [`06_database.ol`](06_database.ol) | A SQLite-backed task tracker: schema, parameterized inserts, queries, group-by aggregates, updates — real persistence |
 | [`07_algebraic_types.ol`](07_algebraic_types.ol) | Enums as real sum types: a recursive expression-tree evaluator, generic Option combinators, and a binary search tree |
 
+## Packages
+
+A two-package demonstration of the package manager (see
+[docs/packages.md](../docs/packages.md)):
+
+- [`packages/geometry/`](packages/geometry/) — a library package: shapes,
+  areas, and 2D point math, exposing a public API with `share`
+- [`packages/demo/`](packages/demo/) — depends on `geometry` by path and
+  imports it with `use geometry { ... }`
+
+```bash
+olang examples/packages/demo/main.ol      # auto-resolves the dependency
+```
+
 ## Topic examples
 
 Older single-topic programs, still runnable:

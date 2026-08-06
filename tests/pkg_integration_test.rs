@@ -139,3 +139,42 @@ fn frozen_install_rejects_a_stale_lock() {
 
     let _ = fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn shared_functions_can_call_private_helpers() {
+    // A package's public function calling a package-private helper declared
+    // *later* in the file must resolve — the export closes over the whole
+    // module, not just what preceded its declaration.
+    let ws = workspace("private");
+    write(
+        &ws.join("lib/olang.toml"),
+        "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n",
+    );
+    write(
+        &ws.join("lib/index.ol"),
+        // `public` calls `helper`, which is private and defined afterwards.
+        "share fn public(x) = helper(x) + 1\nfn helper(x) = x * 10\n",
+    );
+    write(
+        &ws.join("app/olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nlib = { path = \"../lib\" }\n",
+    );
+    let app = ws.join("app");
+
+    let map = install(&app, &InstallOptions::default())
+        .unwrap()
+        .into_iter()
+        .collect();
+    let program = Parser::new()
+        .parse("use lib { public }\npublic(4)")
+        .unwrap();
+    let mut interp = Interpreter::new();
+    interp.set_current_file(&app.join("main.ol"));
+    interp.set_dependency_map(map);
+    assert_eq!(
+        interp.eval_program(program).unwrap(),
+        olang::Value::Integer(41)
+    );
+
+    let _ = fs::remove_dir_all(&ws);
+}

@@ -1,0 +1,4 @@
+[package]
+name = "geometry"
+version = "1.0.0"
+description = "Shapes, areas, and 2D point math"

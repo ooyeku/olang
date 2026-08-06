@@ -1,0 +1,9 @@
+version = 1
+
+[package.geometry]
+checksum = "aa478f89709b88aa41a9bb8eab3a81849ec1eaa023626cf634bb32250688e45d"
+dependencies = []
+
+[package.geometry.source]
+kind = "path"
+path = "../geometry"
