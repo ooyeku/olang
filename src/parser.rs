@@ -2400,6 +2400,30 @@ impl Parser {
         })
     }
 
+    /// Parse a `type_params` pair into (names, bounds). Each `type_param` is
+    /// `identifier (: trait (+ trait)*)?`; bounds are (param name, traits).
+    fn parse_type_params(&self, pair: Pair<Rule>) -> (Vec<String>, Vec<(String, Vec<String>)>) {
+        let mut names = Vec::new();
+        let mut bounds = Vec::new();
+        for type_param in pair.into_inner() {
+            if type_param.as_rule() != Rule::type_param {
+                continue;
+            }
+            let mut idents = type_param
+                .into_inner()
+                .filter(|p| p.as_rule() == Rule::identifier);
+            if let Some(name_pair) = idents.next() {
+                let name = name_pair.as_str().to_string();
+                let traits: Vec<String> = idents.map(|p| p.as_str().to_string()).collect();
+                if !traits.is_empty() {
+                    bounds.push((name.clone(), traits));
+                }
+                names.push(name);
+            }
+        }
+        (names, bounds)
+    }
+
     fn build_function_decl(&self, mut pairs: Pairs<Rule>) -> Result<FunctionDecl, ParseError> {
         let name = pairs
             .next()
@@ -2410,6 +2434,7 @@ impl Parser {
             .to_string();
 
         let mut type_params = Vec::new();
+        let mut type_param_bounds = Vec::new();
         let mut parameters = Vec::new();
         let mut return_type = None;
         let mut body_expr = None;
@@ -2417,12 +2442,9 @@ impl Parser {
         for pair in pairs {
             match pair.as_rule() {
                 Rule::type_params => {
-                    // Parse type parameters
-                    for type_param in pair.into_inner() {
-                        if type_param.as_rule() == Rule::identifier {
-                            type_params.push(type_param.as_str().to_string());
-                        }
-                    }
+                    let (names, bounds) = self.parse_type_params(pair);
+                    type_params = names;
+                    type_param_bounds = bounds;
                 }
                 Rule::param_list => {
                     parameters = self.build_param_list(pair.into_inner())?;
@@ -2444,6 +2466,7 @@ impl Parser {
         Ok(FunctionDecl {
             name,
             type_params,
+            type_param_bounds,
             parameters,
             return_type,
             body,
@@ -2470,11 +2493,8 @@ impl Parser {
         for pair in pairs {
             match pair.as_rule() {
                 Rule::type_params => {
-                    for type_param in pair.into_inner() {
-                        if type_param.as_rule() == Rule::identifier {
-                            type_params.push(type_param.as_str().to_string());
-                        }
-                    }
+                    let (names, _bounds) = self.parse_type_params(pair);
+                    type_params = names;
                 }
                 Rule::param_list => {
                     parameters = self.build_param_list(pair.into_inner())?;
@@ -2517,12 +2537,8 @@ impl Parser {
         for pair in pairs {
             match pair.as_rule() {
                 Rule::type_params => {
-                    // Parse type parameters
-                    for type_param in pair.into_inner() {
-                        if type_param.as_rule() == Rule::identifier {
-                            type_params.push(type_param.as_str().to_string());
-                        }
-                    }
+                    let (names, _bounds) = self.parse_type_params(pair);
+                    type_params = names;
                 }
                 Rule::type_definition => {
                     definition = Some(self.build_type_definition(pair.into_inner())?);

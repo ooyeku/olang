@@ -138,6 +138,11 @@ let d = Point { x: 7, y: 8 }
 println(d.describe())        // Point's impl
 println(d.loud())           // trait default, calling back into describe
 
+// ── Trait bounds: a generic constrained by a trait ──────────────────
+fn present<T: Describe>(item: T) -> String = "presenting " + item.describe()
+println(present(d))                          // Point implements Describe -> ok
+println(`Point implements Describe? ${implements(d, "Describe")}`)
+
 // ── Error handling: Result, ?, try/catch ────────────────────────────
 fn safe_div(a, b) = if b == 0 => Err("division by zero") else => Ok(a / b)
 

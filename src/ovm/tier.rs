@@ -255,6 +255,7 @@ impl BytecodeTier {
         Some(FunctionDecl {
             name: name.to_string(),
             type_params: Vec::new(),
+            type_param_bounds: Vec::new(),
             parameters: func.parameters.clone(),
             return_type: None,
             body: (*func.body).clone(),
@@ -305,6 +306,7 @@ mod tests {
                 right: Box::new(Expr::Integer(2)),
             }),
             closure: Arc::new(im::HashMap::new()),
+            param_bounds: Vec::new(),
         }
     }
 
@@ -363,6 +365,7 @@ mod tests {
                 right: Box::new(Expr::Identifier("captured".to_string())),
             }),
             closure: Arc::new(closure),
+            param_bounds: Vec::new(),
         };
 
         assert!(matches!(
@@ -394,6 +397,7 @@ mod tests {
             parameters: vec![param("x")],
             body: Arc::new(Expr::Identifier("nonexistent_global".to_string())),
             closure: Arc::new(im::HashMap::new()),
+            param_bounds: Vec::new(),
         };
 
         for _ in 0..5 {
@@ -429,6 +433,7 @@ mod tests {
                 right: Box::new(Expr::Identifier("b".to_string())),
             }),
             closure: Arc::new(im::HashMap::new()),
+            param_bounds: Vec::new(),
         };
 
         match tier.try_call(&func, &[Value::Integer(1), Value::Integer(0)]) {

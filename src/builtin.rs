@@ -153,6 +153,14 @@ impl BuiltinFunctions {
             },
         );
 
+        functions.insert(
+            "implements".to_string(),
+            BuiltinFunction {
+                name: "implements".to_string(),
+                arity: 2,
+            },
+        );
+
         // List manipulation utilities
         functions.insert(
             "reverse".to_string(),
@@ -678,6 +686,28 @@ impl BuiltinFunctions {
             "range" => builtins.range(arguments),
             "zip" => builtins.zip(arguments),
             "typeof" => builtins.type_of(arguments),
+            "implements" => {
+                if arguments.len() != 2 {
+                    return Err(InterpreterError::ArityMismatch {
+                        expected: 2,
+                        got: arguments.len(),
+                    });
+                }
+                let trait_name = match &arguments[1] {
+                    Value::String(s) => s.to_string(),
+                    other => {
+                        return Err(InterpreterError::TypeError {
+                            message: format!(
+                                "implements: second argument must be a trait name string, got {}",
+                                other.type_name()
+                            ),
+                        })
+                    }
+                };
+                Ok(Value::Boolean(
+                    interpreter.value_implements(&arguments[0], &trait_name),
+                ))
+            }
             "reverse" => builtins.reverse(arguments),
             "sort" => builtins.sort(arguments),
             "join" => builtins.join(arguments),

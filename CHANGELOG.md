@@ -12,6 +12,17 @@ documented.
 
 ### Added
 
+- **Trait bounds.** A generic function can constrain its type parameters:
+  `fn describe<T: Show>(item: T)` accepts only arguments whose type
+  implements `Show`, checked at the call boundary — a value that doesn't
+  fails there with a clear message (`argument 1 of type Circle does not
+  implement trait Show`) instead of deep inside the body. Multiple bounds
+  with `+` (`<T: Show + Ord>`) require all of them; the error names the
+  specific unmet trait. Unbounded generics (`fn identity<T>(x: T)`) are
+  unaffected. New `implements(value, "Trait")` builtin reports membership.
+  Bounds are enforced at runtime — olang stays dynamically typed — which
+  keeps this independent of the (opt-in) static type checker.
+
 - **Traits with runtime dispatch.** `trait Show { fn show(self) -> String }`
   declares a set of methods (with optional default bodies); `impl Show for
   Point { ... }` provides them for a type. A method call `value.method(args)`

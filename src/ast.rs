@@ -69,6 +69,10 @@ pub struct LetDecl {
 pub struct FunctionDecl {
     pub name: String,
     pub type_params: Vec<String>, // Type parameters for generic functions
+    /// Trait bounds per type parameter: (param name, required trait names).
+    /// From `<T: Show + Ord>`. Enforced at runtime against argument types.
+    #[serde(default)]
+    pub type_param_bounds: Vec<(String, Vec<String>)>,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<TypeAnnotation>,
     pub body: Expr,
@@ -480,6 +484,12 @@ pub struct Function {
     // environment in O(1) instead of copying every entry per call —
     // with the prelude captured, that was ~200 inserts on every call
     pub closure: Arc<im::HashMap<String, Value>>,
+    /// Trait bounds resolved to parameter positions at declaration:
+    /// (parameter index, required trait names). Checked at call time so a
+    /// value not implementing the bound fails at the boundary with a clear
+    /// message. Empty for lambdas and unbounded functions.
+    #[serde(default)]
+    pub param_bounds: Vec<(usize, Vec<String>)>,
 }
 
 /// Built-in function

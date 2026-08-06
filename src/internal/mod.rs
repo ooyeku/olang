@@ -35,6 +35,7 @@ impl ThreadSafeFunction {
             parameters: self.parameters.clone(),
             body: std::sync::Arc::new(body),
             closure: std::sync::Arc::new(self.closure.clone()),
+            param_bounds: Vec::new(),
         }
     }
 }

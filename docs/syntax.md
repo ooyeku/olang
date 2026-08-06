@@ -683,6 +683,38 @@ Struct fields take precedence over methods of the same name, so field
 access is never shadowed. A call to a method no `impl` provides is a
 runtime error.
 
+### Trait bounds
+
+A generic function can require its type parameters to implement traits.
+`fn f<T: Show>(x: T)` accepts only arguments whose type implements `Show`;
+a value that doesn't fails at the call boundary with a clear message,
+rather than deep inside the body. Multiple bounds use `+`.
+
+```olang
+trait Show { fn show(self) -> String }
+type Point = struct { x: Int, y: Int }
+impl Show for Point { fn show(self) = "(" + to_string(self.x) + ", " + to_string(self.y) + ")" }
+
+fn describe<T: Show>(item: T) -> String = "showing " + item.show()
+println(describe(Point { x: 1, y: 2 }))   // ok — Point implements Show
+
+// describe(Circle { r: 5 }) would error:
+//   describe: argument 1 of type Circle does not implement trait Show
+
+// Multiple bounds: T must implement both
+fn label<T: Show + Ord>(x: T) -> String = x.show()
+```
+
+`implements(value, "Trait")` answers whether a value's type implements a
+trait, for introspection:
+
+```olang
+implements(Point { x: 0, y: 0 }, "Show")   // true
+```
+
+Bounds are enforced at runtime (olang stays dynamically typed); an
+unbounded generic like `fn identity<T>(x: T) = x` accepts anything.
+
 ## Async/Await
 
 ### Async Operations

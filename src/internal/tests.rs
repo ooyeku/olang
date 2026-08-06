@@ -136,6 +136,7 @@ mod tests {
                 right: Box::new(crate::ast::Expr::Integer(2)),
             }),
             closure: std::sync::Arc::new(im::HashMap::new()),
+            param_bounds: Vec::new(),
         };
 
         let source_list = Value::List(Arc::from(vec![
@@ -186,6 +187,7 @@ mod tests {
                 right: Box::new(crate::ast::Expr::Integer(0)),
             }),
             closure: std::sync::Arc::new(im::HashMap::new()),
+            param_bounds: Vec::new(),
         };
 
         let source_list = Value::List(Arc::from(vec![
@@ -434,6 +436,7 @@ mod tests {
                 right: Box::new(crate::ast::Expr::Integer(2)),
             }),
             closure: std::sync::Arc::new(im::HashMap::new()),
+            param_bounds: Vec::new(),
         };
 
         let predicate = Function {
@@ -453,6 +456,7 @@ mod tests {
                 right: Box::new(crate::ast::Expr::Integer(0)),
             }),
             closure: std::sync::Arc::new(im::HashMap::new()),
+            param_bounds: Vec::new(),
         };
 
         let lazy_map_filtered = LazyValue::MapFiltered {
@@ -503,6 +507,7 @@ mod tests {
                 right: Box::new(crate::ast::Expr::Integer(2)),
             }),
             closure: std::sync::Arc::new(im::HashMap::new()),
+            param_bounds: Vec::new(),
         };
 
         let predicate = Function {
@@ -522,6 +527,7 @@ mod tests {
                 right: Box::new(crate::ast::Expr::Integer(0)),
             }),
             closure: std::sync::Arc::new(im::HashMap::new()),
+            param_bounds: Vec::new(),
         };
 
         let lazy_map_filtered = LazyValue::MapFiltered {
@@ -584,6 +590,7 @@ mod tests {
             }],
             body: std::sync::Arc::new(crate::ast::Expr::Identifier("x".to_string())),
             closure: Default::default(),
+            param_bounds: Vec::new(),
         };
         // Dummy function for filter
         let filter_fn = Function {
@@ -595,6 +602,7 @@ mod tests {
             }],
             body: std::sync::Arc::new(crate::ast::Expr::Identifier("x".to_string())),
             closure: Default::default(),
+            param_bounds: Vec::new(),
         };
         // Source list
         let source = ValueHandle::new_eager(Value::List(Arc::from(vec![

@@ -2824,6 +2824,7 @@ impl BytecodeCompiler {
                     // Values cloned from the enclosing snapshot — free
                     // variables resolve identically in both tiers
                     closure: std::sync::Arc::new(captured),
+                    param_bounds: Vec::new(),
                 };
 
                 let const_idx = self
@@ -3951,6 +3952,7 @@ mod tests {
         let func = FunctionDecl {
             name: "test".to_string(),
             type_params: Vec::new(),
+            type_param_bounds: Vec::new(),
             parameters: Vec::new(),
             return_type: Some(TypeAnnotation::Int),
             body: Expr::Integer(42),
@@ -3973,6 +3975,7 @@ mod tests {
         let func = FunctionDecl {
             name: "add".to_string(),
             type_params: Vec::new(),
+            type_param_bounds: Vec::new(),
             parameters: vec![
                 Parameter {
                     name: "a".to_string(),
@@ -4191,6 +4194,7 @@ mod tests {
         let func = FunctionDecl {
             name: "simple".to_string(),
             type_params: vec![],
+            type_param_bounds: Vec::new(),
             parameters: vec![],
             body: Expr::BinaryOp {
                 op: BinaryOp::Add,
@@ -4235,6 +4239,7 @@ mod tests {
         let func = FunctionDecl {
             name: "const_expr".to_string(),
             type_params: vec![],
+            type_param_bounds: Vec::new(),
             parameters: vec![],
             body: Expr::BinaryOp {
                 op: BinaryOp::Add,
@@ -4274,6 +4279,7 @@ mod tests {
         let func = FunctionDecl {
             name: "simple_if".to_string(),
             type_params: vec![],
+            type_param_bounds: Vec::new(),
             parameters: vec![],
             body: Expr::If {
                 condition: Box::new(Expr::BinaryOp {
@@ -4313,6 +4319,7 @@ mod tests {
         let func = FunctionDecl {
             name: "range_test".to_string(),
             type_params: vec![],
+            type_param_bounds: Vec::new(),
             parameters: vec![],
             body: Expr::Range {
                 start: Box::new(Expr::Integer(1)),
@@ -4350,6 +4357,7 @@ mod tests {
         let func = FunctionDecl {
             name: "simple".to_string(),
             type_params: vec![],
+            type_param_bounds: Vec::new(),
             parameters: vec![],
             body: Expr::Integer(42),
             return_type: None,
@@ -4391,6 +4399,7 @@ mod tests {
         let func = FunctionDecl {
             name: "two_param".to_string(),
             type_params: vec![],
+            type_param_bounds: Vec::new(),
             parameters: vec![
                 crate::ast::Parameter {
                     name: "x".to_string(),

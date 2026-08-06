@@ -1,8 +1,8 @@
 use crate::analyze::AnalysisReport;
 use crate::ast::{
     Argument, BinaryOp, BuiltinFunction, EnumVariantData, Expr, Function, FunctionDecl, LetDecl,
-    MatchArm, Pattern, Program, PromiseType, ShareDecl, Statement, TestDecl, UnaryOp, UseDecl,
-    Value,
+    MatchArm, Parameter, Pattern, Program, PromiseType, ShareDecl, Statement, TestDecl,
+    TypeAnnotation, UnaryOp, UseDecl, Value,
 };
 use crate::async_runtime::AsyncRuntime;
 use crate::builtin::BuiltinFunctions;
@@ -961,6 +961,7 @@ impl Interpreter {
                     parameters: method.parameters.clone(),
                     body: Arc::new(body.clone()),
                     closure: Arc::new(closure.clone()),
+                    param_bounds: Vec::new(),
                 };
                 self.trait_defaults
                     .insert((trait_decl.name.clone(), method.name.clone()), function);
@@ -982,6 +983,7 @@ impl Interpreter {
                 parameters: method.parameters.clone(),
                 body: Arc::new(method.body.clone()),
                 closure: Arc::new(closure.clone()),
+                param_bounds: Vec::new(),
             };
             self.trait_impls
                 .insert((impl_decl.type_name.clone(), method.name.clone()), function);
@@ -994,6 +996,83 @@ impl Interpreter {
             traits.push(impl_decl.trait_name.clone());
         }
         Ok(Value::Unit)
+    }
+
+    /// Map trait bounds on type parameters to the positions of parameters
+    /// annotated with those type variables. `<T: Show>(x: T)` yields
+    /// `[(0, ["Show"])]`. A parameter must be annotated with the bare type
+    /// variable (`x: T`) for the bound to attach.
+    fn resolve_param_bounds(
+        type_param_bounds: &[(String, Vec<String>)],
+        parameters: &[Parameter],
+    ) -> Vec<(usize, Vec<String>)> {
+        if type_param_bounds.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (index, param) in parameters.iter().enumerate() {
+            let annotated = match &param.type_annotation {
+                Some(TypeAnnotation::TypeVariable(name)) => Some(name),
+                Some(TypeAnnotation::Custom(name)) => Some(name),
+                _ => None,
+            };
+            if let Some(type_var) = annotated {
+                for (bound_var, traits) in type_param_bounds {
+                    if bound_var == type_var {
+                        out.push((index, traits.clone()));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Public: whether a value's runtime type implements a trait. Backs the
+    /// `implements(value, "Trait")` builtin.
+    pub fn value_implements(&self, value: &Value, trait_name: &str) -> bool {
+        self.type_implements(&value.type_name(), trait_name)
+    }
+
+    /// Whether a runtime type name satisfies a trait — either via an explicit
+    /// `impl Trait for Type`, or because the type is the trait's own name
+    /// (allowing a bound to name a concrete type too).
+    fn type_implements(&self, type_name: &str, trait_name: &str) -> bool {
+        if type_name == trait_name {
+            return true;
+        }
+        self.type_traits
+            .get(type_name)
+            .is_some_and(|traits| traits.iter().any(|t| t == trait_name))
+    }
+
+    /// Check every trait bound of a function against the supplied arguments.
+    /// Returns a clear error naming the argument, its type, and the unmet
+    /// trait when a bound is violated.
+    fn check_param_bounds(
+        &self,
+        func: &Function,
+        arguments: &[Value],
+    ) -> Result<(), InterpreterError> {
+        for (index, traits) in &func.param_bounds {
+            if let Some(arg) = arguments.get(*index) {
+                let type_name = arg.type_name();
+                for trait_name in traits {
+                    if !self.type_implements(&type_name, trait_name) {
+                        let fn_name = func.name.as_deref().unwrap_or("<lambda>");
+                        return Err(InterpreterError::TypeError {
+                            message: format!(
+                                "{}: argument {} of type {} does not implement trait {}",
+                                fn_name,
+                                index + 1,
+                                type_name,
+                                trait_name
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Resolve a method for `type_name`: a concrete impl first, then any
@@ -1067,11 +1146,18 @@ impl Interpreter {
             &param_names,
         );
 
+        // Resolve trait bounds to parameter positions: a parameter annotated
+        // with a bounded type variable (`x: T` where `T: Show`) records
+        // (index, required traits), checked against the argument at call time.
+        let param_bounds =
+            Self::resolve_param_bounds(&func_decl.type_param_bounds, &func_decl.parameters);
+
         let function = Function {
             name: Some(func_decl.name.clone()),
             parameters: func_decl.parameters,
             body: Arc::new(resolved_body),
             closure: Arc::new(closure),
+            param_bounds,
         };
 
         // Let the bytecode tier know this function exists, so a promoted
@@ -1188,6 +1274,7 @@ impl Interpreter {
                     parameters: parameters.clone(),
                     body: Arc::new(resolved_body),
                     closure: Arc::new(closure),
+                    param_bounds: Vec::new(),
                 }))
             }
             Expr::Pipeline { left, right } => {
@@ -1503,6 +1590,7 @@ impl Interpreter {
                     parameters: parameters.clone(),
                     body: Arc::new((**body).clone()),
                     closure: Arc::new(closure),
+                    param_bounds: Vec::new(),
                 };
 
                 // Return a function that when called returns a promise
@@ -1825,6 +1913,7 @@ impl Interpreter {
             parameters: async_func_decl.parameters,
             body: Arc::new(async_func_decl.body),
             closure: Arc::new(closure),
+            param_bounds: Vec::new(),
         };
 
         let function_value = Value::Function(function);
@@ -1893,6 +1982,13 @@ impl Interpreter {
                         expected: func.parameters.len(),
                         got: arguments.len(),
                     });
+                }
+
+                // Enforce trait bounds at the call boundary: an argument whose
+                // type does not implement a bounded parameter's trait fails
+                // here with a clear message, not deep inside the body.
+                if !func.param_bounds.is_empty() {
+                    self.check_param_bounds(&func, &arguments)?;
                 }
 
                 // Hot-function promotion: run on the bytecode tier when the

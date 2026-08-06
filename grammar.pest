@@ -81,7 +81,8 @@ async_function_decl = { "async" ~ "fn" ~ identifier ~ type_params? ~ "(" ~ param
 trait_decl  = { "trait" ~ identifier ~ "{" ~ trait_method* ~ "}" }
 trait_method = { "fn" ~ identifier ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ ("=" ~ expr)? }
 impl_decl   = { "impl" ~ identifier ~ "for" ~ identifier ~ "{" ~ function_decl* ~ "}" }
-type_params  = { "<" ~ identifier ~ ("," ~ identifier)* ~ ">" }
+type_params  = { "<" ~ type_param ~ ("," ~ type_param)* ~ ">" }
+type_param   = { identifier ~ (":" ~ identifier ~ ("+" ~ identifier)*)? }
 param_list   = { parameter ~ ("," ~ parameter)* }
 parameter    = { identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
 
