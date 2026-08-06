@@ -494,9 +494,47 @@ impl Repl {
         })
     }
 
+    /// If the working directory is inside a package, resolve its dependencies
+    /// and hand the interpreter the map so `use <dep>` works in the REPL.
+    /// Returns the package name when one was loaded. Called at startup and
+    /// after `:cd`, since packages are resolved relative to the directory.
+    fn load_packages(&mut self) -> Option<String> {
+        let cwd = std::env::current_dir().ok()?;
+        let root = crate::pkg::manifest::Manifest::find_root(&cwd)?;
+        let name = crate::pkg::manifest::Manifest::load(&root)
+            .ok()
+            .map(|m| m.package.name);
+        let opts = crate::pkg::InstallOptions {
+            registry: std::env::var("OLANG_REGISTRY")
+                .ok()
+                .map(std::path::PathBuf::from),
+            ..Default::default()
+        };
+        match crate::pkg::install(&root, &opts) {
+            Ok(map) => {
+                let map: std::collections::HashMap<_, _> = map.into_iter().collect();
+                // Set the REPL's file context to the package root so relative
+                // `use` of sibling modules also resolves.
+                self.interpreter.set_current_file(&root.join("olang.toml"));
+                self.interpreter.set_dependency_map(map);
+                name
+            }
+            Err(e) => {
+                eprintln!("{}: {}", "package resolution".bright_yellow(), e);
+                None
+            }
+        }
+    }
+
     pub fn run(&mut self) -> Result<(), ReplError> {
         println!("Olang v{}", VERSION);
         println!("Type ':help' for help or 'quit' to exit");
+        if let Some(pkg) = self.load_packages() {
+            println!(
+                "Package '{}' loaded — its dependencies are available via `use`",
+                pkg.bright_green()
+            );
+        }
         println!();
 
         loop {
@@ -709,6 +747,10 @@ impl Repl {
                 if let Ok(cwd) = std::env::current_dir() {
                     println!("{}", cwd.display().to_string().bright_cyan());
                 }
+                // The package context is directory-relative, so re-resolve.
+                if let Some(pkg) = self.load_packages() {
+                    println!("Package '{}' loaded", pkg.bright_green());
+                }
             }
             Err(e) => eprintln!("cd: {}: {}", expanded, e),
         }
@@ -796,6 +838,22 @@ impl Repl {
             ":ls" => {
                 let args = command[":ls".len()..].trim();
                 self.run_shell_command(&format!("ls {}", args));
+            }
+
+            ":pkg" => {
+                // Re-resolve the current directory's package (after editing
+                // olang.toml, or to see what's loaded).
+                match self.load_packages() {
+                    Some(name) => println!(
+                        "Package '{}' loaded — dependencies available via `use`",
+                        name.bright_green()
+                    ),
+                    None => println!(
+                        "{}",
+                        "No package here. Run this REPL from a directory with an olang.toml."
+                            .bright_yellow()
+                    ),
+                }
             }
 
             ":env" => {

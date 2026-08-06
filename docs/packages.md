@@ -73,6 +73,28 @@ Running a file inside a package resolves dependencies automatically — `olang
 main.ol` reads `olang.toml`, installs, and runs — so `otc pkg install` is
 mainly for pre-fetching and inspecting the lock.
 
+## In the REPL
+
+Start `olang` from a directory inside a package (one containing an
+`olang.toml`, or any subdirectory of it) and the REPL resolves its
+dependencies automatically:
+
+```
+$ cd examples/packages/demo
+$ olang
+Olang v0.25.0
+Package 'demo' loaded — its dependencies are available via `use`
+
+olang> use geometry { circle, area }
+olang> area(circle(2.0))
+12.5663706
+```
+
+A `use` still binds the names — the package context just makes it
+resolvable. `:cd` into another package re-resolves; `:pkg` re-resolves the
+current one (after editing `olang.toml`) or reports that there is no
+package here.
+
 ## The lockfile
 
 `olang.lock` pins every dependency exactly — a git commit SHA, a resolved
