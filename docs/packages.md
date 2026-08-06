@@ -95,6 +95,10 @@ resolvable. `:cd` into another package re-resolves; `:pkg` re-resolves the
 current one (after editing `olang.toml`) or reports that there is no
 package here.
 
+A package is also referable by its own name from within itself, so you can
+test a package in its own REPL — `use geometry { circle }` works from
+inside the `geometry` package, not only from a package that depends on it.
+
 ## The lockfile
 
 `olang.lock` pins every dependency exactly — a git commit SHA, a resolved

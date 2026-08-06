@@ -512,7 +512,13 @@ impl Repl {
         };
         match crate::pkg::install(&root, &opts) {
             Ok(map) => {
-                let map: std::collections::HashMap<_, _> = map.into_iter().collect();
+                let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
+                // Make the current package referable by its own name, so you
+                // can test a package in its own REPL (`use geometry { ... }`
+                // from inside geometry resolves to its own root module).
+                if let Some(pkg_name) = &name {
+                    map.entry(pkg_name.clone()).or_insert_with(|| root.clone());
+                }
                 // Set the REPL's file context to the package root so relative
                 // `use` of sibling modules also resolves.
                 self.interpreter.set_current_file(&root.join("olang.toml"));

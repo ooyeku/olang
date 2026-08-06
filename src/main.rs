@@ -492,7 +492,13 @@ fn execute_file(
         };
         match olang::pkg::install(&root, &opts) {
             Ok(map) => {
-                let map: std::collections::HashMap<_, _> = map.into_iter().collect();
+                let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
+                // A package is referable by its own name from within itself,
+                // so a single-file package can `use <own_name> { ... }`.
+                if let Ok(manifest) = olang::pkg::manifest::Manifest::load(&root) {
+                    map.entry(manifest.package.name)
+                        .or_insert_with(|| root.clone());
+                }
                 interpreter.set_dependency_map(map);
             }
             Err(e) => {
