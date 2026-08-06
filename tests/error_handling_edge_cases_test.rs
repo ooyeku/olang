@@ -316,12 +316,15 @@ fn test_parser_error_recovery() {
     let parser = Parser::new();
 
     // Test invalid syntax recovery
+    // Note: trailing commas in collections (e.g. `[1, 2, 3,]`) are now
+    // *valid*, consistent with maps, structs, and enums — so they are not
+    // listed here. These are genuinely malformed.
     let invalid_sources = vec![
         "let x = ;",
         "fn (x) = x",
         "match { 1 => }",
         "if => true",
-        "[1, 2, 3,]",
+        "[1, 2, 3,,]",
         "{ x: 1, y: }",
     ];
 

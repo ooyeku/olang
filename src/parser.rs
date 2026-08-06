@@ -3176,9 +3176,17 @@ impl Parser {
             }
         }
 
-        let list_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing item list in use".to_string(),
-        })?;
+        // No `{ ... }` means "import everything the package shares" — a bare
+        // `use foo` is sugar for `use foo { * }`.
+        let list_pair = match pairs.next() {
+            Some(p) => p,
+            None => {
+                return Ok(UseDecl {
+                    path,
+                    items: vec![crate::ast::UseItem::Wildcard],
+                });
+            }
+        };
         let mut items = Vec::new();
         for item in list_pair.into_inner() {
             if item.as_rule() == Rule::use_item {

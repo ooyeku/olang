@@ -1,7 +1,8 @@
 // Olang Grammar Definition
 // Supports functions, pipelines, pattern matching, and minimal syntax
 
-WHITESPACE  = _{ " " | "\t" | NEWLINE }
+WHITESPACE  = _{ " " | "\t" }
+NL          = _{ NEWLINE | COMMENT }
 NEWLINE     = _{ "\n" | "\r\n" }
 COMMENT     = _{ "//" ~ (!NEWLINE ~ ANY)* }
 
@@ -31,16 +32,16 @@ hex         = @{ ("+" | "-")? ~ "0x" ~ ASCII_HEX_DIGIT+ ~ ("_" ~ ASCII_HEX_DIGIT
 number      = { float | binary | octal | hex | integer }
 
 // Lists and tuples
-list        = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
-tuple       = { "(" ~ expr ~ "," ~ expr ~ ("," ~ expr)* ~ ")" }
+list        = { "[" ~ NL* ~ (expr ~ (NL* ~ "," ~ NL* ~ expr)* ~ NL* ~ ","? ~ NL*)? ~ "]" }
+tuple       = { "(" ~ NL* ~ expr ~ NL* ~ "," ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ expr)* ~ NL* ~ ")" }
 
 // Program structure - Put share_decl and use_decl BEFORE expr to ensure they are matched first
-program     = { SOI ~ (statement ~ ";"?)* ~ EOI }
+program     = { SOI ~ NL* ~ (statement ~ (";" | NL)* )* ~ EOI }
 statement   = { share_decl | use_decl | test_decl | error_type_decl | trait_decl | impl_decl | type_decl | let_decl | async_function_decl | function_decl | expr }
 
 // Share and use declarations - defined EARLY to get precedence
 share_decl = { "share" ~ (use_decl | function_decl | let_decl | type_decl) }
-use_decl = { "use" ~ use_path ~ "{" ~ use_list ~ "}" }
+use_decl = { "use" ~ use_path ~ ("{" ~ NL* ~ use_list ~ NL* ~ "}")? }
 use_path = { identifier ~ ("." ~ identifier)* }
 use_list = { use_item ~ ("," ~ use_item)* }
 use_item = { wildcard | identifier }
@@ -48,7 +49,7 @@ wildcard = { "*" }
 
 // Test declarations
 test_decl = { "test" ~ string ~ test_block }
-test_block = { "{" ~ (test_statement ~ ";"?)* ~ "}" }
+test_block = { "{" ~ NL* ~ (test_statement ~ (";" | NL)* )* ~ "}" }
 test_statement = { assertion | statement }
 assertion = { assert_eq | assert_ne | assert | assert_true | assert_false }
 assert_eq = { "assert_eq" ~ "(" ~ expr ~ "," ~ expr ~ ("," ~ string)? ~ ")" }
@@ -59,7 +60,7 @@ assert_false = { "assert_false" ~ "(" ~ expr ~ ("," ~ string)? ~ ")" }
 
 // Error type declaration (enum-like with variants)
 error_type_decl = { "error" ~ identifier ~ "{" ~ error_variant_list? ~ "}" }
-error_variant_list = { error_variant ~ ("," ~ error_variant)* ~ ","? }
+error_variant_list = { NL* ~ error_variant ~ (NL* ~ "," ~ NL* ~ error_variant)* ~ NL* ~ ","? ~ NL* }
 error_variant = { identifier ~ (":" ~ (unit_type | ("{" ~ struct_field_list ~ "}")))? }
 
 // Type declarations
@@ -67,27 +68,27 @@ type_decl   = { "type" ~ identifier ~ type_params? ~ "=" ~ type_definition }
 type_definition = { union_type_def | struct_def | enum_def }
 union_type_def = { type_annotation ~ ("|" ~ type_annotation)+ }
 struct_def  = { "struct" ~ "{" ~ struct_field_list? ~ "}" }
-struct_field_list = { struct_field ~ ("," ~ struct_field)* ~ ","? }
+struct_field_list = { NL* ~ struct_field ~ (NL* ~ "," ~ NL* ~ struct_field)* ~ NL* ~ ","? ~ NL* }
 struct_field = { identifier ~ ":" ~ type_annotation }
 enum_def    = { "enum" ~ "{" ~ enum_variant_list? ~ "}" }
-enum_variant_list = { enum_variant ~ ("," ~ enum_variant)* ~ ","? }
+enum_variant_list = { NL* ~ enum_variant ~ (NL* ~ "," ~ NL* ~ enum_variant)* ~ NL* ~ ","? ~ NL* }
 enum_variant = { identifier ~ (("(" ~ type_annotation ~ ("," ~ type_annotation)* ~ ")") | ("{" ~ struct_field_list ~ "}"))? }
 
 // Function declarations
-function_decl = { "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ expr }
-async_function_decl = { "async" ~ "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ expr }
+function_decl = { "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ NL* ~ expr }
+async_function_decl = { "async" ~ "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ NL* ~ expr }
 
 // Traits (runtime-dispatched interfaces) and their implementations
-trait_decl  = { "trait" ~ identifier ~ "{" ~ trait_method* ~ "}" }
-trait_method = { "fn" ~ identifier ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ ("=" ~ expr)? }
-impl_decl   = { "impl" ~ identifier ~ "for" ~ identifier ~ "{" ~ function_decl* ~ "}" }
+trait_decl  = { "trait" ~ identifier ~ "{" ~ NL* ~ (trait_method ~ NL*)* ~ "}" }
+trait_method = { "fn" ~ identifier ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ ("=" ~ NL* ~ expr)? }
+impl_decl   = { "impl" ~ identifier ~ "for" ~ identifier ~ "{" ~ NL* ~ (function_decl ~ NL*)* ~ "}" }
 type_params  = { "<" ~ type_param ~ ("," ~ type_param)* ~ ">" }
 type_param   = { identifier ~ (":" ~ identifier ~ ("+" ~ identifier)*)? }
-param_list   = { parameter ~ ("," ~ parameter)* }
+param_list   = { NL* ~ parameter ~ (NL* ~ "," ~ NL* ~ parameter)* ~ NL* }
 parameter    = { identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
 
 // Variable declarations
-let_decl    = { "let" ~ pattern ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
+let_decl    = { "let" ~ pattern ~ (":" ~ type_annotation)? ~ ("=" ~ NL* ~ expr)? }
 
 // Expression hierarchy (with proper operator precedence)
 expr        = { assignment_expr | for_loop | while_loop | loop_expr | break_expr | continue_expr | binary_expr }
@@ -100,13 +101,13 @@ comp_op       = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
 range_op      = { "..=" | ".." }
 unary_op      = { "-" | "!" }
 
-binary_expr   = { comparison_expr ~ (bool_op ~ comparison_expr)* }
-comparison_expr = { additive_expr ~ (comp_op ~ additive_expr)* }
-additive_expr = { multiplicative_expr ~ (add_op ~ multiplicative_expr)* }
-multiplicative_expr = { bitwise_expr ~ (mul_op ~ bitwise_expr)* }
-bitwise_expr = { pipe_expr ~ (bitwise_op ~ pipe_expr)* }
+binary_expr   = { comparison_expr ~ (NL* ~ bool_op ~ NL* ~ comparison_expr)* }
+comparison_expr = { additive_expr ~ (NL* ~ comp_op ~ NL* ~ additive_expr)* }
+additive_expr = { multiplicative_expr ~ (NL* ~ add_op ~ NL* ~ multiplicative_expr)* }
+multiplicative_expr = { bitwise_expr ~ (NL* ~ mul_op ~ NL* ~ bitwise_expr)* }
+bitwise_expr = { pipe_expr ~ (NL* ~ bitwise_op ~ NL* ~ pipe_expr)* }
 pipe_op       = { "|>" }
-pipe_expr     = { range_expr ~ (pipe_op ~ range_expr)* }
+pipe_expr     = { range_expr ~ (NL* ~ pipe_op ~ NL* ~ range_expr)* }
 range_expr    = { unary_expr ~ (range_op ~ unary_expr)? }
 unary_expr    = { unary_op* ~ call_expr }
 call_expr   = { primary ~ ( function_call | ("." ~ identifier) | ("[" ~ expr ~ "]") | postfix_op )* }
@@ -115,7 +116,7 @@ call_expr   = { primary ~ ( function_call | ("." ~ identifier) | ("[" ~ expr ~ "
 function_call = { "(" ~ arg_list? ~ ")" }
 
 // Function call arguments (different from tuple literals)
-arg_list = { argument ~ ("," ~ argument)* }
+arg_list = { NL* ~ argument ~ (NL* ~ "," ~ NL* ~ argument)* ~ NL* }
 argument = { named_arg | positional_arg }
 positional_arg = { expr }
 named_arg = { identifier ~ ":" ~ expr }
@@ -130,7 +131,7 @@ postfix_op = { "?" }
 primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | anonymous_object | map_literal | literal | identifier | "(" ~ expr ~ ")" | block }
 
 // Lambda functions
-lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ (block | expr) }
+lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ NL* ~ (block | expr) }
 
 // Async expressions
 async_expr  = { "async" ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ (block | expr) }
@@ -146,8 +147,8 @@ race_expr   = { "Promise" ~ "." ~ "race" ~ "(" ~ "[" ~ arg_list? ~ "]" ~ ")" }
 spawn_expr  = { "spawn" ~ call_expr }
 
 // Pattern matching
-match_expr  = { "match" ~ expr ~ "{" ~ match_arm+ ~ "}" }
-match_arm   = { pattern ~ ("if" ~ expr)? ~ "=>" ~ expr ~ (","?) }
+match_expr  = { "match" ~ expr ~ "{" ~ NL* ~ match_arm+ ~ "}" }
+match_arm   = { pattern ~ ("if" ~ expr)? ~ "=>" ~ NL* ~ expr ~ NL* ~ ","? ~ NL* }
 pattern     = { or_pattern }
 or_pattern  = { base_pattern ~ ("|" ~ base_pattern)* }
 base_pattern = { range_pattern | result_pattern | struct_pattern | anonymous_struct_pattern | integer | string | boolean | pattern_wildcard | list_pattern | tuple_pattern | enum_variant_pattern | identifier }
@@ -156,19 +157,19 @@ result_pattern = { "Ok" ~ "(" ~ pattern ~ ")" | "Err" ~ "(" ~ pattern ~ ")" }
 enum_variant_pattern = { identifier ~ "(" ~ pattern ~ ("," ~ pattern)* ~ ")" }
 struct_pattern = { identifier ~ "{" ~ struct_pattern_fields? ~ "}" }
 anonymous_struct_pattern = { "{" ~ struct_pattern_fields? ~ "}" }
-struct_pattern_fields = { struct_pattern_field ~ ("," ~ struct_pattern_field)* ~ ","? }
+struct_pattern_fields = { NL* ~ struct_pattern_field ~ (NL* ~ "," ~ NL* ~ struct_pattern_field)* ~ NL* ~ ","? ~ NL* }
 struct_pattern_field = { (identifier ~ ":" ~ pattern) | identifier }
 rest_pattern = { "..." ~ identifier }
-list_pattern = { "[" ~ list_pattern_inner? ~ "]" }
+list_pattern = { "[" ~ NL* ~ list_pattern_inner? ~ NL* ~ "]" }
 list_pattern_inner = { (pattern ~ ("," ~ pattern)* ~ ("," ~ rest_pattern)?) | rest_pattern }
 tuple_pattern = { "(" ~ pattern ~ "," ~ pattern ~ ("," ~ pattern)* ~ ")" }
 pattern_wildcard    = { "_" }
 
 // Blocks and control flow
-block       = { "{" ~ (statement ~ ";"?)* ~ "}" }
+block       = { "{" ~ NL* ~ (statement ~ (";" | NL)* )* ~ "}" }
 
 // Conditionals
-if_expr     = { "if" ~ expr ~ "=>" ~ (block | expr) ~ ("else" ~ "=>" ~ (block | expr))? }
+if_expr     = { "if" ~ expr ~ "=>" ~ NL* ~ (block | expr) ~ (NL* ~ "else" ~ "=>" ~ NL* ~ (block | expr))? }
 
 // Literals
 literal     = { float | binary | octal | hex | integer | char_literal | raw_string | template_string | string | boolean | list | tuple }
@@ -197,12 +198,12 @@ literal_type = { string | integer | boolean }
 // Struct expressions
 struct_literal = { identifier ~ "{" ~ field_value_list? ~ "}" }
 anonymous_object = { "{" ~ field_value_list? ~ "}" }
-field_value_list = { field_value ~ ("," ~ field_value)* ~ ","? }
+field_value_list = { NL* ~ field_value ~ (NL* ~ "," ~ NL* ~ field_value)* ~ NL* ~ ","? ~ NL* }
 field_value = { identifier ~ ":" ~ expr }
 
 // Map literals
 map_literal = { "#{" ~ map_entry_list? ~ "}" }
-map_entry_list = { map_entry ~ ("," ~ map_entry)* ~ ","? }
+map_entry_list = { NL* ~ map_entry ~ (NL* ~ "," ~ NL* ~ map_entry)* ~ NL* ~ ","? ~ NL* }
 map_entry = { expr ~ ":" ~ expr }
 
 // Loop constructs

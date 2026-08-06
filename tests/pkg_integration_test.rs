@@ -269,3 +269,25 @@ fn wildcard_import_binds_all_exports() {
 
     let _ = fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn bare_use_imports_all_exports() {
+    // `use pkg` with no braces is sugar for `use pkg { * }`.
+    let ws = workspace("bareuse");
+    let app = scaffold(&ws); // mathlib exports square and cube
+    let map = install(&app, &InstallOptions::default())
+        .unwrap()
+        .into_iter()
+        .collect();
+    let program = Parser::new()
+        .parse("use mathlib\nsquare(3) + cube(2)")
+        .unwrap();
+    let mut interp = Interpreter::new();
+    interp.set_current_file(&app.join("main.ol"));
+    interp.set_dependency_map(map);
+    assert_eq!(
+        interp.eval_program(program).unwrap(),
+        olang::Value::Integer(9 + 8)
+    );
+    let _ = fs::remove_dir_all(&ws);
+}

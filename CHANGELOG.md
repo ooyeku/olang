@@ -10,6 +10,18 @@ documented.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Newlines now separate statements.** Previously a newline was plain
+  whitespace, so a parenthesized expression on the line after a statement
+  attached as a call to the previous value — `let a = [1,2]` then `(a, a)`
+  parsed as `[1,2](a, a)`, breaking tuple returns and any bare `(...)`
+  statement. Newlines are now statement separators, admitted explicitly at
+  continuation points (operator chains, pipelines, bracketed lists, match
+  arms, bodies after `=`), so multi-line pipelines and calls are unchanged.
+  Trailing commas in list literals are now allowed too, consistent with
+  maps/structs/enums.
+
 ### Added
 
 - **Package manager.** olang projects are now packages: an `olang.toml`

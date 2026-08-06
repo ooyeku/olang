@@ -114,8 +114,8 @@ available. (Running a *file* needs no such step: `olang path/to/main.ol`
 resolves that file's package from anywhere, regardless of your directory.)
 
 An import lists what it binds: `use geometry { circle, area }` brings in
-only those two names; `use geometry { * }` imports everything the package
-`share`s.
+only those two names; `use geometry { * }` (or bare `use geometry`) imports
+everything the package `share`s.
 
 ## The lockfile
 
