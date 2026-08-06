@@ -535,6 +535,7 @@ Check out the `examples/` directory for comprehensive sample programs demonstrat
 - [Syntax Reference](docs/syntax.md) - Complete language syntax
 - [OVM Architecture](docs/ovm.md) - Execution tiers, the bytecode VM, measured
   performance, and current limitations
+- [Packages](docs/packages.md) - Manifest, dependencies, lockfile, registry
 
 Installation instructions are in [Installation](#installation) above.
 - [Standard Library](docs/stdlib.md) - API reference for all modules 

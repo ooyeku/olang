@@ -19,6 +19,7 @@ pub mod log;
 pub mod ovm; // Bytecode execution tier
 pub mod parallel;
 pub mod parser;
+pub mod pkg;
 pub mod repl;
 pub mod resolve;
 pub mod stdlib;

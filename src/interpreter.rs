@@ -773,6 +773,12 @@ pub struct Interpreter {
     /// Which traits each type implements, so a type can reach its trait's
     /// default methods: type name -> set of trait names.
     type_traits: HashMap<String, Vec<String>>,
+
+    /// Package dependency map: dependency name -> the directory whose `.ol`
+    /// files it exposes. A `use foo.bar` whose first segment is a dependency
+    /// name resolves inside that directory rather than relative to the
+    /// current file. Populated by the package manager before execution.
+    dependency_map: HashMap<String, std::path::PathBuf>,
 }
 
 impl Default for Interpreter {
@@ -827,6 +833,7 @@ impl Interpreter {
             trait_impls: HashMap::new(),
             trait_defaults: HashMap::new(),
             type_traits: HashMap::new(),
+            dependency_map: HashMap::new(),
         };
 
         // Register built-in functions
@@ -2136,6 +2143,7 @@ impl Interpreter {
             trait_impls: self.trait_impls.clone(),
             trait_defaults: self.trait_defaults.clone(),
             type_traits: self.type_traits.clone(),
+            dependency_map: self.dependency_map.clone(),
         }
     }
 
@@ -4226,6 +4234,18 @@ impl Interpreter {
             );
         }
 
+        // Package dependencies win first: `use foo.bar` where `foo` is a
+        // declared dependency resolves inside that dependency's directory.
+        if let Ok(path) = self.discover_module_dependency(module_path) {
+            if debug_config.enable_resolution_tracing {
+                crate::log::get_logger().debug(
+                    "interpreter",
+                    &format!("Found in dependency: {}", path.display()),
+                );
+            }
+            return Ok(path);
+        }
+
         // Try discovery algorithms in order of priority
         if let Ok(path) = self.discover_module_same_directory(module_path) {
             if debug_config.enable_resolution_tracing {
@@ -4259,6 +4279,58 @@ impl Interpreter {
 
         // Enhanced error with discovery information
         self.create_module_not_found_error(module_path, &debug_config)
+    }
+
+    /// Install the package dependency map (name -> source directory), so
+    /// `use` paths rooted at a dependency name resolve inside it.
+    pub fn set_dependency_map(&mut self, map: HashMap<String, std::path::PathBuf>) {
+        self.dependency_map = map;
+    }
+
+    /// If the first segment of the module path is a declared dependency,
+    /// resolve the remaining path inside that dependency's directory. A bare
+    /// `use foo` resolves to the dependency's package root (its index.ol,
+    /// mod.ol, or foo.ol).
+    fn discover_module_dependency(
+        &mut self,
+        module_path: &str,
+    ) -> Result<std::path::PathBuf, InterpreterError> {
+        let mut parts = module_path.split('.');
+        let head = parts.next().unwrap_or("");
+        let dep_dir = self.dependency_map.get(head).cloned().ok_or_else(|| {
+            InterpreterError::RuntimeError {
+                message: format!("'{}' is not a dependency", head),
+            }
+        })?;
+
+        let rest: Vec<&str> = parts.collect();
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        if rest.is_empty() {
+            // `use foo` -> the package's public root
+            candidates.push(dep_dir.join("index.ol"));
+            candidates.push(dep_dir.join("mod.ol"));
+            candidates.push(dep_dir.join(format!("{}.ol", head)));
+            candidates.push(dep_dir.join("src").join("index.ol"));
+        } else {
+            // `use foo.bar.baz` -> foo/{bar/baz.ol, bar/baz/index.ol}
+            let sub = rest.join("/");
+            candidates.push(dep_dir.join(format!("{}.ol", sub)));
+            candidates.push(dep_dir.join(&sub).join("index.ol"));
+            candidates.push(dep_dir.join(&sub).join("mod.ol"));
+            candidates.push(dep_dir.join("src").join(format!("{}.ol", sub)));
+        }
+
+        for candidate in candidates {
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+        Err(InterpreterError::RuntimeError {
+            message: format!(
+                "module '{}' not found in dependency '{}'",
+                module_path, head
+            ),
+        })
     }
 
     /// 1. Check same directory as current file

@@ -857,6 +857,10 @@ use utils.math { add, subtract };
 use utils.string { join, split };
 ```
 
+
+For dependencies on other packages (path, git, or registry), see
+[Packages](packages.md).
+
 ## Error Handling
 
 ### Result Types

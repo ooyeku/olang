@@ -5,6 +5,7 @@ pub mod install;
 pub mod new;
 pub mod organize;
 pub mod ovm;
+pub mod pkg;
 pub mod refactor;
 pub mod repl;
 pub mod run;

@@ -479,6 +479,30 @@ fn execute_file(
     // Set file context for proper module resolution
     interpreter.set_current_file(&absolute_path);
 
+    // If the file lives in a package (an olang.toml is found by walking up),
+    // resolve its dependencies and hand the interpreter the dependency map so
+    // `use <dep>` paths resolve. Path and cached-git deps are cheap; a missing
+    // dependency surfaces when the `use` is evaluated, not here.
+    if let Some(root) = olang::pkg::manifest::Manifest::find_root(&absolute_path) {
+        let opts = olang::pkg::InstallOptions {
+            registry: std::env::var("OLANG_REGISTRY")
+                .ok()
+                .map(std::path::PathBuf::from),
+            ..Default::default()
+        };
+        match olang::pkg::install(&root, &opts) {
+            Ok(map) => {
+                let map: std::collections::HashMap<_, _> = map.into_iter().collect();
+                interpreter.set_dependency_map(map);
+            }
+            Err(e) => {
+                if verbose {
+                    logger.warn("main", &format!("package resolution: {}", e));
+                }
+            }
+        }
+    }
+
     match parser.parse(&source) {
         Ok(ast) => match interpreter.eval_program(ast) {
             Ok(result) => {

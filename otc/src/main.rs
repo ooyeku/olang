@@ -84,6 +84,9 @@ enum Commands {
         #[arg(short, long, default_value = ".")]
         dir: String,
     },
+    /// Manage packages (dependencies, lockfile, registry)
+    #[command(subcommand)]
+    Pkg(commands::pkg::PkgCommand),
     /// Visualize project structure
     Tree {
         /// Directory to visualize (default: current directory)
@@ -299,6 +302,7 @@ fn main() {
         Commands::Ovm(ovm_cmd) => ovm_cmd.execute(),
         Commands::Deps { file } => commands::deps::execute(file, verbose),
         Commands::Unused { dir } => commands::unused::execute(dir, verbose),
+        Commands::Pkg(cmd) => cmd.execute(verbose),
         Commands::Tree { dir } => commands::tree::execute(dir, verbose),
         Commands::Organize { dir } => commands::organize::execute(dir, verbose),
         Commands::MoveFn { function, from, to } => {

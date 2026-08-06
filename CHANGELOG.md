@@ -12,6 +12,26 @@ documented.
 
 ### Added
 
+- **Package manager.** olang projects are now packages: an `olang.toml`
+  manifest plus a directory of `.ol` files. Dependencies come as source in
+  three forms — local `path`, `git` (tag/rev/branch), and registry version
+  requirements — and resolve through the same `use` mechanism as local
+  modules (a `use` whose first segment is a dependency name resolves inside
+  that dependency). `otc pkg` gains `init`, `add`, `remove`, `install`,
+  `tree`, and `publish`. Running a file inside a package resolves its
+  dependencies automatically.
+  - **Lockfile** (`olang.lock`) pins every dependency exactly (git SHA /
+    registry version / path) with a sha256 source checksum; `--frozen`
+    fails CI if resolution would drift.
+  - **Version resolution** uses Minimal Version Selection (Go-modules
+    style): the lowest version satisfying every requirement across the
+    graph — reproducible, no backtracking, explicit upgrades.
+  - **Registry** is a git repo of TOML index entries (name@version -> git
+    source + checksum); no hosted service required. Fetched sources are
+    content-addressed by commit under `~/.olang/cache`.
+  - New `pkg` module in the library (`manifest`, `lock`, `cache`,
+    `registry`, `resolver`) and `OLANG_REGISTRY` / `OLANG_CACHE` env vars.
+
 - **Trait bounds.** A generic function can constrain its type parameters:
   `fn describe<T: Show>(item: T)` accepts only arguments whose type
   implements `Show`, checked at the call boundary — a value that doesn't

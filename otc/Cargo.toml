@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/ooyeku/olang"
 
 [dependencies]
+semver = "1.0"
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 olang = { path = ".." }
