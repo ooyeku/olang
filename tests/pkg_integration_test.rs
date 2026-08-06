@@ -178,3 +178,94 @@ fn shared_functions_can_call_private_helpers() {
 
     let _ = fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn a_package_is_referable_by_its_own_name() {
+    // Regression: running inside a package and doing `use <that package>`
+    // must resolve to its own root module. The binaries add the package's
+    // own name -> its root to the dependency map; this verifies that a map
+    // entry pointing a name at the package directory makes `use name` work.
+    let ws = workspace("selfref");
+    write(
+        &ws.join("geometry/olang.toml"),
+        "[package]\nname = \"geometry\"\nversion = \"1.0.0\"\n",
+    );
+    write(
+        &ws.join("geometry/index.ol"),
+        "share fn circle(r) = { kind: \"circle\", r: r }\nshare fn area(s) = 3.0 * s.r * s.r\n",
+    );
+    let geo = ws.join("geometry");
+
+    // Simulate the binary's self-entry: geometry -> its own directory.
+    let mut map = std::collections::HashMap::new();
+    map.insert("geometry".to_string(), geo.clone());
+
+    let program = Parser::new()
+        .parse("use geometry { circle, area }\narea(circle(2.0))")
+        .unwrap();
+    let mut interp = Interpreter::new();
+    interp.set_current_file(&geo.join("olang.toml"));
+    interp.set_dependency_map(map);
+    assert_eq!(
+        interp.eval_program(program).unwrap(),
+        olang::Value::Float(12.0)
+    );
+
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn a_package_loaded_by_path_resolves_from_anywhere() {
+    // Regression: a package made available by an arbitrary path (as `:pkg
+    // load <path>` does) is usable without being in its directory. The
+    // resolution layer only needs the name -> directory mapping.
+    let ws = workspace("bypath");
+    write(
+        &ws.join("faraway/lib/olang.toml"),
+        "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n",
+    );
+    write(&ws.join("faraway/lib/index.ol"), "share fn answer() = 42\n");
+
+    // The current file is somewhere unrelated; only the map connects them.
+    let elsewhere = ws.join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    let mut map = std::collections::HashMap::new();
+    map.insert("lib".to_string(), ws.join("faraway/lib"));
+
+    let program = Parser::new().parse("use lib { answer }\nanswer()").unwrap();
+    let mut interp = Interpreter::new();
+    interp.set_current_file(&elsewhere.join("scratch.ol"));
+    interp.set_dependency_map(map);
+    assert_eq!(
+        interp.eval_program(program).unwrap(),
+        olang::Value::Integer(42)
+    );
+
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn wildcard_import_binds_all_exports() {
+    // `use pkg { * }` imports everything the package shares, unlike a
+    // selective `use pkg { a, b }`.
+    let ws = workspace("wildcard");
+    let app = scaffold(&ws); // mathlib exports square and cube
+
+    let map = install(&app, &InstallOptions::default())
+        .unwrap()
+        .into_iter()
+        .collect();
+    // Only square is named explicitly nowhere — the wildcard must bring both.
+    let program = Parser::new()
+        .parse("use mathlib { * }\nsquare(2) + cube(2)")
+        .unwrap();
+    let mut interp = Interpreter::new();
+    interp.set_current_file(&app.join("main.ol"));
+    interp.set_dependency_map(map);
+    assert_eq!(
+        interp.eval_program(program).unwrap(),
+        olang::Value::Integer(4 + 8)
+    );
+
+    let _ = fs::remove_dir_all(&ws);
+}

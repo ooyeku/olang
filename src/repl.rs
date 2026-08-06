@@ -501,7 +501,17 @@ impl Repl {
     fn load_packages(&mut self) -> Option<String> {
         let cwd = std::env::current_dir().ok()?;
         let root = crate::pkg::manifest::Manifest::find_root(&cwd)?;
-        let name = crate::pkg::manifest::Manifest::load(&root)
+        // Startup / :cd sets a fresh context (replace the map).
+        self.load_package_at(&root, true)
+    }
+
+    /// Resolve the package rooted at `root`, add it (and its dependencies, and
+    /// itself by name) to the interpreter's dependency map. `replace` clears
+    /// the existing map first (a fresh context, for startup/:cd); otherwise
+    /// the package is merged in, so `:pkg load <path>` is additive and you can
+    /// pull in packages by path without cd-ing into them.
+    fn load_package_at(&mut self, root: &std::path::Path, replace: bool) -> Option<String> {
+        let name = crate::pkg::manifest::Manifest::load(root)
             .ok()
             .map(|m| m.package.name);
         let opts = crate::pkg::InstallOptions {
@@ -510,19 +520,24 @@ impl Repl {
                 .map(std::path::PathBuf::from),
             ..Default::default()
         };
-        match crate::pkg::install(&root, &opts) {
+        match crate::pkg::install(root, &opts) {
             Ok(map) => {
                 let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
-                // Make the current package referable by its own name, so you
-                // can test a package in its own REPL (`use geometry { ... }`
-                // from inside geometry resolves to its own root module).
+                // Make the package referable by its own name, so you can test a
+                // package in its own REPL (`use geometry { ... }` from inside
+                // geometry resolves to its own root module).
                 if let Some(pkg_name) = &name {
-                    map.entry(pkg_name.clone()).or_insert_with(|| root.clone());
+                    map.entry(pkg_name.clone())
+                        .or_insert_with(|| root.to_path_buf());
                 }
-                // Set the REPL's file context to the package root so relative
-                // `use` of sibling modules also resolves.
-                self.interpreter.set_current_file(&root.join("olang.toml"));
-                self.interpreter.set_dependency_map(map);
+                if replace {
+                    // Set the file context to the package root so relative
+                    // `use` of sibling modules also resolves.
+                    self.interpreter.set_current_file(&root.join("olang.toml"));
+                    self.interpreter.set_dependency_map(map);
+                } else {
+                    self.interpreter.add_to_dependency_map(map);
+                }
                 name
             }
             Err(e) => {
@@ -847,18 +862,49 @@ impl Repl {
             }
 
             ":pkg" => {
-                // Re-resolve the current directory's package (after editing
-                // olang.toml, or to see what's loaded).
-                match self.load_packages() {
-                    Some(name) => println!(
-                        "Package '{}' loaded — dependencies available via `use`",
-                        name.bright_green()
-                    ),
-                    None => println!(
-                        "{}",
-                        "No package here. Run this REPL from a directory with an olang.toml."
-                            .bright_yellow()
-                    ),
+                if parts.len() > 2 && parts[1] == "load" {
+                    // `:pkg load <path>` — make a package at an explicit path
+                    // available by name, without cd-ing into it. Additive.
+                    let raw = parts[2..].join(" ");
+                    let expanded = if raw == "~" || raw.starts_with("~/") {
+                        match std::env::var("HOME") {
+                            Ok(home) => raw.replacen('~', &home, 1),
+                            Err(_) => raw.clone(),
+                        }
+                    } else {
+                        raw.clone()
+                    };
+                    let path = std::path::Path::new(&expanded);
+                    match crate::pkg::manifest::Manifest::find_root(path) {
+                        Some(root) => {
+                            if let Some(name) = self.load_package_at(&root, false) {
+                                println!(
+                                    "Loaded package '{}' from {} — use it with `use {}`",
+                                    name.bright_green(),
+                                    root.display(),
+                                    name
+                                );
+                            }
+                        }
+                        None => println!(
+                            "{}: no olang.toml at or above '{}'",
+                            "pkg load".bright_yellow(),
+                            expanded
+                        ),
+                    }
+                } else {
+                    // `:pkg` — re-resolve the current directory's package.
+                    match self.load_packages() {
+                        Some(name) => println!(
+                            "Package '{}' loaded — dependencies available via `use`",
+                            name.bright_green()
+                        ),
+                        None => println!(
+                            "{}",
+                            "No package here. Use ':pkg load <path>', or run from a directory with an olang.toml."
+                                .bright_yellow()
+                        ),
+                    }
                 }
             }
 

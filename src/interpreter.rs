@@ -4303,6 +4303,12 @@ impl Interpreter {
         self.dependency_map = map;
     }
 
+    /// Merge entries into the dependency map without clearing existing ones,
+    /// so several packages can be made available by path (e.g. `:pkg load`).
+    pub fn add_to_dependency_map(&mut self, map: HashMap<String, std::path::PathBuf>) {
+        self.dependency_map.extend(map);
+    }
+
     /// If the first segment of the module path is a declared dependency,
     /// resolve the remaining path inside that dependency's directory. A bare
     /// `use foo` resolves to the dependency's package root (its index.ol,

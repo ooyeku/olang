@@ -99,6 +99,24 @@ A package is also referable by its own name from within itself, so you can
 test a package in its own REPL — `use geometry { circle }` works from
 inside the `geometry` package, not only from a package that depends on it.
 
+To use a package **without cd-ing into it**, load it by path:
+
+```
+olang> :pkg load ../geometry          # or an absolute path
+Loaded package 'geometry' — use it with `use geometry`
+olang> use geometry { * }             # import everything it shares
+olang> area(circle(2.0))
+12.5663706
+```
+
+`:pkg load` is additive — load several packages by path and they are all
+available. (Running a *file* needs no such step: `olang path/to/main.ol`
+resolves that file's package from anywhere, regardless of your directory.)
+
+An import lists what it binds: `use geometry { circle, area }` brings in
+only those two names; `use geometry { * }` imports everything the package
+`share`s.
+
 ## The lockfile
 
 `olang.lock` pins every dependency exactly — a git commit SHA, a resolved
