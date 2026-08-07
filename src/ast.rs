@@ -247,8 +247,8 @@ pub enum Expr {
     },
 
     // Concurrent operations
-    All(Vec<Expr>),   // Promise.all([...])
-    Race(Vec<Expr>),  // Promise.race([...])
+    All(Box<Expr>),   // Promise.all(list-expr)
+    Race(Box<Expr>),  // Promise.race(list-expr)
     Spawn(Box<Expr>), // spawn async_expr
 
     // New string literal variants

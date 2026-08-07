@@ -1,0 +1,4 @@
+[package]
+name = "scheduler"
+version = "1.0.0"
+description = "Concurrent fan-out and timeouts with async/await + Promise.all/race"

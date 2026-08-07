@@ -40,6 +40,10 @@ A two-package demonstration of the package manager (see
   pipelines (`lib/stats.ol`), and reads files with `fs` from `os.args()`
   (`main.ol`). Handles malformed lines, missing/empty files, and 2000-line
   logs
+- [`scheduler/`](scheduler/) — concurrent fan-out and timeouts with
+  `async`/`await` and `Promise.all`/`race`: four simulated fetches run
+  concurrently (total time = the slowest, not the sum), and each is raced
+  against a timeout budget
 
 ```bash
 olang examples/packages/demo/main.ol      # auto-resolves the dependency

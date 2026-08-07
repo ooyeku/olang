@@ -1604,57 +1604,14 @@ impl Interpreter {
                 Ok(Value::Function(function))
             }
             Expr::Await { expression } => {
-                // Enhanced await implementation with proper promise resolution
                 let value = self.eval_expr(expression)?;
-                match value {
-                    Value::Promise {
-                        state: crate::ast::PromiseState::Resolved,
-                        value: Some(resolved_value),
-                        ..
-                    } => Ok(*resolved_value),
-                    Value::Promise {
-                        state: crate::ast::PromiseState::Rejected,
-                        error: Some(error_value),
-                        ..
-                    } => Err(InterpreterError::RuntimeError {
-                        message: format!("Promise rejected: {:?}", error_value),
+                let (deadline, outcome) = self.settle_info(value)?;
+                Self::sleep_until_epoch_ms(deadline);
+                match outcome {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(InterpreterError::RuntimeError {
+                        message: format!("Promise rejected: {:?}", e),
                     }),
-                    Value::Promise {
-                        state: crate::ast::PromiseState::Pending,
-                        value,
-                        resolve_at_epoch_ms: Some(deadline),
-                        ..
-                    } => {
-                        // A delayed promise: sleep whatever remains of the
-                        // delay, then yield the value. Work done between
-                        // creation and await counts against the delay, like a
-                        // real timer.
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(u64::MAX);
-                        if deadline > now {
-                            std::thread::sleep(std::time::Duration::from_millis(deadline - now));
-                        }
-                        match value {
-                            Some(v) => Ok(*v),
-                            None => Ok(Value::Unit),
-                        }
-                    }
-                    Value::Promise {
-                        state: crate::ast::PromiseState::Pending,
-                        ..
-                    } => {
-                        // Pending with no deadline: nothing will ever resolve
-                        // it in a synchronous interpreter — say so honestly
-                        Err(InterpreterError::RuntimeError {
-                            message:
-                                "Cannot await pending promise (async scheduling not implemented)"
-                                    .to_string(),
-                        })
-                    }
-                    // If not a promise, treat as already resolved value
-                    _ => Ok(value),
                 }
             }
             Expr::Promise {
@@ -1706,68 +1663,42 @@ impl Interpreter {
                     }
                 }
             }
-            Expr::All(expressions) => {
-                // Enhanced Promise.all implementation
-                let mut results = Vec::new();
-                let mut all_resolved = true;
-                let mut any_rejected = false;
-                let mut rejection_error = None;
+            Expr::All(list_expr) => {
+                // Await every promise in the list, resolving to the list of
+                // their values. Delayed promises carry a deadline, so
+                // "concurrent" fan-out sleeps once until the *latest* deadline
+                // (total time = the longest delay, not their sum) — correct
+                // concurrent timing even on a single thread. Rejects as soon
+                // as any input has already rejected.
+                let promises = self.eval_promise_collection(list_expr, "all")?;
+                let mut settled = Vec::with_capacity(promises.len());
+                for value in promises {
+                    settled.push(self.settle_info(value)?);
+                }
 
-                for expr in expressions {
-                    let value = self.eval_expr(expr)?;
-                    match value {
-                        Value::Promise {
-                            state: crate::ast::PromiseState::Resolved,
-                            value: Some(resolved_value),
-                            ..
-                        } => {
-                            results.push(*resolved_value);
-                        }
-                        Value::Promise {
-                            state: crate::ast::PromiseState::Rejected,
-                            error: Some(error_value),
-                            ..
-                        } => {
-                            any_rejected = true;
-                            rejection_error = Some(*error_value);
-                            break;
-                        }
-                        Value::Promise {
-                            state: crate::ast::PromiseState::Pending,
-                            ..
-                        } => {
-                            all_resolved = false;
-                            // In full async implementation, would wait for all promises
-                            results.push(Value::Unit); // Placeholder
-                        }
-                        // Non-promise values are treated as already resolved
-                        _ => {
-                            results.push(value);
-                        }
+                // A rejection short-circuits the whole thing.
+                for (_, outcome) in &settled {
+                    if let Err(err) = outcome {
+                        return Ok(self.async_runtime.promise_reject(err.clone()));
                     }
                 }
 
-                if any_rejected {
-                    Ok(self
-                        .async_runtime
-                        .promise_reject(rejection_error.unwrap_or(Value::Unit)))
-                } else if all_resolved {
-                    Ok(self
-                        .async_runtime
-                        .promise_resolve(Value::List(std::sync::Arc::from(results))))
-                } else {
-                    // Some promises still pending - in full implementation would return pending promise
-                    Ok(Value::Promise {
-                        state: crate::ast::PromiseState::Pending,
-                        value: None,
-                        error: None,
-                        resolve_at_epoch_ms: None,
-                    })
-                }
+                // Sleep once until the last deadline, then collect values.
+                let deadline = settled.iter().map(|(t, _)| *t).max().unwrap_or(0);
+                Self::sleep_until_epoch_ms(deadline);
+                let results: Vec<Value> = settled
+                    .into_iter()
+                    .map(|(_, outcome)| outcome.unwrap_or(Value::Unit))
+                    .collect();
+                Ok(self
+                    .async_runtime
+                    .promise_resolve(Value::List(std::sync::Arc::from(results))))
             }
-            Expr::Race(expressions) => {
-                // Enhanced Promise.race implementation
-                if expressions.is_empty() {
+            Expr::Race(list_expr) => {
+                // Settle to whichever promise finishes first: the minimum
+                // deadline wins (already-resolved promises settle at t=0).
+                let promises = self.eval_promise_collection(list_expr, "race")?;
+                if promises.is_empty() {
                     return Ok(Value::Promise {
                         state: crate::ast::PromiseState::Pending,
                         value: None,
@@ -1776,42 +1707,21 @@ impl Interpreter {
                     });
                 }
 
-                // Evaluate all expressions and return the first resolved/rejected promise
-                for expr in expressions {
-                    let value = self.eval_expr(expr)?;
-                    match value {
-                        Value::Promise {
-                            state: crate::ast::PromiseState::Resolved,
-                            ..
-                        }
-                        | Value::Promise {
-                            state: crate::ast::PromiseState::Rejected,
-                            ..
-                        } => {
-                            // Return first resolved or rejected promise
-                            return Ok(value);
-                        }
-                        Value::Promise {
-                            state: crate::ast::PromiseState::Pending,
-                            ..
-                        } => {
-                            // Continue to next promise
-                            continue;
-                        }
-                        // Non-promise values are treated as already resolved
-                        _ => {
-                            return Ok(self.async_runtime.promise_resolve(value));
-                        }
-                    }
+                let mut settled = Vec::with_capacity(promises.len());
+                for value in promises {
+                    settled.push(self.settle_info(value)?);
                 }
 
-                // All promises are pending
-                Ok(Value::Promise {
-                    state: crate::ast::PromiseState::Pending,
-                    value: None,
-                    error: None,
-                    resolve_at_epoch_ms: None,
-                })
+                // The earliest to settle wins (ties: first in the list).
+                let (deadline, outcome) = settled
+                    .into_iter()
+                    .min_by_key(|(t, _)| *t)
+                    .expect("non-empty");
+                Self::sleep_until_epoch_ms(deadline);
+                match outcome {
+                    Ok(v) => Ok(self.async_runtime.promise_resolve(v)),
+                    Err(e) => Ok(self.async_runtime.promise_reject(e)),
+                }
             }
             Expr::Spawn(expression) => {
                 // Enhanced spawn implementation - evaluate expression asynchronously
@@ -4355,6 +4265,77 @@ impl Interpreter {
 
     /// Install the package dependency map (name -> source directory), so
     /// `use` paths rooted at a dependency name resolve inside it.
+    /// Evaluate the argument of `Promise.all`/`race` — any expression that
+    /// yields a list — into a vector of promise values. Accepts a literal
+    /// list or a variable holding one.
+    fn eval_promise_collection(
+        &mut self,
+        list_expr: &Expr,
+        which: &str,
+    ) -> Result<Vec<Value>, InterpreterError> {
+        match self.eval_expr(list_expr)? {
+            Value::List(items) => Ok(items.iter().cloned().collect()),
+            other => Err(InterpreterError::TypeError {
+                message: format!(
+                    "Promise.{} expects a list of promises, got {}",
+                    which,
+                    other.type_name()
+                ),
+            }),
+        }
+    }
+
+    /// Normalize a promise value into `(settle_epoch_ms, Ok(value) | Err(err))`
+    /// so `await`, `Promise.all`, and `Promise.race` share one resolution
+    /// model. Already-resolved/rejected promises settle at t=0; a delayed
+    /// promise settles at its deadline carrying its value. A pending promise
+    /// with no deadline can never settle in a synchronous interpreter and is
+    /// an error. Non-promise values are treated as resolved.
+    fn settle_info(&self, value: Value) -> Result<(u64, Result<Value, Value>), InterpreterError> {
+        match value {
+            Value::Promise {
+                state: crate::ast::PromiseState::Resolved,
+                value: Some(v),
+                ..
+            } => Ok((0, Ok(*v))),
+            Value::Promise {
+                state: crate::ast::PromiseState::Rejected,
+                error: Some(e),
+                ..
+            } => Ok((0, Err(*e))),
+            Value::Promise {
+                state: crate::ast::PromiseState::Pending,
+                value,
+                resolve_at_epoch_ms: Some(deadline),
+                ..
+            } => Ok((deadline, Ok(value.map(|v| *v).unwrap_or(Value::Unit)))),
+            Value::Promise {
+                state: crate::ast::PromiseState::Pending,
+                ..
+            } => Err(InterpreterError::RuntimeError {
+                message: "Cannot await pending promise (no deadline to resolve it)".to_string(),
+            }),
+            // A plain value is an already-resolved result.
+            other => Ok((0, Ok(other))),
+        }
+    }
+
+    /// Sleep until the given epoch-millisecond deadline (no-op if already
+    /// past). Time already elapsed since the promise was created counts
+    /// against the delay, like a real timer.
+    fn sleep_until_epoch_ms(deadline: u64) {
+        if deadline == 0 {
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(u64::MAX);
+        if deadline > now {
+            std::thread::sleep(std::time::Duration::from_millis(deadline - now));
+        }
+    }
+
     pub fn set_dependency_map(&mut self, map: HashMap<String, std::path::PathBuf>) {
         self.dependency_map = map;
     }

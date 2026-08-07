@@ -618,18 +618,8 @@ impl Analyzer {
                 }
                 Ok(())
             }
-            Expr::All(promises) => {
-                for promise in promises {
-                    self.analyze_expr(promise)?;
-                }
-                Ok(())
-            }
-            Expr::Race(promises) => {
-                for promise in promises {
-                    self.analyze_expr(promise)?;
-                }
-                Ok(())
-            }
+            Expr::All(promises) => self.analyze_expr(promises),
+            Expr::Race(promises) => self.analyze_expr(promises),
             Expr::Spawn(expr) => {
                 self.analyze_expr(expr)?;
                 Ok(())
@@ -1385,14 +1375,10 @@ impl Analyzer {
                 }
             }
             Expr::All(promises) => {
-                for promise in promises {
-                    self.mark_expression_reachable(promise, reachable);
-                }
+                self.mark_expression_reachable(promises, reachable);
             }
             Expr::Race(promises) => {
-                for promise in promises {
-                    self.mark_expression_reachable(promise, reachable);
-                }
+                self.mark_expression_reachable(promises, reachable);
             }
             Expr::Spawn(expr) => {
                 self.mark_expression_reachable(expr, reachable);

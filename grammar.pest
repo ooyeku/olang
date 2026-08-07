@@ -142,8 +142,8 @@ promise_expr = { "Promise" ~ "." ~ promise_method ~ "(" ~ expr ~ ("," ~ expr)? ~
 promise_method = { "resolve" | "reject" | "delay" }
 
 // Concurrent operations
-all_expr    = { "Promise" ~ "." ~ "all" ~ "(" ~ "[" ~ arg_list? ~ "]" ~ ")" }
-race_expr   = { "Promise" ~ "." ~ "race" ~ "(" ~ "[" ~ arg_list? ~ "]" ~ ")" }
+all_expr    = { "Promise" ~ "." ~ "all" ~ "(" ~ expr ~ ")" }
+race_expr   = { "Promise" ~ "." ~ "race" ~ "(" ~ expr ~ ")" }
 spawn_expr  = { "spawn" ~ call_expr }
 
 // Pattern matching

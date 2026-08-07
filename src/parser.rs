@@ -788,27 +788,6 @@ impl Parser {
         }
     }
 
-    fn build_expr_list(&self, pairs: Pairs<Rule>) -> Result<Vec<Expr>, ParseError> {
-        let mut expressions = Vec::new();
-        for pair in pairs {
-            match pair.as_rule() {
-                Rule::expr => {
-                    expressions.push(self.build_expr(pair.into_inner())?);
-                }
-                Rule::argument => {
-                    // For expression lists, we only want the positional value
-                    let arg = self.build_argument(pair.into_inner())?;
-                    match arg {
-                        Argument::Positional(expr) => expressions.push(expr),
-                        Argument::Named { value, .. } => expressions.push(value),
-                    }
-                }
-                _ => {}
-            }
-        }
-        Ok(expressions)
-    }
-
     fn build_primary(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         // Check for unary expressions
         if let Some(first) = pairs.peek() {
@@ -934,15 +913,15 @@ impl Parser {
         let mut return_type = None;
         let mut body = None;
 
-        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing parameter list in async expression".to_string(),
-        })?;
-        if first_pair.as_rule() == Rule::param_list {
-            parameters = self.build_param_list(first_pair.into_inner())?;
-        }
-
-        for pair in pairs {
+        // The param list is optional (`async () => x` has none), so the first
+        // pair may already be the body — handle every pair uniformly rather
+        // than special-casing the first and discarding it (the zero-param bug
+        // that also bit build_lambda).
+        for pair in pairs.by_ref() {
             match pair.as_rule() {
+                Rule::param_list => {
+                    parameters = self.build_param_list(pair.into_inner())?;
+                }
                 Rule::type_annotation => {
                     return_type = Some(self.build_type_annotation(pair.into_inner())?);
                 }
@@ -1021,31 +1000,30 @@ impl Parser {
     }
 
     fn build_all_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        // As in build_promise_expr: the literals are silent, so skipping
-        // "Promise"/"all" consumed the argument list and every Promise.all
-        // silently evaluated to an empty list.
-        let mut expressions = Vec::new();
-        for pair in pairs {
-            if pair.as_rule() == Rule::arg_list {
-                expressions = self.build_expr_list(pair.into_inner())?;
-                break;
-            }
-        }
-
-        Ok(Expr::All(expressions))
+        // Promise.all(<expr>) — the argument is any expression that evaluates
+        // to a list of promises (a literal `[a, b]` or a variable holding one).
+        let expr = self.build_promise_collection(pairs, "all")?;
+        Ok(Expr::All(Box::new(expr)))
     }
 
     fn build_race_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        // Same silent-literal issue as build_all_expr
-        let mut expressions = Vec::new();
+        let expr = self.build_promise_collection(pairs, "race")?;
+        Ok(Expr::Race(Box::new(expr)))
+    }
+
+    fn build_promise_collection(
+        &self,
+        pairs: Pairs<Rule>,
+        which: &str,
+    ) -> Result<Expr, ParseError> {
         for pair in pairs {
-            if pair.as_rule() == Rule::arg_list {
-                expressions = self.build_expr_list(pair.into_inner())?;
-                break;
+            if pair.as_rule() == Rule::expr {
+                return self.build_expr(pair.into_inner());
             }
         }
-
-        Ok(Expr::Race(expressions))
+        Err(ParseError::InvalidSyntax {
+            message: format!("Promise.{} expects a list argument", which),
+        })
     }
 
     fn build_spawn_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {

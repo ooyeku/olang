@@ -20,6 +20,8 @@ documented.
   `share` keyword for symmetry with `share fn`/`type`/`let`. (Traits already
   register globally, so a plain `trait` in a module also reaches consumers;
   `share` is now simply accepted rather than a parse error.)
+- **`examples/scheduler/`** — concurrent fan-out and timeouts with
+  `async`/`await` and `Promise.all`/`race`.
 - **`examples/loganalyzer/`** — a second dogfooded package: parses
   application logs with `re` capture groups, aggregates by level and route
   with `col` + pipelines, and reads files with `fs`. Handles malformed
@@ -31,6 +33,14 @@ documented.
 
 ### Fixed
 
+- **`Promise.all` / `Promise.race` now compose.** Three async bugs found by
+  dogfooding a concurrency program: (1) they accept any list expression, not
+  just a literal `[...]`, so `Promise.all(jobs)` with a variable works;
+  (2) they resolve *pending* delay-promises instead of erroring with "async
+  scheduling not implemented", sleeping once until the latest deadline
+  (`all`) or the earliest (`race`) — so fan-out over delays takes the max
+  latency, not the sum; (3) async lambdas with no parameters (`async () => x`)
+  parse (same zero-parameter bug that had bitten regular lambdas).
 - **Sub-directory module imports resolve the named file.** `use lib.greet`
   loaded a generated directory index instead of `lib/greet.ol`, and
   generating that index *wrote a file into the user's source tree* on import.

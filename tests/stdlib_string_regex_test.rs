@@ -177,3 +177,58 @@ let groups = unwrap(re.captures("^(\\S+ \\S+) \\[(\\w+)\\] (.+)$", "2026-08-06 0
     let no_match = eval(r#"len(unwrap(re.captures("^(\\S+) \\[(\\w+)\\]$", "junk line")))"#);
     assert_eq!(no_match, Value::Integer(0));
 }
+
+// ── async / concurrency (found by dogfooding the scheduler) ──
+
+#[test]
+fn async_lambda_parses_with_and_without_params() {
+    assert_eq!(eval(r#"await (async () => 5)()"#), Value::Integer(5));
+    assert_eq!(
+        eval(r#"await (async (a, b) => a + b)(3, 4)"#),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn promise_all_accepts_a_variable_list() {
+    // Promise.all/race take any expression yielding a list, not only a
+    // literal [...]. A dynamically-built list of promises must work.
+    let src = r#"
+let ps = [Promise.resolve(1), Promise.resolve(2), Promise.resolve(3)]
+await Promise.all(ps)
+"#;
+    match eval(src) {
+        Value::List(items) => assert_eq!(
+            items,
+            vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)].into()
+        ),
+        other => panic!("expected list, got {:?}", other),
+    }
+}
+
+#[test]
+fn promise_all_awaits_pending_delays() {
+    // Promise.all resolves pending delay-promises (previously errored with
+    // "async scheduling not implemented"). Order is preserved.
+    let src = r#"
+await Promise.all([Promise.delay("a", 5), Promise.delay("b", 5), Promise.resolve("c")])
+"#;
+    match eval(src) {
+        Value::List(items) => {
+            let got: Vec<String> = items.iter().cloned().map(s).collect();
+            assert_eq!(got, vec!["a", "b", "c"]);
+        }
+        other => panic!("expected list, got {:?}", other),
+    }
+}
+
+#[test]
+fn promise_race_returns_the_fastest() {
+    // race settles to the minimum-deadline promise.
+    assert_eq!(
+        s(eval(
+            r#"await Promise.race([Promise.delay("slow", 200), Promise.delay("fast", 5)])"#
+        )),
+        "fast"
+    );
+}
