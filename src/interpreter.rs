@@ -4543,21 +4543,14 @@ impl Interpreter {
             candidates.push(target_dir.join("index.ol"));
             candidates.push(target_dir.join("mod.ol"));
 
-            // Feature 5: Check if this is a directory import and generate index if needed
-            if target_dir.exists() && target_dir.is_dir() {
-                if let Ok(index_path) = self.ensure_directory_index(&target_dir) {
-                    candidates.insert(0, index_path); // Prioritize generated index
-                }
-            }
         } else {
             candidates.push(base_dir.join(&file_name));
 
-            // Feature 5: Check if importing a directory directly (e.g., use utils { ... })
+            // Importing a directory directly (e.g., `use utils { ... }`)
+            // resolves to a user-written index.ol / mod.ol — never a generated
+            // one.
             let target_dir = base_dir.join(module_path);
             if target_dir.exists() && target_dir.is_dir() {
-                if let Ok(index_path) = self.ensure_directory_index(&target_dir) {
-                    candidates.insert(0, index_path);
-                }
                 candidates.push(target_dir.join("index.ol"));
                 candidates.push(target_dir.join("mod.ol"));
             }
@@ -4570,22 +4563,9 @@ impl Interpreter {
             candidates.push(src_target_dir.join("mod.ol"));
             candidates.push(src_target_dir.join("index.ol"));
 
-            // Feature 5: Auto-generate index for src subdirectories
-            if src_target_dir.exists() && src_target_dir.is_dir() {
-                if let Ok(index_path) = self.ensure_directory_index(&src_target_dir) {
-                    candidates.push(index_path);
-                }
-            }
         } else {
             candidates.push(base_dir.join("src").join(&file_name));
 
-            // Feature 5: Check src directory for direct imports
-            let src_target_dir = base_dir.join("src").join(module_path);
-            if src_target_dir.exists() && src_target_dir.is_dir() {
-                if let Ok(index_path) = self.ensure_directory_index(&src_target_dir) {
-                    candidates.push(index_path);
-                }
-            }
         }
 
         // Check each candidate
@@ -4604,227 +4584,10 @@ impl Interpreter {
         })
     }
 
-    /// Feature 5: Ensure a directory has an index.ol file that aggregates all shared exports
-    fn ensure_directory_index(
-        &self,
-        dir_path: &std::path::Path,
-    ) -> Result<std::path::PathBuf, InterpreterError> {
-        let index_path = dir_path.join("index.ol");
 
-        // Scan directory for .ol files (excluding index.ol itself)
-        let ol_files = self.scan_directory_for_modules(dir_path)?;
 
-        if ol_files.is_empty() {
-            return Err(InterpreterError::RuntimeError {
-                message: format!("No .ol files found in directory {}", dir_path.display()),
-            });
-        }
 
-        // Check if index file needs updating
-        let should_regenerate = self.should_regenerate_index(&index_path, &ol_files)?;
 
-        if should_regenerate {
-            self.generate_directory_index(dir_path, &ol_files, &index_path)?;
-            crate::log::get_logger().debug(
-                "interpreter",
-                &format!("Generated index file: {}", index_path.display()),
-            );
-        }
-
-        Ok(index_path)
-    }
-
-    /// Feature 5: Scan directory for .ol files and return their paths
-    fn scan_directory_for_modules(
-        &self,
-        dir_path: &std::path::Path,
-    ) -> Result<Vec<std::path::PathBuf>, InterpreterError> {
-        let mut ol_files = Vec::new();
-
-        if !dir_path.exists() || !dir_path.is_dir() {
-            return Ok(ol_files);
-        }
-
-        let entries = std::fs::read_dir(dir_path).map_err(|e| InterpreterError::RuntimeError {
-            message: format!("Failed to read directory {}: {}", dir_path.display(), e),
-        })?;
-
-        for entry in entries {
-            let entry = entry.map_err(|e| InterpreterError::RuntimeError {
-                message: format!("Failed to read directory entry: {}", e),
-            })?;
-
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(extension) = path.extension() {
-                    if extension == "ol" {
-                        // Skip index.ol and mod.ol to avoid circular references
-                        if let Some(filename) = path.file_name() {
-                            if filename != "index.ol" && filename != "mod.ol" {
-                                ol_files.push(path);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sort for consistent ordering
-        ol_files.sort();
-        Ok(ol_files)
-    }
-
-    /// Feature 5: Check if index file needs regeneration
-    fn should_regenerate_index(
-        &self,
-        index_path: &std::path::Path,
-        ol_files: &[std::path::PathBuf],
-    ) -> Result<bool, InterpreterError> {
-        // If index doesn't exist, need to generate
-        if !index_path.exists() {
-            return Ok(true);
-        }
-
-        // Get index file modification time
-        let index_modified = std::fs::metadata(index_path)
-            .and_then(|m| m.modified())
-            .map_err(|e| InterpreterError::RuntimeError {
-                message: format!("Failed to get index file metadata: {}", e),
-            })?;
-
-        // Check if any .ol file is newer than the index
-        for ol_file in ol_files {
-            let file_modified = std::fs::metadata(ol_file)
-                .and_then(|m| m.modified())
-                .map_err(|e| InterpreterError::RuntimeError {
-                    message: format!(
-                        "Failed to get file metadata for {}: {}",
-                        ol_file.display(),
-                        e
-                    ),
-                })?;
-
-            if file_modified > index_modified {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
-    }
-
-    /// Feature 5: Generate index.ol file that aggregates all shared exports
-    fn generate_directory_index(
-        &self,
-        dir_path: &std::path::Path,
-        ol_files: &[std::path::PathBuf],
-        index_path: &std::path::Path,
-    ) -> Result<(), InterpreterError> {
-        let mut index_content = String::new();
-
-        // Header comment
-        index_content.push_str("// Auto-generated index file for directory: ");
-        index_content.push_str(&dir_path.display().to_string());
-        index_content.push_str(
-            "\n// This file automatically aggregates exports from all modules in this directory\n",
-        );
-        index_content.push_str("// Generated by Olang Feature 5: Automatic Index Files\n\n");
-
-        // Collect all modules and their exports
-        let mut all_exports = Vec::new();
-        for ol_file in ol_files {
-            let exports = self.extract_shared_exports(ol_file)?;
-            let module_name = ol_file
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| InterpreterError::RuntimeError {
-                    message: format!("Invalid filename: {}", ol_file.display()),
-                })?;
-
-            if !exports.is_empty() {
-                all_exports.push((module_name.to_string(), exports));
-            }
-        }
-
-        // For now, let's create a simple aggregation approach
-        // Import all modules at the top
-        for (module_name, exports) in &all_exports {
-            index_content.push_str(&format!(
-                "use {} {{ {} }}\n",
-                module_name,
-                exports.join(", ")
-            ));
-        }
-
-        index_content.push('\n');
-        index_content.push_str("// All exports are automatically available through the individual module imports above\n");
-        index_content.push_str(
-            "// This allows 'use utils { function_name }' to work by importing from this index\n",
-        );
-
-        // Write the index file
-        std::fs::write(index_path, index_content).map_err(|e| InterpreterError::RuntimeError {
-            message: format!("Failed to write index file {}: {}", index_path.display(), e),
-        })?;
-
-        Ok(())
-    }
-
-    /// Feature 5: Extract shared exports from a .ol file
-    fn extract_shared_exports(
-        &self,
-        file_path: &std::path::PathBuf,
-    ) -> Result<Vec<String>, InterpreterError> {
-        let content =
-            std::fs::read_to_string(file_path).map_err(|e| InterpreterError::RuntimeError {
-                message: format!("Failed to read file {}: {}", file_path.display(), e),
-            })?;
-
-        let parser = crate::parser::Parser::new();
-        let program = parser
-            .parse(&content)
-            .map_err(|e| InterpreterError::RuntimeError {
-                message: format!("Failed to parse file {}: {:?}", file_path.display(), e),
-            })?;
-
-        let mut exports = Vec::new();
-
-        for statement in program.statements {
-            if let crate::ast::Statement::ShareDecl(share_decl) = statement {
-                {
-                    match share_decl {
-                        ShareDecl::Function(func_decl) => {
-                            exports.push(func_decl.name);
-                        }
-                        ShareDecl::Let(let_decl) => {
-                            if let Pattern::Identifier(name) = let_decl.pattern {
-                                exports.push(name);
-                            }
-                        }
-                        ShareDecl::Type(type_decl) => {
-                            exports.push(type_decl.name);
-                        }
-                        ShareDecl::Use(use_decl) => {
-                            // Add re-shared items to exports
-                            for item in &use_decl.items {
-                                match item {
-                                    crate::ast::UseItem::Specific(name) => {
-                                        exports.push(name.clone());
-                                    }
-                                    crate::ast::UseItem::Wildcard => {
-                                        // Wildcard re-exports would need to be resolved at runtime
-                                        // For now, we don't add anything to exports for wildcards
-                                        // in re-export context
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(exports)
-    }
 
     /// Feature 9: Enhanced module not found error with detailed context and suggestions
     fn create_module_not_found_error(
