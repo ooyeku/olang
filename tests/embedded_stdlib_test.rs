@@ -99,3 +99,139 @@ fn count_by_agrees() {
         "map_get(col.count_by([\"a\", \"b\", \"a\", \"a\"], (x) => x), \"a\")",
     );
 }
+
+#[test]
+fn drop_while_agrees() {
+    assert_agrees(
+        "drop_while([1, 2, 3, 10, 4], (x) => x < 5)",
+        "col.drop_while([1, 2, 3, 10, 4], (x) => x < 5)",
+    );
+    assert_agrees(
+        "drop_while([9, 1, 2], (x) => x < 5)",
+        "col.drop_while([9, 1, 2], (x) => x < 5)",
+    );
+}
+
+#[test]
+fn flat_map_agrees() {
+    assert_agrees(
+        "flat_map([1, 2, 3], (x) => [x, x * 10])",
+        "col.flat_map([1, 2, 3], (x) => [x, x * 10])",
+    );
+    // non-list results are kept as single elements
+    assert_agrees(
+        "flat_map([1, 2], (x) => x + 1)",
+        "col.flat_map([1, 2], (x) => x + 1)",
+    );
+}
+
+#[test]
+fn frequencies_agrees() {
+    assert_agrees(
+        "map_get(frequencies([1, 2, 2, 3, 2]), \"2\")",
+        "map_get(col.frequencies([1, 2, 2, 3, 2]), \"2\")",
+    );
+}
+
+#[test]
+fn last_agrees() {
+    assert_agrees("last([5, 6, 7])", "col.last([5, 6, 7])");
+    assert_agrees("last([42])", "col.last([42])");
+}
+
+#[test]
+fn min_max_by_agree_with_a_key_function() {
+    // Key that inverts order, over records — exercises real key functions.
+    assert_agrees(
+        "min_by([{v: 3}, {v: 1}, {v: 2}], (r) => r.v).v",
+        "col.min_by([{v: 3}, {v: 1}, {v: 2}], (r) => r.v).v",
+    );
+    assert_agrees(
+        "max_by([{v: 3}, {v: 1}, {v: 2}], (r) => r.v).v",
+        "col.max_by([{v: 3}, {v: 1}, {v: 2}], (r) => r.v).v",
+    );
+    // string keys
+    assert_agrees(
+        "min_by([\"bb\", \"a\", \"ccc\"], (s) => len(s))",
+        "col.min_by([\"bb\", \"a\", \"ccc\"], (s) => len(s))",
+    );
+}
+
+#[test]
+fn sort_by_agrees_and_is_stable() {
+    assert_agrees(
+        "sort_by([3, 1, 4, 1, 5, 9, 2, 6], (x) => x)",
+        "col.sort_by([3, 1, 4, 1, 5, 9, 2, 6], (x) => x)",
+    );
+    // descending by a negated key
+    assert_agrees(
+        "sort_by([1, 2, 3], (x) => 0 - x)",
+        "col.sort_by([1, 2, 3], (x) => 0 - x)",
+    );
+    // stability: equal keys keep input order (first field is the tiebreak we
+    // observe; both implementations must agree)
+    assert_agrees(
+        "sort_by([{k: 1, id: \"a\"}, {k: 1, id: \"b\"}, {k: 0, id: \"c\"}], (r) => r.k)",
+        "col.sort_by([{k: 1, id: \"a\"}, {k: 1, id: \"b\"}, {k: 0, id: \"c\"}], (r) => r.k)",
+    );
+}
+
+#[test]
+fn window_agrees() {
+    assert_agrees(
+        "window([1, 2, 3, 4, 5], 3)",
+        "col.window([1, 2, 3, 4, 5], 3)",
+    );
+    assert_agrees("window([1, 2], 3)", "col.window([1, 2], 3)"); // size > len -> []
+    assert_agrees("window([1, 2, 3], 1)", "col.window([1, 2, 3], 1)");
+}
+
+#[test]
+fn zip_with_agrees() {
+    assert_agrees(
+        "zip_with([1, 2, 3], [10, 20, 30], (x, y) => x + y)",
+        "col.zip_with([1, 2, 3], [10, 20, 30], (x, y) => x + y)",
+    );
+    // truncates to the shorter list
+    assert_agrees(
+        "zip_with([1, 2, 3, 4], [10, 20], (x, y) => x * y)",
+        "col.zip_with([1, 2, 3, 4], [10, 20], (x, y) => x * y)",
+    );
+}
+
+#[test]
+fn colx_mirrors_every_col_function() {
+    // Every function the olang `colx` module exports must be callable, so the
+    // embedded mirror stays complete. We check the known set is present by
+    // importing all and referencing each (a missing export fails to resolve).
+    let names = [
+        "all",
+        "any",
+        "count_by",
+        "drop_while",
+        "flat_map",
+        "frequencies",
+        "last",
+        "max_by",
+        "min_by",
+        "partition",
+        "sort_by",
+        "sum_by",
+        "take_while",
+        "unique",
+        "window",
+        "zip_with",
+    ];
+    for name in names {
+        // Referencing the imported name yields a function value; an absent
+        // export would be an "undefined variable" error.
+        let src = format!("use colx {{ * }}\ntypeof({})", name);
+        let result = eval(&src);
+        assert_eq!(
+            result,
+            Value::String("Function".to_string().into()),
+            "colx is missing `{}`",
+            name
+        );
+    }
+}

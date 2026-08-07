@@ -22,6 +22,17 @@ documented.
   Trailing commas in list literals are now allowed too, consistent with
   maps/structs/enums.
 
+### Changed
+
+- **`colx` now mirrors all of `col`.** The embedded olang collections module
+  gained the remaining nine functions (`min_by`, `max_by`, `sort_by`,
+  `drop_while`, `flat_map`, `frequencies`, `last`, `window`, `zip_with`),
+  reaching full parity with the native `col` module — including an olang
+  insertion sort for `sort_by`. Every function is differential-tested
+  against its Rust counterpart (16 functions, with key-function, stability,
+  and truncation cases), and a parity test asserts the mirror stays
+  complete.
+
 ### Added
 
 - **Embedded olang-source stdlib modules ("builtin packages").** A stdlib

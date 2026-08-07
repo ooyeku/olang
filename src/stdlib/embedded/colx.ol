@@ -45,3 +45,66 @@ share fn take_while(xs, pred) = {
     let (result, _) = final
     result
 }
+
+// Suffix after the take_while prefix.
+share fn drop_while(xs, pred) = {
+    let final = xs |> fold(([], true), (acc, x) => {
+        let (kept, dropping) = acc
+        if dropping && pred(x) => (kept, true)
+        else => (concat(kept, [x]), false)
+    })
+    let (result, _) = final
+    result
+}
+
+// Map then flatten one level; a non-list result is kept as a single element.
+share fn flat_map(xs, f) = xs |> fold([], (acc, x) => {
+    let mapped = f(x)
+    if typeof(mapped) == "List" => concat(acc, mapped)
+    else => concat(acc, [mapped])
+})
+
+// Count occurrences of each distinct value (count_by with identity).
+share fn frequencies(xs) = count_by(xs, (x) => x)
+
+// The last element (errors on an empty list, like indexing past the end).
+share fn last(xs) = xs[len(xs) - 1]
+
+// The element with the smallest key; ties keep the first seen.
+share fn min_by(xs, key_fn) = xs |> fold(head(xs), (best, x) =>
+    if key_fn(x) < key_fn(best) => x else => best)
+
+// The element with the largest key; ties keep the first seen.
+share fn max_by(xs, key_fn) = xs |> fold(head(xs), (best, x) =>
+    if key_fn(x) > key_fn(best) => x else => best)
+
+// Stable sort by a key. Insertion sort (O(n^2)) — the native col.sort_by is
+// the fast path; this is the readable olang mirror. Inserts before the first
+// element with a strictly greater key, so equal keys keep their order.
+fn insert_by_key(sorted, x, key_fn) = {
+    let kx = key_fn(x)
+    let final = sorted |> fold(([], false), (acc, y) => {
+        let (out, placed) = acc
+        if placed => (concat(out, [y]), true)
+        else => if key_fn(y) > kx => (concat(out, [x, y]), true)
+                else => (concat(out, [y]), false)
+    })
+    let (out, placed) = final
+    if placed => out else => concat(out, [x])
+}
+
+share fn sort_by(xs, key_fn) = xs |> fold([], (sorted, x) =>
+    insert_by_key(sorted, x, key_fn))
+
+// Sliding windows of a fixed size: window([1,2,3,4], 2) = [[1,2],[2,3],[3,4]].
+share fn window(xs, size) = {
+    let n = len(xs)
+    if size > n => []
+    else => range(0, n - size + 1) |> map((i) => take(skip(xs, i), size))
+}
+
+// Combine parallel elements with f; truncates to the shorter list.
+share fn zip_with(a, b, f) = zip(a, b) |> map((pair) => {
+    let (x, y) = pair
+    f(x, y)
+})
