@@ -1,0 +1,4 @@
+[package]
+name = "workflow"
+version = "1.0.0"
+description = "A data-driven state machine engine with guards and actions, self-hosted in olang"

@@ -1487,7 +1487,12 @@ impl BuiltinFunctions {
 
         let result = list
             .iter()
-            .map(|item| item.to_string())
+            .map(|item| match item {
+                // Render string elements by their content, not their quoted
+                // debug form — `join(["a", "b"], ",")` is `a,b`, not `"a","b"`.
+                Value::String(s) => s.as_ref().clone(),
+                other => other.to_string(),
+            })
             .collect::<Vec<String>>();
         Ok(Value::String(result.join(separator).into()))
     }

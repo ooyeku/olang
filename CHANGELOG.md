@@ -32,6 +32,9 @@ documented.
   `Type::Variant` form, so the bare constructor had to travel with the import.
 - **Multi-line `use` import lists.** The names inside `use m { ... }` may span
   lines and end with a trailing comma.
+- **`examples/workflow/`** — a data-driven state machine engine with guards
+  and actions as first-class function values, running two machines (an
+  expense-approval pipeline and a cyclic turnstile) on one engine.
 - **`examples/template/`** — a mustache-style template engine self-hosted in
   olang (lexer, parser over a shared `Node` ADT, renderer), driven by a JSON
   context. Exercises all four fixes above.
@@ -51,6 +54,17 @@ documented.
 
 ### Fixed
 
+- **Same-named functions in different modules no longer collide.** The
+  bytecode tier keyed compiled functions by bare name, so once two modules
+  each defined (say) `initial_state`, the first one compiled ran for *both*
+  namespaces — and a caller's private helper could resolve to another
+  module's helper. With the default tier threshold of 1, this struck on the
+  first call. A name bound to two distinct function bodies is now left to the
+  interpreter, which resolves each through its own closure. Found by
+  dogfooding a state machine engine running two machines at once.
+- **`join` renders string elements without quotes.** `join(["a", "b"], ",")`
+  is now `a,b`, not `"a","b"` — it had used each value's debug form. Matches
+  `str.join`.
 - **`map_get`/`map_has_key`/`map_keys`/`map_values` read any struct-like
   value.** They previously accepted only a `Map`, so a parsed JSON object,
   an anonymous object, or a named struct could be read by dot access but not

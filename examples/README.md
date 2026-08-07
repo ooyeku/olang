@@ -54,6 +54,11 @@ A two-package demonstration of the package manager (see
   ADT (`lib/ast.ol`), and a renderer walking it against a JSON context.
   Supports `{{ dotted.paths }}`, `{{#each}}`, `{{#if}}`, and `{{ . }}` for the
   current item
+- [`workflow/`](workflow/) — a data-driven state machine engine (`lib/machine.ol`)
+  where transitions carry guards and actions as first-class function values.
+  Two machines run on it: an expense-approval pipeline that branches on amount
+  (`lib/expense.ol`) and a cyclic turnstile (`lib/turnstile.ol`); context
+  evolves immutably and each run yields an audit trail
 
 ```bash
 olang examples/packages/demo/main.ol      # auto-resolves the dependency

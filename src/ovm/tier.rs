@@ -18,6 +18,7 @@
 //! and interpreter agree on every program the VM accepts.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::ast::{Function, FunctionDecl, Value};
 use crate::ovm::bytecode::{BytecodeError, BytecodeVm};
@@ -51,6 +52,12 @@ pub struct BytecodeTier {
     /// User functions the interpreter has declared, so a promoted function
     /// calling a helper can have that helper compiled too
     known_functions: HashMap<String, Function>,
+    /// Names bound to more than one distinct function body — e.g. the same
+    /// function name defined in two different modules. The tier resolves
+    /// callees by name, which cannot tell such functions apart, so an
+    /// ambiguous name is never tiered: the interpreter runs it and resolves it
+    /// through each function's own closure. Correctness over speed.
+    ambiguous: HashSet<String>,
     stats: TierStats,
     /// Emit a line when a function is promoted (for --ovm-stats / debugging)
     verbose: bool,
@@ -65,6 +72,7 @@ impl BytecodeTier {
             compiled: HashMap::new(),
             rejected: HashSet::new(),
             known_functions: HashMap::new(),
+            ambiguous: HashSet::new(),
             stats: TierStats::default(),
             verbose: false,
         }
@@ -81,13 +89,32 @@ impl BytecodeTier {
 
     /// Record a user function declaration so calls to it can be compiled.
     pub fn note_function(&mut self, name: String, func: Function) {
-        // A redefinition invalidates anything compiled against the old body
-        if self.compiled.remove(&name).is_some() || self.rejected.remove(&name) {
-            // Compiled code may have inlined nothing, but callers resolved the
-            // old id; drop everything so the next call recompiles cleanly.
-            self.compiled.clear();
-            self.rejected.clear();
+        // Already known to be ambiguous: a second module's same-named function
+        // stays off the tier for the rest of the run.
+        if self.ambiguous.contains(&name) {
+            return;
         }
+
+        if let Some(existing) = self.known_functions.get(&name) {
+            // The same declaration re-noted (e.g. a module re-closing its
+            // exports over the full scope) keeps the same body — nothing to do.
+            if Arc::ptr_eq(&existing.body, &func.body) {
+                return;
+            }
+            // A different function now shares this name. Calls can no longer be
+            // resolved by name: drop every trace and mark the name ambiguous so
+            // it is interpreted from here on. Clearing `compiled` wholesale is
+            // deliberate — a previously compiled caller may have resolved the
+            // old id, and must recompile without it.
+            self.ambiguous.insert(name.clone());
+            self.known_functions.remove(&name);
+            self.call_counts.remove(&name);
+            self.rejected.remove(&name);
+            self.vm.unregister_function(&name);
+            self.compiled.clear();
+            return;
+        }
+
         // A user definition shadows any builtin of the same name
         self.vm.shadow_builtin(&name);
         self.known_functions.insert(name, func);
@@ -102,6 +129,11 @@ impl BytecodeTier {
         };
 
         if self.rejected.contains(&name) {
+            return TierOutcome::Fallback;
+        }
+
+        // A name shared by two distinct functions can't be tiered soundly.
+        if self.ambiguous.contains(&name) {
             return TierOutcome::Fallback;
         }
 
@@ -217,7 +249,9 @@ impl BytecodeTier {
         if self.compiled.contains_key(name) {
             return true;
         }
-        if self.rejected.contains(name) {
+        if self.rejected.contains(name) || self.ambiguous.contains(name) {
+            // An ambiguous callee can't be resolved by name; the caller that
+            // needs it therefore can't be tiered either.
             return false;
         }
 
@@ -331,6 +365,59 @@ mod tests {
             ),
         }
         assert_eq!(tier.stats().promoted, 1);
+    }
+
+    /// fn triple(x) = x * 3 — a distinct body under a name we can reuse.
+    fn triple_fn() -> Function {
+        Function {
+            body: Arc::new(Expr::BinaryOp {
+                left: Box::new(Expr::Identifier("x".to_string())),
+                op: BinaryOp::Multiply,
+                right: Box::new(Expr::Integer(3)),
+            }),
+            ..double_fn()
+        }
+    }
+
+    #[test]
+    fn same_name_distinct_bodies_are_never_tiered() {
+        // Two modules declaring a function of the same name with different
+        // bodies must not share a compilation — the tier resolves by name and
+        // cannot tell them apart, so both fall back to the interpreter.
+        let mut tier = BytecodeTier::new(1);
+        let double = double_fn();
+        let triple = triple_fn();
+
+        tier.note_function("double".to_string(), double.clone());
+        tier.note_function("double".to_string(), triple.clone());
+
+        assert!(matches!(
+            tier.try_call(&double, &[Value::Integer(5)]),
+            TierOutcome::Fallback
+        ));
+        assert!(matches!(
+            tier.try_call(&triple, &[Value::Integer(5)]),
+            TierOutcome::Fallback
+        ));
+        assert_eq!(tier.stats().promoted, 0);
+    }
+
+    #[test]
+    fn re_noting_the_same_body_still_tiers() {
+        // Re-noting the exact same function (e.g. a module re-closing its
+        // exports) shares the body Arc and must not be mistaken for a clash.
+        let mut tier = BytecodeTier::new(1);
+        let func = double_fn();
+        tier.note_function("double".to_string(), func.clone());
+        tier.note_function("double".to_string(), func.clone());
+
+        match tier.try_call(&func, &[Value::Integer(5)]) {
+            TierOutcome::Ran(Ok(Value::Integer(10))) => {}
+            other => panic!(
+                "same-body re-note must still tier; fell back: {}",
+                matches!(other, TierOutcome::Fallback)
+            ),
+        }
     }
 
     #[test]
