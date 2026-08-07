@@ -35,6 +35,19 @@ documented.
 
 ### Added
 
+- **`mathx` — the pure subset of `math`, self-hosted in olang.** A second
+  embedded module mirroring the parts of `math` that need no native float
+  intrinsics: `abs`, `sign`, `min`, `max`, `gcd`, `lcm`, `factorial`,
+  `floor`, `ceil`, `trunc`, `round`, `fract`, `radians`, `degrees`, a
+  Newton's-method `sqrt`, and the constants `PI`/`E`/`TAU`. The
+  transcendentals (`sin`, `cos`, `ln`, `exp`, ...) stay native, behind the
+  FFI boundary. Differential-tested against `math`: exact equality for the
+  integer/rational/rounding operations (all matched on the first run,
+  including negative-number rounding semantics), and a tolerance for `sqrt`
+  (Newton's method converges to within ~1 ulp of the correctly-rounded
+  native sqrt). `:help mathx` lists it and points at `:help math.<fn>`.
+
+
 - **Embedded olang-source stdlib modules ("builtin packages").** A stdlib
   module can now be written in olang and compiled into the binary via
   `include_str!`, resolving like a package (`use colx { ... }`) with no file

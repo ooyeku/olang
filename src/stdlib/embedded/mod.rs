@@ -9,7 +9,10 @@
 
 /// Registry of embedded modules: `use <name>` loads this source. Add a module
 /// by dropping a `.ol` file beside this file and listing it here.
-const MODULES: &[(&str, &str)] = &[("colx", include_str!("colx.ol"))];
+const MODULES: &[(&str, &str)] = &[
+    ("colx", include_str!("colx.ol")),
+    ("mathx", include_str!("mathx.ol")),
+];
 
 /// The olang source of an embedded module, if one is registered under `name`.
 pub fn source(name: &str) -> Option<&'static str> {

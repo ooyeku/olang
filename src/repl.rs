@@ -794,14 +794,20 @@ impl Repl {
         for chunk in members.chunks(4) {
             println!("    {}", chunk.join(", "));
         }
-        // colx is the olang mirror of the native `col` module; point at the
-        // detailed per-function docs, which are identical.
-        if name == "colx" {
+        // The embedded olang mirrors (colx, mathx) reproduce a native module;
+        // point at the native module's detailed per-function docs.
+        let mirror_of = match name {
+            "colx" => Some("col"),
+            "mathx" => Some("math"),
+            _ => None,
+        };
+        if let Some(native) = mirror_of {
             println!(
-                "\n  {} colx mirrors the native {} module — see {} for details on any function.",
+                "\n  {} {} mirrors the native {} module — see {} for details on any function.",
                 "note:".bright_yellow(),
-                "col".bright_green(),
-                "':help col.<fn>'".bright_cyan()
+                name,
+                native.bright_green(),
+                format!("':help {}.<fn>'", native).bright_cyan()
             );
         }
         println!(
