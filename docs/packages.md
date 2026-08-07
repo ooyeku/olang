@@ -117,6 +117,10 @@ An import lists what it binds: `use geometry { circle, area }` brings in
 only those two names; `use geometry { * }` (or bare `use geometry`) imports
 everything the package `share`s.
 
+After importing, the module name is a namespace you can inspect and call:
+`geometry.area(...)`, or `:help geometry` in the REPL to list its functions.
+This works for the embedded `colx` collections module too (`:help colx`).
+
 ## The lockfile
 
 `olang.lock` pins every dependency exactly — a git commit SHA, a resolved

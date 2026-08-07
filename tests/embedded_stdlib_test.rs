@@ -260,3 +260,19 @@ use colx { unique }
         other => panic!("expected list, got {:?}", other),
     }
 }
+
+#[test]
+fn module_members_lists_functions_of_a_bound_module() {
+    // Backs `:help <module>` — after use, the module's members are queryable.
+    let program = Parser::new().parse("use colx { unique }").unwrap();
+    let mut interp = Interpreter::new();
+    interp.eval_program(program).unwrap();
+    let members = interp
+        .module_members("colx")
+        .expect("colx is a bound module");
+    assert!(members.contains(&"unique".to_string()));
+    assert!(members.contains(&"sort_by".to_string()));
+    assert_eq!(members.len(), 16);
+    // A non-module name yields None.
+    assert!(interp.module_members("nope").is_none());
+}

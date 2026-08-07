@@ -3008,6 +3008,20 @@ impl Interpreter {
     }
 
     /// Get all user-defined variables (excluding built-ins)
+    /// If `name` is bound to a module (native stdlib, embedded, or a package),
+    /// return its member function names, sorted. Used by `:help <module>` so
+    /// imported modules are discoverable. Returns None for non-module bindings.
+    pub fn module_members(&self, name: &str) -> Option<Vec<String>> {
+        match self.environment.get(name)? {
+            Value::Struct { type_name, fields } if type_name == "Module" => {
+                let mut names: Vec<String> = fields.keys().cloned().collect();
+                names.sort();
+                Some(names)
+            }
+            _ => None,
+        }
+    }
+
     pub fn get_user_variables(&self) -> HashMap<String, &Value> {
         let mut user_vars = HashMap::new();
         let builtin_names: std::collections::HashSet<String> = self

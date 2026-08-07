@@ -777,6 +777,39 @@ impl Repl {
         }
     }
 
+    /// Render help for a bound module: its name and callable functions. For a
+    /// function whose full name (`module.fn`) has a static doc entry, `:help
+    /// module.fn` shows the detail; this lists what is available.
+    fn show_module_help(&self, name: &str, members: &[String]) {
+        println!(
+            "\n{} {}",
+            "═══ Module:".bright_cyan().bold(),
+            format!("{} ═══", name).bright_cyan().bold()
+        );
+        println!(
+            "  {} function(s), call as {}:",
+            members.len().to_string().bright_white(),
+            format!("{}.<fn>(...)", name).bright_cyan()
+        );
+        for chunk in members.chunks(4) {
+            println!("    {}", chunk.join(", "));
+        }
+        // colx is the olang mirror of the native `col` module; point at the
+        // detailed per-function docs, which are identical.
+        if name == "colx" {
+            println!(
+                "\n  {} colx mirrors the native {} module — see {} for details on any function.",
+                "note:".bright_yellow(),
+                "col".bright_green(),
+                "':help col.<fn>'".bright_cyan()
+            );
+        }
+        println!(
+            "\n  Try {} for a function's documentation.",
+            format!(":help {}.<fn>", name).bright_cyan()
+        );
+    }
+
     fn handle_command(&mut self, command: &str) -> Result<(), ReplError> {
         let parts: Vec<&str> = command.split_whitespace().collect();
         let command_name = parts[0];
@@ -824,6 +857,11 @@ impl Repl {
                                 println!("{}", self.help_system.show_function_help(topic));
                             } else if self.help_system.has_category(topic) {
                                 println!("{}", self.help_system.show_category(topic));
+                            } else if let Some(members) = self.interpreter.module_members(topic) {
+                                // An imported/bound module — list its functions
+                                // so packages and embedded modules are
+                                // discoverable via help.
+                                self.show_module_help(topic, &members);
                             } else {
                                 // Try advanced search if direct lookup fails
                                 let results = self.help_system.search(topic, None);
