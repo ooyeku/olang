@@ -10,28 +10,7 @@ documented.
 
 ## [Unreleased]
 
-### Fixed
-
-- **Newlines now separate statements.** Previously a newline was plain
-  whitespace, so a parenthesized expression on the line after a statement
-  attached as a call to the previous value — `let a = [1,2]` then `(a, a)`
-  parsed as `[1,2](a, a)`, breaking tuple returns and any bare `(...)`
-  statement. Newlines are now statement separators, admitted explicitly at
-  continuation points (operator chains, pipelines, bracketed lists, match
-  arms, bodies after `=`), so multi-line pipelines and calls are unchanged.
-  Trailing commas in list literals are now allowed too, consistent with
-  maps/structs/enums.
-
-### Changed
-
-- **`colx` now mirrors all of `col`.** The embedded olang collections module
-  gained the remaining nine functions (`min_by`, `max_by`, `sort_by`,
-  `drop_while`, `flat_map`, `frequencies`, `last`, `window`, `zip_with`),
-  reaching full parity with the native `col` module — including an olang
-  insertion sort for `sort_by`. Every function is differential-tested
-  against its Rust counterpart (16 functions, with key-function, stability,
-  and truncation cases), and a parity test asserts the mirror stays
-  complete.
+## [0.25.0] - 2026-08-06
 
 ### Added
 
@@ -177,40 +156,17 @@ documented.
   literals, `Promise.all`/`Promise.race`/`spawn`, and the reserved-word
   list.
 
-### Fixed
-
-- **Unit-variant patterns dispatch correctly.** A bare name in a `match`
-  arm that resolves to a unit enum variant is now matched as a variant, not
-  bound as a catch-all — previously the first such arm (`North => ...`)
-  captured every case.
-
-- `to_int` and `to_float` are callable as plain identifiers. They were
-  handled by the builtin dispatcher but never registered in the builtin
-  function map, so `to_float(x)` failed with "undefined variable" outside
-  the bytecode tier — a real bug surfaced while writing the example
-  programs.
-
-- Zero-parameter lambdas (`() => 3`) parse — the grammar always allowed
-  them, but the parser discarded the body when no parameter list was
-  present.
-- Documentation no longer claims struct field shorthand, intersection
-  types, union type declarations, or error-variant payloads — none of
-  which parse. `Promise.delay`'s documented argument order was backwards
-  (it is `Promise.delay(value, ms)`).
-
-### Removed
-
-- **~12,000 lines of dead execution machinery**: the `OlangVirtualMachine`
-  routing layer and `ovm_integration` (the pre-0.24 default path, measured
-  ~70% slower than the plain interpreter), `ovm_repl`, the placeholder JIT
-  module, the tracing-GC/region-allocator remnants, and the pipeline, SIMD,
-  lazy, fusion, and adaptive engines — none wired into execution. The OVM
-  directory now contains exactly what runs: the bytecode VM, the tier, the
-  value model, and safepoint flags. REPL commands `:ovm`, `:stats`, and
-  `:memory` now report bytecode-tier statistics; `:gc` is gone (values are
-  reference-counted; there is nothing to force).
-
 ### Changed
+
+- **`colx` now mirrors all of `col`.** The embedded olang collections module
+  gained the remaining nine functions (`min_by`, `max_by`, `sort_by`,
+  `drop_while`, `flat_map`, `frequencies`, `last`, `window`, `zip_with`),
+  reaching full parity with the native `col` module — including an olang
+  insertion sort for `sort_by`. Every function is differential-tested
+  against its Rust counterpart (16 functions, with key-function, stability,
+  and truncation cases), and a parity test asserts the mirror stays
+  complete.
+
 
 - **Stdlib return-type convention unified**: total operations (which cannot
   fail for correctly-typed input) return bare values; fallible operations
@@ -262,10 +218,53 @@ documented.
 
 ### Fixed
 
+- **Newlines now separate statements.** Previously a newline was plain
+  whitespace, so a parenthesized expression on the line after a statement
+  attached as a call to the previous value — `let a = [1,2]` then `(a, a)`
+  parsed as `[1,2](a, a)`, breaking tuple returns and any bare `(...)`
+  statement. Newlines are now statement separators, admitted explicitly at
+  continuation points (operator chains, pipelines, bracketed lists, match
+  arms, bodies after `=`), so multi-line pipelines and calls are unchanged.
+  Trailing commas in list literals are now allowed too, consistent with
+  maps/structs/enums.
+
+
+- **Unit-variant patterns dispatch correctly.** A bare name in a `match`
+  arm that resolves to a unit enum variant is now matched as a variant, not
+  bound as a catch-all — previously the first such arm (`North => ...`)
+  captured every case.
+
+- `to_int` and `to_float` are callable as plain identifiers. They were
+  handled by the builtin dispatcher but never registered in the builtin
+  function map, so `to_float(x)` failed with "undefined variable" outside
+  the bytecode tier — a real bug surfaced while writing the example
+  programs.
+
+- Zero-parameter lambdas (`() => 3`) parse — the grammar always allowed
+  them, but the parser discarded the body when no parameter list was
+  present.
+- Documentation no longer claims struct field shorthand, intersection
+  types, union type declarations, or error-variant payloads — none of
+  which parse. `Promise.delay`'s documented argument order was backwards
+  (it is `Promise.delay(value, ms)`).
+
+
 - Lambda capture no longer depends on `im::HashMap::union`, whose collision
   bias depends on which map is larger — a captured variable could resolve to
   an ancestor call frame's stale value, sending recursion through a captured
   lambda into infinite loops.
+
+### Removed
+
+- **~12,000 lines of dead execution machinery**: the `OlangVirtualMachine`
+  routing layer and `ovm_integration` (the pre-0.24 default path, measured
+  ~70% slower than the plain interpreter), `ovm_repl`, the placeholder JIT
+  module, the tracing-GC/region-allocator remnants, and the pipeline, SIMD,
+  lazy, fusion, and adaptive engines — none wired into execution. The OVM
+  directory now contains exactly what runs: the bytecode VM, the tier, the
+  value model, and safepoint flags. REPL commands `:ovm`, `:stats`, and
+  `:memory` now report bytecode-tier statistics; `:gc` is gone (values are
+  reference-counted; there is nothing to force).
 
 ## [0.23.0] - 2026-08-04
 
