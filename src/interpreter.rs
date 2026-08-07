@@ -2699,6 +2699,12 @@ impl Interpreter {
                 s.push_str(&b);
                 Ok(Value::String(std::sync::Arc::new(s)))
             }
+            (Value::List(a), BinaryOp::Add, Value::List(b)) => {
+                let mut items = Vec::with_capacity(a.len() + b.len());
+                items.extend(a.iter().cloned());
+                items.extend(b.iter().cloned());
+                Ok(Value::List(std::sync::Arc::from(items)))
+            }
             _ => Err(InterpreterError::TypeError {
                 message: "Invalid binary operation".to_string(),
             }),
@@ -3605,6 +3611,24 @@ impl Interpreter {
                     for item in item_list {
                         if let crate::ast::UseItem::Specific(item_name) = item {
                             if let Some(value) = self.get_module_export(module, item_name) {
+                                // Importing an enum type name also brings its
+                                // variant constructors into scope, so the ADT is
+                                // usable for construction (`Text(..)`) and not
+                                // only as a type reference. Variants are bare
+                                // names with no qualified form to reach otherwise.
+                                if let Value::TypeInfo {
+                                    definition: crate::ast::TypeDefinition::Enum { variants },
+                                    ..
+                                } = &value
+                                {
+                                    for variant in variants {
+                                        if let Some(ctor) =
+                                            self.get_module_export(module, &variant.name)
+                                        {
+                                            self.environment.define(variant.name.clone(), ctor);
+                                        }
+                                    }
+                                }
                                 self.environment.define(item_name.clone(), value);
                                 crate::log::get_logger().debug(
                                     "interpreter",
@@ -4083,6 +4107,24 @@ impl Interpreter {
                                     definition: type_decl.definition.clone(),
                                 };
                                 exports.insert(type_decl.name.clone(), type_info);
+
+                                // For an enum, also export each variant
+                                // constructor. `eval_type_decl` bound them into
+                                // the module environment; exporting them lets an
+                                // importer *construct* a shared ADT (`Text("x")`),
+                                // not just pattern-match it. Patterns use bare
+                                // names and never needed the import, but there is
+                                // no qualified `Type::Variant` syntax, so the bare
+                                // constructor must cross the module boundary.
+                                if let crate::ast::TypeDefinition::Enum { variants } =
+                                    &type_decl.definition
+                                {
+                                    for variant in variants {
+                                        if let Some(ctor) = self.environment.get(&variant.name) {
+                                            exports.insert(variant.name.clone(), ctor);
+                                        }
+                                    }
+                                }
                             }
                             // Traits/impls register globally (not as exports);
                             // loading this module is enough to make them apply.

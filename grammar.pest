@@ -43,7 +43,7 @@ statement   = { share_decl | use_decl | test_decl | error_type_decl | trait_decl
 share_decl = { "share" ~ (use_decl | function_decl | let_decl | type_decl | trait_decl | impl_decl) }
 use_decl = { "use" ~ use_path ~ ("{" ~ NL* ~ use_list ~ NL* ~ "}")? }
 use_path = { identifier ~ ("." ~ identifier)* }
-use_list = { use_item ~ ("," ~ use_item)* }
+use_list = { use_item ~ (NL* ~ "," ~ NL* ~ use_item)* ~ (NL* ~ ",")? }
 use_item = { wildcard | identifier }
 wildcard = { "*" }
 
@@ -169,7 +169,7 @@ pattern_wildcard    = { "_" }
 block       = { "{" ~ NL* ~ (statement ~ (";" | NL)* )* ~ "}" }
 
 // Conditionals
-if_expr     = { "if" ~ expr ~ "=>" ~ NL* ~ (block | expr) ~ (NL* ~ "else" ~ "=>" ~ NL* ~ (block | expr))? }
+if_expr     = { "if" ~ expr ~ "=>" ~ NL* ~ (block | expr) ~ (NL* ~ "else" ~ NL* ~ (if_expr | ("=>" ~ NL* ~ (block | expr))))? }
 
 // Literals
 literal     = { float | binary | octal | hex | integer | char_literal | raw_string | template_string | string | boolean | list | tuple }

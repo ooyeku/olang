@@ -1,0 +1,4 @@
+[package]
+name = "template"
+version = "1.0.0"
+description = "A small mustache-style template engine: lex, parse, render, self-hosted in olang"

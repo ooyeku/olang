@@ -187,6 +187,10 @@ let words = ["hello", "world"];
 let first = numbers[0];    // SUPPORTED
 let second = words[1];     // SUPPORTED
 
+// Concatenation with `+`
+let more = numbers + [6, 7];   // [1, 2, 3, 4, 5, 6, 7]
+let grown = [] + [numbers[0]]; // append one element: [1]
+
 // List functions (built-in)
 let doubled = numbers |> map((x) => x * 2);     // SUPPORTED
 let evens = numbers |> filter((x) => x % 2 == 0); // SUPPORTED
@@ -403,6 +407,11 @@ let score = 85
 
 // Simple if-else
 let result = if x > 0 => "positive" else => "non-positive"
+
+// Chained with else if
+let sign = if x > 0 => "positive"
+    else if x < 0 => "negative"
+    else => "zero"
 
 // If without else (evaluates to Unit when false)
 let msg = if is_valid => "Valid input"
@@ -855,6 +864,21 @@ use parent.child { item1, item2 };
 // Import from multiple levels
 use utils.math { add, subtract };
 use utils.string { join, split };
+
+// A long import list may span lines and end with a trailing comma
+use lib.ast {
+    Token, TText, TVar,
+    Node, NText, NVar,
+};
+```
+
+Importing an enum type also brings its variant constructors into scope, so a
+shared ADT can be constructed in the importing module, not only matched:
+
+```olang no-run
+// lib/ast.ol:  share type Node = enum { NText(String), NVar(String) }
+use lib.ast { Node };
+let leaf = NText("hello");   // the variant constructor came along with Node
 ```
 
 

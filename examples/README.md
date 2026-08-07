@@ -49,6 +49,11 @@ A two-package demonstration of the package manager (see
   revenue by region (`lib/aggregate.ol`), emits a `json` report, then reads
   it back and selects fields by a runtime key — a parsed JSON object reads
   through the same `map_*` accessors as a map
+- [`template/`](template/) — a mustache-style template engine self-hosted in
+  olang: a lexer, a parser building a nested node tree over a shared `Node`
+  ADT (`lib/ast.ol`), and a renderer walking it against a JSON context.
+  Supports `{{ dotted.paths }}`, `{{#each}}`, `{{#if}}`, and `{{ . }}` for the
+  current item
 
 ```bash
 olang examples/packages/demo/main.ol      # auto-resolves the dependency

@@ -20,6 +20,21 @@ documented.
   `share` keyword for symmetry with `share fn`/`type`/`let`. (Traits already
   register globally, so a plain `trait` in a module also reaches consumers;
   `share` is now simply accepted rather than a parse error.)
+- **`else if` chains.** Conditionals can chain with `else if COND => ...`
+  instead of only nesting as `else => if ...`. Both tiers.
+- **List concatenation with `+`.** `[1, 2] + [3, 4]` yields `[1, 2, 3, 4]`,
+  matching how `+` already joins strings — so building a list up element by
+  element (`acc = acc + [x]`) works. Both the interpreter and the OVM tier.
+- **Enum variant constructors cross the module boundary.** Importing a shared
+  enum type (`use m { Node }`), a variant by name (`use m { Text }`), or `*`
+  now brings the variant constructors into scope, so a shared ADT is
+  constructible in the importer and not only matchable. There is no qualified
+  `Type::Variant` form, so the bare constructor had to travel with the import.
+- **Multi-line `use` import lists.** The names inside `use m { ... }` may span
+  lines and end with a trailing comma.
+- **`examples/template/`** — a mustache-style template engine self-hosted in
+  olang (lexer, parser over a shared `Node` ADT, renderer), driven by a JSON
+  context. Exercises all four fixes above.
 - **`examples/dataproc/`** — a CSV→aggregate→JSON data pipeline: reads sales
   rows with `csv`, types and aggregates them, emits a `json` report, then
   reads it back and selects fields by a runtime key.

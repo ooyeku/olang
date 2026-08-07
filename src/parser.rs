@@ -2284,6 +2284,9 @@ impl Parser {
 
         let else_branch = if let Some(pair) = pairs.next() {
             match pair.as_rule() {
+                // `else if ...` — the else branch is itself a full if-expression,
+                // so the chain nests without requiring `else => if ...`.
+                Rule::if_expr => Some(Box::new(self.build_if_expr(pair.into_inner())?)),
                 Rule::block => Some(Box::new(self.build_block(pair.into_inner())?)),
                 Rule::expr => Some(Box::new(self.build_expr(pair.into_inner())?)),
                 _ => None,

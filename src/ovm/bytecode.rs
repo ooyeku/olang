@@ -1625,6 +1625,20 @@ impl BytecodeVm {
                     )))
                 }
             },
+            (ValueData::List(a), ValueData::List(b)) => match op {
+                BinaryOp::Add => {
+                    let mut items = Vec::with_capacity(a.len() + b.len());
+                    items.extend(a.iter().cloned());
+                    items.extend(b.iter().cloned());
+                    OvmValue::new_list(items)
+                }
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "Unsupported operation: {:?}",
+                        op
+                    )))
+                }
+            },
             _ => {
                 return Err(BytecodeError::TypeError(
                     "Type mismatch in binary operation".to_string(),

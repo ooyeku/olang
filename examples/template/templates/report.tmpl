@@ -1,0 +1,10 @@
+Invoice for {{ customer.name }} ({{ customer.email }})
+{{#if customer.vip}}  ** VIP customer — priority handling **
+{{/if}}
+Line items:
+{{#each items}}  - {{ name }}: {{ qty }} x ${{ price }}
+{{/each}}
+Tags: {{#each tags}}[{{ . }}] {{/each}}
+
+Total due: ${{ total }}
+Thank you for your business.
