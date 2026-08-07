@@ -44,6 +44,11 @@ A two-package demonstration of the package manager (see
   `async`/`await` and `Promise.all`/`race`: four simulated fetches run
   concurrently (total time = the slowest, not the sum), and each is raced
   against a timeout budget
+- [`dataproc/`](dataproc/) — a CSV→aggregate→JSON pipeline: reads sales rows
+  with `csv.parse_with_headers`, types them (`lib/transform.ol`), aggregates
+  revenue by region (`lib/aggregate.ol`), emits a `json` report, then reads
+  it back and selects fields by a runtime key — a parsed JSON object reads
+  through the same `map_*` accessors as a map
 
 ```bash
 olang examples/packages/demo/main.ol      # auto-resolves the dependency

@@ -2323,6 +2323,18 @@ impl BuiltinFunctions {
         Ok(Value::List(result.into()))
     }
 
+    /// A read-only field-map view over a map or any struct-like value.
+    /// Lets the `map_*` accessors work uniformly on maps, anonymous objects,
+    /// structs, and parsed JSON objects — anything with named fields reads the
+    /// same way, so dynamic key access on parsed JSON is possible.
+    fn field_map(value: &Value) -> Option<&HashMap<String, Value>> {
+        match value {
+            Value::Map(m) => Some(m.as_ref()),
+            Value::Struct { fields, .. } => Some(fields),
+            _ => None,
+        }
+    }
+
     fn map_get(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
         if args.len() != 2 {
             return Err(InterpreterError::ArityMismatch {
@@ -2331,11 +2343,11 @@ impl BuiltinFunctions {
             });
         }
 
-        let map = match &args[0] {
-            Value::Map(map) => map,
-            _ => {
+        let map = match Self::field_map(&args[0]) {
+            Some(map) => map,
+            None => {
                 return Err(InterpreterError::TypeError {
-                    message: "map_get: first argument must be a map".to_string(),
+                    message: "map_get: first argument must be a map or object".to_string(),
                 })
             }
         };
@@ -2401,11 +2413,11 @@ impl BuiltinFunctions {
             });
         }
 
-        let map = match &args[0] {
-            Value::Map(map) => map,
-            _ => {
+        let map = match Self::field_map(&args[0]) {
+            Some(map) => map,
+            None => {
                 return Err(InterpreterError::TypeError {
-                    message: "map_has_key: first argument must be a map".to_string(),
+                    message: "map_has_key: first argument must be a map or object".to_string(),
                 })
             }
         };
@@ -2434,11 +2446,11 @@ impl BuiltinFunctions {
             });
         }
 
-        let map = match &args[0] {
-            Value::Map(map) => map,
-            _ => {
+        let map = match Self::field_map(&args[0]) {
+            Some(map) => map,
+            None => {
                 return Err(InterpreterError::TypeError {
-                    message: "map_keys: argument must be a map".to_string(),
+                    message: "map_keys: argument must be a map or object".to_string(),
                 })
             }
         };
@@ -2459,11 +2471,11 @@ impl BuiltinFunctions {
             });
         }
 
-        let map = match &args[0] {
-            Value::Map(map) => map,
-            _ => {
+        let map = match Self::field_map(&args[0]) {
+            Some(map) => map,
+            None => {
                 return Err(InterpreterError::TypeError {
-                    message: "map_values: argument must be a map".to_string(),
+                    message: "map_values: argument must be a map or object".to_string(),
                 })
             }
         };

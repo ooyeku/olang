@@ -1,0 +1,10 @@
+region,product,amount,quantity
+west,laptop,1200.00,2
+east,mouse,25.50,10
+west,monitor,320.00,3
+east,laptop,1200.00,1
+west,mouse,25.50,5
+east,keyboard,80.00,4
+west,laptop,1200.00,1
+east,monitor,320.00,2
+west,keyboard,80.00,6

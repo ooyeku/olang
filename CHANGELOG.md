@@ -20,6 +20,9 @@ documented.
   `share` keyword for symmetry with `share fn`/`type`/`let`. (Traits already
   register globally, so a plain `trait` in a module also reaches consumers;
   `share` is now simply accepted rather than a parse error.)
+- **`examples/dataproc/`** — a CSV→aggregate→JSON data pipeline: reads sales
+  rows with `csv`, types and aggregates them, emits a `json` report, then
+  reads it back and selects fields by a runtime key.
 - **`examples/scheduler/`** — concurrent fan-out and timeouts with
   `async`/`await` and `Promise.all`/`race`.
 - **`examples/loganalyzer/`** — a second dogfooded package: parses
@@ -33,6 +36,12 @@ documented.
 
 ### Fixed
 
+- **`map_get`/`map_has_key`/`map_keys`/`map_values` read any struct-like
+  value.** They previously accepted only a `Map`, so a parsed JSON object,
+  an anonymous object, or a named struct could be read by dot access but not
+  by a runtime key. They now view a map or any struct's fields uniformly —
+  found by dogfooding a data processor, where selecting a JSON column by a
+  variable is the natural pattern.
 - **`Promise.all` / `Promise.race` now compose.** Three async bugs found by
   dogfooding a concurrency program: (1) they accept any list expression, not
   just a literal `[...]`, so `Promise.all(jobs)` with a variable works;
