@@ -2615,6 +2615,19 @@ impl Interpreter {
             (Value::String(a), BinaryOp::NotEqual, Value::String(b)) => {
                 Ok(Value::Boolean(*a != *b))
             }
+            // Strings order lexicographically, matching the bytecode tier — so
+            // character-range checks like `c >= "0" && c <= "9"` work and
+            // strings sort. Ordering is by Unicode scalar value.
+            (Value::String(a), BinaryOp::LessThan, Value::String(b)) => Ok(Value::Boolean(*a < *b)),
+            (Value::String(a), BinaryOp::LessThanEqual, Value::String(b)) => {
+                Ok(Value::Boolean(*a <= *b))
+            }
+            (Value::String(a), BinaryOp::GreaterThan, Value::String(b)) => {
+                Ok(Value::Boolean(*a > *b))
+            }
+            (Value::String(a), BinaryOp::GreaterThanEqual, Value::String(b)) => {
+                Ok(Value::Boolean(*a >= *b))
+            }
             (Value::Boolean(a), BinaryOp::NotEqual, Value::Boolean(b)) => {
                 Ok(Value::Boolean(a != b))
             }

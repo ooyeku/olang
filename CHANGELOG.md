@@ -32,6 +32,9 @@ documented.
   `Type::Variant` form, so the bare constructor had to travel with the import.
 - **Multi-line `use` import lists.** The names inside `use m { ... }` may span
   lines and end with a trailing comma.
+- **`examples/parser/`** — a parser combinator library (parsers as
+  `(input, pos) -> result` functions, composed by higher-order combinators)
+  with a recursive arithmetic grammar that parses and evaluates in one pass.
 - **`examples/workflow/`** — a data-driven state machine engine with guards
   and actions as first-class function values, running two machines (an
   expense-approval pipeline and a cyclic turnstile) on one engine.
@@ -54,6 +57,13 @@ documented.
 
 ### Fixed
 
+- **Strings compare with `<`, `<=`, `>`, `>=` in the interpreter.** Only
+  `==`/`!=` worked; the ordering operators raised "Invalid binary operation"
+  even though the bytecode tier accepted them — so the result depended on
+  whether a function had been promoted. The interpreter now orders strings
+  lexicographically by Unicode scalar value, matching the tier. Found by
+  dogfooding a parser combinator library, where `c >= "0" && c <= "9"` is
+  everywhere.
 - **Same-named functions in different modules no longer collide.** The
   bytecode tier keyed compiled functions by bare name, so once two modules
   each defined (say) `initial_state`, the first one compiled ran for *both*

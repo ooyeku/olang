@@ -59,6 +59,11 @@ A two-package demonstration of the package manager (see
   Two machines run on it: an expense-approval pipeline that branches on amount
   (`lib/expense.ol`) and a cyclic turnstile (`lib/turnstile.ol`); context
   evolves immutably and each run yields an audit trail
+- [`parser/`](parser/) — a parser combinator library (`lib/combinators.ol`):
+  parsers are `(input, pos) -> result` functions, composed by higher-order
+  combinators (`seq`, `alt`, `many`, `chainl1`, `between`, …). On top of it,
+  `lib/calc.ol` is a recursive arithmetic grammar that parses and evaluates
+  expressions in one pass, honoring precedence and parentheses
 
 ```bash
 olang examples/packages/demo/main.ol      # auto-resolves the dependency

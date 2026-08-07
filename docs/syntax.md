@@ -500,6 +500,12 @@ let less_than = a < b
 let less_equal = a <= b
 let greater_than = a > b
 let greater_equal = a >= b
+
+// Strings compare too: `==`/`!=` for equality, and `<`/`<=`/`>`/`>=` order
+// them lexicographically by Unicode scalar value (so `"apple" < "banana"`,
+// and character-range checks like `c >= "0" && c <= "9"` work).
+let ordered = "apple" < "banana"
+let is_digit = ("5" >= "0") && ("5" <= "9")
 ```
 
 ### Logical Operators
