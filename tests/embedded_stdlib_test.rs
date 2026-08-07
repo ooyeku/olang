@@ -235,3 +235,28 @@ fn colx_mirrors_every_col_function() {
         );
     }
 }
+
+#[test]
+fn use_binds_the_module_as_a_namespace() {
+    // After `use colx { ... }`, the module name itself is bound — inspectable
+    // and callable as `colx.fn(...)` — matching the native stdlib modules.
+    // The selective import still binds the named items too.
+    let src = r#"
+use colx { unique }
+[typeof(colx), colx.sort_by([3, 1, 2], (x) => x), unique([1, 1, 2])]
+"#;
+    match eval(src) {
+        Value::List(items) => {
+            assert_eq!(items[0], Value::String("Module".to_string().into()));
+            assert_eq!(
+                items[1],
+                Value::List(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)].into())
+            );
+            assert_eq!(
+                items[2],
+                Value::List(vec![Value::Integer(1), Value::Integer(2)].into())
+            );
+        }
+        other => panic!("expected list, got {:?}", other),
+    }
+}

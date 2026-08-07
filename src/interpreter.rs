@@ -4874,6 +4874,18 @@ impl Interpreter {
         let module_path = use_decl.path.join(".");
         let module = self.load_module_from_file(&module_path)?;
         self.bind_module_imports(&module, &Some(use_decl.items))?;
+
+        // Also bind the module's own name as a namespace, so an imported
+        // module is inspectable and callable as `name.fn(...)` — matching the
+        // native stdlib modules (`col`, `math`, ...), which are always bound.
+        if let Some(leaf) = use_decl.path.last() {
+            // Don't clobber an existing binding of the same name (e.g. a
+            // native module the user also referenced).
+            if self.environment.get(leaf).is_none() {
+                self.environment.define(leaf.clone(), module.clone());
+            }
+        }
+
         Ok(Value::Unit)
     }
 
