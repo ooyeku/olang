@@ -1,0 +1,4 @@
+[package]
+name = "loganalyzer"
+version = "1.0.0"
+description = "Parse and summarize application logs with re + fs"

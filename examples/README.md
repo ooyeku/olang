@@ -35,6 +35,11 @@ A two-package demonstration of the package manager (see
   package: SQLite storage (`lib/store.ol`), a reporting module using `col`
   and pipelines (`lib/report.ol`), a domain module (`lib/model.ol`), and a
   CLI dispatch on `os.args()` (`main.ol`)
+- [`loganalyzer/`](loganalyzer/) — parses application logs with `re` capture
+  groups (`lib/parse.ol`), aggregates by level and route with `col` +
+  pipelines (`lib/stats.ol`), and reads files with `fs` from `os.args()`
+  (`main.ol`). Handles malformed lines, missing/empty files, and 2000-line
+  logs
 
 ```bash
 olang examples/packages/demo/main.ol      # auto-resolves the dependency

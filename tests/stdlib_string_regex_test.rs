@@ -156,3 +156,24 @@ fn os_args_returns_a_list() {
         other => panic!("expected list, got {:?}", other),
     }
 }
+
+#[test]
+fn log_line_parsing_with_captures() {
+    // The parsing approach the loganalyzer example uses: a capture regex over
+    // a log line yields [whole, time, level, message]. Guards the core.
+    let src = r#"
+let groups = unwrap(re.captures("^(\\S+ \\S+) \\[(\\w+)\\] (.+)$", "2026-08-06 09:13:15 [ERROR] db failed: timeout"))
+[groups[1], groups[2], groups[3]]
+"#;
+    match eval(src) {
+        Value::List(items) => {
+            assert_eq!(s(items[0].clone()), "2026-08-06 09:13:15");
+            assert_eq!(s(items[1].clone()), "ERROR");
+            assert_eq!(s(items[2].clone()), "db failed: timeout");
+        }
+        other => panic!("expected list, got {:?}", other),
+    }
+    // A non-matching line yields Ok([]) — the analyzer treats that as malformed.
+    let no_match = eval(r#"len(unwrap(re.captures("^(\\S+) \\[(\\w+)\\]$", "junk line")))"#);
+    assert_eq!(no_match, Value::Integer(0));
+}

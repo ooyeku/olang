@@ -20,6 +20,11 @@ documented.
   `share` keyword for symmetry with `share fn`/`type`/`let`. (Traits already
   register globally, so a plain `trait` in a module also reaches consumers;
   `share` is now simply accepted rather than a parse error.)
+- **`examples/loganalyzer/`** — a second dogfooded package: parses
+  application logs with `re` capture groups, aggregates by level and route
+  with `col` + pipelines, and reads files with `fs`. Handles malformed
+  lines, missing/empty files, and 2000-line logs. Found no new bugs — the
+  taskcli round had already hardened the shared package/args/import paths.
 - **`examples/taskcli/`** — a persistent task tracker as a real multi-file
   package (SQLite store, a `col`+pipeline reporting module, a domain module,
   and CLI dispatch on `os.args()`), built by dogfooding the language.
