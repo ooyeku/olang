@@ -260,6 +260,9 @@ impl TypeChecker {
             }
             Statement::ShareDecl(share_decl) => {
                 match share_decl {
+                    crate::ast::ShareDecl::Trait(_) | crate::ast::ShareDecl::Impl(_) => {
+                        Ok(crate::ast::TypeAnnotation::Unknown)
+                    }
                     crate::ast::ShareDecl::Function(func_decl) => {
                         self.check_function_decl(func_decl)
                     }

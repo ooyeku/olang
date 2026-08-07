@@ -31,6 +31,10 @@ A two-package demonstration of the package manager (see
   areas, and 2D point math, exposing a public API with `share`
 - [`packages/demo/`](packages/demo/) — depends on `geometry` by path and
   imports it with `use geometry { ... }`
+- [`taskcli/`](taskcli/) — a persistent task tracker as a real multi-file
+  package: SQLite storage (`lib/store.ol`), a reporting module using `col`
+  and pipelines (`lib/report.ol`), a domain module (`lib/model.ol`), and a
+  CLI dispatch on `os.args()` (`main.ol`)
 
 ```bash
 olang examples/packages/demo/main.ol      # auto-resolves the dependency

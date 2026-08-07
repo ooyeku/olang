@@ -3159,6 +3159,12 @@ impl Parser {
             Rule::use_decl => Ok(ShareDecl::Use(
                 self.build_use_decl(inner_pair.into_inner())?,
             )),
+            Rule::trait_decl => Ok(ShareDecl::Trait(
+                self.build_trait_decl(inner_pair.into_inner())?,
+            )),
+            Rule::impl_decl => Ok(ShareDecl::Impl(
+                self.build_impl_decl(inner_pair.into_inner())?,
+            )),
             _ => Err(ParseError::InvalidSyntax {
                 message: "Invalid declaration in share".to_string(),
             }),

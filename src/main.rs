@@ -52,6 +52,11 @@ struct Cli {
     /// keep running on the interpreter.
     #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "50")]
     ovm_tier: Option<u32>,
+
+    /// Arguments passed through to the program, readable via `os.args()`.
+    /// Everything after the file name (or after `--`) is the script's argv.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    script_args: Vec<String>,
 }
 
 /// The interpreter recurses on the host stack, and its documented call-depth
@@ -127,6 +132,12 @@ fn run() -> i32 {
     miette::set_panic_hook();
 
     if let Some(file_path) = cli.file {
+        // Program's argv: the script path, then everything after it. Read via
+        // os.args() inside the program.
+        let mut argv = vec![file_path.to_string_lossy().to_string()];
+        argv.extend(cli.script_args.clone());
+        olang::stdlib::os::set_script_args(argv);
+
         // Execute file in batch mode
         if let Err(e) = execute_file(
             &file_path,

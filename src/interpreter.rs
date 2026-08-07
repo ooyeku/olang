@@ -3999,6 +3999,11 @@ impl Interpreter {
             ShareDecl::Let(letd) => self.eval_let_decl(&letd),
             ShareDecl::Type(typed) => self.eval_type_decl(typed),
             ShareDecl::Use(use_decl) => self.eval_transitive_share(use_decl),
+            // Traits and impls register in global registries, not the
+            // environment, so `share` is cosmetic — declaring them already
+            // makes them available to any module that loads this one.
+            ShareDecl::Trait(trait_decl) => self.eval_trait_decl(trait_decl),
+            ShareDecl::Impl(impl_decl) => self.eval_impl_decl(impl_decl),
         }
     }
 
@@ -4168,6 +4173,14 @@ impl Interpreter {
                                     definition: type_decl.definition.clone(),
                                 };
                                 exports.insert(type_decl.name.clone(), type_info);
+                            }
+                            // Traits/impls register globally (not as exports);
+                            // loading this module is enough to make them apply.
+                            ShareDecl::Trait(trait_decl) => {
+                                self.eval_trait_decl(trait_decl.clone())?;
+                            }
+                            ShareDecl::Impl(impl_decl) => {
+                                self.eval_impl_decl(impl_decl.clone())?;
                             }
                             ShareDecl::Use(use_decl) => {
                                 // Handle transitive sharing: re-export items from another module
@@ -4542,7 +4555,6 @@ impl Interpreter {
             // Feature 5: Check for automatic index files in directories
             candidates.push(target_dir.join("index.ol"));
             candidates.push(target_dir.join("mod.ol"));
-
         } else {
             candidates.push(base_dir.join(&file_name));
 
@@ -4562,10 +4574,8 @@ impl Interpreter {
             candidates.push(src_target_dir.join(&file_name));
             candidates.push(src_target_dir.join("mod.ol"));
             candidates.push(src_target_dir.join("index.ol"));
-
         } else {
             candidates.push(base_dir.join("src").join(&file_name));
-
         }
 
         // Check each candidate
@@ -4583,11 +4593,6 @@ impl Interpreter {
             ),
         })
     }
-
-
-
-
-
 
     /// Feature 9: Enhanced module not found error with detailed context and suggestions
     fn create_module_not_found_error(

@@ -1535,6 +1535,7 @@ impl Analyzer {
     /// Analyze share declarations
     fn analyze_share_decl(&mut self, share_decl: &ShareDecl) -> Result<(), AnalysisError> {
         match share_decl {
+            ShareDecl::Trait(_) | ShareDecl::Impl(_) => Ok(()),
             ShareDecl::Function(func_decl) => {
                 // Add function to current scope
                 if self.scopes[self.current_scope].contains(&func_decl.name) {
@@ -1724,6 +1725,7 @@ impl Analyzer {
         reachable: &mut HashSet<usize>,
     ) {
         match share_decl {
+            ShareDecl::Trait(_) | ShareDecl::Impl(_) => {}
             ShareDecl::Function(func_decl) => {
                 self.mark_expression_reachable(&func_decl.body, reachable);
             }
@@ -1877,6 +1879,7 @@ impl DeadCodeDetector {
             Statement::ShareDecl(share_decl) => {
                 // Handle share declarations by marking their expressions as reachable
                 match share_decl {
+                    ShareDecl::Trait(_) | ShareDecl::Impl(_) => {}
                     ShareDecl::Function(func_decl) => {
                         self.mark_expression_reachable(&func_decl.body);
                     }

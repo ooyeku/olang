@@ -1,0 +1,4 @@
+[package]
+name = "taskcli"
+version = "1.0.0"
+description = "A persistent task tracker CLI, written in olang"

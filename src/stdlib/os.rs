@@ -353,6 +353,16 @@ fn os_pid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 /// Get command line arguments
 /// Usage: os.args() -> Result<[String], Error>
+/// The program's own arguments (argv[0] is the script path, the rest are the
+/// arguments after it). Set by the CLI before execution; when unset (e.g. in
+/// the REPL) `os.args()` falls back to the process arguments.
+static SCRIPT_ARGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// Install the program's argument vector. Called once by the CLI.
+pub fn set_script_args(args: Vec<String>) {
+    let _ = SCRIPT_ARGS.set(args);
+}
+
 fn os_args(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -361,9 +371,16 @@ fn os_args(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         ))))));
     }
 
-    let args: Vec<Value> = env::args()
-        .map(|arg| Value::String(Arc::new(arg)))
-        .collect();
+    // The script's own argv when the CLI set it, otherwise the process args.
+    let args: Vec<Value> = match SCRIPT_ARGS.get() {
+        Some(script_args) => script_args
+            .iter()
+            .map(|arg| Value::String(Arc::new(arg.clone())))
+            .collect(),
+        None => env::args()
+            .map(|arg| Value::String(Arc::new(arg)))
+            .collect(),
+    };
 
     Ok(Value::Ok(Box::new(Value::List(args.into()))))
 }

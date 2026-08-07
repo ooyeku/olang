@@ -146,3 +146,13 @@ fn stdlib_convention_holds() {
     // A bad date is a recoverable Err, not a crash
     assert!(matches!(eval(r#"dates.add_days("bad", 5)"#), Value::Err(_)));
 }
+
+#[test]
+fn os_args_returns_a_list() {
+    // Without the CLI setting script args, os.args() falls back to the
+    // process args — but it must always return Ok(list-of-strings).
+    match eval(r#"unwrap(os.args())"#) {
+        Value::List(items) => assert!(items.iter().all(|v| matches!(v, Value::String(_)))),
+        other => panic!("expected list, got {:?}", other),
+    }
+}

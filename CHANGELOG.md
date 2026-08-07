@@ -10,6 +10,28 @@ documented.
 
 ## [Unreleased]
 
+### Added
+
+- **Programs receive command-line arguments.** `olang script.ol a b c` now
+  passes `a b c` through to the program; `os.args()` returns
+  `[script, a, b, c]` (previously it returned the interpreter's own argv and
+  the CLI rejected trailing args). This makes real CLIs writable in olang.
+- **`share trait` and `share impl`.** Traits and impl blocks can now carry the
+  `share` keyword for symmetry with `share fn`/`type`/`let`. (Traits already
+  register globally, so a plain `trait` in a module also reaches consumers;
+  `share` is now simply accepted rather than a parse error.)
+- **`examples/taskcli/`** — a persistent task tracker as a real multi-file
+  package (SQLite store, a `col`+pipeline reporting module, a domain module,
+  and CLI dispatch on `os.args()`), built by dogfooding the language.
+
+### Fixed
+
+- **Sub-directory module imports resolve the named file.** `use lib.greet`
+  loaded a generated directory index instead of `lib/greet.ol`, and
+  generating that index *wrote a file into the user's source tree* on import.
+  The directory auto-index feature is removed: directory imports resolve a
+  user-written `index.ol`/`mod.ol`, and named modules resolve the named file.
+
 ## [0.25.0] - 2026-08-06
 
 ### Added

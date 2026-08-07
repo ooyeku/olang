@@ -146,3 +146,16 @@ Dog {}.name() + "/" + City {}.name()
 "#;
     assert_eq!(s(eval(src)), "Rex/Paris");
 }
+
+#[test]
+fn traits_and_impls_can_be_shared() {
+    // `share trait` / `share impl` parse and behave like their unshared forms
+    // (traits register globally; `share` is cosmetic but must be accepted).
+    let src = r#"
+share trait Greet { fn greet(self) -> String }
+type Dog = struct {}
+share impl Greet for Dog { fn greet(self) = "woof" }
+Dog {}.greet()
+"#;
+    assert_eq!(s(eval(src)), "woof");
+}

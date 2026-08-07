@@ -961,7 +961,9 @@ pub enum ShareDecl {
     Function(FunctionDecl),
     Let(LetDecl),
     Type(TypeDecl),
-    Use(UseDecl), // Transitive sharing: share use module { items }
+    Use(UseDecl),     // Transitive sharing: share use module { items }
+    Trait(TraitDecl), // `share trait` — accepted; traits register globally
+    Impl(ImplDecl),   // `share impl`  — accepted; impls register globally
 }
 
 // Use item enum for specific imports or wildcard
