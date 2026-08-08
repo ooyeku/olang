@@ -64,6 +64,11 @@ A two-package demonstration of the package manager (see
   combinators (`seq`, `alt`, `many`, `chainl1`, `between`, …). On top of it,
   `lib/calc.ol` is a recursive arithmetic grammar that parses and evaluates
   expressions in one pass, honoring precedence and parentheses
+- [`regex/`](regex/) — a backtracking regex engine: a recursive-descent parser
+  (`lib/parse.ol`) compiles a pattern into a recursive `Re` AST (`lib/ast.ol`),
+  and a continuation-passing matcher (`lib/matcher.ol`) walks it with
+  backtracking. Supports `. * + ? | ( )`, `[a-z]`/`[^…]` classes, `^`/`$`
+  anchors, and `\d \w \s` escapes, with `find` / `find_all` / `matches`
 
 ```bash
 olang examples/packages/demo/main.ol      # auto-resolves the dependency

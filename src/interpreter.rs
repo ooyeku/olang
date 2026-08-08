@@ -774,6 +774,13 @@ pub struct Interpreter {
     /// default methods: type name -> set of trait names.
     type_traits: HashMap<String, Vec<String>>,
 
+    /// Names of declared unit enum variants (e.g. `North`, `AtEnd`). A bare
+    /// identifier pattern is a variant equality test only when its name is one
+    /// of these — otherwise it is a fresh binding. Without this, a binding
+    /// sub-pattern like `b` in `Concat(a, b)` would be misread as a variant
+    /// test whenever some `b` already in scope happened to hold a unit variant.
+    unit_variant_names: HashSet<String>,
+
     /// Package dependency map: dependency name -> the directory whose `.ol`
     /// files it exposes. A `use foo.bar` whose first segment is a dependency
     /// name resolves inside that directory rather than relative to the
@@ -833,6 +840,7 @@ impl Interpreter {
             trait_impls: HashMap::new(),
             trait_defaults: HashMap::new(),
             type_traits: HashMap::new(),
+            unit_variant_names: HashSet::new(),
             dependency_map: HashMap::new(),
         };
 
@@ -1351,9 +1359,35 @@ impl Interpreter {
                 Ok(result)
             }
             Expr::BinaryOp { left, op, right } => {
-                let left = self.eval_expr(left)?;
-                let right = self.eval_expr(right)?;
-                self.eval_binary_op(left, op.clone(), right)
+                // The logical operators short-circuit: the right operand is
+                // evaluated only when the left doesn't already settle the
+                // result. `false && x` is false and `true || x` is true
+                // without touching `x` — so guards like
+                // `i < len && ok(at(i))` are safe. The non-short-circuiting
+                // path still runs through eval_binary_op for its type checks.
+                match op {
+                    BinaryOp::And => {
+                        let left = self.eval_expr(left)?;
+                        if matches!(left, Value::Boolean(false)) {
+                            return Ok(Value::Boolean(false));
+                        }
+                        let right = self.eval_expr(right)?;
+                        self.eval_binary_op(left, op.clone(), right)
+                    }
+                    BinaryOp::Or => {
+                        let left = self.eval_expr(left)?;
+                        if matches!(left, Value::Boolean(true)) {
+                            return Ok(Value::Boolean(true));
+                        }
+                        let right = self.eval_expr(right)?;
+                        self.eval_binary_op(left, op.clone(), right)
+                    }
+                    _ => {
+                        let left = self.eval_expr(left)?;
+                        let right = self.eval_expr(right)?;
+                        self.eval_binary_op(left, op.clone(), right)
+                    }
+                }
             }
             Expr::UnaryOp { op, operand } => {
                 let operand = self.eval_expr(operand)?;
@@ -2053,6 +2087,7 @@ impl Interpreter {
             trait_impls: self.trait_impls.clone(),
             trait_defaults: self.trait_defaults.clone(),
             type_traits: self.type_traits.clone(),
+            unit_variant_names: self.unit_variant_names.clone(),
             dependency_map: self.dependency_map.clone(),
         }
     }
@@ -2217,20 +2252,26 @@ impl Interpreter {
         match (pattern, value) {
             (Pattern::Literal(lit), val) => Ok(lit == val),
             (Pattern::Identifier(name), val) => {
-                // A bare name that resolves to a unit enum variant is a
-                // variant pattern — match it by equality — rather than a
-                // fresh binding that captures everything. Without this,
+                // A bare name that is a *declared* unit enum variant is a
+                // variant pattern — match it by equality — rather than a fresh
+                // binding that captures everything. Without this,
                 // `match dir { North => .., East => .. }` would have `North`
-                // bind and shadow every other arm.
-                if let Some(variant @ Value::Enum { .. }) = self.environment.get(name) {
-                    if matches!(
-                        variant,
-                        Value::Enum {
-                            variant_data: EnumVariantData::Unit,
-                            ..
+                // bind and shadow every other arm. The declared-variant check
+                // (not "does some in-scope value happen to be a unit variant")
+                // is essential: a binding sub-pattern such as `b` in
+                // `Concat(a, b)` must still bind even when a `b` already in
+                // scope holds a unit variant.
+                if self.unit_variant_names.contains(name) {
+                    if let Some(variant @ Value::Enum { .. }) = self.environment.get(name) {
+                        if matches!(
+                            variant,
+                            Value::Enum {
+                                variant_data: EnumVariantData::Unit,
+                                ..
+                            }
+                        ) {
+                            return Ok(&variant == val);
                         }
-                    ) {
-                        return Ok(&variant == val);
                     }
                 }
                 bindings.insert(name.clone(), val.clone());
@@ -2813,11 +2854,16 @@ impl Interpreter {
         if let TypeDefinition::Enum { variants } = &type_decl.definition {
             for variant in variants {
                 let value = match &variant.data {
-                    None => Value::Enum {
-                        type_name: type_decl.name.clone(),
-                        variant_name: variant.name.clone(),
-                        variant_data: EnumVariantData::Unit,
-                    },
+                    None => {
+                        // Remember unit-variant names so a pattern can tell a
+                        // variant test from a fresh binding by name.
+                        self.unit_variant_names.insert(variant.name.clone());
+                        Value::Enum {
+                            type_name: type_decl.name.clone(),
+                            variant_name: variant.name.clone(),
+                            variant_data: EnumVariantData::Unit,
+                        }
+                    }
                     Some(fields) => Value::EnumConstructor {
                         type_name: type_decl.name.clone(),
                         variant_name: variant.name.clone(),

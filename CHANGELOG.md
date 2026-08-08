@@ -32,6 +32,10 @@ documented.
   `Type::Variant` form, so the bare constructor had to travel with the import.
 - **Multi-line `use` import lists.** The names inside `use m { ... }` may span
   lines and end with a trailing comma.
+- **`examples/regex/`** — a backtracking regex engine: a recursive-descent
+  parser compiles a pattern to a recursive `Re` AST, and a continuation-passing
+  matcher walks it. Supports `. * + ? | ( )`, character classes, anchors, and
+  `\d \w \s`, with `find`/`find_all`/`matches`.
 - **`examples/parser/`** — a parser combinator library (parsers as
   `(input, pos) -> result` functions, composed by higher-order combinators)
   with a recursive arithmetic grammar that parses and evaluates in one pass.
@@ -57,6 +61,18 @@ documented.
 
 ### Fixed
 
+- **`&&` and `||` short-circuit.** The right operand was always evaluated, so
+  a guard like `x != 0 && y / x > 0` still divided by zero and a backtracking
+  matcher's progress guard recursed forever. The right operand now runs only
+  when the left doesn't already settle the result. Found by dogfooding a regex
+  engine.
+- **Identifier patterns bind instead of misfiring as variant tests.** A bare
+  name in a pattern was treated as a unit-variant equality test whenever it
+  merely resolved to a unit variant *in scope* — so a binding sub-pattern like
+  `b` in `Node(a, b)` silently failed to match when some `b` already in scope
+  held a unit variant. A name is now a variant test only when it is a
+  *declared* variant; otherwise it binds. Found by dogfooding a regex engine
+  (`Concat(a, b)` with `b` bound to the `$` anchor node).
 - **Strings compare with `<`, `<=`, `>`, `>=` in the interpreter.** Only
   `==`/`!=` worked; the ordering operators raised "Invalid binary operation"
   even though the bytecode tier accepted them — so the result depended on

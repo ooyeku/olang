@@ -518,6 +518,10 @@ let b = false
 let and_result = a && b
 let or_result = a || b
 let not_result = !a
+
+// `&&` and `||` short-circuit: the right operand runs only when the left
+// doesn't already settle the result. So the right side of a guard is safe:
+let safe = (b != false) && a   // right side skipped when the left is false
 ```
 
 ### Bitwise Operators

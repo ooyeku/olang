@@ -1,0 +1,4 @@
+[package]
+name = "regex"
+version = "1.0.0"
+description = "A small backtracking regex engine self-hosted in olang: parse to an AST, then match by recursive descent"
