@@ -18,7 +18,7 @@
 //! and interpreter agree on every program the VM accepts.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crate::ast::{Function, FunctionDecl, Value};
 use crate::ovm::bytecode::{BytecodeError, BytecodeVm};
@@ -61,6 +61,13 @@ pub struct BytecodeTier {
     stats: TierStats,
     /// Emit a line when a function is promoted (for --ovm-stats / debugging)
     verbose: bool,
+    /// Pointer-identity cache for argument conversion. Arc-backed lists are
+    /// immutable, so a list already converted (and validated representable)
+    /// converts for free on every later call — a hot function taking a large
+    /// list no longer pays a deep Value->OvmValue walk per call. Entries are
+    /// keyed by allocation address and validated with a Weak upgrade, so a
+    /// freed-and-reused address can never produce a stale hit.
+    arg_cache: HashMap<usize, (Weak<[Value]>, OvmValue)>,
 }
 
 impl BytecodeTier {
@@ -73,6 +80,7 @@ impl BytecodeTier {
             rejected: HashSet::new(),
             known_functions: HashMap::new(),
             ambiguous: HashSet::new(),
+            arg_cache: HashMap::new(),
             stats: TierStats::default(),
             verbose: false,
         }
@@ -155,10 +163,10 @@ impl BytecodeTier {
         // Arguments must round-trip through the OVM value model
         let mut ovm_args = Vec::with_capacity(args.len());
         for arg in args {
-            if !Self::is_representable(arg) {
-                return TierOutcome::Fallback;
+            match self.convert_arg(arg) {
+                Some(v) => ovm_args.push(v),
+                None => return TierOutcome::Fallback,
             }
-            ovm_args.push(OvmValue::from_ast(arg.clone()));
         }
 
         self.stats.bytecode_calls += 1;
@@ -312,6 +320,41 @@ impl BytecodeTier {
     /// back even though Results round-trip fine.
     fn is_representable(value: &Value) -> bool {
         BytecodeVm::round_trips(value)
+    }
+
+    /// Convert one argument for the VM, or None if it isn't representable.
+    /// Arc-backed lists hit the pointer-identity cache: the same (immutable)
+    /// list converts once, not once per call. Correctness of a hit is
+    /// guaranteed by the Weak upgrade — if the original allocation died, the
+    /// upgrade fails and the entry is replaced; if it is alive, the address
+    /// identifies exactly that list.
+    fn convert_arg(&mut self, arg: &Value) -> Option<OvmValue> {
+        if let Value::List(items) = arg {
+            let key = Arc::as_ptr(items) as *const u8 as usize;
+            if let Some((weak, cached)) = self.arg_cache.get(&key) {
+                if let Some(live) = weak.upgrade() {
+                    if Arc::ptr_eq(&live, items) {
+                        return Some(cached.clone());
+                    }
+                }
+            }
+            if !Self::is_representable(arg) {
+                return None;
+            }
+            let converted = OvmValue::from_ast(arg.clone());
+            // Bound the cache; wholesale clear is fine — entries repopulate
+            // on the next call and hits dominate in steady state.
+            if self.arg_cache.len() >= 512 {
+                self.arg_cache.clear();
+            }
+            self.arg_cache
+                .insert(key, (Arc::downgrade(items), converted.clone()));
+            return Some(converted);
+        }
+        if !Self::is_representable(arg) {
+            return None;
+        }
+        Some(OvmValue::from_ast(arg.clone()))
     }
 }
 

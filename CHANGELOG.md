@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Changed
+
+- **The tier call boundary no longer taxes every call.** Three per-call
+  costs measured and removed: (1) arguments were deep-converted
+  Value→OvmValue on every call — a function taking a 1,000-element list
+  paid a full conversion walk per call (measured: identical work cost
+  0.4µs with a 1-element argument and 8.5µs with 1,000). Arc-backed lists
+  now hit a pointer-identity conversion cache validated by Weak upgrade,
+  so an unchanged list converts once; per-call cost is flat in argument
+  size. (2) The compiled bytecode (whole instruction vector + constants)
+  was deep-cloned out of an RwLock per call; the cache now stores
+  Arc<CompiledBytecode>. (3) Every call allocated a fresh register/local
+  frame and took two Instant::now() samples for an unused statistic;
+  frames are pooled with capacity retained and per-call timing is gone.
+  Measured on the repository benchmarks: N-body 2,511ms → 1,461ms (1.7×),
+  fib(30) 736ms → 340ms (2.2×), boundary microbench flat at 65ms for
+  1/100/1,000-element arguments (was 83/246/1,701ms). Three new
+  tier-agreement tests cover cache identity: repeated same-list calls,
+  fresh lists in a loop (allocation reuse), and derivative lists.
+
 ## [0.32.0] - 2026-08-08
 
 ### Added

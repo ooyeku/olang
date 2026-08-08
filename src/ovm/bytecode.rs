@@ -14,7 +14,8 @@ pub struct BytecodeVm {
     compiler: BytecodeCompiler,
 
     // Compiled bytecode cache
-    bytecode_cache: Arc<RwLock<HashMap<FunctionId, CompiledBytecode>>>,
+    // Arc-wrapped so a call clones a pointer, not the instruction vector
+    bytecode_cache: Arc<RwLock<HashMap<FunctionId, Arc<CompiledBytecode>>>>,
 
     // Runtime execution state
     execution_state: ExecutionState,
@@ -48,6 +49,9 @@ pub struct BytecodeVm {
     /// recursive CallNamed so runaway recursion errors instead of aborting
     call_depth: u32,
     max_call_depth: u32,
+    /// Spare execution frames, pooled so register/local vectors keep their
+    /// allocated capacity across calls
+    frame_pool: Vec<ExecutionState>,
 }
 
 /// Call frame for function execution
@@ -779,6 +783,7 @@ impl BytecodeVm {
             builtins: BuiltinFunctions::new(),
             builtin_interpreter: None,
             call_depth: 0,
+            frame_pool: Vec::new(),
             // Must match the interpreter's own limit: a program that recurses
             // 900 deep has to behave the same whether or not it was promoted
             max_call_depth: 1000,
@@ -845,7 +850,7 @@ impl BytecodeVm {
         let bytecode = self.compiler.compile_function(func_id, func)?;
 
         if let Ok(mut cache) = self.bytecode_cache.write() {
-            cache.insert(func_id, bytecode);
+            cache.insert(func_id, Arc::new(bytecode));
         }
 
         self.stats.compilation_time += start_time.elapsed();
@@ -879,8 +884,11 @@ impl BytecodeVm {
 
         // Give this call its own frame: nested calls (e.g. recursion through
         // CallNamed) re-enter execute(), and sharing one ExecutionState would
-        // clobber the caller's registers and locals.
-        let caller_state = std::mem::take(&mut self.execution_state);
+        // clobber the caller's registers and locals. Frames are pooled so the
+        // register/local vectors keep their capacity across calls instead of
+        // reallocating on every one.
+        let fresh = self.frame_pool.pop().unwrap_or_default();
+        let caller_state = std::mem::replace(&mut self.execution_state, fresh);
 
         let result = (|| {
             self.execution_state
@@ -890,15 +898,15 @@ impl BytecodeVm {
             self.stats.bytecode_cache_hits += 1;
             self.stats.function_calls += 1;
 
-            // Execute bytecode
-            let start_time = std::time::Instant::now();
-            let result = self.execute_bytecode(&bytecode)?;
-            self.stats.execution_time += start_time.elapsed();
-            Ok(result)
+            self.execute_bytecode(&bytecode)
         })();
 
-        // Restore the caller's frame on both success and error paths
-        self.execution_state = caller_state;
+        // Restore the caller's frame on both success and error paths, and
+        // return this call's frame to the pool with its capacity intact.
+        let used = std::mem::replace(&mut self.execution_state, caller_state);
+        if self.frame_pool.len() < 64 {
+            self.frame_pool.push(used);
+        }
         self.call_depth -= 1;
 
         result

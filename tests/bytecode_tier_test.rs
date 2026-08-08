@@ -1376,3 +1376,61 @@ n
 "#,
     );
 }
+
+// ── argument-conversion cache (perf: the tier boundary) ───────────────
+
+#[test]
+fn repeated_calls_with_the_same_list_stay_correct() {
+    // The tier caches Value->OvmValue conversion by allocation identity.
+    // Hammering one list through a promoted function must keep exact results.
+    assert_tier_transparent(
+        r#"
+fn first(xs) = xs[0]
+fn total(xs) = {
+    let mut s = 0
+    for i in 0..500 { s = s + first(xs) }
+    s
+}
+let xs = [7, 8, 9]
+total(xs) + total(xs)
+"#,
+    );
+}
+
+#[test]
+fn fresh_lists_never_see_stale_cached_conversions() {
+    // Lists created and dropped in a loop can reuse allocations; a stale
+    // cache hit would return a previous list's contents. Each iteration's
+    // result must reflect ITS list.
+    assert_tier_transparent(
+        r#"
+fn head_of(xs) = xs[0]
+let mut total = 0
+for i in 0..300 {
+    let fresh = [i * 3, 99]
+    total = total + head_of(fresh)
+}
+total
+"#,
+    );
+}
+
+#[test]
+fn mutated_derivatives_are_distinct_allocations() {
+    // map/filter build new lists; passing originals and derivatives
+    // alternately must never cross wires.
+    assert_tier_transparent(
+        r#"
+fn sum_all(xs) = {
+    let mut s = 0
+    for x in xs { s = s + x }
+    s
+}
+let base = [1, 2, 3, 4]
+let doubled = base |> map((x) => x * 2)
+let mut acc = 0
+for i in 0..100 { acc = acc + sum_all(base) + sum_all(doubled) }
+acc
+"#,
+    );
+}
