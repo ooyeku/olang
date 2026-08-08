@@ -1,0 +1,12 @@
+id = "olang"
+name = "Olang"
+version = "0.1.0"
+schema_version = 1
+authors = ["Olayeku"]
+description = "Olang language support for Zed"
+repository = "https://github.com/olayeku/olang"
+
+[grammars.olang]
+repository = "https://github.com/olayeku/olang"
+rev = "main"
+path = "editors/tree-sitter-olang"

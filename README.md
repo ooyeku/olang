@@ -404,7 +404,22 @@ let signature = unwrap(crypto.sign_data("message", keys.private_key))
 let valid = unwrap(crypto.verify_signature("message", signature, keys.public_key))
 ```
 
+## Editor support
 
+Native Zed support lives in [`editors/zed-olang`](editors/zed-olang), backed
+by the Tree-sitter grammar in
+[`editors/tree-sitter-olang`](editors/tree-sitter-olang). It recognizes `.ol`
+and `.olang` files and provides highlighting, indentation, bracket matching,
+symbol outlines, and text objects.
+
+To install it from a checkout, open Zed's command palette, run
+**zed: install dev extension**, and select `editors/zed-olang`. Markdown code
+fences tagged `olang` are highlighted after the extension is installed.
+
+GitHub currently assigns `.ol` to Jolie and does not load repository-local
+grammars. The root `.gitattributes` therefore selects Rust as the closest
+temporary GitHub rendering grammar. This should change to Olang after the
+language and its grammar are accepted by GitHub Linguist.
 
 ## Development
 

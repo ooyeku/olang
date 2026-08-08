@@ -1,0 +1,6 @@
+# GitHub Linguist currently assigns .ol to Jolie and cannot load a custom
+# repository-local grammar. Rust is a closer temporary rendering grammar for
+# Olang. Replace this override with `linguist-language=Olang` after Olang is
+# accepted into github-linguist/linguist.
+*.ol linguist-language=Rust
+*.olang linguist-language=Rust

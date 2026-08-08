@@ -1,0 +1,26 @@
+{
+  "name": "tree-sitter-olang",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for the Olang programming language",
+  "license": "MIT",
+  "main": "bindings/node",
+  "keywords": [
+    "incremental",
+    "parsing",
+    "tree-sitter",
+    "olang"
+  ],
+  "files": [
+    "grammar.js",
+    "src/**"
+  ],
+  "tree-sitter": [
+    {
+      "scope": "source.olang",
+      "file-types": [
+        "ol",
+        "olang"
+      ]
+    }
+  ]
+}
