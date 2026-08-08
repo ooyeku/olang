@@ -470,6 +470,11 @@ pub enum Value {
         /// no scheduler to resolve it in the background.
         #[serde(default)]
         resolve_at_epoch_ms: Option<u64>,
+        /// For `spawn`: the id of a real background thread in the spawn
+        /// registry. `await` joins it (memoized, so a cloned promise can be
+        /// awaited more than once).
+        #[serde(default)]
+        task_id: Option<u64>,
     },
 
     // Type information for exported types

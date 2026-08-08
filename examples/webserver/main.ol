@@ -3,8 +3,8 @@
 // across requests (the handler closes over the synchronized connection).
 // Run it, then talk to it with curl:
 //
-//   olang main.ol 8080                 // automatic worker count
-//   olang main.ol 8080 8               // explicit worker count
+//   olang main.ol 8080                         // automatic worker count
+//   OLANG_HTTP_WORKERS=8 olang main.ol 8080    // explicit worker count
 //   curl http://127.0.0.1:8080/notes
 //   curl -X POST -d '{"text": "ship the release"}' http://127.0.0.1:8080/notes
 //   curl http://127.0.0.1:8080/notes/1
@@ -137,7 +137,6 @@ fn app(req) = {
 
 let args = unwrap(os.args())
 let port = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 8080
-let worker_count = if len(args) > 2 => unwrap(str.parse_int(args[2])) else => 0
 
 let requested_log_mode = str.to_lower(env_or("OLANG_ACCESS_LOG", "errors"))
 let log_mode = if contains(["all", "errors", "off"], requested_log_mode) => requested_log_mode
@@ -145,10 +144,7 @@ let log_mode = if contains(["all", "errors", "off"], requested_log_mode) => requ
         println("invalid OLANG_ACCESS_LOG=" + requested_log_mode + "; using errors")
         "errors"
     }
-
-let serve_options = if worker_count > 0 =>
-    #{ "workers": worker_count, "queue_capacity": worker_count * 128 }
-else => #{}
+let worker_setting = env_or("OLANG_HTTP_WORKERS", "auto")
 
 println("olang notes API — press Ctrl-C to stop")
 println(unwrap(json.stringify({
@@ -156,7 +152,10 @@ println(unwrap(json.stringify({
     level: "INFO",
     event: "server_start",
     port: port,
-    workers: if worker_count > 0 => worker_count else => "auto",
+    workers: worker_setting,
     access_log: log_mode
 })))
-unwrap(http.serve(port, app, serve_options))
+// Keep the stable two-argument call so this example also runs with olang
+// binaries from before serve options were added. Current runtimes read the
+// worker override from OLANG_HTTP_WORKERS.
+unwrap(http.serve(port, app))

@@ -19,6 +19,55 @@ documented.
   JSON Lines access logging and its dependency-free benchmark reports actual
   average in-flight load.
 
+## [Unreleased]
+
+0.29 is the consolidation release, addressing an external review's bottom
+line item by item (the plan lives in `docs/roadmap.md`).
+
+### Added
+
+- **`spawn` runs on a real OS thread** (C2). Previously it evaluated its
+  expression eagerly and wrapped a resolved promise — concurrency
+  decoration. Now `spawn expr` evaluates on a background thread against a
+  thread-safe interpreter clone (the same worker pattern `http.serve`
+  uses): spawn returns immediately, `await` joins, results are memoized so
+  cloned promises can be awaited repeatedly, a failing task rejects, and
+  capture is by value like closures. Three 100ms tasks awaited together
+  take ~100ms — verified by tests in both tiers. The deterministic
+  deadline model for `Promise.delay` is unchanged.
+
+### Changed
+
+- **Struct construction is validated** (C1). A struct literal must name a
+  declared struct type and supply exactly the declared field names —
+  missing, surprise, and undeclared-type constructions are now errors
+  naming the problem. Field VALUES stay dynamic; the book states the
+  position plainly: declarations fix shape, not types. Anonymous objects
+  remain free-form. (Previously `NeverDeclared { surprise: 42 }`
+  constructed happily.)
+- **The lazy facade is honest** (C4). Every "lazy" path (map, filter,
+  take, skip, concat, and `lazy()` itself) built a thunk and immediately
+  forced it — eager semantics at extra cost. All are now direct eager
+  implementations; `lazy(v)`/`force(v)` keep their observable behavior
+  (identity) and the stdlib reference says so. The fabricated
+  memory-pressure machinery (estimates derived from a stack address) and
+  the module-cache wipe after 50-element range maps are deleted;
+  src/internal/ (2,687 lines) is gone entirely.
+- **Numeric parallelism follows configuration** (C4). `sum` hard-coded
+  parallel execution at ≥5 elements, bypassing the configured threshold;
+  it now respects it, and the default threshold rises from 10 to 10,000 —
+  small lists are always cheaper sequentially.
+
+### Fixed
+
+- **MVS resolution verifies requirements** (C3). The resolver kept an
+  already-selected version whenever it was merely ≥ a new requirement's
+  floor, never checking that it *satisfies* the requirement — `^1.0`
+  alongside a selected 2.0.0 passed silently, and the `Conflict` error was
+  unreachable. Selection now re-verifies every requirement in-loop and at
+  fixpoint; incompatible ranges produce `Conflict` naming the package and
+  requirements, in both resolution orders.
+
 ## [0.28.0] - 2026-08-08
 
 ### Added

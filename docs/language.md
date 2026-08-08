@@ -950,11 +950,17 @@ name in patterns.
 
 ## Async and Concurrency
 
-olang's concurrency model is **cooperative and deterministic**: promises
-carry either a settled value or a deadline, and `await`/`Promise.all`/
-`Promise.race` sleep exactly as long as needed. There is no background
-thread pool; timing composes the way you'd expect — awaiting several delays
-started together costs the *longest*, not the sum.
+olang has two concurrency mechanisms, both explicit:
+
+- **Deterministic promises** (`async`, `Promise.resolve/reject/delay`,
+  `all`, `race`): a promise carries a settled value or a *deadline*, and
+  `await` sleeps exactly as long as needed. Awaiting several delays started
+  together costs the longest, not the sum. No threads are involved —
+  timing is simulated, deterministically.
+- **Real background threads** (`spawn`): `spawn expr` evaluates the
+  expression on its own OS thread against a snapshot of the current
+  bindings, returning a promise that `await` joins. This is genuine
+  parallelism — three 100ms tasks awaited together take ~100ms.
 
 ### `async` functions and lambdas
 
@@ -992,13 +998,26 @@ just a literal.
 
 ### `spawn`
 
-`spawn` turns a call into a promise immediately:
+`spawn expr` starts evaluating the expression on a **real background
+thread** and returns a promise immediately; `await` joins it. The thread
+sees a snapshot of the bindings at spawn time (capture by value, like
+closures), a failing task rejects the promise, and awaiting the same
+promise again returns the memoized result:
 
 ```olang
-fn heavy() = 21 * 2
-let handle = spawn heavy()
-println(to_string(await handle))
+fn heavy(n) = {
+    time.sleep(20)
+    n * 2
+}
+let a = spawn heavy(10)
+let b = spawn heavy(11)
+println(to_string(await a + await b))   // both ran concurrently
+
+let p = spawn heavy(21)
+println(to_string(await p == await p))  // memoized: true
 ```
+
+Spawned promises compose with `Promise.all`/`race` like any other.
 
 ## Modules and Sharing
 

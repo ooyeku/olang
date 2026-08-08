@@ -43,10 +43,10 @@ global builtins.
 ### Stable in behavior, evolving in scope
 
 - **Async and concurrency** — the documented API (`async`/`await`,
-  `Promise.resolve/reject/delay/all/race`, `spawn`) is stable; the
-  *scheduling model* (cooperative, deadline-based, single-threaded) may
-  gain capability (e.g. real parallelism) without changing what existing
-  programs observe.
+  `Promise.resolve/reject/delay/all/race`, `spawn`) is stable. `spawn` runs
+  on a real OS thread (as of 0.29); the deterministic deadline model for
+  `Promise.delay` is unchanged. The scheduling model may gain further
+  capability without changing what existing programs observe.
 - **The OVM tier** — which functions get promoted, and how fast they run,
   changes freely; results never do.
 - **Type annotations** — all documented annotation forms keep parsing. A
