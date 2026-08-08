@@ -84,6 +84,9 @@ worker pool and 0.30 failure-as-a-value semantics compose correctly.
 
 ## [0.29.0] - 2026-08-08
 
+The consolidation release, addressing an external review's bottom line item
+by item (the plan lives in `docs/roadmap.md`).
+
 ### Added
 
 - **Bounded concurrent `http.serve`.** Independent connections run on a
@@ -92,14 +95,6 @@ worker pool and 0.30 failure-as-a-value semantics compose correctly.
   and `remote_addr` on requests. The notes-server example adds configurable
   JSON Lines access logging and its dependency-free benchmark reports actual
   average in-flight load.
-
-## [Unreleased]
-
-0.29 is the consolidation release, addressing an external review's bottom
-line item by item (the plan lives in `docs/roadmap.md`).
-
-### Added
-
 - **`spawn` runs on a real OS thread** (C2). Previously it evaluated its
   expression eagerly and wrapped a resolved promise — concurrency
   decoration. Now `spawn expr` evaluates on a background thread against a
