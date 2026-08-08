@@ -74,14 +74,42 @@ await p
 }
 
 #[test]
-fn a_failing_task_rejects_instead_of_crashing() {
+fn a_failing_task_rejects_as_an_err_value() {
+    // Awaiting a failed task yields Err(e) — a value, not a crash — so
+    // match / try-catch / unwrap_or / `?` all recover from worker failure.
     let src = r#"
 fn boom() = unwrap(Err("exploded"))
 let p = spawn boom()
-await p
+match await p {
+    Ok(v) => "unexpected",
+    Err(e) => "handled: " + show(e)
+}
 "#;
-    let err = eval(src).unwrap_err();
-    assert!(err.contains("spawned task failed"), "got: {err}");
+    match eval(src).unwrap() {
+        Value::String(s) => {
+            assert!(s.contains("handled: spawned task failed"), "got: {s}")
+        }
+        other => panic!("expected string, got {:?}", other),
+    }
+}
+
+#[test]
+fn try_catch_recovers_a_failed_task_and_passes_success_through() {
+    let src = r#"
+fn work(n) = if n == 1 => unwrap(Err("died")) else => n * 10
+let jobs = [spawn work(0), spawn work(1), spawn work(2)]
+let results = jobs |> map((j) => try { await j } catch (e) { 0 - 1 })
+results
+"#;
+    match eval(src).unwrap() {
+        Value::List(items) => {
+            assert_eq!(
+                items.as_ref().to_vec(),
+                vec![Value::Integer(0), Value::Integer(-1), Value::Integer(20)]
+            );
+        }
+        other => panic!("expected list, got {:?}", other),
+    }
 }
 
 #[test]

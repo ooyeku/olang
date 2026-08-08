@@ -903,9 +903,10 @@ println(to_string(is_err(parse_both("2", "oops"))))
 ### `try` / `catch`
 
 `try { ... } catch (e) { ... }` is expression-level sugar over a `Result`:
-the try block must evaluate to a `Result`; `Ok` unwraps to its value, `Err`
-binds the error to `e` and evaluates the catch block. It does **not** catch
-runtime errors (an actual `1 / 0` still aborts) — it destructures Results.
+`Ok` unwraps to its value, `Err` binds the error to `e` and evaluates the
+catch block, and **any other value passes through unchanged** (the try
+block simply succeeded). It does **not** catch runtime errors (an actual
+`1 / 0` still aborts) — it destructures Results.
 
 ```olang
 fn risky(n) = if n > 0 => Ok(n * 2) else => Err("negative input")
@@ -1018,6 +1019,17 @@ println(to_string(await p == await p))  // memoized: true
 ```
 
 Spawned promises compose with `Promise.all`/`race` like any other.
+
+**Failure is a value.** Awaiting a failed task (or any rejected promise)
+yields `Err(e)` rather than aborting, so worker failure is handled with
+the ordinary Result toolkit — one bad task never kills the batch:
+
+```olang
+fn work(n) = if n == 1 => unwrap(Err("task died")) else => n * 10
+let jobs = [spawn work(0), spawn work(1), spawn work(2)]
+let results = jobs |> map((j) => try { await j } catch (e) { -1 })
+println(to_string(results))   // [0, -1, 20]
+```
 
 ## Modules and Sharing
 

@@ -812,9 +812,12 @@ impl Interpreter {
 
                         result
                     }
-                    _ => Err(InterpreterError::TypeError {
-                        message: "Try-catch can only be used on Result values".to_string(),
-                    }),
+                    // A non-Result value passes through unchanged: the try
+                    // block succeeded with a plain value. This is what makes
+                    // `try { await task } catch (e) { fallback }` work when
+                    // the task succeeds (await yields the bare value) as well
+                    // as when it fails (await yields Err).
+                    other => Ok(other),
                 }
             }
             Expr::ForLoop {
@@ -1018,9 +1021,14 @@ impl Interpreter {
                 Self::sleep_until_epoch_ms(deadline);
                 match outcome {
                     Ok(v) => Ok(v),
-                    Err(e) => Err(InterpreterError::RuntimeError {
-                        message: format!("Promise rejected: {:?}", e),
-                    }),
+                    // Rejection is a value, not a crash: awaiting a rejected
+                    // promise (a failed spawn task, Promise.reject, or a
+                    // rejecting all/race) yields `Err(e)`, composing with
+                    // match, unwrap_or, `?`, and try/catch like every other
+                    // fallible result in the language. Previously this raised
+                    // a hard error nothing could catch — one failed worker
+                    // killed the whole program.
+                    Err(e) => Ok(Value::Err(Box::new(e))),
                 }
             }
             Expr::Promise {

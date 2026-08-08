@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **`examples/pargrep/`** — parallel code search dogfooding the real
+  `spawn`: the coordinator walks a tree, deals files to spawned worker
+  threads (fs + re + str running concurrently), merges after `await`, and
+  prints sequential-vs-parallel timings (~2× on the examples tree). A
+  `test` block asserts the parallel result equals the sequential one on
+  every run.
+
+### Fixed
+
+- **Awaiting a rejected promise yields `Err(e)` instead of aborting.**
+  A failed `spawn` task, `Promise.reject`, or a rejecting `all`/`race`
+  produced a hard runtime error nothing could catch — one failed worker
+  killed the whole program, making failure handling impossible. `await`
+  now returns the rejection as an ordinary `Err` value, composing with
+  `match`, `unwrap_or`, `?`, and `try`/`catch`. Found immediately by
+  dogfooding a parallel searcher's per-task recovery.
+- **`try` blocks pass non-Result values through.** `try { await task }
+  catch (e) { fallback }` failed with a type error whenever the task
+  *succeeded* (successful `await` yields the bare value, not `Ok`). A try
+  block's non-Result value now passes through unchanged; Ok/Err behavior
+  is untouched.
+
 ## [0.29.0] - 2026-08-08
 
 ### Added

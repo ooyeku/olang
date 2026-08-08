@@ -1,0 +1,4 @@
+[package]
+name = "pargrep"
+version = "1.0.0"
+description = "Parallel code search: fan a file tree out to spawned workers, merge their hits, and measure the speedup"

@@ -87,6 +87,11 @@ A two-package demonstration of the package manager (see
   a SQLite store that persists across requests. GET/POST/DELETE, JSON in and
   out, 404/400 handling. Long-running — `run_all.ol` skips it; it is
   integration-tested by `tests/http_serve_test.rs`
+- [`pargrep/`](pargrep/) — parallel code search on real `spawn` threads:
+  files are dealt into chunks, one worker thread per chunk searches with
+  `re` + `fs`, results merge after `await Promise.all`, and per-task
+  `try`/`catch` survives worker failure. Prints sequential-vs-parallel
+  timings and self-checks that both agree
 - [`markdown/`](markdown/) — a markdown→HTML converter: a block parser
   (`lib/blocks.ol` — headings, lists, blockquotes, fenced code, rules,
   paragraphs) over a recursive inline renderer (`lib/inline.ol` — `code`,
@@ -114,6 +119,3 @@ Older single-topic programs, still runnable:
 
 - The bytecode tier is on by default, so these run fast with no flags. Add
   `--ovm-stats` to see how many functions were promoted.
-- `enum` types declare but their variants cannot yet be constructed at
-  runtime; the tour expresses discriminated unions as tagged structs matched
-  on a tag field, which is the working idiom today.
