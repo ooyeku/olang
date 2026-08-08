@@ -82,6 +82,11 @@ A two-package demonstration of the package manager (see
   walk collecting a pathed error (`$.address.zip`) per violated keyword —
   `type`, `enum`, `required`, `properties`, `items`, and the min/max/length
   bounds. Reads `schema.json` and `data/*.json` from disk
+- [`webserver/`](webserver/) — a notes JSON API on `http.serve`: a router
+  with `:id` path parameters (`lib/router.ol`) dispatching to handlers over
+  a SQLite store that persists across requests. GET/POST/DELETE, JSON in and
+  out, 404/400 handling. Long-running — `run_all.ol` skips it; it is
+  integration-tested by `tests/http_serve_test.rs`
 
 ```bash
 olang examples/packages/demo/main.ol      # auto-resolves the dependency

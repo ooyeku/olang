@@ -902,6 +902,15 @@ fn olang_value_to_json(value: &Value) -> Result<serde_json::Value, JsonError> {
             }
             Ok(serde_json::Value::Object(obj))
         }
+        // Maps are JSON objects too — `#{ "k": v }` and db rows serialize
+        // exactly like structs and anonymous objects.
+        Value::Map(map) => {
+            let mut obj = serde_json::Map::new();
+            for (key, value) in map.iter() {
+                obj.insert(key.clone(), olang_value_to_json(value)?);
+            }
+            Ok(serde_json::Value::Object(obj))
+        }
         Value::Tuple(tuple) => {
             let mut arr = Vec::new();
             for item in tuple.iter() {

@@ -483,8 +483,8 @@ else => println("git failed: " + r.stderr)
 
 ## `http` — HTTP
 
-Requests return `Result` responses with status, headers, and body. There is
-also a minimal server. (`no-run`: network.)
+Requests return `Result` responses with status, headers, and body — and
+`http.serve` is a real, blocking HTTP/1.1 server. (`no-run`: network.)
 
 | Function | Description |
 |---|---|
@@ -492,8 +492,8 @@ also a minimal server. (`no-run`: network.)
 | `http.request(method, url, body, headers)` | full control |
 | `http.parse_url(url)` | split a URL into parts |
 | `http.encode_query(map)` / `http.decode_query(s)` | query strings |
-| `http.serve(port, handler)` | serve `handler(request)` (experimental) |
-| `http.response(status, body)` / `http.response_with_headers` | build responses |
+| `http.serve(port, handler)` | serve `handler(request)` forever (blocking) |
+| `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses |
 
 ```olang no-run
 let resp = unwrap(http.get("https://example.com/api/status"))
@@ -501,6 +501,39 @@ println(to_string(resp.status))
 let data = unwrap(json.parse(resp.body))
 println(data.message)
 ```
+
+### Serving
+
+`http.serve(port, handler)` binds `127.0.0.1:port` (port `0` picks a free
+one, reported on stdout as `listening on http://127.0.0.1:PORT`) and blocks,
+handling requests **sequentially**. The handler receives a request struct:
+
+| Field | Contents |
+|---|---|
+| `req.method` | `"GET"`, `"POST"`, ... (uppercased) |
+| `req.path` | the path, without the query string |
+| `req.query` | map of decoded query parameters |
+| `req.headers` | map of headers, keys lowercased |
+| `req.body` | the request body as a string |
+
+The handler returns either a bare string (a `200 text/plain`) or a response
+built with `http.response`/`http.response_with_headers` — pass headers as a
+map literal so keys like `Content-Type` can contain `-`. A handler error
+becomes a `500` and a malformed request a `400`; the server keeps running
+through both.
+
+```olang no-run
+fn handle(req) = {
+    if req.path == "/hello" => "hi, " + to_string(map_get(req.query, "name"))
+    else if req.method == "POST" =>
+        http.response_with_headers(201, req.body, #{ "Content-Type": "application/json" })
+    else => http.response(404, "no route for " + req.path)
+}
+http.serve(8080, handle)   // blocks; Ctrl-C to stop
+```
+
+See [`examples/webserver/`](../examples/webserver/) for a complete JSON API
+with a router (`:id` path parameters) over a SQLite store.
 
 ## `db` — SQLite
 

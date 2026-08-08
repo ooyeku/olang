@@ -14,6 +14,10 @@
 let olang = unwrap(os.exe_path())
 let root = unwrap(os.cwd())
 
+// Programs that block forever by design (servers) can't run under the
+// harness; list them here so the skip is visible, never silent.
+let long_running = ["webserver/"]
+
 // ── discover targets: each is { label, dir, file } ──
 let entries = sort(unwrap(fs.list_dir(".")))
 let mut targets = []
@@ -39,6 +43,13 @@ for e in entries {
         }
     }
 }
+
+let runnable = targets |> filter((t) => !contains(long_running, t.label))
+for t in targets {
+    if contains(long_running, t.label) =>
+        { println("  ~ skip   " + t.label + "  (long-running server; covered by tests/http_serve_test.rs)") }
+}
+let targets = runnable
 
 // Show the tail of captured output, indented, so a failure is diagnosable.
 fn show_tail(text) = {

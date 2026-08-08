@@ -54,7 +54,10 @@ global builtins.
 
 ### Experimental — may change or be completed
 
-- `http.serve` (the embedded HTTP server)
+- `http.serve` — the request/response API (the `HttpRequest` fields, string
+  and response-struct returns) is settled and integration-tested; the
+  *execution model* (sequential, blocking, localhost-only) may grow
+  concurrency and configuration without changing existing handlers.
 - `testing.run_test` (closure-based test execution)
 - The `--enable-parallel` / `set_parallel` evaluation modes
 - Assignment to an undeclared name (`x = 1` without `let`) currently

@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **`http.serve` is a real HTTP server.** It was a placeholder that returned
+  "server would start" without ever calling the handler. It now binds
+  `127.0.0.1:port` (port 0 picks a free one and reports it), parses HTTP/1.1
+  requests (method, path, decoded query map, lowercased header map, body),
+  and calls the olang handler per request — a bare string return is a 200, a
+  `http.response`/`response_with_headers` struct is honored. Handler errors
+  become 500s, malformed requests 400s, and the server keeps serving through
+  both. Sequential and blocking by design; integration-tested over real TCP.
+- **`examples/webserver/`** — a notes JSON API on `http.serve`: a router with
+  `:id` path parameters dispatching handlers over a SQLite store that
+  persists across requests (the handler closes over the connection).
+  `run_all.ol` skips long-running servers with a visible note.
+
+### Fixed
+
+- **`json.stringify` serializes maps.** `#{ ... }` literals and db rows are
+  `Map` values; stringify rejected them ("Cannot convert Map to JSON") while
+  handling structs and objects. Maps now serialize as JSON objects — found
+  dogfooding the webserver, where `db.query` rows feed straight into a JSON
+  response.
+- **`http.response_with_headers` accepts map headers.** It required a struct,
+  but object field names cannot contain `-`, making `Content-Type`
+  unwritable. A map literal (`#{ "Content-Type": "application/json" }`) now
+  works.
+
 ## [0.26.0] - 2026-08-07
 
 ### Added

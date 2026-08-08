@@ -1,0 +1,4 @@
+[package]
+name = "webserver"
+version = "1.0.0"
+description = "An HTTP JSON API served by http.serve: a router with :param segments over a SQLite store"

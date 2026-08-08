@@ -69,6 +69,18 @@ found
 }
 
 #[test]
+fn json_stringify_serializes_maps_as_objects() {
+    // db rows and `#{}` literals are Maps; they must serialize like objects.
+    // Surfaced by dogfooding an HTTP JSON API over SQLite.
+    let src = r#"unwrap(json.stringify(#{ "id": 1, "text": "hi" }))"#;
+    let text = s(eval(src));
+    assert!(text == r#"{"id":1,"text":"hi"}"# || text == r#"{"text":"hi","id":1}"#);
+
+    let src = r#"unwrap(json.stringify([#{ "n": 1 }, #{ "n": 2 }]))"#;
+    assert_eq!(s(eval(src)), r#"[{"n":1},{"n":2}]"#);
+}
+
+#[test]
 fn nested_objects_and_arrays_traverse() {
     let src = r#"
 let d = unwrap(json.parse("{\"u\":{\"tags\":[\"a\",\"b\",\"c\"]}}"))

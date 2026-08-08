@@ -424,29 +424,292 @@ fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 /// Start an HTTP server (simplified implementation for basic use)
 /// Usage: http.serve(8080, handler_function) -> Result<Unit, Error>
-fn http_serve(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "serve expects 2 arguments, got {}",
-            args.len()
-        ))))));
-    }
+fn http_serve(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    // The real server needs the interpreter (to call the olang handler), so
+    // `http.serve` is dispatched to `serve_blocking` in the builtin layer.
+    // Reaching this interpreter-less path is a routing bug.
+    Err("serve must be dispatched with the interpreter (internal routing error)".into())
+}
 
-    let port = match &args[0] {
-        Value::Integer(p) => *p,
-        _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "serve: port must be an integer".to_string(),
-            )))))
+/// A parsed incoming request, before conversion to an olang value.
+struct ParsedRequest {
+    method: String,
+    path: String,
+    query: Vec<(String, String)>,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
+/// Read and parse one HTTP/1.1 request from the stream. Minimal but honest:
+/// request line, headers (keys lowercased), and a Content-Length body.
+fn read_request(stream: &mut std::net::TcpStream) -> Result<ParsedRequest, String> {
+    use std::io::Read;
+
+    const MAX_HEAD: usize = 64 * 1024;
+    const MAX_BODY: usize = 10 * 1024 * 1024;
+
+    // Read until the blank line that ends the header block.
+    let mut buf: Vec<u8> = Vec::with_capacity(1024);
+    let mut chunk = [0u8; 4096];
+    let head_end = loop {
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos;
         }
+        if buf.len() > MAX_HEAD {
+            return Err("request header block too large".to_string());
+        }
+        let n = stream.read(&mut chunk).map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("connection closed mid-request".to_string());
+        }
+        buf.extend_from_slice(&chunk[..n]);
     };
 
-    // For now, return a placeholder since implementing a full HTTP server
-    // requires async runtime integration with the interpreter
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(format!(
-        "HTTP server would start on port {} (placeholder implementation)",
-        port
-    ))))))
+    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+    let mut lines = head.split("\r\n");
+
+    // Request line: METHOD SP target SP version
+    let request_line = lines.next().unwrap_or("");
+    let mut parts = request_line.split_whitespace();
+    let method = parts
+        .next()
+        .ok_or_else(|| "malformed request line".to_string())?
+        .to_uppercase();
+    let target = parts
+        .next()
+        .ok_or_else(|| "malformed request line".to_string())?;
+
+    let (path, raw_query) = match target.split_once('?') {
+        Some((p, q)) => (p.to_string(), q.to_string()),
+        None => (target.to_string(), String::new()),
+    };
+    let query: Vec<(String, String)> = url::form_urlencoded::parse(raw_query.as_bytes())
+        .into_owned()
+        .collect();
+
+    let mut headers = Vec::new();
+    for line in lines {
+        if let Some((k, v)) = line.split_once(':') {
+            headers.push((k.trim().to_lowercase(), v.trim().to_string()));
+        }
+    }
+
+    // Body: exactly Content-Length bytes (what's already buffered plus more).
+    let content_length = headers
+        .iter()
+        .find(|(k, _)| k == "content-length")
+        .and_then(|(_, v)| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    if content_length > MAX_BODY {
+        return Err("request body too large".to_string());
+    }
+    let mut body_bytes: Vec<u8> = buf[head_end + 4..].to_vec();
+    while body_bytes.len() < content_length {
+        let n = stream.read(&mut chunk).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        body_bytes.extend_from_slice(&chunk[..n]);
+    }
+    body_bytes.truncate(content_length);
+
+    Ok(ParsedRequest {
+        method,
+        path,
+        query,
+        headers,
+        body: String::from_utf8_lossy(&body_bytes).to_string(),
+    })
+}
+
+/// The request value handed to the olang handler: a struct with dot access,
+/// with `query` and `headers` as maps so `map_get` reads them.
+fn request_to_value(req: &ParsedRequest) -> Value {
+    let query_map: HashMap<String, Value> = req
+        .query
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(Arc::new(v.clone()))))
+        .collect();
+    let header_map: HashMap<String, Value> = req
+        .headers
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(Arc::new(v.clone()))))
+        .collect();
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        "method".to_string(),
+        Value::String(Arc::new(req.method.clone())),
+    );
+    fields.insert(
+        "path".to_string(),
+        Value::String(Arc::new(req.path.clone())),
+    );
+    fields.insert("query".to_string(), Value::Map(Arc::new(query_map)));
+    fields.insert("headers".to_string(), Value::Map(Arc::new(header_map)));
+    fields.insert(
+        "body".to_string(),
+        Value::String(Arc::new(req.body.clone())),
+    );
+
+    Value::Struct {
+        type_name: "HttpRequest".to_string(),
+        fields,
+    }
+}
+
+fn reason_phrase(status: i64) -> &'static str {
+    match status {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        409 => "Conflict",
+        422 => "Unprocessable Entity",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        503 => "Service Unavailable",
+        _ => "Status",
+    }
+}
+
+/// Serialize a status/body/header set into HTTP/1.1 response bytes.
+fn response_bytes(status: i64, body: &str, extra_headers: &[(String, String)]) -> Vec<u8> {
+    let mut out = format!("HTTP/1.1 {} {}\r\n", status, reason_phrase(status));
+    let has_content_type = extra_headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
+    if !has_content_type {
+        out.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+    }
+    for (k, v) in extra_headers {
+        out.push_str(&format!("{}: {}\r\n", k, v));
+    }
+    out.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    out.push_str("Connection: close\r\n\r\n");
+    let mut bytes = out.into_bytes();
+    bytes.extend_from_slice(body.as_bytes());
+    bytes
+}
+
+/// Turn whatever the handler returned into response bytes. A response struct
+/// (from `http.response`/`response_with_headers`, or any struct-like value
+/// with `status`/`body`/`headers` fields) is honored; a bare string is a 200.
+fn render_handler_result(value: &Value) -> Vec<u8> {
+    match value {
+        Value::String(s) => response_bytes(200, s, &[]),
+        Value::Struct { fields, .. } => {
+            let status = match fields.get("status") {
+                Some(Value::Integer(s)) => *s,
+                _ => 200,
+            };
+            let body = match fields.get("body") {
+                Some(Value::String(s)) => s.as_ref().clone(),
+                Some(other) => other.to_string(),
+                None => String::new(),
+            };
+            let mut headers = Vec::new();
+            match fields.get("headers") {
+                Some(Value::Struct { fields: hs, .. }) => {
+                    for (k, v) in hs {
+                        headers.push((k.clone(), header_value_text(v)));
+                    }
+                }
+                Some(Value::Map(m)) => {
+                    for (k, v) in m.iter() {
+                        headers.push((k.clone(), header_value_text(v)));
+                    }
+                }
+                _ => {}
+            }
+            response_bytes(status, &body, &headers)
+        }
+        other => response_bytes(
+            500,
+            &format!(
+                "handler returned {}, expected a response or a string",
+                other.type_name()
+            ),
+            &[],
+        ),
+    }
+}
+
+fn header_value_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.as_ref().clone(),
+        other => other.to_string(),
+    }
+}
+
+/// The real `http.serve`: a blocking, sequential HTTP/1.1 server on
+/// 127.0.0.1. Each request is parsed, handed to the olang handler as an
+/// `HttpRequest` struct, and the handler's return value is written back. A
+/// handler error is a 500, a malformed request a 400 — the server itself
+/// keeps running. Registered in the builtin layer because calling the
+/// handler requires the interpreter.
+pub fn serve_blocking(
+    args: Vec<Value>,
+    interpreter: &mut crate::interpreter::Interpreter,
+) -> Result<Value, crate::interpreter::InterpreterError> {
+    use std::io::Write;
+
+    let err_val = |msg: String| Ok(Value::Err(Box::new(Value::String(Arc::new(msg)))));
+
+    if args.len() != 2 {
+        return err_val(format!(
+            "serve expects 2 arguments (port, handler), got {}",
+            args.len()
+        ));
+    }
+    let port = match &args[0] {
+        Value::Integer(p) if (0..=65535).contains(p) => *p as u16,
+        _ => return err_val("serve: port must be an integer in 0..=65535".to_string()),
+    };
+    let handler = args[1].clone();
+    if !matches!(handler, Value::Function(_) | Value::Builtin(_)) {
+        return err_val("serve: handler must be a function".to_string());
+    }
+
+    let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(l) => l,
+        Err(e) => return err_val(format!("serve: could not bind 127.0.0.1:{}: {}", port, e)),
+    };
+    // The OS assigns the port when 0 was requested; report the real one.
+    let local = listener.local_addr().map(|a| a.port()).unwrap_or(port);
+    println!("listening on http://127.0.0.1:{}", local);
+    let _ = std::io::stdout().flush();
+
+    for stream in listener.incoming() {
+        let mut stream = match stream {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+        let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(10)));
+
+        let bytes = match read_request(&mut stream) {
+            Ok(req) => {
+                let request_value = request_to_value(&req);
+                match interpreter.call_function(handler.clone(), vec![request_value]) {
+                    Ok(result) => render_handler_result(&result),
+                    Err(e) => response_bytes(500, &format!("handler error: {}", e), &[]),
+                }
+            }
+            Err(msg) => response_bytes(400, &format!("bad request: {}", msg), &[]),
+        };
+        let _ = stream.write_all(&bytes);
+        let _ = stream.flush();
+    }
+
+    Ok(Value::Unit)
 }
 
 /// Create an HTTP response struct
@@ -507,9 +770,12 @@ fn http_response_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
         _ => return Err("response_with_headers: body must be a string".into()),
     };
 
+    // Headers may be a map literal (`#{ "Content-Type": "..." }`) — the only
+    // way to write keys containing `-` — or an anonymous object.
     let headers = match &args[2] {
         Value::Struct { fields, .. } => fields.clone(),
-        _ => return Err("response_with_headers: headers must be a struct".into()),
+        Value::Map(m) => m.as_ref().clone(),
+        _ => return Err("response_with_headers: headers must be a map or object".into()),
     };
 
     let mut response_map = HashMap::new();
@@ -921,17 +1187,45 @@ mod tests {
     }
 
     #[test]
-    fn test_http_serve_placeholder() {
-        // Test the placeholder server function
-        let result = http_serve(vec![int_val(8080), string_val("handler")]).unwrap();
-        let response = assert_ok(&result);
+    fn test_http_serve_requires_interpreter_dispatch() {
+        // The interpreter-less path must refuse: real serving happens in
+        // serve_blocking, dispatched with the interpreter in builtin.rs.
+        let result = http_serve(vec![int_val(8080), string_val("handler")]);
+        assert!(result.is_err());
+    }
 
-        if let Value::String(message) = response {
-            assert!(message.contains("HTTP server would start on port 8080"));
-            assert!(message.contains("placeholder implementation"));
-        } else {
-            panic!("Expected string response from serve, got: {:?}", result);
-        }
+    #[test]
+    fn test_response_bytes_shape() {
+        let bytes = response_bytes(404, "missing", &[]);
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.starts_with("HTTP/1.1 404 Not Found\r\n"));
+        assert!(text.contains("Content-Length: 7\r\n"));
+        assert!(text.contains("Content-Type: text/plain"));
+        assert!(text.ends_with("\r\n\r\nmissing"));
+    }
+
+    #[test]
+    fn test_response_bytes_honors_custom_content_type() {
+        let headers = vec![("Content-Type".to_string(), "application/json".to_string())];
+        let text = String::from_utf8(response_bytes(200, "{}", &headers)).unwrap();
+        assert!(text.contains("Content-Type: application/json\r\n"));
+        // The default must not ALSO be emitted.
+        assert!(!text.contains("text/plain"));
+    }
+
+    #[test]
+    fn test_render_handler_result_bare_string_is_200() {
+        let text = String::from_utf8(render_handler_result(&string_val("hi"))).unwrap();
+        assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(text.ends_with("hi"));
+    }
+
+    #[test]
+    fn test_render_handler_result_uses_response_struct() {
+        let resp = http_response(vec![int_val(201), string_val("made")]).unwrap();
+        let text = String::from_utf8(render_handler_result(&resp)).unwrap();
+        assert!(text.starts_with("HTTP/1.1 201 Created\r\n"));
+        assert!(text.ends_with("made"));
     }
 
     #[test]
@@ -989,13 +1283,10 @@ mod tests {
         let result = decode_query(vec![int_val(123)]).unwrap();
         assert_err(&result);
 
-        // http_serve - wrong number of arguments
-        let result = http_serve(vec![int_val(8080)]).unwrap();
-        assert_err(&result);
-
-        // http_serve - wrong argument type
-        let result = http_serve(vec![string_val("not a port"), string_val("handler")]).unwrap();
-        assert_err(&result);
+        // http_serve — the interpreter-less path always refuses (real serving
+        // is dispatched to serve_blocking with the interpreter)
+        assert!(http_serve(vec![int_val(8080)]).is_err());
+        assert!(http_serve(vec![string_val("not a port"), string_val("handler")]).is_err());
     }
 
     #[test]

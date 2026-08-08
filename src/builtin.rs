@@ -538,7 +538,12 @@ impl BuiltinFunctions {
 
         // Handle HTTP functions
         if let Some(http_function) = name.strip_prefix("http.") {
-            // Remove "http." prefix
+            // `serve` runs a blocking server that calls back into an olang
+            // handler on every request, so it needs the interpreter — it
+            // cannot go through the interpreter-less dispatch below.
+            if http_function == "serve" {
+                return crate::stdlib::http::serve_blocking(arguments, interpreter);
+            }
             return crate::stdlib::http::call_http_function(http_function, arguments).map_err(
                 |e| InterpreterError::RuntimeError {
                     message: e.to_string(),
