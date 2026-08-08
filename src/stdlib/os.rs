@@ -78,6 +78,9 @@ pub fn create_os_module() -> Value {
     // System exit
     module.insert("exit".to_string(), create_builtin_function("exit", 1));
 
+    // Run an external program and capture its result
+    module.insert("exec".to_string(), create_builtin_function("exec", 2));
+
     Value::Struct {
         type_name: "Module".to_string(),
         fields: module,
@@ -114,6 +117,7 @@ pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "home_dir" => os_home_dir(args),
         "temp_dir" => os_temp_dir(args),
         "exit" => os_exit(args),
+        "exec" => os_exec(args),
         _ => Err(format!("Unknown os function: {}", name).into()),
     }
 }
@@ -451,6 +455,72 @@ fn os_chdir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "Failed to change directory: {}",
             e
+        )))))),
+    }
+}
+
+/// Run an external program to completion, capturing its output.
+/// Usage: os.exec("olang", ["script.ol", "arg"])
+///   -> Result<{ code: Int, stdout: String, stderr: String }, Error>
+/// The program's exit code is captured (or -1 if it was killed by a signal);
+/// stdout/stderr are returned as strings. An Err is returned only when the
+/// program could not be started at all (e.g. it was not found).
+fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "exec expects 2 arguments (program, args), got {}",
+            args.len()
+        ))))));
+    }
+
+    let program = match &args[0] {
+        Value::String(s) => s.as_ref().clone(),
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "exec: first argument (program) must be a string".to_string(),
+            )))))
+        }
+    };
+
+    let arg_list = match &args[1] {
+        Value::List(items) => items,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "exec: second argument (args) must be a list of strings".to_string(),
+            )))))
+        }
+    };
+
+    let mut cmd_args: Vec<String> = Vec::with_capacity(arg_list.len());
+    for item in arg_list.iter() {
+        match item {
+            Value::String(s) => cmd_args.push(s.as_ref().clone()),
+            other => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                    "exec: argument list must contain only strings, found {}",
+                    other.type_name()
+                ))))))
+            }
+        }
+    }
+
+    match process::Command::new(&program).args(&cmd_args).output() {
+        Ok(output) => {
+            let code = output.status.code().unwrap_or(-1) as i64;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let mut fields = HashMap::new();
+            fields.insert("code".to_string(), Value::Integer(code));
+            fields.insert("stdout".to_string(), Value::String(Arc::new(stdout)));
+            fields.insert("stderr".to_string(), Value::String(Arc::new(stderr)));
+            Ok(Value::Ok(Box::new(Value::Struct {
+                type_name: "ExecResult".to_string(),
+                fields,
+            })))
+        }
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "exec: failed to run '{}': {}",
+            program, e
         )))))),
     }
 }

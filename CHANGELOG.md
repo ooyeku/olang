@@ -12,6 +12,16 @@ documented.
 
 ### Added
 
+- **`os.exec(program, args)` runs external programs.** Returns
+  `Result<{ code, stdout, stderr }, Error>` — the exit code and captured
+  output on success, an `Err` only when the program can't be launched. This
+  lets an olang program drive other programs.
+- **`examples/run_all.ol`** — a test harness that discovers every standalone
+  script and every package (`main.ol`) under `examples/` and runs each in its
+  own `olang` subprocess (from the program's own directory), captures output,
+  and prints a pass/fail summary with a non-zero exit on any failure. Built on
+  `os.exec` plus `fs.list_dir` — a self-hosted way to check the examples stay
+  green.
 - **Programs receive command-line arguments.** `olang script.ol a b c` now
   passes `a b c` through to the program; `os.args()` returns
   `[script, a, b, c]` (previously it returned the interpreter's own argv and

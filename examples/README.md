@@ -6,6 +6,14 @@ Runnable programs demonstrating the language. Run any of them with:
 olang examples/01_language_tour.ol
 ```
 
+To run **every** example at once — each standalone script and each package —
+use the self-hosted harness, which launches each program in its own `olang`
+subprocess and reports a pass/fail summary:
+
+```bash
+cd examples && olang run_all.ol
+```
+
 The numbered programs are a curated, self-contained tour — each runs top to
 bottom, does real work, and prints computed results (nothing is faked). They
 are verified in CI by `tests/example_programs_test.rs`, so they cannot rot.
