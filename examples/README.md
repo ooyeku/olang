@@ -87,6 +87,12 @@ A two-package demonstration of the package manager (see
   a SQLite store that persists across requests. GET/POST/DELETE, JSON in and
   out, 404/400 handling. Long-running — `run_all.ol` skips it; it is
   integration-tested by `tests/http_serve_test.rs`
+- [`markdown/`](markdown/) — a markdown→HTML converter: a block parser
+  (`lib/blocks.ol` — headings, lists, blockquotes, fenced code, rules,
+  paragraphs) over a recursive inline renderer (`lib/inline.ol` — `code`,
+  **bold**, *italic*, links, HTML escaping). Converts a file argument or a
+  built-in sample, and self-checks its contract with a `test` block on
+  every run
 
 ```bash
 olang examples/packages/demo/main.ol      # auto-resolves the dependency

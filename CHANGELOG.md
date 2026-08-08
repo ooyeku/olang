@@ -24,9 +24,21 @@ documented.
   `:id` path parameters dispatching handlers over a SQLite store that
   persists across requests (the handler closes over the connection).
   `run_all.ol` skips long-running servers with a visible note.
+- **`examples/markdown/`** — a markdown→HTML converter: a block parser
+  (headings, lists, blockquotes, fenced code, rules, paragraphs) over a
+  recursive inline span renderer (`code`, bold, italic, links, escaping).
+  Handles unclosed markers gracefully and converts the repository's own
+  README; a `test` block self-checks the conversion contract on every run.
 
 ### Fixed
 
+- **Assertion arguments may span lines.** The `assert_eq`/`assert_ne`/
+  `assert`/`assert_true`/`assert_false` grammar rules had no newline
+  handling between arguments, unlike every other call form — so a
+  multi-line `assert_eq(...)` silently fell out of the assertion grammar
+  and parsed as a call to an undefined `assert_eq` function, failing at
+  runtime with "Undefined variable". Found by the markdown converter's
+  self-check block.
 - **`json.stringify` serializes maps.** `#{ ... }` literals and db rows are
   `Map` values; stringify rejected them ("Cannot convert Map to JSON") while
   handling structs and objects. Maps now serialize as JSON objects — found

@@ -1,0 +1,4 @@
+[package]
+name = "markdown"
+version = "1.0.0"
+description = "A markdown-to-HTML converter: block parser plus recursive inline span renderer, self-hosted in olang"

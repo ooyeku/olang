@@ -976,6 +976,11 @@ test "addition works" {
     assert_ne(add(1, 2), 4)
     assert_true(add(0, 1) == 1)
     assert_false(add(1, 1) == 3)
+    assert_eq(
+        add(20, 22),
+        42,
+        "assertion arguments may span lines"
+    )
 }
 println("tests passed")
 ```

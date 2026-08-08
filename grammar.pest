@@ -51,12 +51,15 @@ wildcard = { "*" }
 test_decl = { "test" ~ string ~ test_block }
 test_block = { "{" ~ NL* ~ (test_statement ~ (";" | NL)* )* ~ "}" }
 test_statement = { assertion | statement }
+// Assertions accept newlines between arguments, like every other call form —
+// without this, a multi-line assert_eq silently parsed as a plain call to an
+// undefined `assert_eq` function.
 assertion = { assert_eq | assert_ne | assert | assert_true | assert_false }
-assert_eq = { "assert_eq" ~ "(" ~ expr ~ "," ~ expr ~ ("," ~ string)? ~ ")" }
-assert_ne = { "assert_ne" ~ "(" ~ expr ~ "," ~ expr ~ ("," ~ string)? ~ ")" }
-assert = { "assert" ~ "(" ~ expr ~ ("," ~ string)? ~ ")" }
-assert_true = { "assert_true" ~ "(" ~ expr ~ ("," ~ string)? ~ ")" }
-assert_false = { "assert_false" ~ "(" ~ expr ~ ("," ~ string)? ~ ")" }
+assert_eq = { "assert_eq" ~ "(" ~ NL* ~ expr ~ NL* ~ "," ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ string)? ~ NL* ~ ")" }
+assert_ne = { "assert_ne" ~ "(" ~ NL* ~ expr ~ NL* ~ "," ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ string)? ~ NL* ~ ")" }
+assert = { "assert" ~ "(" ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ string)? ~ NL* ~ ")" }
+assert_true = { "assert_true" ~ "(" ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ string)? ~ NL* ~ ")" }
+assert_false = { "assert_false" ~ "(" ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ string)? ~ NL* ~ ")" }
 
 // Error type declaration (enum-like with variants)
 error_type_decl = { "error" ~ identifier ~ "{" ~ error_variant_list? ~ "}" }

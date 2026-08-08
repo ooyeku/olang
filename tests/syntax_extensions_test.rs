@@ -135,6 +135,25 @@ fn uninitialized_let_still_parses_and_is_unit() {
 }
 
 #[test]
+fn assertions_accept_multiline_arguments() {
+    // A multi-line assert_eq used to fall out of the assertion grammar and
+    // parse as a call to an undefined `assert_eq` function.
+    let src = "test \"multiline\" {\n    assert_eq(\n        1 + 1,\n        2\n    )\n    assert_eq(\"a\" + \"b\",\n        \"ab\", \"concat\")\n    assert(\n        true\n    )\n}\n\"done\"";
+    match eval(src) {
+        Value::String(s) => assert_eq!(s.to_string(), "done"),
+        other => panic!("expected done, got {:?}", other),
+    }
+}
+
+#[test]
+fn multiline_assertion_failures_still_fail() {
+    let src = "test \"fails\" {\n    assert_eq(\n        1,\n        2\n    )\n}";
+    let program = Parser::new().parse(src).expect("parse");
+    let mut interpreter = Interpreter::new();
+    assert!(interpreter.eval_program(program).is_err());
+}
+
+#[test]
 fn let_mut_is_one_statement_with_no_stray_binding() {
     // `let mut x = 1` must not leave a binding named `mut` behind.
     let src = "let mut x = 1\nx = x + 1\nx";
