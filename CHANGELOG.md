@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
-## [Unreleased]
+## [0.31.0] - 2026-08-08
 
 ### Added
 
@@ -25,11 +25,9 @@ documented.
 - A Rust integration test (`concurrent_load_writes_are_not_lost`) pins the
   same invariant: 16 client threads × 40 writes against an 8-worker pool
   sharing one SQLite connection, asserting the final row count is exact.
-
-Dogfooding `http.serve` under genuine concurrent load — driven by olang's
-own `spawn`/`await` rather than an external tool — found no bugs: the 0.29
-worker pool and 0.30 failure-as-a-value semantics compose correctly.
-
+  (Dogfooding `http.serve` under genuine concurrent load, driven by olang's
+  own `spawn`/`await` rather than an external tool, found no bugs — the 0.29
+  worker pool and 0.30 failure-as-a-value semantics compose correctly.)
 - **The bytecode tier compiles field access and indexing.** `p.x` and
   `xs[i]` (negatives count from the end) now lower to dedicated
   name-based `GetField` and `IndexGet` instructions with the interpreter's
