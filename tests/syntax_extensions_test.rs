@@ -106,3 +106,44 @@ fn single_line_use_list_still_parses() {
     let src = "use lib.things { alpha, beta }\n";
     assert!(Parser::new().parse(src).is_ok());
 }
+
+#[test]
+fn let_with_a_forgotten_equals_is_a_parse_error() {
+    // `let scores #{...}` used to silently parse as an uninitialized `let`
+    // plus a stray expression statement, leaving `scores` bound to Unit.
+    // A let must either have an initializer or end the statement.
+    assert!(Parser::new()
+        .parse("let scores #{ \"ada\": 99 }\n")
+        .is_err());
+    assert!(Parser::new().parse("let x [1, 2, 3]\n").is_err());
+    assert!(Parser::new().parse("let y \"oops\"\n").is_err());
+}
+
+#[test]
+fn uninitialized_let_still_parses_and_is_unit() {
+    assert!(Parser::new().parse("let pending\n").is_ok());
+    assert!(Parser::new()
+        .parse("let pending // fill in later\n")
+        .is_ok());
+    assert!(Parser::new().parse("let typed: Int\n").is_ok());
+    // Unbound-until-assigned semantics are unchanged.
+    let src = "let pending\ntypeof(pending)";
+    match eval(src) {
+        Value::String(s) => assert_eq!(s.to_string(), "Unit"),
+        other => panic!("expected type name, got {:?}", other),
+    }
+}
+
+#[test]
+fn let_mut_is_one_statement_with_no_stray_binding() {
+    // `let mut x = 1` must not leave a binding named `mut` behind.
+    let src = "let mut x = 1\nx = x + 1\nx";
+    assert_eq!(eval(src), Value::Integer(2));
+    let parser = Parser::new();
+    let program = parser.parse("let mut x = 1\ntypeof(mut)").expect("parse");
+    let mut interpreter = Interpreter::new();
+    assert!(
+        interpreter.eval_program(program).is_err(),
+        "`mut` must not be bound by `let mut x`"
+    );
+}

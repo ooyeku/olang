@@ -89,6 +89,11 @@ documented.
 
 ### Fixed
 
+- **A forgotten `=` in `let` is a parse error.** `let scores #{ ... }`
+  silently parsed as an uninitialized `let scores` (bound to Unit) plus a
+  stray expression statement — in the REPL the echoed map made the binding
+  look successful. An uninitialized `let` must now end its statement; the
+  error points at the unexpected token with a `let name = value` hint.
 - **`?` propagates the `Err` instead of aborting.** `expr?` on an `Err`
   raised a runtime error ("Tried to unwrap error") rather than returning the
   `Err` from the enclosing function — making `?` unusable on its main path.

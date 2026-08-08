@@ -89,8 +89,12 @@ parameter    = { identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
 
 // Variable declarations. `mut` is a contextual keyword: it marks intent (all
 // bindings are assignable), and must be followed by the actual binding.
+// A let either has an initializer or ends the statement right there — the
+// lookahead rejects `let scores #{...}` (a forgotten `=`), which would
+// otherwise silently parse as an uninitialized binding plus a stray
+// expression statement.
 mut_kw      = @{ "mut" ~ !(ASCII_ALPHANUMERIC | "_") }
-let_decl    = { "let" ~ mut_kw? ~ pattern ~ (":" ~ type_annotation)? ~ ("=" ~ NL* ~ expr)? }
+let_decl    = { "let" ~ mut_kw? ~ pattern ~ (":" ~ type_annotation)? ~ (("=" ~ NL* ~ expr) | &(";" | NEWLINE | COMMENT | "}" | EOI)) }
 
 // Expression hierarchy (with proper operator precedence)
 expr        = { assignment_expr | for_loop | while_loop | loop_expr | break_expr | continue_expr | binary_expr }

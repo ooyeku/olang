@@ -178,7 +178,9 @@ the name is unbound. Prefer `let` for first bindings; it reads better and
 survives future tightening of this rule (see [Stability](stability.md)).
 
 An initializer is optional; an uninitialized binding is `Unit` until
-assigned:
+assigned. An uninitialized `let` must end its statement — a forgotten `=`
+(as in `let scores #{ "ada": 99 }`) is a parse error, not a silent
+Unit binding:
 
 ```olang
 let pending
