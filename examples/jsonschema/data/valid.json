@@ -1,0 +1,9 @@
+{
+  "name": "Ada Lovelace",
+  "age": 36,
+  "email": "ada@analytical.engine",
+  "role": "admin",
+  "score": 99.5,
+  "tags": ["pioneer", "mathematician"],
+  "address": { "zip": "10001", "city": "London" }
+}

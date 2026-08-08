@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "required": ["name", "age", "email"],
+  "properties": {
+    "name":  { "type": "string", "minLength": 1 },
+    "age":   { "type": "integer", "minimum": 0, "maximum": 150 },
+    "email": { "type": "string", "minLength": 3 },
+    "role":  { "type": "string", "enum": ["admin", "user", "guest"] },
+    "score": { "type": "number", "minimum": 0, "maximum": 100 },
+    "tags":  { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "address": {
+      "type": "object",
+      "required": ["zip"],
+      "properties": {
+        "zip":  { "type": "string", "minLength": 5 },
+        "city": { "type": "string" }
+      }
+    }
+  }
+}

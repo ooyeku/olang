@@ -32,6 +32,12 @@ documented.
   `Type::Variant` form, so the bare constructor had to travel with the import.
 - **Multi-line `use` import lists.** The names inside `use m { ... }` may span
   lines and end with a trailing comma.
+- **`examples/jsonschema/`** — a JSON Schema validator: the schema and document
+  are both parsed JSON, and validation recursively walks them, collecting a
+  pathed error (`$.address.zip`) per violated keyword (type, enum, required,
+  properties, items, and the min/max/length bounds). Found no new bugs — the
+  JSON, map-accessor, recursion, and comparison paths were already hardened by
+  earlier rounds.
 - **`examples/regex/`** — a backtracking regex engine: a recursive-descent
   parser compiles a pattern to a recursive `Re` AST, and a continuation-passing
   matcher walks it. Supports `. * + ? | ( )`, character classes, anchors, and

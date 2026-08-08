@@ -1,0 +1,8 @@
+{
+  "name": "",
+  "age": 200,
+  "role": "wizard",
+  "score": 250,
+  "tags": [],
+  "address": { "city": "Nowhere" }
+}

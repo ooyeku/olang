@@ -69,6 +69,11 @@ A two-package demonstration of the package manager (see
   and a continuation-passing matcher (`lib/matcher.ol`) walks it with
   backtracking. Supports `. * + ? | ( )`, `[a-z]`/`[^…]` classes, `^`/`$`
   anchors, and `\d \w \s` escapes, with `find` / `find_all` / `matches`
+- [`jsonschema/`](jsonschema/) — a JSON Schema validator (`lib/validate.ol`):
+  the schema and document are both parsed JSON, and validation is a recursive
+  walk collecting a pathed error (`$.address.zip`) per violated keyword —
+  `type`, `enum`, `required`, `properties`, `items`, and the min/max/length
+  bounds. Reads `schema.json` and `data/*.json` from disk
 
 ```bash
 olang examples/packages/demo/main.ol      # auto-resolves the dependency
