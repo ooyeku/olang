@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **`examples/loadtest/`** — a self-contained HTTP load test, the server and
+  its concurrent client fleet in one olang program. It boots a SQLite-backed
+  API in a spawned task, fans client workers out across `spawn` threads
+  (each firing a burst of requests and timing them), merges per-worker stats
+  after `await`, and reports throughput and latency. A `test` block checks
+  the load-test invariant on every run: the server's own recorded hit count
+  equals the clients' successes exactly (2xx + the deliberate-500 route),
+  with zero unexpected failures — so `http.serve`'s worker pool provably
+  loses no writes under concurrent load. Measured ~17–19k req/s locally;
+  1,200 requests through a 4-worker pool stay perfectly consistent.
+- A Rust integration test (`concurrent_load_writes_are_not_lost`) pins the
+  same invariant: 16 client threads × 40 writes against an 8-worker pool
+  sharing one SQLite connection, asserting the final row count is exact.
+
+Dogfooding `http.serve` under genuine concurrent load — driven by olang's
+own `spawn`/`await` rather than an external tool — found no bugs: the 0.29
+worker pool and 0.30 failure-as-a-value semantics compose correctly.
+
 ## [0.30.0] - 2026-08-08
 
 ### Added

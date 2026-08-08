@@ -87,6 +87,13 @@ A two-package demonstration of the package manager (see
   a SQLite store that persists across requests. GET/POST/DELETE, JSON in and
   out, 404/400 handling. Long-running — `run_all.ol` skips it; it is
   integration-tested by `tests/http_serve_test.rs`
+- [`loadtest/`](loadtest/) — a self-contained HTTP load test: it boots the
+  API (SQLite-backed) in a spawned task, fans a fleet of client workers out
+  across `spawn` threads (each firing a burst and timing it), merges the
+  per-worker stats after `await`, prints throughput/latency, and a `test`
+  block asserts the server's own hit count equals the clients' successes
+  exactly — proving `http.serve`'s worker pool loses no writes under
+  concurrent load
 - [`pargrep/`](pargrep/) — parallel code search on real `spawn` threads:
   files are dealt into chunks, one worker thread per chunk searches with
   `re` + `fs`, results merge after `await Promise.all`, and per-task

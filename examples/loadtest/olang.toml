@@ -1,0 +1,4 @@
+[package]
+name = "loadtest"
+version = "1.0.0"
+description = "A self-contained HTTP load test: the server and its concurrent client fleet in one olang program"

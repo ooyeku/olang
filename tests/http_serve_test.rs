@@ -219,3 +219,92 @@ http.serve(0, handle, #{ "workers": 2, "queue_capacity": 8 })
         "two 500ms handlers took {elapsed:?}; connections ran sequentially"
     );
 }
+
+/// A server whose handler writes to shared SQLite on every request and can
+/// report the row count — the same shape as examples/loadtest.
+const COUNTING_SERVER: &str = r#"
+let conn = unwrap(db.open(":memory:"))
+unwrap(db.execute(conn, "CREATE TABLE hits (id INTEGER PRIMARY KEY)"))
+fn handle(req) = {
+    if req.path == "/count" => {
+        let row = unwrap(db.query_one(conn, "SELECT COUNT(*) AS c FROM hits"))
+        http.response_with_headers(200, unwrap(json.stringify(row)),
+            #{ "Content-Type": "application/json" })
+    }
+    else => {
+        unwrap(db.execute(conn, "INSERT INTO hits DEFAULT VALUES"))
+        "ok"
+    }
+}
+http.serve(0, handle, #{ "workers": 8 })
+"#;
+
+/// Read the JSON body (after the blank line) of one keep-alive response.
+fn read_json_body(stream: &mut TcpStream) -> String {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut byte = [0u8; 1];
+    while !buf.ends_with(b"\r\n\r\n") {
+        let n = stream.read(&mut byte).expect("header byte");
+        assert!(n > 0, "closed mid-headers");
+        buf.push(byte[0]);
+    }
+    let head = String::from_utf8_lossy(&buf).to_string();
+    let len: usize = head
+        .lines()
+        .find_map(|l| {
+            l.to_lowercase()
+                .strip_prefix("content-length:")
+                .map(|v| v.trim().parse().unwrap())
+        })
+        .expect("content-length");
+    let mut body = vec![0u8; len];
+    stream.read_exact(&mut body).expect("body");
+    String::from_utf8_lossy(&body).to_string()
+}
+
+#[test]
+fn concurrent_load_writes_are_not_lost() {
+    // The load-test invariant, in Rust: many client threads each fire a burst
+    // of writes at the worker pool; the server's own row count must equal the
+    // total requests sent — no lost or double-counted writes across workers
+    // sharing one SQLite connection.
+    let (_guard, port) = spawn_server(COUNTING_SERVER);
+
+    const CLIENTS: usize = 16;
+    const PER_CLIENT: usize = 40;
+
+    let barrier = Arc::new(Barrier::new(CLIENTS + 1));
+    let mut handles = Vec::new();
+    for _ in 0..CLIENTS {
+        let barrier = Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            for _ in 0..PER_CLIENT {
+                let resp = request(
+                    port,
+                    "GET /hit HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n",
+                );
+                assert!(resp.ends_with("ok"), "unexpected response: {resp}");
+            }
+        }));
+    }
+    barrier.wait();
+    for h in handles {
+        h.join().expect("client thread");
+    }
+
+    // Ask the server how many rows it recorded.
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
+        .write_all(b"GET /count HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let body = read_json_body(&mut stream);
+    let expected = format!("\"c\":{}", CLIENTS * PER_CLIENT);
+    assert!(
+        body.contains(&expected),
+        "expected {expected} in {body} — writes were lost under concurrent load"
+    );
+}
