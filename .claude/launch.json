@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "olang-website",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "--cwd", "website", "preview"],
+      "port": 4173
+    }
+  ]
+}

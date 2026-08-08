@@ -1106,7 +1106,7 @@ println("tests passed")
 
 The `testing` stdlib module provides the same assertions as functions plus
 counters (`testing.run_test`, `testing.test_summary`) for building custom
-harnesses — see the [stdlib reference](stdlib.md#testing).
+harnesses — see the [stdlib reference](stdlib.md#testing--assertions).
 
 ## Type Annotations
 
