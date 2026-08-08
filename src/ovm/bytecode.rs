@@ -16,6 +16,11 @@ pub struct BytecodeVm {
     // Compiled bytecode cache
     // Arc-wrapped so a call clones a pointer, not the instruction vector
     bytecode_cache: Arc<RwLock<HashMap<FunctionId, Arc<CompiledBytecode>>>>,
+    /// Lock-free mirror of the cache for the call path, indexed directly by
+    /// FunctionId (ids are small dense integers) - no hashing per call. Sound
+    /// because ids come from a global monotonic counter and are never reused:
+    /// an entry, once cached, can never refer to different bytecode.
+    bytecode_hot: Vec<Option<Arc<CompiledBytecode>>>,
 
     // Runtime execution state
     execution_state: ExecutionState,
@@ -258,6 +263,15 @@ pub enum Instruction {
         function: Register,
         args: Vec<Register>,
         arg_count: u32,
+    },
+    /// Call a user function resolved to its id at COMPILE time - no name
+    /// hash on the call path. Emitted whenever the compiler sees the callee
+    /// in its registry (always true for user functions, which pre-register
+    /// before compilation, including mutual recursion).
+    CallFn {
+        dst: Register,
+        func_id: FunctionId,
+        args: Vec<Register>,
     },
     CallBuiltin {
         dst: Register,
@@ -774,6 +788,7 @@ impl BytecodeVm {
         Self {
             compiler: BytecodeCompiler::new(),
             bytecode_cache: Arc::new(RwLock::new(HashMap::new())),
+            bytecode_hot: Vec::new(),
             execution_state: ExecutionState::new(),
             stats: VmStatistics::default(),
             call_stack: Vec::new(),
@@ -849,8 +864,14 @@ impl BytecodeVm {
 
         let bytecode = self.compiler.compile_function(func_id, func)?;
 
+        let bytecode = Arc::new(bytecode);
+        let idx = func_id.index();
+        if self.bytecode_hot.len() <= idx {
+            self.bytecode_hot.resize(idx + 1, None);
+        }
+        self.bytecode_hot[idx] = Some(bytecode.clone());
         if let Ok(mut cache) = self.bytecode_cache.write() {
-            cache.insert(func_id, Arc::new(bytecode));
+            cache.insert(func_id, bytecode);
         }
 
         self.stats.compilation_time += start_time.elapsed();
@@ -863,16 +884,24 @@ impl BytecodeVm {
         func_id: FunctionId,
         args: &[OvmValue],
     ) -> Result<OvmValue, BytecodeError> {
-        // Get bytecode from cache
-        let bytecode = {
-            if let Ok(cache) = self.bytecode_cache.read() {
-                cache.get(&func_id).cloned()
-            } else {
-                None
+        // Fetch bytecode: index the lock-free mirror first, shared cache on miss
+        let idx = func_id.index();
+        let bytecode = match self.bytecode_hot.get(idx).and_then(|slot| slot.as_ref()) {
+            Some(b) => b.clone(),
+            None => {
+                let fetched = self
+                    .bytecode_cache
+                    .read()
+                    .ok()
+                    .and_then(|cache| cache.get(&func_id).cloned())
+                    .ok_or(BytecodeError::FunctionNotFound(func_id))?;
+                if self.bytecode_hot.len() <= idx {
+                    self.bytecode_hot.resize(idx + 1, None);
+                }
+                self.bytecode_hot[idx] = Some(fetched.clone());
+                fetched
             }
         };
-
-        let bytecode = bytecode.ok_or(BytecodeError::FunctionNotFound(func_id))?;
 
         if self.call_depth >= self.max_call_depth {
             return Err(BytecodeError::RuntimeError(format!(
@@ -914,11 +943,24 @@ impl BytecodeVm {
 
     /// Execute bytecode instructions - Complete implementation
     fn execute_bytecode(&mut self, bytecode: &CompiledBytecode) -> Result<OvmValue, BytecodeError> {
+        // Count instructions in a local and flush once: a stats-field write in
+        // the dispatch loop costs a memory op per instruction executed.
+        let mut executed: u64 = 0;
+        let result = self.dispatch_loop(bytecode, &mut executed);
+        self.stats.instructions_executed += executed;
+        result
+    }
+
+    fn dispatch_loop(
+        &mut self,
+        bytecode: &CompiledBytecode,
+        executed: &mut u64,
+    ) -> Result<OvmValue, BytecodeError> {
         let mut pc = bytecode.entry_point;
 
         while pc < bytecode.instructions.len() {
             let instruction = &bytecode.instructions[pc];
-            self.stats.instructions_executed += 1;
+            *executed += 1;
 
             match instruction {
                 Instruction::LoadConst { dst, const_idx } => {
@@ -1112,12 +1154,21 @@ impl BytecodeVm {
                     ));
                 }
 
+                Instruction::CallFn { dst, func_id, args } => {
+                    let mut arg_values = Vec::with_capacity(args.len());
+                    for arg_reg in args {
+                        arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                    }
+                    let result = self.execute(*func_id, &arg_values)?;
+                    self.execution_state.set_register(*dst, result)?;
+                }
+
                 Instruction::CallNamed {
                     dst,
                     function_name,
                     args,
                 } => {
-                    let mut arg_values = Vec::new();
+                    let mut arg_values = Vec::with_capacity(args.len());
                     for arg_reg in args {
                         arg_values.push(self.execution_state.get_register(*arg_reg)?);
                     }
@@ -3009,11 +3060,21 @@ impl BytecodeCompiler {
                 }
 
                 let dst_reg = self.register_allocator.allocate_register();
-                self.emitter.instructions.push(Instruction::CallNamed {
-                    dst: dst_reg,
-                    function_name,
-                    args: arg_regs,
-                });
+                // User functions shadow builtins (same order as the runtime
+                // path); resolving the id here removes the per-call name hash.
+                if let Some(&func_id) = self.function_registry.get(&function_name) {
+                    self.emitter.instructions.push(Instruction::CallFn {
+                        dst: dst_reg,
+                        func_id,
+                        args: arg_regs,
+                    });
+                } else {
+                    self.emitter.instructions.push(Instruction::CallNamed {
+                        dst: dst_reg,
+                        function_name,
+                        args: arg_regs,
+                    });
+                }
                 Ok(dst_reg)
             }
 

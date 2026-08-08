@@ -12,6 +12,23 @@ documented.
 
 ### Changed
 
+- **VM-internal calls resolve at compile time.** A call to a user function
+  compiled to `CallNamed`, which re-hashed the function's *name* against
+  the registry on every execution — fib(30)'s 2.7 million recursive calls
+  each paid a string hash, then a hash-map bytecode lookup behind an
+  RwLock. The compiler already validates every callee against its registry,
+  so it now emits a new `CallFn` instruction carrying the resolved
+  `FunctionId` (user functions checked before builtins, preserving
+  shadowing semantics; builtins keep `CallNamed`). `execute()` fetches
+  bytecode from a lock-free per-VM table indexed directly by id — sound
+  because ids come from a global monotonic counter and are never reused —
+  falling back to the shared RwLock cache only on first touch. Argument
+  marshaling pre-sizes its vector, and the dispatch loop counts
+  instructions in a local flushed once per call instead of writing a stats
+  field per instruction. Measured: fib(30) 340ms → 285ms, the boundary
+  microbench 65ms → 33ms per 100k calls (still flat in argument size),
+  N-body 1,461ms → 1,427ms.
+
 - **The tier call boundary no longer taxes every call.** Three per-call
   costs measured and removed: (1) arguments were deep-converted
   Value→OvmValue on every call — a function taking a 1,000-element list

@@ -37,4 +37,10 @@ impl FunctionId {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         Self(COUNTER.fetch_add(1, Ordering::SeqCst))
     }
+
+    /// Ids are small dense integers from the global counter, so they double
+    /// as direct indices into per-VM tables (no hashing on the call path).
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
 }
