@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ollie the olang otter, waving hello">
+  <path d="M 302 386 C 376 404 414 356 406 314" fill="none" stroke="#92400E" stroke-width="30" stroke-linecap="round"/>
+  <ellipse cx="256" cy="332" rx="84" ry="98" fill="#B45309"/>
+  <ellipse cx="256" cy="344" rx="52" ry="64" fill="#F3DFB6"/>
+  <ellipse cx="214" cy="426" rx="27" ry="14" fill="#92400E"/>
+  <ellipse cx="298" cy="426" rx="27" ry="14" fill="#92400E"/>
+  <circle cx="212" cy="126" r="14" fill="#92400E"/>
+  <circle cx="300" cy="126" r="14" fill="#92400E"/>
+  <circle cx="256" cy="168" r="58" fill="#B45309"/>
+  <ellipse cx="256" cy="188" rx="34" ry="26" fill="#F3DFB6"/>
+  <ellipse cx="256" cy="176" rx="11" ry="8" fill="#0B1220"/>
+  <circle cx="234" cy="156" r="7" fill="#0B1220"/>
+  <circle cx="278" cy="156" r="7" fill="#0B1220"/>
+  <path d="M 248 196 Q 256 202 264 196" fill="none" stroke="#0B1220" stroke-width="5" stroke-linecap="round"/>
+  <path d="M 212 182 L 190 178 M 212 190 L 192 192" stroke="#0B1220" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 300 182 L 322 178 M 300 190 L 320 192" stroke="#0B1220" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 196 300 L 128 216" fill="none" stroke="#B45309" stroke-width="26" stroke-linecap="round"/>
+  <circle cx="128" cy="216" r="16" fill="#92400E"/>
+  <path d="M 316 300 L 356 352" fill="none" stroke="#B45309" stroke-width="26" stroke-linecap="round"/>
+  <circle cx="356" cy="352" r="16" fill="#92400E"/>
+  <g transform="translate(376 368) scale(0.12)"><circle cx="0" cy="0" r="252" fill="#0B1220"/><circle cx="0" cy="0" r="168" fill="none" stroke="#2DD4BF" stroke-width="76"/><path d="M -42 -74 L 56 0 L -42 74" fill="none" stroke="#FBBF24" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/></g>
+</svg>

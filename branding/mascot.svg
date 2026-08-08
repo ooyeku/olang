@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ollie, the olang otter, floating with the o> pebble">
+  <rect x="0" y="330" width="512" height="182" fill="#0FA394"/>
+  <path d="M 396 344 C 444 340 472 318 484 288" fill="none" stroke="#92400E" stroke-width="32" stroke-linecap="round"/>
+  <ellipse cx="268" cy="312" rx="138" ry="66" fill="#B45309"/>
+  <ellipse cx="282" cy="296" rx="92" ry="42" fill="#F3DFB6"/>
+  <ellipse cx="374" cy="256" rx="17" ry="27" transform="rotate(18 374 256)" fill="#92400E"/>
+  <ellipse cx="344" cy="250" rx="16" ry="25" transform="rotate(8 344 250)" fill="#B45309"/>
+  <circle cx="104" cy="206" r="14" fill="#92400E"/>
+  <circle cx="192" cy="206" r="14" fill="#92400E"/>
+  <circle cx="148" cy="248" r="58" fill="#B45309"/>
+  <ellipse cx="148" cy="268" rx="34" ry="26" fill="#F3DFB6"/>
+  <ellipse cx="148" cy="256" rx="11" ry="8" fill="#0B1220"/>
+  <path d="M 118 236 Q 126 228 134 236" fill="none" stroke="#0B1220" stroke-width="6" stroke-linecap="round"/>
+  <path d="M 162 236 Q 170 228 178 236" fill="none" stroke="#0B1220" stroke-width="6" stroke-linecap="round"/>
+  <path d="M 140 276 Q 148 282 156 276" fill="none" stroke="#0B1220" stroke-width="5" stroke-linecap="round"/>
+  <path d="M 104 262 L 82 258 M 104 270 L 84 272" stroke="#0B1220" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 192 262 L 214 258 M 192 270 L 212 272" stroke="#0B1220" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="228" cy="242" r="17" fill="#92400E"/>
+  <circle cx="310" cy="242" r="17" fill="#92400E"/>
+  <g transform="translate(269 216) scale(0.155)"><circle cx="0" cy="0" r="252" fill="#0B1220"/><circle cx="0" cy="0" r="168" fill="none" stroke="#2DD4BF" stroke-width="76"/><path d="M -42 -74 L 56 0 L -42 74" fill="none" stroke="#FBBF24" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <path d="M 0 358 C 60 340 110 372 170 358 C 230 344 280 376 340 360 C 400 344 456 372 512 356 L 512 512 L 0 512 Z" fill="#14B8A6" opacity="0.85"/>
+  <path d="M 36 388 C 66 380 92 394 122 388 M 300 402 C 330 394 356 408 386 402" fill="none" stroke="#2DD4BF" stroke-width="8" stroke-linecap="round" opacity="0.6"/>
+</svg>

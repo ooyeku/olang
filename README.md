@@ -1,4 +1,6 @@
-# olang
+<p align="center">
+  <img src="branding/banner.svg" alt="olang — pipelines, pattern matching, batteries included" width="840">
+</p>
 
 A batteries-included dynamic functional language: pipelines, pattern
 matching, algebraic data types, immutable values, `Result`-based errors —
@@ -92,3 +94,8 @@ lives in [docs/stability.md](docs/stability.md).
 ## License
 
 MIT
+
+<p align="center">
+  <img src="branding/mascot.svg" alt="Ollie, the olang otter, floating with the o> pebble" width="180"><br>
+  <sub>Ollie, the olang otter</sub>
+</p>

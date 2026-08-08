@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ollie reading the olang book">
+  <path d="M 302 386 C 376 404 414 356 406 314" fill="none" stroke="#92400E" stroke-width="30" stroke-linecap="round"/>
+  <ellipse cx="256" cy="332" rx="84" ry="98" fill="#B45309"/>
+  <ellipse cx="256" cy="344" rx="52" ry="64" fill="#F3DFB6"/>
+  <ellipse cx="214" cy="426" rx="27" ry="14" fill="#92400E"/>
+  <ellipse cx="298" cy="426" rx="27" ry="14" fill="#92400E"/>
+  <circle cx="212" cy="126" r="14" fill="#92400E"/>
+  <circle cx="300" cy="126" r="14" fill="#92400E"/>
+  <circle cx="256" cy="168" r="58" fill="#B45309"/>
+  <ellipse cx="256" cy="188" rx="34" ry="26" fill="#F3DFB6"/>
+  <ellipse cx="256" cy="176" rx="11" ry="8" fill="#0B1220"/>
+  <circle cx="234" cy="156" r="7" fill="#0B1220"/>
+  <circle cx="278" cy="156" r="7" fill="#0B1220"/>
+  <path d="M 212 182 L 190 178 M 212 190 L 192 192" stroke="#0B1220" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 300 182 L 322 178 M 300 190 L 320 192" stroke="#0B1220" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 152 330 L 252 310 L 252 428 L 152 448 Z" fill="#F3DFB6"/>
+  <path d="M 360 330 L 260 310 L 260 428 L 360 448 Z" fill="#F3DFB6"/>
+  <path d="M 152 330 L 152 448 M 360 330 L 360 448" stroke="#0FA394" stroke-width="10" stroke-linecap="round"/>
+  <path d="M 252 310 L 252 428 M 260 310 L 260 428" stroke="#92400E" stroke-width="4"/>
+  <path d="M 172 348 L 236 336 M 172 370 L 236 358 M 172 392 L 236 380 M 276 336 L 340 348 M 276 358 L 340 370 M 276 380 L 340 392" stroke="#0FA394" stroke-width="6" stroke-linecap="round" opacity="0.5"/>
+  <circle cx="160" cy="336" r="15" fill="#92400E"/>
+  <circle cx="352" cy="336" r="15" fill="#92400E"/>
+</svg>
