@@ -64,6 +64,7 @@ pub fn create_string_module() -> Value {
 
     // join(list, separator)
     module.insert("join".to_string(), create_builtin_function("join", 2));
+    module.insert("fmt".to_string(), create_builtin_function("fmt", 1));
 
     Value::Struct {
         type_name: "Module".to_string(),
@@ -113,6 +114,7 @@ pub fn call_string_function(
         "pad_start" => str_pad(args, true),
         "pad_end" => str_pad(args, false),
         "join" => str_join(args),
+        "fmt" => str_fmt(args),
         _ => Err(format!("Unknown str function: {}", name).into()),
     }
 }
@@ -357,6 +359,66 @@ fn str_pad(args: Vec<Value>, start: bool) -> Result<Value, Box<dyn std::error::E
         s.to_string() + &filler
     };
     Ok(ok_string(result))
+}
+
+/// Fill `{}` placeholders with the remaining arguments, rendered in display
+/// form (strings bare, like `show`). `{{` and `}}` escape literal braces.
+/// The placeholder and argument counts must agree.
+/// Usage: str.fmt("{} of {}", 3, "hearts") -> "3 of hearts"
+fn str_fmt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let template = match args.first() {
+        Some(Value::String(s)) => s.as_ref().clone(),
+        Some(other) => {
+            return Err(format!(
+                "str.fmt: first argument must be a format string, got {}",
+                other.type_name()
+            )
+            .into())
+        }
+        None => return Err("str.fmt: missing format string".into()),
+    };
+
+    let mut out = String::with_capacity(template.len());
+    let mut used = 0;
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' if chars.peek() == Some(&'{') => {
+                chars.next();
+                out.push('{');
+            }
+            '}' if chars.peek() == Some(&'}') => {
+                chars.next();
+                out.push('}');
+            }
+            '{' if chars.peek() == Some(&'}') => {
+                chars.next();
+                let value = args.get(used + 1).ok_or_else(|| {
+                    format!(
+                        "str.fmt: format string has more {{}} placeholders than arguments ({})",
+                        args.len() - 1
+                    )
+                })?;
+                match value {
+                    Value::String(s) => out.push_str(s),
+                    other => out.push_str(&other.to_string()),
+                }
+                used += 1;
+            }
+            other => out.push(other),
+        }
+    }
+
+    if used != args.len() - 1 {
+        return Err(format!(
+            "str.fmt: {} argument(s) given but {} {{}} placeholder(s) in the format string",
+            args.len() - 1,
+            used
+        )
+        .into());
+    }
+
+    Ok(Value::String(std::sync::Arc::new(out)))
 }
 
 fn str_join(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

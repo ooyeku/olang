@@ -14,7 +14,7 @@ the implementation.
 |---|---|
 | **[A Tour of olang](tour.md)** | Install to first program in fifteen minutes |
 | **[The Language Reference](language.md)** | Every construct, precisely: literals, operators, control flow, pattern matching, functions, types, traits, errors, async, modules, testing |
-| **[The Standard Library](stdlib.md)** | Every global builtin and all seventeen modules, with examples |
+| **[The Standard Library](stdlib.md)** | Every global builtin and all eighteen modules, with examples |
 | **[Packages](packages.md)** | Manifests, dependencies, lockfiles, versioning, the registry |
 
 Complete worked programs live in [`examples/`](../examples/) — a task CLI,

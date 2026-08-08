@@ -64,38 +64,36 @@ fn show_tail(text) = {
 println("running " + to_string(len(targets)) + " example programs")
 println("")
 
-let started = unwrap(dates.timestamp(dates.now()))
+let started = time.monotonic_ms()
 let mut passed = 0
 let mut failed = 0
 
 for t in targets {
-    unwrap(os.chdir(t.dir))
-    let res = os.exec(olang, [t.file])
-    unwrap(os.chdir(root))
-
-    match res {
+    // Each program runs from its own directory (the exec cwd option), so
+    // relative imports and file reads resolve.
+    match os.exec(olang, [t.file], #{ "cwd": t.dir }) {
         Ok(r) => if r.code == 0 => {
             passed = passed + 1
             println("  ✓ pass   " + t.label)
         }
         else => {
             failed = failed + 1
-            println("  ✗ FAIL   " + t.label + "  (exit " + to_string(r.code) + ")")
+            println("  ✗ FAIL   " + t.label + "  (exit " + show(r.code) + ")")
             show_tail(r.stdout + r.stderr)
         },
         Err(e) => {
             failed = failed + 1
-            println("  ✗ ERROR  " + t.label + "  (could not launch: " + to_string(e) + ")")
+            println("  ✗ ERROR  " + t.label + "  (could not launch: " + show(e) + ")")
         }
     }
 }
 
-let elapsed = unwrap(dates.timestamp(dates.now())) - started
+let elapsed_ms = time.monotonic_ms() - started
 
 // ── summary ──
 println("")
 println("────────────────────────────────────────")
-println("  " + to_string(passed) + " passed, " + to_string(failed) + " failed"
-    + "   (" + to_string(len(targets)) + " total, " + to_string(elapsed) + "s)")
+println(str.fmt("  {} passed, {} failed   ({} total, {}.{}s)",
+    passed, failed, len(targets), elapsed_ms / 1000, (elapsed_ms % 1000) / 100))
 
 if failed > 0 => { os.exit(1) } else => { println("  all green ✓") }

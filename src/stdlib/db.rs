@@ -51,6 +51,12 @@ pub fn create_db_module() -> Value {
         create_builtin_function("query_one", 2),
     );
     module.insert("close".to_string(), create_builtin_function("close", 1));
+    module.insert("begin".to_string(), create_builtin_function("begin", 1));
+    module.insert("commit".to_string(), create_builtin_function("commit", 1));
+    module.insert(
+        "rollback".to_string(),
+        create_builtin_function("rollback", 1),
+    );
 
     Value::Struct {
         type_name: "Module".to_string(),
@@ -73,6 +79,11 @@ pub fn call_db_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "query" => db_query(args, false),
         "query_one" => db_query(args, true),
         "close" => db_close(args),
+        // Transactions: thin wrappers over execute, so a handle flows the
+        // same way and errors surface identically.
+        "begin" => db_transaction_statement(args, "BEGIN"),
+        "commit" => db_transaction_statement(args, "COMMIT"),
+        "rollback" => db_transaction_statement(args, "ROLLBACK"),
         _ => Err(format!("Unknown db function: {}", name).into()),
     }
 }
@@ -152,6 +163,28 @@ fn sql_to_value(cell: ValueRef<'_>) -> Value {
 
 /// db.open(path) -> Result<Connection>. Use ":memory:" for an in-memory
 /// database.
+/// Run BEGIN/COMMIT/ROLLBACK on a connection handle.
+/// Usage: db.begin(conn) / db.commit(conn) / db.rollback(conn) -> Result<_, Error>
+fn db_transaction_statement(
+    args: Vec<Value>,
+    sql: &str,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(
+            format!(
+                "{} expects 1 argument (connection), got {}",
+                sql.to_lowercase(),
+                args.len()
+            ),
+        )))));
+    }
+    let conn = args.into_iter().next().unwrap();
+    db_execute(vec![
+        conn,
+        Value::String(std::sync::Arc::new(sql.to_string())),
+    ])
+}
+
 fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let path = match args.first() {
         Some(Value::String(s)) => s.to_string(),

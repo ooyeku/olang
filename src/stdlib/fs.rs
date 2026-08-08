@@ -69,6 +69,8 @@ pub fn create_fs_module() -> Value {
         "list_dir".to_string(),
         create_builtin_function("list_dir", 1),
     );
+    module.insert("walk".to_string(), create_builtin_function("walk", 1));
+    module.insert("glob".to_string(), create_builtin_function("glob", 1));
     module.insert(
         "create_dir".to_string(),
         create_builtin_function("create_dir", 1),
@@ -134,6 +136,8 @@ pub fn call_fs_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "is_file" => is_file(args),
         "is_dir" => is_dir(args),
         "list_dir" => list_dir(args),
+        "walk" => walk(args),
+        "glob" => glob(args),
         "create_dir" => create_dir(args),
         "create_dir_all" => create_dir_all(args),
         "remove_dir" => remove_dir(args),
@@ -374,6 +378,142 @@ fn list_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             "Failed to read directory '{}': {}",
             path_str, e
         )))))),
+    }
+}
+
+/// Recursively list every file under a directory, paths prefixed with the
+/// argument, sorted for deterministic output. Directories themselves are not
+/// included — this is "every file below here".
+/// Usage: fs.walk("src") -> Result<[String], Error>
+fn walk(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "walk expects 1 argument, got {}",
+            args.len()
+        ))))));
+    }
+    let root = match &args[0] {
+        Value::String(s) => s.as_ref().clone(),
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "walk: path must be a string".to_string(),
+            )))))
+        }
+    };
+
+    let mut found: Vec<String> = Vec::new();
+    if let Err(e) = walk_into(std::path::Path::new(&root), &mut found) {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "walk: {}",
+            e
+        ))))));
+    }
+    found.sort();
+    let values: Vec<Value> = found
+        .into_iter()
+        .map(|p| Value::String(Arc::new(p)))
+        .collect();
+    Ok(Value::Ok(Box::new(Value::List(values.into()))))
+}
+
+fn walk_into(dir: &std::path::Path, out: &mut Vec<String>) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            walk_into(&path, out)?;
+        } else if let Some(s) = path.to_str() {
+            out.push(s.to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Files matching a glob pattern: `*` matches within a path segment, `?` one
+/// character, `**` any number of segments. The pattern's fixed directory
+/// prefix (up to the first wildcard) is walked; results are sorted.
+/// Usage: fs.glob("examples/**/*.ol") -> Result<[String], Error>
+fn glob(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "glob expects 1 argument, got {}",
+            args.len()
+        ))))));
+    }
+    let pattern = match &args[0] {
+        Value::String(s) => s.as_ref().clone(),
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "glob: pattern must be a string".to_string(),
+            )))))
+        }
+    };
+
+    // The walk base: the pattern's directory prefix before any wildcard.
+    let wildcard_at = pattern.find(['*', '?']).unwrap_or(pattern.len());
+    let base = match pattern[..wildcard_at].rfind('/') {
+        Some(slash) => pattern[..slash].to_string(),
+        None => ".".to_string(),
+    };
+
+    let mut found: Vec<String> = Vec::new();
+    if let Err(e) = walk_into(std::path::Path::new(&base), &mut found) {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "glob: {}",
+            e
+        ))))));
+    }
+
+    // Walking "." yields "./x" paths; match them against the bare pattern.
+    let mut matches: Vec<String> = found
+        .into_iter()
+        .filter(|path| {
+            let candidate = path.strip_prefix("./").unwrap_or(path);
+            glob_match(&pattern, candidate)
+        })
+        .collect();
+    matches.sort();
+    let values: Vec<Value> = matches
+        .into_iter()
+        .map(|p| Value::String(Arc::new(p)))
+        .collect();
+    Ok(Value::Ok(Box::new(Value::List(values.into()))))
+}
+
+/// Segment-aware glob matching: `**` spans segments, `*`/`?` stay within one.
+fn glob_match(pattern: &str, path: &str) -> bool {
+    let pat_segs: Vec<&str> = pattern.split('/').collect();
+    let path_segs: Vec<&str> = path.split('/').collect();
+    match_segments(&pat_segs, &path_segs)
+}
+
+fn match_segments(pat: &[&str], path: &[&str]) -> bool {
+    match pat.first() {
+        None => path.is_empty(),
+        Some(&"**") => {
+            // `**` matches zero or more whole segments.
+            (0..=path.len()).any(|skip| match_segments(&pat[1..], &path[skip..]))
+        }
+        Some(seg) => match path.first() {
+            Some(part) => match_one(seg, part) && match_segments(&pat[1..], &path[1..]),
+            None => false,
+        },
+    }
+}
+
+/// Match one path segment against a pattern segment with `*` and `?`.
+fn match_one(pat: &str, text: &str) -> bool {
+    let p: Vec<char> = pat.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    match_chars(&p, &t)
+}
+
+fn match_chars(p: &[char], t: &[char]) -> bool {
+    match p.first() {
+        None => t.is_empty(),
+        Some('*') => (0..=t.len()).any(|skip| match_chars(&p[1..], &t[skip..])),
+        Some('?') => !t.is_empty() && match_chars(&p[1..], &t[1..]),
+        Some(c) => t.first() == Some(c) && match_chars(&p[1..], &t[1..]),
     }
 }
 

@@ -466,9 +466,9 @@ fn os_chdir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// stdout/stderr are returned as strings. An Err is returned only when the
 /// program could not be started at all (e.g. it was not found).
 fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 2 {
+    if args.len() != 2 && args.len() != 3 {
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "exec expects 2 arguments (program, args), got {}",
+            "exec expects 2 or 3 arguments (program, args, options?), got {}",
             args.len()
         ))))));
     }
@@ -504,7 +504,75 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     }
 
-    match process::Command::new(&program).args(&cmd_args).output() {
+    // Optional third argument: #{ "cwd": ..., "stdin": ..., "env": #{...} }.
+    let mut cwd: Option<String> = None;
+    let mut stdin_data: Option<String> = None;
+    let mut env_vars: Vec<(String, String)> = Vec::new();
+    if let Some(options) = args.get(2) {
+        let fields = match options {
+            Value::Map(m) => m.as_ref().clone(),
+            Value::Struct { fields, .. } => fields.clone(),
+            _ => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    "exec: options must be a map or object".to_string(),
+                )))))
+            }
+        };
+        for (key, value) in &fields {
+            match (key.as_str(), value) {
+                ("cwd", Value::String(s)) => cwd = Some(s.as_ref().clone()),
+                ("stdin", Value::String(s)) => stdin_data = Some(s.as_ref().clone()),
+                ("env", Value::Map(m)) => {
+                    for (k, v) in m.iter() {
+                        match v {
+                            Value::String(s) => env_vars.push((k.clone(), s.as_ref().clone())),
+                            other => {
+                                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                                    "exec: env values must be strings, got {}",
+                                    other.type_name()
+                                ))))))
+                            }
+                        }
+                    }
+                }
+                (other_key, _) => {
+                    return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                        "exec: unknown or mistyped option '{}' (supported: cwd, stdin, env)",
+                        other_key
+                    ))))))
+                }
+            }
+        }
+    }
+
+    let mut command = process::Command::new(&program);
+    command.args(&cmd_args);
+    if let Some(dir) = &cwd {
+        command.current_dir(dir);
+    }
+    for (k, v) in &env_vars {
+        command.env(k, v);
+    }
+
+    // With stdin data the child is spawned piped and fed before collecting.
+    let output_result = if let Some(input) = stdin_data {
+        command
+            .stdin(process::Stdio::piped())
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                if let Some(mut pipe) = child.stdin.take() {
+                    pipe.write_all(input.as_bytes())?;
+                }
+                child.wait_with_output()
+            })
+    } else {
+        command.output()
+    };
+
+    match output_result {
         Ok(output) => {
             let code = output.status.code().unwrap_or(-1) as i64;
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();

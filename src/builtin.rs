@@ -625,6 +625,15 @@ impl BuiltinFunctions {
                 });
         }
 
+        // Handle time functions
+        if let Some(time_function) = name.strip_prefix("time.") {
+            return crate::stdlib::time::call_time_function(time_function, arguments).map_err(
+                |e| InterpreterError::RuntimeError {
+                    message: e.to_string(),
+                },
+            );
+        }
+
         // Handle os functions
         if let Some(os_function) = name.strip_prefix("os.") {
             // Remove "os." prefix

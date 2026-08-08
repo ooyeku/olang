@@ -12,6 +12,24 @@ documented.
 
 ### Added
 
+- **Roadmap Tier 3** — stdlib gaps:
+  - **`time` module** — `time.now_ms()` (epoch milliseconds),
+    `time.monotonic_ms()` (a clock that never goes backwards, for
+    durations), and `time.sleep(ms)`.
+  - **`fs.walk(dir)`** — every file below a directory, recursive and sorted;
+    **`fs.glob(pattern)`** — files matching a pattern where `*` matches
+    within a segment, `?` one character, and `**` spans segments.
+  - **`os.exec` options** — an optional third argument
+    `#{ "cwd": ..., "stdin": ..., "env": #{...} }` (any subset); the 2-arg
+    form is unchanged, unknown options are rejected.
+  - **`str.fmt(template, ...)`** — fills `{}` placeholders in display form
+    (strings bare); `{{`/`}}` escape literal braces; placeholder/argument
+    count mismatches are errors, not silence.
+  - **db transactions** — `db.begin` / `db.commit` / `db.rollback` over a
+    connection handle.
+  - `examples/run_all.ol` now dogfoods the tier: per-run `cwd` via the exec
+    option (no more chdir dance) and sub-second timing via
+    `time.monotonic_ms` + `str.fmt`.
 - **Roadmap Tier 2** — control flow and errors:
   - **`return expr`** — exits the nearest function (or lambda) with the
     value; bare `return` yields Unit; escapes loops within the function.

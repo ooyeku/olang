@@ -1,7 +1,7 @@
 # The olang Standard Library Reference
 
 Everything the runtime ships: the global builtins (always in scope) and the
-fifteen native modules plus two olang-source modules compiled into the
+sixteen native modules plus two olang-source modules compiled into the
 binary. As in the [language reference](language.md), every `olang` code
 block here is executed by the test suite — the examples are guaranteed
 current.
@@ -23,6 +23,7 @@ Part of [the olang book](README.md) ·
 - [`csv` — CSV](#csv--csv)
 - [`re` — regular expressions](#re--regular-expressions)
 - [`dates` — dates and times](#dates--dates-and-times)
+- [`time` — clocks and sleeping](#time--clocks-and-sleeping)
 - [`random` — randomness](#random--randomness)
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
 - [`base64` — base64](#base64--base64)
@@ -242,6 +243,7 @@ the parsers return `Result`.
 | `str.reverse(s)` | reversed |
 | `str.is_empty(s)` | `""` test |
 | `str.parse_int(s)` / `str.parse_float(s)` | `Result` parses |
+| `str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |
 
 ```olang
 println(str.pad_start("7", 3, "0"))                 // 007
@@ -249,6 +251,7 @@ println(str.substring("olang", 1, 4))               // lan
 println(str.replace("a-b-c", "-", "+"))
 println(to_string(str.chars("ok")))
 println(to_string(unwrap(str.parse_float("2.5")) * 2))
+println(str.fmt("{} scored {} ({}%)", "ada", 99, 97.5))
 ```
 
 ## `col` / `colx` — collections
@@ -398,6 +401,22 @@ println("days apart: " + to_string(unwrap(dates.diff_days(d, later))))
 `dates.timestamp(dates.now())` is the idiom for "seconds since the epoch,
 now".
 
+## `time` — clocks and sleeping
+
+`dates` is calendars; `time` is measurement and pacing.
+
+| Function | Description |
+|---|---|
+| `time.now_ms()` | milliseconds since the Unix epoch |
+| `time.monotonic_ms()` | monotonic milliseconds (never goes backwards) — the clock for durations |
+| `time.sleep(ms)` | block for `ms` milliseconds |
+
+```olang
+let t0 = time.monotonic_ms()
+time.sleep(25)
+println(show(time.monotonic_ms() - t0 >= 20))   // true
+```
+
 ## `random` — randomness
 
 Seedable (making runs reproducible) and covering the usual distributions.
@@ -460,15 +479,20 @@ disk.)
 | Group | Functions |
 |---|---|
 | Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` |
-| Directories | `create_dir` `create_dir_all` `list_dir` `remove_dir` `remove_dir_all` |
+| Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
 | Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
+
+`fs.walk(dir)` lists every file below a directory (recursive, sorted);
+`fs.glob(pattern)` filters by a pattern where `*` matches within a path
+segment, `?` one character, and `**` any number of segments.
 
 ```olang no-run
 let text = unwrap(fs.read_file("data.txt"))
 unwrap(fs.write_file("out.txt", str.to_upper(text)))
-for entry in sort(unwrap(fs.list_dir("."))) {
-    println(entry)
+for source in unwrap(fs.glob("src/**/*.ol")) {
+    println(source)
 }
+println(show(len(unwrap(fs.walk("docs")))) + " files under docs/")
 ```
 
 ## `os` — operating system
@@ -482,13 +506,15 @@ for entry in sort(unwrap(fs.list_dir("."))) {
 
 `os.exec` runs an external program to completion and returns
 `Ok({ code, stdout, stderr })` — or `Err` if it could not be launched at
-all. `os.args()` is the program's argv (`[script, arg1, ...]`).
+all. An optional third argument configures the child:
+`#{ "cwd": dir, "stdin": text, "env": #{ name: value } }` (any subset).
+`os.args()` is the program's argv (`[script, arg1, ...]`).
 
 ```olang no-run
 let args = unwrap(os.args())
 let target = if len(args) > 1 => args[1] else => "."
 
-let r = unwrap(os.exec("git", ["status", "--short"]))
+let r = unwrap(os.exec("git", ["status", "--short"], #{ "cwd": target }))
 if r.code == 0 => print(r.stdout)
 else => println("git failed: " + r.stderr)
 ```
@@ -558,13 +584,16 @@ in-process database — the example below really runs.
 | `db.execute(conn, sql)` / `db.execute(conn, sql, params)` | run a statement; `?` placeholders |
 | `db.query(conn, sql)` / with `params` | rows as a list of maps |
 | `db.query_one(conn, sql)` | exactly one row |
+| `db.begin(conn)` / `db.commit(conn)` / `db.rollback(conn)` | transactions |
 | `db.close(conn)` | close the handle |
 
 ```olang
 let conn = unwrap(db.open(":memory:"))
 unwrap(db.execute(conn, "CREATE TABLE scores (name TEXT, points INTEGER)"))
+unwrap(db.begin(conn))
 unwrap(db.execute(conn, "INSERT INTO scores VALUES (?, ?)", ["ada", 99]))
 unwrap(db.execute(conn, "INSERT INTO scores VALUES (?, ?)", ["bob", 82]))
+unwrap(db.commit(conn))
 
 let rows = unwrap(db.query(conn, "SELECT name, points FROM scores ORDER BY points DESC"))
 for row in rows {

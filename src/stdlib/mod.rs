@@ -18,6 +18,7 @@ pub mod random;
 pub mod regex_mod;
 pub mod string;
 pub mod testing;
+pub mod time;
 
 pub fn get_stdlib() -> HashMap<String, Value> {
     let mut stdlib = HashMap::new();
@@ -36,6 +37,7 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("testing".to_string(), testing::create_testing_module());
     stdlib.insert("str".to_string(), string::create_string_module());
     stdlib.insert("re".to_string(), regex_mod::create_regex_module());
+    stdlib.insert("time".to_string(), time::create_time_module());
     stdlib
 }
 
