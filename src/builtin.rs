@@ -509,30 +509,6 @@ impl BuiltinFunctions {
         arguments: Vec<Value>,
         interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
-        // Check if this is a force point - functions that require eager evaluation
-        if crate::internal::is_force_point(name) {
-            // Force evaluation of any lazy arguments before calling the function
-            let forced_args: Result<Vec<_>, _> = arguments
-                .into_iter()
-                .map(|arg| {
-                    // For now, just return the argument as-is since we're working with the public Value interface
-                    // In a full implementation, this would force lazy ValueHandle values
-                    Ok(arg)
-                })
-                .collect();
-            let arguments = forced_args?;
-
-            // Continue with the original function call logic
-            return Self::call_internal(builtins, name, arguments, interpreter);
-        }
-
-        // Check if this is a lazy function that can work with lazy values
-        if crate::internal::is_lazy_function(name) {
-            // For lazy functions, we can pass through lazy values
-            return Self::call_internal(builtins, name, arguments, interpreter);
-        }
-
-        // Default case - call the function normally
         Self::call_internal(builtins, name, arguments, interpreter)
     }
 
@@ -863,11 +839,6 @@ impl BuiltinFunctions {
 
                 let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
 
-                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large range operations
-                if range_size > 50 {
-                    interpreter.force_memory_cleanup();
-                }
-
                 return Self::process_map_range(range_vec, function, interpreter);
             }
             _ => {
@@ -876,32 +847,6 @@ impl BuiltinFunctions {
                 })
             }
         };
-
-        // Check if we should use lazy evaluation
-        let config = interpreter.get_lazy_config();
-        if config.lazy_by_default && list_ref.len() > config.lazy_threshold {
-            if let Value::Function(func) = function {
-                let source_handle = crate::internal::utils::value_to_handle(list.clone(), config);
-                let mut lazy_val =
-                    crate::internal::create_lazy_map(source_handle.clone(), func.clone());
-                // Fusion logic: if the source is already a lazy value, try to fuse
-                if config.fusion_enabled {
-                    if let crate::internal::InternalValue::Lazy(ref prev_lazy) =
-                        *source_handle.get_internal()
-                    {
-                        if let Some(fused) = crate::internal::try_fuse_operations(
-                            prev_lazy,
-                            "map",
-                            Some(func.clone()),
-                        ) {
-                            lazy_val = fused;
-                        }
-                    }
-                }
-                let lazy_handle = crate::internal::ValueHandle::new_lazy(lazy_val);
-                return lazy_handle.get(interpreter);
-            }
-        }
 
         // Sequential evaluation - parallel disabled because interpreter cloning is too expensive
         // (cloning full interpreter state for each element defeats parallelization benefits)
@@ -1000,32 +945,6 @@ impl BuiltinFunctions {
                 })
             }
         };
-
-        // Check if we should use lazy evaluation
-        let config = interpreter.get_lazy_config();
-        if config.lazy_by_default && list_ref.len() > config.lazy_threshold {
-            if let Value::Function(func) = function {
-                let source_handle = crate::internal::utils::value_to_handle(list.clone(), config);
-                let mut lazy_val =
-                    crate::internal::create_lazy_filter(source_handle.clone(), func.clone());
-                // Fusion logic: if the source is already a lazy value, try to fuse
-                if config.fusion_enabled {
-                    if let crate::internal::InternalValue::Lazy(ref prev_lazy) =
-                        *source_handle.get_internal()
-                    {
-                        if let Some(fused) = crate::internal::try_fuse_operations(
-                            prev_lazy,
-                            "filter",
-                            Some(func.clone()),
-                        ) {
-                            lazy_val = fused;
-                        }
-                    }
-                }
-                let lazy_handle = crate::internal::ValueHandle::new_lazy(lazy_val);
-                return lazy_handle.get(interpreter);
-            }
-        }
 
         // Sequential evaluation - parallel disabled due to interpreter cloning overhead
         let mut result = Vec::with_capacity(list_ref.len());
@@ -1627,8 +1546,9 @@ impl BuiltinFunctions {
             }
         };
 
-        // Check if we should use parallel processing - be more aggressive for mathematical operations
-        let should_use_parallel = list_values.len() >= 5; // Very low threshold for sum operations - prioritize multi-threading
+        // Parallelism follows the configured threshold like every other
+        // builtin — no operation-specific hardcoded cutoffs.
+        let should_use_parallel = crate::parallel::should_parallelize(list_values.len());
 
         if should_use_parallel {
             // PARALLEL VERSION - parallel sum with fold and reduce
@@ -2091,7 +2011,7 @@ impl BuiltinFunctions {
     fn take_lazy(
         &self,
         args: Vec<Value>,
-        interpreter: &mut crate::interpreter::Interpreter,
+        _interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
         if args.len() != 2 {
             return Err(InterpreterError::ArityMismatch {
@@ -2099,7 +2019,6 @@ impl BuiltinFunctions {
                 got: args.len(),
             });
         }
-        let list = &args[0];
         let n = match &args[1] {
             Value::Integer(i) if *i >= 0 => *i as usize,
             _ => {
@@ -2108,43 +2027,21 @@ impl BuiltinFunctions {
                 })
             }
         };
-        let config = interpreter.get_lazy_config();
-        let source_handle = crate::internal::utils::value_to_handle(list.clone(), config);
-        let mut lazy_val = {
-            // Use the existing utility for take
-            let source_internal = source_handle.get_internal();
-            crate::internal::LazyValue::Thunk(std::sync::Arc::new(move |interpreter| {
-                let source_value =
-                    crate::internal::InternalValue::force(&source_internal, interpreter)?;
-                match source_value {
-                    Value::List(items) => {
-                        let taken: Vec<_> = items.iter().take(n).cloned().collect();
-                        Ok(Value::List(taken.into()))
-                    }
-                    _ => Err(crate::interpreter::InterpreterError::TypeError {
-                        message: "take: argument must be a list".to_string(),
-                    }),
-                }
-            }))
-        };
-        // Fusion logic
-        if config.fusion_enabled {
-            if let crate::internal::InternalValue::Lazy(ref prev_lazy) =
-                *source_handle.get_internal()
-            {
-                if let Some(fused) = crate::internal::try_fuse_operations(prev_lazy, "take", None) {
-                    lazy_val = fused;
-                }
+        match &args[0] {
+            Value::List(items) => {
+                let taken: Vec<_> = items.iter().take(n).cloned().collect();
+                Ok(Value::List(taken.into()))
             }
+            _ => Err(InterpreterError::TypeError {
+                message: "take: argument must be a list".to_string(),
+            }),
         }
-        let lazy_handle = crate::internal::ValueHandle::new_lazy(lazy_val);
-        lazy_handle.get(interpreter)
     }
 
     fn skip_lazy(
         &self,
         args: Vec<Value>,
-        interpreter: &mut crate::interpreter::Interpreter,
+        _interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
         if args.len() != 2 {
             return Err(InterpreterError::ArityMismatch {
@@ -2152,7 +2049,6 @@ impl BuiltinFunctions {
                 got: args.len(),
             });
         }
-        let list = &args[0];
         let n = match &args[1] {
             Value::Integer(i) if *i >= 0 => *i as usize,
             _ => {
@@ -2161,37 +2057,15 @@ impl BuiltinFunctions {
                 })
             }
         };
-        let config = interpreter.get_lazy_config();
-        let source_handle = crate::internal::utils::value_to_handle(list.clone(), config);
-        let mut lazy_val = {
-            // Use the existing utility for skip
-            let source_internal = source_handle.get_internal();
-            crate::internal::LazyValue::Thunk(std::sync::Arc::new(move |interpreter| {
-                let source_value =
-                    crate::internal::InternalValue::force(&source_internal, interpreter)?;
-                match source_value {
-                    Value::List(items) => {
-                        let skipped: Vec<_> = items.iter().skip(n).cloned().collect();
-                        Ok(Value::List(skipped.into()))
-                    }
-                    _ => Err(crate::interpreter::InterpreterError::TypeError {
-                        message: "skip: argument must be a list".to_string(),
-                    }),
-                }
-            }))
-        };
-        // Fusion logic
-        if config.fusion_enabled {
-            if let crate::internal::InternalValue::Lazy(ref prev_lazy) =
-                *source_handle.get_internal()
-            {
-                if let Some(fused) = crate::internal::try_fuse_operations(prev_lazy, "skip", None) {
-                    lazy_val = fused;
-                }
+        match &args[0] {
+            Value::List(items) => {
+                let skipped: Vec<_> = items.iter().skip(n).cloned().collect();
+                Ok(Value::List(skipped.into()))
             }
+            _ => Err(InterpreterError::TypeError {
+                message: "skip: argument must be a list".to_string(),
+            }),
         }
-        let lazy_handle = crate::internal::ValueHandle::new_lazy(lazy_val);
-        lazy_handle.get(interpreter)
     }
 
     fn force_value(
@@ -2206,16 +2080,16 @@ impl BuiltinFunctions {
             });
         }
 
-        // Force evaluation of any lazy values
-        // Since we're working with the public Value interface, this is mostly a no-op
-        // The real lazy forcing happens at the ValueHandle level
-        Ok(crate::internal::utils::force_if_lazy(args[0].clone()))
+        // olang evaluates eagerly: by the time a builtin sees its argument it
+        // is already a value, so `force` is the identity. Kept for source
+        // compatibility; the book documents this honestly.
+        Ok(args[0].clone())
     }
 
     fn make_lazy(
         &self,
         args: Vec<Value>,
-        interpreter: &mut crate::interpreter::Interpreter,
+        _interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
         if args.len() != 1 {
             return Err(InterpreterError::ArityMismatch {
@@ -2223,29 +2097,17 @@ impl BuiltinFunctions {
                 got: args.len(),
             });
         }
-
-        // Wrap the value in a lazy container if appropriate
-        let config = interpreter.get_lazy_config();
-        let value = &args[0];
-
-        if crate::internal::utils::should_be_lazy(value, config) {
-            // Create a lazy thunk that just returns the value
-            let lazy_handle = crate::internal::ValueHandle::new_lazy(
-                crate::internal::LazyValue::Thunk(std::sync::Arc::new({
-                    let val = value.clone();
-                    move |_| Ok(val.clone())
-                })),
-            );
-            lazy_handle.get(interpreter)
-        } else {
-            Ok(value.clone())
-        }
+        // A builtin receives its argument already evaluated, so `lazy` cannot
+        // defer anything — it is the identity, and always was (the previous
+        // implementation built a thunk and immediately forced it). Kept for
+        // source compatibility; the book documents this honestly.
+        Ok(args[0].clone())
     }
 
     fn concat_lazy(
         &self,
         args: Vec<Value>,
-        interpreter: &mut crate::interpreter::Interpreter,
+        _interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
         if args.len() != 2 {
             return Err(InterpreterError::ArityMismatch {
@@ -2257,18 +2119,6 @@ impl BuiltinFunctions {
         let list1 = &args[0];
         let list2 = &args[1];
 
-        // Check if we should use lazy evaluation
-        let config = interpreter.get_lazy_config();
-        if config.lazy_by_default {
-            // Use lazy concatenation for any list size when lazy is enabled
-            let first_handle = crate::internal::utils::value_to_handle(list1.clone(), config);
-            let second_handle = crate::internal::utils::value_to_handle(list2.clone(), config);
-            let lazy_concat = crate::internal::create_lazy_concat(first_handle, second_handle);
-            let lazy_handle = crate::internal::ValueHandle::new_lazy(lazy_concat);
-            return lazy_handle.get(interpreter);
-        }
-
-        // Fall back to eager evaluation
         let (a, b) = match (list1, list2) {
             (Value::List(a), Value::List(b)) => (a, b),
             _ => {
@@ -2319,36 +2169,6 @@ impl BuiltinFunctions {
             }
         };
 
-        // Check if we should use lazy evaluation
-        let config = interpreter.get_lazy_config();
-        if config.lazy_by_default && list_values.len() > config.lazy_threshold {
-            if let (Value::Function(func), Value::Function(pred)) = (function, predicate) {
-                let source_handle = crate::internal::utils::value_to_handle(list.clone(), config);
-                let mut lazy_val = crate::internal::create_lazy_map_filtered(
-                    source_handle.clone(),
-                    func.clone(),
-                    pred.clone(),
-                );
-                // Fusion logic: if the source is already a lazy value, try to fuse
-                if config.fusion_enabled {
-                    if let crate::internal::InternalValue::Lazy(ref prev_lazy) =
-                        *source_handle.get_internal()
-                    {
-                        if let Some(fused) = crate::internal::try_fuse_operations(
-                            prev_lazy,
-                            "map_filtered",
-                            Some(func.clone()),
-                        ) {
-                            lazy_val = fused;
-                        }
-                    }
-                }
-                let lazy_handle = crate::internal::ValueHandle::new_lazy(lazy_val);
-                return lazy_handle.get(interpreter);
-            }
-        }
-
-        // Sequential evaluation - parallel disabled due to interpreter cloning overhead
         let mut result = Vec::new();
         for item in list_values.iter() {
             let pred = interpreter.call_function(predicate.clone(), vec![item.clone()])?;

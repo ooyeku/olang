@@ -107,15 +107,15 @@ fn run() -> i32 {
         std::env::set_var("OVM_PARALLELISM", n.to_string());
     }
 
-    // Set a very aggressive parallel threshold for maximum multi-threading by default
-    // Parallelize even small lists (10+ items) to utilize all CPU cores
-    set_parallel_threshold(10);
+    // Parallelize only where the work plausibly outweighs thread overhead.
+    // Small lists are always cheaper sequentially.
+    set_parallel_threshold(10_000);
 
     if cli.verbose {
         logger.info(
             "main",
             &format!(
-                "Automatic parallelization: Lists with 10+ items will use all {} cores",
+                "Parallelization enabled for lists of 10,000+ items across {} cores",
                 num_cpus::get()
             ),
         );

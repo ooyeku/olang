@@ -28,9 +28,6 @@ pub mod tools;
 pub mod type_checker;
 pub mod version;
 
-// Internal lazy evaluation module (not public API)
-pub(crate) mod internal;
-
 // Re-export commonly used types
 pub use ast::{Expr, Program, Value};
 pub use interpreter::Interpreter;

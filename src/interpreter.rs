@@ -6,7 +6,6 @@ use crate::ast::{
 };
 use crate::async_runtime::AsyncRuntime;
 use crate::builtin::BuiltinFunctions;
-use crate::internal::{check_memory_pressure, LazyConfig};
 use crate::ovm::gc::SafepointManager;
 use crate::type_checker::TypeChecker;
 use im::HashMap as ImHashMap;
@@ -739,7 +738,6 @@ pub struct Interpreter {
     builtin_functions: BuiltinFunctions,
     type_checker: Option<TypeChecker>,
     async_runtime: AsyncRuntime,
-    lazy_config: LazyConfig,
     safepoint_manager: Arc<SafepointManager>,
     pub module_debug_config: ModuleDebugConfig,
 
@@ -826,7 +824,6 @@ impl Interpreter {
             builtin_functions: BuiltinFunctions::new(),
             type_checker: None,
             async_runtime: AsyncRuntime::new(),
-            lazy_config: LazyConfig::default(),
             safepoint_manager: Arc::new(SafepointManager::new()),
             module_debug_config: ModuleDebugConfig::default(),
 
@@ -2111,7 +2108,6 @@ impl Interpreter {
             builtin_functions: self.builtin_functions.clone(),
             type_checker: self.type_checker.clone(),
             async_runtime: AsyncRuntime::new(),
-            lazy_config: self.lazy_config.clone(),
             safepoint_manager: self.safepoint_manager.clone(),
             module_debug_config: self.module_debug_config.clone(),
 
@@ -3162,21 +3158,6 @@ impl Interpreter {
     /// Define a variable in the current environment (for REPL use)
     pub fn define_variable(&mut self, name: String, value: Value) {
         self.environment.define(name, value);
-    }
-
-    /// Get the current lazy evaluation configuration
-    pub fn get_lazy_config(&self) -> &LazyConfig {
-        &self.lazy_config
-    }
-
-    /// Update the lazy evaluation configuration
-    pub fn set_lazy_config(&mut self, config: LazyConfig) {
-        self.lazy_config = config;
-    }
-
-    /// Check if memory pressure detection suggests forcing lazy values
-    pub fn should_force_evaluation(&self) -> bool {
-        check_memory_pressure(self.lazy_config.memory_threshold_mb)
     }
 
     /// Perform safepoint poll for GC coordination

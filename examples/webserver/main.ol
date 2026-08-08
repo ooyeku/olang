@@ -7,6 +7,9 @@
 //   curl -X POST -d '{"text": "ship the release"}' http://127.0.0.1:8080/notes
 //   curl http://127.0.0.1:8080/notes/1
 //   curl -X DELETE http://127.0.0.1:8080/notes/1
+//
+// Stress-test a running server from another terminal:
+//   python3 benchmark.py --duration 30 --concurrency 25
 
 use lib.router { route, dispatch, json_response }
 
