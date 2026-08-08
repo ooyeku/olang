@@ -2922,7 +2922,18 @@ impl BytecodeCompiler {
                 Ok(result_reg)
             }
 
-            Expr::Break => {
+            // `break value` changes what the loop evaluates to and `return`
+            // unwinds the call — the bytecode loops don't model either;
+            // refuse so the function stays on the interpreter (never diverge).
+            Expr::Break(Some(_)) => Err(BytecodeError::CompilationFailed(
+                "'break' with a value is not supported in the bytecode tier".to_string(),
+            )),
+
+            Expr::Return(_) => Err(BytecodeError::CompilationFailed(
+                "'return' is not supported in the bytecode tier".to_string(),
+            )),
+
+            Expr::Break(None) => {
                 let (_, break_target) = *self.loop_targets.last().ok_or_else(|| {
                     BytecodeError::CompilationFailed("'break' outside of a loop".to_string())
                 })?;
@@ -3391,7 +3402,7 @@ impl BytecodeCompiler {
             | Expr::String(_)
             | Expr::RawString(_)
             | Expr::Boolean(_)
-            | Expr::Break
+            | Expr::Break(None)
             | Expr::Continue => true,
 
             Expr::Identifier(name) | Expr::LocalRef { name, .. } => {

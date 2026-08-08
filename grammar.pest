@@ -7,7 +7,7 @@ NEWLINE     = _{ "\n" | "\r\n" }
 COMMENT     = _{ "//" ~ (!NEWLINE ~ ANY)* }
 
 // Keywords - these must not be parsed as identifiers
-keyword = { "fn" | "let" | "type" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "true" | "false" | "async" | "await" | "try" | "catch" | "error" | "share" | "use" | "struct" | "enum" | "test" | "trait" | "impl" }
+keyword = { "fn" | "let" | "type" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "return" | "true" | "false" | "async" | "await" | "try" | "catch" | "error" | "share" | "use" | "struct" | "enum" | "test" | "trait" | "impl" }
 
 // Identifiers and literals - exclude keywords
 identifier  = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_")) ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -100,7 +100,7 @@ mut_kw      = @{ "mut" ~ !(ASCII_ALPHANUMERIC | "_") }
 let_decl    = { "let" ~ mut_kw? ~ pattern ~ (":" ~ type_annotation)? ~ (("=" ~ NL* ~ expr) | &(";" | NEWLINE | COMMENT | "}" | EOI)) }
 
 // Expression hierarchy (with proper operator precedence)
-expr        = { assignment_expr | for_loop | while_loop | loop_expr | break_expr | continue_expr | binary_expr }
+expr        = { assignment_expr | for_loop | while_loop | loop_expr | break_expr | continue_expr | return_expr | binary_expr }
 
 add_op        = { "+" | "-" }
 mul_op        = { "*" | "/" | "%" }
@@ -221,7 +221,8 @@ for_loop    = { "for" ~ (for_binding_tuple | identifier) ~ "in" ~ expr ~ block }
 for_binding_tuple = { "(" ~ identifier ~ ("," ~ identifier)+ ~ ")" }
 while_loop  = { "while" ~ expr ~ block }
 loop_expr   = { "loop" ~ block }
-break_expr  = { "break" }
+break_expr  = { "break" ~ expr? }
 continue_expr = { "continue" }
+return_expr = { "return" ~ expr? }
 
 assignment_expr = { identifier ~ "=" ~ expr }

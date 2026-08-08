@@ -25,9 +25,9 @@ Small, high-value items that finish surfaces the language already has.
 
 | # | Feature | Grounding | Status |
 |---|---|---|---|
-| 5 | **`return expr`** — early exit from a function; reuses the `?` unwind machinery | `let mut go = true` loop flags in the template and markdown parsers | planned |
-| 6 | **Implement `error` declarations** — variants become constructors producing `Err`-matchable values (`match r { Err(NotFound) => ... }`); moves the construct from Reserved to Stable | The webserver's hand-rolled 400/404/500 taxonomy | planned |
-| 7 | **`break value`** — `loop { ... break x }` as an expression | pairs with `return` | planned |
+| 5 | **`return expr`** — early exit from a function; reuses the `?` unwind machinery | `let mut go = true` loop flags in the template and markdown parsers | landed (unreleased) |
+| 6 | **Implement `error` declarations** — variants become constructors producing `Err`-matchable values (`match r { Err(NotFound) => ... }`); moves the construct from Reserved to Stable | The webserver's hand-rolled 400/404/500 taxonomy | landed (unreleased) |
+| 7 | **`break value`** — `loop { ... break x }` as an expression | pairs with `return` | landed (unreleased) |
 
 ## Tier 3 — stdlib gaps
 

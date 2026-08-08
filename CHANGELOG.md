@@ -12,6 +12,23 @@ documented.
 
 ### Added
 
+- **Roadmap Tier 2** — control flow and errors:
+  - **`return expr`** — exits the nearest function (or lambda) with the
+    value; bare `return` yields Unit; escapes loops within the function.
+    Implemented as an unwind signal caught at the call boundary, like `?`.
+    `return` is now a reserved keyword. Top-level `return` is an error.
+  - **`break value`** — a loop becomes an expression: `loop { ... break x }`
+    evaluates to `x` (works in `while` and `for` too). Bare `break` keeps
+    its existing behavior. The bytecode tier refuses functions using
+    `break value` or `return` (they stay on the interpreter) — never
+    diverging; verified identical results across `--no-ovm`, default, and
+    `--ovm-tier=1`.
+  - **`error` declarations have semantics** (previously reserved-but-parsed):
+    bare variants are singleton values, payload variants
+    (`Invalid: { msg: String }`) become constructors taking the fields
+    positionally. The values are ordinary enums, so `Err(NotFound)` and
+    `match r { Err(Invalid(m)) => ... }` compose with the existing Result
+    and pattern machinery. Moved from Reserved to Stable in the book.
 - **Roadmap Tier 1** (`docs/roadmap.md` tracks the plan; every item grounded
   in dogfooding friction):
   - **`show(v)`** — display rendering: strings bare, everything else as

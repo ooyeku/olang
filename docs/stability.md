@@ -32,8 +32,9 @@ Part of [the olang book](README.md) · [Internals](internals.md)
 The core language: literals, variables and assignment, all operators and
 their precedence, strings, lists/tuples/maps/objects, ranges, control flow,
 pattern matching (all documented pattern kinds), functions (defaults, named
-arguments, lambdas, closures-by-value), pipelines, structs, enums and their
-constructors (including cross-module), traits and impls, `Result` +
+arguments, lambdas, closures-by-value, `return`), pipelines, `break value`,
+structs, enums and their constructors (including cross-module), `error`
+declarations, traits and impls, `Result` +
 `?` + `try`/`catch`, modules (`use`/`share` in all documented forms),
 `test` blocks, and the stdlib modules `str`, `col`, `math`, `json`, `csv`,
 `re`, `dates`, `base64`, `fs`, `os`, `db`, `random`, `crypto`, and the
@@ -65,10 +66,13 @@ global builtins.
 
 ### Reserved — parses today, semantics later
 
-- `error Name { ... }` declarations (structured error types)
 - Union (`A | B`) and intersection type *annotations*; union type
   *declarations* are not yet accepted
 - Literal types in annotations
+
+(`error` declarations graduated from this list: they now have full
+semantics — see the
+[language reference](language.md#error-declarations).)
 
 Reserved constructs are safe to avoid entirely; when they gain semantics it
 will be additive.

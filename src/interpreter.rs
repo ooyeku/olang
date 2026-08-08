@@ -60,11 +60,16 @@ pub enum InterpreterError {
     #[error("Pattern match failed")]
     PatternMatchFailed,
     // Loop control flow signals — intercepted by the loop evaluators, an error
-    // only if they escape to top level (i.e. used outside a loop)
+    // only if they escape to top level (i.e. used outside a loop). Break
+    // carries `break value`'s value (Unit when bare).
     #[error("'break' used outside of a loop")]
-    BreakSignal,
+    BreakSignal(Value),
     #[error("'continue' used outside of a loop")]
     ContinueSignal,
+    // `return` unwinds to the enclosing function call, which returns the
+    // carried value. An error only if it escapes to top level.
+    #[error("'return' used outside of a function")]
+    ReturnSignal(Value),
     // `?` on an Err: unwinds to the enclosing function call, which returns
     // the carried `Value::Err` to its caller. An error only if it escapes to
     // top level (i.e. `?` hit an Err outside any function).
@@ -1119,10 +1124,30 @@ impl Interpreter {
 
     fn eval_error_type_decl(
         &mut self,
-        _error_type_decl: crate::ast::ErrorTypeDecl,
+        error_type_decl: crate::ast::ErrorTypeDecl,
     ) -> Result<Value, InterpreterError> {
-        // For now, error type declarations don't produce runtime values
-        // In a full implementation, we'd store error type information for later use
+        // An error declaration behaves like an enum: each bare variant binds
+        // as a unit value, each payload variant as a constructor taking the
+        // payload fields positionally. The resulting values are ordinary
+        // enum values, so `Err(NotFound)` and `match r { Err(Invalid(m)) =>
+        // ... }` use the existing Result and pattern machinery.
+        for variant in &error_type_decl.variants {
+            let value = if variant.fields.is_empty() {
+                self.unit_variant_names.insert(variant.name.clone());
+                Value::Enum {
+                    type_name: error_type_decl.name.clone(),
+                    variant_name: variant.name.clone(),
+                    variant_data: EnumVariantData::Unit,
+                }
+            } else {
+                Value::EnumConstructor {
+                    type_name: error_type_decl.name.clone(),
+                    variant_name: variant.name.clone(),
+                    arity: variant.fields.len(),
+                }
+            };
+            self.environment.define(variant.name.clone(), value);
+        }
         Ok(Value::Unit)
     }
 
@@ -1467,8 +1492,21 @@ impl Interpreter {
             } => self.eval_for_loop(variable, iterable, body),
             Expr::WhileLoop { condition, body } => self.eval_while_loop(condition, body),
             Expr::Loop { body } => self.eval_loop(body),
-            Expr::Break => Err(InterpreterError::BreakSignal),
+            Expr::Break(value) => {
+                let v = match value {
+                    Some(e) => self.eval_expr(e)?,
+                    None => Value::Unit,
+                };
+                Err(InterpreterError::BreakSignal(v))
+            }
             Expr::Continue => Err(InterpreterError::ContinueSignal),
+            Expr::Return(value) => {
+                let v = match value {
+                    Some(e) => self.eval_expr(e)?,
+                    None => Value::Unit,
+                };
+                Err(InterpreterError::ReturnSignal(v))
+            }
             Expr::Assignment { target, value } => {
                 let val = self.eval_expr(value)?;
                 self.environment.set(target, val.clone()).or_else(|_| {
@@ -2001,6 +2039,8 @@ impl Interpreter {
                     // `?` hit an Err inside this body: the function returns
                     // that Err to its caller — the early-return semantics.
                     Err(InterpreterError::ErrPropagation(err)) => Ok(err),
+                    // `return v` inside this body: the function's value is v.
+                    Err(InterpreterError::ReturnSignal(v)) => Ok(v),
                     other => other,
                 };
 
@@ -3275,7 +3315,14 @@ impl Interpreter {
             }
             match self.eval_expr(body) {
                 Ok(v) => last_value = v,
-                Err(InterpreterError::BreakSignal) => break,
+                // `break value` makes the loop evaluate to that value; a
+                // bare break keeps the last body value (Unit carries both).
+                Err(InterpreterError::BreakSignal(v)) => {
+                    if !matches!(v, Value::Unit) {
+                        last_value = v;
+                    }
+                    break;
+                }
                 Err(InterpreterError::ContinueSignal) => continue,
                 Err(e) => return Err(e),
             }
@@ -3303,7 +3350,12 @@ impl Interpreter {
 
             match self.eval_expr(body) {
                 Ok(v) => last_value = v,
-                Err(InterpreterError::BreakSignal) => break,
+                Err(InterpreterError::BreakSignal(v)) => {
+                    if !matches!(v, Value::Unit) {
+                        last_value = v;
+                    }
+                    break;
+                }
                 Err(InterpreterError::ContinueSignal) => continue,
                 Err(e) => return Err(e),
             }
@@ -3320,7 +3372,13 @@ impl Interpreter {
 
             match self.eval_expr(body) {
                 Ok(v) => last_value = v,
-                Err(InterpreterError::BreakSignal) => return Ok(last_value),
+                Err(InterpreterError::BreakSignal(v)) => {
+                    return Ok(if matches!(v, Value::Unit) {
+                        last_value
+                    } else {
+                        v
+                    })
+                }
                 Err(InterpreterError::ContinueSignal) => continue,
                 Err(e) => return Err(e),
             }

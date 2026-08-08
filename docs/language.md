@@ -513,6 +513,18 @@ loop {
 println(to_string(odds))   // 5
 ```
 
+`break value` makes the loop evaluate to that value — the idiomatic
+search-until-found shape:
+
+```olang
+let mut n = 0
+let first_big_square = loop {
+    n = n + 1
+    if n * n > 50 => break n * n
+}
+println(to_string(first_big_square))   // 64
+```
+
 ## Pattern Matching
 
 `match` tests a value against arms in order; the first matching pattern's
@@ -644,6 +656,30 @@ fn compose(f, g) = (x) => f(g(x))
 let add1_then_double = compose((x) => x * 2, (x) => x + 1)
 println(to_string(add1_then_double(5)))   // 12
 ```
+
+### Early return
+
+`return expr` exits the nearest enclosing function (or lambda) immediately
+with the value; a bare `return` yields `Unit`. Guards at the top of a
+function read naturally:
+
+```olang
+fn classify(n) = {
+    if n < 0 => return "negative"
+    if n == 0 => return "zero"
+    "positive"
+}
+println(classify(-3) + " " + classify(0) + " " + classify(7))
+
+fn first_even(xs) = {
+    for x in xs { if x % 2 == 0 => return x }   // escapes the loop too
+    -1
+}
+println(to_string(first_even([3, 5, 8])))
+```
+
+`return` outside any function is an error. For Result-returning functions,
+[`?`](#the--operator) is usually the better early exit.
 
 ### Recursion
 
@@ -865,9 +901,37 @@ println(to_string(a) + " " + to_string(b))
 
 ### `error` declarations
 
-`error Name { Variant, Variant: { field: Type } }` parses and is reserved
-for a future structured-error feature; today it produces no runtime
-bindings. Use enums or string errors meanwhile.
+`error Name { ... }` declares a family of error values: bare variants are
+singleton values, and variants with a payload (`Invalid: { msg: String }`)
+become constructors taking the payload fields positionally. Wrap them in
+`Err(...)` and match them like any enum — this is the structured
+alternative to string errors:
+
+```olang
+error AppError {
+    NotFound,
+    Invalid: { msg: String }
+}
+
+fn lookup(id) = {
+    if id == 0 => return Err(NotFound)
+    if id < 0 => return Err(Invalid("id must be positive"))
+    Ok("user-" + show(id))
+}
+
+fn describe(r) = match r {
+    Ok(user) => user,
+    Err(NotFound) => "no such user",
+    Err(Invalid(msg)) => "bad request: " + msg
+}
+println(describe(lookup(7)))
+println(describe(lookup(0)))
+println(describe(lookup(-1)))
+```
+
+Error variants are ordinary enum values at runtime: they compare with `==`,
+`typeof` reports the declared error type's name, and unit variants match by
+name in patterns.
 
 ## Async and Concurrency
 
@@ -1022,7 +1086,7 @@ names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions,
 Reserved keywords — not usable as identifiers:
 
 ```text
-fn let type if else match for while loop break continue
+fn let type if else match for while loop break continue return
 true false async await try catch error share use
 struct enum test trait impl
 ```

@@ -263,9 +263,8 @@ impl Parser {
             .as_str()
             .to_string();
 
-        let fields = if let Some(pair) = pairs.next() {
+        let variants = if let Some(pair) = pairs.next() {
             match pair.as_rule() {
-                Rule::struct_field_list => self.build_struct_field_list(pair.into_inner())?,
                 Rule::error_variant_list => self.build_error_variant_list(pair.into_inner())?,
                 _ => Vec::new(),
             }
@@ -273,21 +272,27 @@ impl Parser {
             Vec::new()
         };
 
-        Ok(ErrorTypeDecl { name, fields })
+        Ok(ErrorTypeDecl { name, variants })
     }
 
-    fn build_error_variant_list(&self, pairs: Pairs<Rule>) -> Result<Vec<StructField>, ParseError> {
-        let mut fields = Vec::new();
+    fn build_error_variant_list(
+        &self,
+        pairs: Pairs<Rule>,
+    ) -> Result<Vec<crate::ast::ErrorVariant>, ParseError> {
+        let mut variants = Vec::new();
         for pair in pairs {
             if pair.as_rule() == Rule::error_variant {
-                fields.extend(self.build_error_variant(pair.into_inner())?);
+                variants.push(self.build_error_variant(pair.into_inner())?);
             }
         }
-        Ok(fields)
+        Ok(variants)
     }
 
-    fn build_error_variant(&self, mut pairs: Pairs<Rule>) -> Result<Vec<StructField>, ParseError> {
-        let variant_name = pairs
+    fn build_error_variant(
+        &self,
+        mut pairs: Pairs<Rule>,
+    ) -> Result<crate::ast::ErrorVariant, ParseError> {
+        let name = pairs
             .next()
             .ok_or_else(|| ParseError::InvalidSyntax {
                 message: "Missing error variant name".to_string(),
@@ -295,39 +300,17 @@ impl Parser {
             .as_str()
             .to_string();
 
-        // Check if there's a type specification after the colon
-        if let Some(type_pair) = pairs.next() {
-            match type_pair.as_rule() {
-                Rule::unit_type => {
-                    // Unit type variant (e.g., DivideByZero: ())
-                    Ok(vec![StructField {
-                        name: variant_name,
-                        field_type: TypeAnnotation::Unit,
-                    }])
-                }
-                Rule::struct_field_list => {
-                    // Struct-like variant (e.g., NegativeSqrt: { value: Float })
-                    let _inner_fields = self.build_struct_field_list(type_pair.into_inner())?;
-                    // For now, flatten the fields with the variant name as prefix
-                    // In a proper implementation, we'd have nested structure
-                    let custom_type = format!("{}Variant", variant_name);
-                    Ok(vec![StructField {
-                        name: variant_name,
-                        // Use a custom type to represent the struct variant
-                        field_type: TypeAnnotation::Custom(custom_type),
-                    }])
-                }
-                _ => Err(ParseError::InvalidSyntax {
-                    message: format!("Invalid error variant type for {}", variant_name),
-                }),
+        // An optional payload after the colon: `()` (unit) keeps the variant
+        // bare; `{ field: Type, ... }` records the payload fields, which
+        // become the constructor's positional parameters in order.
+        let fields = match pairs.next() {
+            Some(type_pair) if type_pair.as_rule() == Rule::struct_field_list => {
+                self.build_struct_field_list(type_pair.into_inner())?
             }
-        } else {
-            // No type specified, treat as unit variant
-            Ok(vec![StructField {
-                name: variant_name,
-                field_type: TypeAnnotation::Unit,
-            }])
-        }
+            _ => Vec::new(),
+        };
+
+        Ok(crate::ast::ErrorVariant { name, fields })
     }
 
     fn build_let_decl(&self, mut pairs: Pairs<Rule>) -> Result<LetDecl, ParseError> {
@@ -378,8 +361,21 @@ impl Parser {
                 Rule::for_loop => self.build_for_loop(pair.into_inner()),
                 Rule::while_loop => self.build_while_loop(pair.into_inner()),
                 Rule::loop_expr => self.build_loop_expr(pair.into_inner()),
-                Rule::break_expr => Ok(Expr::Break),
+                Rule::break_expr => {
+                    let value = match pair.into_inner().next() {
+                        Some(inner) => Some(Box::new(self.build_expr(inner.into_inner())?)),
+                        None => None,
+                    };
+                    Ok(Expr::Break(value))
+                }
                 Rule::continue_expr => Ok(Expr::Continue),
+                Rule::return_expr => {
+                    let value = match pair.into_inner().next() {
+                        Some(inner) => Some(Box::new(self.build_expr(inner.into_inner())?)),
+                        None => None,
+                    };
+                    Ok(Expr::Return(value))
+                }
                 Rule::assignment_expr => self.build_assignment(pair.into_inner()),
                 _ => Err(ParseError::invalid_syntax_at(
                     format!("Unexpected expression rule: {:?}", pair.as_rule()),

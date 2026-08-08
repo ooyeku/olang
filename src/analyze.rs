@@ -284,15 +284,15 @@ impl Analyzer {
                     },
                 );
 
-                // Analyze error type fields
+                // Analyze error variants for duplicate names
                 let mut field_names = HashSet::new();
-                for field in &error_type_decl.fields {
-                    // Check for duplicate field names
-                    if !field_names.insert(&field.name) {
+                for variant in &error_type_decl.variants {
+                    // Check for duplicate variant names
+                    if !field_names.insert(&variant.name) {
                         return Err(AnalysisError::DuplicateVariable {
                             name: format!(
-                                "Field '{}' in error type '{}'",
-                                field.name, error_type_decl.name
+                                "Variant '{}' in error type '{}'",
+                                variant.name, error_type_decl.name
                             ),
                         });
                     }
@@ -599,8 +599,17 @@ impl Analyzer {
                 self.analyze_expr(body)?;
                 Ok(())
             }
-            Expr::Break | Expr::Continue => {
-                // These are control flow statements - no analysis needed
+            Expr::Break(value) => {
+                if let Some(v) = value {
+                    self.analyze_expr(v)?;
+                }
+                Ok(())
+            }
+            Expr::Continue => Ok(()),
+            Expr::Return(value) => {
+                if let Some(v) = value {
+                    self.analyze_expr(v)?;
+                }
                 Ok(())
             }
             Expr::Async { body, .. } => {
@@ -1430,9 +1439,13 @@ impl Analyzer {
             | Expr::Boolean(_)
             | Expr::RawString(_)
             | Expr::Identifier(_)
-            | Expr::Break
-            | Expr::Continue => {
+            | Expr::Break(None)
+            | Expr::Continue
+            | Expr::Return(None) => {
                 // These don't contain sub-expressions
+            }
+            Expr::Break(Some(value)) | Expr::Return(Some(value)) => {
+                self.mark_expression_reachable(value, reachable);
             }
             // Resolved forms only appear in declaration-resolved function
             // bodies, which the analyzer never sees (it runs on parse
@@ -1455,7 +1468,7 @@ impl Analyzer {
     /// Check if an expression is terminating (doesn't return control flow)
     fn is_terminating_expression(&self, expr: &Expr) -> bool {
         match expr {
-            Expr::Break | Expr::Continue => true,
+            Expr::Break(_) | Expr::Continue | Expr::Return(_) => true,
             Expr::Block(statements) => {
                 // A block is terminating if its last statement is terminating
                 if let Some(last_stmt) = statements.last() {
@@ -1993,7 +2006,7 @@ impl DeadCodeDetector {
     /// Check if an expression is terminating (doesn't return control flow)
     fn is_terminating_expression(&self, expr: &Expr) -> bool {
         match expr {
-            Expr::Break | Expr::Continue => true,
+            Expr::Break(_) | Expr::Continue | Expr::Return(_) => true,
             Expr::Block(statements) => {
                 // A block is terminating if its last statement is terminating
                 if let Some(last_stmt) = statements.last() {

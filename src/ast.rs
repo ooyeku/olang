@@ -53,6 +53,15 @@ pub struct ImplDecl {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ErrorTypeDecl {
     pub name: String,
+    pub variants: Vec<ErrorVariant>,
+}
+
+/// One variant of an `error` declaration: a bare name (`NotFound`) or a name
+/// with a payload (`Invalid: { msg: String }`), whose fields become the
+/// constructor's positional parameters in declaration order.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ErrorVariant {
+    pub name: String,
     pub fields: Vec<StructField>,
 }
 
@@ -217,8 +226,13 @@ pub enum Expr {
     Loop {
         body: Box<Expr>,
     },
-    Break,
+    /// `break` / `break value` — exits the nearest loop; with a value, the
+    /// loop expression evaluates to it.
+    Break(Option<Box<Expr>>),
     Continue,
+    /// `return` / `return value` — exits the nearest function with the value
+    /// (Unit when bare).
+    Return(Option<Box<Expr>>),
 
     Assignment {
         target: String,
