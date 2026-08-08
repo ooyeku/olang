@@ -1250,3 +1250,74 @@ n
     assert!(interpreted.is_err(), "interpreter should type-error");
     assert!(tiered.is_err(), "bytecode tier should type-error too");
 }
+
+// ── field access + indexing (roadmap lane 13) ─────────────────────────
+
+#[test]
+fn field_access_promotes_and_agrees() {
+    assert_tier_transparent(
+        r#"
+type P = struct { x: Int, y: Int }
+fn sum_dist(pts) = {
+    let mut s = 0
+    for p in pts { s = s + p.x * p.x + p.y * p.y }
+    s
+}
+let pts = [P { x: 1, y: 2 }, P { x: 3, y: 4 }, P { x: 5, y: 6 }]
+sum_dist(pts) + sum_dist(pts)
+"#,
+    );
+}
+
+#[test]
+fn indexing_promotes_and_agrees() {
+    assert_tier_transparent(
+        r#"
+fn pick(xs) = xs[0] + xs[1] + xs[-1]
+let mut total = 0
+for i in 0..40 { total = total + pick([i, i + 1, i + 2, i + 3]) }
+total
+"#,
+    );
+}
+
+#[test]
+fn struct_returned_from_compiled_function_round_trips() {
+    // A struct built and returned by a promoted function must survive the
+    // OVM->AST conversion identically.
+    assert_tier_transparent(
+        r#"
+type Pair = struct { a: Int, b: Int }
+fn shift(p) = Pair { a: p.b, b: p.a + p.b }
+let mut p = Pair { a: 0, b: 1 }
+for i in 0..30 { p = shift(p) }
+p.a + p.b
+"#,
+    );
+}
+
+#[test]
+fn nested_field_and_index_agree() {
+    assert_tier_transparent(
+        r#"
+type Box = struct { items: List, label: String }
+fn first_item(b) = b.items[0]
+let mut sum = 0
+for i in 0..40 { sum = sum + first_item(Box { items: [i, i * 2], label: "b" }) }
+sum
+"#,
+    );
+}
+
+#[test]
+fn index_out_of_bounds_agrees_across_tiers() {
+    // Both tiers must error the same way — no wrong value on either.
+    let src = r#"
+fn bad(xs) = xs[5]
+let mut n = 0
+for i in 0..30 { n = n + bad([1, 2]) }
+n
+"#;
+    assert!(eval(src, None).is_err());
+    assert!(eval(src, Some(1)).is_err());
+}

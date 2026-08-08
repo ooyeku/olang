@@ -342,6 +342,17 @@ impl Interpreter {
                 closure: Arc::new(closure.clone()),
                 param_bounds: Vec::new(),
             };
+            // Tell the tier this method body exists under its bare name. A
+            // method dispatched by receiver type (`s.area()`) reaches the tier
+            // keyed only by "area"; when two impls define `area`, the tier's
+            // ambiguity guard sees two distinct bodies and keeps the name on
+            // the interpreter — so dispatch stays correct. A single-impl
+            // method is unambiguous and still promotes. (Before struct
+            // arguments became tier-representable, these never compiled, which
+            // hid the need to note them.)
+            if let Some(tier) = self.bytecode_tier.as_mut() {
+                tier.note_function(method.name.clone(), function.clone());
+            }
             self.trait_impls
                 .insert((impl_decl.type_name.clone(), method.name.clone()), function);
         }

@@ -473,6 +473,22 @@ pub enum Instruction {
         field_idx: u32,
         value: Register,
     },
+    /// Field access by name: `dst = object.<constants[name_const]>`. Reads a
+    /// struct/object/module field, matching the interpreter (the older
+    /// `LoadField` indexes `HashMap::values()` positionally, which is
+    /// nondeterministic, so it is unused by the compiler).
+    GetField {
+        dst: Register,
+        object: Register,
+        name_const: u32,
+    },
+    /// Subscript: `dst = object[index]`. Lists, tuples, and strings with an
+    /// integer index (negative counts from the end), matching the interpreter.
+    IndexGet {
+        dst: Register,
+        object: Register,
+        index: Register,
+    },
 
     // Debug operations
     Nop,
@@ -1522,6 +1538,35 @@ impl BytecodeVm {
                     let result = self.execute_store_field(&object_value, *field_idx, &new_value)?;
                     self.execution_state.set_register(*object, result)?;
                 }
+
+                Instruction::GetField {
+                    dst,
+                    object,
+                    name_const,
+                } => {
+                    let name_value = bytecode
+                        .constants
+                        .get(*name_const as usize)
+                        .ok_or(BytecodeError::InvalidConstantIndex(*name_const))?;
+                    let name = match &name_value.data {
+                        crate::ovm::value::ValueData::String(s) => s.clone(),
+                        _ => {
+                            return Err(BytecodeError::RuntimeError(
+                                "GetField: field name constant is not a string".to_string(),
+                            ))
+                        }
+                    };
+                    let object_value = self.execution_state.get_register(*object)?;
+                    let result = Self::execute_get_field(&object_value, &name)?;
+                    self.execution_state.set_register(*dst, result)?;
+                }
+
+                Instruction::IndexGet { dst, object, index } => {
+                    let (object_value, index_value) =
+                        self.execution_state.register_pair(*object, *index)?;
+                    let result = Self::execute_index_get(object_value, index_value)?;
+                    self.execution_state.set_register(*dst, result)?;
+                }
             }
 
             pc += 1;
@@ -1871,6 +1916,13 @@ impl BytecodeVm {
             Value::List(items) => items.iter().all(Self::round_trips),
             Value::Tuple(items) => items.iter().all(Self::round_trips),
             Value::Ok(inner) | Value::Err(inner) => Self::round_trips(inner),
+            // Structs, anonymous objects, and parsed JSON objects convert
+            // symmetrically (type_name + fields), so they round-trip *when
+            // every field does*. This excludes modules (their fields are
+            // builtins) and any struct holding a function/map — those keep
+            // the function on the interpreter. `from_ast` maps enums to a
+            // struct shape lossily, so enums are deliberately not included.
+            Value::Struct { fields, .. } => fields.values().all(Self::round_trips),
             _ => false,
         }
     }
@@ -2322,6 +2374,90 @@ impl BytecodeVm {
             }
             _ => Err(BytecodeError::TypeError(
                 "Field access requires a struct or tuple".to_string(),
+            )),
+        }
+    }
+
+    /// Field access by name, matching `Interpreter::eval_field_access`
+    /// exactly: struct/object/module fields look up by name; a module reports
+    /// a "Function not found" message, a struct a "Field not found" one; a
+    /// non-struct is a type error.
+    fn execute_get_field(object: &OvmValue, field: &str) -> Result<OvmValue, BytecodeError> {
+        use crate::ovm::value::ValueData;
+        match &object.data {
+            ValueData::Struct(s) => s.fields.get(field).cloned().ok_or_else(|| {
+                if s.type_name == "Module" {
+                    BytecodeError::TypeError(format!("Function '{}' not found in module", field))
+                } else {
+                    BytecodeError::TypeError(format!("Field '{}' not found", field))
+                }
+            }),
+            _ => Err(BytecodeError::TypeError(format!(
+                "Cannot access field '{}' on non-struct value",
+                field
+            ))),
+        }
+    }
+
+    /// Subscript, matching `Interpreter`'s `Expr::Index`: lists, tuples, and
+    /// strings with an integer index; negatives count from the end; out of
+    /// bounds is a runtime error with the same shape of message.
+    fn execute_index_get(object: &OvmValue, index: &OvmValue) -> Result<OvmValue, BytecodeError> {
+        use crate::ovm::value::ValueData;
+
+        let idx = match &index.data {
+            ValueData::Integer(i) => *i,
+            _ => {
+                return Err(BytecodeError::TypeError(
+                    "Index must be an integer".to_string(),
+                ))
+            }
+        };
+        // Resolve a possibly-negative index against a length; None if OOB.
+        let resolve = |len: usize| -> Option<usize> {
+            let pos = if idx < 0 { len as i64 + idx } else { idx };
+            if pos >= 0 && (pos as usize) < len {
+                Some(pos as usize)
+            } else {
+                None
+            }
+        };
+
+        match &object.data {
+            ValueData::List(list) => {
+                resolve(list.len()).map(|i| list[i].clone()).ok_or_else(|| {
+                    BytecodeError::RuntimeError(format!(
+                        "Index {} out of bounds for list of length {}",
+                        idx,
+                        list.len()
+                    ))
+                })
+            }
+            ValueData::Tuple(tuple) => {
+                resolve(tuple.len())
+                    .map(|i| tuple[i].clone())
+                    .ok_or_else(|| {
+                        BytecodeError::RuntimeError(format!(
+                            "Index {} out of bounds for tuple of length {}",
+                            idx,
+                            tuple.len()
+                        ))
+                    })
+            }
+            ValueData::String(s) => {
+                let chars: Vec<char> = s.chars().collect();
+                resolve(chars.len())
+                    .map(|i| OvmValue::new_string(chars[i].to_string()))
+                    .ok_or_else(|| {
+                        BytecodeError::RuntimeError(format!(
+                            "Index {} out of bounds for string of length {}",
+                            idx,
+                            chars.len()
+                        ))
+                    })
+            }
+            _ => Err(BytecodeError::TypeError(
+                "Only lists, tuples, and strings can be indexed".to_string(),
             )),
         }
     }
@@ -3104,6 +3240,32 @@ impl BytecodeCompiler {
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter.emit_load_const(dst_reg, const_idx);
                 Ok(dst_reg)
+            }
+
+            Expr::FieldAccess { object, field } => {
+                let object_reg = self.compile_expression(object)?;
+                let name_const = self
+                    .emitter
+                    .add_constant(OvmValue::new_string(field.clone()));
+                let dst = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::GetField {
+                    dst,
+                    object: object_reg,
+                    name_const,
+                });
+                Ok(dst)
+            }
+
+            Expr::Index { object, index } => {
+                let object_reg = self.compile_expression(object)?;
+                let index_reg = self.compile_expression(index)?;
+                let dst = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::IndexGet {
+                    dst,
+                    object: object_reg,
+                    index: index_reg,
+                });
+                Ok(dst)
             }
 
             other => {

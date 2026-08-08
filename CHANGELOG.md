@@ -30,6 +30,32 @@ Dogfooding `http.serve` under genuine concurrent load — driven by olang's
 own `spawn`/`await` rather than an external tool — found no bugs: the 0.29
 worker pool and 0.30 failure-as-a-value semantics compose correctly.
 
+- **The bytecode tier compiles field access and indexing.** `p.x` and
+  `xs[i]` (negatives count from the end) now lower to dedicated
+  name-based `GetField` and `IndexGet` instructions with the interpreter's
+  exact semantics (missing field, out-of-bounds, and type errors all
+  match). Structs, objects, and parsed JSON objects also became
+  tier-representable — a value round-trips through the OVM when every field
+  does — so functions that read fields off a struct argument finally
+  *promote and run in bytecode* instead of falling back forever. Measured
+  ~1.7× on a field-access-heavy hot loop (920ms → 540ms). Since almost
+  every real function touches a field, this widens promotion from numeric
+  kernels to ordinary code. Five new tier-agreement tests cover field
+  access, indexing (incl. negative and OOB), nested field+index, and a
+  struct returned from a compiled function round-tripping identically.
+
+### Fixed
+
+- **Trait-method dispatch stays correct under promotion.** Impl methods
+  were never registered with the tier's ambiguity guard, so once struct
+  arguments became tier-representable, a trait method like `area` — defined
+  by several types, dispatched by receiver — could compile one type's body
+  and run it for all receivers (`self.s` on a shape with no `s` field). Impl
+  methods are now noted to the tier: multiple same-named impls mark the name
+  ambiguous and keep it on the interpreter (correct dispatch), while a
+  single-impl method still promotes. Found immediately by the tier-agreement
+  doc test.
+
 ## [0.30.0] - 2026-08-08
 
 ### Added

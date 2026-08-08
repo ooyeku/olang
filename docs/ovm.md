@@ -63,6 +63,7 @@ A function is eligible when its body uses only the subset the VM implements:
   or-patterns, guards, and destructuring of `Ok`/`Err`, lists (including
   `...rest`), and tuples — nested to any depth
 - `Ok(..)` / `Err(..)` construction
+- field access (`p.x`) and indexing (`xs[i]`, negatives from the end)
 - pipelines (`|>`), desugared to the equivalent call
 - lambdas whose free variables all resolve in the enclosing function's
   declaration-time closure — which covers lambdas calling other user
@@ -78,7 +79,8 @@ A function is eligible when its body uses only the subset the VM implements:
 Anything else causes the function to stay interpreted:
 
 - referencing a global or captured variable — the VM has no environment
-- structs, maps, async
+- maps, async, and struct/enum *construction* (reading fields off a struct
+  argument is compiled; building a new struct in the body is not)
 - lambdas capturing the enclosing function's *runtime* state: a parameter,
   a local, or any name the enclosing function assigns (the interpreter would
   capture the runtime value, which a declaration-time snapshot cannot
@@ -89,7 +91,9 @@ Anything else causes the function to stay interpreted:
   to every caller)
 - default parameter values
 - arguments or return values that don't round-trip through the OVM value
-  model (functions, structs, maps, promises)
+  model (functions, maps, promises, enums — and any struct holding one of
+  those). Plain structs, objects, and parsed JSON objects *do* round-trip
+  when every field does, so field-reading functions promote
 
 None of these are errors. They are compile-time rejections that fall back to
 the interpreter, which is why enabling the tier can never break a program.
