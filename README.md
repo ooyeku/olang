@@ -1,561 +1,94 @@
-# Olang
+# olang
 
-[![CI](https://github.com/ooyeku/olang/actions/workflows/ci.yml/badge.svg)](https://github.com/ooyeku/olang/actions/workflows/ci.yml)
-
-Current Status: Very early/Experimental.
-
-**Vision**: A modern, functional programming language with advanced features, high-performance execution, and comprehensive standard library.
-
-## Features
-
-### Core Language
-- **REPL-First**: Instant feedback via an advanced interactive REPL with syntax highlighting and error suggestions
-- **Functions as Values**: Arrow syntax (`=>`) for lambdas; named and anonymous functions are interchangeable
-- **Pipeline Operator**: Infix operator `|>` to thread data through transformations
-- **Pattern Matching**: Advanced match expressions with destructuring of enums, tuples, lists, and structs
-- **Minimal Syntax**: Optional semicolons, braces only for multi-line blocks, type annotations optional
-- **Template Strings**: String interpolation with `${expression}` syntax
-- **Bitwise Operations**: Full support for `&`, `|`, `^`, `<<`, `>>` operations
-- **Advanced Literals**: Binary (`0b1010`), octal (`0o755`), hex (`0xFF`), raw strings (`r"..."`), character literals (`'a'`)
-
-### Execution
-- **Tiered Execution**: A tree-walking interpreter plus a register-based
-  bytecode VM, on by default — eligible functions compile on first call.
-  Promotion is transparent: anything the VM can't compile keeps running on
-  the interpreter, so it can never change program behavior
-- **Lazy Evaluation**: Lazy list operations for large datasets
-- **Parallel Processing**: Multi-threaded list operations
-- **Reference Counting**: Deterministic memory reclamation
-- **Performance Monitoring**: Execution statistics via `--ovm-stats`
-
-See [docs/ovm.md](docs/ovm.md) for the architecture, measured speedups, and an
-explicit list of what is and isn't implemented.
-
-### Type System
-- **Union Types**: `Int | String | Bool`
-- **Generic Types**: `List<T>`, `Map<K, V>`
-- **Result Types**: `Result<T, E>` for error handling
-- **Promise Types**: `Promise<T, E>` for async operations
-- **Literal Types**: `"admin" | "user"`, `42`
-
-### Standard Library (11 Modules)
-- **fs**: File system operations (read, write, copy, move, etc.)
-- **http**: HTTP client plus a bounded concurrent HTTP/1.1 server
-- **math**: Comprehensive mathematical functions
-- **random**: Random number generation and distributions
-- **dates**: Date/time parsing, formatting, and arithmetic
-- **json**: JSON parsing, manipulation, and serialization
-- **csv**: CSV file reading, writing, and manipulation
-- **base64**: Base64 encoding and decoding
-- **crypto**: Cryptographic operations (hashing, encryption, etc.)
-- **os**: Operating system utilities
-- **testing**: Assertions for the built-in test framework
-
-### Development Features
-- **Testing Framework**: Built-in test declarations and assertions
-- **Module System**: Share declarations and use imports
-- **Error Handling**: Try-catch expressions and Result types
-- **Async/Await**: Full async programming support
-- **Help System**: Interactive help with fuzzy search and tutorials
-- **REPL Shell Integration**: Run shell commands and navigate the filesystem
-  without leaving the REPL, with TAB completion for paths and identifiers
-
-## Installation
-
-### Prerequisites
-
-- Rust 1.70+ and Cargo
-- Git
-
-### Quick Setup (Recommended)
-
-For the easiest installation experience, use our cross-platform setup scripts:
-
-```bash
-git clone https://github.com/ooyeku/olang.git
-cd olang
-./setup
-```
-
-This will:
-- Install both `olang` and `otc` using `cargo install`
-- Create `~/.olang/` directory with unified executables
-- Copy all example files to `~/.olang/examples/`
-- Configure your PATH automatically
-- Test the installation
-
-For Windows users, run `setup.bat` or `.\setup.ps1` instead.
-
-### Building from Source
-
-```bash
-git clone https://github.com/ooyeku/olang.git
-cd olang
-make build
-```
-
-The binary will be available at `target/release/olang`.
-
-### Manual Install
-
-```bash
-make install
-```
-
-## Usage
-
-### REPL Mode
-
-Start the interactive REPL:
-
-```bash
-olang
-```
-
-Example REPL session:
-
-```text
-olang> let inc = (x) => x + 1
-olang> inc(5)
-6
-olang> [1,2,3] |> map(inc) |> filter((n) => n % 2 == 1)
-[3]
-olang> match Ok(42) { Ok(v) => println(v), Err(e) => println(e) }
-42
-olang> let name = "ann"
-olang> let score = 91
-olang> `Hello ${name}, your score is ${score}%`
-"Hello ann, your score is 91%"
-olang> :help map
-```
-
-#### Shell Commands
-
-Run shell commands without leaving the REPL. `cd` changes the REPL's own
-working directory, so relative paths in `fs.` calls and later commands follow
-along:
-
-```text
-olang> :pwd                        # print working directory
-olang> :cd src                     # change directory (supports ~)
-olang> :ls -la                     # list files
-olang> :sh cat data.csv | head     # any shell command; pipes and globs work
-olang> !git status                 # ! is shorthand for :sh
-```
-
-#### TAB Completion
-
-Press TAB to complete:
-
-- REPL commands — `:p` completes to `:pwd`, `:profile`, ...
-- File paths after shell commands (`!`, `:sh`, `:cd`, `:ls`, `:run`) **and
-  inside string literals**, so `fs.read("src/ma` completes to `src/main.rs`
-- Function and variable names, including stdlib functions and bindings you
-  defined earlier in the session
-
-#### Other REPL Commands
-
-```text
-:env                 # show current environment
-:type <expr>         # inspect the type of an expression
-:history             # command history (:!<n> re-runs an entry)
-:time <expr>         # time an expression
-:help <topic>        # documentation, tutorials, and fuzzy search
-:clear               # clear screen or environment
-```
-
-### File Execution
-
-Execute an Olang file:
-
-```bash
-olang script.ol
-```
-
-### Advanced Options
-
-```bash
-# Batch mode (no REPL)
-olang --batch script.ol
-
-# Verbose output
-olang --verbose
-
-# The bytecode tier is on by default (eligible functions compile on
-# first call). Raise the promotion threshold if desired:
-olang --ovm-tier=50 script.ol
-
-# Pure tree-walking interpreter (the semantics reference)
-olang --no-ovm script.ol
-
-# Show execution statistics, including tier promotions
-olang --ovm-stats script.ol
-
-# Control parallelism for list operations
-olang --enable-parallel script.ol
-olang --ovm-parallelism 4 script.ol
-
-# Enable tracing for debugging
-olang --trace
-```
-
-## Language Syntax
-
-### Functions and Lambdas
+A batteries-included dynamic functional language: pipelines, pattern
+matching, algebraic data types, immutable values, `Result`-based errors —
+with a practical standard library, a source-based package manager, and a
+conservative bytecode accelerator that never changes what your program
+means.
 
 ```olang
-// Named function
-fn add(x: Int, y: Int) -> Int = x + y
+type Shape = enum { Circle(Float), Rect(Float, Float) }
 
-// Function with default parameters
-fn greet(name: String = "World") = "Hello, " + name
-
-// Anonymous functions (lambdas)
-let nums = [1, 2, 3]
-let doubled = nums |> map((n) => n * 2)
-
-// Zero-parameter lambda
-let make_id = () => 42
-```
-
-### Pipeline Operator
-
-```olang
-let data = range(1, 11)
-
-data
-  |> filter((x) => x % 2 == 0)
-  |> map((x) => x * x)
-  |> sum()
-  |> println
-```
-
-### Pattern Matching
-
-```olang
-// Result patterns (note: `error` is a reserved keyword, so bind another name)
-let result = Ok(42)
-match result {
-  Ok(value) => println(value),
-  Err(e) => println(e)
+fn area(s) = match s {
+    Circle(r) => 3.14159 * r * r,
+    Rect(w, h) => w * h
 }
 
-// List patterns with rest
-let list = [1, 2, 3]
-match list {
-  [head, ...tail] => println(head),
-  [] => println("empty")
-}
+let total = [Circle(1.0), Rect(2.0, 3.0), Circle(0.5)]
+    |> map(area)
+    |> fold(0.0, (acc, a) => acc + a)
 
-// Guards and ranges
-let n = 42
-match n {
-  x if x < 0 => println("negative"),
-  0 => println("zero"),
-  1..100 => println("small"),
-  _ => println("large")
-}
+println(`total area: ${total}`)
 ```
 
-### Advanced Literals
+**[The olang book](docs/README.md)** is the authoritative documentation —
+every code block in it (and in this README) is executed by the test suite.
+**[Stability](docs/stability.md)** is the authoritative statement of what
+is stable, evolving, experimental, and reserved. Where any other text
+disagrees with those two, they win.
 
-```olang
-// Numeric literals
-let binary = 0b1010      // 10
-let octal = 0o755        // 493
-let hex = 0xFF           // 255
-
-// String literals
-let name = "Alice"
-let regular = "Hello \"World\""
-let raw = r"C:\Users\Name\file.txt"
-let template = `Hello ${name}!`
-```
-
-### Type System
-
-```olang
-// Type annotations
-let count: Int = 42
-let flexible: Int | String = "hello"
-let user_data: Map<String, String> = #{"name": "Alice"}
-
-// Custom types
-type User = struct {
-    name: String,
-    age: Int,
-    email: String
-}
-
-type Color = enum {
-    Red,
-    Green,
-    Blue,
-    RGB(Int, Int, Int)
-}
-
-// Error types — a variant's payload may be () or an anonymous struct,
-// but not a named type
-error NetworkError {
-    Timeout,
-    ConnectionFailed: (),
-    InvalidResponse: {
-        status: Int,
-        message: String
-    }
-}
-```
-
-### Async/Await
-
-```olang
-// Async function
-async fn fetch_data(url: String) -> Promise<String, String> = {
-    Promise.resolve("data from " + url)
-}
-
-// Await usage
-let data = await fetch_data("https://api.example.com")
-
-// Delayed promises: Promise.delay(value, ms); await sleeps out the remainder
-let slow = Promise.delay("done", 50)
-println(await slow)
-```
-
-### Testing
-
-```olang
-fn add(a, b) = a + b
-
-test "addition test" {
-    let result = add(2, 3)
-    assert_eq(result, 5)
-}
-
-test "string concatenation" {
-    let result = "Hello" + " " + "World"
-    assert_eq(result, "Hello World", "String concatenation failed")
-}
-```
-
-## Standard Library Examples
-
-> **Note:** Standard library functions return `Result` values (`Ok(...)` /
-> `Err(...)`). Use `unwrap(...)`, the `?` operator, or `match` to get at the
-> value — the examples below use `unwrap` for brevity.
-
-### File System Operations
-
-```olang no-run
-// Read and write files
-let content = unwrap(fs.read_file("input.txt"))
-fs.write_file("output.txt", content)
-
-// Directory operations
-let files = unwrap(fs.list_dir("."))
-println(len(files))
-```
-
-### HTTP Operations
-
-```olang no-run
-// HTTP client
-let response = unwrap(http.get("https://api.example.com/data"))
-let data = unwrap(json.parse(response.body))
-
-// POST with a JSON body
-let created = http.post("https://api.example.com/items", unwrap(json.stringify(data)))
-```
-
-`http.serve(port, handler[, options])` runs a bounded concurrent HTTP/1.1
-worker pool; see the [stdlib reference](docs/stdlib.md#http--http).
-
-### Data Processing
-
-```olang no-run
-// CSV processing — parse_with_headers takes CSV *text*, not a path
-let text = unwrap(fs.read_file("data.csv"))
-let rows = unwrap(csv.parse_with_headers(text))
-println(len(rows))
-
-// JSON manipulation (note: strings use double quotes)
-let user = unwrap(json.parse("{\"name\": \"Alice\", \"age\": 30}"))
-let encoded = unwrap(json.stringify(user))
-```
-
-### Cryptography
-
-```olang
-// Hashing
-let hash = crypto.sha256("password")          // total: returns the hex string
-
-// Password hashing and verification
-let stored = unwrap(crypto.hash_password("secret"))
-let ok = unwrap(crypto.verify_password("secret", stored))
-
-// Encryption — the key is a 32-byte hex string
-let key = crypto.random_hex(32)               // total: returns the hex string
-let encrypted = unwrap(crypto.encrypt_aes("secret data", key))
-let decrypted = unwrap(crypto.decrypt_aes(encrypted, key))
-
-// RSA signing
-let keys = unwrap(crypto.generate_key_pair())
-let signature = unwrap(crypto.sign_data("message", keys.private_key))
-let valid = unwrap(crypto.verify_signature("message", signature, keys.public_key))
-```
-
-## Editor support
-
-Native Zed support lives in [`editors/zed-olang`](editors/zed-olang), backed
-by the Tree-sitter grammar in
-[`editors/tree-sitter-olang`](editors/tree-sitter-olang). It recognizes `.ol`
-and `.olang` files and provides highlighting, indentation, bracket matching,
-symbol outlines, and text objects.
-
-To install it from a checkout, open Zed's command palette, run
-**zed: install dev extension**, and select `editors/zed-olang`. Markdown code
-fences tagged `olang` are highlighted after the extension is installed.
-
-GitHub currently assigns `.ol` to Jolie and does not load repository-local
-grammars. The root `.gitattributes` therefore selects Rust as the closest
-temporary GitHub rendering grammar. This should change to Olang after the
-language and its grammar are accepted by GitHub Linguist.
-
-## Development
-
-### Running Tests
+## Install and run
 
 ```bash
-cargo test
-cargo test -- --nocapture  # Show output
+cargo install --path .
+
+olang script.ol            # run a program (args reach os.args())
+olang                      # REPL
+olang test                 # run `test` blocks under the current directory
+olang fmt --check .        # formatter (whitespace hygiene, AST-safe)
 ```
 
-Two suites guard the bytecode tier specifically:
+## What's in the language
 
-```bash
-# The VM must produce identical results to the interpreter
-cargo test --test bytecode_differential_test
+- **Expressions everywhere** — `if`, `match`, blocks, and loops produce
+  values; `break value` and `return` for early exits.
+- **Pattern matching** — literals, tuples, lists with `...rest`, structs,
+  enum variants, ranges, or-patterns, guards.
+- **Algebraic data types** — enums with payload constructors, validated
+  struct declarations (shape is checked; values are dynamic), traits with
+  runtime dispatch, `error` declarations.
+- **Immutability and capture-by-value closures** — values never mutate in
+  place; closures snapshot their environment.
+- **Errors as values** — `Result`, `?` propagation, `try`/`catch`.
+- **Concurrency, honestly labeled** — `spawn` runs on a real OS thread
+  (await joins it); `Promise.delay`/`all`/`race` are deterministic,
+  deadline-based timing simulation.
+- **Modules and packages** — `use`/`share`, plus `olang.toml` packages
+  with lockfiles, checksums, a content-addressed cache, and Minimal
+  Version Selection ([docs/packages.md](docs/packages.md)).
 
-# Whole programs must behave the same with and without promotion
-cargo test --test bytecode_tier_test
-```
+## The standard library
 
-If you extend the bytecode VM, extend the differential suite in the same
-change — the interpreter defines the language, so any divergence is a VM bug.
+Sixteen native modules — `str`, `col`, `math`, `json`, `csv`, `re`,
+`dates`, `time`, `random`, `crypto`, `base64`, `fs`, `os`, `http` (client
+and a keep-alive server), `db` (SQLite), `testing` — plus two olang-source
+modules (`colx`, `mathx`) compiled into the binary and differential-tested
+against their native twins. Reference: [docs/stdlib.md](docs/stdlib.md).
 
-### Benchmarks
+## Execution model
 
-```bash
-# Interpreter benchmarks (ten representative programs)
-cargo bench
+A tree-walking interpreter is the semantic authority. Hot functions are
+promoted to a register bytecode tier (the OVM) — and anything the OVM
+cannot compile *identically* is refused and stays interpreted. Falling
+back is always correct; diverging is never acceptable. Details:
+[docs/internals.md](docs/internals.md), [docs/ovm.md](docs/ovm.md).
 
-# Interpreter vs. bytecode tier on the same functions
-cargo run --release --example tier_compare
-```
+## Examples
 
-### Code Formatting
+[`examples/`](examples/) holds real programs — a task CLI, log analyzer,
+template engine, workflow engine, parser combinators, a regex engine, a
+JSON Schema validator, a markdown converter, an HTTP notes API — all run
+by the self-hosted harness (`olang run_all.ol`) and in CI.
 
-```bash
-cargo fmt
-```
+## Maturity
 
-### Linting
-
-```bash
-cargo clippy
-```
-
-### Performance
-
-The interpreter's call path is fast in its own right (~0.65 µs per function
-call), and `--ovm-tier` promotes hot functions to the bytecode VM for
-additional gains on loop-heavy code. Measured on an Apple Silicon laptop,
-release build:
-
-| Workload | Interpreter | Bytecode tier | Tier speedup |
-|---|---|---|---|
-| `fib(27)` (recursive calls) | 0.27 s | 0.18 s | ~1.5x |
-| 100k-iteration `while` loop | 26.6 ms | 3.5 ms | ~7.5x |
-| 1M-iteration `Result` loop | 1.32 s | 1.11 s | ~1.2x |
-| 2000 x 500-element pipeline | 1.25 s | 1.01 s | ~1.2x |
-
-Reproduce with `cargo run --release --example tier_compare`.
-
-Not every function qualifies — the VM supports a subset of the language, and
-anything outside it stays on the interpreter. See
-[docs/ovm.md](docs/ovm.md#known-limitations) for the current boundaries.
-
-## Roadmap
-
-### Current Status (v0.23, experimental)
-- Core language features implemented
-- Standard library (11 modules)
-- Tree-walking interpreter with an opt-in bytecode tier for hot functions,
-  covered by differential tests against the interpreter
-- Reference-counted value model
-- Type system with unions, intersections, and generics
-- Async/await runtime
-- Testing framework
-- REPL with help system, tutorials, shell integration, and TAB completion
-
-### Next Phase
-- **Widen the bytecode tier**: capturing lambdas (by attaching the enclosing
-  function's closure), struct and enum patterns; cheaper builtin calls (they
-  currently round-trip through the AST value model)
-- **Enable the tier by default** once coverage justifies it
-- **Real JIT codegen** to replace the disabled Cranelift scaffolding
-- Package manager and ecosystem
-- WebAssembly target
-
-Known gaps are tracked explicitly in
-[docs/ovm.md](docs/ovm.md#not-implemented) rather than implied to be finished.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+olang is a young language with an unusual amount of testing discipline
+(45 test binaries; doc examples, tier agreement, and differential stdlib
+tests in CI). It is well suited to scripts, teaching, and
+experimentation; treat long-running services and dependency-heavy
+projects as adventurous. The honest, current capability statement always
+lives in [docs/stability.md](docs/stability.md).
 
 ## License
 
-This project is licensed under the MIT License—see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- [Pest](https://pest.rs/) for parsing
-- [Rustyline](https://github.com/kkawakam/rustyline) for REPL functionality
-- [Serde](https://serde.rs/) for serialization
-- [Cranelift](https://github.com/bytecodealliance/wasmtime/tree/main/cranelift) for the (in-progress) JIT backend
-- [Crossbeam](https://github.com/crossbeam-rs/crossbeam) for concurrent data structures
-
-## Examples Directory
-
-Check out the `examples/` directory for comprehensive sample programs demonstrating Olang's features:
-
-- `union_types.ol` - Advanced pattern matching and discriminated unions
-- `string_interpolation.ol` - Template strings and advanced literals
-- `simple_sales.ol` - Data processing with pipelines
-- `crypto_test.ol` - Cryptographic operations
-- `dates.ol` - Date/time manipulation
-- `loops.ol`, `fast_loops.ol` - Loop forms and performance comparison
-- `benchmark.ol` - Mixed workload used for performance checks
-- `base_utils.ol`, `extended_utils.ol`, `stats_module.ol` - Module system
-- And more in the directory.
-
-## Documentation
-
-**[The olang book](docs/README.md)** is the complete documentation. Every
-code example in it is executed by the test suite, so it cannot drift from
-the implementation.
-
-- [A Tour of olang](docs/tour.md) — install to first program
-- [The Language Reference](docs/language.md) — every construct, precisely
-- [The Standard Library](docs/stdlib.md) — every builtin and module
-- [Packages](docs/packages.md) — manifest, dependencies, lockfile, registry
-- [Internals](docs/internals.md) — architecture, for contributors
-- [OVM](docs/ovm.md) — the bytecode tier: design, speedups, limitations
-- [Stability](docs/stability.md) — what is stable and how olang evolves
-
-Installation instructions are in [Installation](#installation) above.
+MIT

@@ -1,5 +1,9 @@
 # Stability
 
+**This chapter is the authoritative statement of olang's capabilities.**
+Where the README, an old comment, or any other text disagrees with what is
+written here and in the reference chapters, this document wins.
+
 olang's core language is now considered **stable in shape**: the syntax and
 behavior documented in [the language reference](language.md) and
 [the stdlib reference](stdlib.md) are a commitment, not a snapshot.

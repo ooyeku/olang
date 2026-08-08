@@ -38,6 +38,16 @@ line item by item (the plan lives in `docs/roadmap.md`).
 
 ### Changed
 
+- **The interpreter is split into semantic components** (C5). The
+  5,628-line interpreter.rs is now src/interpreter/ — core evaluation
+  (2,629 lines) plus modules, errors, module_cache, ops, patterns,
+  environment, and spawn_registry components. Move-only; public paths
+  preserved via re-exports; the full suite is the equivalence proof.
+- **One capability authority** (C6). The README no longer contradicts the
+  book (it had still claimed "v0.23, experimental", "11 modules", and a
+  placeholder HTTP server). It is now a short, accurate overview whose
+  code runs in CI, and docs/stability.md is explicitly the authoritative
+  capability statement.
 - **Struct construction is validated** (C1). A struct literal must name a
   declared struct type and supply exactly the declared field names —
   missing, surprise, and undeclared-type constructions are now errors
