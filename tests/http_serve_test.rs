@@ -5,7 +5,11 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Barrier};
+use std::time::{Duration, Instant};
+
+static NEXT_SERVER: AtomicU64 = AtomicU64::new(1);
 
 /// Kill the server child even when an assertion panics.
 struct KillOnDrop(Child);
@@ -17,7 +21,8 @@ impl Drop for KillOnDrop {
 }
 
 fn spawn_server(source: &str) -> (KillOnDrop, u16) {
-    let dir = std::env::temp_dir().join(format!("olang_http_it_{}", std::process::id()));
+    let id = NEXT_SERVER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("olang_http_it_{}_{}", std::process::id(), id));
     let _ = std::fs::create_dir_all(&dir);
     let file = dir.join("server.ol");
     std::fs::write(&file, source).expect("write server source");
@@ -176,4 +181,41 @@ fn keep_alive_serves_multiple_requests_on_one_connection() {
     stream.read_to_string(&mut rest).expect("read second");
     assert!(rest.contains("Connection: close"), "got: {rest}");
     assert!(rest.contains("again"), "got: {rest}");
+}
+
+#[test]
+fn worker_pool_serves_independent_connections_concurrently() {
+    let source = r#"
+fn handle(req) = {
+    time.sleep(500)
+    req.remote_addr + " done"
+}
+http.serve(0, handle, #{ "workers": 2, "queue_capacity": 8 })
+"#;
+    let (_guard, port) = spawn_server(source);
+    let barrier = Arc::new(Barrier::new(3));
+    let mut clients = Vec::new();
+    for _ in 0..2 {
+        let barrier = Arc::clone(&barrier);
+        clients.push(std::thread::spawn(move || {
+            barrier.wait();
+            request(
+                port,
+                "GET /slow HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n",
+            )
+        }));
+    }
+
+    let started = Instant::now();
+    barrier.wait();
+    for client in clients {
+        let response = client.join().expect("client thread");
+        assert!(response.ends_with("done"), "got: {response}");
+        assert!(response.contains("127.0.0.1"), "remote address: {response}");
+    }
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(850),
+        "two 500ms handlers took {elapsed:?}; connections ran sequentially"
+    );
 }

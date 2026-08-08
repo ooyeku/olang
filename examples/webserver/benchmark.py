@@ -10,10 +10,10 @@ Then run this script from another terminal:
     python3 benchmark.py
     python3 benchmark.py --duration 30 --concurrency 25
 
-The default target, GET /notes, exercises routing, SQLite, JSON encoding, and
-the HTTP server. Connections close after every request by default because the
-current Olang server processes connections sequentially; a persistent client
-would otherwise hold the server until it closes the connection.
+The default target, GET /notes, exercises routing, synchronized SQLite access,
+JSON encoding, and the concurrent HTTP worker pool. Connections close after
+every request by default so the run measures accept/dispatch costs and spreads
+work evenly across workers. Pass --keep-alive to measure persistent HTTP/1.1.
 """
 
 from __future__ import annotations
@@ -147,7 +147,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--keep-alive",
         action="store_true",
-        help="reuse one connection per worker (not recommended for the current sequential server)",
+        help="reuse one persistent connection per worker",
     )
     return parser.parse_args()
 
@@ -355,6 +355,10 @@ def print_report(result: RunResult, duration: float) -> int:
     rate = completed / result.elapsed if result.elapsed else 0.0
     attempted_rate = attempted / result.elapsed if result.elapsed else 0.0
     byte_rate = result.response_bytes / result.elapsed if result.elapsed else 0.0
+    mean_latency = statistics.fmean(sorted_latencies) if sorted_latencies else math.nan
+    average_in_flight = (
+        attempted_rate * mean_latency / 1000.0 if sorted_latencies else math.nan
+    )
 
     print("\nResults")
     print("=" * 64)
@@ -366,6 +370,8 @@ def print_report(result: RunResult, duration: float) -> int:
     print(f"Transport errors      {transport_errors:12,d}")
     print(f"Response throughput   {rate:12.2f} req/s")
     print(f"Attempt throughput    {attempted_rate:12.2f} req/s")
+    if sorted_latencies:
+        print(f"Average in flight     {average_in_flight:12.2f}")
     print(f"Response data         {format_bytes(result.response_bytes):>16}")
     print(f"Data throughput       {format_bytes(byte_rate) + '/s':>16}")
 
@@ -374,7 +380,7 @@ def print_report(result: RunResult, duration: float) -> int:
         print("-" * 64)
         rows = (
             ("minimum", sorted_latencies[0]),
-            ("mean", statistics.fmean(sorted_latencies)),
+            ("mean", mean_latency),
             ("p50", percentile(sorted_latencies, 50)),
             ("p90", percentile(sorted_latencies, 90)),
             ("p95", percentile(sorted_latencies, 95)),
@@ -443,8 +449,7 @@ def main() -> int:
     print(f"Duration     {args.duration:g} s (+ {args.warmup:g} s warmup)")
     print(f"Concurrency  {args.concurrency}")
     print(f"Connections  {connection_mode}")
-    if args.keep_alive and args.concurrency > 1:
-        print("Note: the current server is sequential; persistent workers may queue behind one connection.")
+    print("Server logs  keep OLANG_ACCESS_LOG=errors/off for clean performance measurements")
 
     try:
         status = preflight(target, method, args.body, headers, args.timeout)

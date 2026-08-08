@@ -741,6 +741,21 @@ println(typeof(p))   // Point
 
 Struct values are immutable; build a new one to "change" a field.
 
+**Construction is validated against the declaration.** A struct literal
+must name a declared struct type and supply exactly the declared fields —
+a missing or surprise field is an error naming it, and an undeclared
+struct-literal name is an error (use an anonymous `{ ... }` object for
+free-form records). Field *values* are not type-checked: olang is
+dynamically typed — **declarations fix shape, not types**.
+
+```olang no-run
+type Point = struct { x: Int, y: Int }
+Point { x: 1 }                    // error: missing field 'y'
+Point { x: 1, y: 2, z: 3 }        // error: no field 'z'
+NeverDeclared { s: 42 }           // error: unknown struct type
+Point { x: "dynamic", y: 2 }      // fine: values are dynamic
+```
+
 ### Enums (algebraic data types)
 
 Variants may be bare (unit), carry positional payloads, or both. Declaring

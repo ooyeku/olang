@@ -796,6 +796,12 @@ pub struct Interpreter {
     test_mode: bool,
     test_results: Vec<TestOutcome>,
 
+    /// Declared struct types: name -> field names. Construction of a
+    /// declared struct validates its field set; an undeclared struct-literal
+    /// name is an error. (Field VALUES are dynamic — declarations fix shape,
+    /// not types.)
+    struct_defs: HashMap<String, Vec<String>>,
+
     /// Package dependency map: dependency name -> the directory whose `.ol`
     /// files it exposes. A `use foo.bar` whose first segment is a dependency
     /// name resolves inside that directory rather than relative to the
@@ -857,6 +863,7 @@ impl Interpreter {
             unit_variant_names: HashSet::new(),
             test_mode: false,
             test_results: Vec::new(),
+            struct_defs: HashMap::new(),
             dependency_map: HashMap::new(),
         };
 
@@ -2145,6 +2152,7 @@ impl Interpreter {
             unit_variant_names: self.unit_variant_names.clone(),
             test_mode: false,
             test_results: Vec::new(),
+            struct_defs: self.struct_defs.clone(),
             dependency_map: self.dependency_map.clone(),
         }
     }
@@ -2958,8 +2966,15 @@ impl Interpreter {
             }
         }
 
-        // Struct and union declarations don't yet produce runtime bindings;
-        // struct values are built via struct-literal syntax.
+        // Struct declarations register their shape: construction validates
+        // the field-name set against it (values stay dynamic).
+        if let TypeDefinition::Struct { fields } = &type_decl.definition {
+            self.struct_defs.insert(
+                type_decl.name.clone(),
+                fields.iter().map(|f| f.name.clone()).collect(),
+            );
+        }
+
         Ok(Value::Unit)
     }
 
@@ -2967,8 +2982,52 @@ impl Interpreter {
         &mut self,
         struct_literal: &crate::ast::StructLiteral,
     ) -> Result<Value, InterpreterError> {
-        let mut fields = std::collections::HashMap::new();
+        // A struct literal names a declared type, and construction validates
+        // the field-name set against the declaration — missing or surprise
+        // fields are errors, and an undeclared name is an error (use an
+        // anonymous `{ ... }` object for free-form records). Field VALUES are
+        // not type-checked: olang is dynamically typed; declarations fix
+        // shape, not types.
+        let declared = match self.struct_defs.get(&struct_literal.type_name) {
+            Some(fields) => fields.clone(),
+            None => {
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "unknown struct type '{}' — declare it with `type {} = struct {{ ... }}`, \
+                         or use an anonymous object `{{ ... }}` for a free-form record",
+                        struct_literal.type_name, struct_literal.type_name
+                    ),
+                })
+            }
+        };
 
+        let given: Vec<&String> = struct_literal.fields.iter().map(|f| &f.name).collect();
+        for required in &declared {
+            if !given.iter().any(|g| *g == required) {
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "struct '{}' is missing field '{}' (declared fields: {})",
+                        struct_literal.type_name,
+                        required,
+                        declared.join(", ")
+                    ),
+                });
+            }
+        }
+        for name in &given {
+            if !declared.contains(name) {
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "struct '{}' has no field '{}' (declared fields: {})",
+                        struct_literal.type_name,
+                        name,
+                        declared.join(", ")
+                    ),
+                });
+            }
+        }
+
+        let mut fields = std::collections::HashMap::new();
         for field_value in &struct_literal.fields {
             let value = self.eval_expr(&field_value.value)?;
             fields.insert(field_value.name.clone(), value);

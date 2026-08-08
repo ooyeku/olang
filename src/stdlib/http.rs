@@ -536,7 +536,7 @@ fn read_request(stream: &mut std::net::TcpStream) -> Result<Option<ParsedRequest
 
 /// The request value handed to the olang handler: a struct with dot access,
 /// with `query` and `headers` as maps so `map_get` reads them.
-fn request_to_value(req: &ParsedRequest) -> Value {
+fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
     let query_map: HashMap<String, Value> = req
         .query
         .iter()
@@ -562,6 +562,10 @@ fn request_to_value(req: &ParsedRequest) -> Value {
     fields.insert(
         "body".to_string(),
         Value::String(Arc::new(req.body.clone())),
+    );
+    fields.insert(
+        "remote_addr".to_string(),
+        Value::String(Arc::new(remote_addr.to_string())),
     );
 
     Value::Struct {
@@ -671,12 +675,187 @@ fn header_value_text(v: &Value) -> String {
     }
 }
 
-/// The real `http.serve`: a blocking, sequential HTTP/1.1 server on
-/// 127.0.0.1. Each request is parsed, handed to the olang handler as an
-/// `HttpRequest` struct, and the handler's return value is written back. A
-/// handler error is a 500, a malformed request a 400 — the server itself
-/// keeps running. Registered in the builtin layer because calling the
-/// handler requires the interpreter.
+#[derive(Clone, Copy)]
+struct ServeConfig {
+    workers: usize,
+    queue_capacity: usize,
+    max_requests_per_connection: usize,
+    idle_timeout_ms: u64,
+    write_timeout_ms: u64,
+}
+
+fn default_worker_count() -> usize {
+    std::env::var("OLANG_HTTP_WORKERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|workers| *workers > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|count| count.get())
+                .unwrap_or(4)
+        })
+}
+
+fn option_usize(
+    fields: &HashMap<String, Value>,
+    name: &str,
+    default: usize,
+    min: usize,
+    max: usize,
+) -> Result<usize, String> {
+    match fields.get(name) {
+        None => Ok(default),
+        Some(Value::Integer(value)) if *value >= min as i64 && *value <= max as i64 => {
+            Ok(*value as usize)
+        }
+        Some(Value::Integer(value)) => Err(format!(
+            "serve: option '{}' must be in {}..={}, got {}",
+            name, min, max, value
+        )),
+        Some(other) => Err(format!(
+            "serve: option '{}' must be an integer, got {}",
+            name,
+            other.type_name()
+        )),
+    }
+}
+
+fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
+    let workers = default_worker_count();
+    let defaults = ServeConfig {
+        workers,
+        queue_capacity: workers.saturating_mul(64).max(64),
+        // A finite keep-alive quantum prevents a small set of persistent
+        // clients from monopolizing every worker while other connections sit
+        // in the queue. Clients reconnect transparently after the cap.
+        max_requests_per_connection: 100,
+        idle_timeout_ms: 5_000,
+        write_timeout_ms: 10_000,
+    };
+    let Some(options) = options else {
+        return Ok(defaults);
+    };
+    let fields = match options {
+        Value::Map(map) => map.as_ref(),
+        Value::Struct { fields, .. } => fields,
+        other => {
+            return Err(format!(
+                "serve: options must be a map or object, got {}",
+                other.type_name()
+            ))
+        }
+    };
+    let known = [
+        "workers",
+        "queue_capacity",
+        "max_requests_per_connection",
+        "idle_timeout_ms",
+        "write_timeout_ms",
+    ];
+    if let Some(unknown) = fields.keys().find(|key| !known.contains(&key.as_str())) {
+        return Err(format!("serve: unknown option '{}'", unknown));
+    }
+
+    let workers = option_usize(fields, "workers", defaults.workers, 1, 256)?;
+    Ok(ServeConfig {
+        workers,
+        queue_capacity: option_usize(
+            fields,
+            "queue_capacity",
+            workers.saturating_mul(64).max(64),
+            1,
+            1_000_000,
+        )?,
+        max_requests_per_connection: option_usize(
+            fields,
+            "max_requests_per_connection",
+            defaults.max_requests_per_connection,
+            1,
+            1_000_000,
+        )?,
+        idle_timeout_ms: option_usize(
+            fields,
+            "idle_timeout_ms",
+            defaults.idle_timeout_ms as usize,
+            1,
+            3_600_000,
+        )? as u64,
+        write_timeout_ms: option_usize(
+            fields,
+            "write_timeout_ms",
+            defaults.write_timeout_ms as usize,
+            1,
+            3_600_000,
+        )? as u64,
+    })
+}
+
+fn serve_connection(
+    mut stream: std::net::TcpStream,
+    interpreter: &mut crate::interpreter::Interpreter,
+    handler: &Value,
+    config: ServeConfig,
+) {
+    use std::io::Write;
+
+    let remote_addr = stream
+        .peer_addr()
+        .map(|address| address.to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(
+        config.idle_timeout_ms,
+    )));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(
+        config.write_timeout_ms,
+    )));
+
+    for served in 0..config.max_requests_per_connection {
+        match read_request(&mut stream) {
+            Ok(None) => break,
+            Ok(Some(req)) => {
+                let client_wants_close = req
+                    .headers
+                    .iter()
+                    .any(|(key, value)| key == "connection" && value.eq_ignore_ascii_case("close"));
+                let keep_alive =
+                    !client_wants_close && served + 1 < config.max_requests_per_connection;
+                let request_value = request_to_value(&req, &remote_addr);
+                let bytes = match interpreter.call_function(handler.clone(), vec![request_value]) {
+                    Ok(result) => render_handler_result(&result, keep_alive),
+                    Err(error) => {
+                        crate::log::get_logger().error(
+                            "http",
+                            &format!(
+                                "handler failed remote_addr={} method={} path={}: {}",
+                                remote_addr, req.method, req.path, error
+                            ),
+                        );
+                        response_bytes(500, "internal server error", &[], keep_alive)
+                    }
+                };
+                if stream.write_all(&bytes).is_err() || stream.flush().is_err() {
+                    break;
+                }
+                if !keep_alive {
+                    break;
+                }
+            }
+            Err(message) => {
+                let bytes = response_bytes(400, &format!("bad request: {}", message), &[], false);
+                let _ = stream.write_all(&bytes);
+                let _ = stream.flush();
+                break;
+            }
+        }
+    }
+}
+
+/// The real `http.serve`: a bounded worker-pool HTTP/1.1 server on
+/// 127.0.0.1. Each worker owns an interpreter clone, so independent
+/// connections execute concurrently without sharing mutable interpreter
+/// state. Stateful native handles (such as SQLite connections) provide their
+/// own synchronization. The optional third argument configures the pool and
+/// connection limits.
 pub fn serve_blocking(
     args: Vec<Value>,
     interpreter: &mut crate::interpreter::Interpreter,
@@ -685,9 +864,9 @@ pub fn serve_blocking(
 
     let err_val = |msg: String| Ok(Value::Err(Box::new(Value::String(Arc::new(msg)))));
 
-    if args.len() != 2 {
+    if !(2..=3).contains(&args.len()) {
         return err_val(format!(
-            "serve expects 2 arguments (port, handler), got {}",
+            "serve expects 2 or 3 arguments (port, handler[, options]), got {}",
             args.len()
         ));
     }
@@ -699,6 +878,10 @@ pub fn serve_blocking(
     if !matches!(handler, Value::Function(_) | Value::Builtin(_)) {
         return err_val("serve: handler must be a function".to_string());
     }
+    let config = match serve_config(args.get(2)) {
+        Ok(config) => config,
+        Err(message) => return err_val(message),
+    };
 
     let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
@@ -707,62 +890,78 @@ pub fn serve_blocking(
     // The OS assigns the port when 0 was requested; report the real one.
     let local = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     println!("listening on http://127.0.0.1:{}", local);
+    println!(
+        "http workers={} queue_capacity={}",
+        config.workers, config.queue_capacity
+    );
     let _ = std::io::stdout().flush();
 
-    // Requests per connection are capped so one client can't hold the
-    // sequential server forever; the idle timeout closes quiet connections.
-    const MAX_REQUESTS_PER_CONNECTION: usize = 1000;
-    const IDLE_TIMEOUT_SECS: u64 = 5;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(config.queue_capacity);
+    let receiver = Arc::new(std::sync::Mutex::new(receiver));
+    let mut worker_handles = Vec::with_capacity(config.workers);
+    for worker_id in 0..config.workers {
+        let receiver = Arc::clone(&receiver);
+        let handler = handler.clone();
+        let mut worker_interpreter = interpreter.thread_safe_clone();
+        let handle = match std::thread::Builder::new()
+            .name(format!("olang-http-{}", worker_id + 1))
+            .stack_size(32 * 1024 * 1024)
+            .spawn(move || loop {
+                let stream = {
+                    let receiver = match receiver.lock() {
+                        Ok(receiver) => receiver,
+                        Err(_) => return,
+                    };
+                    match receiver.recv() {
+                        Ok(stream) => stream,
+                        Err(_) => return,
+                    }
+                };
+                serve_connection(stream, &mut worker_interpreter, &handler, config);
+            }) {
+            Ok(handle) => handle,
+            Err(error) => {
+                drop(sender);
+                return err_val(format!("serve: could not start worker pool: {}", error));
+            }
+        };
+        worker_handles.push(handle);
+    }
+    // Only workers should own receiving handles. If every worker exits, the
+    // next send then reports Disconnected instead of filling an orphaned
+    // queue forever.
+    drop(receiver);
 
     for stream in listener.incoming() {
-        let mut stream = match stream {
+        let stream = match stream {
             Ok(s) => s,
-            Err(_) => continue,
+            Err(error) => {
+                crate::log::get_logger().warn("http", &format!("accept failed: {}", error));
+                continue;
+            }
         };
-        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(IDLE_TIMEOUT_SECS)));
-        let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(10)));
-
-        // Keep-alive: serve requests on this connection until the client
-        // closes, asks to close, errs, or hits the per-connection cap.
-        for served in 0..MAX_REQUESTS_PER_CONNECTION {
-            match read_request(&mut stream) {
-                Ok(None) => break, // clean close or idle timeout
-                Ok(Some(req)) => {
-                    // HTTP/1.1 default is persistent; the client opts out
-                    // with `Connection: close`.
-                    let client_wants_close = req
-                        .headers
-                        .iter()
-                        .any(|(k, v)| k == "connection" && v.eq_ignore_ascii_case("close"));
-                    let keep_alive =
-                        !client_wants_close && served + 1 < MAX_REQUESTS_PER_CONNECTION;
-
-                    let request_value = request_to_value(&req);
-                    let bytes = match interpreter
-                        .call_function(handler.clone(), vec![request_value])
-                    {
-                        Ok(result) => render_handler_result(&result, keep_alive),
-                        Err(e) => {
-                            response_bytes(500, &format!("handler error: {}", e), &[], keep_alive)
-                        }
-                    };
-                    if stream.write_all(&bytes).is_err() || stream.flush().is_err() {
-                        break;
-                    }
-                    if !keep_alive {
-                        break;
-                    }
-                }
-                Err(msg) => {
-                    let bytes = response_bytes(400, &format!("bad request: {}", msg), &[], false);
-                    let _ = stream.write_all(&bytes);
-                    let _ = stream.flush();
-                    break;
-                }
+        match sender.try_send(stream) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::TrySendError::Full(mut stream)) => {
+                let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(
+                    config.write_timeout_ms,
+                )));
+                let bytes = response_bytes(503, "server overloaded", &[], false);
+                let _ = stream.write_all(&bytes);
+                let _ = stream.flush();
+            }
+            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                return Err(crate::interpreter::InterpreterError::RuntimeError {
+                    message: "HTTP worker pool stopped unexpectedly".to_string(),
+                });
             }
         }
     }
 
+    drop(sender);
+    for handle in worker_handles {
+        let _ = handle.join();
+    }
     Ok(Value::Unit)
 }
 

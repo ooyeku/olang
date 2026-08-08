@@ -40,8 +40,7 @@ explicit list of what is and isn't implemented.
 
 ### Standard Library (11 Modules)
 - **fs**: File system operations (read, write, copy, move, etc.)
-- **http**: HTTP client (requests, headers, JSON); `http.serve` is a
-  placeholder, not a working server
+- **http**: HTTP client plus a bounded concurrent HTTP/1.1 server
 - **math**: Comprehensive mathematical functions
 - **random**: Random number generation and distributions
 - **dates**: Date/time parsing, formatting, and arithmetic
@@ -368,8 +367,8 @@ let data = unwrap(json.parse(response.body))
 let created = http.post("https://api.example.com/items", unwrap(json.stringify(data)))
 ```
 
-Server support (`http.serve`) is not implemented — it currently returns a
-placeholder message rather than binding a port.
+`http.serve(port, handler[, options])` runs a bounded concurrent HTTP/1.1
+worker pool; see the [stdlib reference](docs/stdlib.md#http--http).
 
 ### Data Processing
 
@@ -544,4 +543,4 @@ the implementation.
 - [OVM](docs/ovm.md) — the bytecode tier: design, speedups, limitations
 - [Stability](docs/stability.md) — what is stable and how olang evolves
 
-Installation instructions are in [Installation](#installation) above. 
+Installation instructions are in [Installation](#installation) above.

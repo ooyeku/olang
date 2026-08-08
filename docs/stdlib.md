@@ -206,13 +206,18 @@ println(to_string(result_map(r, (v) => v * 2)))
 println(to_string(unwrap_or(Err("nope"), -1)))
 ```
 
-### Lazy evaluation
+### Evaluation helpers
 
 | Function | Description |
 |---|---|
-| `lazy(expr)` | defer a computation |
-| `force(l)` | evaluate a deferred value |
+| `lazy(v)` | identity — olang evaluates eagerly (see note) |
+| `force(v)` | identity — the counterpart of `lazy` |
 | `set_parallel(n)` | thread budget for parallel-capable builtins |
+
+**olang is eager.** A builtin receives its argument already evaluated, so
+`lazy` cannot defer anything — both functions are the identity, kept for
+source compatibility. (Earlier releases wrapped values in lazy handles and
+immediately forced them; the observable behavior was always eager.)
 
 ```olang
 let deferred = lazy([1, 2, 3] |> map((x) => x * 10))
@@ -530,7 +535,7 @@ Requests return `Result` responses with status, headers, and body — and
 | `http.request(method, url, body, headers)` | full control |
 | `http.parse_url(url)` | split a URL into parts |
 | `http.encode_query(map)` / `http.decode_query(s)` | query strings |
-| `http.serve(port, handler)` | serve `handler(request)` forever (blocking) |
+| `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
 | `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses |
 
 ```olang no-run
@@ -543,11 +548,16 @@ println(data.message)
 ### Serving
 
 `http.serve(port, handler)` binds `127.0.0.1:port` (port `0` picks a free
-one, reported on stdout as `listening on http://127.0.0.1:PORT`) and blocks,
-handling requests **sequentially** over **persistent connections**:
-HTTP/1.1 keep-alive is honored (a client opts out with `Connection: close`;
-idle connections close after a few seconds). The handler receives a request
-struct:
+one, reported on stdout as `listening on http://127.0.0.1:PORT`) and blocks
+the calling program while a bounded worker pool handles independent
+connections concurrently. The default worker count is the host's available
+parallelism; `OLANG_HTTP_WORKERS` overrides it. Each worker owns an isolated
+interpreter clone, while stateful native handles such as SQLite connections
+synchronize their own access.
+
+HTTP/1.1 keep-alive is honored. Idle connections time out, each connection
+has a request cap, and a full bounded queue receives `503` rather than growing
+threads or memory without limit. The handler receives a request struct:
 
 | Field | Contents |
 |---|---|
@@ -556,6 +566,17 @@ struct:
 | `req.query` | map of decoded query parameters |
 | `req.headers` | map of headers, keys lowercased |
 | `req.body` | the request body as a string |
+| `req.remote_addr` | client socket address (`ip:port`) |
+
+An optional map/object configures the bounded server:
+
+| Option | Default |
+|---|---|
+| `workers` | available host parallelism / `OLANG_HTTP_WORKERS` |
+| `queue_capacity` | `workers * 64` (minimum 64) |
+| `max_requests_per_connection` | `100` |
+| `idle_timeout_ms` | `5000` |
+| `write_timeout_ms` | `10000` |
 
 The handler returns either a bare string (a `200 text/plain`) or a response
 built with `http.response`/`http.response_with_headers` — pass headers as a
@@ -570,7 +591,8 @@ fn handle(req) = {
         http.response_with_headers(201, req.body, #{ "Content-Type": "application/json" })
     else => http.response(404, "no route for " + req.path)
 }
-http.serve(8080, handle)   // blocks; Ctrl-C to stop
+http.serve(8080, handle, #{ "workers": 8, "queue_capacity": 512 })
+// blocks the calling program; Ctrl-C to stop
 ```
 
 See [`examples/webserver/`](../examples/webserver/) for a complete JSON API

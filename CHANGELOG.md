@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **Bounded concurrent `http.serve`.** Independent connections run on a
+  configurable worker pool (host parallelism by default), with a bounded
+  queue, `503` overload responses, keep-alive request caps, socket timeouts,
+  and `remote_addr` on requests. The notes-server example adds configurable
+  JSON Lines access logging and its dependency-free benchmark reports actual
+  average in-flight load.
+
 ## [0.28.0] - 2026-08-08
 
 ### Added
