@@ -1,5 +1,8 @@
 # Packages
 
+Part of [the olang book](README.md) ·
+[Tour](tour.md) · [Language](language.md) · [Standard Library](stdlib.md)
+
 olang has a source-based package manager: a package is a directory of `.ol`
 files plus an `olang.toml` manifest. There is no build step and no compiled
 artifact — dependencies are fetched as source and resolved by the same `use`

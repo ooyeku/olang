@@ -532,10 +532,16 @@ Check out the `examples/` directory for comprehensive sample programs demonstrat
 
 ## Documentation
 
-- [Syntax Reference](docs/syntax.md) - Complete language syntax
-- [OVM Architecture](docs/ovm.md) - Execution tiers, the bytecode VM, measured
-  performance, and current limitations
-- [Packages](docs/packages.md) - Manifest, dependencies, lockfile, registry
+**[The olang book](docs/README.md)** is the complete documentation. Every
+code example in it is executed by the test suite, so it cannot drift from
+the implementation.
 
-Installation instructions are in [Installation](#installation) above.
-- [Standard Library](docs/stdlib.md) - API reference for all modules 
+- [A Tour of olang](docs/tour.md) — install to first program
+- [The Language Reference](docs/language.md) — every construct, precisely
+- [The Standard Library](docs/stdlib.md) — every builtin and module
+- [Packages](docs/packages.md) — manifest, dependencies, lockfile, registry
+- [Internals](docs/internals.md) — architecture, for contributors
+- [OVM](docs/ovm.md) — the bytecode tier: design, speedups, limitations
+- [Stability](docs/stability.md) — what is stable and how olang evolves
+
+Installation instructions are in [Installation](#installation) above. 

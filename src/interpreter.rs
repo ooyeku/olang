@@ -65,6 +65,11 @@ pub enum InterpreterError {
     BreakSignal,
     #[error("'continue' used outside of a loop")]
     ContinueSignal,
+    // `?` on an Err: unwinds to the enclosing function call, which returns
+    // the carried `Value::Err` to its caller. An error only if it escapes to
+    // top level (i.e. `?` hit an Err outside any function).
+    #[error("'?' propagated an Err outside of a function")]
+    ErrPropagation(Value),
 
     // Enhanced lazy evaluation error types
     #[error("Lazy evaluation error: {message}")]
@@ -1418,9 +1423,9 @@ impl Interpreter {
                 let value = self.eval_expr(expr)?;
                 match value {
                     Value::Ok(inner) => Ok(*inner),
-                    Value::Err(err) => Err(InterpreterError::RuntimeError {
-                        message: format!("Tried to unwrap error: {:?}", err),
-                    }),
+                    // Early-return: unwind to the enclosing function call,
+                    // which returns this Err to its caller.
+                    err @ Value::Err(_) => Err(InterpreterError::ErrPropagation(err)),
                     _ => Err(InterpreterError::TypeError {
                         message: "Try operator can only be used on Result values".to_string(),
                     }),
@@ -1992,7 +1997,12 @@ impl Interpreter {
                 }
 
                 // MEMORY OPTIMIZED: Use scoped evaluation instead of environment replacement
-                let result = self.eval_expr_with_env(&func.body, new_env);
+                let result = match self.eval_expr_with_env(&func.body, new_env) {
+                    // `?` hit an Err inside this body: the function returns
+                    // that Err to its caller — the early-return semantics.
+                    Err(InterpreterError::ErrPropagation(err)) => Ok(err),
+                    other => other,
+                };
 
                 // Decrement call depth when function completes
                 self.call_depth -= 1;
@@ -2645,6 +2655,33 @@ impl Interpreter {
                 Ok(Value::Boolean(left == right))
             }
             (left @ Value::Enum { .. }, BinaryOp::NotEqual, right @ Value::Enum { .. }) => {
+                Ok(Value::Boolean(left != right))
+            }
+            // Collections and structs compare structurally, like enums:
+            // same shape, equal elements. Value's derived PartialEq is the
+            // natural recursive equality.
+            (left @ Value::List(_), BinaryOp::Equal, right @ Value::List(_)) => {
+                Ok(Value::Boolean(left == right))
+            }
+            (left @ Value::List(_), BinaryOp::NotEqual, right @ Value::List(_)) => {
+                Ok(Value::Boolean(left != right))
+            }
+            (left @ Value::Tuple(_), BinaryOp::Equal, right @ Value::Tuple(_)) => {
+                Ok(Value::Boolean(left == right))
+            }
+            (left @ Value::Tuple(_), BinaryOp::NotEqual, right @ Value::Tuple(_)) => {
+                Ok(Value::Boolean(left != right))
+            }
+            (left @ Value::Map(_), BinaryOp::Equal, right @ Value::Map(_)) => {
+                Ok(Value::Boolean(left == right))
+            }
+            (left @ Value::Map(_), BinaryOp::NotEqual, right @ Value::Map(_)) => {
+                Ok(Value::Boolean(left != right))
+            }
+            (left @ Value::Struct { .. }, BinaryOp::Equal, right @ Value::Struct { .. }) => {
+                Ok(Value::Boolean(left == right))
+            }
+            (left @ Value::Struct { .. }, BinaryOp::NotEqual, right @ Value::Struct { .. }) => {
                 Ok(Value::Boolean(left != right))
             }
             (Value::Unit, BinaryOp::Equal, Value::Unit) => Ok(Value::Boolean(true)),

@@ -331,9 +331,17 @@ impl Parser {
     }
 
     fn build_let_decl(&self, mut pairs: Pairs<Rule>) -> Result<LetDecl, ParseError> {
-        let pattern_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+        let mut pattern_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing pattern in let declaration".to_string(),
         })?;
+
+        // `let mut x = ...`: the mut marker documents intent — every binding
+        // is assignable — so it parses and is otherwise ignored.
+        if pattern_pair.as_rule() == Rule::mut_kw {
+            pattern_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+                message: "Missing pattern after `mut` in let declaration".to_string(),
+            })?;
+        }
 
         let pattern = self.build_pattern(pattern_pair.into_inner())?;
 

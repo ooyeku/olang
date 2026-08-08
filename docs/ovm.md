@@ -1,5 +1,8 @@
 # OVM — the Olang Virtual Machine
 
+Part of [the olang book](README.md) ·
+[Internals](internals.md) · [Stability](stability.md)
+
 This document describes how Olang executes code, what parts of the OVM are
 real today, and what is still scaffolding. It is deliberately explicit about
 the second category: knowing what *isn't* implemented is more useful than a

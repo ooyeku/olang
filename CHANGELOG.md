@@ -12,6 +12,18 @@ documented.
 
 ### Added
 
+- **The olang book.** Comprehensive documentation under `docs/`: a hub
+  (`docs/README.md`), a tour, a complete language reference
+  (`docs/language.md`, superseding `docs/syntax.md`), a complete stdlib
+  reference (`docs/stdlib.md`), a contributor internals guide
+  (`docs/internals.md`), and a stability policy (`docs/stability.md`)
+  committing the documented surface to remain stable while development
+  focuses on optimization, new features, and stability. Every olang code
+  block in the book is executed by `doc_examples_test` in CI.
+- **`let mut` is real syntax.** Previously `let mut x = 1` mis-parsed as two
+  statements, leaving a stray `mut` binding. `mut` is now a contextual
+  keyword in `let`: it marks intent (all bindings are assignable) and the
+  statement parses as one declaration.
 - **`os.exec(program, args)` runs external programs.** Returns
   `Result<{ code, stdout, stderr }, Error>` — the exit code and captured
   output on success, an `Err` only when the program can't be launched. This
@@ -77,6 +89,17 @@ documented.
 
 ### Fixed
 
+- **`?` propagates the `Err` instead of aborting.** `expr?` on an `Err`
+  raised a runtime error ("Tried to unwrap error") rather than returning the
+  `Err` from the enclosing function — making `?` unusable on its main path.
+  It now unwinds to the function-call boundary and the function returns that
+  `Err` to its caller. Found while writing the language reference: the
+  documented behavior is now the real one.
+- **Lists, tuples, maps, and structs compare with `==`/`!=`.** Structural
+  equality existed only for enums; `[1, 2] == [1, 2]` was "Invalid binary
+  operation". All compound values now compare structurally, matching the
+  equality already used by pattern matching. Found while writing the
+  language reference.
 - **`&&` and `||` short-circuit.** The right operand was always evaluated, so
   a guard like `x != 0 && y / x > 0` still divided by zero and a backtracking
   matcher's progress guard recursed forever. The right operand now runs only
