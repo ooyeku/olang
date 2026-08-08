@@ -12,6 +12,23 @@ documented.
 
 ### Added
 
+- **Roadmap Tier 4** — the two big lanes:
+  - **The OVM compiles `&&`/`||` as conditional jumps.** Any function
+    containing a logical operator previously fell back to the tree-walker
+    permanently — and post-hardening, that was most interesting functions.
+    The lowering short-circuits on *exactly* `Boolean(false)`/`Boolean(true)`
+    (via a never-erring pattern-equality test, not truthiness), so the
+    interpreter's strict semantics are preserved bit-for-bit — including
+    `0 && true` being a type error. Guard-heavy hot loops measure ~2.2×
+    faster. Fixing this surfaced a latent divergence: the OVM's And/Or
+    *instructions* were JS-style truthiness coercions returning operands;
+    they are now strict Boolean, matching the interpreter.
+  - **`http.serve` keep-alive.** Connections are persistent per HTTP/1.1:
+    the server loops requests on one connection until the client closes,
+    sends `Connection: close`, idles past the timeout, or hits a
+    per-connection cap. Responses advertise `Connection: keep-alive`
+    accordingly. Verified by an integration test running two requests over
+    one TCP stream and by curl's connection reuse against the notes API.
 - **Roadmap Tier 3** — stdlib gaps:
   - **`time` module** — `time.now_ms()` (epoch milliseconds),
     `time.monotonic_ms()` (a clock that never goes backwards, for

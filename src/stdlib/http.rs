@@ -442,7 +442,7 @@ struct ParsedRequest {
 
 /// Read and parse one HTTP/1.1 request from the stream. Minimal but honest:
 /// request line, headers (keys lowercased), and a Content-Length body.
-fn read_request(stream: &mut std::net::TcpStream) -> Result<ParsedRequest, String> {
+fn read_request(stream: &mut std::net::TcpStream) -> Result<Option<ParsedRequest>, String> {
     use std::io::Read;
 
     const MAX_HEAD: usize = 64 * 1024;
@@ -458,11 +458,23 @@ fn read_request(stream: &mut std::net::TcpStream) -> Result<ParsedRequest, Strin
         if buf.len() > MAX_HEAD {
             return Err("request header block too large".to_string());
         }
-        let n = stream.read(&mut chunk).map_err(|e| e.to_string())?;
-        if n == 0 {
-            return Err("connection closed mid-request".to_string());
+        match stream.read(&mut chunk) {
+            // A close (or idle timeout) before any bytes is the clean end of
+            // a kept-alive connection, not an error.
+            Ok(0) if buf.is_empty() => return Ok(None),
+            Ok(0) => return Err("connection closed mid-request".to_string()),
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(e)
+                if buf.is_empty()
+                    && matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+            {
+                return Ok(None)
+            }
+            Err(e) => return Err(e.to_string()),
         }
-        buf.extend_from_slice(&chunk[..n]);
     };
 
     let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
@@ -513,13 +525,13 @@ fn read_request(stream: &mut std::net::TcpStream) -> Result<ParsedRequest, Strin
     }
     body_bytes.truncate(content_length);
 
-    Ok(ParsedRequest {
+    Ok(Some(ParsedRequest {
         method,
         path,
         query,
         headers,
         body: String::from_utf8_lossy(&body_bytes).to_string(),
-    })
+    }))
 }
 
 /// The request value handed to the olang handler: a struct with dot access,
@@ -581,7 +593,12 @@ fn reason_phrase(status: i64) -> &'static str {
 }
 
 /// Serialize a status/body/header set into HTTP/1.1 response bytes.
-fn response_bytes(status: i64, body: &str, extra_headers: &[(String, String)]) -> Vec<u8> {
+fn response_bytes(
+    status: i64,
+    body: &str,
+    extra_headers: &[(String, String)],
+    keep_alive: bool,
+) -> Vec<u8> {
     let mut out = format!("HTTP/1.1 {} {}\r\n", status, reason_phrase(status));
     let has_content_type = extra_headers
         .iter()
@@ -593,7 +610,11 @@ fn response_bytes(status: i64, body: &str, extra_headers: &[(String, String)]) -
         out.push_str(&format!("{}: {}\r\n", k, v));
     }
     out.push_str(&format!("Content-Length: {}\r\n", body.len()));
-    out.push_str("Connection: close\r\n\r\n");
+    if keep_alive {
+        out.push_str("Connection: keep-alive\r\n\r\n");
+    } else {
+        out.push_str("Connection: close\r\n\r\n");
+    }
     let mut bytes = out.into_bytes();
     bytes.extend_from_slice(body.as_bytes());
     bytes
@@ -602,9 +623,9 @@ fn response_bytes(status: i64, body: &str, extra_headers: &[(String, String)]) -
 /// Turn whatever the handler returned into response bytes. A response struct
 /// (from `http.response`/`response_with_headers`, or any struct-like value
 /// with `status`/`body`/`headers` fields) is honored; a bare string is a 200.
-fn render_handler_result(value: &Value) -> Vec<u8> {
+fn render_handler_result(value: &Value, keep_alive: bool) -> Vec<u8> {
     match value {
-        Value::String(s) => response_bytes(200, s, &[]),
+        Value::String(s) => response_bytes(200, s, &[], keep_alive),
         Value::Struct { fields, .. } => {
             let status = match fields.get("status") {
                 Some(Value::Integer(s)) => *s,
@@ -629,7 +650,7 @@ fn render_handler_result(value: &Value) -> Vec<u8> {
                 }
                 _ => {}
             }
-            response_bytes(status, &body, &headers)
+            response_bytes(status, &body, &headers, keep_alive)
         }
         other => response_bytes(
             500,
@@ -638,6 +659,7 @@ fn render_handler_result(value: &Value) -> Vec<u8> {
                 other.type_name()
             ),
             &[],
+            keep_alive,
         ),
     }
 }
@@ -687,26 +709,58 @@ pub fn serve_blocking(
     println!("listening on http://127.0.0.1:{}", local);
     let _ = std::io::stdout().flush();
 
+    // Requests per connection are capped so one client can't hold the
+    // sequential server forever; the idle timeout closes quiet connections.
+    const MAX_REQUESTS_PER_CONNECTION: usize = 1000;
+    const IDLE_TIMEOUT_SECS: u64 = 5;
+
     for stream in listener.incoming() {
         let mut stream = match stream {
             Ok(s) => s,
             Err(_) => continue,
         };
-        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(IDLE_TIMEOUT_SECS)));
         let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(10)));
 
-        let bytes = match read_request(&mut stream) {
-            Ok(req) => {
-                let request_value = request_to_value(&req);
-                match interpreter.call_function(handler.clone(), vec![request_value]) {
-                    Ok(result) => render_handler_result(&result),
-                    Err(e) => response_bytes(500, &format!("handler error: {}", e), &[]),
+        // Keep-alive: serve requests on this connection until the client
+        // closes, asks to close, errs, or hits the per-connection cap.
+        for served in 0..MAX_REQUESTS_PER_CONNECTION {
+            match read_request(&mut stream) {
+                Ok(None) => break, // clean close or idle timeout
+                Ok(Some(req)) => {
+                    // HTTP/1.1 default is persistent; the client opts out
+                    // with `Connection: close`.
+                    let client_wants_close = req
+                        .headers
+                        .iter()
+                        .any(|(k, v)| k == "connection" && v.eq_ignore_ascii_case("close"));
+                    let keep_alive =
+                        !client_wants_close && served + 1 < MAX_REQUESTS_PER_CONNECTION;
+
+                    let request_value = request_to_value(&req);
+                    let bytes = match interpreter
+                        .call_function(handler.clone(), vec![request_value])
+                    {
+                        Ok(result) => render_handler_result(&result, keep_alive),
+                        Err(e) => {
+                            response_bytes(500, &format!("handler error: {}", e), &[], keep_alive)
+                        }
+                    };
+                    if stream.write_all(&bytes).is_err() || stream.flush().is_err() {
+                        break;
+                    }
+                    if !keep_alive {
+                        break;
+                    }
+                }
+                Err(msg) => {
+                    let bytes = response_bytes(400, &format!("bad request: {}", msg), &[], false);
+                    let _ = stream.write_all(&bytes);
+                    let _ = stream.flush();
+                    break;
                 }
             }
-            Err(msg) => response_bytes(400, &format!("bad request: {}", msg), &[]),
-        };
-        let _ = stream.write_all(&bytes);
-        let _ = stream.flush();
+        }
     }
 
     Ok(Value::Unit)
@@ -1196,7 +1250,7 @@ mod tests {
 
     #[test]
     fn test_response_bytes_shape() {
-        let bytes = response_bytes(404, "missing", &[]);
+        let bytes = response_bytes(404, "missing", &[], false);
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.starts_with("HTTP/1.1 404 Not Found\r\n"));
         assert!(text.contains("Content-Length: 7\r\n"));
@@ -1207,7 +1261,7 @@ mod tests {
     #[test]
     fn test_response_bytes_honors_custom_content_type() {
         let headers = vec![("Content-Type".to_string(), "application/json".to_string())];
-        let text = String::from_utf8(response_bytes(200, "{}", &headers)).unwrap();
+        let text = String::from_utf8(response_bytes(200, "{}", &headers, false)).unwrap();
         assert!(text.contains("Content-Type: application/json\r\n"));
         // The default must not ALSO be emitted.
         assert!(!text.contains("text/plain"));
@@ -1215,7 +1269,7 @@ mod tests {
 
     #[test]
     fn test_render_handler_result_bare_string_is_200() {
-        let text = String::from_utf8(render_handler_result(&string_val("hi"))).unwrap();
+        let text = String::from_utf8(render_handler_result(&string_val("hi"), false)).unwrap();
         assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(text.ends_with("hi"));
     }
@@ -1223,7 +1277,7 @@ mod tests {
     #[test]
     fn test_render_handler_result_uses_response_struct() {
         let resp = http_response(vec![int_val(201), string_val("made")]).unwrap();
-        let text = String::from_utf8(render_handler_result(&resp)).unwrap();
+        let text = String::from_utf8(render_handler_result(&resp, false)).unwrap();
         assert!(text.starts_with("HTTP/1.1 201 Created\r\n"));
         assert!(text.ends_with("made"));
     }

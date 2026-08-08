@@ -69,7 +69,10 @@ http.serve(0, handle)
 #[test]
 fn serves_get_requests_with_parsed_method_and_path() {
     let (_guard, port) = spawn_server(SERVER);
-    let resp = request(port, "GET /ping HTTP/1.1\r\nHost: t\r\n\r\n");
+    let resp = request(
+        port,
+        "GET /ping HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n",
+    );
     assert!(resp.starts_with("HTTP/1.1 200 OK\r\n"), "got: {resp}");
     assert!(resp.contains("Content-Length: 14"), "got: {resp}");
     assert!(resp.ends_with("GET /ping pong"), "got: {resp}");
@@ -80,7 +83,7 @@ fn serves_post_bodies_and_custom_headers() {
     let (_guard, port) = spawn_server(SERVER);
     let body = r#"{"n":1}"#;
     let raw = format!(
-        "POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: {}\r\n\r\n{}",
+        "POST /echo HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
         body.len(),
         body
     );
@@ -96,10 +99,16 @@ fn serves_post_bodies_and_custom_headers() {
 #[test]
 fn parses_query_strings_and_reports_status_codes() {
     let (_guard, port) = spawn_server(SERVER);
-    let resp = request(port, "GET /q?q=hello%20world HTTP/1.1\r\nHost: t\r\n\r\n");
+    let resp = request(
+        port,
+        "GET /q?q=hello%20world HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n",
+    );
     assert!(resp.contains("hello world"), "got: {resp}");
 
-    let resp = request(port, "GET /missing HTTP/1.1\r\nHost: t\r\n\r\n");
+    let resp = request(
+        port,
+        "GET /missing HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n",
+    );
     assert!(
         resp.starts_with("HTTP/1.1 404 Not Found\r\n"),
         "got: {resp}"
@@ -111,6 +120,60 @@ fn parses_query_strings_and_reports_status_codes() {
         resp.starts_with("HTTP/1.1 400 Bad Request\r\n"),
         "got: {resp}"
     );
-    let resp = request(port, "GET /ping HTTP/1.1\r\nHost: t\r\n\r\n");
+    let resp = request(
+        port,
+        "GET /ping HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n",
+    );
     assert!(resp.ends_with("GET /ping pong"), "still serving: {resp}");
+}
+
+/// Read exactly one HTTP response from the stream: headers, then
+/// Content-Length body bytes. Leaves the connection open.
+fn read_one_response(stream: &mut TcpStream) -> String {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut byte = [0u8; 1];
+    // headers
+    while !buf.ends_with(b"\r\n\r\n") {
+        let n = stream.read(&mut byte).expect("read header byte");
+        assert!(n > 0, "connection closed mid-headers");
+        buf.push(byte[0]);
+    }
+    let head = String::from_utf8_lossy(&buf).to_string();
+    let content_length: usize = head
+        .lines()
+        .find_map(|l| {
+            l.to_lowercase()
+                .strip_prefix("content-length:")
+                .map(|v| v.trim().parse().unwrap())
+        })
+        .expect("content-length header");
+    let mut body = vec![0u8; content_length];
+    stream.read_exact(&mut body).expect("read body");
+    head + &String::from_utf8_lossy(&body)
+}
+
+#[test]
+fn keep_alive_serves_multiple_requests_on_one_connection() {
+    let (_guard, port) = spawn_server(SERVER);
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+
+    // First request: no Connection header — HTTP/1.1 defaults to keep-alive.
+    stream
+        .write_all(b"GET /ping HTTP/1.1\r\nHost: t\r\n\r\n")
+        .unwrap();
+    let first = read_one_response(&mut stream);
+    assert!(first.contains("Connection: keep-alive"), "got: {first}");
+    assert!(first.ends_with("GET /ping pong"), "got: {first}");
+
+    // Second request on the SAME connection.
+    stream
+        .write_all(b"GET /q?q=again HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut rest = String::new();
+    stream.read_to_string(&mut rest).expect("read second");
+    assert!(rest.contains("Connection: close"), "got: {rest}");
+    assert!(rest.contains("again"), "got: {rest}");
 }

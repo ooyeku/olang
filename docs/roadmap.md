@@ -43,8 +43,8 @@ Small, high-value items that finish surfaces the language already has.
 
 | # | Feature | Grounding | Status |
 |---|---|---|---|
-| 13 | **OVM coverage expansion**, starting with `&&`/`||` as conditional jumps — today any function containing them falls back to the tree-walker permanently. Then strings, field access, closures. Every expansion lands with tier-agreement tests | verified: the OVM compiler has no And/Or lowering; guards are everywhere post-dogfooding | planned |
-| 14 | **`http.serve` keep-alive**, then bounded concurrency — the handler contract is fixed; the execution model grows (as [stability](stability.md) already carves out). Concurrency waits on a shareable-interpreter story | sequential + Connection: close is the honest current model | planned |
+| 13 | **OVM coverage expansion**, starting with `&&`/`||` as conditional jumps — today any function containing them falls back to the tree-walker permanently. Then strings, field access, closures. Every expansion lands with tier-agreement tests | verified: the OVM compiler had no And/Or lowering; guards are everywhere post-dogfooding | `&&`/`||` landed (unreleased): conditional-jump lowering, 2.2× on guard-heavy hot loops; lane continues (strings, field access, closures) |
+| 14 | **`http.serve` keep-alive**, then bounded concurrency — the handler contract is fixed; the execution model grows (as [stability](stability.md) already carves out). Concurrency waits on a shareable-interpreter story | sequential + Connection: close is the honest current model | keep-alive landed (unreleased); concurrency still planned |
 
 ## Tooling track
 

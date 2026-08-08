@@ -56,7 +56,8 @@ semantics, touch both — or make the OVM refuse to compile the construct.
 
 Refusal is the designed escape hatch: the OVM compiler returns
 `CompilationFailed` for anything it does not support (globals, closures over
-modules, `&&`/`||`, and more — see [ovm.md](ovm.md#known-limitations)), and
+modules, `return`/`break value`, and more — see
+[ovm.md](ovm.md#known-limitations)), and
 the function transparently stays on the interpreter. **Falling back is always
 correct; diverging is never acceptable.**
 

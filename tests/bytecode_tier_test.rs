@@ -1195,3 +1195,58 @@ f(3)
     assert_eq!(promotion_count(src, 1), 0);
     assert_tier_transparent(src);
 }
+
+// ── logical operators (Tier 4: compiled as conditional jumps) ──────────
+
+#[test]
+fn logical_and_or_promote_and_agree() {
+    // Guards everywhere: functions with && / || must now compile AND match
+    // the interpreter exactly.
+    assert_tier_transparent(
+        r#"
+fn in_range(x, lo, hi) = (x >= lo) && (x <= hi)
+fn either_positive(a, b) = (a > 0) || (b > 0)
+let mut hits = 0
+for i in 0..50 {
+    if in_range(i % 10, 3, 7) => { hits = hits + 1 }
+    if either_positive(i - 49, 1) => { hits = hits + 1 }
+}
+hits
+"#,
+    );
+}
+
+#[test]
+fn logical_ops_short_circuit_in_the_bytecode_tier() {
+    // The right operand must not run when the left settles the result —
+    // unwrap(Err(...)) would abort the program if evaluated.
+    assert_tier_transparent(
+        r#"
+fn boom() = unwrap(Err("must not run"))
+fn safe_and(flag) = flag && (boom() == 0)
+fn safe_or(flag) = flag || (boom() == 0)
+let mut n = 0
+for i in 0..20 {
+    if !safe_and(false) => { n = n + 1 }
+    if safe_or(true) => { n = n + 1 }
+}
+n
+"#,
+    );
+}
+
+#[test]
+fn logical_type_errors_agree_across_tiers() {
+    // `0 && true` is a type error in the interpreter; the promoted function
+    // must error too, not coerce by truthiness.
+    let src = r#"
+fn bad() = 0 && true
+let mut n = 0
+for i in 0..20 { n = n + (if bad() => 1 else => 0) }
+n
+"#;
+    let interpreted = eval(src, None);
+    let tiered = eval(src, Some(1));
+    assert!(interpreted.is_err(), "interpreter should type-error");
+    assert!(tiered.is_err(), "bytecode tier should type-error too");
+}

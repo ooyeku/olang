@@ -544,7 +544,10 @@ println(data.message)
 
 `http.serve(port, handler)` binds `127.0.0.1:port` (port `0` picks a free
 one, reported on stdout as `listening on http://127.0.0.1:PORT`) and blocks,
-handling requests **sequentially**. The handler receives a request struct:
+handling requests **sequentially** over **persistent connections**:
+HTTP/1.1 keep-alive is honored (a client opts out with `Connection: close`;
+idle connections close after a few seconds). The handler receives a request
+struct:
 
 | Field | Contents |
 |---|---|

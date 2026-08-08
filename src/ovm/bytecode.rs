@@ -1713,13 +1713,15 @@ impl BytecodeVm {
         left: &OvmValue,
         right: &OvmValue,
     ) -> Result<OvmValue, BytecodeError> {
-        let left_truthy = self.is_truthy(left);
-        if !left_truthy {
-            // Short-circuit: return left if it's falsy
-            Ok(left.clone())
-        } else {
-            // Return right if left is truthy
-            Ok(right.clone())
+        // Strict Boolean semantics, matching the interpreter: non-boolean
+        // operands are a type error, never coerced by truthiness. (Short-
+        // circuiting happens in the compiled jump sequence, not here.)
+        use crate::ovm::value::ValueData;
+        match (&left.data, &right.data) {
+            (ValueData::Boolean(a), ValueData::Boolean(b)) => Ok(OvmValue::new_boolean(*a && *b)),
+            _ => Err(BytecodeError::TypeError(
+                "Invalid binary operation".to_string(),
+            )),
         }
     }
 
@@ -1729,13 +1731,12 @@ impl BytecodeVm {
         left: &OvmValue,
         right: &OvmValue,
     ) -> Result<OvmValue, BytecodeError> {
-        let left_truthy = self.is_truthy(left);
-        if left_truthy {
-            // Short-circuit: return left if it's truthy
-            Ok(left.clone())
-        } else {
-            // Return right if left is falsy
-            Ok(right.clone())
+        use crate::ovm::value::ValueData;
+        match (&left.data, &right.data) {
+            (ValueData::Boolean(a), ValueData::Boolean(b)) => Ok(OvmValue::new_boolean(*a || *b)),
+            _ => Err(BytecodeError::TypeError(
+                "Invalid binary operation".to_string(),
+            )),
         }
     }
 
@@ -2626,6 +2627,60 @@ impl BytecodeCompiler {
             }
 
             Expr::BinaryOp { left, op, right } => {
+                // `&&` / `||` short-circuit: the right operand is compiled
+                // behind a conditional jump taken only when the left doesn't
+                // already settle the result. The short-circuit test must be
+                // "is exactly Boolean(false/true)" — NOT truthiness — to match
+                // the interpreter (`0 && x` still evaluates x and then type-
+                // errors in the And instruction, exactly like the tree-walk).
+                // PatternEq never errors and always yields a Boolean, which
+                // makes it safe to branch on.
+                if matches!(op, BinaryOp::And | BinaryOp::Or) {
+                    let left_reg = self.compile_expression(left)?;
+
+                    let settle_value = matches!(op, BinaryOp::Or); // false for &&, true for ||
+                    let settle_const = self
+                        .emitter
+                        .add_constant(OvmValue::new_boolean(settle_value));
+                    let settle_reg = self.register_allocator.allocate_register();
+                    self.emitter.emit_load_const(settle_reg, settle_const);
+
+                    let settles = self.register_allocator.allocate_register();
+                    self.emitter.instructions.push(Instruction::PatternEq {
+                        dst: settles,
+                        value: left_reg,
+                        other: settle_reg,
+                    });
+
+                    // Preset the result to the settling value; overwritten on
+                    // the right-hand path.
+                    let dst_reg = self.register_allocator.allocate_register();
+                    self.emitter.emit_load_const(dst_reg, settle_const);
+
+                    let rhs_label = self.emitter.create_label();
+                    let end_label = self.emitter.create_label();
+                    self.emitter.emit_branch_if_false(settles, rhs_label);
+                    self.emitter.emit_jump(end_label);
+
+                    self.emitter.place_label(rhs_label);
+                    let right_reg = self.compile_expression(right)?;
+                    let combine = match op {
+                        BinaryOp::And => Instruction::And {
+                            dst: dst_reg,
+                            lhs: left_reg,
+                            rhs: right_reg,
+                        },
+                        _ => Instruction::Or {
+                            dst: dst_reg,
+                            lhs: left_reg,
+                            rhs: right_reg,
+                        },
+                    };
+                    self.emitter.instructions.push(combine);
+                    self.emitter.place_label(end_label);
+                    return Ok(dst_reg);
+                }
+
                 let left_reg = self.compile_expression(left)?;
                 let right_reg = self.compile_expression(right)?;
                 let dst_reg = self.register_allocator.allocate_register();
