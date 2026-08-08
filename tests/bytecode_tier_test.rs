@@ -1321,3 +1321,58 @@ n
     assert!(eval(src, None).is_err());
     assert!(eval(src, Some(1)).is_err());
 }
+
+// ── module math builtins compile in the tier ──────────────────────────
+
+#[test]
+fn math_builtins_promote_and_agree() {
+    // A field-access + math kernel (the N-body shape) must promote and match
+    // the interpreter — `math.sqrt` and friends are now compilable builtins.
+    assert_tier_transparent(
+        r#"
+type Body = struct { x: Float, mass: Float }
+fn pull(bi, bodies) = {
+    let mut a = 0.0
+    for bj in bodies {
+        let dx = bj.x - bi.x
+        let d2 = dx * dx + 0.5
+        a = a + bj.mass * dx / (d2 * math.sqrt(d2))
+    }
+    a
+}
+let bodies = [Body { x: 0.0, mass: 1.0 }, Body { x: 1.0, mass: 2.0 }, Body { x: 3.0, mass: 1.5 }]
+let mut total = 0.0
+for i in 0..20 { total = total + pull(bodies[1], bodies) }
+total
+"#,
+    );
+}
+
+#[test]
+fn assorted_math_functions_agree_across_tiers() {
+    assert_tier_transparent(
+        r#"
+fn f(x) = math.sqrt(x) + math.pow(x, 3.0) + math.abs(0.0 - x)
+    + math.floor(x + 0.9) + math.max(x, 2.0) + math.min(x, 2.0)
+let mut s = 0.0
+for i in 0..30 { s = s + f(to_float(i) * 0.1 + 1.0) }
+s
+"#,
+    );
+}
+
+#[test]
+fn a_local_shadowing_a_module_name_is_field_access_not_a_builtin() {
+    // `math.sqrt` where `math` is a *local* must read the field, not call the
+    // builtin — the compiler distinguishes a bare module identifier from a
+    // slot-resolved local. Both tiers must agree.
+    assert_tier_transparent(
+        r#"
+type M = struct { sqrt: Int }
+fn use_it(math) = math.sqrt + 1
+let mut n = 0
+for i in 0..30 { n = n + use_it(M { sqrt: 41 }) }
+n
+"#,
+    );
+}

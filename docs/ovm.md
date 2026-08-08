@@ -64,6 +64,10 @@ A function is eligible when its body uses only the subset the VM implements:
   `...rest`), and tuples — nested to any depth
 - `Ok(..)` / `Err(..)` construction
 - field access (`p.x`) and indexing (`xs[i]`, negatives from the end)
+- calls to the pure `math` module functions (`math.sqrt`, `math.sin`,
+  `math.pow`, ...) — recognized as builtins when the module is a bare
+  identifier, so a numeric kernel promotes instead of falling back on its
+  first `sqrt`
 - pipelines (`|>`), desugared to the equivalent call
 - lambdas whose free variables all resolve in the enclosing function's
   declaration-time closure — which covers lambdas calling other user

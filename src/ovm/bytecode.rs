@@ -709,6 +709,44 @@ impl BytecodeVm {
             "unwrap_or",
             // numeric
             "clamp",
+            // pure `math` module functions — scalar in, scalar out, all
+            // round-trippable. Reached via `math.sqrt(x)` (a module call),
+            // which the compiler recognizes as a builtin below. This is what
+            // lets a field-access-heavy numeric kernel (an N-body force loop,
+            // say) actually promote instead of falling back on the first sqrt.
+            "math.abs",
+            "math.sqrt",
+            "math.cbrt",
+            "math.floor",
+            "math.ceil",
+            "math.round",
+            "math.trunc",
+            "math.sign",
+            "math.fract",
+            "math.pow",
+            "math.exp",
+            "math.exp2",
+            "math.ln",
+            "math.log",
+            "math.log2",
+            "math.log10",
+            "math.sin",
+            "math.cos",
+            "math.tan",
+            "math.asin",
+            "math.acos",
+            "math.atan",
+            "math.atan2",
+            "math.sinh",
+            "math.cosh",
+            "math.tanh",
+            "math.degrees",
+            "math.radians",
+            "math.gcd",
+            "math.lcm",
+            "math.factorial",
+            "math.min",
+            "math.max",
             // output
             "print",
             "println",
@@ -2918,6 +2956,19 @@ impl BytecodeCompiler {
                 let function_name = match callee.as_ref() {
                     // A slot-resolved callee is still a call by name here
                     Expr::Identifier(name) | Expr::LocalRef { name, .. } => name.clone(),
+                    // A stdlib module call like `math.sqrt(x)`: the object is a
+                    // *bare* identifier (a shadowing local would be a
+                    // LocalRef), so this is the real module. The synthesized
+                    // `module.fn` name is only accepted when it's in the
+                    // builtin allow-list below — otherwise it falls back.
+                    Expr::FieldAccess { object, field } => match object.as_ref() {
+                        Expr::Identifier(module) => format!("{}.{}", module, field),
+                        _ => {
+                            return Err(BytecodeError::CompilationFailed(
+                                "Unsupported method-call callee in bytecode tier".to_string(),
+                            ))
+                        }
+                    },
                     other => {
                         return Err(BytecodeError::CompilationFailed(format!(
                             "Unsupported callee in bytecode tier: {:?}",

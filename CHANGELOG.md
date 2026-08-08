@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **The bytecode tier compiles `math.*` calls.** The pure `math` module
+  functions (`sqrt`, `sin`, `cos`, `pow`, `floor`, `abs`, `atan2`, ... — 30
+  in all) are now compilable builtins, recognized when the module is a bare
+  identifier (a local shadowing `math` is still field access, not the
+  builtin). Before this, a single `math.sqrt` in a hot loop kept the whole
+  function on the interpreter — so any real numeric kernel missed the tier.
+- **`examples/nbody/`** — an N-body gravity simulation: `Body` structs whose
+  force kernels (`accel_x`/`accel_y`) read five fields per interaction in an
+  O(n²) loop and call `math.sqrt`, exactly the field-access + math shape the
+  tier now accelerates. It times itself and reports throughput; a `test`
+  block locks determinism and momentum conservation. **Measured 9× on the
+  bytecode tier** (120 bodies × 150 steps: 23.2s interpreter → 2.6s tier).
+
+### Changed
+
+- **`olang test` runs through the bytecode tier**, exactly as `olang <file>`
+  does by default, so tests execute at production speed and exercise the tier
+  that actually ships. (The N-body example's self-check went from 24s to
+  2.7s.)
+
 ## [0.31.0] - 2026-08-08
 
 ### Added

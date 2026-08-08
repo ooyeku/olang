@@ -48,6 +48,10 @@ pub fn run(path: &Path) -> i32 {
 
         let mut interpreter = Interpreter::new();
         interpreter.enable_test_mode();
+        // Run tests through the bytecode tier, exactly as `olang <file>` does
+        // by default — so tests execute at production speed and exercise the
+        // tier that actually ships (a promotion threshold of 1, the default).
+        interpreter.enable_bytecode_tier(1, false);
         let absolute = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
         interpreter.set_current_file(&absolute);
 

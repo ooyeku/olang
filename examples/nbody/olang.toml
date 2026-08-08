@@ -1,0 +1,4 @@
+[package]
+name = "nbody"
+version = "1.0.0"
+description = "An N-body gravity simulation: a field-access + math heavy benchmark for the bytecode tier"

@@ -43,7 +43,7 @@ Small, high-value items that finish surfaces the language already has.
 
 | # | Feature | Grounding | Status |
 |---|---|---|---|
-| 13 | **OVM coverage expansion**, starting with `&&`/`||` as conditional jumps — today any function containing them falls back to the tree-walker permanently. Then strings, field access, closures. Every expansion lands with tier-agreement tests | verified: the OVM compiler had no And/Or lowering; guards are everywhere post-dogfooding | `&&`/`||` (0.27, 2.2× on guards) and field access + indexing (0.31, ~1.7× on field-heavy loops, structs now tier-representable) landed; lane continues (struct construction, closures) |
+| 13 | **OVM coverage expansion**, starting with `&&`/`||` as conditional jumps — today any function containing them falls back to the tree-walker permanently. Then strings, field access, closures. Every expansion lands with tier-agreement tests | verified: the OVM compiler had no And/Or lowering; guards are everywhere post-dogfooding | `&&`/`||` (0.27), field access + indexing (0.31), and pure `math.*` calls (0.32) landed — a field-access + math N-body kernel now runs 9× faster on the tier (examples/nbody); lane continues (struct construction, closures) |
 | 14 | **`http.serve` keep-alive**, then bounded concurrency — the handler contract is fixed; the execution model grows (as [stability](stability.md) already carves out) | sequential + Connection: close was the original model | keep-alive landed (0.27); bounded worker pool landed (0.29), load-tested in pure olang (examples/loadtest) — exact shared-state consistency under concurrent load |
 
 ## Tooling track

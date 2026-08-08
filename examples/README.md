@@ -94,6 +94,11 @@ A two-package demonstration of the package manager (see
   block asserts the server's own hit count equals the clients' successes
   exactly — proving `http.serve`'s worker pool loses no writes under
   concurrent load
+- [`nbody/`](nbody/) — an N-body gravity simulation as a bytecode-tier
+  benchmark: `Body` structs whose O(n^2) force kernels read fields and call
+  `math.sqrt` in a hot loop — exactly what the tier accelerates. Times itself
+  and reports throughput; ~9x faster on the tier than the interpreter. A
+  `test` block locks determinism and momentum conservation
 - [`pargrep/`](pargrep/) — parallel code search on real `spawn` threads:
   files are dealt into chunks, one worker thread per chunk searches with
   `re` + `fs`, results merge after `await Promise.all`, and per-task
