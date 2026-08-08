@@ -6,7 +6,7 @@
 share fn format_status(status) -> String = {
     match status {
         "pending" => "Waiting",
-        "running" => "In Progress", 
+        "running" => "In Progress",
         "completed" => "Done",
         "failed" => "Error",
         _ => "Unknown status"
@@ -123,24 +123,24 @@ println(process_value(intvalue))      // Integer: 42
 println(process_value(floatvalue))    // Float: 3.14159
 
 // HTTP response examples
-let successresponse = { 
-    status: 200, 
-    body: "Welcome to the API!", 
-    headers: ["Content-Type: application/json"] 
+let successresponse = {
+    status: 200,
+    body: "Welcome to the API!",
+    headers: ["Content-Type: application/json"]
 }
 
-let notfound = { 
-    status: 404, 
-    message: "Resource not found" 
+let notfound = {
+    status: 404,
+    message: "Resource not found"
 }
 
 println(handle_http_response(successresponse))
 println(handle_http_response(notfound))
 
-// Authentication examples  
+// Authentication examples
 let successfulauth = {
     authenticated: true,
-    user: { 
+    user: {
         id: 123,
         username: "alice",
         role: "admin"
@@ -155,4 +155,4 @@ let failedauth = {
 }
 
 println(handle_auth(successfulauth))
-println(handle_auth(failedauth)) 
+println(handle_auth(failedauth))

@@ -12,4 +12,4 @@ share fn extended_helper() = helper() + " extended"
 share fn enhanced_format(text: String) = format_text(text) + " [ENHANCED]"
 
 // Use imported function internally but don't re-share it
-fn internal_calculation(x: Int) = double_value(x) + 10 
+fn internal_calculation(x: Int) = double_value(x) + 10

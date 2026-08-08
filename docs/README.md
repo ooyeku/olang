@@ -29,6 +29,7 @@ all with `cd examples && olang run_all.ol`.
 | **[Internals](internals.md)** | Architecture: grammar → parser → interpreter → bytecode tier; the value model; modules; how to add things |
 | **[The OVM](ovm.md)** | The bytecode tier in depth: design, measured speedups, limitations |
 | **[Stability](stability.md)** | What is stable, what is experimental, and how the language evolves from here |
+| **[Tooling](tooling.md)** | `olang test` (the test runner) and `olang fmt` (the formatter) |
 | **[Roadmap](roadmap.md)** | What comes next, each item grounded in real friction from the example programs |
 
 ## Reading order

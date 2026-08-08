@@ -5,4 +5,4 @@ share fn common_function() = "From Module B"
 
 share fn process_data(data: String) = "B: " + data
 
-share fn unique_b_function() = "Only in B" 
+share fn unique_b_function() = "Only in B"

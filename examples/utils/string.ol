@@ -16,4 +16,4 @@ share fn to_uppercase(text: String) = {
 // Private function (not shared)
 fn internal_helper() = {
     "internal"
-} 
+}

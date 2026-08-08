@@ -47,4 +47,3 @@ for i in r |> map((val) => val * val) {
 
 }
 }
-

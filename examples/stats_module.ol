@@ -34,8 +34,8 @@ share fn calculate_stats(data: [Float]) = {
     let data_min = min_value(data)
     let data_max = max_value(data)
     let data_range = range_value(data)
-    
-    { 
+
+    {
         count: len(data),
         sum: sum(data),
         mean: data_mean,
@@ -55,7 +55,7 @@ share fn variance(data: [Float]) = {
 // Summary function
 share fn summary_stats(data: [Float]) = {
     let stats = calculate_stats(data)
-    
+
     println("Statistical Summary:")
     println("Count: " + to_string(stats.count))
     println("Sum: " + to_string(stats.sum))
@@ -63,6 +63,6 @@ share fn summary_stats(data: [Float]) = {
     println("Min: " + to_string(stats.min))
     println("Max: " + to_string(stats.max))
     println("Range: " + to_string(stats.range))
-    
+
     stats
-} 
+}

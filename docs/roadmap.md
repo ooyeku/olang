@@ -50,8 +50,8 @@ Small, high-value items that finish surfaces the language already has.
 
 | # | Feature | Grounding | Status |
 |---|---|---|---|
-| 15 | **`olang test`** — discover and run `test` blocks across a package in isolation, with reporting | examples now carry self-check `test` blocks; make the pattern first-class | planned |
-| 16 | **`olang fmt`** — enforce the book's conventions mechanically | the fixed idioms (`= {` bodies, `=>` arms) are formatter-shaped | planned |
+| 15 | **`olang test`** — discover and run `test` blocks across a package in isolation, with reporting | examples now carry self-check `test` blocks; make the pattern first-class | landed (unreleased) |
+| 16 | **`olang fmt`** — enforce the book's conventions mechanically | the fixed idioms (`= {` bodies, `=>` arms) are formatter-shaped | landed (unreleased): whitespace hygiene with an AST-identity safety gate; layout normalization is future work |
 
 ## Explicitly not planned
 

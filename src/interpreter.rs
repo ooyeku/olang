@@ -791,6 +791,13 @@ pub struct Interpreter {
     /// test whenever some `b` already in scope happened to hold a unit variant.
     unit_variant_names: HashSet<String>,
 
+    /// Test-runner mode (`olang test`): when on, `test` blocks record their
+    /// outcome here and execution continues past failures instead of
+    /// aborting. When off (normal runs), a failing test block is an error —
+    /// the long-standing inline behavior.
+    test_mode: bool,
+    test_results: Vec<TestOutcome>,
+
     /// Package dependency map: dependency name -> the directory whose `.ol`
     /// files it exposes. A `use foo.bar` whose first segment is a dependency
     /// name resolves inside that directory rather than relative to the
@@ -851,6 +858,8 @@ impl Interpreter {
             trait_defaults: HashMap::new(),
             type_traits: HashMap::new(),
             unit_variant_names: HashSet::new(),
+            test_mode: false,
+            test_results: Vec::new(),
             dependency_map: HashMap::new(),
         };
 
@@ -2138,6 +2147,8 @@ impl Interpreter {
             trait_defaults: self.trait_defaults.clone(),
             type_traits: self.type_traits.clone(),
             unit_variant_names: self.unit_variant_names.clone(),
+            test_mode: false,
+            test_results: Vec::new(),
             dependency_map: self.dependency_map.clone(),
         }
     }
@@ -4868,13 +4879,49 @@ impl Interpreter {
     }
 
     fn eval_test_decl(&mut self, test_decl: TestDecl) -> Result<Value, InterpreterError> {
-        // For now, we'll just evaluate the test body and return Unit
-        // In a full implementation, this would be part of the test runner
-        for statement in &test_decl.body {
-            self.eval_statement(statement)?;
+        if !self.test_mode {
+            // Inline behavior (normal runs): the body executes in place and a
+            // failing assertion aborts, like any other error.
+            for statement in &test_decl.body {
+                self.eval_statement(statement)?;
+            }
+            return Ok(Value::Unit);
         }
+
+        // Runner behavior (`olang test`): record the outcome and keep going,
+        // so one failing block doesn't hide the others.
+        let mut error = None;
+        for statement in &test_decl.body {
+            if let Err(e) = self.eval_statement(statement) {
+                error = Some(e.to_string());
+                break;
+            }
+        }
+        self.test_results.push(TestOutcome {
+            name: test_decl.name,
+            error,
+        });
         Ok(Value::Unit)
     }
+
+    /// Turn on test-runner mode: `test` blocks record outcomes (readable via
+    /// `take_test_results`) and execution continues past failing blocks.
+    pub fn enable_test_mode(&mut self) {
+        self.test_mode = true;
+    }
+
+    /// The outcomes of every `test` block run so far, clearing the record.
+    pub fn take_test_results(&mut self) -> Vec<TestOutcome> {
+        std::mem::take(&mut self.test_results)
+    }
+}
+
+/// The result of one `test "name" { ... }` block under `olang test`.
+#[derive(Debug, Clone)]
+pub struct TestOutcome {
+    pub name: String,
+    /// `None` when the block passed; the failure message otherwise.
+    pub error: Option<String>,
 }
 
 /// Enhanced module cache entry with smart caching features

@@ -1,4 +1,4 @@
-// Math Utilities Module  
+// Math Utilities Module
 // This module provides mathematical helper functions
 
 share fn calculate_average(numbers: [Float]) = {
@@ -16,4 +16,4 @@ share fn cube(x: Float) = {
 // Private function (not shared)
 fn private_calc() = {
     42
-} 
+}

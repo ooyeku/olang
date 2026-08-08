@@ -1,8 +1,6 @@
 
-
 share fn fast_loop() = {
     let data = 1..100
-
 
 let n = 1..100
 

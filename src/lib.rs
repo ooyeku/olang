@@ -24,6 +24,7 @@ pub mod repl;
 pub mod resolve;
 pub mod stdlib;
 pub mod test_framework;
+pub mod tools;
 pub mod type_checker;
 pub mod version;
 

@@ -33,7 +33,7 @@ let windows_path = r"C:\Users\Documents\file.txt"
 let regex = r"^\d{3}-\d{2}-\d{4}$"  // SSN pattern
 let sql_query = r"SELECT * FROM users WHERE name = '${name}'"
 
-// Multi-line templates  
+// Multi-line templates
 let grade = if score >= 90 => "A" else => if score >= 80 => "B" else => "C"
 let status = if score >= 70 => "PASS" else => "FAIL"
 let report = `
@@ -45,4 +45,4 @@ Grade: ${grade}
 Status: ${status}
 `
 
-println(report) 
+println(report)

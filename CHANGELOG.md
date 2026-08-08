@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **`olang test` — the test runner.** Discovers every `.ol` file containing
+  a top-level `test` block (recursively), runs each file in a fresh
+  interpreter from its own directory with its package dependencies, and
+  reports every block's outcome. Under the runner a failing block records
+  its failure and later blocks still run (inline `olang <file>` behavior is
+  unchanged: a failing assertion aborts). Files without test blocks are not
+  executed. Non-zero exit on any failure; setup errors outside a block are
+  reported as file errors.
+- **`olang fmt` — the formatter.** Conservative whitespace hygiene applied
+  only outside multi-line strings: CRLF→LF, trailing whitespace stripped,
+  leading tabs → 4 spaces, blank-line runs collapsed, exactly one final
+  newline. It never re-indents or reflows, and it refuses to write unless
+  the formatted source re-parses to an AST identical to the original —
+  unparseable or meaning-changing results are skipped and reported.
+  `--check` reports and exits non-zero for CI. Applied to the examples tree
+  (19 files cleaned; everything still green).
+- **The book gains a [Tooling](docs/tooling.md) chapter** covering both
+  tools and the examples harness; the roadmap's tooling track is landed.
+
 ## [0.27.0] - 2026-08-08
 
 ### Added

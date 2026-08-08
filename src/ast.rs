@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Represents a complete Olang program
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Program {
     pub statements: Vec<Statement>,
 }

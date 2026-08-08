@@ -70,4 +70,4 @@ println("Is ", year24, " a leap year? ", leap_check)
 println()
 
 println("=== Demo Complete ===")
-println("The dates library provides comprehensive date/time functionality!") 
+println("The dates library provides comprehensive date/time functionality!")

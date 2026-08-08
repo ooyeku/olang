@@ -10,4 +10,4 @@ share fn double_value(x: Int) = x * 2
 // A function that's not shared - should not be accessible via transitive sharing
 fn private_helper() = "this is private"
 
-share fn get_version() = "v1.0.0" 
+share fn get_version() = "v1.0.0"

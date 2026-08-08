@@ -49,28 +49,28 @@ share fn furniture_revenue(sales_data) = {
 // Main analysis function
 share fn run_analysis() = {
     println("Starting analysis...")
-    
+
     let sales = create_sales_data()
     println("Created " + to_string(len(sales)) + " sales records")
-    
+
     let total = calculate_total_revenue(sales)
     println("Total Revenue: $" + to_string(total))
-    
+
     let transactions = count_transactions(sales)
     println("Total Transactions: " + to_string(transactions))
-    
+
     let electronics_total = electronics_revenue(sales)
     println("Electronics Revenue: $" + to_string(electronics_total))
-    
+
     let furniture_total = furniture_revenue(sales)
     println("Furniture Revenue: $" + to_string(furniture_total))
-    
+
     let avg_transaction = total / transactions
     println("Average Transaction: $" + to_string(avg_transaction))
-    
+
     println()
     println("Analysis complete!")
-    
+
     {
         total_revenue: total,
         total_transactions: transactions,
@@ -86,4 +86,4 @@ share fn run_analysis() = {
 }
 
 // Run the analysis
-run_analysis() 
+run_analysis()

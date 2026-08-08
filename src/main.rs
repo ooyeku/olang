@@ -131,6 +131,39 @@ fn run() -> i32 {
     // Initialize error reporting
     miette::set_panic_hook();
 
+    // Tool commands: `olang test [path]` and `olang fmt [paths] [--check]`.
+    // The first positional dispatches; a file literally named `test` or
+    // `fmt` is still runnable as `./test` or `test.ol`.
+    if let Some(ref file_path) = cli.file {
+        match file_path.to_string_lossy().as_ref() {
+            "test" => {
+                // Files under the runner get a bare argv — a program that
+                // branches on os.args() takes its no-argument path.
+                olang::stdlib::os::set_script_args(vec!["olang-test".to_string()]);
+                let target = cli
+                    .script_args
+                    .first()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("."));
+                return olang::tools::test_runner::run(&target);
+            }
+            "fmt" => {
+                let check = cli.script_args.iter().any(|a| a == "--check");
+                let mut paths: Vec<PathBuf> = cli
+                    .script_args
+                    .iter()
+                    .filter(|a| *a != "--check")
+                    .map(PathBuf::from)
+                    .collect();
+                if paths.is_empty() {
+                    paths.push(PathBuf::from("."));
+                }
+                return olang::tools::fmt::run(&paths, check);
+            }
+            _ => {}
+        }
+    }
+
     if let Some(file_path) = cli.file {
         // Program's argv: the script path, then everything after it. Read via
         // os.args() inside the program.

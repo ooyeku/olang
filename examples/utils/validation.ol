@@ -17,4 +17,4 @@ share fn is_not_empty(text: String) = {
 share type ValidationResult = struct {
     valid: Bool,
     message: String
-} 
+}

@@ -11,4 +11,4 @@ share use conflict_b { unique_b_function }
 // Add a function that demonstrates both modules are accessible
 share fn demonstrate_both_modules() = {
     unique_a_function() + " and " + unique_b_function()
-} 
+}
