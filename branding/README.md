@@ -33,16 +33,22 @@ word's first letter.
 | `mark.svg` / `mark-light.svg` / `mark-mono.svg` | the o> mark alone |
 | `favicon.svg`, `icons/icon-{16,32,180,512}.png` | the mark on a rounded ink tile |
 | `banner.svg` | the README hero (1200×320, self-contained dark panel) |
-| `mascot.svg` | **Ollie**, the olang otter — floating with the o> pebble |
-| `mascot/*.svg` | Ollie's pose family: `waving`, `juggling`, `coding`, `surfing`, `reading`, `badge` |
+| `mascot.svg` | **Ollie**, the olang otter — floating with the o> stone |
+| `mascot/*.svg` | Ollie's pose family: `swimming`, `standing`, `lookout`, `inspecting`, `badge` |
 
 ## Ollie
 
-Ollie is an otter: otters float on their backs, carry a favorite stone
-everywhere (batteries included), and are relentlessly practical. Ollie's
-stone is the o> mark. Use the floating hero for splashes, `badge` for
-avatars, and the pose family wherever a page needs warmth — one Ollie per
-page is plenty.
+Ollie is a sea otter, drawn with naturalistic anatomy in a restrained flat
+style: profile head with a defined muzzle, the pale head over a dark body
+that marks real sea otters, a small open eye, long streamlined
+proportions. Sea otters carry a favorite stone; Ollie's stone is the o>
+mark — the only brand element in the illustrations besides the water.
+
+Poses: `mascot.svg` (floating, the primary), and under `mascot/`:
+`swimming`, `standing`, `lookout`, `inspecting`, and `badge` (a profile
+bust in the brand ring, for avatars). Use sparingly — the mascot belongs
+in documentation interiors, stickers, and community contexts, not on
+primary marketing surfaces.
 
 ## Usage rules
 

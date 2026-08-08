@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ollie at lookout above the waterline">
+  <rect x="0" y="332" width="512" height="180" fill="#0FA394"/>
+  <path d="M 178 358 C 190 322 232 300 274 304 C 312 308 340 328 348 356 C 320 372 240 374 202 366 C 188 363 180 360 178 358 Z" fill="#6B4423"/>
+  <path d="M 232 330 C 250 318 276 320 288 334 C 294 344 290 354 278 358 C 258 362 238 358 230 348 C 226 342 227 335 232 330 Z" fill="#C9A876" opacity="0.35"/>
+  <g transform="translate(262 282) rotate(-6) scale(1.1 1.1)"><path d="M -30 8 C -34 26 -28 44 -12 54 C 4 62 20 58 28 46 C 18 34 6 24 -2 14 Z" fill="#C9A876"/><circle cx="0" cy="0" r="34" fill="#C9A876"/><path d="M 8 -12 C 30 -14 46 -4 50 6 C 52 12 48 18 40 19 C 24 22 8 18 2 12 Z" fill="#B8936A"/><circle cx="-24" cy="-18" r="6.5" fill="#523318"/><path d="M 44 2 C 50 2 52 6 50 10 C 48 13 42 13 40 9 C 39 6 40 3 44 2 Z" fill="#0B1220"/><circle cx="16" cy="-8" r="4.2" fill="#0B1220"/><path d="M 40 16 C 34 20 26 20 20 17" fill="none" stroke="#0B1220" stroke-width="2.4" stroke-linecap="round"/><path d="M 34 8 L 58 4 M 34 11 L 58 12 M 33 14 L 55 20" fill="none" stroke="#0B1220" stroke-width="1.6" stroke-linecap="round" opacity="0.85"/></g>
+  <path d="M 120 372 C 160 362 200 376 240 368 M 300 374 C 340 364 380 378 420 370" fill="none" stroke="#2DD4BF" stroke-width="7" stroke-linecap="round" opacity="0.5"/>
+  <path d="M 0 360 C 80 350 160 368 250 358 C 340 348 420 368 512 356 L 512 512 L 0 512 Z" fill="#14B8A6" opacity="0.85"/>
+</svg>

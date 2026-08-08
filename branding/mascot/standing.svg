@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ollie standing with the o> stone">
+  <path d="M 96 448 L 416 448" stroke="#0FA394" stroke-width="6" stroke-linecap="round" opacity="0.5"/>
+  <path d="M 282 430 C 330 436 368 428 392 404 L 376 388 C 352 406 322 412 288 408 Z" fill="#523318"/>
+  <path d="M 218 210 C 258 202 292 218 302 258 C 314 310 312 380 296 424 C 288 444 268 452 244 450 C 216 448 198 434 194 408 C 188 350 190 274 202 234 C 206 220 210 212 218 210 Z" fill="#6B4423"/>
+  <path d="M 232 232 C 252 226 268 238 272 262 C 278 300 276 348 266 380 C 260 396 244 400 232 392 C 220 382 216 344 218 300 C 219 270 222 244 232 232 Z" fill="#C9A876" opacity="0.35"/>
+  <path d="M 208 446 C 196 446 186 440 184 432 L 236 432 C 234 442 224 446 208 446 Z" fill="#523318"/>
+  <path d="M 276 446 C 264 446 254 440 252 432 L 304 432 C 302 442 292 446 276 446 Z" fill="#523318"/>
+  <circle cx="228" cy="296" r="11" fill="#523318"/>
+  <circle cx="274" cy="296" r="11" fill="#523318"/>
+  <g transform="translate(251 282) scale(0.12)"><circle cx="0" cy="0" r="252" fill="#0B1220"/><circle cx="0" cy="0" r="168" fill="none" stroke="#2DD4BF" stroke-width="76"/><path d="M -42 -74 L 56 0 L -42 74" fill="none" stroke="#FBBF24" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <g transform="translate(258 182) rotate(-2) scale(1.05 1.05)"><path d="M -30 8 C -34 26 -28 44 -12 54 C 4 62 20 58 28 46 C 18 34 6 24 -2 14 Z" fill="#C9A876"/><circle cx="0" cy="0" r="34" fill="#C9A876"/><path d="M 8 -12 C 30 -14 46 -4 50 6 C 52 12 48 18 40 19 C 24 22 8 18 2 12 Z" fill="#B8936A"/><circle cx="-24" cy="-18" r="6.5" fill="#523318"/><path d="M 44 2 C 50 2 52 6 50 10 C 48 13 42 13 40 9 C 39 6 40 3 44 2 Z" fill="#0B1220"/><circle cx="16" cy="-8" r="4.2" fill="#0B1220"/><path d="M 40 16 C 34 20 26 20 20 17" fill="none" stroke="#0B1220" stroke-width="2.4" stroke-linecap="round"/><path d="M 34 8 L 58 4 M 34 11 L 58 12 M 33 14 L 55 20" fill="none" stroke="#0B1220" stroke-width="1.6" stroke-linecap="round" opacity="0.85"/></g>
+</svg>

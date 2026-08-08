@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ollie examining the o> stone">
+  <path d="M 116 448 L 396 448" stroke="#0FA394" stroke-width="6" stroke-linecap="round" opacity="0.5"/>
+  <path d="M 300 428 C 352 430 388 414 402 384 L 384 370 C 370 394 340 406 304 406 Z" fill="#523318"/>
+  <path d="M 196 260 C 232 226 296 228 322 270 C 344 306 344 372 322 410 C 306 436 260 444 224 432 C 192 420 176 392 176 352 C 176 316 182 280 196 260 Z" fill="#6B4423"/>
+  <path d="M 224 286 C 248 272 278 280 288 306 C 296 330 294 366 282 390 C 272 406 248 408 234 396 C 220 382 214 344 216 316 C 217 302 218 292 224 286 Z" fill="#C9A876" opacity="0.35"/>
+  <path d="M 210 444 C 198 444 190 438 188 430 L 238 430 C 236 440 226 444 210 444 Z" fill="#523318"/>
+  <path d="M 282 444 C 270 444 262 438 260 430 L 310 430 C 308 440 298 444 282 444 Z" fill="#523318"/>
+  <circle cx="232" cy="352" r="11" fill="#523318"/>
+  <circle cx="278" cy="352" r="11" fill="#523318"/>
+  <g transform="translate(255 340) scale(0.125)"><circle cx="0" cy="0" r="252" fill="#0B1220"/><circle cx="0" cy="0" r="168" fill="none" stroke="#2DD4BF" stroke-width="76"/><path d="M -42 -74 L 56 0 L -42 74" fill="none" stroke="#FBBF24" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <g transform="translate(262 240) rotate(26) scale(1.0 1.0)"><path d="M -30 8 C -34 26 -28 44 -12 54 C 4 62 20 58 28 46 C 18 34 6 24 -2 14 Z" fill="#C9A876"/><circle cx="0" cy="0" r="34" fill="#C9A876"/><path d="M 8 -12 C 30 -14 46 -4 50 6 C 52 12 48 18 40 19 C 24 22 8 18 2 12 Z" fill="#B8936A"/><circle cx="-24" cy="-18" r="6.5" fill="#523318"/><path d="M 44 2 C 50 2 52 6 50 10 C 48 13 42 13 40 9 C 39 6 40 3 44 2 Z" fill="#0B1220"/><circle cx="16" cy="-8" r="4.2" fill="#0B1220"/><path d="M 40 16 C 34 20 26 20 20 17" fill="none" stroke="#0B1220" stroke-width="2.4" stroke-linecap="round"/><path d="M 34 8 L 58 4 M 34 11 L 58 12 M 33 14 L 55 20" fill="none" stroke="#0B1220" stroke-width="1.6" stroke-linecap="round" opacity="0.85"/></g>
+</svg>

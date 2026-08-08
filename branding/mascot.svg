@@ -1,23 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ollie, the olang otter, floating with the o> pebble">
-  <rect x="0" y="330" width="512" height="182" fill="#0FA394"/>
-  <path d="M 396 344 C 444 340 472 318 484 288" fill="none" stroke="#92400E" stroke-width="32" stroke-linecap="round"/>
-  <ellipse cx="268" cy="312" rx="138" ry="66" fill="#B45309"/>
-  <ellipse cx="282" cy="296" rx="92" ry="42" fill="#F3DFB6"/>
-  <ellipse cx="374" cy="256" rx="17" ry="27" transform="rotate(18 374 256)" fill="#92400E"/>
-  <ellipse cx="344" cy="250" rx="16" ry="25" transform="rotate(8 344 250)" fill="#B45309"/>
-  <circle cx="104" cy="206" r="14" fill="#92400E"/>
-  <circle cx="192" cy="206" r="14" fill="#92400E"/>
-  <circle cx="148" cy="248" r="58" fill="#B45309"/>
-  <ellipse cx="148" cy="268" rx="34" ry="26" fill="#F3DFB6"/>
-  <ellipse cx="148" cy="256" rx="11" ry="8" fill="#0B1220"/>
-  <path d="M 118 236 Q 126 228 134 236" fill="none" stroke="#0B1220" stroke-width="6" stroke-linecap="round"/>
-  <path d="M 162 236 Q 170 228 178 236" fill="none" stroke="#0B1220" stroke-width="6" stroke-linecap="round"/>
-  <path d="M 140 276 Q 148 282 156 276" fill="none" stroke="#0B1220" stroke-width="5" stroke-linecap="round"/>
-  <path d="M 104 262 L 82 258 M 104 270 L 84 272" stroke="#0B1220" stroke-width="4" stroke-linecap="round"/>
-  <path d="M 192 262 L 214 258 M 192 270 L 212 272" stroke="#0B1220" stroke-width="4" stroke-linecap="round"/>
-  <circle cx="228" cy="242" r="17" fill="#92400E"/>
-  <circle cx="310" cy="242" r="17" fill="#92400E"/>
-  <g transform="translate(269 216) scale(0.155)"><circle cx="0" cy="0" r="252" fill="#0B1220"/><circle cx="0" cy="0" r="168" fill="none" stroke="#2DD4BF" stroke-width="76"/><path d="M -42 -74 L 56 0 L -42 74" fill="none" stroke="#FBBF24" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/></g>
-  <path d="M 0 358 C 60 340 110 372 170 358 C 230 344 280 376 340 360 C 400 344 456 372 512 356 L 512 512 L 0 512 Z" fill="#14B8A6" opacity="0.85"/>
-  <path d="M 36 388 C 66 380 92 394 122 388 M 300 402 C 330 394 356 408 386 402" fill="none" stroke="#2DD4BF" stroke-width="8" stroke-linecap="round" opacity="0.6"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ollie, the olang otter, floating with the o> stone">
+  <rect x="0" y="322" width="512" height="190" fill="#0FA394"/>
+  <path d="M 402 318 C 442 314 470 322 488 344 L 468 356 C 448 340 424 334 398 338 Z" fill="#523318"/>
+  <path d="M 120 300 C 150 268 220 258 288 264 C 348 269 396 284 408 306 C 414 322 402 338 376 344 C 300 360 180 358 132 338 C 110 328 108 314 120 300 Z" fill="#6B4423"/>
+  <path d="M 138 296 C 160 276 208 268 252 272 C 268 274 276 284 270 296 C 250 316 180 320 150 312 C 136 308 132 302 138 296 Z" fill="#C9A876" opacity="0.35"/>
+  <path d="M 384 300 C 398 272 414 258 434 252 C 438 266 432 288 416 306 Z" fill="#523318"/>
+  <path d="M 356 300 C 364 276 376 262 392 256 C 396 270 390 290 376 306 Z" fill="#6B4423"/>
+  <circle cx="238" cy="266" r="12" fill="#523318"/>
+  <circle cx="292" cy="266" r="12" fill="#523318"/>
+  <g transform="translate(265 248) scale(0.13)"><circle cx="0" cy="0" r="252" fill="#0B1220"/><circle cx="0" cy="0" r="168" fill="none" stroke="#2DD4BF" stroke-width="76"/><path d="M -42 -74 L 56 0 L -42 74" fill="none" stroke="#FBBF24" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <g transform="translate(158 252) rotate(-4) scale(1.06 1.06)"><path d="M -30 8 C -34 26 -28 44 -12 54 C 4 62 20 58 28 46 C 18 34 6 24 -2 14 Z" fill="#C9A876"/><circle cx="0" cy="0" r="34" fill="#C9A876"/><path d="M 8 -12 C 30 -14 46 -4 50 6 C 52 12 48 18 40 19 C 24 22 8 18 2 12 Z" fill="#B8936A"/><circle cx="-24" cy="-18" r="6.5" fill="#523318"/><path d="M 44 2 C 50 2 52 6 50 10 C 48 13 42 13 40 9 C 39 6 40 3 44 2 Z" fill="#0B1220"/><circle cx="16" cy="-8" r="4.2" fill="#0B1220"/><path d="M 40 16 C 34 20 26 20 20 17" fill="none" stroke="#0B1220" stroke-width="2.4" stroke-linecap="round"/><path d="M 34 8 L 58 4 M 34 11 L 58 12 M 33 14 L 55 20" fill="none" stroke="#0B1220" stroke-width="1.6" stroke-linecap="round" opacity="0.85"/></g>
+  <path d="M 0 350 C 70 336 130 362 200 350 C 270 338 330 364 400 350 C 452 340 490 356 512 348 L 512 512 L 0 512 Z" fill="#14B8A6" opacity="0.85"/>
+  <path d="M 44 384 C 78 376 106 390 140 384 M 318 396 C 352 388 380 402 414 396" fill="none" stroke="#2DD4BF" stroke-width="7" stroke-linecap="round" opacity="0.5"/>
 </svg>

@@ -1,55 +1,29 @@
 #!/usr/bin/env python3
-"""Generate Ollie, the olang otter, in every pose — one set of shared parts
-(head, pebble, palette) so the whole family stays consistent. Run from
-branding/:  python3 mascot_gen.py
+"""Generate Ollie, the olang otter — drawn with realistic sea-otter anatomy
+in a restrained flat style: profile head with a true muzzle, pale head over
+a dark body (as sea otters have), small open eye, long streamlined
+proportions. The only brand colors are the water and the o> stone.
 
-Emits mascot.svg (the floating hero) plus mascot/<pose>.svg variants.
+Run from branding/:  python3 mascot_gen.py
+Emits mascot.svg (floating, the hero) plus mascot/<pose>.svg variants.
 """
 import os
 
-# palette
-FUR = "#B45309"
-FUR_DARK = "#92400E"
-CREAM = "#F3DFB6"
-INK = "#0B1220"
+# otter palette — muted, naturalistic
+BODY = "#6B4423"        # dark brown body
+BODY_DK = "#523318"     # shadow / limbs / tail underside
+HEAD = "#C9A876"        # pale head and throat, the sea-otter field mark
+MUZZLE = "#B8936A"      # slightly deeper than the head
+INK = "#0B1220"         # eye, nose, whiskers
+# brand
 TEAL = "#2DD4BF"
 TEAL_MID = "#14B8A6"
 TEAL_DEEP = "#0FA394"
 AMBER = "#FBBF24"
 
 
-def head(cx, cy, r=58, eyes="closed", smile=True):
-    """Ollie's face, front view, centered on (cx, cy)."""
-    e = []
-    # ears
-    e.append(f'<circle cx="{cx - 44}" cy="{cy - 42}" r="14" fill="{FUR_DARK}"/>')
-    e.append(f'<circle cx="{cx + 44}" cy="{cy - 42}" r="14" fill="{FUR_DARK}"/>')
-    e.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{FUR}"/>')
-    # muzzle + nose
-    e.append(f'<ellipse cx="{cx}" cy="{cy + 20}" rx="34" ry="26" fill="{CREAM}"/>')
-    e.append(f'<ellipse cx="{cx}" cy="{cy + 8}" rx="11" ry="8" fill="{INK}"/>')
-    # eyes
-    if eyes == "closed":
-        e.append(f'<path d="M {cx - 30} {cy - 12} Q {cx - 22} {cy - 20} {cx - 14} {cy - 12}" '
-                 f'fill="none" stroke="{INK}" stroke-width="6" stroke-linecap="round"/>')
-        e.append(f'<path d="M {cx + 14} {cy - 12} Q {cx + 22} {cy - 20} {cx + 30} {cy - 12}" '
-                 f'fill="none" stroke="{INK}" stroke-width="6" stroke-linecap="round"/>')
-    else:
-        e.append(f'<circle cx="{cx - 22}" cy="{cy - 12}" r="7" fill="{INK}"/>')
-        e.append(f'<circle cx="{cx + 22}" cy="{cy - 12}" r="7" fill="{INK}"/>')
-    if smile:
-        e.append(f'<path d="M {cx - 8} {cy + 28} Q {cx} {cy + 34} {cx + 8} {cy + 28}" '
-                 f'fill="none" stroke="{INK}" stroke-width="5" stroke-linecap="round"/>')
-    # whiskers
-    e.append(f'<path d="M {cx - 44} {cy + 14} L {cx - 66} {cy + 10} M {cx - 44} {cy + 22} L {cx - 64} {cy + 24}" '
-             f'stroke="{INK}" stroke-width="4" stroke-linecap="round"/>')
-    e.append(f'<path d="M {cx + 44} {cy + 14} L {cx + 66} {cy + 10} M {cx + 44} {cy + 22} L {cx + 64} {cy + 24}" '
-             f'stroke="{INK}" stroke-width="4" stroke-linecap="round"/>')
-    return e
-
-
-def pebble(cx, cy, s=0.155):
-    """The o> stone Ollie carries everywhere."""
+def stone(cx, cy, s=0.14):
+    """The o> stone — the single brand element Ollie carries."""
     return [
         f'<g transform="translate({cx} {cy}) scale({s})">'
         f'<circle cx="0" cy="0" r="252" fill="{INK}"/>'
@@ -59,21 +33,29 @@ def pebble(cx, cy, s=0.155):
     ]
 
 
-def arm(x1, y1, x2, y2, w=26):
-    return [f'<path d="M {x1} {y1} L {x2} {y2}" fill="none" stroke="{FUR}" '
-            f'stroke-width="{w}" stroke-linecap="round"/>',
-            f'<circle cx="{x2}" cy="{y2}" r="16" fill="{FUR_DARK}"/>']
-
-
-def standing_body(cx=256, top=236):
-    """Pear-shaped standing body with belly, feet, and side tail."""
+def profile_head(cx, cy, s=1.0, facing=1, tilt=0):
+    """A sea-otter head in profile: rounded skull, defined muzzle, small ear,
+    small open eye, nose, whiskers. `facing` 1 = right, -1 = left."""
     return [
-        f'<path d="M {cx + 46} {top + 150} C {cx + 120} {top + 168} {cx + 158} {top + 120} {cx + 150} {top + 78}" '
-        f'fill="none" stroke="{FUR_DARK}" stroke-width="30" stroke-linecap="round"/>',
-        f'<ellipse cx="{cx}" cy="{top + 96}" rx="84" ry="98" fill="{FUR}"/>',
-        f'<ellipse cx="{cx}" cy="{top + 108}" rx="52" ry="64" fill="{CREAM}"/>',
-        f'<ellipse cx="{cx - 42}" cy="{top + 190}" rx="27" ry="14" fill="{FUR_DARK}"/>',
-        f'<ellipse cx="{cx + 42}" cy="{top + 190}" rx="27" ry="14" fill="{FUR_DARK}"/>',
+        f'<g transform="translate({cx} {cy}) rotate({tilt}) scale({facing * s} {s})">'
+        # throat: pale wedge running down-back, seating the head on the body
+        f'<path d="M -30 8 C -34 26 -28 44 -12 54 C 4 62 20 58 28 46 C 18 34 6 24 -2 14 Z" fill="{HEAD}"/>'
+        # skull (pale)
+        f'<circle cx="0" cy="0" r="34" fill="{HEAD}"/>'
+        # muzzle: blunt wedge forward
+        f'<path d="M 8 -12 C 30 -14 46 -4 50 6 C 52 12 48 18 40 19 C 24 22 8 18 2 12 Z" fill="{MUZZLE}"/>'
+        # ear: small, set back and low (true otter placement)
+        f'<circle cx="-24" cy="-18" r="6.5" fill="{BODY_DK}"/>'
+        # nose
+        f'<path d="M 44 2 C 50 2 52 6 50 10 C 48 13 42 13 40 9 C 39 6 40 3 44 2 Z" fill="{INK}"/>'
+        # eye: small, open, attentive
+        f'<circle cx="16" cy="-8" r="4.2" fill="{INK}"/>'
+        # mouth: a short neutral line under the muzzle
+        f'<path d="M 40 16 C 34 20 26 20 20 17" fill="none" stroke="{INK}" stroke-width="2.4" stroke-linecap="round"/>'
+        # whiskers: three fine lines off the muzzle
+        f'<path d="M 34 8 L 58 4 M 34 11 L 58 12 M 33 14 L 55 20" fill="none" stroke="{INK}" '
+        f'stroke-width="1.6" stroke-linecap="round" opacity="0.85"/>'
+        f'</g>'
     ]
 
 
@@ -92,116 +74,150 @@ def write(path, content):
 # ── poses ──────────────────────────────────────────────────────────────
 
 def floating():
-    """The hero: Ollie on its back in the water, pebble on its chest."""
+    """The hero: a sea otter on its back — long low body, head in profile,
+    hind flippers raised, the stone held on the chest."""
+    return [
+        # deep water
+        f'<rect x="0" y="322" width="512" height="190" fill="{TEAL_DEEP}"/>',
+        # tail: thick at the hip, tapering into the water
+        f'<path d="M 402 318 C 442 314 470 322 488 344 L 468 356 C 448 340 424 334 398 338 Z" fill="{BODY_DK}"/>',
+        # body: long, low floating mass
+        f'<path d="M 120 300 C 150 268 220 258 288 264 C 348 269 396 284 408 306 '
+        f'C 414 322 402 338 376 344 C 300 360 180 358 132 338 C 110 328 108 314 120 300 Z" fill="{BODY}"/>',
+        # chest/throat: pale wash flowing from the head
+        f'<path d="M 138 296 C 160 276 208 268 252 272 C 268 274 276 284 270 296 '
+        f'C 250 316 180 320 150 312 C 136 308 132 302 138 296 Z" fill="{HEAD}" opacity="0.35"/>',
+        # hind flippers: webbed paddles angled up out of the water
+        f'<path d="M 384 300 C 398 272 414 258 434 252 C 438 266 432 288 416 306 Z" fill="{BODY_DK}"/>',
+        f'<path d="M 356 300 C 364 276 376 262 392 256 C 396 270 390 290 376 306 Z" fill="{BODY}"/>',
+        # forepaws holding the stone on the chest
+        f'<circle cx="238" cy="266" r="12" fill="{BODY_DK}"/>',
+        f'<circle cx="292" cy="266" r="12" fill="{BODY_DK}"/>',
+    ] + stone(265, 248, 0.13) + profile_head(158, 252, 1.06, facing=1, tilt=-4) + [
+        # waterline lapping the body
+        f'<path d="M 0 350 C 70 336 130 362 200 350 C 270 338 330 364 400 350 C 452 340 490 356 512 348 '
+        f'L 512 512 L 0 512 Z" fill="{TEAL_MID}" opacity="0.85"/>',
+        f'<path d="M 44 384 C 78 376 106 390 140 384 M 318 396 C 352 388 380 402 414 396" fill="none" '
+        f'stroke="{TEAL}" stroke-width="7" stroke-linecap="round" opacity="0.5"/>',
+    ]
+
+
+def swimming():
+    """Streamlined surface swim: body in a long arc, tail driving, wake behind."""
     return [
         f'<rect x="0" y="330" width="512" height="182" fill="{TEAL_DEEP}"/>',
-        f'<path d="M 396 344 C 444 340 472 318 484 288" fill="none" stroke="{FUR_DARK}" '
-        f'stroke-width="32" stroke-linecap="round"/>',
-        f'<ellipse cx="268" cy="312" rx="138" ry="66" fill="{FUR}"/>',
-        f'<ellipse cx="282" cy="296" rx="92" ry="42" fill="{CREAM}"/>',
-        f'<ellipse cx="374" cy="256" rx="17" ry="27" transform="rotate(18 374 256)" fill="{FUR_DARK}"/>',
-        f'<ellipse cx="344" cy="250" rx="16" ry="25" transform="rotate(8 344 250)" fill="{FUR}"/>',
-    ] + head(148, 248) + [
-        f'<circle cx="228" cy="242" r="17" fill="{FUR_DARK}"/>',
-        f'<circle cx="310" cy="242" r="17" fill="{FUR_DARK}"/>',
-    ] + pebble(269, 216) + [
-        f'<path d="M 0 358 C 60 340 110 372 170 358 C 230 344 280 376 340 360 C 400 344 456 372 512 356 '
-        f'L 512 512 L 0 512 Z" fill="{TEAL_MID}" opacity="0.85"/>',
-        f'<path d="M 36 388 C 66 380 92 394 122 388 M 300 402 C 330 394 356 408 386 402" fill="none" '
-        f'stroke="{TEAL}" stroke-width="8" stroke-linecap="round" opacity="0.6"/>',
+        # wake
+        f'<path d="M 60 342 C 100 332 140 348 180 340 M 30 366 C 66 358 98 370 134 364" fill="none" '
+        f'stroke="{TEAL}" stroke-width="7" stroke-linecap="round" opacity="0.5"/>',
+        # tail: driving stroke, half submerged
+        f'<path d="M 120 330 C 92 320 70 300 64 274 L 86 268 C 96 292 114 308 140 316 Z" fill="{BODY_DK}"/>',
+        # body: horizontal arc, chest forward
+        f'<path d="M 130 322 C 160 292 250 278 330 286 C 388 292 428 306 440 322 '
+        f'C 446 334 436 344 412 348 C 320 360 190 358 148 344 C 126 338 120 330 130 322 Z" fill="{BODY}"/>',
+        # foreleg tucked, hinting motion
+        f'<path d="M 336 330 C 348 340 352 352 348 362 L 328 358 C 328 348 330 338 336 330 Z" fill="{BODY_DK}"/>',
+    ] + profile_head(446, 300, 1.0, facing=1, tilt=-8) + [
+        # bow wave at the chest
+        f'<path d="M 470 336 C 490 330 504 336 512 344" fill="none" stroke="{TEAL}" '
+        f'stroke-width="7" stroke-linecap="round" opacity="0.6"/>',
+        f'<path d="M 0 356 C 80 346 150 364 230 354 C 320 344 400 366 512 352 L 512 512 L 0 512 Z" '
+        f'fill="{TEAL_MID}" opacity="0.85"/>',
     ]
 
 
-def waving():
-    """Standing, one paw raised in greeting, pebble tucked in the other."""
-    return standing_body() + head(256, 168, eyes="open") + \
-        arm(196, 300, 128, 216) + arm(316, 300, 356, 352) + \
-        pebble(376, 368, 0.12)
-
-
-def juggling():
-    """Three pebbles in the air — concurrency has never been fluffier."""
-    return standing_body() + head(256, 178, eyes="open") + \
-        arm(192, 306, 148, 238) + arm(320, 306, 364, 238) + \
-        pebble(150, 130, 0.11) + pebble(256, 72, 0.11) + pebble(362, 130, 0.11)
-
-
-def coding():
-    """At the laptop; the screen shows the prompt."""
-    return standing_body(top=210) + head(256, 148, eyes="open", smile=True) + [
-        # laptop: screen leaning toward the viewer + base
-        f'<rect x="146" y="330" width="220" height="132" rx="12" fill="{INK}"/>',
-        f'<rect x="160" y="344" width="192" height="104" rx="6" fill="#122032"/>',
-        f'<text x="182" y="384" font-family="ui-monospace, Menlo, monospace" font-size="21" '
-        f'fill="{TEAL}">olang&gt;</text>',
-        f'<rect x="278" y="364" width="12" height="22" fill="{AMBER}"/>',
-        f'<rect x="126" y="458" width="260" height="20" rx="10" fill="#1E2D42"/>',
-    ] + arm(186, 320, 172, 452, 24)[:1] + arm(326, 320, 340, 452, 24)[:1]
-
-
-def surfing():
-    """Riding the amber chevron across the water — the fast lane."""
+def standing():
+    """Upright and alert — the heraldic pose. Tail grounds the figure; the
+    stone is held close at the chest."""
     return [
-        f'<rect x="0" y="360" width="512" height="152" fill="{TEAL_DEEP}"/>',
-        # speed lines
-        f'<path d="M 40 300 L 130 300 M 20 254 L 96 254 M 60 344 L 150 344" stroke="{TEAL}" '
-        f'stroke-width="10" stroke-linecap="round" opacity="0.55"/>',
-        # the chevron as surfboard: a big legible ">" skimming the crest
-        f'<g transform="translate(258 366) rotate(-10)">'
-        f'<path d="M -120 -60 L 44 0 L -120 60" fill="none" stroke="{AMBER}" stroke-width="44" '
-        f'stroke-linecap="round" stroke-linejoin="round"/></g>',
-        # crouched body above the board
-        f'<ellipse cx="252" cy="250" rx="82" ry="68" fill="{FUR}"/>',
-        f'<ellipse cx="252" cy="266" rx="50" ry="40" fill="{CREAM}"/>',
-        f'<ellipse cx="204" cy="312" rx="23" ry="13" transform="rotate(-14 204 312)" fill="{FUR_DARK}"/>',
-        f'<ellipse cx="298" cy="308" rx="23" ry="13" transform="rotate(-8 298 308)" fill="{FUR_DARK}"/>',
-    ] + head(244, 166, eyes="open") + arm(186, 234, 126, 192) + arm(318, 234, 378, 198) + [
-        # spray
-        f'<path d="M 150 372 C 176 354 204 380 232 366 M 330 366 C 360 350 390 376 418 362" fill="none" '
-        f'stroke="{TEAL}" stroke-width="9" stroke-linecap="round" opacity="0.7"/>',
+        # ground line
+        f'<path d="M 96 448 L 416 448" stroke="{TEAL_DEEP}" stroke-width="6" stroke-linecap="round" opacity="0.5"/>',
+        # tail: thick, resting on the ground behind
+        f'<path d="M 282 430 C 330 436 368 428 392 404 L 376 388 C 352 406 322 412 288 408 Z" fill="{BODY_DK}"/>',
+        # body: tall tapered column, chest lifted
+        f'<path d="M 218 210 C 258 202 292 218 302 258 C 314 310 312 380 296 424 '
+        f'C 288 444 268 452 244 450 C 216 448 198 434 194 408 C 188 350 190 274 202 234 C 206 220 210 212 218 210 Z" '
+        f'fill="{BODY}"/>',
+        # throat/chest: pale front
+        f'<path d="M 232 232 C 252 226 268 238 272 262 C 278 300 276 348 266 380 '
+        f'C 260 396 244 400 232 392 C 220 382 216 344 218 300 C 219 270 222 244 232 232 Z" fill="{HEAD}" opacity="0.35"/>',
+        # hind feet: webbed, flat on the ground
+        f'<path d="M 208 446 C 196 446 186 440 184 432 L 236 432 C 234 442 224 446 208 446 Z" fill="{BODY_DK}"/>',
+        f'<path d="M 276 446 C 264 446 254 440 252 432 L 304 432 C 302 442 292 446 276 446 Z" fill="{BODY_DK}"/>',
+        # forepaws holding the stone at the chest
+        f'<circle cx="228" cy="296" r="11" fill="{BODY_DK}"/>',
+        f'<circle cx="274" cy="296" r="11" fill="{BODY_DK}"/>',
+    ] + stone(251, 282, 0.12) + profile_head(258, 182, 1.05, facing=1, tilt=-2)
+
+
+def lookout():
+    """The spyhop: head and shoulders periscoped above the waterline,
+    scanning — alert, composed."""
+    return [
+        f'<rect x="0" y="332" width="512" height="180" fill="{TEAL_DEEP}"/>',
+        # shoulders breaking the surface
+        f'<path d="M 178 358 C 190 322 232 300 274 304 C 312 308 340 328 348 356 '
+        f'C 320 372 240 374 202 366 C 188 363 180 360 178 358 Z" fill="{BODY}"/>',
+        # pale chest above the water
+        f'<path d="M 232 330 C 250 318 276 320 288 334 C 294 344 290 354 278 358 '
+        f'C 258 362 238 358 230 348 C 226 342 227 335 232 330 Z" fill="{HEAD}" opacity="0.35"/>',
+    ] + profile_head(262, 282, 1.1, facing=1, tilt=-6) + [
+        # ripples radiating from the body
+        f'<path d="M 120 372 C 160 362 200 376 240 368 M 300 374 C 340 364 380 378 420 370" fill="none" '
+        f'stroke="{TEAL}" stroke-width="7" stroke-linecap="round" opacity="0.5"/>',
+        f'<path d="M 0 360 C 80 350 160 368 250 358 C 340 348 420 368 512 356 L 512 512 L 0 512 Z" '
+        f'fill="{TEAL_MID}" opacity="0.85"/>',
     ]
 
 
-def reading():
-    """Nose in the book (the olang book, naturally). Open, attentive eyes."""
-    return standing_body() + head(256, 168, eyes="open", smile=False) + [
-        # open book held in both paws
-        f'<path d="M 152 330 L 252 310 L 252 428 L 152 448 Z" fill="{CREAM}"/>',
-        f'<path d="M 360 330 L 260 310 L 260 428 L 360 448 Z" fill="{CREAM}"/>',
-        f'<path d="M 152 330 L 152 448 M 360 330 L 360 448" stroke="{TEAL_DEEP}" stroke-width="10" '
-        f'stroke-linecap="round"/>',
-        f'<path d="M 252 310 L 252 428 M 260 310 L 260 428" stroke="{FUR_DARK}" stroke-width="4"/>',
-        # text lines
-        f'<path d="M 172 348 L 236 336 M 172 370 L 236 358 M 172 392 L 236 380 '
-        f'M 276 336 L 340 348 M 276 358 L 340 370 M 276 380 L 340 392" '
-        f'stroke="{TEAL_DEEP}" stroke-width="6" stroke-linecap="round" opacity="0.5"/>',
-        f'<circle cx="160" cy="336" r="15" fill="{FUR_DARK}"/>',
-        f'<circle cx="352" cy="336" r="15" fill="{FUR_DARK}"/>',
-    ]
+def inspecting():
+    """Head bowed over the stone, turning it in both paws — for
+    documentation and tooling contexts."""
+    return [
+        f'<path d="M 116 448 L 396 448" stroke="{TEAL_DEEP}" stroke-width="6" stroke-linecap="round" opacity="0.5"/>',
+        # tail curled around the seated body
+        f'<path d="M 300 428 C 352 430 388 414 402 384 L 384 370 C 370 394 340 406 304 406 Z" fill="{BODY_DK}"/>',
+        # seated body: rounded, hunched forward
+        f'<path d="M 196 260 C 232 226 296 228 322 270 C 344 306 344 372 322 410 '
+        f'C 306 436 260 444 224 432 C 192 420 176 392 176 352 C 176 316 182 280 196 260 Z" fill="{BODY}"/>',
+        # pale chest
+        f'<path d="M 224 286 C 248 272 278 280 288 306 C 296 330 294 366 282 390 '
+        f'C 272 406 248 408 234 396 C 220 382 214 344 216 316 C 217 302 218 292 224 286 Z" fill="{HEAD}" opacity="0.35"/>',
+        # hind feet forward
+        f'<path d="M 210 444 C 198 444 190 438 188 430 L 238 430 C 236 440 226 444 210 444 Z" fill="{BODY_DK}"/>',
+        f'<path d="M 282 444 C 270 444 262 438 260 430 L 310 430 C 308 440 298 444 282 444 Z" fill="{BODY_DK}"/>',
+        # paws turning the stone
+        f'<circle cx="232" cy="352" r="11" fill="{BODY_DK}"/>',
+        f'<circle cx="278" cy="352" r="11" fill="{BODY_DK}"/>',
+    ] + stone(255, 340, 0.125) + profile_head(262, 240, 1.0, facing=1, tilt=26)
 
 
 def badge():
-    """Head-only avatar on the dark tile — for stickers and profile images.
-    The standard head is scaled up as a unit so every feature stays put."""
-    inner = "".join(head(0, 0, eyes="closed"))
+    """Profile head within the brand ring — avatars and small placements."""
     return [
         f'<rect width="512" height="512" rx="256" fill="{INK}"/>',
-        f'<circle cx="256" cy="256" r="228" fill="none" stroke="{TEAL}" stroke-width="18"/>',
-        f'<g transform="translate(256 240) scale(1.85)">{inner}</g>',
-    ] + pebble(256, 434, 0.14)
+        f'<circle cx="256" cy="256" r="226" fill="none" stroke="{TEAL}" stroke-width="16"/>',
+        # neck/shoulder base so the head doesn't float
+        f'<path d="M 130 388 C 160 340 220 316 288 322 C 344 328 386 352 398 388 '
+        f'C 360 428 300 448 240 444 C 190 440 152 420 130 388 Z" fill="{BODY}"/>',
+    ] + profile_head(250, 264, 2.1, facing=1, tilt=-2) + stone(256, 430, 0.1)
 
 
 POSES = {
-    "waving": (waving, "Ollie the olang otter, waving hello"),
-    "juggling": (juggling, "Ollie juggling three o> pebbles"),
-    "coding": (coding, "Ollie at a laptop with the olang prompt"),
-    "surfing": (surfing, "Ollie surfing the chevron"),
-    "reading": (reading, "Ollie reading the olang book"),
-    "badge": (badge, "Ollie badge avatar"),
+    "swimming": (swimming, "Ollie the olang otter swimming"),
+    "standing": (standing, "Ollie standing with the o> stone"),
+    "lookout": (lookout, "Ollie at lookout above the waterline"),
+    "inspecting": (inspecting, "Ollie examining the o> stone"),
+    "badge": (badge, "Ollie profile badge"),
 }
 
 if __name__ == "__main__":
-    write("mascot.svg", svg(floating(), "Ollie, the olang otter, floating with the o> pebble"))
+    write("mascot.svg", svg(floating(), "Ollie, the olang otter, floating with the o> stone"))
     os.makedirs("mascot", exist_ok=True)
+    # drop poses from the earlier cartoon set
+    for stale in ("waving.svg", "juggling.svg", "coding.svg", "surfing.svg", "reading.svg", "diving.svg"):
+        p = os.path.join("mascot", stale)
+        if os.path.exists(p):
+            os.remove(p)
+            print(f"  removed mascot/{stale}")
     for name, (fn, label) in POSES.items():
         write(f"mascot/{name}.svg", svg(fn(), label))
