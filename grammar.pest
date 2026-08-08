@@ -215,8 +215,10 @@ map_literal = { "#{" ~ map_entry_list? ~ "}" }
 map_entry_list = { NL* ~ map_entry ~ (NL* ~ "," ~ NL* ~ map_entry)* ~ NL* ~ ","? ~ NL* }
 map_entry = { expr ~ ":" ~ expr }
 
-// Loop constructs
-for_loop    = { "for" ~ identifier ~ "in" ~ expr ~ block }
+// Loop constructs. The loop binding is a name or a tuple of names —
+// `for (i, x) in enumerate(xs)` destructures each element.
+for_loop    = { "for" ~ (for_binding_tuple | identifier) ~ "in" ~ expr ~ block }
+for_binding_tuple = { "(" ~ identifier ~ ("," ~ identifier)+ ~ ")" }
 while_loop  = { "while" ~ expr ~ block }
 loop_expr   = { "loop" ~ block }
 break_expr  = { "break" }

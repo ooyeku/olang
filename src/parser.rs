@@ -2758,11 +2758,32 @@ impl Parser {
     }
 
     fn build_for_loop(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        // Expected order: identifier, expr (iterable), block (body)
-        let var_name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+        // Expected order: binding (identifier or tuple of identifiers),
+        // expr (iterable), block (body)
+        let binding_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing loop variable".to_string(),
         })?;
-        let variable = var_name_pair.as_str().to_string();
+
+        // A tuple binding desugars: `for (a, b) in e { body }` becomes a loop
+        // over a hidden variable whose body first destructures it with
+        // `let (a, b) = <hidden>`. Both tiers then see plain, existing forms.
+        let tuple_names: Option<Vec<String>> = if binding_pair.as_rule() == Rule::for_binding_tuple
+        {
+            Some(
+                binding_pair
+                    .clone()
+                    .into_inner()
+                    .map(|p| p.as_str().to_string())
+                    .collect(),
+            )
+        } else {
+            None
+        };
+        let variable = if tuple_names.is_some() {
+            "__for_item".to_string()
+        } else {
+            binding_pair.as_str().to_string()
+        };
 
         let iterable_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing iterable expression in for loop".to_string(),
@@ -2780,6 +2801,23 @@ impl Parser {
                     message: "Invalid body in for loop".to_string(),
                 })
             }
+        };
+
+        let body_expr = match tuple_names {
+            None => body_expr,
+            Some(names) => Expr::Block(vec![
+                crate::ast::Statement::LetDecl(crate::ast::LetDecl {
+                    pattern: crate::ast::Pattern::Tuple(
+                        names
+                            .into_iter()
+                            .map(crate::ast::Pattern::Identifier)
+                            .collect(),
+                    ),
+                    type_annotation: None,
+                    value: Some(Expr::Identifier(variable.clone())),
+                }),
+                crate::ast::Statement::Expression(body_expr),
+            ]),
         };
 
         Ok(Expr::ForLoop {

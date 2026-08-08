@@ -65,15 +65,20 @@ their value directly.
 | Function | Description |
 |---|---|
 | `typeof(v)` | runtime type name as a string |
-| `to_string(v)` | render any value as text (strings render quoted) |
+| `show(v)` | display rendering: strings bare, others as `to_string` |
+| `to_string(v)` | repr rendering: strings quoted |
 | `to_int(v)` | string/float → Int (floats truncate) |
 | `to_float(v)` | string/int → Float |
 | `len(v)` | length of a list, string, tuple, or map |
 | `implements(v, "Trait")` | does the value's type implement the trait? |
 
+`show` is for building output for people; `to_string` shows a value's shape
+(so `to_string("hi")` is `"hi"` with quotes, `show("hi")` is bare `hi`):
+
 ```olang
-println(typeof(3.5) + " " + to_string(to_int(3.9)) + " " + to_string(to_float("2.5")))
-println(to_string(len([1, 2, 3])) + " " + to_string(len("abcd")))
+println(show("hi") + " vs " + to_string("hi"))
+println(typeof(3.5) + " " + show(to_int(3.9)) + " " + show(to_float("2.5")))
+println(show(len([1, 2, 3])) + " " + show(len("abcd")))
 ```
 
 ### Lists
@@ -154,26 +159,33 @@ The full string toolkit lives in [`str`](#str--strings).
 
 ### The `map_*` family
 
-Read and build maps — and the accessors read **any struct-like value**
-(anonymous objects, structs, parsed JSON objects) the same way, which is how
-dynamic key access works. Maps are immutable: writers return a new map.
+Read and update maps — and **any struct-like value** (anonymous objects,
+structs, parsed JSON objects) works the same way, reading *and* writing:
+updating a parsed JSON object yields a new JSON object, updating a struct a
+new struct of the same type. Everything is immutable — writers return a new
+value.
 
 | Function | Description |
 |---|---|
 | `map_get(m, k)` | value, or `Unit` when absent |
 | `map_has_key(m, k)` | presence test (distinguishes absent from null) |
 | `map_keys(m)` / `map_values(m)` | key/value lists (unordered) |
+| `entries(m)` | `(key, value)` tuples, sorted by key — for `for (k, v) in` |
 | `map_len(m)` | entry count |
-| `map_set(m, k, v)` | new map with `k` set |
-| `map_remove(m, k)` | new map without `k` |
+| `map_set(m, k, v)` | new value of the same kind with `k` set |
+| `map_remove(m, k)` | new value of the same kind without `k` |
 | `map_merge(a, b)` | new map, `b`'s entries winning |
 | `map_clear(m)` | fresh empty map |
 
 ```olang
 let m = #{ "a": 1, "b": 2 }
 let m2 = map_set(m, "c", 3)
-println(to_string(map_len(m)) + " -> " + to_string(map_len(m2)))
-println(to_string(map_get({ x: 42 }, "x")))   // objects read like maps
+println(show(map_len(m)) + " -> " + show(map_len(m2)))
+println(show(map_get({ x: 42 }, "x")))            // objects read like maps
+let d = map_set(unwrap(json.parse("{\"a\": 1}")), "b", 2)
+println(typeof(d) + " " + show(map_get(d, "b")))  // JSON updates stay JSON
+for (k, v) in entries(m2) { print(k + "=" + show(v) + " ") }
+println("")
 ```
 
 ### Results

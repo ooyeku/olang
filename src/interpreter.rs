@@ -3233,6 +3233,25 @@ impl Interpreter {
 
                 result
             }
+            // Strings iterate by character, each a 1-character string —
+            // consistent with 'a' literals being strings.
+            Value::String(s) => {
+                let parent_env = std::mem::take(&mut self.environment);
+                self.environment.parent = Some(Arc::new(parent_env));
+                self.environment.is_frame = true;
+
+                let chars: Vec<Value> = s
+                    .chars()
+                    .map(|c| Value::String(Arc::new(c.to_string())))
+                    .collect();
+                let result = self.run_loop_body(body, chars.into_iter(), Some(variable));
+
+                if let Some(parent) = self.environment.parent.take() {
+                    self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
+                }
+
+                result
+            }
             _ => Err(InterpreterError::TypeError {
                 message: format!("Cannot iterate over {:?}", iterable_value),
             }),

@@ -12,6 +12,20 @@ documented.
 
 ### Added
 
+- **Roadmap Tier 1** (`docs/roadmap.md` tracks the plan; every item grounded
+  in dogfooding friction):
+  - **`show(v)`** — display rendering: strings bare, everything else as
+    `to_string` (which keeps its repr form, strings quoted).
+  - **`entries(m)`** — the `(key, value)` tuples of a map or any struct-like
+    value, sorted by key for deterministic iteration.
+  - **Write-side struct-likeness** — `map_set`/`map_remove` now accept
+    objects, structs, and parsed JSON, returning a new value of the same
+    kind; the write side finally matches the read side.
+  - **`for` tuple destructuring** — `for (i, x) in enumerate(xs)` and
+    `for (k, v) in entries(m)` bind element parts directly (desugars to a
+    tuple `let`, so both tiers agree by construction).
+  - **Strings iterate** — `for ch in "abc"` yields 1-character strings, by
+    character (not byte), in both execution tiers.
 - **`http.serve` is a real HTTP server.** It was a placeholder that returned
   "server would start" without ever calling the handler. It now binds
   `127.0.0.1:port` (port 0 picks a free one and reports it), parses HTTP/1.1

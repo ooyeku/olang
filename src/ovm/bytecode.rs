@@ -1794,6 +1794,8 @@ impl BytecodeVm {
                 };
                 Ok(span.max(0).min(i64::MAX as i128) as i64)
             }
+            // Strings iterate by character, matching the interpreter.
+            ValueData::String(s) => Ok(s.chars().count() as i64),
             _ => Err(BytecodeError::TypeError(
                 "Cannot iterate over this value".to_string(),
             )),
@@ -1819,6 +1821,15 @@ impl BytecodeVm {
                 .map(OvmValue::new_integer)
                 .ok_or_else(|| {
                     BytecodeError::RuntimeError("Integer overflow iterating range".to_string())
+                }),
+            // Strings iterate by character, matching the interpreter.
+            ValueData::String(s) => s
+                .chars()
+                .nth(idx as usize)
+                .map(|c| OvmValue::new_string(c.to_string()))
+                .ok_or(BytecodeError::IndexOutOfBounds {
+                    index: idx,
+                    length: s.chars().count(),
                 }),
             _ => Err(BytecodeError::TypeError(
                 "Cannot iterate over this value".to_string(),

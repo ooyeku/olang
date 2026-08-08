@@ -335,12 +335,13 @@ println(to_string(str.index_of("abc", "z")))   // -1 when absent
 println(join(split("a,b,c", ","), " + "))
 ```
 
-Strings are not directly iterable with `for`; use `str.chars` to get a list
-of characters:
+Strings iterate by character with `for` (each a 1-character string), and
+`str.chars` gives the same characters as a list:
 
 ```olang
-for c in str.chars("abc") { print(c + ".") }
+for c in "abc" { print(c + ".") }
 println("")
+println(to_string(str.chars("abc")))
 ```
 
 ## Collections
@@ -470,20 +471,28 @@ println(to_string(n))   // 128
 
 ### `for`
 
-Iterates lists, ranges, and other iterables, binding each element:
+Iterates lists, ranges, and strings (by character), binding each element:
 
 ```olang
 let mut total = 0
 for x in [10, 20, 30] { total = total + x }
 for i in 0..3 { total = total + i }
 println(to_string(total))   // 63
+
+for ch in "abc" { print(ch) }
+println("")
 ```
 
-`enumerate` pairs elements with their index:
+The binding may be a tuple of names, destructuring each element — the
+natural shape for `enumerate` (index pairs) and `entries` (key/value pairs
+of a map or object):
 
 ```olang
-for pair in enumerate(["a", "b"]) {
-    println(to_string(pair[0]) + ": " + pair[1])
+for (i, x) in enumerate(["a", "b"]) {
+    println(to_string(i) + ": " + x)
+}
+for (k, v) in entries(#{ "b": 2, "a": 1 }) {
+    println(k + " -> " + show(v))      // entries are sorted by key
 }
 ```
 

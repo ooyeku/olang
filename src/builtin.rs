@@ -350,6 +350,22 @@ impl BuiltinFunctions {
             },
         );
 
+        // Display rendering and iteration helpers
+        functions.insert(
+            "show".to_string(),
+            BuiltinFunction {
+                name: "show".to_string(),
+                arity: 1,
+            },
+        );
+        functions.insert(
+            "entries".to_string(),
+            BuiltinFunction {
+                name: "entries".to_string(),
+                arity: 1,
+            },
+        );
+
         // Map functions
         functions.insert(
             "map_get".to_string(),
@@ -737,6 +753,8 @@ impl BuiltinFunctions {
             "lazy" => builtins.make_lazy(arguments, interpreter),
             "concat" => builtins.concat_lazy(arguments, interpreter),
             "map_filtered" => builtins.map_filtered(arguments, interpreter),
+            "show" => builtins.show(arguments),
+            "entries" => builtins.entries(arguments),
             "map_get" => builtins.map_get(arguments),
             "map_set" => builtins.map_set(arguments),
             "map_has_key" => builtins.map_has_key(arguments),
@@ -2345,6 +2363,55 @@ impl BuiltinFunctions {
         }
     }
 
+    /// Display rendering: strings render bare (no quotes), everything else
+    /// exactly as `to_string`. `to_string` keeps its repr form — `show` is
+    /// what you want when building output for people.
+    fn show(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+        let text = match &args[0] {
+            Value::String(s) => s.as_ref().clone(),
+            other => other.to_string(),
+        };
+        Ok(Value::String(std::sync::Arc::new(text)))
+    }
+
+    /// The (key, value) pairs of a map or any struct-like value, as a list
+    /// of tuples sorted by key — deterministic order, made for
+    /// `for (k, v) in entries(m)`.
+    fn entries(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+        let map = match Self::field_map(&args[0]) {
+            Some(map) => map,
+            None => {
+                return Err(InterpreterError::TypeError {
+                    message: "entries: argument must be a map or object".to_string(),
+                })
+            }
+        };
+        let mut keys: Vec<&String> = map.keys().collect();
+        keys.sort();
+        let pairs: Vec<Value> = keys
+            .into_iter()
+            .map(|k| {
+                Value::Tuple(std::sync::Arc::from(vec![
+                    Value::String(std::sync::Arc::new(k.clone())),
+                    map.get(k).cloned().unwrap_or(Value::Unit),
+                ]))
+            })
+            .collect();
+        Ok(Value::List(std::sync::Arc::from(pairs)))
+    }
+
     fn map_get(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
         if args.len() != 2 {
             return Err(InterpreterError::ArityMismatch {
@@ -2385,15 +2452,6 @@ impl BuiltinFunctions {
             });
         }
 
-        let map_ref = match &args[0] {
-            Value::Map(map) => map,
-            _ => {
-                return Err(InterpreterError::TypeError {
-                    message: "map_set: first argument must be a map".to_string(),
-                })
-            }
-        };
-
         let key = match &args[1] {
             Value::String(s) => s.as_ref().clone(),
             Value::Integer(i) => i.to_string(),
@@ -2408,11 +2466,27 @@ impl BuiltinFunctions {
 
         let value = args[2].clone();
 
-        // Create a new map with the updated value
-        let mut new_map = (**map_ref).clone();
-        new_map.insert(key, value);
-
-        Ok(Value::Map(std::sync::Arc::new(new_map)))
+        // Writers mirror the readers' struct-likeness: updating a map yields
+        // a map; updating an object, struct, or parsed JSON object yields a
+        // new value of the same kind with the field set.
+        match &args[0] {
+            Value::Map(map_ref) => {
+                let mut new_map = (**map_ref).clone();
+                new_map.insert(key, value);
+                Ok(Value::Map(std::sync::Arc::new(new_map)))
+            }
+            Value::Struct { type_name, fields } => {
+                let mut new_fields = fields.clone();
+                new_fields.insert(key, value);
+                Ok(Value::Struct {
+                    type_name: type_name.clone(),
+                    fields: new_fields,
+                })
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: "map_set: first argument must be a map or object".to_string(),
+            }),
+        }
     }
 
     fn map_has_key(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
@@ -2503,20 +2577,11 @@ impl BuiltinFunctions {
             });
         }
 
-        let map_ref = match &args[0] {
-            Value::Map(map) => map,
-            _ => {
-                return Err(InterpreterError::TypeError {
-                    message: "map_remove: first argument must be a map".to_string(),
-                })
-            }
-        };
-
         let key = match &args[1] {
-            Value::String(s) => s.as_ref(),
-            Value::Integer(i) => &i.to_string(),
-            Value::Float(f) => &f.to_string(),
-            Value::Boolean(b) => &b.to_string(),
+            Value::String(s) => s.as_ref().clone(),
+            Value::Integer(i) => i.to_string(),
+            Value::Float(f) => f.to_string(),
+            Value::Boolean(b) => b.to_string(),
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "map_remove: key must be string, integer, float, or boolean"
@@ -2525,11 +2590,26 @@ impl BuiltinFunctions {
             }
         };
 
-        // Create a new map without the specified key
-        let mut new_map = (**map_ref).clone();
-        new_map.remove(key);
-
-        Ok(Value::Map(std::sync::Arc::new(new_map)))
+        // Like map_set, removal works on any struct-like value and returns a
+        // new value of the same kind without the key.
+        match &args[0] {
+            Value::Map(map_ref) => {
+                let mut new_map = (**map_ref).clone();
+                new_map.remove(&key);
+                Ok(Value::Map(std::sync::Arc::new(new_map)))
+            }
+            Value::Struct { type_name, fields } => {
+                let mut new_fields = fields.clone();
+                new_fields.remove(&key);
+                Ok(Value::Struct {
+                    type_name: type_name.clone(),
+                    fields: new_fields,
+                })
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: "map_remove: first argument must be a map or object".to_string(),
+            }),
+        }
     }
 
     fn map_len(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
