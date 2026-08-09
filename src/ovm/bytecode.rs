@@ -2577,6 +2577,23 @@ impl BytecodeVm {
     ) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
 
+        // Native extension values: offer the op to the owning OVM module —
+        // the same hook the interpreter's eval_binary_op calls, on the same
+        // Arc-shared value, so the tiers cannot diverge. to_ast on a Native
+        // operand is an Arc clone, O(1).
+        if matches!(left.data, ValueData::Native(_)) || matches!(right.data, ValueData::Native(_)) {
+            let l = left
+                .to_ast()
+                .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+            let r = right
+                .to_ast()
+                .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+            if let Some(result) = crate::native::binary_op_hook(&op, &l, &r) {
+                let value = result.map_err(BytecodeError::RuntimeError)?;
+                return Ok(OvmValue::from_ast(value));
+            }
+        }
+
         // Operate directly on ValueData — converting operands through the AST
         // representation on every instruction dominated the dispatch loop.
         let result = match (&left.data, &right.data) {
@@ -3497,6 +3514,9 @@ impl BytecodeVm {
                     fields.values().all(Self::round_trips)
                 }
             },
+            // Native values cross as the same Arc in both directions —
+            // lossless by construction (pinned by tests/ods_module_test.rs).
+            Value::Native(_) => true,
             _ => false,
         }
     }
@@ -3732,6 +3752,7 @@ impl BytecodeVm {
                 "enum"
             }
             Ok(Value::EnumConstructor { .. }) => "enum_constructor",
+            Ok(Value::Native(handle)) => handle.0.type_name(),
             Ok(Value::Promise { .. }) => "promise",
             Ok(Value::Map(_)) => "map",
             Err(_) => "unknown",

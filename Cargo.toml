@@ -13,7 +13,12 @@ categories = ["development-tools"]
 members = [".", "otc", "playground"]
 
 [features]
-default = ["native"]
+default = ["native", "ods"]
+# ods — the Olang Data Stack (docs/design/ods.md). Pure Rust, so it is
+# not part of the "native" set: the playground can enable it explicitly.
+# Phase 0 has no dependencies of its own; the engine's (faer, statrs)
+# arrive optional and gated here in Phase 1.
+ods = []
 # Everything that cannot exist in a browser: sockets, SQLite's C library,
 # terminals, mmap, process/host introspection, thread pools. The playground
 # (wasm32) build compiles with --no-default-features; gated code falls back

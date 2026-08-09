@@ -75,6 +75,9 @@ pub enum TypeTag {
     // Error types
     Error = 50,
     Result = 51,
+
+    // Values owned by OVM modules (ods arrays, ...)
+    Native = 60,
 }
 
 /// Execution tier for values
@@ -174,6 +177,11 @@ pub enum ValueData {
         ok: Option<Box<OvmValue>>,
         err: Option<Box<OvmValue>>,
     },
+
+    /// A value owned by an OVM module: the *same* Arc the interpreter's
+    /// `Value::Native` holds, so the tier boundary is a refcount bump and
+    /// the conversion is lossless by construction.
+    Native(crate::native::NativeHandle),
 }
 
 /// Function object representation
@@ -864,6 +872,7 @@ impl OvmValue {
             ValueData::Boolean(b) => ValueData::Boolean(*b),
             ValueData::Unit => ValueData::Unit,
             ValueData::String(p) => ValueData::String(p.clone()),
+            ValueData::Native(p) => ValueData::Native(p.clone()),
             ValueData::List(p) => ValueData::List(p.clone()),
             ValueData::Tuple(p) => ValueData::Tuple(p.clone()),
             ValueData::Function(p) => ValueData::Function(p.clone()),
@@ -1443,6 +1452,17 @@ impl OvmValue {
             // A constructor is a callable; it never actually crosses into the
             // VM (round_trips excludes it), so a placeholder unit is fine
             Value::EnumConstructor { .. } => Self::new_unit(),
+
+            // The same Arc, shared verbatim: crossing the boundary is a
+            // refcount bump, never a conversion.
+            Value::Native(handle) => Self {
+                header: ValueHeader::new(
+                    TypeTag::Native,
+                    ExecutionTier::Interpreter,
+                    LazyState::Eager,
+                ),
+                data: ValueData::Native(handle),
+            },
         }
     }
 
@@ -1684,6 +1704,7 @@ impl OvmValue {
                     Err(RuntimeError::new("Result value has neither Ok nor Err"))
                 }
             }
+            ValueData::Native(handle) => Ok(Value::Native(handle.clone())),
         }
     }
 }
@@ -1705,6 +1726,7 @@ impl fmt::Display for OvmValue {
             ValueData::Float(fl) => write!(f, "{}", fl),
             ValueData::Boolean(b) => write!(f, "{}", b),
             ValueData::Unit => write!(f, "()"),
+            ValueData::Native(handle) => write!(f, "{}", handle.0.display()),
             ValueData::String(gc_ptr) => write!(f, "\"{}\"", gc_ptr),
             ValueData::List(gc_ptr) => {
                 write!(f, "[")?;

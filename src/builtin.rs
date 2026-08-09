@@ -727,6 +727,17 @@ impl BuiltinFunctions {
                 });
         }
 
+        // OVM extension modules (ods, ...): "<module>.<func>" dispatches
+        // through the module registry. After the fixed prefixes above so
+        // no existing module name can be shadowed.
+        if let Some((module_name, module_function)) = name.split_once('.') {
+            if let Some(module) = crate::native::module_named(module_name) {
+                return module
+                    .dispatch(module_function, arguments)
+                    .map_err(|message| InterpreterError::RuntimeError { message });
+            }
+        }
+
         match name {
             "println" => builtins.println(arguments),
             "print" => builtins.print(arguments),

@@ -1823,6 +1823,7 @@ impl Repl {
             Value::Promise { .. } => "promise",
             Value::Map(_) => "map",
             Value::TypeInfo { .. } => "type",
+            Value::Native(handle) => handle.0.type_name(),
         }
     }
 

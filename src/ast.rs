@@ -482,6 +482,11 @@ pub enum Value {
         name: String,
         definition: TypeDefinition,
     },
+
+    // A value owned by an OVM module (e.g. an ods array). The handle is
+    // one Arc shared verbatim with the bytecode tier, so crossing the
+    // boundary is a refcount bump, never a conversion.
+    Native(crate::native::NativeHandle),
 }
 
 // Value is Send + Sync automatically now that Expr uses Arc throughout;
@@ -913,6 +918,7 @@ impl std::fmt::Display for Value {
                 }
             },
             Value::TypeInfo { name, .. } => write!(f, "<type: {}>", name),
+            Value::Native(handle) => write!(f, "{}", handle.0.display()),
         }
     }
 }
@@ -939,6 +945,7 @@ impl Value {
             Value::EnumConstructor { type_name, .. } => type_name.clone(),
             Value::Promise { .. } => "Promise".to_string(),
             Value::TypeInfo { .. } => "Type".to_string(),
+            Value::Native(handle) => handle.0.type_name().to_string(),
         }
     }
 

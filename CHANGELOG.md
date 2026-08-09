@@ -10,6 +10,21 @@ documented.
 
 ## [Unreleased]
 
+### Added
+
+- **OVM modules and native values — ods Phase 0**
+  (`docs/design/ods.md`). The OVM grew a module system: a Rust
+  component registers stdlib-style namespaces, native value types, and
+  operator behavior into *both* execution tiers through one registry
+  (`src/native.rs`). Native values cross the tier boundary as one
+  shared Arc — a refcount bump, never a conversion — so the
+  lossy-round-trip failure mode that once kept maps and enums off the
+  tier is unrepresentable for them (pinned by an Arc-identity test).
+  First module: `ods` (feature `ods`, default on, pure Rust so the
+  playground can enable it), registering `ods.version()` and the seam
+  probes that pin the plumbing (`tests/ods_module_test.rs`). The
+  numerical engine itself is Phase 1.
+
 ### Changed
 
 - **`otc` slimmed to the commands that earn their keep.** The toolchain

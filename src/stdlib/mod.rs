@@ -46,6 +46,13 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("str".to_string(), string::create_string_module());
     stdlib.insert("re".to_string(), regex_mod::create_regex_module());
     stdlib.insert("time".to_string(), time::create_time_module());
+    // OVM extension modules (ods, ...) contribute their namespaces through
+    // the registry, so both tiers and the stdlib agree on one module set.
+    for module in crate::native::registered_modules() {
+        for (name, value) in module.namespaces() {
+            stdlib.insert(name, value);
+        }
+    }
     stdlib
 }
 
@@ -127,6 +134,7 @@ pub mod error_utils {
             Value::Promise { .. } => "promise",
             Value::Map(_) => "map",
             Value::TypeInfo { .. } => "type",
+            Value::Native(handle) => handle.0.type_name(),
         }
     }
 }
