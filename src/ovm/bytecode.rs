@@ -60,6 +60,11 @@ pub struct BytecodeVm {
     /// recursive CallNamed so runaway recursion errors instead of aborting
     call_depth: u32,
     max_call_depth: u32,
+    /// The baseline JIT: native code for pure-integer hot functions,
+    /// entered from execute()/execute_from_regs when the entry guard
+    /// (all-Integer arguments) holds. See src/ovm/jit.rs.
+    #[cfg(feature = "native")]
+    jit: crate::ovm::jit::JitCache,
     /// Spare execution frames, pooled so register/local vectors keep their
     /// allocated capacity across calls
     /// Pooled argument buffers for Call* instructions, so marshaling a call's
@@ -869,6 +874,11 @@ pub enum BytecodeError {
     #[error("Division by zero")]
     DivisionByZero,
 
+    /// Kept distinct from DivisionByZero because the interpreter's `%`
+    /// error says "Modulo by zero" — the tier must say the same words.
+    #[error("Modulo by zero")]
+    ModuloByZero,
+
     #[error("Index out of bounds: {index} for length {length}")]
     IndexOutOfBounds { index: i64, length: usize },
 
@@ -1075,6 +1085,8 @@ impl BytecodeVm {
             // Must match the interpreter's own limit: a program that recurses
             // 900 deep has to behave the same whether or not it was promoted
             max_call_depth: 1000,
+            #[cfg(feature = "native")]
+            jit: crate::ovm::jit::JitCache::new(),
         }
     }
 
@@ -1308,6 +1320,8 @@ impl BytecodeVm {
                     self.bytecode_hot.resize(idx + 1, None);
                 }
                 self.bytecode_hot[idx] = Some(lambda_bytecode.clone());
+                #[cfg(feature = "native")]
+                self.jit.try_compile(lambda_id, &lambda_bytecode);
                 if let Ok(mut cache) = self.bytecode_cache.write() {
                     cache.insert(lambda_id, lambda_bytecode);
                 }
@@ -1320,6 +1334,8 @@ impl BytecodeVm {
             self.bytecode_hot.resize(idx + 1, None);
         }
         self.bytecode_hot[idx] = Some(bytecode.clone());
+        #[cfg(feature = "native")]
+        self.jit.try_compile(func_id, &bytecode);
         if let Ok(mut cache) = self.bytecode_cache.write() {
             cache.insert(func_id, bytecode);
         }
@@ -1359,6 +1375,17 @@ impl BytecodeVm {
                 bytecode.param_count,
                 args.len()
             )));
+        }
+
+        // Native tier: if a JIT body exists and every argument is an
+        // Integer, run it. None means it declined (or deopted) — the
+        // bytecode path below is the unchanged fallback.
+        #[cfg(feature = "native")]
+        if self.jit.has(func_id) {
+            let remaining = self.max_call_depth.saturating_sub(self.call_depth);
+            if let Some(result) = self.jit.try_call(func_id, args, remaining) {
+                return Ok(result);
+            }
         }
 
         if self.call_depth >= self.max_call_depth {
@@ -1419,6 +1446,33 @@ impl BytecodeVm {
                 bytecode.param_count,
                 arg_regs.len()
             )));
+        }
+
+        // Native tier: extract raw integers straight from the caller's
+        // registers (only after the cheap has() check) and run the JIT
+        // body. None → the unchanged bytecode path below.
+        #[cfg(feature = "native")]
+        if self.jit.has(func_id) && arg_regs.len() <= 16 {
+            let mut ints = [0i64; 16];
+            let mut all_int = true;
+            for (slot, reg) in ints.iter_mut().zip(arg_regs) {
+                match self.execution_state.register_ref(*reg).map(|v| &v.data) {
+                    Ok(crate::ovm::value::ValueData::Integer(i)) => *slot = *i,
+                    _ => {
+                        all_int = false;
+                        break;
+                    }
+                }
+            }
+            if all_int {
+                let remaining = self.max_call_depth.saturating_sub(self.call_depth);
+                if let Some(result) =
+                    self.jit
+                        .try_call_ints(func_id, &ints[..arg_regs.len()], remaining)
+                {
+                    return Ok(result);
+                }
+            }
         }
 
         if self.call_depth >= self.max_call_depth {
@@ -2624,7 +2678,7 @@ impl BytecodeVm {
                 }
                 BinaryOp::Modulo => {
                     if *b == 0 {
-                        return Err(BytecodeError::DivisionByZero);
+                        return Err(BytecodeError::ModuloByZero);
                     }
                     OvmValue::new_integer(a.checked_rem(*b).ok_or_else(|| {
                         BytecodeError::RuntimeError("Integer overflow in modulo".to_string())
@@ -2752,7 +2806,7 @@ impl BytecodeVm {
             }
             BinaryOp::Modulo => {
                 if b == 0.0 {
-                    return Err(BytecodeError::DivisionByZero);
+                    return Err(BytecodeError::ModuloByZero);
                 }
                 OvmValue::new_float(a % b)
             }
@@ -7046,13 +7100,14 @@ mod tests {
         let mut vm = BytecodeVm::new();
         let func_id = FunctionId::new();
 
-        // Create a simple function
+        // A string body: stays on bytecode (the JIT's pure-integer
+        // whitelist declines it), so dispatch-loop stats keep counting.
         let func = FunctionDecl {
             name: "simple".to_string(),
             type_params: vec![],
             type_param_bounds: Vec::new(),
             parameters: vec![],
-            body: Expr::Integer(42),
+            body: Expr::String(std::sync::Arc::new("still on bytecode".to_string())),
             return_type: None,
         };
 

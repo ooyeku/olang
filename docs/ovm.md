@@ -281,6 +281,40 @@ layout more than the saved dispatches earn back — so instruction-count
 reduction is not pursued for its own sake (see the changelog for the
 details).
 
+## The JIT
+
+The third tier (`src/ovm/jit.rs`, 0.40): hot bytecode compiled to native
+machine code via Cranelift, extending the correctness ladder unchanged —
+"can't compile identically → stay interpreted" gained a rung: "can't
+compile natively → stay on bytecode".
+
+A function qualifies when every instruction falls in a **pure
+integer/boolean whitelist**: arithmetic, comparisons, logic, branches,
+self-recursion, and return, with operand kinds proven by a fixpoint
+inference over its registers (a register may hold mixed kinds only if
+nothing ever reads it — the dead result slot of an `if` statement, say).
+Qualifying functions compile at promotion time; everything else stays on
+bytecode with zero overhead beyond one table lookup per call.
+
+Purity is the load-bearing property. A qualifying function has no side
+effects, so every guard failure — non-integer argument at entry, integer
+overflow, division by zero, `i64::MIN` edge cases, recursion-depth
+exhaustion — simply **deopts**: the native run is abandoned and the same
+call re-executes on bytecode, which produces the exact result or error
+the VM would have produced anyway. The JIT never reproduces an error
+message; it only ever declines. Self-recursion is a direct native call
+carrying a depth budget clamped to the VM's own `max_call_depth`, so
+runaway recursion errors exactly as it does on bytecode instead of
+overflowing the native stack.
+
+What this buys, measured: fib(30) 89 ms → **5 ms** (18×, now level with
+the JavaScript JITs), integer loop kernels 20–30×, and `par_map` over a
+jitted kernel compounds both campaigns. Floats, strings, and heap values
+are future whitelist expansions — N-body is unchanged until floats land.
+
+`tests/jit_test.rs` holds the parity suite: every guard edge runs tiered
+and interpreted and must agree byte-for-byte.
+
 ## Builtins
 
 The VM mostly does not reimplement builtins — it calls the interpreter's
@@ -332,36 +366,39 @@ the user's definition in compiled code too.
 
 ## Performance
 
-Measured on an Apple Silicon laptop, release build, as of 0.38. All
+Measured on an Apple Silicon laptop, release build, as of 0.40. All
 workloads are algorithm-identical across languages and checksum-verified
 (the N-body sample position matches across every implementation to the
 last digit). Since the tier is on by default, the olang numbers are what
 a plain `olang program.ol` gets — no flags.
 
-Four representative workloads against the field (as of 0.38):
+Four representative workloads against the field (as of 0.40, with the
+baseline JIT):
 
 | Workload | Rust | Node | Bun | CPython | Ruby | **olang** |
 |---|---|---|---|---|---|---|
 | N-body (120 bodies × 150 steps) | 2.5 ms | 6 ms | 8 ms | 404 ms | 474 ms | **400 ms** |
 | Word frequency (50k tokens × 20) | 5 ms | 17 ms | 12 ms | 16 ms | 62 ms | **26 ms** |
-| `map(λ) \|> sum` pipeline, 1M elements | ~0 ms | 9 ms | 4 ms | 24 ms | 21 ms | **27 ms** |
-| fib(30) (2.7M recursive calls) | 1.4 ms | 4 ms | 4 ms | 46 ms | 44 ms | **89 ms** |
+| `map(λ) \|> sum` pipeline, 1M elements | ~0 ms | 9 ms | 4 ms | 24 ms | 21 ms | **13 ms** |
+| fib(30) (2.7M recursive calls) | 1.4 ms | 4 ms | 4 ms | 46 ms | 44 ms | **5 ms** |
 
 (Interpreter-only mode runs the same programs at 23.6 s / — / 370 ms /
 1.1 s; the word-frequency workload exceeds the interpreter's allocation
 guard entirely, so the tier is what makes it runnable at this size.)
 
-The shape of the result: olang now runs ahead of BOTH CPython and Ruby
-on struct-and-float work, dramatically ahead of Ruby on map-heavy work
-(2.4×) and within striking distance of CPython there; pipelines sit
-between Ruby and CPython; raw call overhead (fib) remains within 2× of
-both, the gap being dispatch cost that only threaded dispatch or a JIT
-would close. The compiled-language tier (Rust, the JavaScript JITs)
-remains 30–150× away — that is the JIT-vs-bytecode-VM gap, and olang
-does not currently ship a JIT.
+The shape of the result: on pure integer work the baseline JIT puts
+olang **level with the JavaScript JITs** — fib(30) at 5 ms sits beside
+Node and Bun's 4 ms and runs 9× ahead of CPython and Ruby; the pipeline
+workload (a jitted lambda inside the VM's native map loop) now leads
+CPython and Ruby outright. olang stays ahead of both on
+struct-and-float work and map-heavy text (where the JIT doesn't apply
+yet — the value model is the bound, not dispatch). The remaining gap to
+Rust is the price of guards, boxing at tier boundaries, and the
+unspecialized float/heap paths — exactly the NaN-boxing and
+float-specialization rungs the roadmap sequences next.
 
-Against its own interpreter, the tier is worth 12× (fib) to 57×
-(N-body): the whole N-body simulation — construction, stepping,
+Against its own interpreter, the tiers are worth 57× (N-body, bytecode)
+to 220× (fib, bytecode + JIT): the whole N-body simulation — construction, stepping,
 capturing lambdas, struct building, field access, `math.sqrt` — runs as
 6 promoted functions, 0 rejected, with 7 tier crossings and 127M
 bytecode instructions for the run.

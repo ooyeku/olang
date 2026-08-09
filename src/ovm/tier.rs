@@ -238,7 +238,18 @@ impl BytecodeTier {
                     TierOutcome::Fallback
                 }
             },
-            Err(e) => TierOutcome::Ran(Err(e.to_string())),
+            Err(e) => {
+                // RuntimeError's Display already says "Runtime error: {msg}",
+                // and the consumer wraps this string in an
+                // InterpreterError::RuntimeError that prepends the same words
+                // — which doubled the prefix relative to the interpreter's
+                // own errors. Hand over the bare message instead.
+                let message = match e {
+                    crate::ovm::bytecode::BytecodeError::RuntimeError(msg) => msg,
+                    other => other.to_string(),
+                };
+                TierOutcome::Ran(Err(message))
+            }
         }
     }
 

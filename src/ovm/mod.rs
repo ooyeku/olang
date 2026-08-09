@@ -16,6 +16,8 @@
 
 pub mod bytecode; // Register-based bytecode VM
 pub mod gc; // Safepoint coordination flags
+#[cfg(feature = "native")]
+pub mod jit; // Baseline JIT: pure-integer hot functions to native code
 pub mod tier; // Hot-function promotion to the bytecode tier
 pub mod value; // Reference-counted runtime values
 

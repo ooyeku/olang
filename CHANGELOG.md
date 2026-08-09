@@ -12,6 +12,25 @@ documented.
 
 ### Added
 
+- **The baseline JIT — the performance campaign's P2.** Hot bytecode
+  compiles to native machine code via Cranelift (`src/ovm/jit.rs`),
+  extending the correctness ladder unchanged: "can't compile
+  identically → stay interpreted" gained "can't compile natively → stay
+  on bytecode". A function qualifies when every instruction is in a
+  pure integer/boolean whitelist, with operand kinds proven by a
+  fixpoint inference (registers may hold mixed kinds only if nothing
+  reads them — `if`-statement result slots taught that rule the hard
+  way). Purity makes deopt trivial and total: non-integer arguments,
+  overflow, division by zero, `i64::MIN` edges, and depth exhaustion
+  all abandon the native run and re-execute on bytecode, which owns
+  every error message; recursion carries a depth budget clamped to the
+  VM's own limit, so runaway recursion errors identically instead of
+  smashing the native stack. **fib(30): 89ms → 5ms (18×) — level with
+  Node and Bun**; integer loop kernels 20–30×; the 1M-element pipeline
+  27ms → 13ms. Pinned by tests/jit_test.rs (17 guard-edge parity tests)
+  on top of the existing 150-test tier suite, which now runs everything
+  through the JIT as well.
+
 - **OVM modules and native values — ods Phase 0**
   (`docs/design/ods.md`). The OVM grew a module system: a Rust
   component registers stdlib-style namespaces, native value types, and
@@ -24,6 +43,15 @@ documented.
   playground can enable it), registering `ods.version()` and the seam
   probes that pin the plumbing (`tests/ods_module_test.rs`). The
   numerical engine itself is Phase 1.
+
+### Fixed
+
+- **Two tier-vs-interpreter error divergences** the JIT parity suite
+  exposed (both present in released 0.39): tiered runtime errors
+  carried a doubled "Runtime error:" prefix (the tier re-wrapped an
+  already-prefixed message), and `%` by zero said "Division by zero" on
+  the tier where the interpreter says "Modulo by zero" — the VM now has
+  a distinct ModuloByZero error with the interpreter's exact words.
 
 ### Changed
 

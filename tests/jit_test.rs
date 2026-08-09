@@ -1,0 +1,231 @@
+//! The baseline JIT: native code must be unobservable except in speed.
+//!
+//! Every test here runs a program three ways — interpreted, on the
+//! bytecode tier (which now JITs qualifying functions) — and demands
+//! byte-identical results. The interesting cases are the guard edges:
+//! overflow, division by zero, i64::MIN, non-integer arguments, depth
+//! exhaustion — where the native code must deopt and let bytecode (or
+//! the interpreter) produce the canonical answer.
+
+use olang::ast::Value;
+use olang::{Interpreter, Parser};
+
+// 512MB: debug-build interpreter frames are enormous, and the recursion
+// tests interpret ~1000 frames deep before their guards trip.
+fn with_big_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(f)
+        .expect("spawn")
+        .join()
+        .expect("join")
+}
+
+fn eval(source: &str, tier_threshold: Option<u32>) -> Result<Value, String> {
+    let source = source.to_string();
+    with_big_stack(move || {
+        let parser = Parser::new();
+        let program = parser.parse(&source).map_err(|e| e.to_string())?;
+        let mut interpreter = Interpreter::new();
+        if let Some(threshold) = tier_threshold {
+            interpreter.enable_bytecode_tier(threshold, false);
+        }
+        interpreter.eval_program(program).map_err(|e| e.to_string())
+    })
+}
+
+/// Tiered (JIT-active) and interpreted runs must agree exactly.
+fn assert_jit_transparent(source: &str) {
+    let interpreted = eval(source, None);
+    let tiered = eval(source, Some(1));
+    assert_eq!(tiered, interpreted, "tier+jit diverged from interpreter");
+}
+
+#[test]
+fn fib_is_correct_under_the_jit() {
+    assert_jit_transparent("fn fib(n) = if n < 2 => n else => fib(n - 1) + fib(n - 2)\nfib(24)");
+}
+
+#[test]
+fn loop_kernels_are_correct_under_the_jit() {
+    assert_jit_transparent(
+        r#"
+fn kernel(n) = {
+    let mut acc = 0
+    let mut i = 0
+    while i < 1000 { acc = acc + (n * i) % 7; i = i + 1 }
+    acc
+}
+kernel(3) + kernel(11)
+"#,
+    );
+}
+
+#[test]
+fn bool_returning_functions_are_correct_under_the_jit() {
+    assert_jit_transparent(
+        r#"
+fn is_even(n) = n % 2 == 0
+fn both_even(a, b) = is_even(a) && is_even(b)
+show(is_even(7)) + " " + show(both_even(4, 8))
+"#,
+    );
+}
+
+#[test]
+fn overflow_deopts_to_the_canonical_error() {
+    // 2^62 * 4 overflows i64: the native guard must deopt and the
+    // canonical overflow error must surface, identical to interpretation.
+    let src = r#"
+fn quad(n) = n * 4
+quad(4611686018427387904)
+"#;
+    let interpreted = eval(src, None);
+    let tiered = eval(src, Some(1));
+    assert!(interpreted.is_err(), "interpreter should overflow");
+    assert_eq!(tiered, interpreted);
+}
+
+#[test]
+fn addition_overflow_matches() {
+    let src = r#"
+fn bump(n) = n + 1
+bump(9223372036854775807)
+"#;
+    assert_eq!(eval(src, Some(1)), eval(src, None));
+}
+
+#[test]
+fn division_by_zero_matches() {
+    let src = r#"
+fn ratio(a, b) = a / b
+ratio(10, 0)
+"#;
+    assert_eq!(eval(src, Some(1)), eval(src, None));
+}
+
+#[test]
+fn modulo_by_zero_matches() {
+    let src = r#"
+fn wrap(a, b) = a % b
+wrap(10, 0)
+"#;
+    assert_eq!(eval(src, Some(1)), eval(src, None));
+}
+
+#[test]
+fn i64_min_division_edge_matches() {
+    // i64::MIN / -1 overflows; the guard must deopt.
+    let src = r#"
+fn div(a, b) = a / b
+div(-9223372036854775808, -1)
+"#;
+    assert_eq!(eval(src, Some(1)), eval(src, None));
+}
+
+#[test]
+fn negation_of_i64_min_matches() {
+    let src = r#"
+fn flip(n) = -n
+flip(-9223372036854775808)
+"#;
+    assert_eq!(eval(src, Some(1)), eval(src, None));
+}
+
+#[test]
+fn float_arguments_take_the_bytecode_path() {
+    // The entry guard requires all-Integer arguments; floats must give
+    // exactly the bytecode/interpreter behavior.
+    assert_jit_transparent(
+        r#"
+fn add_one(x) = x + 1
+show(add_one(5)) + " " + show(add_one(2.5))
+"#,
+    );
+}
+
+#[test]
+fn deep_recursion_still_errors_cleanly() {
+    // Depth budget exhaustion deopts; the re-run hits the canonical
+    // recursion-guard error rather than overflowing the native stack.
+    // (3000 exceeds both the native budget and the interpreter's guard;
+    // release-binary probes confirmed both modes error identically.)
+    let src = r#"
+fn down(n) = if n == 0 => 0 else => down(n - 1)
+down(3000)
+"#;
+    let interpreted = eval(src, None);
+    let tiered = eval(src, Some(1));
+    assert_eq!(tiered.is_err(), interpreted.is_err());
+    assert_eq!(tiered, interpreted);
+}
+
+#[test]
+fn recursion_within_budget_is_correct() {
+    assert_jit_transparent("fn down(n) = if n == 0 => 0 else => down(n - 1)\ndown(900)");
+}
+
+#[test]
+fn mutual_recursion_stays_on_bytecode_and_agrees() {
+    // Mutual recursion has non-self CallFn instructions: the JIT declines,
+    // bytecode runs it, results agree.
+    assert_jit_transparent(
+        r#"
+fn is_even(n) = if n == 0 => true else => is_odd(n - 1)
+fn is_odd(n) = if n == 0 => false else => is_even(n - 1)
+show(is_even(100)) + " " + show(is_odd(77))
+"#,
+    );
+}
+
+#[test]
+fn jitted_functions_compose_with_higher_order_builtins() {
+    assert_jit_transparent(
+        r#"
+fn square(n) = n * n
+sum(map(1..100, square))
+"#,
+    );
+}
+
+#[test]
+fn jitted_functions_work_inside_par_map() {
+    assert_jit_transparent(
+        r#"
+fn collatz_len(n0) = {
+    let mut n = n0
+    let mut steps = 0
+    while n != 1 {
+        if n % 2 == 0 => { n = n / 2 } else => { n = 3 * n + 1 }
+        steps = steps + 1
+    }
+    steps
+}
+sum(par_map(1..500, collatz_len))
+"#,
+    );
+}
+
+#[test]
+fn comparison_chains_and_logic_are_correct() {
+    assert_jit_transparent(
+        r#"
+fn classify(n) = {
+    let small = n < 10
+    let even = n % 2 == 0
+    if small && even => 1 else => if small || even => 2 else => 3
+}
+show(classify(4)) + show(classify(7)) + show(classify(12)) + show(classify(13))
+"#,
+    );
+}
+
+#[test]
+fn negative_operands_and_neg_are_correct() {
+    assert_jit_transparent(
+        r#"
+fn f(a, b) = -a * b + (a % b) - (a / b)
+show(f(-17, 5)) + " " + show(f(17, -5)) + " " + show(f(-17, -5))
+"#,
+    );
+}
