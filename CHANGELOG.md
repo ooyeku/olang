@@ -12,6 +12,25 @@ documented.
 
 ### Changed
 
+- **Immediate operands: numeric literals ride in the instruction.**
+  `x + 1`, `n < 2`, `i % 2` compiled to a LoadConst into a fresh register
+  plus the operation — two dispatches for a value known at compile time.
+  A `BinImm` instruction carries the literal; execution reuses the same
+  fast path and fallback, so overflow, division by zero, and type errors
+  are byte-identical. A literal left operand fuses when the operation
+  commutes or the comparison flips. Measured: fib(30) ~103ms → ~89ms,
+  pipeline ~28ms → ~26ms.
+
+  A second fusion — compare+branch pairs merged into one instruction —
+  was built, measured, and **reverted**: it retired 3.5% of executed
+  instructions but ran 3–4% *slower* on every benchmark. Growing the
+  instruction enum perturbs the dispatch match's code layout more than
+  the saved dispatches earn back, even with deliberately slimmed arms;
+  the honest conclusion is that dispatch-loop layout, not instruction
+  count, is now the binding constraint, and the next real lever there is
+  threaded dispatch — a different project. The negative result is
+  recorded here so it isn't re-attempted casually.
+
 - **Structs have interned shapes, and field reads have inline caches.**
   A struct used to be a hash map: every `p.x` hashed the field name
   (~28% of the N-body kernel). Now a struct is an interned shape — one
