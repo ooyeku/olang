@@ -218,6 +218,14 @@ Surface decisions deferred to their phase: exact constructor names,
 `Series`/`Matrix` type names in the type checker, list↔series conversion
 builtins, and how comparison operators yield boolean masks.
 
+*Phase 1 resolved the operator questions as:* `< <= > >=` yield Bool-series
+masks, as does `==`/`!=` against a scalar (no structural reading exists);
+`==`/`!=` between two Series stays **structural** like every other olang
+collection, with `ods.eq`/`ods.ne` providing the elementwise masks. Nulls
+enter via `()` values in `ods.series` lists (e.g. a missed `map_get`) — a
+dedicated null literal is a language-level question deliberately not
+settled here.
+
 ## Benchmarks are the spec
 
 The roadmap already pins performance claims to measurements (fib vs CPython,
@@ -239,6 +247,41 @@ phase lands.
 A phase whose benchmarks miss target does not ship with an asterisk; it
 ships when the target is met or the target is revised *in this document
 with the reason recorded*.
+
+### Measured — Phase 1 (preliminary)
+
+Apple Silicon macOS, `cargo bench -p olang-ods` (release), vs NumPy 2.5.2
+on Python 3.14 (single-threaded, best-of-15). 10M f64 elements. "par" is
+what a 10M series gets under the language's default parallel policy
+(threshold 1000 via `crate::parallel`).
+
+| # | Benchmark | ods seq | ods par | NumPy | Verdict |
+|---|---|---|---|---|---|
+| B1 | `sum` | 1.01 ms | 0.41 ms | 1.12 ms | **met** — seq parity, par 2.7× ahead |
+| B1 | `mean` | 1.01 ms | — | 1.13 ms | **met** |
+| B1 | `std` | 2.06 ms | — | 5.11 ms | **met** — 2.5× ahead |
+| B2 | `a * b + 1.0` | 6.19 ms | 2.42 ms | 3.24 ms | **met as executed** (par is the 10M default); seq trails 1.9× — headroom noted below |
+| B3 | `sort` | 121.5 ms | 24.1 ms | 324.3 ms | **met** — 2.7× / 13× ahead |
+| B5 | null-aware `mean`, 10% nulls | 4.71 ms | — | 7.84 ms (`nanmean`) | **met vs the external bar** (1.7× ahead); internal ratio target revised, below |
+
+Notes recorded per the revision rule:
+
+- **B5 revision.** The original target ("within 1.5× of B1's time")
+  implicitly assumed null *clusters*, where whole 64-element blocks stay
+  dense. The benchmark's scattered pattern (every 10th element null)
+  leaves no dense blocks, so the kernel runs entirely on set-bit
+  iteration; closing further requires multiply-by-mask kernels, which
+  are unsound here because values under null slots may hold inf/NaN from
+  masked-out computations. Revised target: **beat NumPy's `nanmean`**,
+  the user-facing equivalent — currently 1.7× ahead.
+- **B2 sequential headroom.** `a * b + 1.0` is two passes and two
+  allocations (matching NumPy's own evaluation of the expression).
+  The sequential gap is allocation + bandwidth, not compute; expression
+  fusion (Phase 4) is the structural fix and is deliberately deferred.
+- **Why seq `sum` needed care:** strict FP ordering forbids LLVM from
+  vectorizing a naive fold; the dense kernels use eight accumulators
+  (order differs from left-to-right by design, like NumPy's pairwise
+  sum).
 
 ## Phases
 

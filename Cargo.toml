@@ -10,15 +10,15 @@ keywords = ["language", "repl", "interpreter", "functional"]
 categories = ["development-tools"]
 
 [workspace]
-members = [".", "otc", "playground"]
+members = [".", "otc", "playground", "olang-ods"]
 
 [features]
 default = ["native", "ods"]
 # ods — the Olang Data Stack (docs/design/ods.md). Pure Rust, so it is
 # not part of the "native" set: the playground can enable it explicitly.
-# Phase 0 has no dependencies of its own; the engine's (faer, statrs)
-# arrive optional and gated here in Phase 1.
-ods = []
+# The engine crate builds without rayon by default; the native feature
+# switches its parallel kernels on (wasm builds stay sequential).
+ods = ["dep:olang-ods"]
 # Everything that cannot exist in a browser: sockets, SQLite's C library,
 # terminals, mmap, process/host introspection, thread pools. The playground
 # (wasm32) build compiles with --no-default-features; gated code falls back
@@ -39,9 +39,15 @@ native = [
     "dep:cranelift-frontend",
     "dep:cranelift-jit",
     "dep:cranelift-module",
+    "olang-ods?/parallel",
 ]
 
 [dependencies]
+# The ods numerical engine (docs/design/ods.md): pure kernels, no olang
+# dependency. default-features off keeps rayon out of wasm builds; the
+# native feature turns its parallel kernels on.
+olang-ods = { path = "olang-ods", optional = true, default-features = false }
+
 # Core parsing and AST
 pest = "2.7"
 pest_derive = "2.7"

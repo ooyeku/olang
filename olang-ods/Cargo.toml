@@ -1,0 +1,23 @@
+[package]
+name = "olang-ods"
+version = "0.1.0"
+edition = "2021"
+description = "ods — the numerical engine behind olang's data stack. Pure kernels, no olang dependency."
+license = "MIT"
+
+[features]
+default = ["parallel"]
+# Rayon data parallelism. Off for wasm builds; every parallel kernel has a
+# sequential twin selected by the caller-provided `par` flag, so disabling
+# the feature only changes speed, never results.
+parallel = ["dep:rayon"]
+
+[dependencies]
+rayon = { version = "1.8", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "series"
+harness = false

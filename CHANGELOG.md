@@ -12,6 +12,26 @@ documented.
 
 ### Added
 
+- **Series — ods Phase 1, the numerical engine** (`docs/design/ods.md`).
+  A typed, null-aware 1-D array backed by the new `olang-ods` workspace
+  crate: pure Rust kernels with no olang dependency, contiguous
+  Arc-shared copy-on-write buffers, validity bitmaps, and rayon
+  parallelism that respects the runtime's configured threshold. The
+  `ods` namespace grows 24 functions — constructors (`series` from
+  lists/ranges, `zeros`, `linspace`), null-skipping reductions (`sum
+  mean var std min max quantile`), `sort argsort take filter cumsum
+  dot`, and null tools — and operators are intercepted in both tiers:
+  `s * 2.0 + 1.0` runs vectorized kernels, `s > 2` yields a Bool-series
+  mask, `10.0 - s` broadcasts. Integer kernels are checked and error
+  with the interpreter's exact wording; `==` between Series stays
+  structural like every olang collection (`ods.eq`/`ods.ne` give
+  elementwise masks). **Measured against NumPy at 10M elements: sum at
+  parity sequentially (1.01ms vs 1.12ms) and 2.7× ahead in parallel,
+  std 2.5× ahead, sort 13× ahead, null-aware mean 1.7× ahead of
+  nanmean** — full table in the design doc. Pinned by 22 engine
+  property tests against naive references plus 12 tier-transparency
+  integration tests (tests/ods_series_test.rs).
+
 - **The baseline JIT — the performance campaign's P2.** Hot bytecode
   compiles to native machine code via Cranelift (`src/ovm/jit.rs`),
   extending the correctness ladder unchanged: "can't compile

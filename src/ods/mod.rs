@@ -1,11 +1,13 @@
-//! ods — the Olang Data Stack. Phase 0: the seam, not the engine.
+//! ods — the Olang Data Stack.
 //!
-//! This registers the module and its seam probes only. The numerical
-//! engine (typed arrays, kernels) arrives in Phase 1 — see
-//! `docs/design/ods.md`. The probe type exists so every piece of
-//! Native-value plumbing — tier boundary, `typeof`, display, equality,
-//! operator interception, module dispatch — is pinned by tests before
-//! any real kernel depends on it.
+//! Phase 0 landed the seam: the module registry, Native values, and the
+//! probe type that pins the plumbing. Phase 1 adds Series — a typed,
+//! null-aware 1-D array backed by the `olang-ods` engine crate (pure
+//! kernels, no olang dependency). See `docs/design/ods.md`.
+
+mod series;
+
+pub use series::{make_series_value, OdsSeries};
 
 use crate::ast::{BinaryOp, BuiltinFunction, Value};
 use crate::native::{NativeHandle, NativeObject, OvmModule};
@@ -61,7 +63,12 @@ impl OvmModule for OdsModule {
 
     fn namespaces(&self) -> Vec<(String, Value)> {
         let mut module = HashMap::new();
-        for (name, arity) in [("version", 0), ("probe", 1), ("probe_tag", 1)] {
+        let seam_probes = [("version", 0), ("probe", 1), ("probe_tag", 1)];
+        for (name, arity) in seam_probes
+            .iter()
+            .copied()
+            .chain(series::FUNCTIONS.iter().copied())
+        {
             module.insert(
                 name.to_string(),
                 Value::Builtin(BuiltinFunction {
@@ -80,9 +87,12 @@ impl OvmModule for OdsModule {
     }
 
     fn dispatch(&self, func: &str, args: Vec<Value>) -> Result<Value, String> {
+        if series::FUNCTIONS.iter().any(|(n, _)| *n == func) {
+            return series::dispatch(func, args).expect("membership checked above");
+        }
         match func {
             "version" => Ok(Value::String(Arc::new(format!(
-                "{} (phase 0)",
+                "{} (phase 1)",
                 env!("CARGO_PKG_VERSION")
             )))),
             "probe" => match args.as_slice() {
@@ -100,6 +110,9 @@ impl OvmModule for OdsModule {
     }
 
     fn binary_op(&self, op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
+        if let Some(result) = series::binary_op(op, lhs, rhs) {
+            return Some(result);
+        }
         match op {
             BinaryOp::Add => {
                 let (probe, n) = match (probe_of(lhs), rhs) {

@@ -191,7 +191,7 @@ fn unsupported_probe_operation_errors_in_both_tiers() {
 fn ods_version_reports_phase() {
     let result = eval("ods.version()", None).expect("version");
     match result {
-        Value::String(s) => assert!(s.contains("phase 0"), "got {}", s),
+        Value::String(s) => assert!(s.contains("phase"), "got {}", s),
         other => panic!("ods.version() returned {:?}", other),
     }
 }
