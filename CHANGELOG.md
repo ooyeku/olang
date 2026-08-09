@@ -12,6 +12,19 @@ documented.
 
 ### Added
 
+- **Template strings and nested `fn` declarations compile.** A
+  `MakeTemplate` instruction builds the string with the interpreter's
+  exact interpolation rules — String raw, Int/Float/Bool via
+  `to_string`, everything else through the AST value's Display (structs,
+  enums, and lists interpolate identically, verified byte-for-byte).
+  Interpolated expressions compile in written order. A nested `fn` is
+  compiled as the equivalent named closure over the current frame
+  (`MakeClosure` machinery), so helpers capturing enclosing parameters
+  and calling sibling nested fns promote; a self-recursive nested fn
+  refuses through the bound-names rule and stays interpreted, pinned by
+  a test. Corpus: promoted 112 → 117; template-string and
+  nested-declaration refusals both to zero.
+
 - **Trait method dispatch compiles.** `value.m(..)` — the top remaining
   promotion blocker in the example corpus (21 refusals) — now compiles to
   a `CallMethod` instruction when the receiver expression is pure

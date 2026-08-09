@@ -203,6 +203,13 @@ pub struct CompiledBytecode {
     pub entry_point: usize,
 }
 
+/// One piece of a compiled template string.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TplPart {
+    Literal(String),
+    Reg(Register),
+}
+
 /// A GetField site's one-entry inline cache, packing (shape id << 32 |
 /// field index) into one atomic word so concurrent VMs sharing the
 /// bytecode can never see a torn pair. Zero means cold (shape ids start
@@ -366,6 +373,14 @@ pub enum Instruction {
         dst: Register,
         shape: Arc<crate::ovm::value::StructShape>,
         field_regs: Vec<Register>,
+    },
+    /// Build a template string: literal chunks verbatim, interpolated
+    /// registers stringified with the interpreter's exact rules (String
+    /// raw, Int/Float/Bool via to_string, everything else through the AST
+    /// value's Display).
+    MakeTemplate {
+        dst: Register,
+        parts: Vec<TplPart>,
     },
     /// A method call `receiver.m(args)` on a receiver held in a register.
     /// Mirrors the interpreter's dispatch exactly: a struct FIELD named
@@ -1676,6 +1691,36 @@ impl BytecodeVm {
                     };
                     self.execution_state
                         .set_register(*dst, OvmValue::new_struct(Arc::new(obj)))?;
+                }
+
+                Instruction::MakeTemplate { dst, parts } => {
+                    use crate::ovm::value::ValueData;
+                    let mut out = String::new();
+                    for part in parts {
+                        match part {
+                            TplPart::Literal(text) => out.push_str(text),
+                            TplPart::Reg(reg) => {
+                                let value = self.execution_state.register_ref(*reg)?;
+                                match &value.data {
+                                    ValueData::String(s) => out.push_str(s),
+                                    ValueData::Integer(n) => out.push_str(&n.to_string()),
+                                    ValueData::Float(f) => out.push_str(&f.to_string()),
+                                    ValueData::Boolean(b) => out.push_str(&b.to_string()),
+                                    _ => {
+                                        // The interpreter formats everything
+                                        // else through Value's Display; go
+                                        // through the same impl.
+                                        let ast = value.to_ast().map_err(|e| {
+                                            BytecodeError::RuntimeError(format!("{:?}", e))
+                                        })?;
+                                        out.push_str(&format!("{}", ast));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_string(out))?;
                 }
 
                 Instruction::CallMethod {
@@ -4559,6 +4604,34 @@ impl BytecodeCompiler {
                 Ok(dst_reg)
             }
 
+            Expr::TemplateString { parts } => {
+                // Interpolations compile in written order (side-effect
+                // order); literal chunks ride in the instruction.
+                let mut compiled = Vec::with_capacity(parts.len());
+                for part in parts {
+                    match part {
+                        crate::ast::TemplatePart::Literal(text) => {
+                            compiled.push(TplPart::Literal(text.clone()));
+                        }
+                        crate::ast::TemplatePart::Interpolation(expr) => {
+                            compiled.push(TplPart::Reg(self.compile_expression(expr)?));
+                        }
+                    }
+                }
+                let dst_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::MakeTemplate {
+                    dst: dst_reg,
+                    parts: compiled,
+                });
+                Ok(dst_reg)
+            }
+
+            // A nested `fn` declaration is a named closure over the current
+            // frame: compile it exactly as the equivalent lambda (runtime
+            // captures via MakeClosure, declaration-closure constants baked)
+            // and bind the name. A nested fn referencing ITSELF refuses
+            // through the lambda machinery's bound-names rule, matching the
+            // conservative treatment of names bound later.
             Expr::Lambda {
                 parameters, body, ..
             } => {
@@ -5253,6 +5326,10 @@ impl BytecodeCompiler {
                         }
                         Statement::FunctionDecl(decl) => {
                             names.insert(decl.name.clone());
+                            for p in &decl.parameters {
+                                names.insert(p.name.clone());
+                            }
+                            Self::collect_bound_names(&decl.body, names);
                         }
                         _ => {}
                     }
@@ -5343,6 +5420,13 @@ impl BytecodeCompiler {
                 Self::collect_bound_names(inner, names)
             }
             Expr::FieldAccess { object, .. } => Self::collect_bound_names(object, names),
+            Expr::TemplateString { parts } => {
+                for part in parts {
+                    if let crate::ast::TemplatePart::Interpolation(e) = part {
+                        Self::collect_bound_names(e, names);
+                    }
+                }
+            }
             Expr::StructLiteral(literal) => {
                 for field in &literal.fields {
                     Self::collect_bound_names(&field.value, names);
@@ -5433,6 +5517,13 @@ impl BytecodeCompiler {
             }
 
             Expr::FieldAccess { object, .. } => Self::collect_free_vars(object, bound, free),
+
+            Expr::TemplateString { parts } => parts.iter().all(|p| match p {
+                crate::ast::TemplatePart::Literal(_) => true,
+                crate::ast::TemplatePart::Interpolation(e) => {
+                    Self::collect_free_vars(e, bound, free)
+                }
+            }),
 
             Expr::StructLiteral(literal) => literal
                 .fields
@@ -5530,6 +5621,16 @@ impl BytecodeCompiler {
                                 }
                             }
                             Self::pattern_binding_names(&decl.pattern, &mut scope);
+                        }
+                        Statement::FunctionDecl(decl) => {
+                            let mut inner = scope.clone();
+                            for p in &decl.parameters {
+                                inner.insert(p.name.clone());
+                            }
+                            if !Self::collect_free_vars(&decl.body, &inner, free) {
+                                return false;
+                            }
+                            scope.insert(decl.name.clone());
                         }
                         _ => return false,
                     }
@@ -5672,6 +5773,23 @@ impl BytecodeCompiler {
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter.emit_load_const(dst_reg, const_idx);
                 Ok(dst_reg)
+            }
+            crate::ast::Statement::FunctionDecl(decl) => {
+                // A nested fn is a named closure over the current frame:
+                // compile the equivalent lambda (runtime captures via
+                // MakeClosure, declaration constants baked) and bind the
+                // name. Self-recursive nested fns refuse via the lambda
+                // machinery's bound-names rule.
+                let lambda = Expr::Lambda {
+                    parameters: decl.parameters.clone(),
+                    body: Box::new(decl.body.clone()),
+                    return_type: None,
+                };
+                let value_reg = self.compile_expression(&lambda)?;
+                let var_reg = self.register_allocator.allocate_register();
+                self.local_variables.insert(decl.name.clone(), var_reg);
+                self.emitter.emit_move(var_reg, value_reg);
+                self.unit_register()
             }
             other => Err(BytecodeError::CompilationFailed(format!(
                 "Unsupported statement in bytecode tier: {:?}",

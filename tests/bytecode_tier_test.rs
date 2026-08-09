@@ -1499,6 +1499,62 @@ n
     );
 }
 
+// ── template strings and nested fn declarations ───────────────────────
+
+#[test]
+fn template_strings_promote_and_stringify_identically() {
+    // Interpolation rules are the interpreter's: String raw, Int/Float/
+    // Bool via to_string, everything else through Value's Display —
+    // structs, enums, lists included.
+    let src = r#"
+type P = struct { x: Int }
+type E = enum { A(Int), B }
+fn tpl(n) = {
+    let p = P { x: n }
+    `n=${n} f=${n * 0.5} s=${"txt"} b=${n > 2} p=${p} l=${[1, n]} e=${A(n)} u=${B}`
+}
+let mut out = ""
+for i in 0..20 { out = out + tpl(i) }
+len(out)
+"#;
+    assert!(promotion_count(src, 2) >= 1, "tpl should promote");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn nested_fn_declarations_promote_as_named_closures() {
+    // A nested fn captures the enclosing frame like a lambda; a sibling
+    // nested fn is a local function value by the time it is called.
+    let src = r#"
+fn outer(n) = {
+    fn helper(x) = x * 2
+    fn scaled(x) = helper(x) + n
+    scaled(n) + helper(3)
+}
+let mut t = 0
+for i in 0..20 { t = t + outer(i) }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 1, "outer should promote");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn recursive_nested_fns_fall_back_and_agree() {
+    // A nested fn referencing itself refuses (its name binds after the
+    // closure is built); the enclosing function stays interpreted and
+    // correct.
+    assert_tier_transparent(
+        r#"
+fn outer(n) = {
+    fn count(x) = if x <= 0 => 0 else => 1 + count(x - 1)
+    count(n)
+}
+outer(5) + outer(6) + outer(7)
+"#,
+    );
+}
+
 // ── struct shapes and inline caches ───────────────────────────────────
 
 #[test]

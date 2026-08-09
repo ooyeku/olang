@@ -82,6 +82,11 @@ A function is eligible when its body uses only the subset the VM implements:
   identifier, so a numeric kernel promotes instead of falling back on its
   first `sqrt`
 - pipelines (`|>`), desugared to the equivalent call
+- template strings, with the interpreter's exact interpolation rules
+  (String raw; Int/Float/Bool via to_string; everything else through the
+  value's display form)
+- nested `fn` declarations, compiled as named closures over the current
+  frame (self-recursive ones refuse and stay interpreted)
 - free identifiers that resolve in the function's own closure — global
   constants, module-level bindings, and named functions passed as values —
   baked as constants. Sound because the interpreter installs exactly that
@@ -349,11 +354,12 @@ These are real gaps, not oversights:
    fallthrough re-evaluates the receiver, which the VM will not replicate
    for an expression with side effects. Pure receivers — locals, field
    chains, literals — compile (see below).
-2. **Map literals, template strings, and nested `fn` declarations are
-   uncompiled**, as is *assigning* to a global (reads bake as snapshot
-   constants). Map-returning builtins (`map_set`, `group_by`, ...) remain
-   excluded because a `Map` does not survive the round trip back to an
-   AST value.
+2. **Map literals are uncompiled**, as is *assigning* to a global
+   (reads bake as snapshot constants). Map-returning builtins
+   (`map_set`, `group_by`, ...) remain excluded because a `Map` does not
+   survive the round trip back to an AST value. Self-recursive *nested*
+   `fn` declarations refuse (the name binds after the closure is built);
+   non-recursive nested fns compile.
 3. **Bridged builtin calls cost a value round trip.** Builtins outside
    the native set convert arguments and results between the OVM and AST
    value models per call. The native `map`/`filter`/`sum` loops avoid
