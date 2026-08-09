@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **Enums are first-class in the VM.** Enum values used to be crushed
+  into a struct shape with a `__variant` field that could not convert
+  back, so no enum ever crossed the tier boundary and any function
+  touching one stayed interpreted. The OVM now has a real enum value:
+  construction (`Circle(2.0)`) compiles to `MakeEnum` with constructor
+  arity checked at compile time, unit variants bake as closure constants,
+  `==`/`!=` compare structurally, and conversion is lossless both ways.
+  Enum-variant *patterns* compile too — including the interpreter's exact
+  quirks: a bare unit-variant name is an equality match rather than a
+  binding (per the declared-variant rule, with locals shadowing back to a
+  binding), struct-variant payloads match positionally in field-name
+  order, and a plain tuple of matching length satisfies an enum pattern
+  (legacy behavior). Struct and anonymous-object patterns compile as
+  well. Chosen by measurement: a sweep of the example corpus found enum
+  patterns and enum-typed closure constants were the largest class of
+  compilation refusals — the regex engine's 15-function cascade traced
+  to a single unit variant. Direct enum/struct pattern rejections across
+  the corpus: 14 → 0. The differential suite caught one real divergence
+  during development (a unit-variant pattern compiled as a binding,
+  swallowing every arm below it) — fixed by mirroring the interpreter's
+  declared-variant rule, with a new-variant declaration invalidating
+  previously compiled functions the same way struct redeclaration does.
+
 ## [0.34.0] - 2026-08-08
 
 ### Changed

@@ -61,9 +61,16 @@ A function is eligible when its body uses only the subset the VM implements:
 - `if`/`else` expressions
 - `match` expressions over literals, wildcards, bindings, integer ranges,
   or-patterns, guards, and destructuring of `Ok`/`Err`, lists (including
-  `...rest`), and tuples — nested to any depth
+  `...rest`), tuples, enum variants (a bare unit-variant name is an
+  equality match, not a binding — the interpreter's rule), and struct /
+  anonymous-object patterns — nested to any depth
 - `Ok(..)` / `Err(..)` construction
 - field access (`p.x`) and indexing (`xs[i]`, negatives from the end)
+- enum values end to end: unit variants bake as closure constants,
+  tuple-variant constructors (`Circle(2.0)`) compile to a `MakeEnum`
+  instruction with arity checked at compile time, `==`/`!=` compare
+  structurally, and enums round-trip the tier boundary losslessly (they
+  used to be crushed into a struct shape that could not convert back)
 - struct literals and anonymous objects. Literals validate against the
   declared field set at *compile* time with the interpreter's exact rules
   (unknown type, missing field, surprise field all refuse, so the
@@ -102,8 +109,8 @@ Anything else causes the function to stay interpreted:
 - a free identifier absent from the function's closure — the interpreter
   would resolve it through the caller's runtime scope chain, which no
   compile-time snapshot can represent
-- maps, async, and *enum* construction (struct construction compiles;
-  enums convert lossily and stay interpreted)
+- maps, async, and struct-variant enum construction (unit and tuple
+  variants compile)
 - a lambda capturing a name the enclosing function binds only *later*
   (no register holds it yet at the lambda expression); calling a
   lambda-valued expression directly

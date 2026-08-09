@@ -482,6 +482,9 @@ impl Interpreter {
         for variant in &error_type_decl.variants {
             let value = if variant.fields.is_empty() {
                 self.unit_variant_names.insert(variant.name.clone());
+                if let Some(tier) = self.bytecode_tier.as_mut() {
+                    tier.note_unit_variant(variant.name.clone());
+                }
                 Value::Enum {
                     type_name: error_type_decl.name.clone(),
                     variant_name: variant.name.clone(),
@@ -1693,6 +1696,9 @@ impl Interpreter {
                         // Remember unit-variant names so a pattern can tell a
                         // variant test from a fresh binding by name.
                         self.unit_variant_names.insert(variant.name.clone());
+                        if let Some(tier) = self.bytecode_tier.as_mut() {
+                            tier.note_unit_variant(variant.name.clone());
+                        }
                         Value::Enum {
                             type_name: type_decl.name.clone(),
                             variant_name: variant.name.clone(),

@@ -917,9 +917,8 @@ sum_oks([Ok(1), Err("a"), Ok(2), Ok(3)])
 }
 
 #[test]
-fn struct_patterns_still_fall_back() {
-    // Struct patterns are not compiled; the function must stay interpreted
-    // and still be correct.
+fn struct_patterns_now_compile() {
+    // (This used to assert struct patterns were rejected.)
     let src = r#"
 type User = struct { name: String, age: Int }
 fn label(u) = match u {
@@ -928,7 +927,7 @@ fn label(u) = match u {
 label(User { name: "ann", age: 30 })
 label(User { name: "bob", age: 40 })
 "#;
-    assert_eq!(promotion_count(src, 1), 0);
+    assert_eq!(promotion_count(src, 1), 1, "label should now compile");
     assert_tier_transparent(src);
 }
 
@@ -1498,6 +1497,131 @@ for i in 0..30 { n = n + use_it(M { sqrt: 41 }) }
 n
 "#,
     );
+}
+
+// ── enums: construction, unit variants, and patterns ──────────────────
+
+#[test]
+fn enum_construction_and_matching_promote_and_agree() {
+    let src = r#"
+type Shape = enum { Circle(Float), Rect(Float, Float), Empty }
+fn area(s) = match s {
+    Circle(r) => 3.0 * r * r,
+    Rect(w, h) => w * h,
+    Empty => 0.0
+}
+fn total(n) = {
+    let mut t = 0.0
+    for i in 0..n {
+        let f = to_float(i)
+        t = t + area(Circle(f)) + area(Rect(f, 2.0)) + area(Empty)
+    }
+    t
+}
+total(40) + total(40) + total(40)
+"#;
+    assert!(
+        promotion_count(src, 2) >= 2,
+        "area and total should promote"
+    );
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn recursive_adt_functions_promote_and_agree() {
+    // The algebraic-types shape: a recursive enum consumed by a recursive
+    // match — trees of Node/Leaf.
+    let src = r#"
+type Tree = enum { Leaf(Int), Node(Tree, Tree) }
+fn total(t) = match t {
+    Leaf(n) => n,
+    Node(l, r) => total(l) + total(r)
+}
+fn build(depth) = {
+    if depth <= 0 => Leaf(1)
+    else => Node(build(depth - 1), build(depth - 1))
+}
+let tree = build(10)
+let mut acc = 0
+for i in 0..20 { acc = acc + total(tree) }
+acc
+"#;
+    assert!(promotion_count(src, 2) >= 1);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn enum_values_cross_the_tier_boundary_and_compare() {
+    // Enums round-trip losslessly now: constructed in compiled code,
+    // returned to the interpreter, compared and matched there.
+    let src = r#"
+type Opt = enum { SomeV(Int), NoneV }
+fn wrap(n) = if n > 0 => SomeV(n) else => NoneV
+wrap(1)
+wrap(2)
+let a = wrap(5)
+let b = wrap(0 - 1)
+match a { SomeV(x) => x, NoneV => 0 } + match b { SomeV(x) => x, NoneV => 100 }
+"#;
+    assert_tier_transparent(src);
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(105));
+}
+
+#[test]
+fn enum_arity_mismatch_falls_back_and_errors_identically() {
+    // Wrong constructor arity refuses compilation; the interpreter raises
+    // its arity error in both tiers.
+    assert_tier_transparent(
+        r#"
+type Shape = enum { Circle(Float) }
+fn bad(n) = Circle(n, n)
+bad(1.0)
+bad(2.0)
+bad(3.0)
+"#,
+    );
+}
+
+#[test]
+fn struct_and_anonymous_patterns_promote_and_agree() {
+    let src = r#"
+type User = struct { name: String, age: Int }
+fn describe(u) = match u {
+    User { age, name } if age >= 18 => name + ":adult",
+    User { name, age } => name + ":" + to_string(age)
+}
+fn tag(rec) = match rec {
+    { kind, size } => kind + to_string(size),
+    _ => "unknown"
+}
+let mut s = ""
+for i in 0..20 {
+    s = s + describe(User { name: "a", age: i }) + tag({ kind: "k", size: i })
+}
+len(s)
+"#;
+    assert!(promotion_count(src, 2) >= 1);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn enum_patterns_against_wrong_shapes_agree() {
+    // Non-matching variants, plain tuples (the interpreter accepts a tuple
+    // of matching length against an enum pattern — legacy behavior), and
+    // non-enum values must fall through arms identically.
+    let src = r#"
+type E = enum { A(Int), B }
+fn probe(v) = match v {
+    A(x) => x,
+    B => 100,
+    _ => 999
+}
+probe(A(7))
+probe(B)
+probe((42, 43))
+probe(A(7)) + probe(B) + probe(7) + probe((1, 2, 3))
+"#;
+    assert_tier_transparent(src);
 }
 
 // ── struct construction compiles ──────────────────────────────────────

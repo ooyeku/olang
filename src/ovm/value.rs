@@ -135,6 +135,11 @@ pub enum ValueData {
     /// and hands to builtins; FunctionObject drops parameter metadata and
     /// rewrites the closure, so it cannot round-trip.
     AstFunction(Arc<crate::ast::Function>),
+    /// A proper enum value: type, variant, and payload, converting to and
+    /// from the interpreter's `Value::Enum` losslessly. (Enums used to be
+    /// crushed into a struct shape with a `__variant` field, which could
+    /// not convert back — so no enum ever crossed the tier boundary.)
+    Enum(Arc<EnumObject>),
     /// A lambda over *runtime* captures, built by the MakeClosure
     /// instruction: the template carries parameters, body, and the
     /// declaration-time closure part; `captured` holds the values
@@ -175,6 +180,24 @@ pub struct FunctionObject {
     pub compilation_tier: ExecutionTier,
     pub call_count: AtomicU32,
     pub optimization_data: OptimizationData,
+}
+
+/// An enum value in the OVM: mirrors `Value::Enum` exactly.
+#[derive(Debug)]
+pub struct EnumObject {
+    pub type_name: String,
+    pub variant_name: String,
+    pub data: EnumData,
+}
+
+#[derive(Debug)]
+pub enum EnumData {
+    Unit,
+    Tuple(Vec<OvmValue>),
+    /// Struct-variant fields. Order preserved from the source value; the
+    /// interpreter's positional pattern matching sorts by name, which the
+    /// VM mirrors at match time, not here.
+    Struct(Vec<(String, OvmValue)>),
 }
 
 /// A compiled lambda plus its runtime captures. Convertible back to an
@@ -631,6 +654,7 @@ impl PartialEq for OvmValue {
             (ValueData::Function(a), ValueData::Function(b)) => Arc::ptr_eq(a, b),
             (ValueData::AstFunction(a), ValueData::AstFunction(b)) => Arc::ptr_eq(a, b),
             (ValueData::Closure(a), ValueData::Closure(b)) => Arc::ptr_eq(a, b),
+            (ValueData::Enum(a), ValueData::Enum(b)) => Arc::ptr_eq(a, b),
             (ValueData::Struct(a), ValueData::Struct(b)) => Arc::ptr_eq(a, b),
             (ValueData::Builtin(a), ValueData::Builtin(b)) => Arc::ptr_eq(a, b),
             (ValueData::Promise(a), ValueData::Promise(b)) => Arc::ptr_eq(a, b),
@@ -747,6 +771,7 @@ impl OvmValue {
             ValueData::Function(p) => ValueData::Function(p.clone()),
             ValueData::AstFunction(p) => ValueData::AstFunction(p.clone()),
             ValueData::Closure(p) => ValueData::Closure(p.clone()),
+            ValueData::Enum(p) => ValueData::Enum(p.clone()),
             ValueData::Struct(p) => ValueData::Struct(p.clone()),
             ValueData::Range(p) => ValueData::Range(p.clone()),
             ValueData::Builtin(p) => ValueData::Builtin(p.clone()),
@@ -1283,47 +1308,23 @@ impl OvmValue {
                 variant_name,
                 variant_data,
             } => {
-                // For now, create a simple struct-like representation for enums
-                // In a full implementation, we would have proper enum value support
-                let mut fields = FieldMap::default();
-                fields.insert(
-                    "__variant".to_string(),
-                    Self::new_string(variant_name.clone()),
-                );
-
-                match variant_data {
-                    crate::ast::EnumVariantData::Unit => {
-                        // Unit variant has no additional fields
-                    }
+                let data = match variant_data {
+                    crate::ast::EnumVariantData::Unit => EnumData::Unit,
                     crate::ast::EnumVariantData::Tuple(values) => {
-                        // Add tuple values as indexed fields
-                        for (i, value) in values.iter().enumerate() {
-                            fields.insert(format!("_{}", i), Self::from_ast(value.clone()));
-                        }
+                        EnumData::Tuple(values.iter().map(|v| Self::from_ast(v.clone())).collect())
                     }
-                    crate::ast::EnumVariantData::Struct(struct_fields) => {
-                        // Add struct fields directly
-                        for (name, value) in struct_fields {
-                            fields.insert(name, Self::from_ast(value.clone()));
-                        }
-                    }
-                }
-
-                let struct_obj = StructObject {
-                    type_name: format!("{}::{}", type_name, variant_name),
-                    fields,
-                };
-
-                let gc_ptr = Arc::new(struct_obj);
-
-                Self {
-                    header: ValueHeader::new(
-                        TypeTag::Struct,
-                        ExecutionTier::Interpreter,
-                        LazyState::Eager,
+                    crate::ast::EnumVariantData::Struct(struct_fields) => EnumData::Struct(
+                        struct_fields
+                            .iter()
+                            .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
+                            .collect(),
                     ),
-                    data: ValueData::Struct(gc_ptr),
-                }
+                };
+                Self::new_enum(Arc::new(EnumObject {
+                    type_name,
+                    variant_name,
+                    data,
+                }))
             }
 
             Value::Promise {
@@ -1414,6 +1415,7 @@ impl OvmValue {
                 ValueData::Function(_) => std::mem::size_of::<FunctionObject>(),
                 ValueData::AstFunction(_) => std::mem::size_of::<crate::ast::Function>(),
                 ValueData::Closure(_) => std::mem::size_of::<ClosureObject>(),
+                ValueData::Enum(_) => std::mem::size_of::<EnumObject>(),
                 ValueData::Struct(_) => std::mem::size_of::<StructObject>(),
                 ValueData::Range(_) => std::mem::size_of::<RangeObject>(),
                 ValueData::Promise(_) => std::mem::size_of::<PromiseObject>(),
@@ -1425,6 +1427,14 @@ impl OvmValue {
         safepoint_manager.record_allocation(allocation_size);
 
         Ok(ovm_value)
+    }
+
+    /// Wrap an enum value.
+    pub fn new_enum(obj: Arc<EnumObject>) -> Self {
+        Self {
+            header: ValueHeader::new(TypeTag::Struct, ExecutionTier::Bytecode, LazyState::Eager),
+            data: ValueData::Enum(obj),
+        }
     }
 
     /// Wrap a struct object built by MakeStruct.
@@ -1508,6 +1518,28 @@ impl OvmValue {
                 Ok(Value::Tuple(std::sync::Arc::new(ast_values)))
             }
             ValueData::AstFunction(func) => Ok(Value::Function((**func).clone())),
+            ValueData::Enum(e) => {
+                let variant_data = match &e.data {
+                    EnumData::Unit => crate::ast::EnumVariantData::Unit,
+                    EnumData::Tuple(values) => crate::ast::EnumVariantData::Tuple(
+                        values
+                            .iter()
+                            .map(|v| v.to_ast())
+                            .collect::<Result<_, _>>()?,
+                    ),
+                    EnumData::Struct(fields) => crate::ast::EnumVariantData::Struct(
+                        fields
+                            .iter()
+                            .map(|(k, v)| Ok((k.clone(), v.to_ast()?)))
+                            .collect::<Result<_, RuntimeError>>()?,
+                    ),
+                };
+                Ok(Value::Enum {
+                    type_name: e.type_name.clone(),
+                    variant_name: e.variant_name.clone(),
+                    variant_data,
+                })
+            }
             // Rebuild the interpreter function the lambda evaluation would
             // have produced: the declaration-time closure with the runtime
             // captures layered on top. The body Arc is shared verbatim.
@@ -1628,6 +1660,7 @@ impl fmt::Display for OvmValue {
             ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
                 write!(f, "<function>")
             }
+            ValueData::Enum(e) => write!(f, "{}::{}", e.type_name, e.variant_name),
             ValueData::Struct(_) => write!(f, "<struct>"),
             ValueData::Range(gc_ptr) => {
                 if gc_ptr.inclusive {

@@ -75,6 +75,10 @@ pub struct BytecodeVm {
     /// interpreter's registry so struct literals validate at compile time
     /// with exactly the interpreter's rules.
     struct_defs: HashMap<String, Vec<String>>,
+    /// Declared unit enum variant names: a bare identifier pattern with
+    /// one of these names is an equality match, not a binding — the same
+    /// rule the interpreter applies.
+    unit_variant_names: std::collections::HashSet<String>,
     /// Types redeclared with a *different* field set. Compile-time
     /// validation would go stale for them, so their literals are never
     /// compiled again — the interpreter (whose registry is live) stays the
@@ -143,6 +147,9 @@ pub struct BytecodeCompiler {
     /// Declared struct shapes for compile-time literal validation
     /// (mirrored from the interpreter; poisoned types are absent).
     struct_defs: HashMap<String, Vec<String>>,
+
+    /// Declared unit enum variant names (see BytecodeVm::unit_variant_names).
+    unit_variant_names: std::collections::HashSet<String>,
 
     /// Lambdas with runtime captures met during this compile: each is the
     /// lambda body as a standalone declaration whose trailing parameters
@@ -316,6 +323,43 @@ pub enum Instruction {
         dst: Register,
         type_name: String,
         fields: Vec<(String, Register)>,
+    },
+    /// Build a tuple-variant enum value from argument registers (the only
+    /// runtime construction form: unit variants are constants, and struct
+    /// variants have no construction syntax).
+    MakeEnum {
+        dst: Register,
+        type_name: String,
+        variant_name: String,
+        args: Vec<Register>,
+    },
+    /// The enum-variant pattern test, mirroring the interpreter's decision
+    /// tree exactly: an Enum matches when the variant name matches and the
+    /// payload count equals `pattern_count` (Unit counts as zero); a plain
+    /// Tuple of matching length also matches (legacy behavior, variant
+    /// name ignored); anything else does not match.
+    PatternTestEnum {
+        dst: Register,
+        value: Register,
+        variant_name: String,
+        pattern_count: usize,
+    },
+    /// Extract payload element `index` after PatternTestEnum has passed:
+    /// tuple payloads by position, struct-variant payloads by position in
+    /// field-name order (the interpreter sorts by name for positional
+    /// matching), legacy tuples by position.
+    ExtractEnumPayload {
+        dst: Register,
+        value: Register,
+        index: usize,
+    },
+    /// True when the value is a struct carrying the named field. Never
+    /// errors: a non-struct value is simply `false`, as in the
+    /// interpreter's pattern matcher.
+    PatternTestStructField {
+        dst: Register,
+        value: Register,
+        field_name: String,
     },
     /// Build a runtime closure: clone the template ClosureObject stored at
     /// `template_const` and fill its `captured` values from the given
@@ -865,6 +909,7 @@ impl BytecodeVm {
             arg_pool: Vec::new(),
             hof_cache: HashMap::new(),
             struct_defs: HashMap::new(),
+            unit_variant_names: std::collections::HashSet::new(),
             poisoned_structs: std::collections::HashSet::new(),
             // Must match the interpreter's own limit: a program that recurses
             // 900 deep has to behave the same whether or not it was promoted
@@ -894,6 +939,14 @@ impl BytecodeVm {
                 false
             }
         }
+    }
+
+    /// Record a declared unit enum variant name. Returns true when the
+    /// name is new — previously compiled functions may have compiled a
+    /// bare-identifier pattern of this name as a binding, which is now an
+    /// equality match, so they must recompile.
+    pub fn note_unit_variant(&mut self, name: String) -> bool {
+        self.unit_variant_names.insert(name)
     }
 
     pub fn register_function(&mut self, name: String, func_id: FunctionId) {
@@ -951,6 +1004,7 @@ impl BytecodeVm {
         self.compiler.function_registry = self.function_registry.clone();
         self.compiler.builtin_names = self.builtin_names.clone();
         self.compiler.struct_defs = self.struct_defs.clone();
+        self.compiler.unit_variant_names = self.unit_variant_names.clone();
         self.compiler.enclosing_closure = closure;
 
         self.compiler.pending_lambdas.clear();
@@ -1364,6 +1418,87 @@ impl BytecodeVm {
                     };
                     self.execution_state
                         .set_register(*dst, OvmValue::new_struct(Arc::new(obj)))?;
+                }
+
+                Instruction::MakeEnum {
+                    dst,
+                    type_name,
+                    variant_name,
+                    args,
+                } => {
+                    let mut values = Vec::with_capacity(args.len());
+                    for reg in args {
+                        values.push(self.execution_state.get_register(*reg)?);
+                    }
+                    let obj = crate::ovm::value::EnumObject {
+                        type_name: type_name.clone(),
+                        variant_name: variant_name.clone(),
+                        data: crate::ovm::value::EnumData::Tuple(values),
+                    };
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_enum(Arc::new(obj)))?;
+                }
+
+                Instruction::PatternTestEnum {
+                    dst,
+                    value,
+                    variant_name,
+                    pattern_count,
+                } => {
+                    use crate::ovm::value::{EnumData, ValueData};
+                    let matches = match &self.execution_state.register_ref(*value)?.data {
+                        ValueData::Enum(e) => {
+                            e.variant_name == *variant_name
+                                && match &e.data {
+                                    EnumData::Unit => *pattern_count == 0,
+                                    EnumData::Tuple(vs) => vs.len() == *pattern_count,
+                                    EnumData::Struct(fs) => fs.len() == *pattern_count,
+                                }
+                        }
+                        // Legacy: an enum pattern matches a plain tuple of the
+                        // same length, variant name ignored (interpreter parity)
+                        ValueData::Tuple(vs) => vs.len() == *pattern_count,
+                        _ => false,
+                    };
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_boolean(matches))?;
+                }
+
+                Instruction::ExtractEnumPayload { dst, value, index } => {
+                    use crate::ovm::value::{EnumData, ValueData};
+                    let extracted = match &self.execution_state.register_ref(*value)?.data {
+                        ValueData::Enum(e) => match &e.data {
+                            EnumData::Tuple(vs) => vs.get(*index).cloned(),
+                            EnumData::Struct(fs) => {
+                                let mut ordered: Vec<&(String, OvmValue)> = fs.iter().collect();
+                                ordered.sort_by(|a, b| a.0.cmp(&b.0));
+                                ordered.get(*index).map(|(_, v)| v.clone())
+                            }
+                            EnumData::Unit => None,
+                        },
+                        ValueData::Tuple(vs) => vs.get(*index).cloned(),
+                        _ => None,
+                    };
+                    let extracted = extracted.ok_or_else(|| {
+                        BytecodeError::RuntimeError(
+                            "enum payload extraction after a passing test cannot miss".to_string(),
+                        )
+                    })?;
+                    self.execution_state.set_register(*dst, extracted)?;
+                }
+
+                Instruction::PatternTestStructField {
+                    dst,
+                    value,
+                    field_name,
+                } => {
+                    use crate::ovm::value::ValueData;
+                    let has = match &self.execution_state.register_ref(*value)?.data {
+                        ValueData::Struct(s) => s.fields.contains_key(field_name),
+                        _ => false,
+                    };
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_boolean(has))?;
                 }
 
                 Instruction::MakeClosure {
@@ -2058,6 +2193,17 @@ impl BytecodeVm {
                     )))
                 }
             },
+            (ValueData::Enum(_), ValueData::Enum(_))
+            | (ValueData::Struct(_), ValueData::Struct(_)) => match op {
+                BinaryOp::Equal => OvmValue::new_boolean(Self::pattern_eq(left, right)),
+                BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "Unsupported operation: {:?}",
+                        op
+                    )))
+                }
+            },
             (ValueData::List(a), ValueData::List(b)) => match op {
                 BinaryOp::Add => {
                     let mut items = Vec::with_capacity(a.len() + b.len());
@@ -2521,6 +2667,14 @@ impl BytecodeVm {
             (ValueData::Boolean(x), ValueData::Boolean(y)) => x == y,
             (ValueData::String(x), ValueData::String(y)) => x == y,
             (ValueData::Unit, ValueData::Unit) => true,
+            // Enums and structs compare structurally, as the interpreter's
+            // Value equality does; conversion is exact so comparing the AST
+            // forms is the same relation.
+            (ValueData::Enum(_), ValueData::Enum(_))
+            | (ValueData::Struct(_), ValueData::Struct(_)) => match (a.to_ast(), b.to_ast()) {
+                (Ok(x), Ok(y)) => x == y,
+                _ => false,
+            },
             _ => false,
         }
     }
@@ -2548,6 +2702,16 @@ impl BytecodeVm {
             // the function on the interpreter. `from_ast` maps enums to a
             // struct shape lossily, so enums are deliberately not included.
             Value::Struct { fields, .. } => fields.values().all(Self::round_trips),
+            // Enums convert losslessly (type, variant, payload) since the
+            // OVM grew a first-class enum value; they round-trip when the
+            // payload does.
+            Value::Enum { variant_data, .. } => match variant_data {
+                crate::ast::EnumVariantData::Unit => true,
+                crate::ast::EnumVariantData::Tuple(values) => values.iter().all(Self::round_trips),
+                crate::ast::EnumVariantData::Struct(fields) => {
+                    fields.values().all(Self::round_trips)
+                }
+            },
             _ => false,
         }
     }
@@ -3303,6 +3467,7 @@ impl BytecodeCompiler {
             _label_counter: 0,
             function_registry: HashMap::new(),
             struct_defs: HashMap::new(),
+            unit_variant_names: std::collections::HashSet::new(),
             pending_lambdas: Vec::new(),
         }
     }
@@ -3654,11 +3819,28 @@ impl BytecodeCompiler {
 
                 // Reject callees the VM can't resolve at compile time rather
                 // than failing mid-execution
-                if !self.builtin_names.contains(&function_name)
+                // A callee that is neither a user function nor a builtin may
+                // be an enum tuple-variant constructor from the closure —
+                // `Circle(2.0)`. Constructors only take this path when the
+                // name has no user-function or builtin meaning, so nothing
+                // can be shadowed the wrong way; an argument-count mismatch
+                // refuses, and the interpreter raises its arity error.
+                let enum_constructor = if !self.builtin_names.contains(&function_name)
                     && !self.function_registry.contains_key(&function_name)
                 {
-                    return Err(BytecodeError::UnresolvedCallee(function_name));
-                }
+                    match self.enclosing_closure.get(&function_name) {
+                        Some(Value::EnumConstructor {
+                            type_name,
+                            variant_name,
+                            arity,
+                        }) if *arity == arguments.len() => {
+                            Some((type_name.clone(), variant_name.clone()))
+                        }
+                        _ => return Err(BytecodeError::UnresolvedCallee(function_name)),
+                    }
+                } else {
+                    None
+                };
 
                 let mut arg_regs = Vec::new();
                 for argument in arguments {
@@ -3676,6 +3858,15 @@ impl BytecodeCompiler {
                 }
 
                 let dst_reg = self.register_allocator.allocate_register();
+                if let Some((type_name, variant_name)) = enum_constructor {
+                    self.emitter.instructions.push(Instruction::MakeEnum {
+                        dst: dst_reg,
+                        type_name,
+                        variant_name,
+                        args: arg_regs,
+                    });
+                    return Ok(dst_reg);
+                }
                 // User functions shadow builtins (same order as the runtime
                 // path); resolving the id here removes the per-call name hash.
                 if let Some(&func_id) = self.function_registry.get(&function_name) {
@@ -4164,6 +4355,47 @@ impl BytecodeCompiler {
             Pattern::Wildcard => Ok(()),
 
             Pattern::Identifier(name) => {
+                // A bare name that is a declared unit enum variant is an
+                // equality match, not a binding — mirroring the interpreter,
+                // which checks (in order) that the name is a declared unit
+                // variant AND resolves to a unit enum in the current scope.
+                // A local shadowing the name makes it a binding again; a
+                // variant declared after this function (absent from the
+                // closure, resolvable only through the caller's runtime
+                // scope) refuses, because no snapshot can answer it.
+                if !self.local_variables.contains_key(name)
+                    && self.unit_variant_names.contains(name)
+                {
+                    match self.enclosing_closure.get(name) {
+                        Some(
+                            variant @ Value::Enum {
+                                variant_data: crate::ast::EnumVariantData::Unit,
+                                ..
+                            },
+                        ) => {
+                            let const_idx = self
+                                .emitter
+                                .add_constant(OvmValue::from_ast(variant.clone()));
+                            let const_reg = self.register_allocator.allocate_register();
+                            self.emitter.emit_load_const(const_reg, const_idx);
+                            let test_reg = self.register_allocator.allocate_register();
+                            self.emitter.instructions.push(Instruction::PatternEq {
+                                dst: test_reg,
+                                value: value_reg,
+                                other: const_reg,
+                            });
+                            self.emitter.emit_branch_if_false(test_reg, fail_label);
+                            return Ok(());
+                        }
+                        Some(_) => {} // shadowed by a non-variant: binds
+                        None => {
+                            return Err(BytecodeError::CompilationFailed(format!(
+                                "unit variant '{}' resolves through runtime scope, not the closure",
+                                name
+                            )))
+                        }
+                    }
+                }
                 // Bind the name to its own register so later assignment to it
                 // doesn't clobber the scrutinee
                 let var_reg = self.register_allocator.allocate_register();
@@ -4330,6 +4562,70 @@ impl BytecodeCompiler {
                         from: patterns.len(),
                     });
                     self.local_variables.insert(rest_name.clone(), rest_reg);
+                }
+                Ok(())
+            }
+
+            Pattern::EnumVariant {
+                variant_name,
+                patterns,
+            } => {
+                // Test first (variant + payload arity, with the interpreter's
+                // legacy plain-tuple acceptance), then extract each payload
+                // element positionally — struct-variant payloads in
+                // field-name order, exactly as the interpreter matches them.
+                let test_reg = self.register_allocator.allocate_register();
+                self.emitter
+                    .instructions
+                    .push(Instruction::PatternTestEnum {
+                        dst: test_reg,
+                        value: value_reg,
+                        variant_name: variant_name.clone(),
+                        pattern_count: patterns.len(),
+                    });
+                self.emitter.emit_branch_if_false(test_reg, fail_label);
+
+                for (index, sub) in patterns.iter().enumerate() {
+                    let payload_reg = self.register_allocator.allocate_register();
+                    self.emitter
+                        .instructions
+                        .push(Instruction::ExtractEnumPayload {
+                            dst: payload_reg,
+                            value: value_reg,
+                            index,
+                        });
+                    self.compile_pattern_test(sub, payload_reg, fail_label)?;
+                }
+                Ok(())
+            }
+
+            // Struct patterns: each named field must exist and its
+            // subpattern match, checked in written order with short-circuit.
+            // The interpreter ignores the pattern's type name and tolerates
+            // extra fields in the value; so does this.
+            Pattern::Struct { field_patterns, .. }
+            | Pattern::AnonymousStruct { field_patterns } => {
+                for (field_name, sub) in field_patterns {
+                    let test_reg = self.register_allocator.allocate_register();
+                    self.emitter
+                        .instructions
+                        .push(Instruction::PatternTestStructField {
+                            dst: test_reg,
+                            value: value_reg,
+                            field_name: field_name.clone(),
+                        });
+                    self.emitter.emit_branch_if_false(test_reg, fail_label);
+
+                    let name_const = self
+                        .emitter
+                        .add_constant(OvmValue::new_string(field_name.clone()));
+                    let field_reg = self.register_allocator.allocate_register();
+                    self.emitter.instructions.push(Instruction::GetField {
+                        dst: field_reg,
+                        object: value_reg,
+                        name_const,
+                    });
+                    self.compile_pattern_test(sub, field_reg, fail_label)?;
                 }
                 Ok(())
             }
@@ -4713,6 +5009,11 @@ impl BytecodeCompiler {
             Pattern::Tuple(patterns) => patterns.iter().any(Self::pattern_binds),
             Pattern::List { patterns, rest } => {
                 rest.is_some() || patterns.iter().any(Self::pattern_binds)
+            }
+            Pattern::EnumVariant { patterns, .. } => patterns.iter().any(Self::pattern_binds),
+            Pattern::Struct { field_patterns, .. }
+            | Pattern::AnonymousStruct { field_patterns } => {
+                field_patterns.iter().any(|(_, p)| Self::pattern_binds(p))
             }
             _ => false,
         }

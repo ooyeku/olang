@@ -111,6 +111,15 @@ impl BytecodeTier {
         }
     }
 
+    /// Record a declared unit enum variant. A NEW name invalidates every
+    /// compiled function: a bare-identifier pattern of this name compiled
+    /// as a binding is now an equality match.
+    pub fn note_unit_variant(&mut self, name: String) {
+        if self.vm.note_unit_variant(name) {
+            self.compiled.clear();
+        }
+    }
+
     /// Record a user function declaration so calls to it can be compiled.
     pub fn note_function(&mut self, name: String, func: Function) {
         // Already known to be ambiguous: a second module's same-named function

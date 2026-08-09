@@ -286,11 +286,6 @@ fn unsupported_features_fail_compilation() {
     let cases = [
         // free variable / global
         ("fn f(x) = x + y", "f"),
-        // struct patterns are not compiled
-        (
-            "fn f(x) = match x { User { name, age } => name, _ => 0 }",
-            "f",
-        ),
         // or-patterns that bind are rejected: alternatives would leave
         // different bindings on the success path
         ("fn f(x) = match x { Ok(a) | Err(a) => a, _ => 0 }", "f"),
@@ -321,6 +316,13 @@ fn capturing_lambdas_compile_and_agree() {
     for arg in [1i64, 3, 10] {
         assert_same("fn f(x) = map([1, 2], (y) => y * x)", "f", &ints(&[arg]));
     }
+    // Also formerly rejected: a struct pattern against a non-struct value
+    // falls through to the wildcard arm in both tiers.
+    assert_same(
+        "fn f(x) = match x { User { name, age } => name, _ => 0 }",
+        "f",
+        &ints(&[1]),
+    );
 }
 
 // --- Aliasing and binding cases (register-window hazards) ---
