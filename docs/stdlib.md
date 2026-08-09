@@ -127,6 +127,8 @@ println(to_string(clamp(15, 0, 10)))
 |---|---|
 | `map(xs, f)` | transform each element |
 | `filter(xs, pred)` | keep matching elements |
+| `par_map(xs, f)` | `map` fanned out across OS threads |
+| `par_filter(xs, pred)` | `filter` fanned out across OS threads |
 | `fold(xs, init, f)` | reduce left with an accumulator |
 | `reduce(xs, init, f)` | same shape as `fold` |
 | `find(xs, pred)` | `Ok(first match)` or `Err` |
@@ -141,6 +143,26 @@ let total = [1, 2, 3, 4, 5]
     |> fold(0, (a, x) => a + x)
 println(to_string(total))                       // 1 + 9 + 25
 println(to_string(unwrap(find([3, 8, 2], (x) => x > 5))))
+```
+
+`par_map` and `par_filter` are the parallel twins of `map` and `filter`:
+same arguments, same results in the same order, but the work fans out
+across OS threads — one interpreter (with its own bytecode tier) per
+worker, no GIL. Use them when `f` does real computation per element;
+`examples/parmap/` measures the speedup. One deliberate difference: like
+`spawn`, the function runs against worker snapshots, so mutating enclosing
+state from inside it is not visible to the caller. If several elements
+would fail, the error reported is the one `map` would have hit first.
+
+```olang
+fn weight(n) = {
+    let mut acc = 0
+    for i in 0..200 { acc = acc + (n * i) % 13 }
+    acc
+}
+let par = 1..50 |> par_map(weight)
+println(to_string(par == (1..50 |> map(weight))))   // identical results
+println(to_string(par_filter(1..10, (x) => x % 3 == 0)))
 ```
 
 ### Strings (global shortcuts)

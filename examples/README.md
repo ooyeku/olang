@@ -107,6 +107,11 @@ A two-package demonstration of the package manager (see
   layers of interpretation (~11× faster on the tier — this example is what
   motivated the native collection builtins), and a test block locks
   evaluation results and error messages
+- [`parmap/`](parmap/) — data-parallel pipelines with `par_map` /
+  `par_filter`: counts primes in 48 blocks both sequentially and fanned
+  out across every core, asserts the answers are identical, and reports
+  the measured speedup (~9× on an M-series). A `test` block pins
+  parallel == sequential on every run
 - [`pargrep/`](pargrep/) — parallel code search on real `spawn` threads:
   files are dealt into chunks, one worker thread per chunk searches with
   `re` + `fs`, results merge after `await Promise.all`, and per-task

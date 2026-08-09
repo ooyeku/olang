@@ -70,6 +70,22 @@ impl BuiltinFunctions {
         );
 
         functions.insert(
+            "par_map".to_string(),
+            BuiltinFunction {
+                name: "par_map".to_string(),
+                arity: 2,
+            },
+        );
+
+        functions.insert(
+            "par_filter".to_string(),
+            BuiltinFunction {
+                name: "par_filter".to_string(),
+                arity: 2,
+            },
+        );
+
+        functions.insert(
             "reduce".to_string(),
             BuiltinFunction {
                 name: "reduce".to_string(),
@@ -716,6 +732,8 @@ impl BuiltinFunctions {
             "print" => builtins.print(arguments),
             "map" => builtins.map(arguments, interpreter),
             "filter" => builtins.filter(arguments, interpreter),
+            "par_map" => builtins.par_map(arguments, interpreter),
+            "par_filter" => builtins.par_filter(arguments, interpreter),
             "reduce" => builtins.reduce(arguments, interpreter),
             "fold" => builtins.fold(arguments, interpreter),
             "len" => builtins.len(arguments),
@@ -992,6 +1010,170 @@ impl BuiltinFunctions {
         }
 
         Ok(Value::List(result.into()))
+    }
+
+    /// Materialize `par_map`/`par_filter`'s first argument, mirroring the
+    /// sequential builtins' checks and messages.
+    fn parallel_input(op: &str, value: &Value) -> Result<Vec<Value>, InterpreterError> {
+        match value {
+            Value::List(items) => Ok(items.as_ref().to_vec()),
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let end_val = if *inclusive {
+                    end.saturating_add(1)
+                } else {
+                    *end
+                };
+                let range_size = end_val.saturating_sub(*start).max(0) as usize;
+                if range_size > 10_000_000 {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!(
+                            "Range size ({}) too large, this could cause memory issues. Maximum range size is 10000000.",
+                            range_size
+                        ),
+                    });
+                }
+                Ok((*start..end_val).map(Value::Integer).collect())
+            }
+            _ => Err(InterpreterError::TypeError {
+                message: format!("{}: first argument must be a list or range", op),
+            }),
+        }
+    }
+
+    /// Apply `function` to every item, fanning contiguous chunks out to one
+    /// interpreter clone per worker thread (this is the fix for why `map`
+    /// went sequential: cloning per *element* was ruinous; cloning per
+    /// *worker* is O(cores) and im-map clones are cheap). Order is
+    /// preserved. On error, the one reported is the error the sequential
+    /// twin would have hit first (lowest index) — but unlike the sequential
+    /// twin, later elements may already have been evaluated.
+    ///
+    /// Every chunk runs on a clone — including the single-threaded
+    /// fallback — so `function` always sees spawn's snapshot semantics:
+    /// mutations to enclosing state never reach the caller, on any machine.
+    fn parallel_apply(
+        items: &[Value],
+        function: &Value,
+        interpreter: &crate::interpreter::Interpreter,
+    ) -> Result<Vec<Value>, InterpreterError> {
+        if items.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        #[cfg(feature = "native")]
+        {
+            let workers = crate::parallel::get_config()
+                .max_threads
+                .clamp(1, items.len());
+            if workers > 1 {
+                let chunk_size = items.len().div_ceil(workers);
+                let joined: Vec<Result<Vec<Value>, (usize, InterpreterError)>> =
+                    std::thread::scope(|scope| {
+                        let handles: Vec<_> = items
+                            .chunks(chunk_size)
+                            .enumerate()
+                            .map(|(chunk_idx, chunk)| {
+                                let mut worker = interpreter.thread_safe_clone();
+                                let function = function.clone();
+                                scope.spawn(move || {
+                                    let mut out = Vec::with_capacity(chunk.len());
+                                    for (i, item) in chunk.iter().enumerate() {
+                                        match worker
+                                            .call_function_optimized(&function, vec![item.clone()])
+                                        {
+                                            Ok(v) => out.push(v),
+                                            Err(e) => return Err((chunk_idx * chunk_size + i, e)),
+                                        }
+                                    }
+                                    Ok(out)
+                                })
+                            })
+                            .collect();
+                        handles
+                            .into_iter()
+                            .map(|h| {
+                                h.join().unwrap_or_else(|_| {
+                                    Err((
+                                        usize::MAX,
+                                        InterpreterError::RuntimeError {
+                                            message: "parallel worker thread panicked".to_string(),
+                                        },
+                                    ))
+                                })
+                            })
+                            .collect()
+                    });
+
+                let mut chunks_ok = Vec::new();
+                let mut first_err: Option<(usize, InterpreterError)> = None;
+                for result in joined {
+                    match result {
+                        Ok(values) => chunks_ok.push(values),
+                        Err((idx, e)) => {
+                            if first_err.as_ref().is_none_or(|(seen, _)| idx < *seen) {
+                                first_err = Some((idx, e));
+                            }
+                        }
+                    }
+                }
+                if let Some((_, e)) = first_err {
+                    return Err(e);
+                }
+                return Ok(chunks_ok.concat());
+            }
+        }
+
+        // One core, or the playground (no threads): same snapshot
+        // semantics on a single clone.
+        let mut worker = interpreter.thread_safe_clone();
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            out.push(worker.call_function_optimized(function, vec![item.clone()])?);
+        }
+        Ok(out)
+    }
+
+    fn par_map(
+        &self,
+        args: Vec<Value>,
+        interpreter: &mut crate::interpreter::Interpreter,
+    ) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+        let items = Self::parallel_input("par_map", &args[0])?;
+        let results = Self::parallel_apply(&items, &args[1], interpreter)?;
+        Ok(Value::List(results.into()))
+    }
+
+    fn par_filter(
+        &self,
+        args: Vec<Value>,
+        interpreter: &mut crate::interpreter::Interpreter,
+    ) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+        let items = Self::parallel_input("par_filter", &args[0])?;
+        let verdicts = Self::parallel_apply(&items, &args[1], interpreter)?;
+        // Same acceptance rule as filter: keep on Boolean(true), drop on
+        // anything else.
+        let kept: Vec<Value> = items
+            .into_iter()
+            .zip(verdicts)
+            .filter_map(|(item, verdict)| matches!(verdict, Value::Boolean(true)).then_some(item))
+            .collect();
+        Ok(Value::List(kept.into()))
     }
 
     fn reduce(

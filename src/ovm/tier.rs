@@ -72,6 +72,12 @@ pub struct BytecodeTier {
 }
 
 impl BytecodeTier {
+    /// The promotion threshold this tier was built with — used to give
+    /// worker-thread interpreters a fresh tier with the same policy.
+    pub fn threshold(&self) -> u32 {
+        self.threshold
+    }
+
     pub fn new(threshold: u32) -> Self {
         Self {
             vm: BytecodeVm::new(),

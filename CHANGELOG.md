@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **`par_map` / `par_filter` — the performance campaign's P1.** The
+  parallel twins of `map` and `filter`: same arguments, same results in
+  the same order, but fanned out across OS threads with no GIL. The
+  design is the one the roadmap prescribed — `map` originally went
+  sequential because cloning the interpreter per *element* was ruinous;
+  par_map clones per *worker* (im-map environments make that cheap),
+  gives each worker its own bytecode tier, and splits the list into
+  contiguous chunks under `std::thread::scope`. Semantics are pinned by
+  a 15-test differential suite: spawn-style snapshot isolation (the
+  function never mutates the caller's environment — on any machine,
+  including the single-core fallback), first-in-order error reporting
+  (the error you get is the one `map` would have hit first), filter's
+  keep-on-`true` rule, and fail-closed refusal in the VM (functions
+  calling par_map stay interpreted). **Measured: 9–13× vs sequential
+  `map` on compute-heavy kernels** (examples/parmap, which self-checks
+  parallel == sequential on every run).
+
+### Fixed
+
+- **`spawn` threads now carry the bytecode tier.** `thread_safe_clone`
+  set `bytecode_tier: None`, so every spawn worker (and http.serve
+  handler thread) silently ran the pure tree-walker — losing the tier's
+  ~10× on compute. Clones now get a fresh, quiet tier with the parent's
+  promotion policy, and the parent's declaration knowledge (functions,
+  struct shapes, trait impls/defaults, unit variants) is replayed into
+  it, since workers never re-evaluate the declarations themselves.
+
 ## [0.39.0] - 2026-08-09
 
 ### Added

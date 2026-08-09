@@ -943,6 +943,48 @@ impl HelpSystem {
         });
 
         self.add_function(FunctionDoc {
+            name: "par_map".to_string(),
+            description: "map fanned out across OS threads: same results in the same order, \
+                          one worker interpreter per thread (no GIL). The function runs against \
+                          worker snapshots like spawn, so mutations to enclosing state are not \
+                          visible to the caller"
+                .to_string(),
+            syntax: "par_map(list, function)".to_string(),
+            parameters: vec![
+                "list: List[T] - The list to transform".to_string(),
+                "function: T -> U - Function to apply to each element (effectively pure)"
+                    .to_string(),
+            ],
+            return_type: "List[U]".to_string(),
+            examples: vec![
+                "par_map([1, 2, 3], (x) => x * 2)  // [2, 4, 6]".to_string(),
+                "1..1000 |> par_map(expensive_fn)  // uses every core".to_string(),
+            ],
+            category: "List".to_string(),
+            see_also: vec![
+                "map".to_string(),
+                "par_filter".to_string(),
+                "spawn".to_string(),
+            ],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "par_filter".to_string(),
+            description: "filter fanned out across OS threads — the parallel twin of filter, \
+                          with the same keep-on-true rule and ordering"
+                .to_string(),
+            syntax: "par_filter(list, predicate)".to_string(),
+            parameters: vec![
+                "list: List[T] - The list to filter".to_string(),
+                "predicate: T -> Bool - Keep elements where this returns true".to_string(),
+            ],
+            return_type: "List[T]".to_string(),
+            examples: vec!["par_filter(1..100, (x) => is_expensive_check(x))".to_string()],
+            category: "List".to_string(),
+            see_also: vec!["filter".to_string(), "par_map".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
             name: "filter".to_string(),
             description: "Returns a new list containing only elements that satisfy the predicate"
                 .to_string(),

@@ -1527,8 +1527,41 @@ impl Interpreter {
             large_allocation_count: 0,
             last_cleanup_operation: 0,
 
-            // Each thread profiles independently; the VM is not shared
-            bytecode_tier: None,
+            // Each thread profiles independently; the VM is not shared, so
+            // the clone gets a fresh, quiet tier with the same promotion
+            // policy, and the declaration knowledge the parent accumulated
+            // (functions, struct shapes, traits, variants) is replayed into
+            // it — the worker never re-evaluates the declarations, so
+            // without the replay nothing could promote. (This used to be
+            // None — worker threads ran the pure tree-walker and silently
+            // lost the tier's speed.)
+            bytecode_tier: self.bytecode_tier.as_ref().map(|t| {
+                let mut tier = crate::ovm::tier::BytecodeTier::new(t.threshold());
+                for (name, fields) in &self.struct_defs {
+                    tier.note_struct(name.clone(), fields.clone());
+                }
+                for name in &self.unit_variant_names {
+                    tier.note_unit_variant(name.clone());
+                }
+                for ((type_name, method), func) in &self.trait_impls {
+                    tier.note_function(method.clone(), func.clone());
+                    tier.note_trait_impl(type_name.clone(), method.clone(), func.clone());
+                }
+                for ((trait_name, method), func) in &self.trait_defaults {
+                    tier.note_trait_default(trait_name.clone(), method.clone(), func.clone());
+                }
+                for (type_name, traits) in &self.type_traits {
+                    for trait_name in traits {
+                        tier.note_type_trait(type_name.clone(), trait_name.clone());
+                    }
+                }
+                for (name, value) in self.environment.get_all_variables() {
+                    if let Value::Function(func) = value {
+                        tier.note_function(name, func);
+                    }
+                }
+                Box::new(tier)
+            }),
             trait_impls: self.trait_impls.clone(),
             trait_defaults: self.trait_defaults.clone(),
             type_traits: self.type_traits.clone(),
