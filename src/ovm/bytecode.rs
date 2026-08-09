@@ -324,6 +324,15 @@ pub enum Instruction {
         type_name: String,
         fields: Vec<(String, Register)>,
     },
+    /// Call whatever function value the callee register holds — a
+    /// parameter, a local, the result of another call. Compiled function
+    /// values run in the VM; anything else takes the interpreter, which
+    /// stays the authority for arity errors, defaults, and non-callables.
+    CallValue {
+        dst: Register,
+        callee: Register,
+        args: Vec<Register>,
+    },
     /// Build a tuple-variant enum value from argument registers (the only
     /// runtime construction form: unit variants are constants, and struct
     /// variants have no construction syntax).
@@ -872,6 +881,43 @@ impl BytecodeVm {
             "math.factorial",
             "math.min",
             "math.max",
+            // pure `str` module functions — strings and lists of strings in
+            // and out (parse_int/parse_float return Results), all
+            // round-trippable, reached as `str.length(s)` module calls like
+            // math.*. These are what string-heavy code (parsers, regex
+            // engines, template renderers) lives on.
+            "str.to_upper",
+            "str.to_lower",
+            "str.trim",
+            "str.trim_start",
+            "str.trim_end",
+            "str.reverse",
+            "str.chars",
+            "str.lines",
+            "str.words",
+            "str.capitalize",
+            "str.is_empty",
+            "str.length",
+            "str.parse_int",
+            "str.parse_float",
+            "str.contains",
+            "str.starts_with",
+            "str.ends_with",
+            "str.split",
+            "str.index_of",
+            "str.last_index_of",
+            "str.repeat",
+            "str.count",
+            "str.char_at",
+            "str.replace",
+            "str.replace_first",
+            "str.substring",
+            "str.pad_start",
+            "str.pad_end",
+            "str.join",
+            "str.fmt",
+            // stringification (same bridge as to_string)
+            "show",
             // output
             "print",
             "println",
@@ -1418,6 +1464,21 @@ impl BytecodeVm {
                     };
                     self.execution_state
                         .set_register(*dst, OvmValue::new_struct(Arc::new(obj)))?;
+                }
+
+                Instruction::CallValue { dst, callee, args } => {
+                    let mut arg_values = self.arg_pool.pop().unwrap_or_default();
+                    arg_values.reserve(args.len());
+                    for arg_reg in args {
+                        arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                    }
+                    let callee_value = self.execution_state.get_register(*callee)?;
+                    let result = self.call_function_value(&callee_value, &arg_values);
+                    arg_values.clear();
+                    if self.arg_pool.len() < 64 {
+                        self.arg_pool.push(arg_values);
+                    }
+                    self.execution_state.set_register(*dst, result?)?;
                 }
 
                 Instruction::MakeEnum {
@@ -2375,6 +2436,62 @@ impl BytecodeVm {
         result
     }
 
+    /// Call a function *value*: the fast paths run compiled bytecode (a
+    /// plain function compiles on demand through the hof cache; a runtime
+    /// closure already carries its func_id, captures appended after the
+    /// arguments). Everything else — builtins, constructors, functions the
+    /// compiler declines, non-callables — converts to AST and runs through
+    /// the bridge interpreter, whose call_function owns the exact semantics
+    /// of arity errors, default parameters, trait bounds, and the
+    /// "Cannot call non-function value" error.
+    fn call_function_value(
+        &mut self,
+        callee: &OvmValue,
+        args: &[OvmValue],
+    ) -> Result<OvmValue, BytecodeError> {
+        use crate::ovm::value::ValueData;
+        match &callee.data {
+            ValueData::AstFunction(f) => {
+                let f = f.clone();
+                if let Some(func_id) = self.hof_function_id(&f, args.len()) {
+                    return self.execute(func_id, args);
+                }
+            }
+            ValueData::Closure(c) if c.template.parameters.len() == args.len() => {
+                let c = c.clone();
+                let mut full_args = Vec::with_capacity(args.len() + c.captured.len());
+                full_args.extend(args.iter().cloned());
+                full_args.extend(c.captured.iter().cloned());
+                return self.execute(c.func_id, &full_args);
+            }
+            _ => {}
+        }
+
+        // Interpreter fallback: exact semantics for everything declined
+        let callee_ast = callee
+            .to_ast()
+            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+        let mut ast_args = Vec::with_capacity(args.len());
+        for arg in args {
+            ast_args.push(
+                arg.to_ast()
+                    .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?,
+            );
+        }
+        let interpreter = self
+            .builtin_interpreter
+            .get_or_insert_with(|| Box::new(crate::interpreter::Interpreter::new()));
+        let result = interpreter
+            .call_function(callee_ast, ast_args)
+            .map_err(|e| BytecodeError::RuntimeError(e.to_string()))?;
+        if !Self::round_trips(&result) {
+            return Err(BytecodeError::RuntimeError(
+                "function value returned a value the bytecode tier cannot represent".to_string(),
+            ));
+        }
+        Ok(OvmValue::from_ast(result))
+    }
+
     /// Native execution for the higher-order builtins when the collection
     /// is a list and the function argument compiles: the loop runs inside
     /// the VM, one `execute()` per element, no AST conversion anywhere.
@@ -2702,6 +2819,10 @@ impl BytecodeVm {
             // the function on the interpreter. `from_ast` maps enums to a
             // struct shape lossily, so enums are deliberately not included.
             Value::Struct { fields, .. } => fields.values().all(Self::round_trips),
+            // Function values wrap verbatim (AstFunction), so they always
+            // round-trip — which is what lets user functions be passed as
+            // arguments into promoted functions.
+            Value::Function(_) => true,
             // Enums convert losslessly (type, variant, payload) since the
             // OVM grew a first-class enum value; they round-trip when the
             // payload does.
@@ -3790,56 +3911,44 @@ impl BytecodeCompiler {
             }
 
             Expr::Call { callee, arguments } => {
-                // Only direct calls to named functions/builtins are supported;
-                // the callee is resolved by name at runtime through the VM's
-                // registries (which also makes recursion work).
-                let function_name = match callee.as_ref() {
-                    // A slot-resolved callee is still a call by name here
-                    Expr::Identifier(name) | Expr::LocalRef { name, .. } => name.clone(),
-                    // A stdlib module call like `math.sqrt(x)`: the object is a
-                    // *bare* identifier (a shadowing local would be a
-                    // LocalRef), so this is the real module. The synthesized
-                    // `module.fn` name is only accepted when it's in the
-                    // builtin allow-list below — otherwise it falls back.
+                // Callee resolution mirrors the interpreter's scope order. A
+                // name held by a LOCAL is a function value and the call goes
+                // through CallValue — so a parameter named `len` shadows the
+                // builtin, exactly as interpreted. Otherwise the name
+                // resolves through the registries (user functions shadow
+                // builtins), then enum constructors, then the closure as a
+                // baked value. Non-name callees — `f(x)(y)`, an immediately
+                // invoked lambda, `obj.handler(x)` — compile as expressions
+                // and call through CallValue.
+                let callee_reg: Option<Register> = match callee.as_ref() {
+                    Expr::Identifier(name) | Expr::LocalRef { name, .. } => {
+                        self.local_variables.get(name).copied()
+                    }
+                    // A stdlib module call like `math.sqrt(x)`: the object is
+                    // a *bare* identifier (a shadowing local would be a
+                    // LocalRef), so this is the real module when the
+                    // synthesized name is in the builtin allow-list. Any
+                    // other `value.m(..)` REFUSES: the interpreter dispatches
+                    // it as a trait method on the value's runtime type, which
+                    // a field read cannot replicate (compiling it as
+                    // GetField+CallValue mis-ran trait defaults).
                     Expr::FieldAccess { object, field } => match object.as_ref() {
-                        Expr::Identifier(module) => format!("{}.{}", module, field),
+                        Expr::Identifier(module)
+                            if !self.local_variables.contains_key(module)
+                                && self
+                                    .builtin_names
+                                    .contains(&format!("{}.{}", module, field)) =>
+                        {
+                            None
+                        }
                         _ => {
                             return Err(BytecodeError::CompilationFailed(
-                                "Unsupported method-call callee in bytecode tier".to_string(),
+                                "Method calls dispatch on runtime type (traits); not compiled in the bytecode tier"
+                                    .to_string(),
                             ))
                         }
                     },
-                    other => {
-                        return Err(BytecodeError::CompilationFailed(format!(
-                            "Unsupported callee in bytecode tier: {:?}",
-                            std::mem::discriminant(other)
-                        )))
-                    }
-                };
-
-                // Reject callees the VM can't resolve at compile time rather
-                // than failing mid-execution
-                // A callee that is neither a user function nor a builtin may
-                // be an enum tuple-variant constructor from the closure —
-                // `Circle(2.0)`. Constructors only take this path when the
-                // name has no user-function or builtin meaning, so nothing
-                // can be shadowed the wrong way; an argument-count mismatch
-                // refuses, and the interpreter raises its arity error.
-                let enum_constructor = if !self.builtin_names.contains(&function_name)
-                    && !self.function_registry.contains_key(&function_name)
-                {
-                    match self.enclosing_closure.get(&function_name) {
-                        Some(Value::EnumConstructor {
-                            type_name,
-                            variant_name,
-                            arity,
-                        }) if *arity == arguments.len() => {
-                            Some((type_name.clone(), variant_name.clone()))
-                        }
-                        _ => return Err(BytecodeError::UnresolvedCallee(function_name)),
-                    }
-                } else {
-                    None
+                    _ => Some(self.compile_expression(callee)?),
                 };
 
                 let mut arg_regs = Vec::new();
@@ -3857,16 +3966,26 @@ impl BytecodeCompiler {
                     }
                 }
 
-                let dst_reg = self.register_allocator.allocate_register();
-                if let Some((type_name, variant_name)) = enum_constructor {
-                    self.emitter.instructions.push(Instruction::MakeEnum {
+                if let Some(callee_reg) = callee_reg {
+                    let dst_reg = self.register_allocator.allocate_register();
+                    self.emitter.instructions.push(Instruction::CallValue {
                         dst: dst_reg,
-                        type_name,
-                        variant_name,
+                        callee: callee_reg,
                         args: arg_regs,
                     });
                     return Ok(dst_reg);
                 }
+
+                let function_name = match callee.as_ref() {
+                    Expr::Identifier(name) | Expr::LocalRef { name, .. } => name.clone(),
+                    Expr::FieldAccess { object, field } => match object.as_ref() {
+                        Expr::Identifier(module) => format!("{}.{}", module, field),
+                        _ => unreachable!("non-identifier objects take the value path"),
+                    },
+                    _ => unreachable!("non-name callees take the value path"),
+                };
+
+                let dst_reg = self.register_allocator.allocate_register();
                 // User functions shadow builtins (same order as the runtime
                 // path); resolving the id here removes the per-call name hash.
                 if let Some(&func_id) = self.function_registry.get(&function_name) {
@@ -3875,22 +3994,73 @@ impl BytecodeCompiler {
                         func_id,
                         args: arg_regs,
                     });
-                } else if let Some(builtin_id) =
-                    BytecodeVm::float_math_id(&function_name, arg_regs.len())
-                {
-                    self.emitter.instructions.push(Instruction::CallBuiltin {
-                        dst: dst_reg,
-                        builtin_id,
-                        args: arg_regs,
-                    });
-                } else {
-                    self.emitter.instructions.push(Instruction::CallNamed {
-                        dst: dst_reg,
-                        function_name,
-                        args: arg_regs,
-                    });
+                    return Ok(dst_reg);
                 }
-                Ok(dst_reg)
+                if self.builtin_names.contains(&function_name) {
+                    if let Some(builtin_id) =
+                        BytecodeVm::float_math_id(&function_name, arg_regs.len())
+                    {
+                        self.emitter.instructions.push(Instruction::CallBuiltin {
+                            dst: dst_reg,
+                            builtin_id,
+                            args: arg_regs,
+                        });
+                    } else {
+                        self.emitter.instructions.push(Instruction::CallNamed {
+                            dst: dst_reg,
+                            function_name,
+                            args: arg_regs,
+                        });
+                    }
+                    return Ok(dst_reg);
+                }
+                // An enum tuple-variant constructor from the closure —
+                // `Circle(2.0)`. An argument-count mismatch refuses, and the
+                // interpreter raises its arity error.
+                if let Some(Value::EnumConstructor {
+                    type_name,
+                    variant_name,
+                    arity,
+                }) = self.enclosing_closure.get(&function_name)
+                {
+                    if *arity != arguments.len() {
+                        return Err(BytecodeError::UnresolvedCallee(function_name));
+                    }
+                    self.emitter.instructions.push(Instruction::MakeEnum {
+                        dst: dst_reg,
+                        type_name: type_name.clone(),
+                        variant_name: variant_name.clone(),
+                        args: arg_regs,
+                    });
+                    return Ok(dst_reg);
+                }
+                // Last resort: the closure. A function bearing THIS name is
+                // a user function the tier hasn't registered yet — report
+                // UnresolvedCallee so the tier's dependency resolution
+                // compiles it and retries (that channel is what makes
+                // transitive and mutual recursion promote both functions).
+                // Anything else — an alias holding a differently-named
+                // function, a lambda, a non-callable — bakes as a value and
+                // calls through CallValue, whose interpreter fallback owns
+                // the error semantics.
+                match self.enclosing_closure.get(&function_name) {
+                    Some(Value::Function(f))
+                        if f.name.as_deref() == Some(function_name.as_str()) =>
+                    {
+                        Err(BytecodeError::UnresolvedCallee(function_name))
+                    }
+                    Some(_) => {
+                        let baked =
+                            self.compile_expression(&Expr::Identifier(function_name.clone()))?;
+                        self.emitter.instructions.push(Instruction::CallValue {
+                            dst: dst_reg,
+                            callee: baked,
+                            args: arg_regs,
+                        });
+                        Ok(dst_reg)
+                    }
+                    None => Err(BytecodeError::UnresolvedCallee(function_name)),
+                }
             }
 
             Expr::Block(statements) => {

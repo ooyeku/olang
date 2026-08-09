@@ -579,11 +579,26 @@ mod tests {
     fn non_representable_arguments_fall_back() {
         let mut tier = BytecodeTier::new(1);
         let func = double_fn();
-        // Passing a function value must not go to the VM
+        // A map does not round-trip the value model and must not go to the VM
+        let map_arg = Value::Map(std::sync::Arc::new(std::collections::HashMap::new()));
         assert!(matches!(
-            tier.try_call(&func, &[Value::Function(double_fn())]),
+            tier.try_call(&func, &[map_arg]),
             TierOutcome::Fallback
         ));
+    }
+
+    #[test]
+    fn function_arguments_cross_the_boundary_and_error_like_the_interpreter() {
+        // Function values round-trip now (AstFunction wraps them verbatim),
+        // so double(<function>) runs on the VM — and multiplying a function
+        // by 2 is a type error there exactly as it is interpreted.
+        let mut tier = BytecodeTier::new(1);
+        let func = double_fn();
+        match tier.try_call(&func, &[Value::Function(double_fn())]) {
+            TierOutcome::Ran(Err(_)) => {}
+            TierOutcome::Ran(Ok(v)) => panic!("expected a type error, got {:?}", v),
+            TierOutcome::Fallback => panic!("function arguments should cross the boundary"),
+        }
     }
 
     #[test]

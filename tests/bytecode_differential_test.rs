@@ -289,9 +289,6 @@ fn unsupported_features_fail_compilation() {
         // or-patterns that bind are rejected: alternatives would leave
         // different bindings on the success path
         ("fn f(x) = match x { Ok(a) | Err(a) => a, _ => 0 }", "f"),
-        // immediately-invoked lambda: calling a lambda-valued expression is
-        // not compiled (only passing one to a builtin is)
-        ("fn f(x) = ((y) => y)(x)", "f"),
     ];
     for (src, target) in cases {
         let result = bytecode_result(src, target, &ints(&[1]));
@@ -323,6 +320,18 @@ fn capturing_lambdas_compile_and_agree() {
         "f",
         &ints(&[1]),
     );
+}
+
+#[test]
+fn function_valued_callees_compile_and_agree() {
+    // CallValue: an immediately invoked lambda, a curried call, and — the
+    // shadowing case that used to be a latent divergence — a parameter
+    // named after a builtin, which must be CALLED as the parameter.
+    for arg in [1i64, 5, -3] {
+        assert_same("fn f(x) = ((y) => y * 3)(x)", "f", &ints(&[arg]));
+        assert_same("fn f(x) = ((a) => (b) => a + b)(x)(10)", "f", &ints(&[arg]));
+        assert_same("fn f(len) = ((z) => len + z)(1)", "f", &ints(&[arg]));
+    }
 }
 
 // --- Aliasing and binding cases (register-window hazards) ---

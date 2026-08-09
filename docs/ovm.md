@@ -99,6 +99,16 @@ A function is eligible when its body uses only the subset the VM implements:
   interpreter function when it crosses the tier boundary
 - blocks, `let` bindings, assignment to locals, `while` and `for` loops,
   `break`, and `continue`
+- calls through function *values*: parameters and locals holding
+  functions (`f(x)` where `f` is a parameter — locals shadow builtins,
+  exactly as interpreted), curried calls (`g(a)(b)`), immediately invoked
+  lambdas, and aliased functions from the closure. Compiled function
+  values run in the VM; anything declined runs through the bridge
+  interpreter, which owns arity errors, default parameters, and the
+  non-callable error. Function values also round-trip the tier boundary
+  now (wrapped verbatim), so higher-order user functions promote
+- calls to the pure `str` module functions (`str.length`, `str.char_at`,
+  `str.split`, ...) and `show`, over the same bridge as `to_string`
 - calls to itself (recursion), to other user functions (compiled on demand,
   including mutual recursion), and to 43 builtins (see [Builtins](#builtins))
 
@@ -106,6 +116,9 @@ Anything else causes the function to stay interpreted:
 
 - *assigning* to a global (reads bake as snapshot constants; a write
   would need the interpreter's environment)
+- method calls (`value.m(..)` where `value` is not a stdlib module):
+  they dispatch on the value's runtime type through trait impls, which a
+  compile-time field read cannot replicate
 - a free identifier absent from the function's closure — the interpreter
   would resolve it through the caller's runtime scope chain, which no
   compile-time snapshot can represent

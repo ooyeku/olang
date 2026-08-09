@@ -1192,33 +1192,11 @@ impl OvmValue {
                 Self::new_tuple(ovm_items)
             }
 
-            Value::Function(func) => {
-                // Create function object
-                let func_obj = FunctionObject {
-                    name: func.name.clone(),
-                    parameters: func.parameters.iter().map(|p| p.name.clone()).collect(),
-                    body: (*func.body).clone(),
-                    closure: func
-                        .closure
-                        .iter()
-                        .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
-                        .collect(),
-                    compilation_tier: ExecutionTier::Interpreter,
-                    call_count: AtomicU32::new(0),
-                    optimization_data: OptimizationData::default(),
-                };
-
-                let gc_ptr = Arc::new(func_obj);
-
-                Self {
-                    header: ValueHeader::new(
-                        TypeTag::Function,
-                        ExecutionTier::Interpreter,
-                        LazyState::Eager,
-                    ),
-                    data: ValueData::Function(gc_ptr),
-                }
-            }
+            // Wrapped verbatim: the old conversion deep-copied the whole
+            // closure into a FunctionObject that could not convert back, so
+            // no function value ever crossed the tier boundary. AstFunction
+            // is lossless and O(1).
+            Value::Function(func) => Self::new_ast_function(func),
 
             Value::Builtin(builtin) => {
                 // Create a placeholder builtin function

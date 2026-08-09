@@ -1499,6 +1499,136 @@ n
     );
 }
 
+// ── function-valued callees (CallValue) ───────────────────────────────
+
+#[test]
+fn higher_order_user_functions_promote_and_agree() {
+    // A function passed as an argument crosses the boundary (functions
+    // round-trip now) and is called through CallValue inside the VM.
+    let src = r#"
+fn apply(f, x) = f(x)
+fn double(n) = n * 2
+fn go(n) = apply(double, n) + apply((x) => x + 1, n)
+let mut t = 0
+for i in 0..30 { t = t + go(i) }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 1, "go should promote");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn a_parameter_shadowing_a_builtin_is_called_as_the_parameter() {
+    // `len` here is the parameter, not the builtin — the interpreter
+    // resolves locals first and now so does the compiler. This divergence
+    // was latent until function values could cross the boundary.
+    let src = r#"
+fn apply(len, x) = len(x)
+fn double(n) = n * 2
+apply(double, 21)
+apply(double, 21)
+apply(double, 21)
+"#;
+    assert!(promotion_count(src, 2) >= 1);
+    assert_eq!(eval(src, Some(2)).unwrap(), Value::Integer(42));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn curried_calls_and_returned_closures_agree() {
+    let src = r#"
+fn curry_add(a) = (b) => a + b
+fn go(n) = curry_add(n)(10) + curry_add(3)(n)
+let mut t = 0
+for i in 0..30 { t = t + go(i) }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 1);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn calling_a_non_function_value_errors_identically() {
+    assert_tier_transparent(
+        r#"
+fn bad(x) = x(1)
+bad(42)
+bad(42)
+bad(42)
+"#,
+    );
+}
+
+#[test]
+fn adt_combinators_promote_and_agree() {
+    // The algebraic-types shape that used to reject: an option map/filter
+    // built from enum patterns and a function-valued parameter.
+    let src = r#"
+type Opt = enum { SomeV(Int), NoneV }
+fn opt_map(o, f) = match o {
+    SomeV(x) => SomeV(f(x)),
+    NoneV => NoneV
+}
+fn unwrap_or_zero(o) = match o { SomeV(x) => x, NoneV => 0 }
+fn go(n) = {
+    let a = opt_map(SomeV(n), (x) => x * 2)
+    let b = opt_map(NoneV, (x) => x * 2)
+    unwrap_or_zero(a) + unwrap_or_zero(b)
+}
+let mut t = 0
+for i in 0..30 { t = t + go(i) }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 2);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn trait_method_calls_stay_interpreted_and_agree() {
+    // `self.describe()` dispatches on runtime type through trait impls; a
+    // compiled GetField+call would read a (nonexistent) field. Functions
+    // containing method calls must refuse and stay correct — this exact
+    // shape broke the language tour when method callees briefly compiled.
+    let src = r#"
+type Point = struct { x: Int, y: Int }
+trait Describe {
+    fn describe(self) -> String
+    fn loud(self) -> String = self.describe() + "!"
+}
+impl Describe for Point {
+    fn describe(self) = "point"
+}
+let d = Point { x: 1, y: 2 }
+let mut s = ""
+for i in 0..10 { s = s + d.loud() }
+len(s)
+"#;
+    assert_tier_transparent(src);
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(60));
+}
+
+// ── str module builtins ───────────────────────────────────────────────
+
+#[test]
+fn str_module_calls_promote_and_agree() {
+    let src = r#"
+fn norm(s) = str.trim(str.to_lower(s)) + str.char_at(s, 0) + show(str.length(s))
+fn parse(s) = match str.parse_int(s) { Ok(v) => v, Err(_) => 0 - 1 }
+let mut acc = ""
+let mut n = 0
+for i in 0..30 {
+    acc = norm("  MiXeD  ")
+    n = n + parse("42") + parse("nope")
+}
+acc + show(n)
+"#;
+    assert!(
+        promotion_count(src, 2) >= 2,
+        "norm and parse should promote"
+    );
+    assert_tier_transparent(src);
+}
+
 // ── enums: construction, unit variants, and patterns ──────────────────
 
 #[test]

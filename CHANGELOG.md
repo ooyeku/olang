@@ -12,6 +12,40 @@ documented.
 
 ### Added
 
+- **Function values are callable — and cross the tier boundary.** Two
+  changes that complete the higher-order story. First, `Value::Function`
+  now converts to the VM losslessly (wrapped verbatim instead of
+  deep-copied into a dead-end object), so a user function passed as an
+  argument no longer knocks the whole call back to the interpreter.
+  Second, a new `CallValue` instruction calls whatever function value a
+  register holds: parameters (`fn apply(f, x) = f(x)`), curried calls
+  (`g(a)(b)`), immediately invoked lambdas, and closure aliases. Compiled
+  values run in the VM; everything declined routes through the bridge
+  interpreter, which owns arity errors, default parameters, and the
+  "Cannot call non-function value" error. Callee resolution now mirrors
+  the interpreter's scope order — locals first — fixing a latent
+  divergence where a parameter named after a builtin (`fn apply(len, x) =
+  len(x)`) would have called the builtin once function values could
+  cross. Two course corrections along the way, both caught by the
+  suites: known-but-unregistered user functions must still route through
+  the tier's dependency channel (transitive/mutual recursion promotes
+  both functions), and method calls (`value.m()`) must keep refusing —
+  they dispatch on runtime type through trait impls, which a field read
+  cannot replicate; the language tour caught that one, and a regression
+  test now pins it.
+
+- **The pure `str` module compiles, and so does `show`.** The 30 `str`
+  functions (`length`, `char_at`, `split`, `parse_int`, ...) are
+  allowlisted over the same bridge as `math.*`, and `show` stringifies
+  through the same path as `to_string` — including structs and enums,
+  verified bit-identical. String-heavy code (parsers, regex engines,
+  template renderers) lives on these.
+
+  Corpus sweep across all examples after this and the enum work:
+  **promoted functions 55 → 108, rejections 125 → 64**, with rejection
+  cascades collapsing from 92 to 15. The regex engine's parse pipeline
+  and the algebraic-types combinators (`opt_map`, `find_first`) promote.
+
 - **Enums are first-class in the VM.** Enum values used to be crushed
   into a struct shape with a `__variant` field that could not convert
   back, so no enum ever crossed the tier boundary and any function
