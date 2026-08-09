@@ -2,7 +2,6 @@
 //! and records bridges, the tidyverse pipeline, group_by references,
 //! joins, and tier transparency.
 
-#![cfg(feature = "ods")]
 
 use olang::ast::Value;
 use olang::{Interpreter, Parser};

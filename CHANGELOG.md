@@ -8,9 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
-## [Unreleased]
+## [0.40.0] - 2026-08-09
 
 ### Added
+
+- **ods is part of the language — no flag, no import, no setup.** The
+  `ods` cargo feature is gone: the data stack (Series, Frames, stats,
+  plot) compiles into every build unconditionally, including the wasm
+  playground — `ods.series([...])` works in the browser sandbox exactly
+  as it does natively. Verified across every boundary this release
+  built: Series round-trip the bytecode tier byte-identically, ride
+  par_map worker threads as shared Arcs, and coexist with the JIT in
+  the same program.
+
 
 - **The `plot` namespace — ods Phase 4, charts as SVG text**
   (`docs/design/ods.md`). `plot.line`, `plot.scatter`, `plot.lines`

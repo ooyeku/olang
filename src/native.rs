@@ -123,11 +123,8 @@ pub fn registered_modules() -> &'static [Arc<dyn OvmModule>] {
     static MODULES: Lazy<Vec<Arc<dyn OvmModule>>> = Lazy::new(|| {
         #[allow(unused_mut)]
         let mut modules: Vec<Arc<dyn OvmModule>> = Vec::new();
-        #[cfg(feature = "ods")]
         modules.push(Arc::new(crate::ods::OdsModule));
-        #[cfg(feature = "ods")]
         modules.push(Arc::new(crate::ods::StatsModule));
-        #[cfg(feature = "ods")]
         modules.push(Arc::new(crate::ods::PlotModule));
         modules
     });

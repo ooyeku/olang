@@ -5,7 +5,6 @@
 //! interception behaves identically in both tiers, and typeof / display /
 //! equality / module dispatch all see the same value.
 
-#![cfg(feature = "ods")]
 
 use olang::ast::Value;
 use olang::native::NativeHandle;

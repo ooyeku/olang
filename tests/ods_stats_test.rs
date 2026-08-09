@@ -3,7 +3,6 @@
 //! in olang-ods/tests/stats.rs) and tier transparency for the flows
 //! that promote.
 
-#![cfg(feature = "ods")]
 
 use olang::ast::Value;
 use olang::{Interpreter, Parser};

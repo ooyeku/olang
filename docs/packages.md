@@ -85,7 +85,7 @@ dependencies automatically:
 ```
 $ cd examples/packages/demo
 $ olang
-Olang v0.39.0
+Olang v0.40.0
 Package 'demo' loaded — its dependencies are available via `use`
 
 olang> use geometry { circle, area }
