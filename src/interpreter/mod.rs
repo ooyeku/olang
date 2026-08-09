@@ -88,7 +88,12 @@ pub struct Interpreter {
 
     /// Optional bytecode tier: hot functions are compiled and executed on the
     /// OVM instead of walking the AST. Disabled unless explicitly enabled.
-    bytecode_tier: Option<crate::ovm::tier::BytecodeTier>,
+    /// Boxed deliberately: the tier owns the whole VM (compiler, caches,
+    /// execution state — 1.4 KB), and `call_function` moves it out of the
+    /// interpreter and back on every call so the tier can borrow the
+    /// interpreter for builtins. Inline, that was ~2.8 KB of memcpy per
+    /// interpreted call; behind a box it is two pointer moves.
+    bytecode_tier: Option<Box<crate::ovm::tier::BytecodeTier>>,
 
     /// Trait method implementations, keyed by (type name, method name) ->
     /// the concrete function. Populated by `impl` blocks; consulted when a
@@ -1297,8 +1302,9 @@ impl Interpreter {
     /// compile (closures, unsupported expressions, unresolved callees) stays
     /// interpreted. See `crate::ovm::tier` and the differential test suite.
     pub fn enable_bytecode_tier(&mut self, threshold: u32, verbose: bool) {
-        self.bytecode_tier =
-            Some(crate::ovm::tier::BytecodeTier::new(threshold).with_verbose(verbose));
+        self.bytecode_tier = Some(Box::new(
+            crate::ovm::tier::BytecodeTier::new(threshold).with_verbose(verbose),
+        ));
     }
 
     pub fn bytecode_tier_stats(&self) -> Option<crate::ovm::tier::TierStats> {

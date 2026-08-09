@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Changed
+
+- **The bytecode tier is boxed, so a call no longer memcpys it.** The tier
+  owns the whole VM — compiler, bytecode caches, execution state, frame and
+  argument pools — which is 1,424 bytes, and it was stored inline in the
+  interpreter. `call_function` moves the tier out of the interpreter and
+  back on every call (so the tier can borrow the interpreter for builtins),
+  which meant about 2.8 KB of memcpy per interpreted function call. Behind
+  a `Box` it is two pointer moves. This costs nothing for code already
+  running inside the VM, and pays where olang is currently weakest —
+  pipelines and higher-order builtins, which call back through the
+  interpreter once per element. Measured over 1M elements: `map` with a
+  named compiled function 192ms → 154ms, `map` with a capturing lambda
+  417ms → 382ms.
+
 ## [0.33.0] - 2026-08-08
 
 ### Added
