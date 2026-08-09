@@ -19,8 +19,9 @@ the implementation.
 
 Complete worked programs live in [`examples/`](../examples/) — a task CLI,
 a log analyzer, a template engine, a regex engine, a parser combinator
-library, a state-machine engine, a JSON Schema validator, and more. Run them
-all with `cd examples && olang run_all.ol`.
+library, a state-machine engine, a JSON Schema validator, a small Lisp
+interpreter written in olang (`minilisp/`), a full-stack issue tracker
+(`app/`), and more. Run them all with `cd examples && olang run_all.ol`.
 
 ## For developers — working on olang
 

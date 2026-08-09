@@ -41,8 +41,8 @@ structs, enums and their constructors (including cross-module), `error`
 declarations, traits and impls, `Result` +
 `?` + `try`/`catch`, modules (`use`/`share` in all documented forms),
 `test` blocks, and the stdlib modules `str`, `col`, `math`, `json`, `csv`,
-`re`, `dates`, `base64`, `fs`, `os`, `db`, `random`, `crypto`, and the
-global builtins.
+`re`, `dates`, `time`, `base64`, `fs`, `os`, `db`, `random`, `crypto`, and
+the global builtins.
 
 ### Stable in behavior, evolving in scope
 

@@ -289,6 +289,20 @@ println(to_string(col.window([1, 2, 3, 4], 2)))
 println(to_string(col.zip_with([1, 2], [10, 20], (a, b) => a + b)))
 ```
 
+The quantifiers short-circuit, and the `_by` family takes a key function —
+so sorting or picking extremes by a projection needs no comparator:
+
+```olang
+println(to_string(col.all([2, 4, 6], (x) => x % 2 == 0)))
+println(to_string(col.any([1, 3, 5], (x) => x > 4)))
+println(to_string(col.sort_by(["ccc", "a", "bb"], (s) => str.length(s))))
+let top = col.max_by([{ name: "a", p: 3 }, { name: "b", p: 9 }], (r) => r.p)
+println(top.name)
+println(to_string(col.take_while([1, 2, 9, 1], (x) => x < 5)))
+println(to_string(col.flat_map([1, 2], (x) => [x, x * 10])))
+println(to_string(col.last([1, 2, 3])))
+```
+
 ## `math` / `mathx` — mathematics
 
 `mathx` (`use mathx`) is the olang-source twin of the pure subset.
@@ -442,6 +456,11 @@ random.seed(7)
 let first = random.randint(1, 100)
 random.seed(7)
 println(to_string(first == random.randint(1, 100)))   // deterministic
+
+let deck = random.shuffle(range(1, 53))
+println(to_string(len(deck)) + " cards, top: " + typeof(random.choice(deck)))
+println(to_string(len(random.sample(deck, 5))))
+println(to_string(str.length(random.randstr_alpha(8))))
 ```
 
 ## `crypto` — hashing and encryption
@@ -596,7 +615,9 @@ http.serve(8080, handle, #{ "workers": 8, "queue_capacity": 512 })
 ```
 
 See [`examples/webserver/`](../examples/webserver/) for a complete JSON API
-with a router (`:id` path parameters) over a SQLite store.
+with a router (`:id` path parameters) over a SQLite store, and
+[`examples/app/`](../examples/app/) for a full-stack issue tracker — the
+same server also delivering its own browser frontend from disk.
 
 ## `db` — SQLite
 

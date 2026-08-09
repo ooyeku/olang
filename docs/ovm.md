@@ -149,26 +149,29 @@ Anything else causes the function to stay interpreted:
 
 - *assigning* to a global (reads bake as snapshot constants; a write
   would need the interpreter's environment)
-- method calls (`value.m(..)` where `value` is not a stdlib module):
-  they dispatch on the value's runtime type through trait impls, which a
-  compile-time field read cannot replicate
+- method calls on *effectful* receiver expressions (`make_thing().m(..)`):
+  the interpreter's dispatch fallthrough re-evaluates the receiver, which
+  the VM will not replicate for an expression with side effects — pure
+  receivers compile (see above)
 - a free identifier absent from the function's closure — the interpreter
   would resolve it through the caller's runtime scope chain, which no
   compile-time snapshot can represent
-- maps, async, and struct-variant enum construction (unit and tuple
-  variants compile)
-- a lambda capturing a name the enclosing function binds only *later*
-  (no register holds it yet at the lambda expression); calling a
-  lambda-valued expression directly
-- struct and enum patterns, and or-patterns that bind variables (each
-  alternative would otherwise leave different bindings on the success path)
+- async (`spawn`, `await`, promises), and struct-variant enum
+  construction (unit and tuple variants compile)
+- `return` and `break value` — both unwind in ways the bytecode loops
+  don't model
+- a lambda capturing a *local* the enclosing function binds only *later*
+  (no register holds it yet at the lambda expression) — a *function*
+  declared later resolves through the registry and compiles
+- or-patterns that bind variables (each alternative would otherwise
+  leave different bindings on the success path)
 - calling a function that itself cannot be compiled (the rejection propagates
   to every caller)
 - default parameter values
 - arguments or return values that don't round-trip through the OVM value
-  model (functions, maps, promises, enums — and any struct holding one of
-  those). Plain structs, objects, and parsed JSON objects *do* round-trip
-  when every field does, so field-reading functions promote
+  model (promises, builtins, module values — and any struct holding one
+  of those). Structs, objects, parsed JSON objects, maps, enums, and
+  function values all round-trip when their contents do
 
 None of these are errors. They are compile-time rejections that fall back to
 the interpreter, which is why enabling the tier can never break a program.
@@ -280,13 +283,19 @@ details).
 
 ## Builtins
 
-The VM does not reimplement builtins — it calls the interpreter's own
-implementations through `BuiltinFunctions::call`. Reimplementation would be a
-second source of truth that could drift from the semantics the differential
-tests hold the VM to; delegating makes them identical by construction.
+The VM mostly does not reimplement builtins — it calls the interpreter's
+own implementations through `BuiltinFunctions::call`. Reimplementation
+would be a second source of truth that could drift from the semantics the
+differential tests hold the VM to; delegating makes them identical by
+construction. The one measured exception: ten collection builtins (`len`,
+`head`, `tail`, `cons`, `concat`, `skip`, `map_get`, `map_set`,
+`map_has_key`, `entries`) run natively on the VM value model with zero
+boundary conversion, each mirroring the interpreter's checks in the same
+order with the same messages — the boundary tax on `map_get`/`map_set`
+was what kept environment-threading code slow (see the 0.38 changelog).
 
 The enabled set spans the core builtins below plus the pure `math`
-module (30 functions), the pure `str` module (30 functions), and `show`:
+module (33 functions), the pure `str` module (30 functions), and `show`:
 
 | Group | Builtins |
 |---|---|
@@ -295,6 +304,7 @@ module (30 functions), the pure `str` module (30 functions), and `show`:
 | Aggregation | `sum`, `min`, `max`, `average`, `contains` |
 | Higher-order | `map`, `filter`, `reduce`, `fold`, `find`, `map_filtered`, `result_map`, `result_map_err`, `unwrap_or_else` |
 | Strings | `split`, `join`, `starts_with`, `ends_with` |
+| Maps | `map_get`, `map_set`, `map_has_key`, `map_remove`, `map_keys`, `map_values`, `map_len`, `map_merge`, `map_clear`, `entries`, `group_by` |
 | Results | `is_ok`, `is_err`, `unwrap`, `unwrap_or` |
 | Numeric | `clamp` |
 | Output | `print`, `println` |
@@ -308,12 +318,7 @@ call per element, no conversion at the boundary — and a mapped list flows
 into `sum` without leaving the VM's value model. Anything declined bridges
 to the interpreter, which stays the semantic authority; a native loop never
 falls back mid-flight, so element errors propagate exactly as the
-interpreter would. One category remains deliberately excluded:
-
-- **Map-returning builtins** (`map_set`, `group_by`, ...) produce values that
-  do not survive the round trip back to an AST value — a `Map` would come back
-  as a `Struct`. `execute_builtin_call` checks representability and errors
-  rather than silently returning a corrupted value.
+interpreter would.
 
 `BytecodeVm::round_trips` is the single definition of which values survive the
 boundary; the tier uses it to decide whether a call's arguments and result can
@@ -327,7 +332,7 @@ the user's definition in compiled code too.
 
 ## Performance
 
-Measured on an Apple Silicon laptop, release build, as of 0.36. All
+Measured on an Apple Silicon laptop, release build, as of 0.38. All
 workloads are algorithm-identical across languages and checksum-verified
 (the N-body sample position matches across every implementation to the
 last digit). Since the tier is on by default, the olang numbers are what
@@ -407,7 +412,7 @@ These are real gaps, not oversights:
 
 | File | Role |
 |---|---|
-| `src/interpreter.rs` | Tree-walking evaluator; the semantics reference |
+| `src/interpreter/` | Tree-walking evaluator; the semantics reference |
 | `src/resolve.rs` | Slot resolution for function bodies |
 | `src/ovm/tier.rs` | Promotion decisions and eligibility |
 | `src/ovm/bytecode.rs` | Compiler, instruction set, and dispatch loop |

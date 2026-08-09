@@ -378,6 +378,26 @@ let pair = (1, "one")
 println(to_string(pair[0]) + " is " + pair[1])
 ```
 
+Tuples destructure in `let`, `for`, and `match`, and are what `zip`,
+`enumerate`, `entries`, and `group_by` produce — so paired data flows
+naturally:
+
+```olang
+let (lo, hi) = (3, 9)
+println(to_string(hi - lo))
+
+for (name, score) in zip(["ada", "bob"], [99, 82]) {
+    println(name + ": " + to_string(score))
+}
+
+fn quadrant(p) = match p {
+    (0, 0) => "origin",
+    (x, y) if x > 0 && y > 0 => "first",
+    _ => "elsewhere"
+}
+println(quadrant((2, 5)) + " " + quadrant((0, 0)))
+```
+
 ### Maps
 
 `#{ key: value }` builds a hash map. Keys are strings (integers, floats, and
@@ -690,6 +710,33 @@ matter for top-level functions):
 fn fib(n) = if n < 2 => n else => fib(n - 1) + fib(n - 2)
 println(to_string(fib(10)))
 ```
+
+### Nested functions
+
+`fn` declarations may appear inside a function body. A nested function sees
+the enclosing function's parameters and locals (captured by value, like a
+lambda), is scoped to the body, and may call itself and its sibling nested
+functions:
+
+```olang
+fn bullet_list(items, marker) = {
+    fn line(x) = marker + " " + show(x)       // captures `marker`
+    items |> map(line) |> join("\n")
+}
+println(bullet_list(["read", "write"], "-"))
+
+fn sum_list(xs) = {
+    fn go(rest, acc) = match rest {
+        [] => acc,
+        [h, ...t] => go(t, acc + h)           // self-recursive nested fn
+    }
+    go(xs, 0)
+}
+println(to_string(sum_list([1, 2, 3, 4])))
+```
+
+Use a nested `fn` where a lambda would need a name — recursive helpers,
+or a step function shared by several call sites in the same body.
 
 ### Generics and trait bounds
 

@@ -18,7 +18,7 @@ source (.ol)
 parse pairs ──► AST             src/parser.rs → src/ast.rs
    │  static passes             src/analyze.rs, src/type_checker.rs
    ▼
-tree-walking evaluation         src/interpreter.rs
+tree-walking evaluation         src/interpreter/
    │  hot functions promoted
    ▼
 register bytecode (OVM)         src/ovm/ — on by default
@@ -38,9 +38,11 @@ plus `Value` — the runtime value enum that the interpreter produces.
 gates execution today — the runtime is dynamic (see
 [Stability](stability.md)).
 
-**`src/interpreter.rs`** is the reference semantics: a tree-walking
+**`src/interpreter/`** is the reference semantics: a tree-walking
 evaluator over `Value` with a persistent-map `Environment` (cheap closure
-snapshots, copy-on-write scoping).
+snapshots, copy-on-write scoping). It is split into semantic components —
+core eval (`mod.rs`), environments, modules, patterns, operators, errors,
+and the spawn registry.
 
 **`src/ovm/`** is the acceleration tier: functions that get called often are
 compiled to register bytecode and re-executed there. It is on by default.
@@ -55,8 +57,8 @@ list concatenation); when you touch either tier's operators or value
 semantics, touch both — or make the OVM refuse to compile the construct.
 
 Refusal is the designed escape hatch: the OVM compiler returns
-`CompilationFailed` for anything it does not support (lambdas capturing
-runtime state, global assignment, `return`/`break value`, and more — see
+`CompilationFailed` for anything it does not support (global assignment,
+`return`/`break value`, async, and more — see
 [ovm.md](ovm.md#known-limitations)), and
 the function transparently stays on the interpreter. **Falling back is always
 correct; diverging is never acceptable.**
@@ -115,13 +117,13 @@ own standard library.
 
 `InterpreterError` (thiserror) covers user-visible failures; the REPL and
 CLI format them with source context and suggestions
-(`src/error_formatter.rs`, `src/help.rs`). Language-level fallibility is
+(`src/interpreter/errors.rs`, `src/help.rs`). Language-level fallibility is
 `Value::Ok`/`Value::Err` — the interpreter only raises hard errors for
 genuine violations (type errors, undefined names, arity, overflow).
 
 ## Testing strategy
 
-~40 integration test binaries under `tests/` plus unit tests. The layers:
+42 integration test binaries under `tests/` plus unit tests. The layers:
 
 | Layer | Where | What it protects |
 |---|---|---|
@@ -169,13 +171,15 @@ grammar.pest              syntax (pest PEG)
 src/
   main.rs                 CLI (file mode, REPL, flags)
   parser.rs, ast.rs       parsing → AST + Value
-  interpreter.rs          reference semantics
+  interpreter/            reference semantics (core eval, environment,
+                          modules, patterns, ops, errors, spawn registry)
   analyze.rs              static hints
   type_checker.rs         optional annotation checking
   builtin.rs              global builtins
   stdlib/                 native modules + embedded/ (olang-source)
   ovm/                    bytecode tier: compiler, VM, tier manager
   pkg/                    package manager (see packages.md)
+  tools/                  olang test (test_runner.rs), olang fmt (fmt.rs)
   repl.rs, help.rs        interactive mode
 docs/                     this book
 examples/                 runnable programs + run_all.ol harness

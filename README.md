@@ -31,6 +31,11 @@ disagrees with those two, they win.
 
 ## Install and run
 
+Or don't install anything: the website's **playground** runs the whole
+language — interpreter and bytecode tier — compiled to WebAssembly in
+your browser (`cd website && bun run dev`, then /playground; no code
+leaves the page).
+
 ```bash
 cargo install --path .
 
@@ -74,18 +79,24 @@ promoted to a register bytecode tier (the OVM) — and anything the OVM
 cannot compile *identically* is refused and stays interpreted. Falling
 back is always correct; diverging is never acceptable. The tier covers
 the language people actually write — pipelines, capturing lambdas,
-structs, enums, globals, higher-order functions — and on
-checksum-verified benchmarks olang runs ahead of Ruby and even with
-CPython on struct-and-float workloads, and ahead of CPython on idiomatic
-`map`/`sum` pipelines. Details and measured tables:
+structs, enums, maps, tuples, globals, higher-order functions, trait
+method dispatch, template strings, nested functions, and stdlib module
+calls; 158 of the 164 functions in the example corpus promote (the six
+holdouts are async and global assignment, by design). On
+checksum-verified benchmarks olang runs ahead of both CPython and Ruby
+on struct-and-float workloads and well ahead of Ruby on map-heavy text
+work. Details and measured tables:
 [docs/internals.md](docs/internals.md), [docs/ovm.md](docs/ovm.md).
 
 ## Examples
 
 [`examples/`](examples/) holds real programs — a task CLI, log analyzer,
 template engine, workflow engine, parser combinators, a regex engine, a
-JSON Schema validator, a markdown converter, an HTTP notes API — all run
-by the self-hosted harness (`olang run_all.ol`) and in CI.
+JSON Schema validator, a markdown converter, an HTTP notes API, a small
+Lisp interpreter written in olang (`minilisp/`), and a full-stack issue
+tracker (`app/`: SQLite JSON API plus its own browser frontend, all
+served by `olang main.ol`) — all run by the self-hosted harness
+(`olang run_all.ol`) and in CI.
 
 ## Maturity
 

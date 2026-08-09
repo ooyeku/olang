@@ -103,6 +103,30 @@ let shapes = [Circle(1.0), Rect(3.0, 4.0)]
 println(to_string(shapes |> map(area)))
 ```
 
+## Behavior with dispatch: traits
+
+A trait declares methods (optionally with defaults); `impl Trait for Type`
+provides them, and calls dispatch on the receiver's runtime type:
+
+```olang
+trait Describe {
+    fn name(self) -> String
+    fn describe(self) -> String = "a " + self.name()   // default method
+}
+
+type Circle = struct { r: Float }
+type Rect = struct { w: Float, h: Float }
+impl Describe for Circle { fn name(self) = "circle" }
+impl Describe for Rect {
+    fn name(self) = "rect"
+    fn describe(self) = "a " + self.name() + " (custom)"   // override
+}
+
+for shape in [Circle { r: 1.0 }, Rect { w: 2.0, h: 3.0 }] {
+    println(shape.describe())
+}
+```
+
 ## Errors are values
 
 Fallible functions return `Ok(...)` or `Err(...)`. Unwrap, default, match,
@@ -144,5 +168,6 @@ for word in sort(map_keys(counts)) {
 - [The Standard Library](stdlib.md) — every builtin and module.
 - [Packages](packages.md) — multi-file programs and dependencies.
 - [`examples/`](../examples/) — complete programs: a task CLI, a template
-  engine, a regex engine, a parser combinator library, and more. Run them
-  all with `cd examples && olang run_all.ol`.
+  engine, a regex engine, a parser combinator library, a Lisp interpreter
+  written in olang (`minilisp/`), a full-stack issue tracker (`app/`), and
+  more. Run them all with `cd examples && olang run_all.ol`.
