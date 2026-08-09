@@ -630,6 +630,7 @@ impl Eq for OvmValue {}
 
 impl OvmValue {
     /// Create a new integer value
+    #[inline]
     pub fn new_integer(value: i64) -> Self {
         Self {
             header: ValueHeader::new(
@@ -642,6 +643,7 @@ impl OvmValue {
     }
 
     /// Create a new float value
+    #[inline]
     pub fn new_float(value: f64) -> Self {
         Self {
             header: ValueHeader::new(TypeTag::Float, ExecutionTier::Interpreter, LazyState::Eager),
@@ -650,6 +652,7 @@ impl OvmValue {
     }
 
     /// Create a new boolean value
+    #[inline]
     pub fn new_boolean(value: bool) -> Self {
         Self {
             header: ValueHeader::new(
@@ -673,7 +676,45 @@ impl OvmValue {
     /// GcPtr payload (previously they were silently replaced with Unit,
     /// destroying every string/list/function that went through a register
     /// copy or argument pass).
+    #[inline]
     pub fn clone_simple(&self) -> Self {
+        // Immediates dominate register traffic in a numeric kernel, and
+        // copying one is a few bytes. Splitting them out keeps this arm
+        // inlinable at the call site; the heap arms stay behind a call,
+        // because a 20-way match is far past what LLVM will inline, and
+        // leaving them here made *every* register copy a jump into it.
+        match &self.data {
+            ValueData::Integer(i) => {
+                return Self {
+                    header: self.header,
+                    data: ValueData::Integer(*i),
+                }
+            }
+            ValueData::Float(f) => {
+                return Self {
+                    header: self.header,
+                    data: ValueData::Float(*f),
+                }
+            }
+            ValueData::Boolean(b) => {
+                return Self {
+                    header: self.header,
+                    data: ValueData::Boolean(*b),
+                }
+            }
+            ValueData::Unit => {
+                return Self {
+                    header: self.header,
+                    data: ValueData::Unit,
+                }
+            }
+            _ => {}
+        }
+        self.clone_heap()
+    }
+
+    #[inline(never)]
+    fn clone_heap(&self) -> Self {
         let data = match &self.data {
             ValueData::Integer(i) => ValueData::Integer(*i),
             ValueData::Float(f) => ValueData::Float(*f),

@@ -10,7 +10,34 @@ documented.
 
 ## [Unreleased]
 
+### Added
+
+- **The bytecode tier compiles unary `-` and `!`.** The VM has had `Neg`
+  and `Not` instructions, and an `execute_unary_op` matching the
+  interpreter exactly (`checked_neg` with the same overflow message, `-x`
+  on floats, `!b` on booleans, a type error otherwise), since it was
+  written — the compiler simply never emitted them. A single `-x`
+  anywhere in a function therefore refused the whole function and left it
+  on the interpreter. Found while auditing the tier tests: the test named
+  `indexing_promotes_and_agrees` promoted nothing, because its `xs[-1]`
+  made it uncompilable.
+
 ### Changed
+
+- **Value copies and drops stopped going out of line.** `clone_simple` is
+  a 20-variant match, far past what LLVM will inline, so *every* register
+  copy became a call into it — it was the second-hottest symbol in a
+  profile. Immediates (which fill nearly every register in a numeric
+  kernel) now clone through a small inlinable fast path with the heap
+  variants behind `clone_heap`. The mirror image showed up next:
+  `drop_in_place<ValueData>` was ~25% of VM samples, because overwriting a
+  register runs the old value's drop glue. Writes and frame resets now
+  skip that glue when the value being replaced owns no heap payload,
+  decided by matching on the data itself rather than the header tag so it
+  cannot disagree with reality. Measured: N-body ~680ms → ~530ms (8.0M
+  interactions/sec), fib(30) ~218ms → ~140ms. Two new tier tests cover the
+  skip decision: a register cycled through strings, ints, lists and floats
+  on every pass, and heap values returned from pooled frames.
 
 - **Profile-guided dispatch-loop cuts: phantom errors and double dispatch.**
   A CPU profile of the N-body run showed ~15% of VM time in

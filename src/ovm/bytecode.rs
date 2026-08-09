@@ -2835,10 +2835,16 @@ impl ExecutionState {
             )));
         }
 
-        // Allocate registers
-        self.registers.clear();
-        self.registers
-            .resize(bytecode.register_count as usize, OvmValue::new_unit());
+        // Reset registers in place. `clear()` ran ValueData's drop glue --
+        // an out-of-line call over 20 variants -- once per register per
+        // call; resetting in place skips it for the immediates that fill
+        // almost every slot, and keeps the allocation.
+        let want = bytecode.register_count as usize;
+        self.registers.truncate(want);
+        for slot in self.registers.iter_mut() {
+            Self::reset_slot(slot);
+        }
+        self.registers.resize(want, OvmValue::new_unit());
 
         // Arguments occupy the first registers (the compiler assigns
         // parameters registers 0..n in declaration order)
@@ -2861,6 +2867,7 @@ impl ExecutionState {
         Ok(())
     }
 
+    #[inline]
     pub fn get_register(&self, reg: Register) -> Result<OvmValue, BytecodeError> {
         self.registers
             .get(reg.0 as usize)
@@ -2868,9 +2875,9 @@ impl ExecutionState {
             .ok_or_else(|| BytecodeError::InvalidRegister(reg))
     }
 
-    /// Borrow a register without cloning. Cloning an OvmValue copies its
-    /// header (three atomics), which dominated the dispatch loop when every
-    /// operand read went through get_register.
+    /// Borrow a register without cloning. Cloning an OvmValue rebuilds it
+    /// (and bumps an Arc for heap payloads), which dominated the dispatch
+    /// loop when every operand read went through get_register.
     #[inline]
     pub fn register_ref(&self, reg: Register) -> Result<&OvmValue, BytecodeError> {
         self.registers
@@ -2888,9 +2895,39 @@ impl ExecutionState {
         Ok((self.register_ref(lhs)?, self.register_ref(rhs)?))
     }
 
+    /// True when a value owns no heap payload, read off the data itself
+    /// rather than the header tag so it cannot disagree with reality.
+    #[inline]
+    fn owns_nothing(value: &OvmValue) -> bool {
+        use crate::ovm::value::ValueData;
+        matches!(
+            value.data,
+            ValueData::Integer(_) | ValueData::Float(_) | ValueData::Boolean(_) | ValueData::Unit
+        )
+    }
+
+    /// Overwrite a slot with Unit, skipping drop glue when the old value
+    /// owned nothing. `forget` on a value that owns nothing leaks nothing.
+    #[inline]
+    fn reset_slot(slot: &mut OvmValue) {
+        if Self::owns_nothing(slot) {
+            std::mem::forget(std::mem::replace(slot, OvmValue::new_unit()));
+        } else {
+            *slot = OvmValue::new_unit();
+        }
+    }
+
+    #[inline]
     pub fn set_register(&mut self, reg: Register, value: OvmValue) -> Result<(), BytecodeError> {
         if let Some(slot) = self.registers.get_mut(reg.0 as usize) {
-            *slot = value;
+            // Same trick as reset_slot: the value being overwritten is an
+            // immediate on nearly every write in a numeric kernel, and its
+            // drop glue was ~25% of VM samples in a profile.
+            if Self::owns_nothing(slot) {
+                std::mem::forget(std::mem::replace(slot, value));
+            } else {
+                *slot = value;
+            }
             Ok(())
         } else {
             Err(BytecodeError::InvalidRegister(reg))
@@ -3054,6 +3091,29 @@ impl BytecodeCompiler {
                         name
                     )))
                 }
+            }
+
+            // Unary `-` and `!`. The VM has had Neg/Not instructions and an
+            // execute_unary_op matching the interpreter's semantics exactly
+            // (checked_neg with the same overflow message, `-x` on floats,
+            // `!b` on booleans, type error otherwise) all along -- the
+            // compiler simply never emitted them, so any function containing
+            // a `-x` was refused and stayed on the interpreter.
+            Expr::UnaryOp { op, operand } => {
+                let operand_reg = self.compile_expression(operand)?;
+                let dst_reg = self.register_allocator.allocate_register();
+                let instruction = match op {
+                    UnaryOp::Negate => Instruction::Neg {
+                        dst: dst_reg,
+                        src: operand_reg,
+                    },
+                    UnaryOp::Not => Instruction::Not {
+                        dst: dst_reg,
+                        src: operand_reg,
+                    },
+                };
+                self.emitter.instructions.push(instruction);
+                Ok(dst_reg)
             }
 
             Expr::BinaryOp { left, op, right } => {

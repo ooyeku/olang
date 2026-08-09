@@ -1400,6 +1400,104 @@ n
     );
 }
 
+// ── unary operators compile ───────────────────────────────────────────
+
+#[test]
+fn unary_negation_and_not_promote_and_agree() {
+    // Until these compiled, a single `-x` anywhere in a function refused
+    // the whole function and left it on the interpreter.
+    let src = r#"
+fn mix(n, f, b) = {
+    let a = -n
+    let c = -f
+    let d = !b
+    let e = --n
+    let g = -(n * 2) + (0 - n)
+    if d => a + e + g + c
+    else => a - e + g - c
+}
+let mut s = 0.0
+for i in 0..40 { s = s + mix(i, 1.5, i > 20) }
+s
+"#;
+    assert_eq!(promotion_count(src, 2), 1, "mix should be promoted");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn negation_overflow_and_type_errors_match_the_interpreter() {
+    // checked_neg on i64::MIN, and negating a non-number, must fail the
+    // same way in both tiers rather than diverging.
+    assert_tier_transparent(
+        r#"
+fn neg(n) = -n
+neg(1)
+neg(2)
+neg(-9223372036854775807 - 1)
+"#,
+    );
+    assert_tier_transparent(
+        r#"
+fn neg(n) = -n
+neg(1)
+neg(2)
+neg("nope")
+"#,
+    );
+}
+
+// ── register slot reuse (perf: skipping drop glue) ────────────────────
+
+#[test]
+fn registers_alternating_between_heap_and_immediate_values_stay_correct() {
+    // Writing a register skips drop glue when the value being overwritten
+    // owns no heap payload. A register that alternates between strings,
+    // lists and numbers exercises both branches of that decision on every
+    // pass: a mistake either drops a live payload or keeps a dead one.
+    // (Deliberately free of `show`, which the tier refuses to compile — a
+    // rejected function would leave this test exercising the interpreter
+    // twice and proving nothing.)
+    assert_tier_transparent(
+        r#"
+fn churn(n) = {
+    let mut slot = "start"
+    let mut acc = 0
+    for i in 0..n {
+        slot = "s" + "tring"
+        acc = acc + len(slot)
+        slot = i
+        acc = acc + slot
+        slot = [i, i + 1, i + 2]
+        acc = acc + len(slot) + slot[2]
+        slot = 0.5
+        acc = acc + 1
+    }
+    acc
+}
+churn(60) + churn(60) + churn(60)
+"#,
+    );
+}
+
+#[test]
+fn heap_values_survive_being_passed_through_reused_frames() {
+    // Frames are pooled and their register vectors reset in place rather
+    // than cleared. A string built in one call must not be observable in
+    // the next call that reuses the frame, and must come back intact.
+    assert_tier_transparent(
+        r#"
+fn tag(prefix, n) = {
+    let mut out = prefix
+    for i in 0..n { out = out + "-ab" }
+    len(out)
+}
+let mut all = 0
+for k in 0..150 { all = all + tag("r", 3) }
+all + tag("zz", 9)
+"#,
+    );
+}
+
 // ── argument-conversion cache (perf: the tier boundary) ───────────────
 
 #[test]
