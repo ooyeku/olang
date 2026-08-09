@@ -341,6 +341,29 @@ Notes:
   the row). Groups keep first-seen order, so results are deterministic
   without a sort.
 
+### Phase 4 — shipped and closed
+
+- **`plot` shipped as designed: charts as SVG text.** `plot.line`,
+  `plot.scatter`, `plot.lines` (multi-series with legend), `plot.bar`,
+  and `plot.hist` render complete standalone SVG documents from Series
+  data — no rendering dependency, composing identically with
+  `fs.write_file`, an `http` response, or the wasm playground. Visual
+  defaults follow a CVD-validated categorical palette assigned in fixed
+  order, ink-colored text, recessive grid/axes, 2px lines, 8px markers,
+  rounded data-ends anchored to the baseline, and a hard one-y-axis
+  rule. Options ride in one map (`title`, `x_label`, `y_label`,
+  `width`, `height`; unknown keys refuse). Null pairs drop in xy
+  charts; bars refuse null values. Output was rendered and visually
+  verified, not just string-asserted.
+- **Lazy evaluation and fusion: evaluated and deferred, with the
+  reasoning and a reopening gate recorded in
+  [ods-lazy.md](ods-lazy.md).** Short version: the eager engine already
+  beats NumPy/Polars on the phase benchmarks, fusion's win is bounded
+  (one memory stream per intermediate), lazy frames are a second
+  evaluation model the language shouldn't pay for on today's evidence,
+  and the bytecode peephole — the right eventual home — deliberately
+  waits for the JIT's instruction-level machinery to stabilize.
+
 ## Phases
 
 Each phase is independently shippable and defensible; no phase begins until
@@ -352,7 +375,7 @@ the previous phase's gate is met.
 | **1 — Series** | f64/i64/bool arrays with validity bitmaps: constructors (`series(list)`, `ods.zeros`, `ods.linspace`, range conversion), operator arithmetic with scalar broadcasting, reductions (`sum mean var std min max quantile`), `sort argsort take mask filter cumsum dot` | B1, B2, B3, B5 met; benchmark table published in this doc; property tests pin every kernel against a naive interpreter-level reference implementation |
 | **2 — stats** | `describe`, correlation/covariance, distributions (normal, t, chi², F: pdf/cdf/ppf/sample), one- and two-sample t-tests, chi² test, `stats.lm` (OLS — normal equations + in-crate Cholesky; faer deferred to Phase 3, see Measured notes) | B4 met; results pinned against published reference values (R/scipy outputs recorded as constants in tests) |
 | **3 — Frame** | Columnar table = named Series + string columns; `select filter with group_by agg join sort`; CSV/JSON bridges to the existing stdlib modules; the tidyverse verb layer | B6 met; `examples/dataproc` rewritten on Frame with a measured speedup recorded |
-| **4 — plot + lazy** | `plot` as an SVG-text emitter (composes with the playground); *evaluate* lazy expression fusion — bytecode already flows ods ops through instructions, so peephole fusion is possible without surface changes | Explicitly gated on 1–3 being done; lazy work requires its own design doc |
+| **4 — plot + lazy** | `plot` as an SVG-text emitter (composes with the playground); *evaluate* lazy expression fusion — bytecode already flows ods ops through instructions, so peephole fusion is possible without surface changes | Explicitly gated on 1–3 being done; lazy work requires its own design doc — **done: plot shipped, lazy evaluated and deferred in [ods-lazy.md](ods-lazy.md)** |
 
 ## Relationship to the JIT (roadmap P2)
 

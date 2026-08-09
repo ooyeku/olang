@@ -12,6 +12,25 @@ documented.
 
 ### Added
 
+- **The `plot` namespace — ods Phase 4, charts as SVG text**
+  (`docs/design/ods.md`). `plot.line`, `plot.scatter`, `plot.lines`
+  (multi-series with legend), `plot.bar`, and `plot.hist` render
+  complete standalone SVG documents from Series data — no rendering
+  dependency, composing identically with `fs.write_file`, an `http`
+  response, or the wasm playground. Defaults carry real charting
+  discipline: a CVD-validated categorical palette assigned in fixed
+  order (a 9th series errors rather than inventing a hue), 1-2-5 nice
+  ticks, recessive grid and axes, ink-colored text, rounded data-ends
+  anchored to the baseline, legends only at two or more series,
+  XML-escaped labels, one y-axis always. Options ride in one map
+  (`title`, `x_label`, `y_label`, `width`, `height`) and unknown keys
+  refuse. Null pairs drop in xy charts; bars refuse null values. With
+  this, every phase of the ods design doc is shipped: CSV → Frame →
+  group_by → chart is one pipeline. Lazy evaluation was Phase 4's
+  other mandate: evaluated and **deferred with a measured reopening
+  gate** in the new `docs/design/ods-lazy.md` — the eager engine
+  already beats NumPy on the benchmark fusion would improve.
+
 - **Frame — ods Phase 3, the columnar table** (`docs/design/ods.md`).
   Series grew a String dtype (lexicographic comparisons, sort, gather,
   fill_null), and the `ods` namespace grew the tidyverse verb set over

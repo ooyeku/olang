@@ -127,6 +127,8 @@ pub fn registered_modules() -> &'static [Arc<dyn OvmModule>] {
         modules.push(Arc::new(crate::ods::OdsModule));
         #[cfg(feature = "ods")]
         modules.push(Arc::new(crate::ods::StatsModule));
+        #[cfg(feature = "ods")]
+        modules.push(Arc::new(crate::ods::PlotModule));
         modules
     });
     &MODULES

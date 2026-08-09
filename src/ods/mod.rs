@@ -9,6 +9,7 @@
 //! `docs/design/ods.md`.
 
 mod frame;
+mod plot;
 mod series;
 mod stats;
 
@@ -109,7 +110,7 @@ impl OvmModule for OdsModule {
         }
         match func {
             "version" => Ok(Value::String(Arc::new(format!(
-                "{} (phase 3)",
+                "{} (phase 4)",
                 env!("CARGO_PKG_VERSION")
             )))),
             "probe" => match args.as_slice() {
@@ -148,6 +149,53 @@ impl OvmModule for OdsModule {
             // native_eq fallback; everything else is a type error.
             _ => None,
         }
+    }
+}
+
+/// The `plot` namespace: charts as SVG text from Series data. Like
+/// stats, a pure-function module over ods values — no native types or
+/// operators of its own.
+pub struct PlotModule;
+
+impl OvmModule for PlotModule {
+    fn name(&self) -> &'static str {
+        "plot"
+    }
+
+    fn namespaces(&self) -> Vec<(String, Value)> {
+        let mut module = HashMap::new();
+        for (name, arity) in plot::FUNCTIONS {
+            module.insert(
+                name.to_string(),
+                Value::Builtin(BuiltinFunction {
+                    name: format!("plot.{}", name),
+                    arity: *arity,
+                }),
+            );
+        }
+        vec![(
+            "plot".to_string(),
+            Value::Struct {
+                type_name: "Module".to_string(),
+                fields: module,
+            },
+        )]
+    }
+
+    fn dispatch(&self, func: &str, args: Vec<Value>) -> Result<Value, String> {
+        if !plot::handles(func) {
+            return Err(format!("unknown plot function: plot.{}", func));
+        }
+        plot::dispatch(func, args)
+    }
+
+    fn binary_op(
+        &self,
+        _op: &BinaryOp,
+        _lhs: &Value,
+        _rhs: &Value,
+    ) -> Option<Result<Value, String>> {
+        None
     }
 }
 
