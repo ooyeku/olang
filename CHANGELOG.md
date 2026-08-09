@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **Trait method dispatch compiles.** `value.m(..)` — the top remaining
+  promotion blocker in the example corpus (21 refusals) — now compiles to
+  a `CallMethod` instruction when the receiver expression is pure
+  (locals, field chains, literals). Dispatch mirrors the interpreter
+  exactly: a struct *field* named like the method takes precedence and is
+  called without self; otherwise a direct `impl` for the receiver's
+  runtime type, then the type's traits in registration order for a
+  default (defaults calling back into the receiver's own impl work);
+  otherwise the field-access error. The runtime type-name mapping mirrors
+  `Value::type_name`, so traits implemented for primitives (`impl
+  Describe for Int`) dispatch too. The interpreter feeds impls, defaults,
+  and type-trait facts to the tier as declarations evaluate; any change
+  to the dispatch landscape invalidates compiled functions, so an `impl`
+  declared after a function promoted still dispatches correctly — pinned
+  by a test. Receivers with side effects refuse: the interpreter's
+  dispatch fallthrough re-evaluates the receiver, which the VM will not
+  replicate for effectful expressions. The language tour — whose
+  trait-default method caught the previous attempt at compiling method
+  calls — now runs output-identical under both tiers, and one call site
+  serves Point, Circle, and Int receivers in the tests. Corpus: promoted
+  108 → 112.
+
 ## [0.36.0] - 2026-08-09
 
 ### Changed

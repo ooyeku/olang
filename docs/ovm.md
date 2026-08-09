@@ -99,6 +99,14 @@ A function is eligible when its body uses only the subset the VM implements:
   interpreter function when it crosses the tier boundary
 - blocks, `let` bindings, assignment to locals, `while` and `for` loops,
   `break`, and `continue`
+- method calls (`value.m(..)`) on pure receiver expressions — locals,
+  field chains, literals. A `CallMethod` instruction mirrors the
+  interpreter's dispatch exactly: struct fields take precedence (called
+  without self), then a direct `impl` for the receiver's runtime type,
+  then the type's traits in registration order for a default; the
+  resolved method runs compiled when its body compiles and bridges
+  otherwise. Late `impl` declarations invalidate compiled functions so
+  new types dispatch correctly
 - calls through function *values*: parameters and locals holding
   functions (`f(x)` where `f` is a parameter — locals shadow builtins,
   exactly as interpreted), curried calls (`g(a)(b)`), immediately invoked
@@ -336,9 +344,11 @@ ten representative programs). Use it when changing the evaluator; use
 
 These are real gaps, not oversights:
 
-1. **Method calls stay interpreted.** `value.m(..)` dispatches on the
-   value's runtime type through trait impls, which a compile-time field
-   read cannot replicate; a function containing one is refused whole.
+1. **Method calls on *effectful* receiver expressions stay interpreted.**
+   `make_thing().m(..)` refuses because the interpreter's dispatch
+   fallthrough re-evaluates the receiver, which the VM will not replicate
+   for an expression with side effects. Pure receivers — locals, field
+   chains, literals — compile (see below).
 2. **Map literals, template strings, and nested `fn` declarations are
    uncompiled**, as is *assigning* to a global (reads bake as snapshot
    constants). Map-returning builtins (`map_set`, `group_by`, ...) remain

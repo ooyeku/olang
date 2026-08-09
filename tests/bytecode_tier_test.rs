@@ -1675,13 +1675,14 @@ t
 }
 
 #[test]
-fn trait_method_calls_stay_interpreted_and_agree() {
-    // `self.describe()` dispatches on runtime type through trait impls; a
-    // compiled GetField+call would read a (nonexistent) field. Functions
-    // containing method calls must refuse and stay correct — this exact
-    // shape broke the language tour when method callees briefly compiled.
+fn trait_method_calls_compile_and_dispatch_on_runtime_type() {
+    // CallMethod mirrors the interpreter's dispatch: impl method by the
+    // receiver's runtime type, trait defaults (which call back into the
+    // receiver's own impl), and primitives as receivers. One call site
+    // serves three types.
     let src = r#"
 type Point = struct { x: Int, y: Int }
+type Circle = struct { r: Float }
 trait Describe {
     fn describe(self) -> String
     fn loud(self) -> String = self.describe() + "!"
@@ -1689,13 +1690,102 @@ trait Describe {
 impl Describe for Point {
     fn describe(self) = "point"
 }
-let d = Point { x: 1, y: 2 }
-let mut s = ""
-for i in 0..10 { s = s + d.loud() }
-len(s)
+impl Describe for Circle {
+    fn describe(self) = "circle"
+}
+impl Describe for Int {
+    fn describe(self) = "int"
+}
+fn render(v) = v.describe() + v.loud()
+fn go(n) = {
+    let p = Point { x: n, y: 2 }
+    let c = Circle { r: 0.5 }
+    len(render(p)) + len(render(c)) + len(render(n))
+}
+let mut t = 0
+for i in 0..20 { t = t + go(i) }
+t
 "#;
+    assert!(promotion_count(src, 2) >= 2, "render and go should promote");
+    assert_eq!(
+        eval(src, Some(1)).unwrap(),
+        Value::Integer(((5 + 6) + (6 + 7) + (3 + 4)) * 20)
+    );
     assert_tier_transparent(src);
-    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(60));
+}
+
+#[test]
+fn struct_fields_take_precedence_over_trait_methods() {
+    // A struct FIELD named like a method wins, and is called WITHOUT the
+    // receiver as self — the interpreter's precedence rule.
+    let src = r#"
+type Holder = struct { get: Function, tag: Int }
+trait Get {
+    fn get(self) -> Int = 999
+}
+impl Get for Holder {
+    fn get(self) = 999
+}
+fn go(n) = {
+    let h = Holder { get: (x) => x * 2, tag: n }
+    h.get(21)
+}
+go(1)
+go(2)
+go(3)
+"#;
+    assert_eq!(eval(src, None).unwrap(), Value::Integer(42));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn missing_methods_error_identically() {
+    assert_tier_transparent(
+        r#"
+type P = struct { x: Int }
+fn bad(p) = p.nope()
+let p = P { x: 1 }
+bad(p)
+bad(p)
+bad(p)
+"#,
+    );
+    // non-struct receiver with no impl
+    assert_tier_transparent(
+        r#"
+fn bad(n) = n.nope()
+bad(1)
+bad(2)
+bad(3)
+"#,
+    );
+}
+
+#[test]
+fn late_impl_declarations_invalidate_compiled_dispatch() {
+    // `speak` compiles while only Dog's impl exists; declaring Cat's impl
+    // afterwards must invalidate it so the new type dispatches correctly.
+    let src = r#"
+type Dog = struct { name: String }
+type Cat = struct { name: String }
+trait Speak { fn speak(self) -> String }
+impl Speak for Dog {
+    fn speak(self) = "woof"
+}
+fn hear(a) = a.speak()
+let d = Dog { name: "rex" }
+let first = hear(d) + hear(d) + hear(d)
+impl Speak for Cat {
+    fn speak(self) = "meow"
+}
+let c = Cat { name: "tom" }
+first + hear(c)
+"#;
+    assert_eq!(
+        eval(src, Some(1)).unwrap(),
+        Value::String("woofwoofwoofmeow".to_string().into())
+    );
+    assert_tier_transparent(src);
 }
 
 // ── str module builtins ───────────────────────────────────────────────

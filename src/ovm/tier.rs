@@ -111,6 +111,28 @@ impl BytecodeTier {
         }
     }
 
+    /// Record trait dispatch facts as declarations evaluate. Any change
+    /// to the dispatch landscape invalidates compiled functions — a
+    /// CallMethod site may hold a resolution that no longer matches the
+    /// interpreter's.
+    pub fn note_trait_impl(&mut self, type_name: String, method: String, func: Function) {
+        if self.vm.note_trait_impl(type_name, method, func) {
+            self.compiled.clear();
+        }
+    }
+
+    pub fn note_trait_default(&mut self, trait_name: String, method: String, func: Function) {
+        if self.vm.note_trait_default(trait_name, method, func) {
+            self.compiled.clear();
+        }
+    }
+
+    pub fn note_type_trait(&mut self, type_name: String, trait_name: String) {
+        if self.vm.note_type_trait(type_name, trait_name) {
+            self.compiled.clear();
+        }
+    }
+
     /// Record a declared unit enum variant. A NEW name invalidates every
     /// compiled function: a bare-identifier pattern of this name compiled
     /// as a binding is now an equality match.

@@ -74,6 +74,15 @@ pub struct BytecodeVm {
     /// interpreter's registry so struct literals validate at compile time
     /// with exactly the interpreter's rules.
     struct_defs: HashMap<String, Vec<String>>,
+    /// Trait dispatch registries, mirrored from the interpreter as
+    /// declarations evaluate: (type name, method) → impl method,
+    /// (trait name, method) → default method, and type → traits it
+    /// implements. Lookup order matches `Interpreter::lookup_method`
+    /// exactly: a direct impl wins, then the type's traits are scanned in
+    /// registration order for a default.
+    trait_impls: HashMap<(String, String), crate::ast::Function>,
+    trait_defaults: HashMap<(String, String), crate::ast::Function>,
+    type_traits: HashMap<String, Vec<String>>,
     /// Declared unit enum variant names: a bare identifier pattern with
     /// one of these names is an equality match, not a binding — the same
     /// rule the interpreter applies.
@@ -357,6 +366,20 @@ pub enum Instruction {
         dst: Register,
         shape: Arc<crate::ovm::value::StructShape>,
         field_regs: Vec<Register>,
+    },
+    /// A method call `receiver.m(args)` on a receiver held in a register.
+    /// Mirrors the interpreter's dispatch exactly: a struct FIELD named
+    /// `m` takes precedence (called without self); otherwise the method
+    /// resolves through the trait registries on the receiver's runtime
+    /// type and is called with the receiver prepended as self; otherwise
+    /// the field-access error. Only compiled when the receiver expression
+    /// is a plain local, so the interpreter's re-evaluation quirk on the
+    /// field path is unobservable.
+    CallMethod {
+        dst: Register,
+        object: Register,
+        method: String,
+        args: Vec<Register>,
     },
     /// Call whatever function value the callee register holds — a
     /// parameter, a local, the result of another call. Compiled function
@@ -989,6 +1012,9 @@ impl BytecodeVm {
             hof_cache: HashMap::new(),
             struct_defs: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
+            trait_impls: HashMap::new(),
+            trait_defaults: HashMap::new(),
+            type_traits: HashMap::new(),
             poisoned_structs: std::collections::HashSet::new(),
             // Must match the interpreter's own limit: a program that recurses
             // 900 deep has to behave the same whether or not it was promoted
@@ -1017,6 +1043,101 @@ impl BytecodeVm {
                 self.struct_defs.insert(name, fields);
                 false
             }
+        }
+    }
+
+    /// Record an `impl Trait for Type` method. Returns true when the
+    /// dispatch landscape changed (new method, or an existing key rebound
+    /// to a different body) — compiled functions may hold stale
+    /// resolutions and must recompile.
+    pub fn note_trait_impl(
+        &mut self,
+        type_name: String,
+        method: String,
+        func: crate::ast::Function,
+    ) -> bool {
+        match self.trait_impls.insert((type_name, method), func.clone()) {
+            Some(old) => !std::sync::Arc::ptr_eq(&old.body, &func.body),
+            None => true,
+        }
+    }
+
+    /// Record a trait's default method. Same change-tracking as
+    /// note_trait_impl.
+    pub fn note_trait_default(
+        &mut self,
+        trait_name: String,
+        method: String,
+        func: crate::ast::Function,
+    ) -> bool {
+        match self
+            .trait_defaults
+            .insert((trait_name, method), func.clone())
+        {
+            Some(old) => !std::sync::Arc::ptr_eq(&old.body, &func.body),
+            None => true,
+        }
+    }
+
+    /// Record that a type implements a trait (registration order matters:
+    /// default lookup scans it in order, as the interpreter does).
+    pub fn note_type_trait(&mut self, type_name: String, trait_name: String) -> bool {
+        let traits = self.type_traits.entry(type_name).or_default();
+        if traits.contains(&trait_name) {
+            false
+        } else {
+            traits.push(trait_name);
+            true
+        }
+    }
+
+    /// `Interpreter::lookup_method`, mirrored: direct impl first, then the
+    /// type's traits in registration order for a default.
+    fn lookup_method(&self, type_name: &str, method: &str) -> Option<&crate::ast::Function> {
+        if let Some(f) = self
+            .trait_impls
+            .get(&(type_name.to_string(), method.to_string()))
+        {
+            return Some(f);
+        }
+        if let Some(traits) = self.type_traits.get(type_name) {
+            for trait_name in traits {
+                if let Some(f) = self
+                    .trait_defaults
+                    .get(&(trait_name.clone(), method.to_string()))
+                {
+                    return Some(f);
+                }
+            }
+        }
+        None
+    }
+
+    /// `Value::type_name`, mirrored for the VM value model — dispatch keys
+    /// on the receiver's runtime type name, so the two must agree exactly.
+    fn ovm_type_name(value: &OvmValue) -> &str {
+        use crate::ovm::value::ValueData;
+        match &value.data {
+            ValueData::Integer(_) => "Int",
+            ValueData::Float(_) => "Float",
+            ValueData::String(_) => "String",
+            ValueData::Boolean(_) => "Bool",
+            ValueData::List(_) => "List",
+            ValueData::Tuple(_) => "Tuple",
+            ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
+                "Function"
+            }
+            ValueData::Builtin(_) => "Builtin",
+            ValueData::Struct(s) => s.type_name(),
+            ValueData::Range(_) => "Range",
+            ValueData::Result { .. } => "Result",
+            ValueData::Unit => "Unit",
+            ValueData::Enum(e) => &e.type_name,
+            ValueData::Promise(_) => "Promise",
+            // Never constructed by compiled code; a failed lookup falls to
+            // the field-access error, which is what the interpreter's
+            // generic path produces too.
+            _ => "<internal>",
         }
     }
 
@@ -1555,6 +1676,62 @@ impl BytecodeVm {
                     };
                     self.execution_state
                         .set_register(*dst, OvmValue::new_struct(Arc::new(obj)))?;
+                }
+
+                Instruction::CallMethod {
+                    dst,
+                    object,
+                    method,
+                    args,
+                } => {
+                    let receiver = self.execution_state.get_register(*object)?;
+                    // Struct fields take precedence over methods, exactly as
+                    // interpreted: field access that happens to hold a
+                    // callable stays field access.
+                    let field_callee = match &receiver.data {
+                        crate::ovm::value::ValueData::Struct(st) => st.field(method).cloned(),
+                        _ => None,
+                    };
+                    let result = if let Some(callee) = field_callee {
+                        let mut arg_values = self.arg_pool.pop().unwrap_or_default();
+                        arg_values.reserve(args.len());
+                        for arg_reg in args {
+                            arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                        }
+                        let r = self.call_function_value(&callee, &arg_values);
+                        arg_values.clear();
+                        if self.arg_pool.len() < 64 {
+                            self.arg_pool.push(arg_values);
+                        }
+                        r?
+                    } else if let Some(m) =
+                        self.lookup_method(Self::ovm_type_name(&receiver), method)
+                    {
+                        let m = OvmValue::new_ast_function(m.clone());
+                        let mut arg_values = self.arg_pool.pop().unwrap_or_default();
+                        arg_values.reserve(args.len() + 1);
+                        arg_values.push(receiver);
+                        for arg_reg in args {
+                            arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                        }
+                        let r = self.call_function_value(&m, &arg_values);
+                        arg_values.clear();
+                        if self.arg_pool.len() < 64 {
+                            self.arg_pool.push(arg_values);
+                        }
+                        r?
+                    } else {
+                        // No field, no method: the interpreter's generic path
+                        // evaluates the field access, which raises the
+                        // missing-field / non-struct error.
+                        return Err(match Self::execute_get_field(&receiver, method) {
+                            Err(e) => e,
+                            Ok(_) => BytecodeError::RuntimeError(
+                                "method dispatch reached an impossible state".to_string(),
+                            ),
+                        });
+                    };
+                    self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::CallValue { dst, callee, args } => {
@@ -4127,11 +4304,12 @@ impl BytecodeCompiler {
                     // A stdlib module call like `math.sqrt(x)`: the object is
                     // a *bare* identifier (a shadowing local would be a
                     // LocalRef), so this is the real module when the
-                    // synthesized name is in the builtin allow-list. Any
-                    // other `value.m(..)` REFUSES: the interpreter dispatches
-                    // it as a trait method on the value's runtime type, which
-                    // a field read cannot replicate (compiling it as
-                    // GetField+CallValue mis-ran trait defaults).
+                    // synthesized name is in the builtin allow-list. A
+                    // `value.m(..)` whose receiver is a plain LOCAL compiles
+                    // to CallMethod, which mirrors trait dispatch at runtime
+                    // (restricting to locals keeps the interpreter's
+                    // receiver re-evaluation quirk unobservable). Anything
+                    // else refuses.
                     Expr::FieldAccess { object, field } => match object.as_ref() {
                         Expr::Identifier(module)
                             if !self.local_variables.contains_key(module)
@@ -4141,9 +4319,34 @@ impl BytecodeCompiler {
                         {
                             None
                         }
+                        receiver if Self::receiver_is_pure(receiver) => {
+                            let object_reg = self.compile_expression(object)?;
+                            let mut arg_regs = Vec::new();
+                            for argument in arguments {
+                                match argument {
+                                    crate::ast::Argument::Positional(expr) => {
+                                        arg_regs.push(self.compile_expression(expr)?);
+                                    }
+                                    crate::ast::Argument::Named { .. } => {
+                                        return Err(BytecodeError::CompilationFailed(
+                                            "Named arguments are not supported in the bytecode tier"
+                                                .to_string(),
+                                        ))
+                                    }
+                                }
+                            }
+                            let dst_reg = self.register_allocator.allocate_register();
+                            self.emitter.instructions.push(Instruction::CallMethod {
+                                dst: dst_reg,
+                                object: object_reg,
+                                method: field.clone(),
+                                args: arg_regs,
+                            });
+                            return Ok(dst_reg);
+                        }
                         _ => {
                             return Err(BytecodeError::CompilationFailed(
-                                "Method calls dispatch on runtime type (traits); not compiled in the bytecode tier"
+                                "Method calls on effectful receiver expressions are not compiled in the bytecode tier"
                                     .to_string(),
                             ))
                         }
@@ -5400,6 +5603,25 @@ impl BytecodeCompiler {
             | Pattern::AnonymousStruct { field_patterns } => {
                 field_patterns.iter().any(|(_, p)| Self::pattern_binds(p))
             }
+            _ => false,
+        }
+    }
+
+    /// True when re-evaluating the expression is unobservable — the
+    /// interpreter's method-dispatch fallthrough re-evaluates the receiver,
+    /// so only receivers in this set may compile to CallMethod. Field
+    /// access can error, but re-evaluating reproduces the same error with
+    /// no side effects.
+    fn receiver_is_pure(expr: &Expr) -> bool {
+        match expr {
+            Expr::Identifier(_)
+            | Expr::LocalRef { .. }
+            | Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::String(_)
+            | Expr::RawString(_)
+            | Expr::Boolean(_) => true,
+            Expr::FieldAccess { object, .. } => Self::receiver_is_pure(object),
             _ => false,
         }
     }

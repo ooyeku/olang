@@ -325,6 +325,13 @@ impl Interpreter {
                     closure: Arc::new(closure.clone()),
                     param_bounds: Vec::new(),
                 };
+                if let Some(tier) = self.bytecode_tier.as_mut() {
+                    tier.note_trait_default(
+                        trait_decl.name.clone(),
+                        method.name.clone(),
+                        function.clone(),
+                    );
+                }
                 self.trait_defaults
                     .insert((trait_decl.name.clone(), method.name.clone()), function);
             }
@@ -357,9 +364,17 @@ impl Interpreter {
             // hid the need to note them.)
             if let Some(tier) = self.bytecode_tier.as_mut() {
                 tier.note_function(method.name.clone(), function.clone());
+                tier.note_trait_impl(
+                    impl_decl.type_name.clone(),
+                    method.name.clone(),
+                    function.clone(),
+                );
             }
             self.trait_impls
                 .insert((impl_decl.type_name.clone(), method.name.clone()), function);
+        }
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.note_type_trait(impl_decl.type_name.clone(), impl_decl.trait_name.clone());
         }
         let traits = self
             .type_traits
