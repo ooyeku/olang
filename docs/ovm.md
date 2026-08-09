@@ -98,7 +98,11 @@ A function is eligible when its body uses only the subset the VM implements:
   snapshots: a global mutated after the function's declaration is not seen
   by either tier (pinned by a test)
 - lambdas, including those capturing the enclosing function's *runtime*
-  state (a parameter, a local). Free variables resolving in the
+  state (a parameter, a local), and those referencing registered user
+  functions that are not in the closure — self-reference and forward
+  (mutual) recursion through a lambda both compile, with the function
+  value carried in the lambda's escaped form so a bridged copy resolves
+  it identically. Free variables resolving in the
   declaration-time closure travel with the lambda as that snapshot;
   runtime captures compile via a `MakeClosure` instruction that reads the
   captured registers at the lambda expression — the interpreter's own
@@ -124,8 +128,13 @@ A function is eligible when its body uses only the subset the VM implements:
   interpreter, which owns arity errors, default parameters, and the
   non-callable error. Function values also round-trip the tier boundary
   now (wrapped verbatim), so higher-order user functions promote
-- calls to the pure `str` module functions (`str.length`, `str.char_at`,
-  `str.split`, ...) and `show`, over the same bridge as `to_string`
+- calls to ANY native stdlib module function (`db.query`, `fs.read`,
+  `json.parse`, `col.frequencies`, `re.find`, ...): the module resolves
+  in the closure to its Module value, the function's existence is
+  validated at compile time against the module's own field set, and the
+  call bridges under the builtin's own dispatch name — the same
+  implementation the interpreter runs. `math.*` and `str.*` additionally
+  have fast paths; `show` bridges like `to_string`
 - calls to itself (recursion), to other user functions (compiled on demand,
   including mutual recursion), and to a broad builtin set — the core
   builtins plus the pure `math` and `str` modules (see [Builtins](#builtins))

@@ -74,6 +74,13 @@ pub struct BytecodeVm {
     /// interpreter's registry so struct literals validate at compile time
     /// with exactly the interpreter's rules.
     struct_defs: HashMap<String, Vec<String>>,
+    /// User function VALUES by name, mirrored from the tier's
+    /// declarations. Used when a lambda's free variable is a registered
+    /// function: the compiled body calls it through the registry, but the
+    /// lambda's AST form must still CARRY the function in its closure so
+    /// it behaves identically when it escapes to the interpreter (bridged
+    /// builtins, returned values).
+    known_function_values: HashMap<String, crate::ast::Function>,
     /// Trait dispatch registries, mirrored from the interpreter as
     /// declarations evaluate: (type name, method) → impl method,
     /// (trait name, method) → default method, and type → traits it
@@ -158,6 +165,10 @@ pub struct BytecodeCompiler {
 
     /// Declared unit enum variant names (see BytecodeVm::unit_variant_names).
     unit_variant_names: std::collections::HashSet<String>,
+
+    /// User function values for lambda-closure attachment (see
+    /// BytecodeVm::known_function_values).
+    known_function_values: HashMap<String, crate::ast::Function>,
 
     /// Lambdas with runtime captures met during this compile: each is the
     /// lambda body as a standalone declaration whose trailing parameters
@@ -1006,6 +1017,7 @@ impl BytecodeVm {
             "map_len",
             "map_merge",
             "map_clear",
+            "map_has_key",
             "group_by",
             // stringification (same bridge as to_string)
             "show",
@@ -1046,6 +1058,7 @@ impl BytecodeVm {
             hof_cache: HashMap::new(),
             struct_defs: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
+            known_function_values: HashMap::new(),
             trait_impls: HashMap::new(),
             trait_defaults: HashMap::new(),
             type_traits: HashMap::new(),
@@ -1078,6 +1091,11 @@ impl BytecodeVm {
                 false
             }
         }
+    }
+
+    /// Record a user function's VALUE for lambda-closure attachment.
+    pub fn note_function_value(&mut self, name: String, func: crate::ast::Function) {
+        self.known_function_values.insert(name, func);
     }
 
     /// Record an `impl Trait for Type` method. Returns true when the
@@ -1239,6 +1257,7 @@ impl BytecodeVm {
         self.compiler.function_registry = self.function_registry.clone();
         self.compiler.builtin_names = self.builtin_names.clone();
         self.compiler.struct_defs = self.struct_defs.clone();
+        self.compiler.known_function_values = self.known_function_values.clone();
         self.compiler.unit_variant_names = self.unit_variant_names.clone();
         self.compiler.enclosing_closure = closure;
 
@@ -1979,7 +1998,13 @@ impl BytecodeVm {
                     if let Some(&func_id) = self.function_registry.get(function_name) {
                         let result = self.execute(func_id, &arg_values)?;
                         self.execution_state.set_register(*dst, result)?;
-                    } else if self.builtin_names.contains(function_name) {
+                    } else if self.builtin_names.contains(function_name)
+                        || function_name.contains('.')
+                    {
+                        // Module-prefixed names ("db.execute") were validated
+                        // at compile time against the module's own field set;
+                        // the bridge dispatches them by prefix exactly as the
+                        // interpreter does.
                         let result = self.execute_builtin_call(function_name, &arg_values)?;
                         self.execution_state.set_register(*dst, result)?;
                     } else {
@@ -4017,6 +4042,7 @@ impl BytecodeCompiler {
             function_registry: HashMap::new(),
             struct_defs: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
+            known_function_values: HashMap::new(),
             pending_lambdas: Vec::new(),
         }
     }
@@ -4429,6 +4455,56 @@ impl BytecodeCompiler {
                         {
                             None
                         }
+                        // Any OTHER native-module call: the module resolves in
+                        // the closure to a Module struct, and the function is
+                        // one of its Builtin fields. The builtin value carries
+                        // its full dispatch name ("db.execute"), which is
+                        // exactly what the interpreter itself calls through —
+                        // so the bridge runs the same implementation with the
+                        // same name. Existence is validated here at compile
+                        // time; a call to a missing module function refuses
+                        // (falls through) and stays interpreted.
+                        Expr::Identifier(module)
+                            if !self.local_variables.contains_key(module)
+                                && matches!(
+                                    self.enclosing_closure.get(module),
+                                    Some(Value::Struct { type_name, fields })
+                                        if type_name == "Module"
+                                            && matches!(
+                                                fields.get(field.as_str()),
+                                                Some(Value::Builtin(_))
+                                            )
+                                ) =>
+                        {
+                            let builtin_name = match self.enclosing_closure.get(module) {
+                                Some(Value::Struct { fields, .. }) => match fields.get(field.as_str()) {
+                                    Some(Value::Builtin(b)) => b.name.clone(),
+                                    _ => unreachable!("guard checked the field is a builtin"),
+                                },
+                                _ => unreachable!("guard checked the module"),
+                            };
+                            let mut arg_regs = Vec::new();
+                            for argument in arguments {
+                                match argument {
+                                    crate::ast::Argument::Positional(expr) => {
+                                        arg_regs.push(self.compile_expression(expr)?);
+                                    }
+                                    crate::ast::Argument::Named { .. } => {
+                                        return Err(BytecodeError::CompilationFailed(
+                                            "Named arguments are not supported in the bytecode tier"
+                                                .to_string(),
+                                        ))
+                                    }
+                                }
+                            }
+                            let dst_reg = self.register_allocator.allocate_register();
+                            self.emitter.instructions.push(Instruction::CallNamed {
+                                dst: dst_reg,
+                                function_name: builtin_name,
+                                args: arg_regs,
+                            });
+                            return Ok(dst_reg);
+                        }
                         receiver if Self::receiver_is_pure(receiver) => {
                             let object_reg = self.compile_expression(object)?;
                             let mut arg_regs = Vec::new();
@@ -4750,16 +4826,35 @@ impl BytecodeCompiler {
                 for name in &free {
                     if let Some(&reg) = self.local_variables.get(name) {
                         runtime_captures.push((name.clone(), reg));
+                    } else if self.function_registry.contains_key(name) {
+                        // A known user function (forward or mutual recursion
+                        // through the lambda): the compiled body calls it
+                        // through the registry — but the lambda's AST form
+                        // must still carry the function in its closure, or an
+                        // escaped copy (bridged to a builtin, returned to
+                        // interpreted code) hits "Undefined variable". The
+                        // template example caught exactly that. Attached
+                        // below via known_function_values; a registered name
+                        // with no recorded value refuses.
+                        if !self.known_function_values.contains_key(name) {
+                            return Err(BytecodeError::CompilationFailed(format!(
+                                "Lambda references function '{}' with no recorded value",
+                                name
+                            )));
+                        }
                     } else if self.enclosing_bound_names.contains(name) {
                         return Err(BytecodeError::CompilationFailed(format!(
                             "Lambda captures '{}' before the enclosing function binds it",
                             name
                         )));
                     } else if !self.enclosing_closure.contains_key(name) {
-                        return Err(BytecodeError::CompilationFailed(format!(
-                            "Lambda references '{}', which is not in the enclosing closure",
-                            name
-                        )));
+                        // Not a local, not registered, not in the closure. It
+                        // may still be a user function declared LATER (mutual
+                        // recursion through the lambda): report it as an
+                        // unresolved callee so the tier's dependency
+                        // resolution can register and compile it, then retry.
+                        // A name that isn't a known function rejects there.
+                        return Err(BytecodeError::UnresolvedCallee(name.clone()));
                     }
                 }
                 // Deterministic capture order regardless of hash iteration
@@ -4773,9 +4868,14 @@ impl BytecodeCompiler {
                     .iter()
                     .filter(|name| !runtime_captures.iter().any(|(n, _)| n == *name))
                     .filter_map(|name| {
-                        self.enclosing_closure
+                        if let Some(value) = self.enclosing_closure.get(name) {
+                            return Some((name.clone(), value.clone()));
+                        }
+                        // Registry-resolved function: carried as a value so
+                        // the escaped lambda resolves it interpreted too
+                        self.known_function_values
                             .get(name)
-                            .map(|value| (name.clone(), value.clone()))
+                            .map(|f| (name.clone(), Value::Function(f.clone())))
                     })
                     .collect();
 

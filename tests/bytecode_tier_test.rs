@@ -1342,14 +1342,51 @@ join(classify([1, 2, 3]), "-")
 }
 
 #[test]
-fn recursive_reference_inside_lambda_falls_back() {
-    // `f` is not in its own declaration-time closure (the snapshot is taken
-    // before the name is defined), so a lambda referencing it is rejected.
+fn recursive_reference_inside_lambda_now_compiles() {
+    // `f` is not in its own declaration-time closure, but it IS a
+    // registered function: the compiled lambda calls it through the
+    // registry, and the lambda's AST form carries the function value so an
+    // escaped copy still resolves it interpreted. (This used to reject.)
     let src = r#"
 fn f(n) = if n <= 0 => 0 else => sum(map([1], (x) => f(n - 1)))
 f(3)
+f(3)
+f(3)
 "#;
-    assert_eq!(promotion_count(src, 1), 0);
+    assert!(promotion_count(src, 2) >= 1, "f should now compile");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn mutual_recursion_through_lambdas_promotes_and_agrees() {
+    // The template-example shape: render_node's lambda calls render, which
+    // is declared LATER and calls back into render_node. The dependency
+    // channel registers the forward reference and retries.
+    let src = r#"
+fn render_node(nodes) = nodes |> map((n) => render(n)) |> sum
+fn render(n) = if n > 3 => n * 2 else => render_node([n + 1, n + 2])
+let mut t = 0
+for i in 0..12 { t = t + render(i) }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 2);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn escaped_lambdas_carrying_registry_functions_resolve_interpreted() {
+    // The exact template bug: a compiled lambda referencing a registry
+    // function is handed to a BRIDGED builtin (fold is not native), so it
+    // runs interpreted — the carried function value must resolve.
+    let src = r#"
+fn double(x) = x * 2
+fn go(xs) = fold(xs, 0, (acc, x) => acc + double(x))
+go([1, 2, 3])
+go([1, 2, 3])
+go([1, 2, 3])
+"#;
+    assert!(promotion_count(src, 2) >= 1);
+    assert_eq!(eval(src, Some(2)).unwrap(), Value::Integer(12));
     assert_tier_transparent(src);
 }
 

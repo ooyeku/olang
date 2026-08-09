@@ -12,6 +12,31 @@ documented.
 
 ### Added
 
+- **The unresolved-identifier tail, diagnosed and closed.** A sweep of
+  every remaining refusal found three mechanisms, fixed together:
+  (1) *Native module calls* — `db.execute`, `fs.read`, `json.parse`,
+  `col.frequencies`, and every other stdlib module call outside the
+  math/str allowlists refused. Now the module resolves in the closure to
+  its Module value, the function's existence is validated at compile
+  time against the module's own field set, and the call bridges under
+  the builtin value's own dispatch name — the exact name and
+  implementation the interpreter calls through. (2) `map_has_key` was
+  simply missing from the allowlist. (3) *Recursion through lambdas* —
+  a lambda referencing its own enclosing function, or one declared later
+  (the template example's mutual `render`/`render_node`), refused
+  because the name is not in the declaration closure. Registered
+  functions now resolve through the registry, with the closure-miss
+  routed through the dependency channel so forward references register
+  and retry. The examples caught a real bug in the first version of that
+  fix: a compiled lambda handed to a *bridged* builtin runs interpreted,
+  and without the function value carried in its closure it hit
+  "Undefined variable: render" — escaped lambdas now carry
+  registry-resolved functions as values, pinned by a test reproducing
+  the exact template shape. **Corpus: promoted 122 → 152, rejections
+  43 → 14** — the largest single-rung coverage jump of the arc; what
+  remains is self-recursive nested fns (4), tuple-pattern lets, async,
+  and stragglers.
+
 - **Maps are first-class in the VM.** The last missing data type: maps
   used to be crushed into a struct shape that could not convert back,
   which kept every map-touching function and every map-returning builtin

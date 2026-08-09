@@ -172,6 +172,7 @@ impl BytecodeTier {
 
         // A user definition shadows any builtin of the same name
         self.vm.shadow_builtin(&name);
+        self.vm.note_function_value(name.clone(), func.clone());
         self.known_functions.insert(name, func);
     }
 
