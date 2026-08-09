@@ -12,6 +12,13 @@ documented.
 
 ### Changed
 
+- **The tier stopped allocating a string per call.** `try_call` cloned the
+  callee's name into a fresh `String` on every call of every named
+  function, purely to probe three maps with it — the callee is the
+  caller's value and independent of the tier, so the lookups now borrow.
+  Measured: `map` with a named compiled function 154ms → 145ms over 1M
+  elements.
+
 - **The bytecode tier is boxed, so a call no longer memcpys it.** The tier
   owns the whole VM — compiler, bytecode caches, execution state, frame and
   argument pools — which is 1,424 bytes, and it was stored inline in the

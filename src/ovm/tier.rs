@@ -136,30 +136,34 @@ impl BytecodeTier {
 
     /// Try to execute `func(args)` on the bytecode VM.
     pub fn try_call(&mut self, func: &Function, args: &[Value]) -> TierOutcome {
-        let name = match &func.name {
-            Some(name) => name.clone(),
+        // Borrowed, not cloned: `func` is the caller's, independent of
+        // `self`, so the lookups below need no owned copy. This used to
+        // allocate a String on every call of every named function purely to
+        // probe three maps with it.
+        let name: &str = match &func.name {
+            Some(name) => name,
             // Anonymous lambdas have no stable identity to profile
             None => return TierOutcome::Fallback,
         };
 
-        if self.rejected.contains(&name) {
+        if self.rejected.contains(name) {
             return TierOutcome::Fallback;
         }
 
         // A name shared by two distinct functions can't be tiered soundly.
-        if self.ambiguous.contains(&name) {
+        if self.ambiguous.contains(name) {
             return TierOutcome::Fallback;
         }
 
-        let func_id = match self.compiled.get(&name) {
+        let func_id = match self.compiled.get(name) {
             Some(id) => *id,
             None => {
-                let count = self.call_counts.entry(name.clone()).or_insert(0);
+                let count = self.call_counts.entry(name.to_string()).or_insert(0);
                 *count += 1;
                 if *count < self.threshold {
                     return TierOutcome::Fallback;
                 }
-                match self.compile(&name, func) {
+                match self.compile(name, func) {
                     Some(id) => id,
                     None => return TierOutcome::Fallback,
                 }
@@ -182,7 +186,7 @@ impl BytecodeTier {
                 // A result we can't convert would be observable as a wrong
                 // value; refuse rather than return something else.
                 Err(_) => {
-                    self.reject(&name);
+                    self.reject(name);
                     TierOutcome::Fallback
                 }
             },
