@@ -32,6 +32,21 @@ documented.
   property tests against naive references plus 12 tier-transparency
   integration tests (tests/ods_series_test.rs).
 
+- **JIT type specialization: floats.** Compilation is now lazy and
+  runtime-observed: a whitelisted function compiles on its first call,
+  specialized to the Int/Float argument kinds that call carries, with
+  the native entry guarding on exactly that signature — any other shape
+  runs on bytecode (one specialization per function). Registers are
+  typed i64 or f64 by the same fixpoint inference, mixed int/float
+  arithmetic promotes the integer side exactly as the VM does, float
+  division by zero deopts (olang errors there, not inf), NaN and IEEE
+  overflow-to-inf behave identically to the VM, and float modulo is
+  declined outright (fmod has no exact IR equivalent). One inference
+  subtlety earned its comment: liveness flows backwards through
+  register copies, or `zr = zr2` kernels misclassify their sources as
+  dead. Float orbit kernels measure ~4.5× over bytecode; eleven new
+  parity tests cover the float guard edges, polymorphic call sites
+  (int-then-float and float-then-int), and fmod refusal.
 - **The baseline JIT — the performance campaign's P2.** Hot bytecode
   compiles to native machine code via Cranelift (`src/ovm/jit.rs`),
   extending the correctness ladder unchanged: "can't compile

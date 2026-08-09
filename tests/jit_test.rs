@@ -229,3 +229,137 @@ show(f(-17, 5)) + " " + show(f(17, -5)) + " " + show(f(-17, -5))
 "#,
     );
 }
+
+// ── float specialization ───────────────────────────────────────────────
+
+#[test]
+fn float_kernels_are_correct_under_the_jit() {
+    assert_jit_transparent(
+        r#"
+fn orbit(cr, ci) = {
+    let mut zr = 0.0
+    let mut zi = 0.0
+    let mut i = 0
+    while i < 50 {
+        let zr2 = zr * zr - zi * zi + cr
+        let zi2 = 2.0 * zr * zi + ci
+        zr = zr2
+        zi = zi2
+        if zr * zr + zi * zi > 4.0 => { break }
+        i = i + 1
+    }
+    i
+}
+show(orbit(0.1, 0.1)) + " " + show(orbit(0.8, 0.3)) + " " + show(orbit(-1.0, 0.2))
+"#,
+    );
+}
+
+#[test]
+fn mixed_int_float_arithmetic_matches() {
+    assert_jit_transparent(
+        r#"
+fn blend(a, b) = a * 2 + b / 4.0 - 1
+show(blend(3.5, 10.0)) + " " + show(blend(2.25, 9.0))
+"#,
+    );
+}
+
+#[test]
+fn float_recursion_with_mixed_params_matches() {
+    assert_jit_transparent(
+        "fn fpow(base, n) = if n == 0 => 1.0 else => base * fpow(base, n - 1)\nfpow(1.5, 20)",
+    );
+}
+
+#[test]
+fn float_division_by_zero_matches() {
+    let src = r#"
+fn ratio(a, b) = a / b
+ratio(1.5, 0.0)
+"#;
+    assert_eq!(eval(src, Some(1)), eval(src, None));
+}
+
+#[test]
+fn float_overflow_to_infinity_matches() {
+    // IEEE overflow is not an error in olang: both tiers produce inf.
+    assert_jit_transparent(
+        r#"
+fn big(x) = x + x
+show(big(1.0e308))
+"#,
+    );
+}
+
+#[test]
+fn nan_comparisons_match() {
+    assert_jit_transparent(
+        r#"
+fn cmp(a, b) = {
+    let lt = a < b
+    let ge = a >= b
+    let eq = a == b
+    let ne = a != b
+    show(lt) + show(ge) + show(eq) + show(ne)
+}
+let inf = 1.0e308 * 10.0
+let nan = inf * 0.0
+cmp(nan, 1.0) + " " + cmp(nan, nan) + " " + cmp(1.0, 2.0)
+"#,
+    );
+}
+
+#[test]
+fn float_compares_against_int_operands_match() {
+    assert_jit_transparent(
+        r#"
+fn check(x) = if x > 2 => "big" else => "small"
+check(2.5) + " " + check(1.5)
+"#,
+    );
+}
+
+#[test]
+fn polymorphic_call_sites_stay_correct() {
+    // First call specializes on Int; the later Float call must deopt to
+    // bytecode and still agree exactly.
+    assert_jit_transparent(
+        r#"
+fn twice(x) = x + x
+show(twice(21)) + " " + show(twice(0.75)) + " " + show(twice(3))
+"#,
+    );
+}
+
+#[test]
+fn float_first_polymorphism_stays_correct() {
+    assert_jit_transparent(
+        r#"
+fn half(x) = x / 2.0
+show(half(5.0)) + " " + show(half(7))
+"#,
+    );
+}
+
+#[test]
+fn float_modulo_is_refused_but_correct() {
+    // fmod has no exact IR equivalent, so the JIT declines the whole
+    // function; bytecode runs it and results agree.
+    assert_jit_transparent(
+        r#"
+fn wrap(a, b) = a % b
+show(wrap(7.5, 2.0)) + " " + show(wrap(-7.5, 2.0))
+"#,
+    );
+}
+
+#[test]
+fn negative_zero_and_fneg_match() {
+    assert_jit_transparent(
+        r#"
+fn flip(x) = -x
+show(flip(2.5)) + " " + show(flip(-2.5)) + " " + show(flip(0.0) == 0.0)
+"#,
+    );
+}

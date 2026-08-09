@@ -288,29 +288,40 @@ machine code via Cranelift, extending the correctness ladder unchanged —
 "can't compile identically → stay interpreted" gained a rung: "can't
 compile natively → stay on bytecode".
 
-A function qualifies when every instruction falls in a **pure
-integer/boolean whitelist**: arithmetic, comparisons, logic, branches,
-self-recursion, and return, with operand kinds proven by a fixpoint
-inference over its registers (a register may hold mixed kinds only if
-nothing ever reads it — the dead result slot of an `if` statement, say).
-Qualifying functions compile at promotion time; everything else stays on
-bytecode with zero overhead beyond one table lookup per call.
+A function prequalifies at promotion time when every instruction falls
+in a **pure numeric/boolean whitelist**: arithmetic, comparisons, logic,
+branches, self-recursion, and return. Compilation itself is
+**type-specialized and lazy**: it happens on the first call, using the
+Int/Float argument kinds that call actually carries, and the compiled
+entry guards on exactly that signature — any other argument shape runs
+on bytecode (one specialization per function). Register kinds are proven
+by a fixpoint inference (i64 or f64 per register; mixed int/float
+arithmetic promotes the integer side exactly as the VM does; a register
+may hold mixed kinds only if nothing ever reads it — the dead result
+slot of an `if` statement, say — with liveness flowing backwards through
+copies). Everything else stays on bytecode with zero overhead beyond one
+table lookup per call.
 
 Purity is the load-bearing property. A qualifying function has no side
-effects, so every guard failure — non-integer argument at entry, integer
-overflow, division by zero, `i64::MIN` edge cases, recursion-depth
+effects, so every guard failure — argument-kind mismatch at entry,
+integer overflow, division by zero (integer *and* float — olang errors
+there rather than producing inf), `i64::MIN` edge cases, recursion-depth
 exhaustion — simply **deopts**: the native run is abandoned and the same
 call re-executes on bytecode, which produces the exact result or error
 the VM would have produced anyway. The JIT never reproduces an error
-message; it only ever declines. Self-recursion is a direct native call
-carrying a depth budget clamped to the VM's own `max_call_depth`, so
-runaway recursion errors exactly as it does on bytecode instead of
-overflowing the native stack.
+message; it only ever declines (float modulo, for instance, is declined
+outright: fmod has no exact IR equivalent, and guessing is how
+divergence starts). Self-recursion is a direct native call carrying a
+depth budget clamped to the VM's own `max_call_depth`, so runaway
+recursion errors exactly as it does on bytecode instead of overflowing
+the native stack.
 
 What this buys, measured: fib(30) 89 ms → **5 ms** (18×, now level with
-the JavaScript JITs), integer loop kernels 20–30×, and `par_map` over a
-jitted kernel compounds both campaigns. Floats, strings, and heap values
-are future whitelist expansions — N-body is unchanged until floats land.
+the JavaScript JITs), integer loop kernels 20–30×, float kernels
+(Mandelbrot-style orbit loops) ~4.5×, and `par_map` over a jitted kernel
+compounds both campaigns. Strings, heap values, and cross-function
+native calls are future expansions — N-body needs struct field access,
+which is sequenced with the NaN-boxing rung.
 
 `tests/jit_test.rs` holds the parity suite: every guard edge runs tiered
 and interpreted and must agree byte-for-byte.

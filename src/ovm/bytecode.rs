@@ -1377,13 +1377,13 @@ impl BytecodeVm {
             )));
         }
 
-        // Native tier: if a JIT body exists and every argument is an
-        // Integer, run it. None means it declined (or deopted) — the
-        // bytecode path below is the unchanged fallback.
+        // Native tier: if a JIT body exists (or can be specialized on this
+        // call's argument kinds), run it. None means it declined (or
+        // deopted) — the bytecode path below is the unchanged fallback.
         #[cfg(feature = "native")]
         if self.jit.has(func_id) {
             let remaining = self.max_call_depth.saturating_sub(self.call_depth);
-            if let Some(result) = self.jit.try_call(func_id, args, remaining) {
+            if let Some(result) = self.jit.try_call(func_id, &bytecode, args, remaining) {
                 return Ok(result);
             }
         }
@@ -1448,28 +1448,40 @@ impl BytecodeVm {
             )));
         }
 
-        // Native tier: extract raw integers straight from the caller's
-        // registers (only after the cheap has() check) and run the JIT
-        // body. None → the unchanged bytecode path below.
+        // Native tier: extract raw bits and kinds straight from the
+        // caller's registers (only after the cheap has() check) and run
+        // the JIT body. None → the unchanged bytecode path below.
         #[cfg(feature = "native")]
         if self.jit.has(func_id) && arg_regs.len() <= 16 {
-            let mut ints = [0i64; 16];
-            let mut all_int = true;
-            for (slot, reg) in ints.iter_mut().zip(arg_regs) {
+            use crate::ovm::jit::Kind as JitKind;
+            let mut bits = [0i64; 16];
+            let mut kinds = [JitKind::Int; 16];
+            let mut extractable = true;
+            for (i, reg) in arg_regs.iter().enumerate() {
                 match self.execution_state.register_ref(*reg).map(|v| &v.data) {
-                    Ok(crate::ovm::value::ValueData::Integer(i)) => *slot = *i,
+                    Ok(crate::ovm::value::ValueData::Integer(v)) => {
+                        bits[i] = *v;
+                        kinds[i] = JitKind::Int;
+                    }
+                    Ok(crate::ovm::value::ValueData::Float(f)) => {
+                        bits[i] = f.to_bits() as i64;
+                        kinds[i] = JitKind::Float;
+                    }
                     _ => {
-                        all_int = false;
+                        extractable = false;
                         break;
                     }
                 }
             }
-            if all_int {
+            if extractable {
                 let remaining = self.max_call_depth.saturating_sub(self.call_depth);
-                if let Some(result) =
-                    self.jit
-                        .try_call_ints(func_id, &ints[..arg_regs.len()], remaining)
-                {
+                if let Some(result) = self.jit.try_call_raw(
+                    func_id,
+                    &bytecode,
+                    &bits[..arg_regs.len()],
+                    &kinds[..arg_regs.len()],
+                    remaining,
+                ) {
                     return Ok(result);
                 }
             }
