@@ -75,12 +75,15 @@ A function is eligible when its body uses only the subset the VM implements:
   closure as the call environment, and closures are declaration-time
   snapshots: a global mutated after the function's declaration is not seen
   by either tier (pinned by a test)
-- lambdas whose free variables all resolve in the enclosing function's
-  declaration-time closure — which covers lambdas calling other user
-  functions, builtins, and stdlib modules, and lambdas referencing global
-  constants. The lambda carries that closure verbatim (the same snapshot the
-  interpreter layers over the call-site chain), so resolution is identical in
-  both tiers
+- lambdas, including those capturing the enclosing function's *runtime*
+  state (a parameter, a local). Free variables resolving in the
+  declaration-time closure travel with the lambda as that snapshot;
+  runtime captures compile via a `MakeClosure` instruction that reads the
+  captured registers at the lambda expression — the interpreter's own
+  capture-by-value moment — with the lambda body compiled once, taking
+  the captures as hidden trailing parameters. The resulting closure runs
+  natively through `map`/`filter` and converts losslessly to an
+  interpreter function when it crosses the tier boundary
 - blocks, `let` bindings, assignment to locals, `while` and `for` loops,
   `break`, and `continue`
 - calls to itself (recursion), to other user functions (compiled on demand,
@@ -95,10 +98,9 @@ Anything else causes the function to stay interpreted:
   compile-time snapshot can represent
 - maps, async, and struct/enum *construction* (reading fields off a struct
   argument is compiled; building a new struct in the body is not)
-- lambdas capturing the enclosing function's *runtime* state: a parameter,
-  a local, or any name the enclosing function assigns (the interpreter would
-  capture the runtime value, which a declaration-time snapshot cannot
-  represent); calling a lambda-valued expression directly
+- a lambda capturing a name the enclosing function binds only *later*
+  (no register holds it yet at the lambda expression); calling a
+  lambda-valued expression directly
 - struct and enum patterns, and or-patterns that bind variables (each
   alternative would otherwise leave different bindings on the success path)
 - calling a function that itself cannot be compiled (the rejection propagates
