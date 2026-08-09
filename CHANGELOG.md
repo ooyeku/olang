@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
-## [Unreleased]
+## [0.33.0] - 2026-08-08
 
 ### Added
 
@@ -59,7 +59,7 @@ documented.
   to `execute_binary_op`, which keeps owning the error messages. Measured:
   N-body ~940ms → ~680ms (6.2M interactions/sec), fib(30) ~267ms → ~218ms,
   checksum bit-identical. Cumulative for the whole performance arc:
-  N-body 2,511ms → 670ms (3.7×), fib(30) 736ms → 218ms (3.4×).
+  N-body 2,511ms → 680ms (3.7×), fib(30) 736ms → 218ms (3.4×).
 
 - **The dispatch loop stopped paying for hashing and conversion it didn't
   need.** Three more measured per-operation taxes removed: (1) `GetField`
