@@ -2267,6 +2267,89 @@ make(4)
     assert_tier_transparent(src);
 }
 
+// ── native collection builtins ────────────────────────────────────────
+
+#[test]
+fn native_collection_builtins_agree_across_maps_and_structs() {
+    // map_get / map_set / map_has_key / entries work on maps AND
+    // struct-likes (the interpreter's field_map duality), with the same
+    // key coercion; len/head/tail/cons/concat/skip cover the list family.
+    let src = r#"
+type P = struct { a: Int, b: Int }
+fn go(n) = {
+    let m = map_set(#{"x": n, 7: n * 2}, true, n + 1)
+    let p = map_set(P { a: n, b: 2 }, "c", n * 3)
+    let e = entries(m)
+    let l = concat([n], skip([1, 2, 3, 4], 2))
+    map_get(m, "x") + map_get(m, 7) + map_get(m, true)
+        + map_get(p, "a") + map_get(p, "c")
+        + len(e) + len(l) + head(l) + len(tail(l)) + head(cons(n, l))
+        + (if map_has_key(m, "x") => 1 else => 0)
+        + (if map_has_key(p, "c") => 10 else => 0)
+        + (if map_has_key(m, "zz") => 100 else => 0)
+}
+let mut t = 0
+for i in 0..25 { t = t + go(i) }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 1, "go should promote");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn native_collection_errors_match_the_interpreter() {
+    for src in [
+        r#"fn f(n) = head([])
+f(1)
+f(2)
+f(3)"#,
+        r#"fn f(n) = tail([])
+f(1)
+f(2)
+f(3)"#,
+        r#"fn f(n) = len(n)
+f(1)
+f(2)
+f(3)"#,
+        r#"fn f(n) = concat([1], n)
+f(1)
+f(2)
+f(3)"#,
+        r#"fn f(n) = skip([1, 2], 0 - 1)
+f(1)
+f(2)
+f(3)"#,
+        r#"fn f(n) = map_get(n, "k")
+f(1)
+f(2)
+f(3)"#,
+        r#"fn f(n) = map_set(#{}, [1], n)
+f(1)
+f(2)
+f(3)"#,
+    ] {
+        assert_tier_transparent(src);
+    }
+}
+
+#[test]
+fn map_has_key_checks_presence_not_value() {
+    // A key explicitly holding Unit still exists: has_key must be true
+    // even though map_get returns Unit for it.
+    let src = r#"
+fn unit_value() = { let _ = 0 }
+fn go() = {
+    let m = map_set(#{}, "k", println(""))
+    if map_has_key(m, "k") => 1 else => 0
+}
+go()
+go()
+go()
+"#;
+    assert_eq!(eval(src, Some(2)).unwrap(), Value::Integer(1));
+    assert_tier_transparent(src);
+}
+
 // ── native higher-order builtins (map / filter / sum in the VM) ───────
 
 #[test]

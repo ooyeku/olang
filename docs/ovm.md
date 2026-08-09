@@ -378,8 +378,12 @@ These are real gaps, not oversights:
    interpreted.
 3. **Bridged builtin calls cost a value round trip.** Builtins outside
    the native set convert arguments and results between the OVM and AST
-   value models per call. The native `map`/`filter`/`sum` loops avoid
-   this entirely; `reduce`, `fold`, and friends still bridge.
+   value models per call. The native set now spans the higher-order
+   loops (`map`/`filter`/`sum`) and the collection core (`len`, `head`,
+   `tail`, `cons`, `concat`, `skip`, `map_get`, `map_set`,
+   `map_has_key`, `entries`), which is what environment-threading and
+   list-building code lives on; `reduce`, `fold`, and the rest still
+   bridge.
 
 ## Not implemented
 

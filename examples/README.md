@@ -104,8 +104,9 @@ A two-package demonstration of the package manager (see
   values as the only error channel, and call-time self-binding for recursive
   defines — the same trick olang's own interpreter uses one level up. Every
   function promotes to the bytecode tier; a timed `fib(17)` runs through two
-  layers of interpretation, and a test block locks evaluation results and
-  error messages
+  layers of interpretation (~11× faster on the tier — this example is what
+  motivated the native collection builtins), and a test block locks
+  evaluation results and error messages
 - [`pargrep/`](pargrep/) — parallel code search on real `spawn` threads:
   files are dealt into chunks, one worker thread per chunk searches with
   `re` + `fs`, results merge after `await Promise.all`, and per-task

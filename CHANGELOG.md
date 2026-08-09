@@ -12,6 +12,22 @@ documented.
 
 ### Added
 
+- **Native collection builtins.** The minilisp dogfood quantified the
+  bridged-builtin tax: `map_get`/`map_set` converted the *entire*
+  environment map to AST values and back on every lookup and binding,
+  turning an environment-threading interpreter — a 57× workload by
+  shape — into a 1.35× one. Ten builtins now run natively on the VM
+  value model with zero boundary conversion: `len`, `head`, `tail`,
+  `cons`, `concat`, `skip`, `map_get`, `map_set`, `map_has_key`, and
+  `entries` — each mirroring the interpreter's checks in the same order
+  with the same messages, including the map/struct-like duality
+  (`map_set` on a struct yields a struct) and `entries`' sorted keys.
+  One subtlety pinned by a test: `map_has_key` checks *presence*, not
+  value — a key explicitly holding Unit still exists, so it cannot ride
+  on map_get's Unit-for-missing. **minilisp's lisp-fib(17): 500ms →
+  62ms — the tier's advantage on it went from 1.35× to 11×.** N-body,
+  fib, and pipelines unmoved.
+
 - **The corpus tail: self-recursive nested fns, tuples, and a live
   divergence.** Self-recursive nested `fn` declarations compile — the
   name binds to its own compiled id during the body's compile (recursion

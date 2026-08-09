@@ -2918,6 +2918,95 @@ impl BytecodeVm {
         Ok(OvmValue::from_ast(result))
     }
 
+    /// map_get with the interpreter's exact semantics and check order:
+    /// receiver must be a map or struct-like first, then the key coerces
+    /// (String raw, Int/Float/Bool via to_string); a missing key is Unit.
+    fn native_map_get(
+        receiver: &OvmValue,
+        key: &OvmValue,
+        who: &str,
+    ) -> Result<OvmValue, BytecodeError> {
+        use crate::ovm::value::ValueData;
+        enum Recv<'a> {
+            Map(&'a std::collections::HashMap<String, OvmValue>),
+            Struct(&'a crate::ovm::value::StructObject),
+        }
+        let recv = match &receiver.data {
+            ValueData::Map(m) => Recv::Map(m),
+            ValueData::Struct(st) => Recv::Struct(st),
+            _ => {
+                return Err(BytecodeError::TypeError(format!(
+                    "{}: first argument must be a map or object",
+                    who
+                )))
+            }
+        };
+        let key_string;
+        let key_str: &str = match &key.data {
+            ValueData::String(st) => st,
+            ValueData::Integer(i) => {
+                key_string = i.to_string();
+                &key_string
+            }
+            ValueData::Float(f) => {
+                key_string = f.to_string();
+                &key_string
+            }
+            ValueData::Boolean(b) => {
+                key_string = b.to_string();
+                &key_string
+            }
+            _ => {
+                return Err(BytecodeError::TypeError(format!(
+                    "{}: key must be string, integer, float, or boolean",
+                    who
+                )))
+            }
+        };
+        Ok(match recv {
+            Recv::Map(m) => m.get(key_str).cloned().unwrap_or_else(OvmValue::new_unit),
+            Recv::Struct(st) => st
+                .field(key_str)
+                .cloned()
+                .unwrap_or_else(OvmValue::new_unit),
+        })
+    }
+
+    fn native_map_has_key(receiver: &OvmValue, key: &OvmValue) -> Result<OvmValue, BytecodeError> {
+        use crate::ovm::value::ValueData;
+        let contains: Box<dyn Fn(&str) -> bool> = match &receiver.data {
+            ValueData::Map(m) => Box::new(move |k| m.contains_key(k)),
+            ValueData::Struct(st) => Box::new(move |k| st.shape.field_index(k).is_some()),
+            _ => {
+                return Err(BytecodeError::TypeError(
+                    "map_has_key: first argument must be a map or object".to_string(),
+                ))
+            }
+        };
+        let key_string;
+        let key_str: &str = match &key.data {
+            ValueData::String(st) => st,
+            ValueData::Integer(i) => {
+                key_string = i.to_string();
+                &key_string
+            }
+            ValueData::Float(f) => {
+                key_string = f.to_string();
+                &key_string
+            }
+            ValueData::Boolean(b) => {
+                key_string = b.to_string();
+                &key_string
+            }
+            _ => {
+                return Err(BytecodeError::TypeError(
+                    "map_has_key: key must be string, integer, float, or boolean".to_string(),
+                ))
+            }
+        };
+        Ok(OvmValue::new_boolean(contains(key_str)))
+    }
+
     /// Native execution for the higher-order builtins when the collection
     /// is a list and the function argument compiles: the loop runs inside
     /// the VM, one `execute()` per element, no AST conversion anywhere.
@@ -2973,6 +3062,151 @@ impl BytecodeVm {
                 };
                 Some(run())
             }
+            // ── native collection builtins ─────────────────────────────
+            // These operate directly on the VM value model with no boundary
+            // conversion — the bridged versions converted whole collections
+            // to AST per call, which turned environment-threading programs
+            // (the minilisp example) from a 57x workload into a 1.35x one.
+            // Every arm mirrors the interpreter's checks in the same order
+            // with the same messages; anything not matched falls to the
+            // bridge, which stays the authority.
+            "len" if args.len() == 1 => Some(match &args[0].data {
+                ValueData::List(items) => Ok(OvmValue::new_integer(items.len() as i64)),
+                ValueData::Tuple(items) => Ok(OvmValue::new_integer(items.len() as i64)),
+                ValueData::String(st) => Ok(OvmValue::new_integer(st.chars().count() as i64)),
+                _ => Err(BytecodeError::TypeError(
+                    "len: argument must be a list, string, or tuple".to_string(),
+                )),
+            }),
+            "head" if args.len() == 1 => Some(match &args[0].data {
+                ValueData::List(items) => match items.first() {
+                    Some(v) => Ok(v.clone()),
+                    None => Err(BytecodeError::RuntimeError(
+                        "head: cannot get head of empty list".to_string(),
+                    )),
+                },
+                _ => Err(BytecodeError::TypeError(
+                    "head: argument must be a list".to_string(),
+                )),
+            }),
+            "tail" if args.len() == 1 => Some(match &args[0].data {
+                ValueData::List(items) => {
+                    if items.is_empty() {
+                        Err(BytecodeError::RuntimeError(
+                            "tail: cannot get tail of empty list".to_string(),
+                        ))
+                    } else {
+                        Ok(OvmValue::new_list(items[1..].to_vec()))
+                    }
+                }
+                _ => Err(BytecodeError::TypeError(
+                    "tail: argument must be a list".to_string(),
+                )),
+            }),
+            "cons" if args.len() == 2 => Some(match &args[1].data {
+                ValueData::List(items) => {
+                    let mut out = Vec::with_capacity(items.len() + 1);
+                    out.push(args[0].clone());
+                    out.extend(items.iter().cloned());
+                    Ok(OvmValue::new_list(out))
+                }
+                _ => Err(BytecodeError::TypeError(
+                    "cons: second argument must be a list".to_string(),
+                )),
+            }),
+            "concat" if args.len() == 2 => Some(match (&args[0].data, &args[1].data) {
+                (ValueData::List(a), ValueData::List(b)) => {
+                    let mut out = Vec::with_capacity(a.len() + b.len());
+                    out.extend(a.iter().cloned());
+                    out.extend(b.iter().cloned());
+                    Ok(OvmValue::new_list(out))
+                }
+                _ => Err(BytecodeError::TypeError(
+                    "concat: arguments must be lists".to_string(),
+                )),
+            }),
+            "skip" if args.len() == 2 => Some((|| {
+                let n = match &args[1].data {
+                    ValueData::Integer(i) if *i >= 0 => *i as usize,
+                    _ => {
+                        return Err(BytecodeError::TypeError(
+                            "skip: second argument must be a non-negative integer".to_string(),
+                        ))
+                    }
+                };
+                match &args[0].data {
+                    ValueData::List(items) => {
+                        Ok(OvmValue::new_list(items.iter().skip(n).cloned().collect()))
+                    }
+                    _ => Err(BytecodeError::TypeError(
+                        "skip: argument must be a list".to_string(),
+                    )),
+                }
+            })()),
+            "map_get" if args.len() == 2 => {
+                Some(Self::native_map_get(&args[0], &args[1], "map_get"))
+            }
+            // Presence, not value: a key explicitly holding Unit still
+            // exists, so this cannot ride on map_get's Unit-for-missing.
+            "map_has_key" if args.len() == 2 => Some(Self::native_map_has_key(&args[0], &args[1])),
+            "map_set" if args.len() == 3 => Some((|| {
+                // Key coercion first, then the receiver — the interpreter's
+                // check order.
+                let key = match &args[1].data {
+                    ValueData::String(st) => st.as_ref().clone(),
+                    ValueData::Integer(i) => i.to_string(),
+                    ValueData::Float(f) => f.to_string(),
+                    ValueData::Boolean(b) => b.to_string(),
+                    _ => {
+                        return Err(BytecodeError::TypeError(
+                            "map_set: key must be string, integer, float, or boolean".to_string(),
+                        ))
+                    }
+                };
+                match &args[0].data {
+                    ValueData::Map(m) => {
+                        let mut new_map = (**m).clone();
+                        new_map.insert(key, args[2].clone());
+                        Ok(OvmValue::new_map(Arc::new(new_map)))
+                    }
+                    ValueData::Struct(st) => {
+                        let mut pairs: Vec<(String, OvmValue)> = st
+                            .iter()
+                            .filter(|(name, _)| **name != key)
+                            .map(|(name, v)| (name.clone(), v.clone()))
+                            .collect();
+                        pairs.push((key, args[2].clone()));
+                        Ok(OvmValue::new_struct(Arc::new(
+                            crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
+                        )))
+                    }
+                    _ => Err(BytecodeError::TypeError(
+                        "map_set: first argument must be a map or object".to_string(),
+                    )),
+                }
+            })()),
+            "entries" if args.len() == 1 => Some((|| {
+                let mut pairs: Vec<(String, OvmValue)> = match &args[0].data {
+                    ValueData::Map(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    ValueData::Struct(st) => {
+                        st.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                    }
+                    _ => {
+                        return Err(BytecodeError::TypeError(
+                            "entries: argument must be a map or object".to_string(),
+                        ))
+                    }
+                };
+                // The interpreter sorts keys, so entries is deterministic
+                pairs.sort_by(|a, b| a.0.cmp(&b.0));
+                Ok(OvmValue::new_list(
+                    pairs
+                        .into_iter()
+                        .map(|(k, v)| OvmValue::new_tuple(vec![OvmValue::new_string(k), v]))
+                        .collect(),
+                ))
+            })()),
+
             // Mirrors the interpreter's *sequential* sum exactly; lists past
             // the parallel threshold bridge out so the parallel behavior
             // (including its different overflow and float-order profile)
