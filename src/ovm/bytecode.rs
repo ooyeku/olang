@@ -367,6 +367,17 @@ pub enum Instruction {
         callee: Register,
         args: Vec<Register>,
     },
+    /// A binary operation whose right operand is a compile-time numeric
+    /// literal, carried in the instruction — no LoadConst dispatch, no
+    /// constant register. Semantics are identical to the two-instruction
+    /// form: binary_fast with execute_binary_op as the fallback, so
+    /// overflow, division by zero, and type errors match exactly.
+    BinImm {
+        op: BinaryOp,
+        dst: Register,
+        lhs: Register,
+        imm: OvmValue,
+    },
     /// Build a tuple-variant enum value from argument registers (the only
     /// runtime construction form: unit variants are constants, and struct
     /// variants have no construction syntax).
@@ -1561,6 +1572,15 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, result?)?;
                 }
 
+                Instruction::BinImm { op, dst, lhs, imm } => {
+                    let left = self.execution_state.register_ref(*lhs)?;
+                    let result = match Self::binary_fast(left, imm, op.clone()) {
+                        Some(v) => v,
+                        None => self.execute_binary_op(left, imm, op.clone())?,
+                    };
+                    self.execution_state.set_register(*dst, result)?;
+                }
+
                 Instruction::MakeEnum {
                     dst,
                     type_name,
@@ -2175,7 +2195,7 @@ impl BytecodeVm {
                     };
                     let result = match hit {
                         Some(value) => value,
-                        None => Self::get_field_slow(&bytecode, *name_const, object_value, cache)?,
+                        None => Self::get_field_slow(bytecode, *name_const, object_value, cache)?,
                     };
                     self.execution_state.set_register(*dst, result)?;
                 }
@@ -3937,6 +3957,65 @@ impl BytecodeCompiler {
                     return Ok(dst_reg);
                 }
 
+                // A numeric literal operand rides in the instruction as an
+                // immediate: no LoadConst, no constant register. A literal
+                // has no side effects, so skipping its "evaluation" is
+                // unobservable; a literal LEFT operand only fuses when the
+                // operation commutes or the comparison can flip.
+                let imm_of = |e: &Expr| match e {
+                    Expr::Integer(n) => Some(OvmValue::new_integer(*n)),
+                    Expr::Float(f) => Some(OvmValue::new_float(*f)),
+                    _ => None,
+                };
+                let flipped = |op: &BinaryOp| match op {
+                    BinaryOp::Add | BinaryOp::Multiply => Some(op.clone()),
+                    BinaryOp::Equal | BinaryOp::NotEqual => Some(op.clone()),
+                    BinaryOp::LessThan => Some(BinaryOp::GreaterThan),
+                    BinaryOp::LessThanEqual => Some(BinaryOp::GreaterThanEqual),
+                    BinaryOp::GreaterThan => Some(BinaryOp::LessThan),
+                    BinaryOp::GreaterThanEqual => Some(BinaryOp::LessThanEqual),
+                    _ => None,
+                };
+                let immediate_ops = matches!(
+                    op,
+                    BinaryOp::Add
+                        | BinaryOp::Subtract
+                        | BinaryOp::Multiply
+                        | BinaryOp::Divide
+                        | BinaryOp::Modulo
+                        | BinaryOp::Equal
+                        | BinaryOp::NotEqual
+                        | BinaryOp::LessThan
+                        | BinaryOp::LessThanEqual
+                        | BinaryOp::GreaterThan
+                        | BinaryOp::GreaterThanEqual
+                );
+                if immediate_ops {
+                    if let Some(imm) = imm_of(right) {
+                        let left_reg = self.compile_expression(left)?;
+                        let dst_reg = self.register_allocator.allocate_register();
+                        self.emitter.instructions.push(Instruction::BinImm {
+                            op: op.clone(),
+                            dst: dst_reg,
+                            lhs: left_reg,
+                            imm,
+                        });
+                        return Ok(dst_reg);
+                    }
+                    if let (Some(imm), None, Some(op)) = (imm_of(left), imm_of(right), flipped(op))
+                    {
+                        let right_reg = self.compile_expression(right)?;
+                        let dst_reg = self.register_allocator.allocate_register();
+                        self.emitter.instructions.push(Instruction::BinImm {
+                            op,
+                            dst: dst_reg,
+                            lhs: right_reg,
+                            imm,
+                        });
+                        return Ok(dst_reg);
+                    }
+                }
+
                 let left_reg = self.compile_expression(left)?;
                 let right_reg = self.compile_expression(right)?;
                 let dst_reg = self.register_allocator.allocate_register();
@@ -4520,10 +4599,6 @@ impl BytecodeCompiler {
                 let zero = self.emitter.add_constant(OvmValue::new_integer(0));
                 self.emitter.emit_load_const(idx_reg, zero);
 
-                let one_reg = self.register_allocator.allocate_register();
-                let one = self.emitter.add_constant(OvmValue::new_integer(1));
-                self.emitter.emit_load_const(one_reg, one);
-
                 // The loop variable gets its own register, rebound each pass
                 let var_reg = self.register_allocator.allocate_register();
                 self.local_variables.insert(variable.clone(), var_reg);
@@ -4551,7 +4626,12 @@ impl BytecodeCompiler {
                 body_result?;
 
                 self.emitter.place_label(loop_step);
-                self.emitter.emit_add(idx_reg, idx_reg, one_reg);
+                self.emitter.instructions.push(Instruction::BinImm {
+                    op: BinaryOp::Add,
+                    dst: idx_reg,
+                    lhs: idx_reg,
+                    imm: OvmValue::new_integer(1),
+                });
                 self.emitter.emit_jump(loop_start);
 
                 self.emitter.place_label(loop_end);
