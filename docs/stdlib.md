@@ -1,7 +1,7 @@
 # The olang Standard Library Reference
 
 Everything the runtime ships: the global builtins (always in scope) and the
-sixteen native modules plus two olang-source modules compiled into the
+nineteen native modules plus two olang-source modules compiled into the
 binary. As in the [language reference](language.md), every `olang` code
 block here is executed by the test suite — the examples are guaranteed
 current.
@@ -32,6 +32,9 @@ Part of [the olang book](README.md) ·
 - [`http` — HTTP](#http--http)
 - [`db` — SQLite](#db--sqlite)
 - [`testing` — assertions](#testing--assertions)
+- [`ods` — Series and Frames](#ods--series-and-frames)
+- [`stats` — statistical inference](#stats--statistical-inference)
+- [`plot` — charts as SVG text](#plot--charts-as-svg-text)
 
 ## Conventions
 
@@ -688,6 +691,151 @@ maintain counters for custom harnesses.
 testing.assert_eq(2 + 2, 4, "arithmetic works")
 testing.assert_ok(str.parse_int("5"), "parses")
 println("assertions passed")
+```
+
+## `ods` — Series and Frames
+
+The data stack ([design](design/ods.md)): typed, null-aware columns and
+tables over contiguous native buffers, measured at NumPy parity for
+reductions and within 1.13× of Polars for group-by — see the design doc's
+benchmark tables. A **Series** is a 1-D column of `Int`, `Float`, `Bool`,
+or `String`; a **Frame** is named, equal-length Series.
+
+Two ideas carry everything. **Operators are vectorized**: `s * 2.0 + 1.0`
+runs native kernels over the whole column, `s > 2` yields a Bool-series
+mask for `ods.filter`, and a scalar on either side broadcasts. **Nulls are
+first-class**: a `()` value in a source list (a missed `map_get`, an empty
+CSV cell, a missing JSON key) becomes a null that propagates through
+arithmetic and is skipped by reductions.
+
+| Function | Description |
+|---|---|
+| `ods.series(xs)` | Series from a list or range; dtype inferred, `()` is null |
+| `ods.zeros(n)` / `ods.linspace(a, b, n)` | constructors |
+| `ods.to_list(s)` / `ods.get(s, i)` / `ods.len(s)` | back to values (null → `()`; negative `i` from the end) |
+| `ods.null_count(s)` / `ods.is_null(s)` / `ods.fill_null(s, v)` | null tools |
+| `ods.sum` `mean` `var` `std` `min` `max` | reductions, skipping nulls (`var`/`std` are sample, n−1) |
+| `ods.quantile(s, q)` | linear interpolation, like NumPy |
+| `ods.sort(s)` / `ods.argsort(s)` | ascending, nulls last |
+| `ods.take(s, idx)` / `ods.filter(s, mask)` | selection |
+| `ods.cumsum(s)` / `ods.dot(a, b)` | running sum; inner product |
+| `ods.eq(a, b)` / `ods.ne(a, b)` | *elementwise* equality masks — `a == b` between Series stays structural, like every olang collection |
+
+```olang
+let prices = ods.series([12.5, 8.0, 15.25, 4.0])
+let taxed = prices * 1.07
+println(to_string(ods.mean(taxed)))
+
+let missing = map_get(#{}, "absent")          // Unit → null
+let s = ods.series([1.0, missing, 3.0])
+println(to_string(ods.null_count(s * 2.0)))   // nulls propagate: 1
+println(to_string(ods.mean(s)))               // reductions skip them: 2
+println(to_string(ods.to_list(ods.filter(prices, prices > 10.0))))
+println(to_string(ods.series(1..4) == ods.series([1, 2, 3])))
+```
+
+Frames add the table verbs — all pipeline-friendly:
+
+| Function | Description |
+|---|---|
+| `ods.frame(pairs)` | from `[[name, series-or-list], ...]` |
+| `ods.read_csv(text)` | CSV text → Frame, column types inferred, empty cells null |
+| `ods.frame_from_records(xs)` | list of maps (what `json.parse` gives for an array of objects) |
+| `ods.to_records(f)` | back to a list of maps |
+| `ods.columns` `column` `n_rows` `n_cols` | introspection |
+| `ods.select(f, names)` / `ods.with_column(f, name, col)` | shape the columns |
+| `ods.filter(f, mask)` / `ods.take(f, idx)` / `ods.head(f, n)` | shape the rows |
+| `ods.sort_by(f, col, descending)` | one key, nulls last either way |
+| `ods.group_by(f, keys, aggs)` | aggs are `[[out, op, col], ...]` with ops `count` `sum` `mean` `min` `max`; a null key is its own group |
+| `ods.join(a, b, on_a, on_b)` / `ods.join_left(...)` | hash joins; null keys never match, collisions suffix `_right` |
+
+```olang
+let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,80.0,4\n")
+let full = ods.with_column(sales, "revenue",
+    ods.column(sales, "amount") * ods.column(sales, "qty"))
+
+let summary = full
+    |> ods.group_by("region", [["total", "sum", "revenue"], ["n", "count"]])
+    |> ods.sort_by("total", true)
+for rec in ods.to_records(summary) {
+    println(map_get(rec, "region") + ": " + to_string(map_get(rec, "total")))
+}
+
+let tax = ods.frame([["name", ["east", "west"]], ["rate", [0.07, 0.09]]])
+let joined = ods.join(summary, tax, "region", "name")
+println(to_string(ods.columns(joined)))
+```
+
+## `stats` — statistical inference
+
+Distributions, hypothesis tests, and regression, every result pinned
+against scipy reference values in the test suite. Tests and fits return
+maps — destructure them with `map_get`.
+
+| Function | Description |
+|---|---|
+| `stats.describe(s)` | count, nulls, mean, std, min, quartiles, max as a map |
+| `stats.corr(a, b)` / `stats.cov(a, b)` | Pearson r and sample covariance, pairwise-complete |
+| `stats.t_test(a, b)` | Welch's two-sample when `b` is a Series; one-sample vs the null mean when `b` is a number |
+| `stats.chi2_test(observed, expected)` | goodness of fit |
+| `stats.lm(y, xs)` | OLS with an intercept; `xs` is one Series or a list of them; rows with nulls drop; returns coef/se/t/p_value Series plus `r2`, `adj_r2`, `n` |
+| `stats.norm` / `stats.t` / `stats.chi2` / `stats.f` | distribution families |
+| `stats.<fam>.pdf` / `cdf` / `ppf` | density, cumulative, quantile (`norm` takes `mu, sigma`; `t`/`chi2` take `df`; `f` takes `d1, d2`) |
+| `stats.<fam>.sample(n, ...)` | draw a Series — from the `random` module's stream, so `random.seed` makes it reproducible |
+
+```olang
+println(to_string(stats.norm.ppf(0.975, 0.0, 1.0)))   // 1.9599...
+
+let a = ods.series([5.1, 4.9, 6.2, 5.7, 5.5, 4.8, 5.9, 6.1])
+let b = ods.series([4.2, 4.8, 4.5, 5.0, 4.4, 4.1, 4.9])
+let t = stats.t_test(a, b)
+println("p = " + to_string(map_get(t, "p_value")))
+println("significant: " + to_string(map_get(t, "p_value") < 0.05))
+
+let x = ods.series([1.0, 2.0, 3.0, 4.0, 5.0])
+let y = ods.series([2.1, 3.9, 6.2, 8.1, 9.8])
+let fit = stats.lm(y, x)
+println("slope = " + to_string(ods.get(map_get(fit, "coef"), 1)))
+println("r2 = " + to_string(map_get(fit, "r2")))
+
+random.seed(42)
+let draws = stats.norm.sample(1000, 100.0, 15.0)
+println(to_string(ods.mean(draws) > 95.0))
+```
+
+## `plot` — charts as SVG text
+
+Charts render to complete standalone SVG documents as strings — write one
+with `fs.write_file`, serve it over `http`, or return it from the
+playground. Defaults follow a colorblind-validated palette with hues
+assigned in fixed series order, so a chart is presentable with an empty
+options map.
+
+| Function | Description |
+|---|---|
+| `plot.line(x, y, opts)` / `plot.scatter(x, y, opts)` | one xy series; null pairs drop |
+| `plot.lines(x, pairs, opts)` | multiple series as `[[label, y], ...]` (≤ 8), legend included |
+| `plot.bar(labels, values, opts)` | labels are a Series or list; null values refuse |
+| `plot.hist(s, bins, opts)` | binned counts of a numeric Series |
+
+Options ride in one map — `title`, `x_label`, `y_label`, `width`,
+`height` — and an unknown key is an error, because it is always a typo.
+
+```olang
+let x = ods.linspace(0.0, 6.28, 50)
+let y = ods.series(map(ods.to_list(x), (v) => math.sin(v)))
+let svg = plot.line(x, y, #{ "title": "sin(t)", "x_label": "t" })
+println(to_string(str.contains(svg, "<svg")))
+
+let by_region = ods.read_csv("region,rev\neast,2415.0\nwest,5167.5\n")
+let bars = plot.bar(ods.column(by_region, "region"),
+                    ods.column(by_region, "rev"), #{})
+println(to_string(str.length(bars) > 500))
+```
+
+```olang no-run
+// The usual ending: a chart on disk, viewable in any browser.
+unwrap(fs.write_file("chart.svg", svg))
 ```
 
 ---
