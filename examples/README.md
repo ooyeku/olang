@@ -99,6 +99,13 @@ A two-package demonstration of the package manager (see
   `math.sqrt` in a hot loop — exactly what the tier accelerates. Times itself
   and reports throughput; ~9x faster on the tier than the interpreter. A
   `test` block locks determinism and momentum conservation
+- [`minilisp/`](minilisp/) — a small Lisp interpreted by olang: reader and
+  evaluator over `LVal` enum trees, maps as functional environments, Err
+  values as the only error channel, and call-time self-binding for recursive
+  defines — the same trick olang's own interpreter uses one level up. Every
+  function promotes to the bytecode tier; a timed `fib(17)` runs through two
+  layers of interpretation, and a test block locks evaluation results and
+  error messages
 - [`pargrep/`](pargrep/) — parallel code search on real `spawn` threads:
   files are dealt into chunks, one worker thread per chunk searches with
   `re` + `fs`, results merge after `await Promise.all`, and per-task
