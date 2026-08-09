@@ -172,9 +172,11 @@ before + go(xs)
 }
 
 #[test]
-fn functions_using_unsupported_features_keep_working() {
-    // Map literals are not compiled; the function must fall back and still
-    // produce the right answer.
+fn map_literals_and_builtins_now_promote() {
+    // (This used to assert map literals were rejected.) Maps are
+    // first-class in the VM: literals compile to MakeMap with the
+    // interpreter's key-coercion rules, and the map builtins bridge
+    // losslessly.
     let src = r#"
 fn lookup(k) = {
     let m = #{"a": 1, "b": 2}
@@ -182,8 +184,61 @@ fn lookup(k) = {
 }
 to_string(lookup("a")) + to_string(lookup("b"))
 "#;
-    assert_eq!(promotion_count(src, 1), 0);
+    assert_eq!(promotion_count(src, 1), 1, "lookup should now compile");
     assert_tier_transparent(src);
+}
+
+#[test]
+fn maps_promote_and_agree_across_builders_and_readers() {
+    let src = r#"
+fn build(n) = {
+    let mut m = #{"base": n, 3: 30, true: 100}
+    for i in 0..5 { m = map_set(m, "k" + show(i), i * n) }
+    m
+}
+fn totals(n) = {
+    let m = build(n)
+    let mut t = map_len(m) + map_get(m, "3") + map_get(m, true)
+    for kv in entries(m) { t = t + kv[1] }
+    t + map_len(map_merge(m, #{"extra": 1}))
+}
+let mut acc = 0
+for i in 0..20 { acc = acc + totals(i) }
+acc + len(map_keys(build(2)))
+"#;
+    assert!(
+        promotion_count(src, 2) >= 2,
+        "build and totals should promote"
+    );
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn maps_cross_the_boundary_and_compare_structurally() {
+    // A map built in compiled code returns to the interpreter as a real
+    // Map (it used to come back as a struct), and == compares contents.
+    let src = r#"
+fn make(n) = #{"x": n, "y": n * 2}
+make(1)
+make(2)
+let a = make(5)
+let b = #{"y": 10, "x": 5}
+if a == b => 1 else => 0
+"#;
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(1));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn invalid_map_keys_error_identically() {
+    assert_tier_transparent(
+        r#"
+fn bad(n) = #{[1, 2]: n}
+bad(1)
+bad(2)
+bad(3)
+"#,
+    );
 }
 
 #[test]
@@ -331,17 +386,20 @@ d(1) + d(2) + d(3)
 
 #[test]
 fn caller_is_rejected_when_helper_cannot_compile() {
-    // `describe` builds a map literal, which the tier does not compile, so
-    // neither it nor its caller may be promoted — but the program must
-    // still produce the right answer. (This used to use a global as the
-    // uncompilable feature; globals bake as closure constants now.)
+    // `bump` ASSIGNS a global, which the tier will never compile (writes
+    // need the interpreter's environment), so neither it nor its caller
+    // may be promoted — but the program must still produce the right
+    // answer. (This test has burned through two previous "uncompilable"
+    // features — a global read, then a map literal — as each became
+    // compilable; global assignment is the durable choice.)
     let src = r#"
-fn describe(n) = {
-    let m = #{"n": n}
-    to_string(map_get(m, "n"))
+let mut counter = 0
+fn bump(n) = {
+    counter = counter + n
+    counter
 }
-fn label(n) = describe(n) + "!"
-len(label(1)) + len(label(2))
+fn label(n) = bump(n) + 1
+label(1) + label(2)
 "#;
     assert_eq!(promotion_count(src, 1), 0);
     assert_tier_transparent(src);

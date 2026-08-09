@@ -601,8 +601,17 @@ mod tests {
     fn non_representable_arguments_fall_back() {
         let mut tier = BytecodeTier::new(1);
         let func = double_fn();
-        // A map does not round-trip the value model and must not go to the VM
-        let map_arg = Value::Map(std::sync::Arc::new(std::collections::HashMap::new()));
+        // Maps round-trip now; a TypeInfo value never converts, so a map
+        // holding one is the durable non-representable specimen
+        let mut bad = std::collections::HashMap::new();
+        bad.insert(
+            "t".to_string(),
+            Value::TypeInfo {
+                name: "X".to_string(),
+                definition: crate::ast::TypeDefinition::Struct { fields: Vec::new() },
+            },
+        );
+        let map_arg = Value::Map(std::sync::Arc::new(bad));
         assert!(matches!(
             tier.try_call(&func, &[map_arg]),
             TierOutcome::Fallback

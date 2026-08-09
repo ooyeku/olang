@@ -12,6 +12,28 @@ documented.
 
 ### Added
 
+- **Maps are first-class in the VM.** The last missing data type: maps
+  used to be crushed into a struct shape that could not convert back,
+  which kept every map-touching function and every map-returning builtin
+  off the tier. `ValueData::Map` mirrors the interpreter's map exactly
+  and converts losslessly both ways; `#{...}` literals compile to a
+  `MakeMap` instruction with the interpreter's key-coercion rules (bad
+  keys raise the same type error); `==`/`!=` compare structurally; and
+  ten map builtins (`map_get`, `map_set`, `map_remove`, `map_keys`,
+  `map_values`, `map_len`, `map_merge`, `map_clear`, `entries`,
+  `group_by`) are allowlisted over the bridge, retiring the
+  "map-returning builtins are excluded" limitation. Promoting the
+  map-heavy workflow example exposed a *pre-existing* VM gap the
+  differential suite now pins: the interpreter concatenates
+  `String + Int/Float` in both orders and the VM errored — the missing
+  arms are added with the interpreter's exact stringification. Two test
+  fixtures that used maps as their "unrepresentable value" specimens now
+  use a genuinely unconvertible value instead, and the
+  helper-cannot-compile test moved to global assignment as its durable
+  uncompilable feature (its third choice, after global reads and map
+  literals each became compilable). Corpus: promoted 117 → 122,
+  rejections 55 → 43; map-literal refusals to zero.
+
 - **Template strings and nested `fn` declarations compile.** A
   `MakeTemplate` instruction builds the string with the interpreter's
   exact interpolation rules — String raw, Int/Float/Bool via

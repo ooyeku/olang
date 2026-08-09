@@ -71,6 +71,10 @@ A function is eligible when its body uses only the subset the VM implements:
   instruction with arity checked at compile time, `==`/`!=` compare
   structurally, and enums round-trip the tier boundary losslessly (they
   used to be crushed into a struct shape that could not convert back)
+- map literals (`#{...}`), with the interpreter's key coercion (String
+  raw, Int/Float/Bool via to_string), and the map builtins (`map_get`,
+  `map_set`, `entries`, `map_merge`, `group_by`, ...) — maps are
+  first-class in the VM and round-trip the boundary losslessly
 - struct literals and anonymous objects. Literals validate against the
   declared field set at *compile* time with the interpreter's exact rules
   (unknown type, missing field, surprise field all refuse, so the
@@ -354,12 +358,11 @@ These are real gaps, not oversights:
    fallthrough re-evaluates the receiver, which the VM will not replicate
    for an expression with side effects. Pure receivers — locals, field
    chains, literals — compile (see below).
-2. **Map literals are uncompiled**, as is *assigning* to a global
-   (reads bake as snapshot constants). Map-returning builtins
-   (`map_set`, `group_by`, ...) remain excluded because a `Map` does not
-   survive the round trip back to an AST value. Self-recursive *nested*
-   `fn` declarations refuse (the name binds after the closure is built);
-   non-recursive nested fns compile.
+2. ***Assigning* to a global is uncompiled** (reads bake as snapshot
+   constants). Self-recursive *nested* `fn` declarations refuse (the
+   name binds after the closure is built); non-recursive nested fns
+   compile. Async constructs (`spawn`, `await`, promises) stay
+   interpreted.
 3. **Bridged builtin calls cost a value round trip.** Builtins outside
    the native set convert arguments and results between the OVM and AST
    value models per call. The native `map`/`filter`/`sum` loops avoid

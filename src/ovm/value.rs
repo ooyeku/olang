@@ -135,6 +135,12 @@ pub enum ValueData {
     /// and hands to builtins; FunctionObject drops parameter metadata and
     /// rewrites the closure, so it cannot round-trip.
     AstFunction(Arc<crate::ast::Function>),
+    /// A map value, mirroring the interpreter's `Value::Map` exactly
+    /// (string keys, arbitrary values, shared via Arc). Maps used to be
+    /// crushed into a struct shape that could not convert back, which
+    /// kept every map-touching function and every map-returning builtin
+    /// off the tier.
+    Map(Arc<HashMap<String, OvmValue>>),
     /// A proper enum value: type, variant, and payload, converting to and
     /// from the interpreter's `Value::Enum` losslessly. (Enums used to be
     /// crushed into a struct shape with a `__variant` field, which could
@@ -746,6 +752,7 @@ impl PartialEq for OvmValue {
             (ValueData::AstFunction(a), ValueData::AstFunction(b)) => Arc::ptr_eq(a, b),
             (ValueData::Closure(a), ValueData::Closure(b)) => Arc::ptr_eq(a, b),
             (ValueData::Enum(a), ValueData::Enum(b)) => Arc::ptr_eq(a, b),
+            (ValueData::Map(a), ValueData::Map(b)) => Arc::ptr_eq(a, b),
             (ValueData::Struct(a), ValueData::Struct(b)) => Arc::ptr_eq(a, b),
             (ValueData::Builtin(a), ValueData::Builtin(b)) => Arc::ptr_eq(a, b),
             (ValueData::Promise(a), ValueData::Promise(b)) => Arc::ptr_eq(a, b),
@@ -863,6 +870,7 @@ impl OvmValue {
             ValueData::AstFunction(p) => ValueData::AstFunction(p.clone()),
             ValueData::Closure(p) => ValueData::Closure(p.clone()),
             ValueData::Enum(p) => ValueData::Enum(p.clone()),
+            ValueData::Map(p) => ValueData::Map(p.clone()),
             ValueData::Struct(p) => ValueData::Struct(p.clone()),
             ValueData::Range(p) => ValueData::Range(p.clone()),
             ValueData::Builtin(p) => ValueData::Builtin(p.clone()),
@@ -1422,26 +1430,11 @@ impl OvmValue {
                 }
             }
 
-            Value::Map(map) => {
-                // Convert HashMap<String, Value> to OVM representation
-                // For now, create a simple struct-like representation
-                let pairs: Vec<(String, OvmValue)> = map
-                    .iter()
+            Value::Map(map) => Self::new_map(Arc::new(
+                map.iter()
                     .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
-                    .collect();
-                let struct_obj = StructObject::from_pairs("Map", pairs);
-
-                let gc_ptr = Arc::new(struct_obj);
-
-                Self {
-                    header: ValueHeader::new(
-                        TypeTag::Struct,
-                        ExecutionTier::Interpreter,
-                        LazyState::Eager,
-                    ),
-                    data: ValueData::Struct(gc_ptr),
-                }
-            }
+                    .collect(),
+            )),
 
             Value::TypeInfo { name, .. } => {
                 // For now, represent types as string names
@@ -1476,6 +1469,7 @@ impl OvmValue {
                 ValueData::AstFunction(_) => std::mem::size_of::<crate::ast::Function>(),
                 ValueData::Closure(_) => std::mem::size_of::<ClosureObject>(),
                 ValueData::Enum(_) => std::mem::size_of::<EnumObject>(),
+                ValueData::Map(m) => m.len() * 64,
                 ValueData::Struct(_) => std::mem::size_of::<StructObject>(),
                 ValueData::Range(_) => std::mem::size_of::<RangeObject>(),
                 ValueData::Promise(_) => std::mem::size_of::<PromiseObject>(),
@@ -1487,6 +1481,14 @@ impl OvmValue {
         safepoint_manager.record_allocation(allocation_size);
 
         Ok(ovm_value)
+    }
+
+    /// Wrap a map value.
+    pub fn new_map(map: Arc<HashMap<String, OvmValue>>) -> Self {
+        Self {
+            header: ValueHeader::new(TypeTag::Struct, ExecutionTier::Bytecode, LazyState::Eager),
+            data: ValueData::Map(map),
+        }
     }
 
     /// Wrap an enum value.
@@ -1578,6 +1580,13 @@ impl OvmValue {
                 Ok(Value::Tuple(std::sync::Arc::new(ast_values)))
             }
             ValueData::AstFunction(func) => Ok(Value::Function((**func).clone())),
+            ValueData::Map(m) => {
+                let mut out = HashMap::new();
+                for (k, v) in m.iter() {
+                    out.insert(k.clone(), v.to_ast()?);
+                }
+                Ok(Value::Map(Arc::new(out)))
+            }
             ValueData::Enum(e) => {
                 let variant_data = match &e.data {
                     EnumData::Unit => crate::ast::EnumVariantData::Unit,
@@ -1721,6 +1730,7 @@ impl fmt::Display for OvmValue {
                 write!(f, "<function>")
             }
             ValueData::Enum(e) => write!(f, "{}::{}", e.type_name, e.variant_name),
+            ValueData::Map(m) => write!(f, "<map: {} entries>", m.len()),
             ValueData::Struct(_) => write!(f, "<struct>"),
             ValueData::Range(gc_ptr) => {
                 if gc_ptr.inclusive {

@@ -323,6 +323,23 @@ fn capturing_lambdas_compile_and_agree() {
 }
 
 #[test]
+fn mixed_string_number_concatenation_agrees() {
+    // The interpreter stringifies the number in String+Int, Int+String,
+    // String+Float, Float+String. The VM lacked these arms and errored —
+    // unreachable in compiled code until map support made the workflow
+    // example's formatting functions promotable, which is how it surfaced.
+    for arg in [0i64, 5, -3] {
+        assert_same(r#"fn f(x) = "n=" + x"#, "f", &ints(&[arg]));
+        assert_same(r#"fn f(x) = x + "!""#, "f", &ints(&[arg]));
+        assert_same(
+            r#"fn f(x) = ("v" + (x * 1.5)) + (x * 0.5 + "w")"#,
+            "f",
+            &ints(&[arg]),
+        );
+    }
+}
+
+#[test]
 fn function_valued_callees_compile_and_agree() {
     // CallValue: an immediately invoked lambda, a curried call, and — the
     // shadowing case that used to be a latent divergence — a parameter

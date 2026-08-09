@@ -374,6 +374,13 @@ pub enum Instruction {
         shape: Arc<crate::ovm::value::StructShape>,
         field_regs: Vec<Register>,
     },
+    /// Build a map from (key, value) register pairs, coercing keys with
+    /// the interpreter's exact rule: String raw, Int/Float/Bool via
+    /// to_string, anything else the interpreter's type error.
+    MakeMap {
+        dst: Register,
+        entries: Vec<(Register, Register)>,
+    },
     /// Build a template string: literal chunks verbatim, interpolated
     /// registers stringified with the interpreter's exact rules (String
     /// raw, Int/Float/Bool via to_string, everything else through the AST
@@ -988,6 +995,18 @@ impl BytecodeVm {
             "str.pad_end",
             "str.join",
             "str.fmt",
+            // map builtins — maps round-trip losslessly now, so builders
+            // and readers both bridge safely
+            "entries",
+            "map_get",
+            "map_set",
+            "map_remove",
+            "map_keys",
+            "map_values",
+            "map_len",
+            "map_merge",
+            "map_clear",
+            "group_by",
             // stringification (same bridge as to_string)
             "show",
             // output
@@ -1148,6 +1167,7 @@ impl BytecodeVm {
             ValueData::Result { .. } => "Result",
             ValueData::Unit => "Unit",
             ValueData::Enum(e) => &e.type_name,
+            ValueData::Map(_) => "Map",
             ValueData::Promise(_) => "Promise",
             // Never constructed by compiled code; a failed lookup falls to
             // the field-access error, which is what the interpreter's
@@ -1691,6 +1711,29 @@ impl BytecodeVm {
                     };
                     self.execution_state
                         .set_register(*dst, OvmValue::new_struct(Arc::new(obj)))?;
+                }
+
+                Instruction::MakeMap { dst, entries } => {
+                    use crate::ovm::value::ValueData;
+                    let mut map = std::collections::HashMap::with_capacity(entries.len());
+                    for (key_reg, value_reg) in entries {
+                        let key = match &self.execution_state.register_ref(*key_reg)?.data {
+                            ValueData::String(s) => s.as_ref().clone(),
+                            ValueData::Integer(i) => i.to_string(),
+                            ValueData::Float(f) => f.to_string(),
+                            ValueData::Boolean(b) => b.to_string(),
+                            _ => {
+                                return Err(BytecodeError::TypeError(
+                                    "Map keys must be strings, integers, floats, or booleans"
+                                        .to_string(),
+                                ))
+                            }
+                        };
+                        let value = self.execution_state.get_register(*value_reg)?;
+                        map.insert(key, value);
+                    }
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_map(Arc::new(map)))?;
                 }
 
                 Instruction::MakeTemplate { dst, parts } => {
@@ -2572,8 +2615,26 @@ impl BytecodeVm {
                     )))
                 }
             },
+            // Mixed string-number concatenation, mirroring the interpreter:
+            // "n=" + 5, 5 + "!", "x" + 0.5, 0.5 + "x" all stringify the
+            // number. This was unreachable in compiled code until maps made
+            // the formatting-heavy functions promotable — the differential
+            // suite now pins it.
+            (ValueData::String(a), ValueData::Integer(b)) if matches!(op, BinaryOp::Add) => {
+                OvmValue::new_string(format!("{}{}", a, b))
+            }
+            (ValueData::Integer(a), ValueData::String(b)) if matches!(op, BinaryOp::Add) => {
+                OvmValue::new_string(format!("{}{}", a, b))
+            }
+            (ValueData::String(a), ValueData::Float(b)) if matches!(op, BinaryOp::Add) => {
+                OvmValue::new_string(format!("{}{}", a, b))
+            }
+            (ValueData::Float(a), ValueData::String(b)) if matches!(op, BinaryOp::Add) => {
+                OvmValue::new_string(format!("{}{}", a, b))
+            }
             (ValueData::Enum(_), ValueData::Enum(_))
-            | (ValueData::Struct(_), ValueData::Struct(_)) => match op {
+            | (ValueData::Struct(_), ValueData::Struct(_))
+            | (ValueData::Map(_), ValueData::Map(_)) => match op {
                 BinaryOp::Equal => OvmValue::new_boolean(Self::pattern_eq(left, right)),
                 BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
                 _ => {
@@ -3106,7 +3167,8 @@ impl BytecodeVm {
             // Value equality does; conversion is exact so comparing the AST
             // forms is the same relation.
             (ValueData::Enum(_), ValueData::Enum(_))
-            | (ValueData::Struct(_), ValueData::Struct(_)) => match (a.to_ast(), b.to_ast()) {
+            | (ValueData::Struct(_), ValueData::Struct(_))
+            | (ValueData::Map(_), ValueData::Map(_)) => match (a.to_ast(), b.to_ast()) {
                 (Ok(x), Ok(y)) => x == y,
                 _ => false,
             },
@@ -3141,6 +3203,9 @@ impl BytecodeVm {
             // round-trip — which is what lets user functions be passed as
             // arguments into promoted functions.
             Value::Function(_) => true,
+            // Maps convert losslessly now that the OVM has a first-class
+            // map value; they round-trip when every entry does.
+            Value::Map(map) => map.values().all(Self::round_trips),
             // Enums convert losslessly (type, variant, payload) since the
             // OVM grew a first-class enum value; they round-trip when the
             // payload does.
@@ -4604,6 +4669,23 @@ impl BytecodeCompiler {
                 Ok(dst_reg)
             }
 
+            Expr::MapLiteral { entries } => {
+                // Keys and values compile in written order, key before value
+                // per entry — the interpreter's evaluation order.
+                let mut entry_regs = Vec::with_capacity(entries.len());
+                for entry in entries {
+                    let key_reg = self.compile_expression(&entry.key)?;
+                    let value_reg = self.compile_expression(&entry.value)?;
+                    entry_regs.push((key_reg, value_reg));
+                }
+                let dst_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::MakeMap {
+                    dst: dst_reg,
+                    entries: entry_regs,
+                });
+                Ok(dst_reg)
+            }
+
             Expr::TemplateString { parts } => {
                 // Interpolations compile in written order (side-effect
                 // order); literal chunks ride in the instruction.
@@ -5420,6 +5502,12 @@ impl BytecodeCompiler {
                 Self::collect_bound_names(inner, names)
             }
             Expr::FieldAccess { object, .. } => Self::collect_bound_names(object, names),
+            Expr::MapLiteral { entries } => {
+                for entry in entries {
+                    Self::collect_bound_names(&entry.key, names);
+                    Self::collect_bound_names(&entry.value, names);
+                }
+            }
             Expr::TemplateString { parts } => {
                 for part in parts {
                     if let crate::ast::TemplatePart::Interpolation(e) = part {
@@ -5517,6 +5605,11 @@ impl BytecodeCompiler {
             }
 
             Expr::FieldAccess { object, .. } => Self::collect_free_vars(object, bound, free),
+
+            Expr::MapLiteral { entries } => entries.iter().all(|e| {
+                Self::collect_free_vars(&e.key, bound, free)
+                    && Self::collect_free_vars(&e.value, bound, free)
+            }),
 
             Expr::TemplateString { parts } => parts.iter().all(|p| match p {
                 crate::ast::TemplatePart::Literal(_) => true,
@@ -6293,11 +6386,25 @@ mod tests {
     #[test]
     fn unrepresentable_builtin_results_are_rejected() {
         // A value that cannot round-trip through the OVM model must produce an
-        // error rather than silently becoming Unit.
+        // error rather than silently becoming Unit. Maps round-trip now, so
+        // the unrepresentable specimen is a map holding an unrepresentable
+        // VALUE (a promise-free stand-in: a map containing a map is fine, so
+        // use a TypeInfo, which never converts).
         let mut vm = BytecodeVm::new();
         let mut fields = std::collections::HashMap::new();
         fields.insert("a".to_string(), Value::Integer(1));
-        assert!(!BytecodeVm::round_trips(&Value::Map(Arc::new(fields))));
+        assert!(BytecodeVm::round_trips(&Value::Map(Arc::new(
+            fields.clone()
+        ))));
+        let mut bad = std::collections::HashMap::new();
+        bad.insert(
+            "t".to_string(),
+            Value::TypeInfo {
+                name: "X".to_string(),
+                definition: crate::ast::TypeDefinition::Struct { fields: Vec::new() },
+            },
+        );
+        assert!(!BytecodeVm::round_trips(&Value::Map(Arc::new(bad))));
         assert!(BytecodeVm::round_trips(&Value::Integer(1)));
         assert!(BytecodeVm::round_trips(&Value::Ok(Box::new(
             Value::Integer(1)
