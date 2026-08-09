@@ -5,7 +5,8 @@
       "name": "olang-website",
       "runtimeExecutable": "bun",
       "runtimeArgs": ["run", "--cwd", "website", "preview"],
-      "port": 4173
+      "port": 4173,
+      "autoPort": true
     }
   ]
 }

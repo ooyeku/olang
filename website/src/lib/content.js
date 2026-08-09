@@ -58,7 +58,9 @@ export const BOOK = [
   { slug: 'internals', file: 'internals.md', title: 'Internals' },
   { slug: 'ovm', file: 'ovm.md', title: 'The OVM' },
   { slug: 'stability', file: 'stability.md', title: 'Stability' },
-  { slug: 'roadmap', file: 'roadmap.md', title: 'Roadmap' }
+  { slug: 'roadmap', file: 'roadmap.md', title: 'Roadmap' },
+  { slug: 'design-ods', file: 'design/ods.md', title: 'Design: the ods data stack' },
+  { slug: 'design-ods-lazy', file: 'design/ods-lazy.md', title: 'Design: lazy evaluation' }
 ];
 
 const CHAPTER_LINKS = Object.fromEntries([
@@ -74,20 +76,42 @@ function slugify(text) {
   return text.toLowerCase().replace(/[^\w\- ]/g, '').replace(/ /g, '-');
 }
 
-function rewriteHref(href) {
+/// Resolve a relative href against a base directory, collapsing `.`
+/// and `..` segments (pure string work — these paths never touch the fs).
+function resolvePath(baseDir, path) {
+  const joined = baseDir ? `${baseDir}/${path}` : path;
+  const out = [];
+  for (const seg of joined.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      if (out.length && out[out.length - 1] !== '..') out.pop();
+      else out.push('..');
+    } else out.push(seg);
+  }
+  return out.join('/');
+}
+
+function rewriteHref(href, baseDir = '') {
   if (!href || /^(https?:|#|mailto:)/.test(href)) return href;
   const [path, anchor] = href.split('#');
-  const clean = path.replace(/^\.\//, '');
-  if (CHAPTER_LINKS[clean] !== undefined) {
-    return CHAPTER_LINKS[clean] + (anchor ? `#${anchor}` : '');
+  // Chapters live under docs/ at any depth; resolve the link relative to
+  // the chapter it appears in, so "ods-lazy.md" from design/ods.md and
+  // "design/ods.md" from stdlib.md both land on their chapter pages.
+  const docRel = resolvePath(baseDir, path);
+  if (CHAPTER_LINKS[docRel] !== undefined) {
+    return CHAPTER_LINKS[docRel] + (anchor ? `#${anchor}` : '');
   }
-  // everything else in the repo links to GitHub
-  const repoPath = clean.replace(/^(\.\.\/)+/, '');
+  // everything else in the repo links to GitHub, resolved from the
+  // chapter's real location (docs/<baseDir>/) so subdirectory docs and
+  // ../-escapes both produce correct repo paths
+  const repoPath = resolvePath(baseDir ? `docs/${baseDir}` : 'docs', path);
   return `${GITHUB}/tree/main/${repoPath}`;
 }
 
-/** Render a docs markdown file to { html, toc, title }. */
-export async function renderMarkdown(markdown) {
+/** Render a docs markdown file to { html, toc, title }. `baseDir` is the
+ * file's directory relative to docs/ ('' for top-level chapters), used to
+ * resolve its relative links. */
+export async function renderMarkdown(markdown, baseDir = '') {
   const toc = [];
 
   // Lex once; pre-highlight every fenced block (shiki is async, marked's
@@ -119,7 +143,7 @@ export async function renderMarkdown(markdown) {
     return `<h${level} id="${id}"><a class="anchor" href="#${id}">${text}</a></h${level}>`;
   };
   renderer.link = (href, title, text) =>
-    `<a href="${rewriteHref(href)}"${title ? ` title="${title}"` : ''}>${text}</a>`;
+    `<a href="${rewriteHref(href, baseDir)}"${title ? ` title="${title}"` : ''}>${text}</a>`;
 
   const html = marked.parser(tokens, { renderer, gfm: true });
   const titleMatch = markdown.match(/^#\s+(.+)$/m);
@@ -136,7 +160,10 @@ export async function renderChapter(slug) {
     : BOOK.find((c) => c.slug === slug);
   if (!chapter) return null;
   const markdown = readFileSync(join(docs, chapter.file), 'utf-8');
-  const rendered = await renderMarkdown(markdown);
+  const baseDir = chapter.file.includes('/')
+    ? chapter.file.slice(0, chapter.file.lastIndexOf('/'))
+    : '';
+  const rendered = await renderMarkdown(markdown, baseDir);
   return { ...chapter, ...rendered };
 }
 

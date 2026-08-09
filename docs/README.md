@@ -32,6 +32,8 @@ interpreter written in olang (`minilisp/`), a full-stack issue tracker
 | **[Stability](stability.md)** | What is stable, what is experimental, and how the language evolves from here |
 | **[Tooling](tooling.md)** | `olang test` (the test runner) and `olang fmt` (the formatter) |
 | **[Roadmap](roadmap.md)** | What comes next, each item grounded in real friction from the example programs |
+| **[Design: the ods data stack](design/ods.md)** | How Series, Frames, stats, and plot were designed and measured — benchmarks vs NumPy, scipy, and Polars, with every deferral recorded |
+| **[Design: lazy evaluation](design/ods-lazy.md)** | Why ods evaluates eagerly, and the measured gate for revisiting |
 
 ## Reading order
 

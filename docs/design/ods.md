@@ -1,14 +1,18 @@
 # ODS — the Olang Data Stack
 
-Design document · Status: **proposed** · Owner: olang core
+Design document · Status: **shipped — all four phases landed against their
+gates** · Owner: olang core
 
 Companion reading: [The OVM](../ovm.md) · [Roadmap](../roadmap.md) ·
-[Internals](../internals.md)
+[Internals](../internals.md) · user docs in
+[the stdlib chapter](../stdlib.md#ods--series-and-frames)
 
 This document specifies **ods**, a native numerical-computation engine built
-into the OVM, and the module system that hosts it. It is a design document,
-not user documentation: the olang code in it does not run yet, and none of
-its blocks are executed by `tests/doc_examples_test.rs`.
+into the OVM, and the module system that hosts it. It is the campaign's
+design record — the decisions, measurements, and deferrals — not user
+documentation: the doc-tested reference lives in the stdlib chapter, and
+this file's code blocks are illustrative (not executed by
+`tests/doc_examples_test.rs`).
 
 The register follows the rest of the book: explicit about what is and is not
 being built, with acceptance criteria that are measurements, not adjectives.

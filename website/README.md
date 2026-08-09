@@ -16,7 +16,7 @@ The site has no copied content. At build time it reads from the repository:
 
 | Site section | Source |
 |---|---|
-| Book pages (`/book`, `/book/[slug]`) | `../docs/*.md`, rendered with chapter navigation and rewritten cross-links |
+| Book pages (`/book`, `/book/[slug]`) | `../docs/*.md` and `../docs/design/*.md`, rendered with chapter navigation and rewritten cross-links |
 | Example gallery (`/examples`) | entry names and descriptions parsed from `../examples/README.md` |
 | Example sources (`/examples/[name]`) | the actual `.ol` files under `../examples/<name>/` |
 | Hero code sample | the first `olang` code block in `../README.md` |
