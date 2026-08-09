@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tracker — olang</title>
+<style>
+  :root {
+    --ink: #0b1220; --paper: #f6f8fa; --line: #d8dee6; --cell: #ffffff;
+    --teal: #0fa394; --amber: #f59e0b; --slate: #63748a; --soft: #eef1f5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; background: var(--ink); color: #e6edf3;
+  }
+  header .mark { color: var(--teal); font-weight: 700; font-size: 17px; }
+  header .mark b { color: var(--amber); }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  header .spacer { flex: 1; }
+  #filter {
+    background: #1c2736; border: 1px solid #31405a; color: #e6edf3;
+    border-radius: 6px; padding: 6px 10px; width: 220px; font-size: 13px;
+  }
+  #filter::placeholder { color: #7c93a8; }
+  main { padding: 18px 20px 60px; }
+  table {
+    border-collapse: collapse; width: 100%; background: var(--cell);
+    box-shadow: 0 1px 3px rgba(11, 18, 32, .08); border-radius: 8px; overflow: hidden;
+  }
+  th, td { border: 1px solid var(--line); padding: 0; }
+  th {
+    background: var(--soft); color: var(--slate); font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em; padding: 8px 10px;
+    text-align: left; cursor: pointer; user-select: none; position: sticky; top: 0;
+  }
+  th .dir { color: var(--teal); margin-left: 4px; }
+  td input, td select, td textarea {
+    width: 100%; border: 0; background: transparent; font: inherit; color: inherit;
+    padding: 7px 10px; outline: none; display: block;
+  }
+  td input:focus, td select:focus { background: #f0faf8; box-shadow: inset 0 0 0 2px var(--teal); }
+  td.num input { text-align: right; font-variant-numeric: tabular-nums; }
+  td.id { color: var(--slate); padding: 7px 10px; text-align: right; width: 44px;
+          font-variant-numeric: tabular-nums; background: var(--soft); }
+  td.del { width: 34px; text-align: center; }
+  td.del button {
+    border: 0; background: none; color: var(--slate); cursor: pointer; font-size: 15px;
+    width: 100%; padding: 6px 0;
+  }
+  td.del button:hover { color: #c0392b; }
+  tr.status-done td input, tr.status-done td select { color: var(--slate); }
+  tr.status-done td .title-input { text-decoration: line-through; }
+  select.pill-high { color: #c0392b; font-weight: 600; }
+  select.pill-medium { color: var(--amber); font-weight: 600; }
+  select.pill-low { color: var(--slate); }
+  select.status-in-progress { color: var(--teal); font-weight: 600; }
+  select.status-done { color: var(--slate); }
+  #newrow td { background: #fbfcfe; }
+  #newrow input { color: var(--slate); }
+  footer {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    padding: 8px 20px; background: var(--ink); color: #7c93a8; font-size: 12px;
+    display: flex; gap: 18px;
+  }
+  footer .ok { color: var(--teal); }
+</style>
+</head>
+<body>
+  <header>
+    <span class="mark">o<b>&gt;</b></span>
+    <h1>tracker</h1>
+    <span class="spacer"></span>
+    <input id="filter" type="search" placeholder="filter issues…">
+  </header>
+  <main>
+    <table id="grid">
+      <thead>
+        <tr>
+          <th data-col="id">#<span class="dir"></span></th>
+          <th data-col="title">Title<span class="dir"></span></th>
+          <th data-col="status">Status<span class="dir"></span></th>
+          <th data-col="priority">Priority<span class="dir"></span></th>
+          <th data-col="assignee">Assignee<span class="dir"></span></th>
+          <th data-col="points">Pts<span class="dir"></span></th>
+          <th data-col="notes">Notes<span class="dir"></span></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+      <tbody>
+        <tr id="newrow">
+          <td class="id">+</td>
+          <td><input id="new-title" placeholder="New issue — type a title and press Enter"></td>
+          <td colspan="6"></td>
+        </tr>
+      </tbody>
+    </table>
+  </main>
+  <footer>
+    <span id="count"></span>
+    <span id="summary"></span>
+    <span class="spacer"></span>
+    <span>backend: <span class="ok">olang · in-memory sqlite</span></span>
+  </footer>
+  <script src="/app.js"></script>
+</body>
+</html>

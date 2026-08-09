@@ -1228,6 +1228,7 @@ sum(work([1, 2, 3]))
 }
 
 #[test]
+#[allow(clippy::identity_op)] // the sum below mirrors the loop structure per iteration
 fn captures_snapshot_at_lambda_creation_not_at_call() {
     // The local is reassigned after the lambda is created; the closure must
     // hold the creation-time value in both tiers. Also: a lambda created in
@@ -1791,7 +1792,7 @@ read(p) + read(make(7))
 read(p) + read(make(7))
 "#;
     assert_tier_transparent(src);
-    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer((405 + 708) * 1));
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(405 + 708));
 }
 
 // ── the register slab (frame windows) ─────────────────────────────────

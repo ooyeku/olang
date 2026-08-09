@@ -16,7 +16,7 @@ let root = unwrap(os.cwd())
 
 // Programs that block forever by design (servers) can't run under the
 // harness; list them here so the skip is visible, never silent.
-let long_running = ["webserver/"]
+let long_running = ["webserver/", "app/"]
 
 // ── discover targets: each is { label, dir, file } ──
 let entries = sort(unwrap(fs.list_dir(".")))
