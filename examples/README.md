@@ -109,6 +109,12 @@ A two-package demonstration of the package manager (see
   layers of interpretation (~11× faster on the tier — this example is what
   motivated the native collection builtins), and a test block locks
   evaluation results and error messages
+- [`statlab/`](statlab/) — statistical inference and charts on the ods
+  data stack: a seeded A/B experiment (`stats.norm.sample`), described
+  and tested with Welch's t-test, a dose-response line fit with
+  `stats.lm`, and both rendered to standalone SVG charts with `plot`.
+  A `test` block pins the inferences (significance, slope, r²) on
+  every run
 - [`parmap/`](parmap/) — data-parallel pipelines with `par_map` /
   `par_filter`: counts primes in 48 blocks both sequentially and fanned
   out across every core, asserts the answers are identical, and reports
