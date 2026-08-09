@@ -12,6 +12,24 @@ documented.
 
 ### Changed
 
+- **The dispatch loop stopped paying for hashing and conversion it didn't
+  need.** Three more measured per-operation taxes removed: (1) `GetField`
+  cloned the field-name `Arc<String>` and the whole object value (two
+  refcount round-trips) per read — it now borrows both, and struct field
+  maps hash with FNV-1a instead of SipHash (field names are short
+  identifiers from program text; the maps are tiny). (2) `math` builtins
+  ran through the full interpreter bridge on every call: OVM→AST argument
+  conversion, name-string dispatch, a result round-trip check, and
+  AST→OVM conversion back. The 25 pure float functions (`sqrt`, `sin`,
+  `pow`, `atan2`, ...) now compile to a `CallBuiltin` instruction resolved
+  by id at compile time and evaluate as plain `f64` ops — non-numeric
+  arguments still take the interpreter path so errors stay identical, and
+  a new tier-agreement test locks every table entry (Float and Integer
+  arguments) to the interpreter's results. (3) `Call*` argument marshaling
+  reused pooled buffers instead of allocating per call. Measured: N-body
+  1,427ms → ~940ms (3.6M interactions/sec, checksum bit-identical),
+  fib(30) 285ms → ~267ms.
+
 - **VM-internal calls resolve at compile time.** A call to a user function
   compiled to `CallNamed`, which re-hashed the function's *name* against
   the registry on every execution — fib(30)'s 2.7 million recursive calls

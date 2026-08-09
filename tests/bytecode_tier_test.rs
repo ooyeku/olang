@@ -1362,6 +1362,29 @@ s
 }
 
 #[test]
+fn every_float_math_fast_path_function_agrees_across_tiers() {
+    // The VM resolves these to a CallBuiltin fast path (pure f64, no AST
+    // round-trip). Every function in that table, with Float and with Integer
+    // arguments, must produce bit-identical results to the interpreter.
+    assert_tier_transparent(
+        r#"
+fn probe(x) = math.sqrt(x) + math.cbrt(x) + math.floor(x) + math.ceil(x)
+    + math.round(x) + math.trunc(x) + math.fract(x)
+    + math.sin(x) + math.cos(x) + math.tan(x)
+    + math.asin(x / 10.0) + math.acos(x / 10.0) + math.atan(x)
+    + math.sinh(x) + math.cosh(x) + math.tanh(x)
+    + math.exp(x) + math.exp2(x) + math.ln(x) + math.log2(x) + math.log10(x)
+    + math.to_degrees(x) + math.to_radians(x)
+    + math.pow(x, 2.5) + math.atan2(x, 3.0)
+fn probe_int(n) = math.sqrt(n) + math.pow(n, 2) + math.atan2(n, 2)
+let mut s = 0.0
+for i in 0..30 { s = s + probe(to_float(i) * 0.17 + 1.1) + probe_int(i + 1) }
+s
+"#,
+    );
+}
+
+#[test]
 fn a_local_shadowing_a_module_name_is_field_access_not_a_builtin() {
     // `math.sqrt` where `math` is a *local* must read the field, not call the
     // builtin — the compiler distinguishes a bare module identifier from a

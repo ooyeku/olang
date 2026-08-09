@@ -175,8 +175,41 @@ pub struct FunctionObject {
 #[derive(Debug)]
 pub struct StructObject {
     pub type_name: String,
-    pub fields: HashMap<String, OvmValue>,
+    pub fields: FieldMap,
 }
+
+/// FNV-1a for struct field maps. Field lookups sit on the dispatch loop's
+/// hot path (every GetField hashes the field name), the maps are tiny, and
+/// the keys are short identifiers from source text - SipHash's per-lookup
+/// cost is the wrong trade here. Not DoS-hardened; field names come from
+/// program text, not external input.
+pub struct FnvHasher(u64);
+
+impl std::hash::Hasher for FnvHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut h = self.0;
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        self.0 = h;
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct FnvBuildHasher;
+
+impl std::hash::BuildHasher for FnvBuildHasher {
+    type Hasher = FnvHasher;
+    fn build_hasher(&self) -> FnvHasher {
+        FnvHasher(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+pub type FieldMap = HashMap<String, OvmValue, FnvBuildHasher>;
 
 /// Range object for OVM execution with proper iteration support
 #[derive(Debug)]
@@ -1160,7 +1193,7 @@ impl OvmValue {
 
             Value::Struct { type_name, fields } => {
                 // Create struct object
-                let struct_fields: HashMap<String, OvmValue> = fields
+                let struct_fields: FieldMap = fields
                     .into_iter()
                     .map(|(k, v)| (k, Self::from_ast(v)))
                     .collect();
@@ -1189,7 +1222,7 @@ impl OvmValue {
             } => {
                 // For now, create a simple struct-like representation for enums
                 // In a full implementation, we would have proper enum value support
-                let mut fields = HashMap::new();
+                let mut fields = FieldMap::default();
                 fields.insert(
                     "__variant".to_string(),
                     Self::new_string(variant_name.clone()),
@@ -1264,7 +1297,7 @@ impl OvmValue {
             Value::Map(map) => {
                 // Convert HashMap<String, Value> to OVM representation
                 // For now, create a simple struct-like representation
-                let mut fields = HashMap::new();
+                let mut fields = FieldMap::default();
                 for (key, value) in map.iter() {
                     fields.insert(key.clone(), Self::from_ast(value.clone()));
                 }

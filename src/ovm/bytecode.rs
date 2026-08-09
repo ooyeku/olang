@@ -57,6 +57,9 @@ pub struct BytecodeVm {
     /// Spare execution frames, pooled so register/local vectors keep their
     /// allocated capacity across calls
     frame_pool: Vec<ExecutionState>,
+    /// Pooled argument buffers for Call* instructions, so marshaling a call's
+    /// arguments does not malloc on every call.
+    arg_pool: Vec<Vec<OvmValue>>,
 }
 
 /// Call frame for function execution
@@ -799,6 +802,7 @@ impl BytecodeVm {
             builtin_interpreter: None,
             call_depth: 0,
             frame_pool: Vec::new(),
+            arg_pool: Vec::new(),
             // Must match the interpreter's own limit: a program that recurses
             // 900 deep has to behave the same whether or not it was promoted
             max_call_depth: 1000,
@@ -1146,21 +1150,59 @@ impl BytecodeVm {
                     ));
                 }
 
-                // The compiler emits CallNamed for builtins (resolved by name);
-                // reaching this means hand-written or stale bytecode.
-                Instruction::CallBuiltin { .. } => {
-                    return Err(BytecodeError::RuntimeError(
-                        "CallBuiltin is not emitted by the compiler; use CallNamed".to_string(),
-                    ));
+                // Float-math fast path: id resolved at compile time, args read
+                // as f64 with no AST conversion. Non-numeric arguments fall
+                // back to the interpreter path so errors stay identical.
+                Instruction::CallBuiltin {
+                    dst,
+                    builtin_id,
+                    args,
+                } => {
+                    let id = *builtin_id as usize;
+                    let (name, arity) = *Self::FLOAT_MATH.get(id).ok_or_else(|| {
+                        BytecodeError::RuntimeError(format!(
+                            "unknown builtin id {} in CallBuiltin",
+                            builtin_id
+                        ))
+                    })?;
+                    let mut nums = [0.0f64; 2];
+                    let mut all_numeric = args.len() == arity && arity <= 2;
+                    if all_numeric {
+                        for (i, arg_reg) in args.iter().enumerate() {
+                            match &self.execution_state.register_ref(*arg_reg)?.data {
+                                crate::ovm::value::ValueData::Integer(n) => nums[i] = *n as f64,
+                                crate::ovm::value::ValueData::Float(f) => nums[i] = *f,
+                                _ => {
+                                    all_numeric = false;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let result = if all_numeric {
+                        OvmValue::new_float(Self::eval_float_math(id, nums[0], nums[1]))
+                    } else {
+                        let mut arg_values = Vec::with_capacity(args.len());
+                        for arg_reg in args {
+                            arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                        }
+                        self.execute_builtin_call(name, &arg_values)?
+                    };
+                    self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::CallFn { dst, func_id, args } => {
-                    let mut arg_values = Vec::with_capacity(args.len());
+                    let mut arg_values = self.arg_pool.pop().unwrap_or_default();
+                    arg_values.reserve(args.len());
                     for arg_reg in args {
                         arg_values.push(self.execution_state.get_register(*arg_reg)?);
                     }
-                    let result = self.execute(*func_id, &arg_values)?;
-                    self.execution_state.set_register(*dst, result)?;
+                    let result = self.execute(*func_id, &arg_values);
+                    arg_values.clear();
+                    if self.arg_pool.len() < 64 {
+                        self.arg_pool.push(arg_values);
+                    }
+                    self.execution_state.set_register(*dst, result?)?;
                 }
 
                 Instruction::CallNamed {
@@ -1641,20 +1683,22 @@ impl BytecodeVm {
                     object,
                     name_const,
                 } => {
+                    // Borrow both the name constant and the object register:
+                    // cloning them cost two Arc refcount round-trips per read.
                     let name_value = bytecode
                         .constants
                         .get(*name_const as usize)
                         .ok_or(BytecodeError::InvalidConstantIndex(*name_const))?;
-                    let name = match &name_value.data {
-                        crate::ovm::value::ValueData::String(s) => s.clone(),
+                    let name: &str = match &name_value.data {
+                        crate::ovm::value::ValueData::String(s) => s,
                         _ => {
                             return Err(BytecodeError::RuntimeError(
                                 "GetField: field name constant is not a string".to_string(),
                             ))
                         }
                     };
-                    let object_value = self.execution_state.get_register(*object)?;
-                    let result = Self::execute_get_field(&object_value, &name)?;
+                    let object_value = self.execution_state.register_ref(*object)?;
+                    let result = Self::execute_get_field(object_value, name)?;
                     self.execution_state.set_register(*dst, result)?;
                 }
 
@@ -1890,6 +1934,79 @@ impl BytecodeVm {
     /// that could drift from the interpreter; delegating makes them identical
     /// by construction. The cost is a value round trip per call, which is
     /// dominated by the builtin's own work.
+    /// The float-math fast path: `math` builtins that accept numbers and
+    /// always return Float in the interpreter (see stdlib/math.rs). A
+    /// CallBuiltin's builtin_id indexes this table; entries record arity.
+    /// Excluded on purpose: abs/min/max (integer-preserving), log (optional
+    /// base), and the integer functions (factorial, gcd, lcm, ...).
+    const FLOAT_MATH: &'static [(&'static str, usize)] = &[
+        ("math.sqrt", 1),
+        ("math.cbrt", 1),
+        ("math.floor", 1),
+        ("math.ceil", 1),
+        ("math.round", 1),
+        ("math.trunc", 1),
+        ("math.fract", 1),
+        ("math.sin", 1),
+        ("math.cos", 1),
+        ("math.tan", 1),
+        ("math.asin", 1),
+        ("math.acos", 1),
+        ("math.atan", 1),
+        ("math.sinh", 1),
+        ("math.cosh", 1),
+        ("math.tanh", 1),
+        ("math.exp", 1),
+        ("math.exp2", 1),
+        ("math.ln", 1),
+        ("math.log2", 1),
+        ("math.log10", 1),
+        ("math.to_degrees", 1),
+        ("math.to_radians", 1),
+        ("math.pow", 2),
+        ("math.atan2", 2),
+    ];
+
+    fn float_math_id(name: &str, arity: usize) -> Option<u32> {
+        Self::FLOAT_MATH
+            .iter()
+            .position(|(n, a)| *n == name && *a == arity)
+            .map(|i| i as u32)
+    }
+
+    /// Mirrors the interpreter implementations exactly: every entry is a
+    /// pure f64 operation from std. atan2 is y.atan2(x) with y = args[0].
+    fn eval_float_math(id: usize, a: f64, b: f64) -> f64 {
+        match id {
+            0 => a.sqrt(),
+            1 => a.cbrt(),
+            2 => a.floor(),
+            3 => a.ceil(),
+            4 => a.round(),
+            5 => a.trunc(),
+            6 => a.fract(),
+            7 => a.sin(),
+            8 => a.cos(),
+            9 => a.tan(),
+            10 => a.asin(),
+            11 => a.acos(),
+            12 => a.atan(),
+            13 => a.sinh(),
+            14 => a.cosh(),
+            15 => a.tanh(),
+            16 => a.exp(),
+            17 => a.exp2(),
+            18 => a.ln(),
+            19 => a.log2(),
+            20 => a.log10(),
+            21 => a.to_degrees(),
+            22 => a.to_radians(),
+            23 => a.powf(b),
+            24 => a.atan2(b),
+            _ => f64::NAN,
+        }
+    }
+
     fn execute_builtin_call(
         &mut self,
         name: &str,
@@ -3066,6 +3183,14 @@ impl BytecodeCompiler {
                     self.emitter.instructions.push(Instruction::CallFn {
                         dst: dst_reg,
                         func_id,
+                        args: arg_regs,
+                    });
+                } else if let Some(builtin_id) =
+                    BytecodeVm::float_math_id(&function_name, arg_regs.len())
+                {
+                    self.emitter.instructions.push(Instruction::CallBuiltin {
+                        dst: dst_reg,
+                        builtin_id,
                         args: arg_regs,
                     });
                 } else {
