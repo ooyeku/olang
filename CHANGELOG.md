@@ -64,6 +64,19 @@ documented.
   property tests against naive references plus 12 tier-transparency
   integration tests (tests/ods_series_test.rs).
 
+- **P3 verdict: full NaN-boxing deferred, on the probe's own evidence.**
+  The probe existed to price the rewrite, and it did: halving value
+  size moved the most value-bound workload 13%, so halving again
+  projects roughly another 10% — not the 2-3x the roadmap estimated
+  from the old 32-byte baseline. Against that stands the cost: packing
+  heap pointers means manual refcounting at every register move, the
+  exact raw-pointer GcPtr scheme this codebase measured, found leaking
+  every allocation, and deleted in 0.23. A ~10% win does not buy back
+  that risk. The nanbox primitives remain proven and ready should the
+  JIT's register model want them; the performance effort redirects to
+  JIT struct field access on the safe Arc model — the actual N-body
+  blocker. Recorded so the rung is not re-attempted without new data,
+  like the compare+branch fusion before it.
 - **NaN-boxing foundation (src/ovm/nanbox.rs).** The 8-byte packed
   value scheme for P3 proper, landed as primitives-with-proofs before
   any VM wiring: floats bit-exact with real NaNs canonicalized so no
