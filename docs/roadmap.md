@@ -78,6 +78,29 @@ Deliberately out of scope, with reasons:
   but the precedence table is documented stable; revisiting it is a
   major-version conversation, recorded here so it isn't forgotten.
 
+## The performance campaign (0.39+)
+
+The 0.33–0.38 arc took the bytecode tier as far as bytecode tiers go:
+ahead of CPython and Ruby on struct/float and map work, the whole
+language covered (158 of 164 corpus functions promote), every step
+checksum-verified. The profile now shows essentially all remaining time
+in instruction dispatch itself — the ceiling of the tier's *class*. The
+next order of magnitude requires the levers every language that crossed
+this gap used (V8, LuaJIT, PyPy, JSC). In planned order:
+
+| # | Lever | Grounding | Expected | Status |
+|---|---|---|---|---|
+| P1 | **Parallel pipelines** — a native `par_map` (and a parallel `for`) in the VM: worker threads over Arc-shared immutable inputs, one VM per worker. olang already has real OS threads with no GIL, immutable values, and capture-by-value closures, so data-parallel map is trivially safe in a way CPython structurally cannot offer | `spawn` is load-tested (examples/loadtest); N-body's force loop is embarrassingly parallel; pargrep already hand-rolls this pattern | ~core-count multiplier (≈8× on an M-series) on data-parallel workloads, independent of single-thread speed | planned |
+| P2 | **Baseline JIT via Cranelift** — compile hot bytecode to native machine code, type-specialized: observe operand types during bytecode execution, emit int-/float-specialized code with guards that deoptimize to bytecode on type surprise. The tier system, promotion machinery, `CompiledBytecode` IR, and fallback contract are the exact substrate a JIT needs; "can't compile natively → stay on bytecode" extends the correctness story unchanged. fib(30) is the acceptance test, then floats + shape-checked field access for N-body | The dispatch loop is ~100% of remaining hot time; the fib gap to CPython (2×) and to the JITs (20–60×) is dispatch cost by construction. The 0.23 Cranelift scaffolding was deleted for being placeholder UB — the dependency choice stands, the implementation starts honest this time | 10–50× on hot numeric/monomorphic code: fib 89ms → low single-digit ms, N-body 400ms → tens of ms | planned |
+| P3 | **Value-model slimming (NaN-boxing)** — `OvmValue` is ~32 bytes (a nearly-dead header plus a 16-byte enum) copied on every register move; NaN-boxed 8-byte values triple effective bandwidth through the dispatch loop and are what JIT-compiled code wants in registers. High-blast-radius rewrite gated on the differential suite; the header alone can go first as a cheap probe | Every profile since the register-slab rung shows value movement as the bulk of dispatch work; sequenced after P2 so the JIT reveals where boxing actually hurts | 2–3× broad, larger in JIT-compiled code | planned |
+
+Explicitly rejected for this campaign: threaded dispatch (~1.5× measured
+ceiling, and the compare+branch fusion experiment showed this dispatch
+loop's layout fragility — recorded in the 0.36 changelog), and removing
+the interpreter (it is the semantic oracle, the declaration engine, and
+the deopt target; every tiered VM that made this jump kept its bottom
+tier).
+
 ## Explicitly not planned
 
 - **Qualified `Type::Variant` syntax** — variant constructors already travel
