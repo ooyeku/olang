@@ -64,6 +64,17 @@ documented.
   property tests against naive references plus 12 tier-transparency
   integration tests (tests/ods_series_test.rs).
 
+- **NaN-boxing foundation (src/ovm/nanbox.rs).** The 8-byte packed
+  value scheme for P3 proper, landed as primitives-with-proofs before
+  any VM wiring: floats bit-exact with real NaNs canonicalized so no
+  arithmetic result can alias a tag; 48-bit small integers ([-2^47,
+  2^47) inline, wider admits NeedsHeap — settling upfront that olang's
+  full-i64 integers split); 48-bit pointers; bool/unit constants.
+  Pinned by boundary tests (±2^47, i64::MIN/MAX, -0.0, ±inf, payload
+  NaNs including a tagged-int bit pattern) and a million-iteration
+  randomized decode cross-check. Deliberately not wired: the value-model
+  rewrite builds on these next, with the bit-level subtleties already
+  settled where they were cheap.
 - **Value-model slimming: OvmValue 32 -> 16 bytes — the P3 probe.** The
   roadmap prescribed removing the per-value header first as a cheap
   probe before NaN-boxing, and the probe paid: the ValueHeader (type
