@@ -1260,7 +1260,7 @@ impl BytecodeVm {
         func: &FunctionDecl,
         closure: std::sync::Arc<im::HashMap<String, Value>>,
     ) -> Result<(), BytecodeError> {
-        let start_time = std::time::Instant::now();
+        let start_time = crate::clock::Instant::now();
 
         // Set up registries so the compiler can validate callees
         self.compiler.function_registry = self.function_registry.clone();

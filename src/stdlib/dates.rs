@@ -1,7 +1,5 @@
 use crate::ast::Value;
-use chrono::{
-    DateTime, Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc, Weekday,
-};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 use std::collections::HashMap;
 
 /// Error types for date operations
@@ -226,7 +224,7 @@ fn dates_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("now expects 0 arguments, got {}", args.len()).into());
     }
 
-    let now = Local::now();
+    let now = crate::clock::local_now_fixed();
     Ok(Value::String(now.to_rfc3339().into()))
 }
 
@@ -237,7 +235,7 @@ fn dates_utc_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         return Err(format!("utc_now expects 0 arguments, got {}", args.len()).into());
     }
 
-    let now = Utc::now();
+    let now = crate::clock::utc_now();
     Ok(Value::String(now.to_rfc3339().into()))
 }
 
@@ -248,7 +246,7 @@ fn dates_today(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("today expects 0 arguments, got {}", args.len()).into());
     }
 
-    let today = Local::now().date_naive();
+    let today = crate::clock::local_now_fixed().date_naive();
     Ok(Value::String(today.to_string().into()))
 }
 

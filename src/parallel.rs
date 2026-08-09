@@ -16,7 +16,10 @@ impl Default for ParallelConfig {
     fn default() -> Self {
         Self {
             min_parallel_size: 1000,
+            #[cfg(feature = "native")]
             max_threads: num_cpus::get(),
+            #[cfg(not(feature = "native"))]
+            max_threads: 1,
             enabled: true,
         }
     }
@@ -37,14 +40,25 @@ pub fn set_config(config: ParallelConfig) {
 
 /// Check if a list should be processed in parallel
 pub fn should_parallelize(list_size: usize) -> bool {
-    let config = get_config();
-    config.enabled && list_size >= config.min_parallel_size
+    // Without the native feature (wasm playground) there is no thread pool:
+    // every "parallel" path degrades to its sequential twin.
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = list_size;
+        false
+    }
+    #[cfg(feature = "native")]
+    {
+        let config = get_config();
+        config.enabled && list_size >= config.min_parallel_size
+    }
 }
 
 /// Initialize the parallel processing system
 pub fn initialize_parallelization(
     threads: Option<usize>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(feature = "native")]
     if let Some(num_threads) = threads {
         rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
@@ -54,6 +68,8 @@ pub fn initialize_parallelization(
         config.max_threads = num_threads;
         set_config(config);
     }
+    #[cfg(not(feature = "native"))]
+    let _ = threads;
     Ok(())
 }
 

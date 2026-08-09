@@ -3,8 +3,9 @@
 
 use super::InterpreterError;
 use crate::ast::Value;
+use crate::clock::Instant;
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 /// Enhanced module cache entry with smart caching features
 #[derive(Debug, Clone)]
@@ -154,8 +155,13 @@ pub struct SmartCacheConfig {
 impl Default for SmartCacheConfig {
     fn default() -> Self {
         Self {
-            enable_persistent_cache: true,
+            // The playground has no disk: no persistent cache, and
+            // std::env::temp_dir() would panic there ("no filesystem").
+            enable_persistent_cache: cfg!(feature = "native"),
+            #[cfg(feature = "native")]
             cache_directory: std::env::temp_dir().join("olang_cache"),
+            #[cfg(not(feature = "native"))]
+            cache_directory: std::path::PathBuf::from("olang_cache"),
             max_cache_size_mb: 100,
             max_cache_entries: 1000,
             cache_cleanup_interval: Duration::from_secs(300), // 5 minutes

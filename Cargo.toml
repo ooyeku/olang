@@ -10,7 +10,27 @@ keywords = ["language", "repl", "interpreter", "functional"]
 categories = ["development-tools"]
 
 [workspace]
-members = [".", "otc"]
+members = [".", "otc", "playground"]
+
+[features]
+default = ["native"]
+# Everything that cannot exist in a browser: sockets, SQLite's C library,
+# terminals, mmap, process/host introspection, thread pools. The playground
+# (wasm32) build compiles with --no-default-features; gated code falls back
+# to a clear "unavailable in the playground" error.
+native = [
+    "dep:rusqlite",
+    "dep:rustyline",
+    "dep:reqwest",
+    "dep:tokio",
+    "dep:hyper",
+    "dep:memmap2",
+    "dep:hostname",
+    "dep:whoami",
+    "dep:dirs",
+    "dep:rayon",
+    "dep:num_cpus",
+]
 
 [dependencies]
 # Core parsing and AST
@@ -18,16 +38,15 @@ pest = "2.7"
 pest_derive = "2.7"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-bincode = "1.3"  # Binary serialization for smart caching
 csv = "1.3"
 regex = "1.10"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 toml = "0.8"
 semver = { version = "1.0", features = ["serde"] }
 base64 = "0.22"
-hostname = "0.4"
-whoami = "1.4"
-dirs = "5.0"
+hostname = { version = "0.4", optional = true }
+whoami = { version = "1.4", optional = true }
+dirs = { version = "5.0", optional = true }
 
 # Cryptographic libraries for stdlib
 sha2 = { version = "0.10", features = ["oid"] }
@@ -41,7 +60,7 @@ rsa = "0.9"
 argon2 = "0.5"
 
 # REPL and CLI
-rustyline = "13.0"
+rustyline = { version = "13.0", optional = true }
 clap = { version = "4.4", features = ["derive"] }
 colored = "2.0"  # Terminal colors for better display
 
@@ -51,14 +70,12 @@ thiserror = "1.0"
 miette = { version = "5.10", features = ["fancy"] }
 
 # High-performance filesystem libraries for stdlib
-memmap2 = "0.9"  # Memory-mapped file I/O for maximum speed
-walkdir = "2.4"  # Fast directory traversal
-glob = "0.3"     # Pattern matching for file paths
+memmap2 = { version = "0.9", optional = true }  # Memory-mapped file I/O for maximum speed
 
 # HTTP libraries for stdlib
-reqwest = { version = "0.11", features = ["blocking", "json"] }  # HTTP client
-tokio = { version = "1", features = ["full"] }  # Async runtime
-hyper = { version = "0.14", features = ["full"] }  # HTTP server
+reqwest = { version = "0.11", features = ["blocking", "json"], optional = true }  # HTTP client
+tokio = { version = "1", features = ["full"], optional = true }  # Async runtime
+hyper = { version = "0.14", features = ["full"], optional = true }  # HTTP server
 url = "2.5"  # URL parsing
 urlencoding = "2.1"  # URL encoding/decoding
 
@@ -67,43 +84,31 @@ rand = { version = "0.8", features = ["std_rng"] }  # Random number generation
 rand_distr = "0.4"  # Random distributions (normal, etc.)
 
 # Collections and data structures
-indexmap = "2.0"
-dashmap = "5.5"
 im = { version = "15.1", features = ["serde"] }  # Persistent/immutable collections for O(1) environment cloning
 
 # Parallelization
-rayon = "1.8"          # Data parallelism library
-once_cell = "1.19"     # Thread-safe lazy statics  
+rayon = { version = "1.8", optional = true }  # Data parallelism library
+once_cell = "1.19"     # Thread-safe lazy statics
 parking_lot = "0.12"   # High-performance synchronization primitives
-num_cpus = "1.16"      # CPU core detection
-
-# Future JIT support (commented out for now)
-# cranelift = "0.100"
-# cranelift-module = "0.100"
-# cranelift-simplejit = "0.100"
+num_cpus = { version = "1.16", optional = true }  # CPU core detection
 
 # Optional: For better debugging and development
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-chrono = "0.4.41"
-cranelift = "0.121.0"
+# default-features off: the default set includes "wasmbind" (a wasm-bindgen
+# shim for Utc::now on wasm), which would drag wasm-bindgen imports into the
+# playground artifact. Wall-clock "now" goes through src/clock.rs instead.
+chrono = { version = "0.4.41", default-features = false, features = ["clock", "std"] }
 
-# For async runtime and unique IDs
-# uuid = { version = "1.0", features = ["v4"] }
-
-# OVM (Olang Virtual Machine) dependencies
-crossbeam = "0.8"           # Lock-free data structures
-crossbeam-queue = "0.3"     # Lock-free queues for OVM
-atomic = "0.6"              # Additional atomic operations
-memoffset = "0.9"           # Memory offset calculations for GC
-cranelift-jit = "0.121.0"   # JIT compilation backend
-cranelift-module = "0.121.0" # Module system for Cranelift
-cranelift-codegen = "0.121.0" # Code generation
-target-lexicon = "0.12"     # Target platform detection
-
-# Phase 4 Sprint 2: SIMD and Vectorization dependencies
-wide = "0.7"                # Safe SIMD operations (stable and reliable)
-num-traits = "0.2"          # Numeric trait abstractions for vectorization
+# Playground (wasm) build: the same crate compiled to wasm32-unknown-unknown
+# with --no-default-features. The "native" feature carries every dependency
+# that cannot exist in a browser (sockets, SQLite's C library, terminals,
+# mmap, JIT). getrandom needs its "js" backend on wasm so `random` works.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# "custom" (not "js"): the js backend needs wasm-bindgen, which the manual
+# C-ABI boundary avoids. src/playground.rs registers a generator fed by the
+# host's crypto.getRandomValues through the host_random_bytes import.
+getrandom = { version = "0.2", features = ["custom"] }
 
 [dev-dependencies]
 criterion = "0.5"

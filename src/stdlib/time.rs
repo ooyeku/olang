@@ -6,9 +6,9 @@
 //! sleep.
 
 use crate::ast::Value;
+use crate::clock::Instant;
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use std::time::Instant;
 
 /// The monotonic clock's origin: the first time anything asked for it.
 static MONOTONIC_ORIGIN: OnceLock<Instant> = OnceLock::new();
@@ -54,11 +54,7 @@ fn time_now_ms(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
         return Err(format!("now_ms expects 0 arguments, got {}", args.len()).into());
     }
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    Ok(Value::Integer(ms))
+    Ok(Value::Integer(crate::clock::epoch_ms()))
 }
 
 /// Milliseconds on a monotonic clock (origin: first use in this process).
@@ -89,7 +85,7 @@ fn time_sleep(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .into())
         }
     };
-    std::thread::sleep(std::time::Duration::from_millis(ms));
+    crate::clock::sleep_ms(ms);
     Ok(Value::Unit)
 }
 

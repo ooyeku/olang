@@ -1,7 +1,7 @@
 use crate::ast::{PromiseState, Value};
+use crate::clock::Instant;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 /// Unique identifier for tasks
 pub type TaskId = u64;

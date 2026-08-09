@@ -8,6 +8,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **The playground: olang in the browser.** The whole language —
+  interpreter, bytecode tier, and the pure stdlib — now compiles to
+  `wasm32-unknown-unknown` and powers a `/playground` page on the
+  website: editor, curated examples, output pane, and a 5-second
+  kill-switch. Safety comes from the platform, not trust: the wasm
+  instance imports exactly three host functions (two clocks and an
+  entropy source) and touches nothing but its own linear memory — no
+  filesystem, network, process, or DOM — and it runs inside a Web
+  Worker the page terminates on timeout. The boundary is a hand-rolled
+  C ABI (`olang_alloc`/`olang_run`/`olang_result_free` returning
+  length-prefixed JSON), so no wasm-bindgen toolchain is involved;
+  `bun run build` in website/ builds and stages the artifact
+  (`playground/` cdylib crate → `static/playground/olang.wasm`).
+- **A "native" cargo feature** (default-on) now carries everything a
+  browser can't have: rusqlite, rustyline, reqwest/tokio/hyper, memmap2,
+  hostname/whoami/dirs, rayon/num_cpus. Without it, `db`/`fs`/`http`/`os`
+  aren't registered and their builtin bridges answer with a plain
+  "not available in the playground" error; `should_parallelize` is
+  always false and every parallel path degrades to its sequential twin.
+  `src/clock.rs` is the one clock for both worlds — native re-exports
+  `std::time`, the playground rebuilds `Instant`/wall-clock/sleep on the
+  host imports (std's own clocks panic on wasm, as does
+  `env::current_dir`, now wrapped). `print`/`println` route through
+  `src/output.rs`: stdout natively, a drained capture buffer in the
+  playground.
+
+### Changed
+
+- **Dependency prune.** Sixteen unused dependencies removed — all four
+  cranelift crates, crossbeam ×2, atomic, memoffset, target-lexicon,
+  wide, num-traits, dashmap, indexmap, bincode, glob, walkdir — none
+  referenced by any source file. chrono drops its default `wasmbind`
+  feature (wall-clock "now" goes through `src/clock.rs`).
+- **Docs audit against 0.38.** The book and README now state the tier's
+  real coverage (158/164 corpus functions promote; refusal lists match
+  the compiler's actual `CompilationFailed` sites), the current
+  benchmark standings, and the new examples (minilisp, app). New
+  doc-tested example blocks: traits in the tour, tuple destructuring and
+  nested functions in the language reference, `col` quantifiers/`_by`
+  family and `random` sampling in the stdlib reference. Stale claims
+  fixed in internals.md (file map, refusal examples), ovm.md
+  (self-contradictory refusal list, retired map-builtin limitation),
+  roadmap item 13 (closed into the performance campaign), stability.md
+  (`time` was stable-but-unlisted).
+
 ## [0.38.0] - 2026-08-09
 
 ### Added

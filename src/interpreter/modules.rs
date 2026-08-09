@@ -8,10 +8,11 @@ use super::{
 };
 use crate::analyze::AnalysisReport;
 use crate::ast::{Pattern, Program, ShareDecl, UseDecl, Value};
+use crate::clock::{system_now, Instant};
 use sha2::Digest;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 impl Interpreter {
     /// Feature 8: Enhanced cached module retrieval with smart validation
@@ -47,7 +48,7 @@ impl Interpreter {
         if let Some(entry) = self.module_cache.get_mut(module_path) {
             // Update access statistics
             entry.access_count += 1;
-            entry.last_accessed = SystemTime::now();
+            entry.last_accessed = system_now();
             self.cache_statistics.cache_hits += 1;
 
             // Validate if needed
@@ -79,7 +80,7 @@ impl Interpreter {
                 if self.is_persistent_cache_valid(&entry, module_path)? {
                     // Update access statistics
                     entry.access_count += 1;
-                    entry.last_accessed = SystemTime::now();
+                    entry.last_accessed = system_now();
                     self.cache_statistics.persistent_loads += 1;
 
                     // Store in memory cache for faster access
@@ -188,7 +189,7 @@ impl Interpreter {
             content_hash,
             compilation_time,
             access_count: 1,
-            last_accessed: SystemTime::now(),
+            last_accessed: system_now(),
             cache_generation: 1,
             memory_size,
         };
@@ -491,7 +492,7 @@ impl Interpreter {
 
     /// Feature 8: Calculate priority score for cache entry (higher = keep longer)
     fn calculate_cache_priority_score(&self, entry: &ModuleCacheEntry) -> f64 {
-        let _now = SystemTime::now();
+        let _now = system_now();
         let hours_since_access = entry
             .last_accessed
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -753,7 +754,7 @@ impl Interpreter {
             content_hash,
             compilation_time: std::time::Duration::default(),
             access_count: 0,
-            last_accessed: SystemTime::now(),
+            last_accessed: system_now(),
             cache_generation: 0,
             memory_size: 0,
         };
@@ -1056,23 +1057,23 @@ impl Interpreter {
                             .unwrap_or_else(|| std::path::Path::new("."))
                             .to_path_buf()
                     } else {
-                        std::env::current_dir().map_err(|e| InterpreterError::RuntimeError {
+                        crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
                             message: format!("Failed to get current directory: {}", e),
                         })?
                     }
                 } else {
-                    std::env::current_dir().map_err(|e| InterpreterError::RuntimeError {
+                    crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
                         message: format!("Failed to get current directory: {}", e),
                     })?
                 }
             } else {
-                std::env::current_dir().map_err(|e| InterpreterError::RuntimeError {
+                crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
                     message: format!("Failed to get current directory: {}", e),
                 })?
             }
         } else {
             // No current module context, use current working directory
-            std::env::current_dir().map_err(|e| InterpreterError::RuntimeError {
+            crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
                 message: format!("Failed to get current directory: {}", e),
             })?
         };
@@ -1123,9 +1124,10 @@ impl Interpreter {
 
     /// Detect project root by looking for common project indicators
     fn detect_project_root(&self) -> Result<std::path::PathBuf, InterpreterError> {
-        let current_dir = std::env::current_dir().map_err(|e| InterpreterError::RuntimeError {
-            message: format!("Failed to get current directory: {}", e),
-        })?;
+        let current_dir =
+            crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
+                message: format!("Failed to get current directory: {}", e),
+            })?;
 
         // Look for project indicators in current and parent directories
         let mut dir = current_dir;
@@ -1152,7 +1154,7 @@ impl Interpreter {
                 dir = parent.to_path_buf();
             } else {
                 // Reached filesystem root, use original current directory
-                return std::env::current_dir().map_err(|e| InterpreterError::RuntimeError {
+                return crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
                     message: format!("Failed to get current directory: {}", e),
                 });
             }
@@ -1234,7 +1236,7 @@ impl Interpreter {
         let mut available_modules = Vec::new();
 
         // Collect search paths
-        if let Ok(current_dir) = std::env::current_dir() {
+        if let Ok(current_dir) = crate::clock::current_dir() {
             searched_paths.push(format!("Same directory: {}", current_dir.display()));
         }
 
@@ -1249,7 +1251,7 @@ impl Interpreter {
         available_modules.extend(stdlib.keys().map(|s| s.to_string()));
 
         // Get available modules from current directory (if any .ol files exist)
-        if let Ok(current_dir) = std::env::current_dir() {
+        if let Ok(current_dir) = crate::clock::current_dir() {
             if let Ok(entries) = std::fs::read_dir(&current_dir) {
                 for entry in entries.flatten() {
                     if let Some(name) = entry.file_name().to_str() {

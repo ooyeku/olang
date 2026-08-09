@@ -13,13 +13,18 @@ pub mod analyze;
 pub mod ast;
 pub mod async_runtime;
 pub mod builtin;
+pub mod clock;
 pub mod help;
 pub mod interpreter;
 pub mod log;
+pub mod output;
 pub mod ovm; // Bytecode execution tier
 pub mod parallel;
 pub mod parser;
 pub mod pkg;
+#[cfg(not(feature = "native"))]
+pub mod playground;
+#[cfg(feature = "native")]
 pub mod repl;
 pub mod resolve;
 pub mod stdlib;
@@ -33,6 +38,7 @@ pub use ast::{Expr, Program, Value};
 pub use interpreter::Interpreter;
 pub use ovm::OvmValue;
 pub use parser::Parser;
+#[cfg(feature = "native")]
 pub use repl::Repl;
 pub use type_checker::{TypeChecker, TypeClass};
 

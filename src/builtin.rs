@@ -1,7 +1,24 @@
 use crate::ast::{BuiltinFunction, Value};
 use crate::interpreter::InterpreterError;
 use crate::parallel::should_parallelize;
+#[cfg(feature = "native")]
 use rayon::prelude::*;
+
+// Sequential stand-ins for rayon's API on the wasm (playground) build, so
+// the `should_parallelize(..)` call sites compile unchanged. They are never
+// hot: should_parallelize is always false without the native feature.
+#[cfg(not(feature = "native"))]
+trait SeqParIter {
+    type Item;
+    fn par_iter(&self) -> std::slice::Iter<'_, Self::Item>;
+}
+#[cfg(not(feature = "native"))]
+impl<T> SeqParIter for [T] {
+    type Item = T;
+    fn par_iter(&self) -> std::slice::Iter<'_, T> {
+        self.iter()
+    }
+}
 use std::collections::HashMap;
 
 pub struct BuiltinFunctions {
@@ -519,6 +536,7 @@ impl BuiltinFunctions {
         interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
         // Handle filesystem functions
+        #[cfg(feature = "native")]
         if let Some(fs_function) = name.strip_prefix("fs.") {
             // Remove "fs." prefix
             return crate::stdlib::fs::call_fs_function(fs_function, arguments).map_err(|e| {
@@ -529,6 +547,7 @@ impl BuiltinFunctions {
         }
 
         // Handle HTTP functions
+        #[cfg(feature = "native")]
         if let Some(http_function) = name.strip_prefix("http.") {
             // `serve` runs a blocking server that calls back into an olang
             // handler on every request, so it needs the interpreter — it
@@ -541,6 +560,21 @@ impl BuiltinFunctions {
                     message: e.to_string(),
                 },
             );
+        }
+
+        // Without the native feature (the browser playground), whole module
+        // families don't exist: say so plainly instead of "unknown function".
+        #[cfg(not(feature = "native"))]
+        for gated in ["fs.", "http.", "os.", "db."] {
+            if name.starts_with(gated) {
+                return Err(InterpreterError::RuntimeError {
+                    message: format!(
+                        "{} is not available in the playground (no filesystem, network, \
+                         processes, or database in the browser sandbox)",
+                        name
+                    ),
+                });
+            }
         }
 
         // Handle math functions
@@ -611,6 +645,7 @@ impl BuiltinFunctions {
         }
 
         // Handle os functions
+        #[cfg(feature = "native")]
         if let Some(os_function) = name.strip_prefix("os.") {
             // Remove "os." prefix
             return crate::stdlib::os::call_os_function(os_function, arguments).map_err(|e| {
@@ -630,6 +665,7 @@ impl BuiltinFunctions {
         }
 
         // Handle db (SQLite) functions
+        #[cfg(feature = "native")]
         if let Some(db_function) = name.strip_prefix("db.") {
             return crate::stdlib::db::call_db_function(db_function, arguments).map_err(|e| {
                 InterpreterError::RuntimeError {
@@ -764,7 +800,7 @@ impl BuiltinFunctions {
 
     fn println(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
         if args.is_empty() {
-            println!();
+            crate::output::emit_line("");
         } else {
             // Force evaluation of any lazy values before printing
             let output = args
@@ -776,7 +812,7 @@ impl BuiltinFunctions {
                 })
                 .collect::<Vec<String>>()
                 .join(" ");
-            println!("{}", output);
+            crate::output::emit_line(&output);
         }
         Ok(Value::Unit)
     }
@@ -790,8 +826,8 @@ impl BuiltinFunctions {
         }
 
         match &args[0] {
-            Value::String(s) => print!("{}", s.as_str()),
-            other => print!("{}", other),
+            Value::String(s) => crate::output::emit(s.as_str()),
+            other => crate::output::emit(&format!("{}", other)),
         }
         Ok(Value::Unit)
     }
@@ -1370,10 +1406,8 @@ impl BuiltinFunctions {
 
         let mut result: Vec<Value> = list.to_vec();
 
-        // Use parallel sorting for larger lists
-        if should_parallelize(result.len()) {
-            // PARALLEL VERSION - use rayon's parallel sort
-            result.par_sort_by(|a, b| match (a, b) {
+        fn sort_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
+            match (a, b) {
                 (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
                 (Value::Float(x), Value::Float(y)) => {
                     x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
@@ -1386,24 +1420,18 @@ impl BuiltinFunctions {
                     .partial_cmp(&(*y as f64))
                     .unwrap_or(std::cmp::Ordering::Equal),
                 _ => std::cmp::Ordering::Equal,
-            });
-        } else {
-            // SEQUENTIAL VERSION for small lists
-            result.sort_by(|a, b| match (a, b) {
-                (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
-                (Value::Float(x), Value::Float(y)) => {
-                    x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
-                }
-                (Value::String(x), Value::String(y)) => x.cmp(y),
-                (Value::Integer(x), Value::Float(y)) => (*x as f64)
-                    .partial_cmp(y)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-                (Value::Float(x), Value::Integer(y)) => x
-                    .partial_cmp(&(*y as f64))
-                    .unwrap_or(std::cmp::Ordering::Equal),
-                _ => std::cmp::Ordering::Equal,
-            });
+            }
         }
+
+        // Parallel sort for larger lists; always sequential without rayon.
+        #[cfg(feature = "native")]
+        if should_parallelize(result.len()) {
+            result.par_sort_by(sort_cmp);
+        } else {
+            result.sort_by(sort_cmp);
+        }
+        #[cfg(not(feature = "native"))]
+        result.sort_by(sort_cmp);
 
         Ok(Value::List(result.into()))
     }
@@ -1551,62 +1579,70 @@ impl BuiltinFunctions {
         let should_use_parallel = crate::parallel::should_parallelize(list_values.len());
 
         if should_use_parallel {
-            // PARALLEL VERSION - parallel sum with fold and reduce
-            let result = list_values
-                .par_iter()
-                .try_fold(
-                    || (0i64, 0.0f64, false), // (int_acc, float_acc, is_float)
-                    |mut acc, item| match item {
-                        Value::Integer(n) => {
-                            if acc.2 {
-                                acc.1 += *n as f64;
+            // PARALLEL VERSION - parallel sum with fold and reduce.
+            // (rayon's try_fold/try_reduce have no sequential lookalike, so
+            // this arm is compiled out on the wasm build, where
+            // should_parallelize is always false.)
+            #[cfg(not(feature = "native"))]
+            unreachable!("should_parallelize is false without the native feature");
+            #[cfg(feature = "native")]
+            {
+                let result = list_values
+                    .par_iter()
+                    .try_fold(
+                        || (0i64, 0.0f64, false), // (int_acc, float_acc, is_float)
+                        |mut acc, item| match item {
+                            Value::Integer(n) => {
+                                if acc.2 {
+                                    acc.1 += *n as f64;
+                                } else {
+                                    acc.0 = acc.0.checked_add(*n).ok_or_else(|| {
+                                        InterpreterError::RuntimeError {
+                                            message: "sum: integer overflow".to_string(),
+                                        }
+                                    })?;
+                                }
+                                Ok(acc)
+                            }
+                            Value::Float(f) => {
+                                if !acc.2 {
+                                    // Zero the int accumulator when promoting so the
+                                    // reduce step doesn't add it a second time
+                                    acc.1 = acc.0 as f64;
+                                    acc.0 = 0;
+                                    acc.2 = true;
+                                }
+                                acc.1 += f;
+                                Ok(acc)
+                            }
+                            _ => Err(InterpreterError::TypeError {
+                                message: "sum: list must contain only numbers".to_string(),
+                            }),
+                        },
+                    )
+                    .try_reduce(
+                        || (0i64, 0.0f64, false),
+                        |mut acc1, acc2| {
+                            if acc1.2 || acc2.2 {
+                                acc1.1 += acc1.0 as f64 + acc2.1 + acc2.0 as f64;
+                                acc1.0 = 0;
+                                acc1.2 = true;
                             } else {
-                                acc.0 = acc.0.checked_add(*n).ok_or_else(|| {
+                                acc1.0 = acc1.0.checked_add(acc2.0).ok_or_else(|| {
                                     InterpreterError::RuntimeError {
                                         message: "sum: integer overflow".to_string(),
                                     }
                                 })?;
                             }
-                            Ok(acc)
-                        }
-                        Value::Float(f) => {
-                            if !acc.2 {
-                                // Zero the int accumulator when promoting so the
-                                // reduce step doesn't add it a second time
-                                acc.1 = acc.0 as f64;
-                                acc.0 = 0;
-                                acc.2 = true;
-                            }
-                            acc.1 += f;
-                            Ok(acc)
-                        }
-                        _ => Err(InterpreterError::TypeError {
-                            message: "sum: list must contain only numbers".to_string(),
-                        }),
-                    },
-                )
-                .try_reduce(
-                    || (0i64, 0.0f64, false),
-                    |mut acc1, acc2| {
-                        if acc1.2 || acc2.2 {
-                            acc1.1 += acc1.0 as f64 + acc2.1 + acc2.0 as f64;
-                            acc1.0 = 0;
-                            acc1.2 = true;
-                        } else {
-                            acc1.0 = acc1.0.checked_add(acc2.0).ok_or_else(|| {
-                                InterpreterError::RuntimeError {
-                                    message: "sum: integer overflow".to_string(),
-                                }
-                            })?;
-                        }
-                        Ok(acc1)
-                    },
-                )?;
+                            Ok(acc1)
+                        },
+                    )?;
 
-            if result.2 {
-                Ok(Value::Float(result.1))
-            } else {
-                Ok(Value::Integer(result.0))
+                if result.2 {
+                    Ok(Value::Float(result.1))
+                } else {
+                    Ok(Value::Integer(result.0))
+                }
             }
         } else {
             // SEQUENTIAL VERSION (for small lists)

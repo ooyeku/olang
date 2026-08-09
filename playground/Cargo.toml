@@ -1,0 +1,15 @@
+# The wasm playground artifact: olang without its native feature, packaged
+# as a cdylib so `cargo build -p olang-playground --target
+# wasm32-unknown-unknown --release` emits the .wasm the website loads.
+# Kept as its own crate so native builds of olang never pay for a cdylib.
+[package]
+name = "olang-playground"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+olang = { path = "..", default-features = false }

@@ -231,12 +231,12 @@ impl Interpreter {
             let cache_entry = ModuleCacheEntry {
                 module: Value::Unit,
                 file_path: Some(file_path.to_path_buf()),
-                last_modified: Some(std::time::SystemTime::now()),
+                last_modified: Some(crate::clock::system_now()),
                 dependencies: vec![],
                 content_hash,
                 compilation_time: std::time::Duration::default(),
                 access_count: 0,
-                last_accessed: std::time::SystemTime::now(),
+                last_accessed: crate::clock::system_now(),
                 cache_generation: 0,
                 memory_size: 0,
             };
@@ -1087,7 +1087,7 @@ impl Interpreter {
                                     // registered with a runtime nothing drains,
                                     // leaking an entry per delay and making
                                     // every await of it error.
-                                    let deadline = std::time::SystemTime::now()
+                                    let deadline = crate::clock::system_now()
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .map(|d| d.as_millis() as u64)
                                         .unwrap_or(0)
@@ -2415,12 +2415,12 @@ impl Interpreter {
         if deadline == 0 {
             return;
         }
-        let now = std::time::SystemTime::now()
+        let now = crate::clock::system_now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(u64::MAX);
         if deadline > now {
-            std::thread::sleep(std::time::Duration::from_millis(deadline - now));
+            crate::clock::sleep_ms(deadline - now);
         }
     }
 

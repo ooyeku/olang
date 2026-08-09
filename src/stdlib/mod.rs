@@ -7,12 +7,16 @@ pub mod collections;
 pub mod crypto;
 pub mod csv;
 pub mod dates;
+#[cfg(feature = "native")]
 pub mod db;
 pub mod embedded;
+#[cfg(feature = "native")]
 pub mod fs;
+#[cfg(feature = "native")]
 pub mod http;
 pub mod json;
 pub mod math;
+#[cfg(feature = "native")]
 pub mod os;
 pub mod random;
 pub mod regex_mod;
@@ -25,13 +29,17 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("base64".to_string(), base64::create_base64_module());
     stdlib.insert("col".to_string(), collections::create_collections_module());
     stdlib.insert("crypto".to_string(), crypto::create_crypto_module());
+    #[cfg(feature = "native")]
     stdlib.insert("db".to_string(), db::create_db_module());
     stdlib.insert("csv".to_string(), csv::create_csv_module());
     stdlib.insert("dates".to_string(), dates::create_dates_module());
+    #[cfg(feature = "native")]
     stdlib.insert("fs".to_string(), fs::create_fs_module());
+    #[cfg(feature = "native")]
     stdlib.insert("http".to_string(), http::create_http_module());
     stdlib.insert("json".to_string(), json::create_json_module());
     stdlib.insert("math".to_string(), math::create_math_module());
+    #[cfg(feature = "native")]
     stdlib.insert("os".to_string(), os::create_os_module());
     stdlib.insert("random".to_string(), random::create_random_module());
     stdlib.insert("testing".to_string(), testing::create_testing_module());
