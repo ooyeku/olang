@@ -110,7 +110,8 @@ A function is eligible when its body uses only the subset the VM implements:
 - calls to the pure `str` module functions (`str.length`, `str.char_at`,
   `str.split`, ...) and `show`, over the same bridge as `to_string`
 - calls to itself (recursion), to other user functions (compiled on demand,
-  including mutual recursion), and to 43 builtins (see [Builtins](#builtins))
+  including mutual recursion), and to a broad builtin set — the core
+  builtins plus the pure `math` and `str` modules (see [Builtins](#builtins))
 
 Anything else causes the function to stay interpreted:
 
@@ -146,13 +147,13 @@ the interpreter, which is why enabling the tier can never break a program.
 handle is rejected at compile time rather than approximated at runtime. This
 rule is enforced by two test suites:
 
-- `tests/bytecode_differential_test.rs` (30 groups) runs programs through
+- `tests/bytecode_differential_test.rs` (32 groups) runs programs through
   *both* the interpreter and the VM and asserts identical results —
   arithmetic and overflow errors, float semantics, comparisons, branches,
   recursion, loops, strings, lists, ranges, arity errors, and a set of
   aliasing cases specific to the register-window design. It also asserts the
   inverse: unsupported features must be *rejected*, never miscompiled.
-- `tests/bytecode_tier_test.rs` (100+ tests) runs whole programs with and
+- `tests/bytecode_tier_test.rs` (130+ tests) runs whole programs with and
   without the tier enabled and asserts the observable results match,
   including mixed programs where some functions are promoted and others are
   not, transitive and mutual recursion, and function redefinition.
@@ -191,8 +192,23 @@ A register machine. Key design points:
 - **Two-pass label resolution.** Jumps are emitted against label ids, then a
   resolution pass patches every target to an instruction offset before
   execution. A jump to an unplaced label is a compilation error.
-- **Per-call frames.** Each call gets its own register file, saved and
-  restored around nested execution, so recursion works.
+- **One register slab, frame windows.** All live frames share one
+  contiguous register array: a call bumps a window past the caller's and a
+  return restores two integers, so calling costs no allocation, no frame
+  swap, and no per-call vector bookkeeping (the Lua register-stack
+  design). Arguments copy straight from the caller's window into the
+  callee's. Bounds checks are against the window, so a compiler bug can
+  never read another frame's registers.
+- **Interned struct shapes with inline caches.** A struct is an interned
+  shape (one per type + field set, with a stable id) plus a values vector
+  in shape order. Every field-access site carries a one-entry inline
+  cache packing (shape id → field index) into a single atomic word: a
+  repeat read of the same shape is an integer compare and an array index,
+  no hashing. Misses take a cold outlined path that refills the cache.
+- **Immediate operands.** A binary operation with a numeric literal
+  operand (`x + 1`, `n < 2`) carries the literal in the instruction —
+  no constant load, no constant register — through the same fast path
+  and fallback as the register form, so error behavior is identical.
 - **Native operand dispatch.** Arithmetic and comparisons match on the value
   representation directly; there is no conversion to and from the AST value
   type inside the loop.
@@ -219,12 +235,16 @@ A register machine. Key design points:
   type error. Falling past every arm emits `MatchFail`, the interpreter's
   pattern-match failure.
 
-There are currently **no optimization passes**. The previous pipeline (dead
-code elimination, register renaming, peephole rewrites, control-flow
-optimization) was removed because each was incorrect: DCE deleted live control
-flow and stores, register renaming rewrote only three opcodes, and the
-control-flow pass treated label ids as addresses. Passes may return
-individually, each validated against the differential suite.
+Optimizations land as compile-time instruction *selection* (immediate
+operands, resolved call targets, interned shapes), not as passes over
+emitted bytecode. The previous pass pipeline (dead code elimination,
+register renaming, peephole rewrites) was removed because each was
+incorrect. One measured negative result is on record: fusing
+compare+branch pairs retired 3.5% of executed instructions and ran 3–4%
+*slower* — growing the instruction set perturbs the dispatch loop's code
+layout more than the saved dispatches earn back — so instruction-count
+reduction is not pursued for its own sake (see the changelog for the
+details).
 
 ## Builtins
 
@@ -233,11 +253,12 @@ implementations through `BuiltinFunctions::call`. Reimplementation would be a
 second source of truth that could drift from the semantics the differential
 tests hold the VM to; delegating makes them identical by construction.
 
-43 builtins are enabled:
+The enabled set spans the core builtins below plus the pure `math`
+module (30 functions), the pure `str` module (30 functions), and `show`:
 
 | Group | Builtins |
 |---|---|
-| Conversion | `to_string`, `to_int`, `to_float`, `typeof`, `len` |
+| Conversion | `to_string`, `show`, `to_int`, `to_float`, `typeof`, `len` |
 | List access | `head`, `tail`, `cons`, `concat`, `reverse`, `sort`, `take`, `skip`, `flatten`, `zip`, `enumerate`, `chunk`, `range` |
 | Aggregation | `sum`, `min`, `max`, `average`, `contains` |
 | Higher-order | `map`, `filter`, `reduce`, `fold`, `find`, `map_filtered`, `result_map`, `result_map_err`, `unwrap_or_else` |
@@ -274,38 +295,38 @@ the user's definition in compiled code too.
 
 ## Performance
 
-Measured on an Apple Silicon laptop, release build. Reproduce with
-`cargo run --release --example tier_compare` and the workloads described in
-the benchmark suite.
+Measured on an Apple Silicon laptop, release build, as of 0.36. All
+workloads are algorithm-identical across languages and checksum-verified
+(the N-body sample position matches across every implementation to the
+last digit). Since the tier is on by default, the olang numbers are what
+a plain `olang program.ol` gets — no flags.
 
-The 0.23 cycle changed the performance story twice. First the bytecode tier
-delivered 26–120× over the interpreter on call-heavy code. Then a rewrite of
-the interpreter's call path — swapping environments instead of overlaying and
-restoring every closure entry on each call, adopting closures as persistent
-maps in O(1), and keeping call-frame bindings in a probed vector — made the
-*interpreter* 50–90× faster on those same workloads, collapsing the tier's
-relative advantage:
+Three representative workloads against the field:
 
-| Workload | Interpreter | Bytecode tier | Tier speedup |
-|---|---|---|---|
-| `fib(27)` (recursive calls) | 0.27 s | 0.18 s | ~1.5× |
-| 100k-iteration `while` loop | 26.6 ms | 3.5 ms | ~7.5× |
-| 1M-iteration `Result` construct + match loop | 1.32 s | 1.11 s | ~1.2× |
-| 2000 × 500-element `map`/`filter`/`fold` pipeline | 1.25 s | 1.01 s | ~1.2× |
+| Workload | Rust | Node | Bun | CPython | Ruby | **olang** | olang `--no-ovm` |
+|---|---|---|---|---|---|---|---|
+| N-body (120 bodies × 150 steps) | 2.8 ms | 6 ms | 8 ms | 416 ms | 468 ms | **415 ms** | 23.6 s |
+| fib(30) (2.7M recursive calls) | 1.3 ms | 4 ms | 5 ms | 46 ms | 44 ms | **89 ms** | 1.1 s |
+| `map(λ) \|> sum` pipeline, 1M elements | ~0 ms | 9 ms | 4 ms | 31 ms | 21 ms | **26 ms** | 370 ms |
 
-(For scale: before the call-path rewrite the interpreter took 23.6 s, 64 s,
-and 93 s on the first, third, and fourth rows.)
+The shape of the result: on struct-and-float workloads olang runs ahead
+of Ruby and even with CPython; on idiomatic pipelines it is ahead of
+CPython; on raw call overhead (fib) it is within 2× of both, the
+remaining gap being dispatch cost that only threaded dispatch or a JIT
+would close. The compiled-language tier (Rust, the JavaScript JITs)
+remains 30–150× away — that is the JIT-vs-bytecode-VM gap, and olang
+does not currently ship a JIT.
 
-The honest summary: the tier's headline numbers were largely measuring
-interpreter overhead that is now gone. Loop-heavy code still benefits
-meaningfully (~7.5×) because the VM avoids per-iteration AST dispatch;
-call-heavy code benefits modestly. Per-call interpreter cost is now ~0.65 µs
-(down from ~33 µs).
+Against its own interpreter, the tier is worth 12× (fib) to 57×
+(N-body): the whole N-body simulation — construction, stepping,
+capturing lambdas, struct building, field access, `math.sqrt` — runs as
+6 promoted functions, 0 rejected, with 7 tier crossings and 127M
+bytecode instructions for the run.
 
-Since the tier is on by default, these are the numbers a plain `olang
-program.ol` gets — no flags. `otc ovm --compare <file>` runs a program both
-ways, verifies the results agree, and reports the timings and promotion
-statistics.
+`--ovm-stats` prints promotions, rejections, tier crossings, and
+instructions retired; `--verbose` names each promoted or refused
+function with the reason. `otc ovm --compare <file>` runs a program both
+ways, verifies the results agree, and reports timings.
 
 `cargo bench` measures the interpreter itself (`benches/interpreter_bench.rs`,
 ten representative programs). Use it when changing the evaluator; use
@@ -315,20 +336,18 @@ ten representative programs). Use it when changing the evaluator; use
 
 These are real gaps, not oversights:
 
-1. **Lambdas capturing enclosing runtime state fall back.** A lambda
-   referencing an enclosing function's parameter or local — `(x) => x * k`
-   where `k` is a parameter — keeps its enclosing function interpreted.
-   Lifting this needs per-call closure construction at runtime. Struct and
-   enum patterns are also uncompiled.
-2. **Map-returning builtins are unavailable** (see [Builtins](#builtins)).
-   A function calling one stays interpreted, and so does every function that
-   calls it.
-3. **Builtin calls cost a value round trip.** Delegation converts arguments
-   and results between the OVM and AST value models, so a function dominated
-   by builtin work sees a much smaller speedup than one dominated by
-   arithmetic and control flow. Delegated lambdas also execute their bodies
-   in the interpreter — the VM accelerates the code *around* a pipeline, not
-   inside its lambdas.
+1. **Method calls stay interpreted.** `value.m(..)` dispatches on the
+   value's runtime type through trait impls, which a compile-time field
+   read cannot replicate; a function containing one is refused whole.
+2. **Map literals, template strings, and nested `fn` declarations are
+   uncompiled**, as is *assigning* to a global (reads bake as snapshot
+   constants). Map-returning builtins (`map_set`, `group_by`, ...) remain
+   excluded because a `Map` does not survive the round trip back to an
+   AST value.
+3. **Bridged builtin calls cost a value round trip.** Builtins outside
+   the native set convert arguments and results between the OVM and AST
+   value models per call. The native `map`/`filter`/`sum` loops avoid
+   this entirely; `reduce`, `fold`, and friends still bridge.
 
 ## Not implemented
 

@@ -72,7 +72,12 @@ against their native twins. Reference: [docs/stdlib.md](docs/stdlib.md).
 A tree-walking interpreter is the semantic authority. Hot functions are
 promoted to a register bytecode tier (the OVM) — and anything the OVM
 cannot compile *identically* is refused and stays interpreted. Falling
-back is always correct; diverging is never acceptable. Details:
+back is always correct; diverging is never acceptable. The tier covers
+the language people actually write — pipelines, capturing lambdas,
+structs, enums, globals, higher-order functions — and on
+checksum-verified benchmarks olang runs ahead of Ruby and even with
+CPython on struct-and-float workloads, and ahead of CPython on idiomatic
+`map`/`sum` pipelines. Details and measured tables:
 [docs/internals.md](docs/internals.md), [docs/ovm.md](docs/ovm.md).
 
 ## Examples
@@ -85,7 +90,7 @@ by the self-hosted harness (`olang run_all.ol`) and in CI.
 ## Maturity
 
 olang is a young language with an unusual amount of testing discipline
-(45 test binaries; doc examples, tier agreement, and differential stdlib
+(850+ tests across 42 binaries; doc examples, tier agreement, and differential stdlib
 tests in CI). It is well suited to scripts, teaching, and
 experimentation; treat long-running services and dependency-heavy
 projects as adventurous. The honest, current capability statement always
