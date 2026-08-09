@@ -83,6 +83,20 @@ documented.
   property tests against naive references plus 12 tier-transparency
   integration tests (tests/ods_series_test.rs).
 
+- **JIT struct field access — the redirected P3 effort, on the safe
+  Arc model.** Struct arguments pass into native code as *borrowed*
+  pointers (JIT calls are synchronous; the caller's slot outlives the
+  call — no refcount is ever touched), specialized per interned shape
+  with field indices resolved at compile time. Every read goes through
+  one guarded host helper that deopts on any surprise (same-shape
+  instances may carry different field kinds in a dynamic language), so
+  no layout assumption and no unsafe discipline leaks into the VM.
+  Shape specs are only gathered when specializing; Ready calls extract
+  a pointer and a shape id, nothing more. **A struct-field kernel:
+  143ms -> 18ms (8x)**; N-body 350 -> 322ms (its inner kernel awaits
+  math.sqrt in the whitelist). Four new parity tests: field kernels,
+  mixed Int/Float/Bool fields, same-shape/different-kind deopt, and
+  structs through native call chains.
 - **P3 verdict: full NaN-boxing deferred, on the probe's own evidence.**
   The probe existed to price the rewrite, and it did: halving value
   size moved the most value-bound workload 13%, so halving again

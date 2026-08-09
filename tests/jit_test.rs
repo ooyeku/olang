@@ -465,3 +465,57 @@ show(red(30)) + " " + show(green(31)) + " " + show(blue(32))
 "#,
     );
 }
+
+// ── struct field access ────────────────────────────────────────────────
+
+#[test]
+fn struct_field_kernels_agree() {
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+fn dist2(a, b) = {
+    let dx = b.x - a.x
+    let dy = b.y - a.y
+    dx * dx + dy * dy
+}
+show(dist2(P { x: 1.0, y: 2.0 }, P { x: 4.0, y: 6.0 }))
+"#,
+    );
+}
+
+#[test]
+fn mixed_field_kinds_and_int_fields_agree() {
+    assert_jit_transparent(
+        r#"
+type Row = struct { id: Int, w: Float, live: Bool }
+fn score(r) = if r.live => r.w * 2.0 + to_float(r.id) else => 0.0
+show(score(Row { id: 7, w: 1.5, live: true })) + " " + show(score(Row { id: 1, w: 9.0, live: false }))
+"#,
+    );
+}
+
+#[test]
+fn same_shape_different_field_kind_deopts_and_agrees() {
+    // Specialized on a float x; the later int-x instance must deopt at
+    // the guarded read and agree exactly.
+    assert_jit_transparent(
+        r#"
+type Box = struct { v: Float }
+fn get(b) = b.v
+show(get(Box { v: 2.5 }) + get(Box { v: 1.5 }))
+"#,
+    );
+}
+
+#[test]
+fn structs_passed_through_call_chains_agree() {
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+fn dx(a, b) = b.x - a.x
+fn dy(a, b) = b.y - a.y
+fn taxi(a, b) = dx(a, b) + dy(a, b)
+show(taxi(P { x: 1.0, y: 1.0 }, P { x: 4.0, y: 9.0 }))
+"#,
+    );
+}

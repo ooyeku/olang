@@ -67,6 +67,33 @@ type NativeEntry = unsafe extern "C" fn(*const i64, i64, *mut i64) -> i64;
 /// call graph.
 pub type BytecodeLookup<'a> = dyn Fn(FunctionId) -> Option<Arc<CompiledBytecode>> + 'a;
 
+/// A struct shape observed at the entry: the interned shape plus the
+/// field kinds of the argument instance the specialization keys on.
+/// Per-read helper guards keep same-shape/different-kind instances safe.
+pub struct ShapeSpec {
+    pub shape: Arc<crate::ovm::value::StructShape>,
+    pub field_kinds: Vec<Kind>,
+}
+
+fn observe_struct(obj: &crate::ovm::value::StructObject) -> Option<(Kind, ShapeSpec)> {
+    let mut field_kinds = Vec::with_capacity(obj.values.len());
+    for v in &obj.values {
+        field_kinds.push(match v.data {
+            ValueData::Integer(_) => Kind::Int,
+            ValueData::Float(_) => Kind::Float,
+            ValueData::Boolean(_) => Kind::Bool,
+            _ => return None,
+        });
+    }
+    Some((
+        Kind::Struct(obj.shape.id),
+        ShapeSpec {
+            shape: obj.shape.clone(),
+            field_kinds,
+        },
+    ))
+}
+
 const STATUS_OK: i64 = 0;
 const MAX_PARAMS: usize = 16;
 /// Sanity bound on how many functions one group may pull in.
@@ -77,6 +104,10 @@ pub enum Kind {
     Int,
     Bool,
     Float,
+    /// A struct argument of one interned shape, passed as a borrowed
+    /// pointer (JIT calls are synchronous; the caller's slot outlives
+    /// the call, so no refcount is touched).
+    Struct(u32),
 }
 
 impl Kind {
@@ -140,6 +171,45 @@ fn jit_debug() -> bool {
     std::env::var_os("OLANG_JIT_DEBUG").is_some()
 }
 
+// Field-kind codes shared between codegen and the host helper.
+const FIELD_INT: u64 = 0;
+const FIELD_FLOAT: u64 = 1;
+const FIELD_BOOL: u64 = 2;
+
+/// Host helper the native code calls for `obj.field`. `obj` is a borrowed
+/// StructObject pointer (valid for the duration of the synchronous native
+/// call), `idx` a shape-resolved field index, `expect` a FIELD_* code.
+/// Returns 0 and writes the raw bits on success; 1 to deopt on any
+/// surprise (index out of range, unexpected field kind) — the bytecode
+/// re-run then produces the canonical behavior.
+///
+/// # Safety
+/// Called only from JIT code compiled by this module, with pointers the
+/// entry guard extracted from live argument slots.
+unsafe extern "C" fn olang_jit_field(
+    obj: *const crate::ovm::value::StructObject,
+    idx: u64,
+    expect: u64,
+    out: *mut i64,
+) -> i64 {
+    let obj = &*obj;
+    match obj.values.get(idx as usize).map(|v| &v.data) {
+        Some(ValueData::Integer(i)) if expect == FIELD_INT => {
+            *out = *i;
+            0
+        }
+        Some(ValueData::Float(f)) if expect == FIELD_FLOAT => {
+            *out = f.to_bits() as i64;
+            0
+        }
+        Some(ValueData::Boolean(b)) if expect == FIELD_BOOL => {
+            *out = *b as i64;
+            0
+        }
+        _ => 1,
+    }
+}
+
 impl JitCache {
     pub fn new() -> Self {
         Self {
@@ -153,11 +223,12 @@ impl JitCache {
     fn module(&mut self) -> Option<&mut JITModule> {
         if self.module.is_none() {
             // Speed over compile time; the functions are tiny.
-            let builder = JITBuilder::with_flags(
+            let mut builder = JITBuilder::with_flags(
                 &[("opt_level", "speed")],
                 cranelift_module::default_libcall_names(),
             )
             .ok()?;
+            builder.symbol("olang_jit_field", olang_jit_field as *const u8);
             self.module = Some(JITModule::new(builder));
         }
         self.module.as_mut()
@@ -219,29 +290,47 @@ impl JitCache {
             return None;
         }
         for (i, arg) in args.iter().enumerate() {
-            match arg.data {
+            match &arg.data {
                 ValueData::Integer(v) => {
-                    bits[i] = v;
+                    bits[i] = *v;
                     kinds[i] = Kind::Int;
                 }
                 ValueData::Float(f) => {
                     bits[i] = f.to_bits() as i64;
                     kinds[i] = Kind::Float;
                 }
+                ValueData::Struct(obj) => {
+                    bits[i] = Arc::as_ptr(obj) as i64;
+                    kinds[i] = Kind::Struct(obj.shape.id);
+                }
                 _ => return None,
             }
         }
-        self.try_call_raw(
+        // Shape specs are only needed to SPECIALIZE (first call); Ready
+        // calls skip the allocation entirely. Per-read helper guards keep
+        // same-shape/different-kind instances safe either way.
+        let mut shapes: HashMap<u32, ShapeSpec> = HashMap::new();
+        if matches!(self.table.get(func_id.index()), Some(Some(Slot::Pending))) {
+            for arg in args {
+                if let ValueData::Struct(obj) = &arg.data {
+                    let (_, spec) = observe_struct(obj)?;
+                    shapes.entry(obj.shape.id).or_insert(spec);
+                }
+            }
+        }
+        self.try_call_raw_with_shapes(
             func_id,
             bytecode,
             &bits[..args.len()],
             &kinds[..args.len()],
             remaining_depth,
             lookup,
+            &shapes,
         )
     }
 
-    /// Like try_call, but the caller already extracted raw bits and kinds.
+    /// Like try_call, but the caller already extracted raw bits and kinds
+    /// (no struct arguments on this path).
     pub fn try_call_raw(
         &mut self,
         func_id: FunctionId,
@@ -251,6 +340,29 @@ impl JitCache {
         remaining_depth: u32,
         lookup: &BytecodeLookup,
     ) -> Option<OvmValue> {
+        let shapes = HashMap::new();
+        self.try_call_raw_with_shapes(
+            func_id,
+            bytecode,
+            bits,
+            kinds,
+            remaining_depth,
+            lookup,
+            &shapes,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_call_raw_with_shapes(
+        &mut self,
+        func_id: FunctionId,
+        bytecode: &Arc<CompiledBytecode>,
+        bits: &[i64],
+        kinds: &[Kind],
+        remaining_depth: u32,
+        lookup: &BytecodeLookup,
+        shapes: &HashMap<u32, ShapeSpec>,
+    ) -> Option<OvmValue> {
         let idx = func_id.index();
         match self.table.get(idx)? {
             Some(Slot::Ready(_)) => {}
@@ -258,7 +370,7 @@ impl JitCache {
                 // First call: specialize the whole reachable group on the
                 // kinds this call carries.
                 if self
-                    .specialize_group(func_id, bytecode, kinds, lookup)
+                    .specialize_group(func_id, bytecode, kinds, lookup, shapes)
                     .is_none()
                 {
                     if jit_debug() {
@@ -288,6 +400,7 @@ impl JitCache {
             Kind::Int => OvmValue::new_integer(out),
             Kind::Bool => OvmValue::new_boolean(out != 0),
             Kind::Float => OvmValue::new_float(f64::from_bits(out as u64)),
+            Kind::Struct(_) => unreachable!("struct returns are refused by inference"),
         })
     }
 
@@ -301,6 +414,7 @@ impl JitCache {
         entry_bytecode: &Arc<CompiledBytecode>,
         entry_kinds: &[Kind],
         lookup: &BytecodeLookup,
+        shapes: &HashMap<u32, ShapeSpec>,
     ) -> Option<()> {
         if entry_kinds.len() != entry_bytecode.param_count {
             return None;
@@ -332,7 +446,7 @@ impl JitCache {
 
             let mut requests: Vec<(FunctionId, Vec<Kind>)> = Vec::new();
             for plan in plans.iter_mut() {
-                plan.infer_pass(&sigs, &mut requests, &mut changed)?;
+                plan.infer_pass(&sigs, shapes, &mut requests, &mut changed)?;
             }
 
             for (fid, kinds) in requests {
@@ -386,6 +500,17 @@ impl JitCache {
             }
         }
         let module = self.module()?;
+        // The imported field helper, declared once per group.
+        let field_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..4 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_field", Linkage::Import, &sig)
+                .ok()?
+        };
         let mut clif_ids = Vec::with_capacity(plans.len());
         for (plan, inf) in plans.iter().zip(&inferences) {
             let mut sig = module.make_signature();
@@ -421,7 +546,15 @@ impl JitCache {
             };
             {
                 let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fbc);
-                translate_body(&mut builder, module, &targets, &plan.bytecode, inf)?;
+                translate_body(
+                    &mut builder,
+                    module,
+                    &targets,
+                    &plan.bytecode,
+                    inf,
+                    shapes,
+                    field_helper,
+                )?;
                 builder.finalize();
             }
             if let Err(e) = module.define_function(*clif_id, &mut ctx) {
@@ -566,6 +699,7 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::JumpIfTrue { .. }
         | Instruction::JumpIfFalse { .. }
         | Instruction::MatchFail
+        | Instruction::GetField { .. }
         | Instruction::CallFn { .. } => true,
         Instruction::BinImm { imm, .. } => {
             matches!(imm.data, ValueData::Integer(_) | ValueData::Float(_))
@@ -588,14 +722,16 @@ const K_INT: u8 = 1;
 const K_BOOL: u8 = 2;
 const K_UNIT: u8 = 4;
 const K_FLOAT: u8 = 8;
+const K_STRUCT: u8 = 16;
 const K_NUM: u8 = K_INT | K_FLOAT;
-const K_ANY: u8 = K_INT | K_BOOL | K_UNIT | K_FLOAT;
+const K_ANY: u8 = K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT;
 
 fn kind_mask(k: Kind) -> u8 {
     match k {
         Kind::Int => K_INT,
         Kind::Bool => K_BOOL,
         Kind::Float => K_FLOAT,
+        Kind::Struct(_) => K_STRUCT,
     }
 }
 
@@ -617,6 +753,8 @@ struct PlanFn {
     writes: Vec<u8>,
     allowed: Vec<u8>,
     was_read: Vec<bool>,
+    /// Which interned shape a struct-holding register carries.
+    shape_of: Vec<Option<u32>>,
     ret_mask: u8,
     eq_pairs: Vec<(u32, u32)>,
     return_regs: Vec<u32>,
@@ -633,8 +771,12 @@ impl PlanFn {
     fn new(func_id: FunctionId, bytecode: Arc<CompiledBytecode>, param_kinds: Vec<Kind>) -> Self {
         let nregs = bytecode.register_count as usize;
         let mut writes = vec![0u8; nregs];
+        let mut shape_of = vec![None; nregs];
         for (i, k) in param_kinds.iter().enumerate() {
             writes[i] = kind_mask(*k);
+            if let Kind::Struct(sid) = k {
+                shape_of[i] = Some(*sid);
+            }
         }
         Self {
             func_id,
@@ -643,6 +785,7 @@ impl PlanFn {
             writes,
             allowed: vec![K_ANY; nregs],
             was_read: vec![false; nregs],
+            shape_of,
             ret_mask: 0,
             eq_pairs: Vec::new(),
             return_regs: Vec::new(),
@@ -656,6 +799,7 @@ impl PlanFn {
     fn infer_pass(
         &mut self,
         sigs: &HashMap<usize, (Vec<Kind>, u8)>,
+        shapes: &HashMap<u32, ShapeSpec>,
         requests: &mut Vec<(FunctionId, Vec<Kind>)>,
         global_changed: &mut bool,
     ) -> Option<()> {
@@ -708,6 +852,14 @@ impl PlanFn {
                 Instruction::Move { dst, src } => {
                     let src_mask = self.writes[src.0 as usize];
                     grow!(self.writes[dst.0 as usize], src_mask);
+                    if let Some(sid) = self.shape_of[src.0 as usize] {
+                        if self.shape_of[dst.0 as usize].is_none() {
+                            self.shape_of[dst.0 as usize] = Some(sid);
+                            changed = true;
+                        } else if self.shape_of[dst.0 as usize] != Some(sid) {
+                            return None; // one shape per register
+                        }
+                    }
                     // Liveness flows backwards through copies: the move
                     // reads src only if someone reads dst, and the copied
                     // value must satisfy dst's constraint.
@@ -793,6 +945,34 @@ impl PlanFn {
                         _ => return None,
                     }
                 }
+                Instruction::GetField {
+                    dst,
+                    object,
+                    name_const,
+                    ..
+                } => {
+                    narrow!(object.0, K_STRUCT);
+                    let sid = self.shape_of[object.0 as usize]?;
+                    let spec = shapes.get(&sid)?;
+                    let name = match self
+                        .bytecode
+                        .constants
+                        .get(*name_const as usize)
+                        .map(|c| &c.data)
+                    {
+                        Some(ValueData::String(n)) => n.clone(),
+                        _ => return None,
+                    };
+                    let idx = spec
+                        .shape
+                        .field_names
+                        .iter()
+                        .position(|f| f == name.as_str())?;
+                    grow!(
+                        self.writes[dst.0 as usize],
+                        kind_mask(spec.field_kinds[idx])
+                    );
+                }
                 Instruction::Jump { .. } | Instruction::MatchFail => {}
                 Instruction::JumpIfTrue { condition, .. }
                 | Instruction::JumpIfFalse { condition, .. } => {
@@ -805,6 +985,11 @@ impl PlanFn {
                         }
                         for (i, a) in args.iter().enumerate() {
                             narrow!(a.0, kind_mask(param_kinds[i]));
+                            if let Kind::Struct(sid) = param_kinds[i] {
+                                if self.shape_of[a.0 as usize] != Some(sid) {
+                                    return None; // shape must match exactly
+                                }
+                            }
                         }
                         let rm = *ret_mask;
                         grow!(self.writes[dst.0 as usize], rm);
@@ -815,6 +1000,10 @@ impl PlanFn {
                         let mut kinds = Vec::with_capacity(args.len());
                         let mut resolved = true;
                         for a in args {
+                            if let Some(sid) = self.shape_of[a.0 as usize] {
+                                kinds.push(Kind::Struct(sid));
+                                continue;
+                            }
                             match mask_singleton(self.writes[a.0 as usize]) {
                                 Some(k) => kinds.push(k),
                                 None => {
@@ -851,6 +1040,14 @@ impl PlanFn {
         let mut reg_kind: Vec<Option<Kind>> = vec![None; nregs];
         for (r, slot) in reg_kind.iter_mut().enumerate() {
             if self.was_read[r] {
+                if self.writes[r] == K_STRUCT {
+                    let sid = self.shape_of[r]?;
+                    if kind_mask(Kind::Struct(sid)) & self.allowed[r] == 0 {
+                        return None;
+                    }
+                    *slot = Some(Kind::Struct(sid));
+                    continue;
+                }
                 let k = mask_singleton(self.writes[r])?;
                 if kind_mask(k) & self.allowed[r] == 0 {
                     return None;
@@ -957,12 +1154,15 @@ impl Gen<'_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn translate_body(
     builder: &mut FunctionBuilder,
     module: &mut JITModule,
     targets: &HashMap<usize, (cranelift_module::FuncId, Kind)>,
     bytecode: &CompiledBytecode,
     inference: &Inference,
+    shapes: &HashMap<u32, ShapeSpec>,
+    field_helper: cranelift_module::FuncId,
 ) -> Option<()> {
     let n = bytecode.instructions.len();
     let param_count = inference.param_kinds.len();
@@ -1113,7 +1313,7 @@ fn translate_body(
                         builder.switch_to_block(cont);
                         builder.ins().ineg(a)
                     }
-                    Kind::Bool => return None,
+                    Kind::Bool | Kind::Struct(_) => return None,
                 };
                 gen.write(builder, dst.0, val);
             }
@@ -1197,6 +1397,54 @@ fn translate_body(
                     }
                     _ => return None,
                 }
+            }
+            Instruction::GetField {
+                dst,
+                object,
+                name_const,
+                ..
+            } => {
+                let Kind::Struct(sid) = gen.kind(object.0)? else {
+                    return None;
+                };
+                let spec = shapes.get(&sid)?;
+                let name = match &bytecode.constants[*name_const as usize].data {
+                    ValueData::String(n) => n.clone(),
+                    _ => return None,
+                };
+                let idx = spec
+                    .shape
+                    .field_names
+                    .iter()
+                    .position(|f| f == name.as_str())?;
+                let fk = spec.field_kinds[idx];
+                let expect = match fk {
+                    Kind::Int => FIELD_INT,
+                    Kind::Float => FIELD_FLOAT,
+                    Kind::Bool => FIELD_BOOL,
+                    Kind::Struct(_) => return None,
+                };
+
+                let obj_ptr = builder.use_var(Variable::from_u32(object.0));
+                let idx_v = builder.ins().iconst(types::I64, idx as i64);
+                let exp_v = builder.ins().iconst(types::I64, expect as i64);
+                let slot =
+                    builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                        cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                        8,
+                        3,
+                    ));
+                let out_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                let helper_ref = module.declare_func_in_func(field_helper, builder.func);
+                let call = builder
+                    .ins()
+                    .call(helper_ref, &[obj_ptr, idx_v, exp_v, out_ptr]);
+                let status = builder.inst_results(call)[0];
+                let ok_block = builder.create_block();
+                builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
+                builder.switch_to_block(ok_block);
+                let val = builder.ins().stack_load(fk.clif_type(), slot, 0);
+                gen.write(builder, dst.0, val);
             }
             Instruction::Jump { target } => {
                 let block = blocks[target.0 as usize]?;
