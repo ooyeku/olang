@@ -12,6 +12,30 @@ documented.
 
 ### Changed
 
+- **Structs have interned shapes, and field reads have inline caches.**
+  A struct used to be a hash map: every `p.x` hashed the field name
+  (~28% of the N-body kernel). Now a struct is an interned shape — one
+  `Arc<StructShape>` per (type, field set), field names in canonical
+  order with a stable id — plus a values vector in shape order. Every
+  `GetField` site carries a one-entry inline cache packing (shape id →
+  field index) into a single atomic word, so concurrent VMs sharing
+  bytecode can never see a torn pair: a repeat read of the same shape is
+  an integer compare and an array index, no hashing. Misses take a cold
+  outlined path that refills the cache — outlined deliberately, because
+  a first draft with the miss path inline perturbed the dispatch loop's
+  code layout and cost fib/pipeline 10% each (caught by benchmarking
+  non-struct workloads, recovered exactly). `MakeStruct` interns its
+  shape at compile time and stores field registers in shape order
+  (field expressions still evaluate in literal order). Two new tests
+  pin the risky parts: a polymorphic read site rotating through shapes
+  that place the same field at different indices, and shaped structs
+  round-tripping the tier boundary into interpreter pattern matches.
+  Measured: N-body ~485ms → ~415ms — **ahead of Ruby (468ms) and at
+  parity with CPython (416ms)** — with fib and pipeline unchanged and
+  the checksum bit-identical. The profile after this rung shows
+  essentially all remaining N-body time in the dispatch loop itself,
+  which is what the instruction-fusion rung attacks next.
+
 - **Frames are windows on one register slab.** Every call used to swap a
   whole `ExecutionState` in and out through a frame pool, re-size its
   register and locals vectors, and reset per-call bookkeeping. The VM now

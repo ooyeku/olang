@@ -214,11 +214,102 @@ pub struct ClosureObject {
     pub func_id: crate::ovm::FunctionId,
 }
 
-/// Struct object representation
+/// A struct's layout, interned globally: one shape per (type name, field
+/// set), field names in sorted order, with a stable id. Two structs of the
+/// same type share the same `Arc<StructShape>`, which is what lets a
+/// GetField site cache "shape id → field index" and turn a repeat read
+/// into an integer compare plus an array index — no hashing.
+#[derive(Debug)]
+pub struct StructShape {
+    pub id: u32,
+    pub type_name: String,
+    /// Sorted — the canonical order `values` is stored in.
+    pub field_names: Vec<String>,
+    index: HashMap<String, u32, FnvBuildHasher>,
+}
+
+impl StructShape {
+    #[inline]
+    pub fn field_index(&self, name: &str) -> Option<u32> {
+        self.index.get(name).copied()
+    }
+}
+
+impl PartialEq for StructShape {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+/// Intern a shape. Shapes live for the process; ids start at 1 so 0 can
+/// mean "cold" in inline caches.
+pub fn intern_shape(type_name: &str, mut field_names: Vec<String>) -> Arc<StructShape> {
+    use std::sync::{Mutex, OnceLock};
+    type Interner = Mutex<HashMap<(String, Vec<String>), Arc<StructShape>>>;
+    static SHAPES: OnceLock<Interner> = OnceLock::new();
+    static NEXT_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+    field_names.sort();
+    let mut shapes = SHAPES.get_or_init(Default::default).lock().unwrap();
+    let key = (type_name.to_string(), field_names);
+    if let Some(shape) = shapes.get(&key) {
+        return shape.clone();
+    }
+    let index = key
+        .1
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.clone(), i as u32))
+        .collect();
+    let shape = Arc::new(StructShape {
+        id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        type_name: key.0.clone(),
+        field_names: key.1.clone(),
+        index,
+    });
+    shapes.insert(key, shape.clone());
+    shape
+}
+
+/// Struct object: an interned shape plus values in the shape's field order.
 #[derive(Debug)]
 pub struct StructObject {
-    pub type_name: String,
-    pub fields: FieldMap,
+    pub shape: Arc<StructShape>,
+    pub values: Vec<OvmValue>,
+}
+
+impl StructObject {
+    /// Build from unordered (name, value) pairs, interning the shape.
+    pub fn from_pairs(type_name: &str, pairs: Vec<(String, OvmValue)>) -> Self {
+        let shape = intern_shape(type_name, pairs.iter().map(|(n, _)| n.clone()).collect());
+        let mut values: Vec<Option<OvmValue>> =
+            (0..shape.field_names.len()).map(|_| None).collect();
+        for (name, value) in pairs {
+            if let Some(i) = shape.field_index(&name) {
+                values[i as usize] = Some(value);
+            }
+        }
+        let values = values
+            .into_iter()
+            .map(|v| v.unwrap_or_else(OvmValue::new_unit))
+            .collect();
+        Self { shape, values }
+    }
+
+    #[inline]
+    pub fn field(&self, name: &str) -> Option<&OvmValue> {
+        self.shape
+            .field_index(name)
+            .map(|i| &self.values[i as usize])
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &OvmValue)> {
+        self.shape.field_names.iter().zip(self.values.iter())
+    }
+
+    pub fn type_name(&self) -> &str {
+        &self.shape.type_name
+    }
 }
 
 /// FNV-1a for struct field maps. Field lookups sit on the dispatch loop's
@@ -1258,16 +1349,11 @@ impl OvmValue {
             }
 
             Value::Struct { type_name, fields } => {
-                // Create struct object
-                let struct_fields: FieldMap = fields
+                let pairs: Vec<(String, OvmValue)> = fields
                     .into_iter()
                     .map(|(k, v)| (k, Self::from_ast(v)))
                     .collect();
-
-                let struct_obj = StructObject {
-                    type_name,
-                    fields: struct_fields,
-                };
+                let struct_obj = StructObject::from_pairs(&type_name, pairs);
 
                 let gc_ptr = Arc::new(struct_obj);
 
@@ -1339,15 +1425,11 @@ impl OvmValue {
             Value::Map(map) => {
                 // Convert HashMap<String, Value> to OVM representation
                 // For now, create a simple struct-like representation
-                let mut fields = FieldMap::default();
-                for (key, value) in map.iter() {
-                    fields.insert(key.clone(), Self::from_ast(value.clone()));
-                }
-
-                let struct_obj = StructObject {
-                    type_name: "Map".to_string(),
-                    fields,
-                };
+                let pairs: Vec<(String, OvmValue)> = map
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
+                    .collect();
+                let struct_obj = StructObject::from_pairs("Map", pairs);
 
                 let gc_ptr = Arc::new(struct_obj);
 
@@ -1540,11 +1622,11 @@ impl OvmValue {
             }
             ValueData::Struct(gc_ptr) => {
                 let mut fields = HashMap::new();
-                for (name, val) in &gc_ptr.fields {
+                for (name, val) in gc_ptr.iter() {
                     fields.insert(name.clone(), val.to_ast()?);
                 }
                 Ok(Value::Struct {
-                    type_name: gc_ptr.type_name.clone(),
+                    type_name: gc_ptr.type_name().to_string(),
                     fields,
                 })
             }

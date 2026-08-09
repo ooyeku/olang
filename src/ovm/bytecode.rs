@@ -194,6 +194,40 @@ pub struct CompiledBytecode {
     pub entry_point: usize,
 }
 
+/// A GetField site's one-entry inline cache, packing (shape id << 32 |
+/// field index) into one atomic word so concurrent VMs sharing the
+/// bytecode can never see a torn pair. Zero means cold (shape ids start
+/// at 1). Cloned instructions start cold; caches never affect equality.
+#[derive(Debug, Default)]
+pub struct FieldCache(std::sync::atomic::AtomicU64);
+
+impl FieldCache {
+    #[inline]
+    pub fn load(&self) -> (u32, u32) {
+        let packed = self.0.load(std::sync::atomic::Ordering::Relaxed);
+        ((packed >> 32) as u32, packed as u32)
+    }
+    #[inline]
+    pub fn store(&self, shape_id: u32, index: u32) {
+        self.0.store(
+            ((shape_id as u64) << 32) | index as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
+
+impl Clone for FieldCache {
+    fn clone(&self) -> Self {
+        FieldCache::default()
+    }
+}
+
+impl PartialEq for FieldCache {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
 /// Bytecode instruction set - Enhanced with more operations
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction {
@@ -314,14 +348,15 @@ pub enum Instruction {
         args: Vec<Register>,
         arg_count: u32,
     },
-    /// Build a struct (or anonymous object) from field registers. The
-    /// literal was validated against the declared field set at compile
-    /// time with the interpreter's exact rules, so execution just
-    /// assembles the value.
+    /// Build a struct (or anonymous object): the shape was interned at
+    /// compile time and `field_regs` is already in the shape's field
+    /// order, so execution just moves values into place. The literal was
+    /// validated against the declared field set with the interpreter's
+    /// exact rules.
     MakeStruct {
         dst: Register,
-        type_name: String,
-        fields: Vec<(String, Register)>,
+        shape: Arc<crate::ovm::value::StructShape>,
+        field_regs: Vec<Register>,
     },
     /// Call whatever function value the callee register holds — a
     /// parameter, a local, the result of another call. Compiled function
@@ -614,6 +649,9 @@ pub enum Instruction {
         dst: Register,
         object: Register,
         name_const: u32,
+        /// One-entry inline cache: shape id → field index. Interior-mutable
+        /// because bytecode is shared (Arc) across calls and threads.
+        cache: FieldCache,
     },
     /// Subscript: `dst = object[index]`. Lists, tuples, and strings with an
     /// integer index (negative counts from the end), matching the interpreter.
@@ -1493,17 +1531,16 @@ impl BytecodeVm {
 
                 Instruction::MakeStruct {
                     dst,
-                    type_name,
-                    fields,
+                    shape,
+                    field_regs,
                 } => {
-                    let mut field_map = crate::ovm::value::FieldMap::default();
-                    for (name, reg) in fields {
-                        let value = self.execution_state.get_register(*reg)?;
-                        field_map.insert(name.clone(), value);
+                    let mut values = Vec::with_capacity(field_regs.len());
+                    for reg in field_regs {
+                        values.push(self.execution_state.get_register(*reg)?);
                     }
                     let obj = crate::ovm::value::StructObject {
-                        type_name: type_name.clone(),
-                        fields: field_map,
+                        shape: shape.clone(),
+                        values,
                     };
                     self.execution_state
                         .set_register(*dst, OvmValue::new_struct(Arc::new(obj)))?;
@@ -1598,7 +1635,7 @@ impl BytecodeVm {
                 } => {
                     use crate::ovm::value::ValueData;
                     let has = match &self.execution_state.register_ref(*value)?.data {
-                        ValueData::Struct(s) => s.fields.contains_key(field_name),
+                        ValueData::Struct(s) => s.shape.field_index(field_name).is_some(),
                         _ => false,
                     };
                     self.execution_state
@@ -2118,23 +2155,28 @@ impl BytecodeVm {
                     dst,
                     object,
                     name_const,
+                    cache,
                 } => {
-                    // Borrow both the name constant and the object register:
-                    // cloning them cost two Arc refcount round-trips per read.
-                    let name_value = bytecode
-                        .constants
-                        .get(*name_const as usize)
-                        .ok_or_else(|| BytecodeError::InvalidConstantIndex(*name_const))?;
-                    let name: &str = match &name_value.data {
-                        crate::ovm::value::ValueData::String(s) => s,
-                        _ => {
-                            return Err(BytecodeError::RuntimeError(
-                                "GetField: field name constant is not a string".to_string(),
-                            ))
-                        }
-                    };
+                    // Inline-cache fast path: same shape as last time means
+                    // the field index is already known — an integer compare
+                    // and an array read, no hashing. Misses take the cold
+                    // outlined path, which refills the cache.
                     let object_value = self.execution_state.register_ref(*object)?;
-                    let result = Self::execute_get_field(object_value, name)?;
+                    let hit = match &object_value.data {
+                        crate::ovm::value::ValueData::Struct(st) => {
+                            let (cached_shape, cached_idx) = cache.load();
+                            if cached_shape == st.shape.id {
+                                st.values.get(cached_idx as usize).cloned()
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    let result = match hit {
+                        Some(value) => value,
+                        None => Self::get_field_slow(&bytecode, *name_const, object_value, cache)?,
+                    };
                     self.execution_state.set_register(*dst, result)?;
                 }
 
@@ -3322,6 +3364,38 @@ impl BytecodeVm {
         }
     }
 
+    /// GetField's miss path: resolve by name, refill the inline cache when
+    /// the object is a struct, and produce the interpreter-exact errors.
+    /// Outlined so the dispatch arm stays small enough not to perturb the
+    /// loop's code layout.
+    #[cold]
+    #[inline(never)]
+    fn get_field_slow(
+        bytecode: &CompiledBytecode,
+        name_const: u32,
+        object: &OvmValue,
+        cache: &FieldCache,
+    ) -> Result<OvmValue, BytecodeError> {
+        let name_value = bytecode
+            .constants
+            .get(name_const as usize)
+            .ok_or(BytecodeError::InvalidConstantIndex(name_const))?;
+        let name: &str = match &name_value.data {
+            crate::ovm::value::ValueData::String(s) => s,
+            _ => {
+                return Err(BytecodeError::RuntimeError(
+                    "GetField: field name constant is not a string".to_string(),
+                ))
+            }
+        };
+        if let crate::ovm::value::ValueData::Struct(st) = &object.data {
+            if let Some(idx) = st.shape.field_index(name) {
+                cache.store(st.shape.id, idx);
+            }
+        }
+        Self::execute_get_field(object, name)
+    }
+
     /// Field access by name, matching `Interpreter::eval_field_access`
     /// exactly: struct/object/module fields look up by name; a module reports
     /// a "Function not found" message, a struct a "Field not found" one; a
@@ -3329,8 +3403,8 @@ impl BytecodeVm {
     fn execute_get_field(object: &OvmValue, field: &str) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
         match &object.data {
-            ValueData::Struct(s) => s.fields.get(field).cloned().ok_or_else(|| {
-                if s.type_name == "Module" {
+            ValueData::Struct(s) => s.field(field).cloned().ok_or_else(|| {
+                if s.type_name() == "Module" {
                     BytecodeError::TypeError(format!("Function '{}' not found in module", field))
                 } else {
                     BytecodeError::TypeError(format!("Field '{}' not found", field))
@@ -4160,16 +4234,23 @@ impl BytecodeCompiler {
                     }
                 }
 
-                let mut field_regs = Vec::with_capacity(literal.fields.len());
+                // Field exprs compile in literal order (side-effect order);
+                // the instruction stores their registers in SHAPE order.
+                let mut pairs = Vec::with_capacity(literal.fields.len());
                 for field in &literal.fields {
                     let reg = self.compile_expression(&field.value)?;
-                    field_regs.push((field.name.clone(), reg));
+                    pairs.push((field.name.clone(), reg));
                 }
+                let shape = crate::ovm::value::intern_shape(
+                    &literal.type_name,
+                    pairs.iter().map(|(n, _)| n.clone()).collect(),
+                );
+                pairs.sort_by(|a, b| a.0.cmp(&b.0));
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter.instructions.push(Instruction::MakeStruct {
                     dst: dst_reg,
-                    type_name: literal.type_name.clone(),
-                    fields: field_regs,
+                    shape,
+                    field_regs: pairs.into_iter().map(|(_, r)| r).collect(),
                 });
                 Ok(dst_reg)
             }
@@ -4177,16 +4258,21 @@ impl BytecodeCompiler {
             // Anonymous objects are free-form: no validation, type name
             // "Object", exactly as the interpreter builds them.
             Expr::AnonymousObject { fields } => {
-                let mut field_regs = Vec::with_capacity(fields.len());
+                let mut pairs = Vec::with_capacity(fields.len());
                 for field in fields {
                     let reg = self.compile_expression(&field.value)?;
-                    field_regs.push((field.name.clone(), reg));
+                    pairs.push((field.name.clone(), reg));
                 }
+                let shape = crate::ovm::value::intern_shape(
+                    "Object",
+                    pairs.iter().map(|(n, _)| n.clone()).collect(),
+                );
+                pairs.sort_by(|a, b| a.0.cmp(&b.0));
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter.instructions.push(Instruction::MakeStruct {
                     dst: dst_reg,
-                    type_name: "Object".to_string(),
-                    fields: field_regs,
+                    shape,
+                    field_regs: pairs.into_iter().map(|(_, r)| r).collect(),
                 });
                 Ok(dst_reg)
             }
@@ -4526,6 +4612,7 @@ impl BytecodeCompiler {
                     dst,
                     object: object_reg,
                     name_const,
+                    cache: FieldCache::default(),
                 });
                 Ok(dst)
             }
@@ -4841,6 +4928,7 @@ impl BytecodeCompiler {
                         dst: field_reg,
                         object: value_reg,
                         name_const,
+                        cache: FieldCache::default(),
                     });
                     self.compile_pattern_test(sub, field_reg, fail_label)?;
                 }

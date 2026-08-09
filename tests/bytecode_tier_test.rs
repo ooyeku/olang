@@ -1499,6 +1499,56 @@ n
     );
 }
 
+// ── struct shapes and inline caches ───────────────────────────────────
+
+#[test]
+fn polymorphic_field_sites_stay_correct_across_shapes() {
+    // One GetField site reading `.x` off three different shapes in
+    // rotation: the inline cache thrashes but must never serve a stale
+    // index. The shapes deliberately place `x` at different positions in
+    // sorted field order.
+    let src = r#"
+type A = struct { x: Int, z: Int }
+type B = struct { a: Int, x: Int }
+type C = struct { a: Int, b: Int, x: Int }
+fn read_x(v) = v.x
+fn go(n) = {
+    let mut t = 0
+    for i in 0..n {
+        t = t + read_x(A { x: 1, z: 9 })
+            + read_x(B { a: 9, x: 2 })
+            + read_x(C { a: 9, b: 9, x: 3 })
+            + read_x({ x: 4 })
+    }
+    t
+}
+go(50) + go(50)
+"#;
+    assert!(promotion_count(src, 2) >= 1);
+    assert_eq!(
+        eval(src, Some(1)).unwrap(),
+        Value::Integer((1 + 2 + 3 + 4) * 100)
+    );
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn shaped_structs_round_trip_and_match_after_boundary_crossings() {
+    // Shapes are a VM-internal layout: structs must convert back to the
+    // interpreter's map form unchanged, and struct patterns must keep
+    // matching on both sides of the boundary.
+    let src = r#"
+type P = struct { y: Int, x: Int }
+fn make(n) = P { y: n + 1, x: n }
+fn read(p) = match p { P { x, y } => x * 100 + y }
+let p = make(4)
+read(p) + read(make(7))
+read(p) + read(make(7))
+"#;
+    assert_tier_transparent(src);
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer((405 + 708) * 1));
+}
+
 // ── the register slab (frame windows) ─────────────────────────────────
 
 #[test]
