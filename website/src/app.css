@@ -57,6 +57,12 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .site-header nav a.active { color: var(--teal); }
 .gh-link { display: inline-flex; align-items: center; gap: 0.45rem; }
 .gh-link svg { width: 19px; height: 19px; fill: currentColor; }
+@media (max-width: 560px) {
+  .site-header .container { gap: 1rem; }
+  .site-header nav { gap: 0.9rem; }
+  .site-header nav a { font-size: 0.84rem; }
+  .gh-label { display: none; }
+}
 
 /* ── hero ───────────────────────────────────────────────────────────── */
 .hero {

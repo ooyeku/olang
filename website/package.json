@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "sync-brand": "bun scripts/sync-brand.mjs",
-    "dev": "bun run sync-brand && vite dev",
-    "build": "bun run sync-brand && vite build",
+    "sync-playground": "bun scripts/sync-playground.mjs",
+    "dev": "bun run sync-brand && bun run sync-playground && vite dev",
+    "build": "bun run sync-brand && bun run sync-playground && vite build",
     "preview": "vite preview"
   },
   "devDependencies": {
