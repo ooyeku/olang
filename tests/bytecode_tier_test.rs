@@ -1635,19 +1635,113 @@ t
 }
 
 #[test]
-fn recursive_nested_fns_fall_back_and_agree() {
-    // A nested fn referencing itself refuses (its name binds after the
-    // closure is built); the enclosing function stays interpreted and
-    // correct.
-    assert_tier_transparent(
-        r#"
+fn recursive_nested_fns_now_compile() {
+    // A nested fn referencing itself binds its own name to its own
+    // compiled id (recursion is CallFn), and the escaped form carries the
+    // name so interpreted copies recurse too. (This used to refuse.)
+    let src = r#"
 fn outer(n) = {
     fn count(x) = if x <= 0 => 0 else => 1 + count(x - 1)
     count(n)
 }
 outer(5) + outer(6) + outer(7)
+"#;
+    assert!(promotion_count(src, 2) >= 1, "outer should promote");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn recursive_nested_fns_with_captures_keep_them_through_recursion() {
+    // The 03_algorithms bug: a nested fn capturing enclosing state whose
+    // body recurses. Self-calls must append the capture parameters, or
+    // recursion arrives with the wrong arity (2 args into a 4-param body).
+    let src = r#"
+fn binary_search(xs, target) = {
+    fn go(lo, hi) = {
+        if lo >= hi => 0 - 1
+        else => {
+            let mid = (lo + hi) / 2
+            if xs[mid] == target => mid
+            else if xs[mid] < target => go(mid + 1, hi)
+            else => go(lo, mid)
+        }
+    }
+    go(0, len(xs))
+}
+let xs = [1, 3, 5, 7, 9, 11]
+binary_search(xs, 7) * 100 + binary_search(xs, 4) + binary_search(xs, 11)
+"#;
+    assert!(promotion_count(src, 2) >= 1, "binary_search should promote");
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(300 - 1 + 5));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn escaped_recursive_nested_fns_recurse_interpreted() {
+    // The nested fn ESCAPES (returned, then handed to a bridged builtin):
+    // the carried name makes interpreted self-recursion work.
+    let src = r#"
+fn make_counter() = {
+    fn count(x) = if x <= 0 => 0 else => 1 + count(x - 1)
+    count
+}
+fn go(xs) = {
+    let c = make_counter()
+    fold(xs, 0, (acc, x) => acc + c(x))
+}
+go([1, 2, 3])
+go([1, 2, 3])
+go([1, 2, 3])
+"#;
+    assert_eq!(eval(src, Some(2)).unwrap(), Value::Integer(6));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn tuple_expressions_and_let_destructuring_promote() {
+    let src = r#"
+fn pairs(n) = {
+    let t = (n, n * 2, "x")
+    let (a, b, s) = t
+    a + b + len(s)
+}
+let mut acc = 0
+for i in 0..20 { acc = acc + pairs(i) }
+acc
+"#;
+    assert!(promotion_count(src, 2) >= 1, "pairs should promote");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn let_destructuring_mismatch_errors_identically() {
+    assert_tier_transparent(
+        r#"
+fn bad(n) = {
+    let (a, b) = (n, n + 1, n + 2)
+    a + b
+}
+bad(1)
+bad(2)
+bad(3)
 "#,
     );
+}
+
+#[test]
+fn a_block_ending_in_let_evaluates_to_the_bound_value() {
+    // eval_let_decl returns the bound value; a compiled block must too.
+    // This was a live divergence in 0.37.0: `fn f() = { let x = 5 }`
+    // returned 5 interpreted and Unit compiled.
+    let src = r#"
+fn f(n) = { let x = n * 5 }
+f(1)
+f(1)
+f(1) + f(2)
+"#;
+    assert!(promotion_count(src, 2) >= 1);
+    assert_eq!(eval(src, Some(2)).unwrap(), Value::Integer(15));
+    assert_tier_transparent(src);
 }
 
 // ── struct shapes and inline caches ───────────────────────────────────

@@ -170,6 +170,13 @@ pub struct BytecodeCompiler {
     /// BytecodeVm::known_function_values).
     known_function_values: HashMap<String, crate::ast::Function>,
 
+    /// Set while compiling a named nested fn's pending body: (name, id,
+    /// real parameter count, capture count). A self-call must append the
+    /// body's own capture parameters — registers real..real+captures — or
+    /// recursion arrives without its captures (binary_search's nested `go`
+    /// recursed with 2 args into a 4-parameter body before this).
+    self_call: Option<(String, FunctionId, usize, usize)>,
+
     /// Lambdas with runtime captures met during this compile: each is the
     /// lambda body as a standalone declaration whose trailing parameters
     /// are the captured names, compiled by the VM after the enclosing
@@ -180,12 +187,14 @@ pub struct BytecodeCompiler {
 }
 
 /// A deferred lambda compile: its id, the body as a standalone declaration
-/// (captures as trailing parameters), and the declaration-time closure to
-/// compile it against.
+/// (captures as trailing parameters), the declaration-time closure to
+/// compile it against, and — for a named nested fn — its own name, bound
+/// to its own id during compilation so self-recursion resolves.
 type PendingLambda = (
     FunctionId,
     FunctionDecl,
     std::sync::Arc<im::HashMap<String, Value>>,
+    Option<(String, usize)>,
 );
 
 /// Bytecode optimization engine
@@ -1278,9 +1287,22 @@ impl BytecodeVm {
                 ));
             }
             let pending = std::mem::take(&mut self.compiler.pending_lambdas);
-            for (lambda_id, decl, lambda_closure) in pending {
+            for (lambda_id, decl, lambda_closure, self_binding) in pending {
                 self.compiler.enclosing_closure = lambda_closure;
-                let lambda_bytecode = Arc::new(self.compiler.compile_function(lambda_id, &decl)?);
+                // A named nested fn binds its own name through the
+                // self_call channel, which appends the body's own capture
+                // parameters to recursive calls.
+                self.compiler.self_call = self_binding.as_ref().map(|(name, captures)| {
+                    (
+                        name.clone(),
+                        lambda_id,
+                        decl.parameters.len() - captures,
+                        *captures,
+                    )
+                });
+                let compiled = self.compiler.compile_function(lambda_id, &decl);
+                self.compiler.self_call = None;
+                let lambda_bytecode = Arc::new(compiled?);
                 let idx = lambda_id.index();
                 if self.bytecode_hot.len() <= idx {
                     self.bytecode_hot.resize(idx + 1, None);
@@ -4043,6 +4065,7 @@ impl BytecodeCompiler {
             struct_defs: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
             known_function_values: HashMap::new(),
+            self_call: None,
             pending_lambdas: Vec::new(),
         }
     }
@@ -4575,6 +4598,23 @@ impl BytecodeCompiler {
                 };
 
                 let dst_reg = self.register_allocator.allocate_register();
+                // A nested fn calling ITSELF: CallFn to its own id, with the
+                // body's capture parameters appended so recursion keeps its
+                // captures.
+                if let Some((self_name, self_id, real_params, captures)) = &self.self_call {
+                    if *self_name == function_name {
+                        let mut full_args = arg_regs;
+                        for i in 0..*captures {
+                            full_args.push(Register((real_params + i) as u32));
+                        }
+                        self.emitter.instructions.push(Instruction::CallFn {
+                            dst: dst_reg,
+                            func_id: *self_id,
+                            args: full_args,
+                        });
+                        return Ok(dst_reg);
+                    }
+                }
                 // User functions shadow builtins (same order as the runtime
                 // path); resolving the id here removes the per-call name hash.
                 if let Some(&func_id) = self.function_registry.get(&function_name) {
@@ -4792,158 +4832,17 @@ impl BytecodeCompiler {
             // conservative treatment of names bound later.
             Expr::Lambda {
                 parameters, body, ..
-            } => {
-                // Only lambdas that reference nothing but their own parameters.
-                // Such a lambda is a compile-time constant: with no free
-                // variables, an empty closure is equivalent to whatever the
-                // interpreter would have captured.
-                if parameters.iter().any(|p| p.default_value.is_some()) {
-                    return Err(BytecodeError::CompilationFailed(
-                        "Lambda with default parameter values is not supported in the bytecode tier"
-                            .to_string(),
-                    ));
+            } => self.compile_lambda(parameters, body, None),
+
+            Expr::Tuple(items) => {
+                let mut element_regs = Vec::with_capacity(items.len());
+                for item in items.iter() {
+                    element_regs.push(self.compile_expression(item)?);
                 }
-
-                let bound: std::collections::HashSet<String> =
-                    parameters.iter().map(|p| p.name.clone()).collect();
-                let mut free = std::collections::HashSet::new();
-                if !Self::collect_free_vars(body, &bound, &mut free) {
-                    return Err(BytecodeError::CompilationFailed(
-                        "Lambda body uses constructs the bytecode tier cannot analyze".to_string(),
-                    ));
-                }
-
-                // Free variables split three ways. A name currently living
-                // in a register (a parameter or an already-bound local) is a
-                // RUNTIME capture: its value is snapshotted at the lambda
-                // expression by MakeClosure, the interpreter's own
-                // capture-by-value moment. A name in the declaration-time
-                // closure resolves identically in both tiers and is baked
-                // into the template. A name the enclosing function binds
-                // only LATER (in scope for the interpreter's resolution
-                // rules but with no register yet) refuses compilation.
-                let mut runtime_captures: Vec<(String, Register)> = Vec::new();
-                for name in &free {
-                    if let Some(&reg) = self.local_variables.get(name) {
-                        runtime_captures.push((name.clone(), reg));
-                    } else if self.function_registry.contains_key(name) {
-                        // A known user function (forward or mutual recursion
-                        // through the lambda): the compiled body calls it
-                        // through the registry — but the lambda's AST form
-                        // must still carry the function in its closure, or an
-                        // escaped copy (bridged to a builtin, returned to
-                        // interpreted code) hits "Undefined variable". The
-                        // template example caught exactly that. Attached
-                        // below via known_function_values; a registered name
-                        // with no recorded value refuses.
-                        if !self.known_function_values.contains_key(name) {
-                            return Err(BytecodeError::CompilationFailed(format!(
-                                "Lambda references function '{}' with no recorded value",
-                                name
-                            )));
-                        }
-                    } else if self.enclosing_bound_names.contains(name) {
-                        return Err(BytecodeError::CompilationFailed(format!(
-                            "Lambda captures '{}' before the enclosing function binds it",
-                            name
-                        )));
-                    } else if !self.enclosing_closure.contains_key(name) {
-                        // Not a local, not registered, not in the closure. It
-                        // may still be a user function declared LATER (mutual
-                        // recursion through the lambda): report it as an
-                        // unresolved callee so the tier's dependency
-                        // resolution can register and compile it, then retry.
-                        // A name that isn't a known function rejects there.
-                        return Err(BytecodeError::UnresolvedCallee(name.clone()));
-                    }
-                }
-                // Deterministic capture order regardless of hash iteration
-                runtime_captures.sort_by(|a, b| a.0.cmp(&b.0));
-
-                // Attach only the entries the lambda actually references.
-                // Attaching the full closure would defeat call_function's
-                // empty-closure fast path: every call of a trivial lambda
-                // would materialize the entire prelude into its environment.
-                let captured: im::HashMap<String, Value> = free
-                    .iter()
-                    .filter(|name| !runtime_captures.iter().any(|(n, _)| n == *name))
-                    .filter_map(|name| {
-                        if let Some(value) = self.enclosing_closure.get(name) {
-                            return Some((name.clone(), value.clone()));
-                        }
-                        // Registry-resolved function: carried as a value so
-                        // the escaped lambda resolves it interpreted too
-                        self.known_function_values
-                            .get(name)
-                            .map(|f| (name.clone(), Value::Function(f.clone())))
-                    })
-                    .collect();
-
-                let function = crate::ast::Function {
-                    name: None,
-                    parameters: parameters.clone(),
-                    body: std::sync::Arc::new((**body).clone()),
-                    // Values cloned from the enclosing snapshot — free
-                    // variables resolve identically in both tiers
-                    closure: std::sync::Arc::new(captured.clone()),
-                    param_bounds: Vec::new(),
-                };
-
-                if runtime_captures.is_empty() {
-                    // No runtime state: the lambda is a compile-time constant
-                    let const_idx = self
-                        .emitter
-                        .add_constant(OvmValue::new_ast_function(function));
-                    let dst_reg = self.register_allocator.allocate_register();
-                    self.emitter.emit_load_const(dst_reg, const_idx);
-                    return Ok(dst_reg);
-                }
-
-                // Runtime captures: compile the body once as a standalone
-                // function whose trailing parameters are the captured names
-                // (call with [args..., captures...]), deferred to the VM
-                // because the compiler's per-function state cannot nest.
-                let capture_names: Vec<String> =
-                    runtime_captures.iter().map(|(n, _)| n.clone()).collect();
-                let capture_regs: Vec<Register> =
-                    runtime_captures.iter().map(|(_, r)| *r).collect();
-
-                let mut hidden_params = parameters.clone();
-                for name in &capture_names {
-                    hidden_params.push(crate::ast::Parameter {
-                        name: name.clone(),
-                        type_annotation: None,
-                        default_value: None,
-                    });
-                }
-                let lambda_id = FunctionId::new();
-                self.pending_lambdas.push((
-                    lambda_id,
-                    FunctionDecl {
-                        name: "<lambda>".to_string(),
-                        type_params: Vec::new(),
-                        type_param_bounds: Vec::new(),
-                        parameters: hidden_params,
-                        return_type: None,
-                        body: (**body).clone(),
-                    },
-                    std::sync::Arc::new(captured),
-                ));
-
-                let template = crate::ovm::value::ClosureObject {
-                    template: function,
-                    capture_names,
-                    captured: Vec::new(),
-                    func_id: lambda_id,
-                };
-                let template_const = self
-                    .emitter
-                    .add_constant(OvmValue::new_closure(Arc::new(template)));
                 let dst_reg = self.register_allocator.allocate_register();
-                self.emitter.instructions.push(Instruction::MakeClosure {
+                self.emitter.instructions.push(Instruction::MakeTuple {
                     dst: dst_reg,
-                    template_const,
-                    captures: capture_regs,
+                    elements: element_regs,
                 });
                 Ok(dst_reg)
             }
@@ -5185,6 +5084,179 @@ impl BytecodeCompiler {
     /// Only the non-destructuring subset is supported; destructuring patterns
     /// (Ok/Err, lists, tuples, structs, enums) are rejected so the function
     /// stays on the interpreter rather than being miscompiled.
+    /// Compile a lambda or a named nested fn to a function value. With
+    /// `self_name`, the name is a self-binding: skipped in free-variable
+    /// analysis, bound to the pending body's own id during its compile
+    /// (so recursion is CallFn), and carried on the escaped AST form so
+    /// interpreted copies recurse through call-time self-definition.
+    fn compile_lambda(
+        &mut self,
+        parameters: &[crate::ast::Parameter],
+        body: &Expr,
+        self_name: Option<&str>,
+    ) -> Result<Register, BytecodeError> {
+        // Only lambdas that reference nothing but their own parameters.
+        // Such a lambda is a compile-time constant: with no free
+        // variables, an empty closure is equivalent to whatever the
+        // interpreter would have captured.
+        if parameters.iter().any(|p| p.default_value.is_some()) {
+            return Err(BytecodeError::CompilationFailed(
+                "Lambda with default parameter values is not supported in the bytecode tier"
+                    .to_string(),
+            ));
+        }
+
+        let bound: std::collections::HashSet<String> =
+            parameters.iter().map(|p| p.name.clone()).collect();
+        let mut free = std::collections::HashSet::new();
+        if !Self::collect_free_vars(body, &bound, &mut free) {
+            return Err(BytecodeError::CompilationFailed(
+                "Lambda body uses constructs the bytecode tier cannot analyze".to_string(),
+            ));
+        }
+
+        // Free variables split three ways. A name currently living
+        // in a register (a parameter or an already-bound local) is a
+        // RUNTIME capture: its value is snapshotted at the lambda
+        // expression by MakeClosure, the interpreter's own
+        // capture-by-value moment. A name in the declaration-time
+        // closure resolves identically in both tiers and is baked
+        // into the template. A name the enclosing function binds
+        // only LATER (in scope for the interpreter's resolution
+        // rules but with no register yet) refuses compilation.
+        let mut runtime_captures: Vec<(String, Register)> = Vec::new();
+        for name in &free {
+            if Some(name.as_str()) == self_name {
+                // The nested fn's own name: resolves to its own
+                // compiled id (bound during the pending compile), and
+                // the escaped form carries the name so interpreted
+                // recursion works through call_function's
+                // self-definition.
+                continue;
+            }
+            if let Some(&reg) = self.local_variables.get(name) {
+                runtime_captures.push((name.clone(), reg));
+            } else if self.function_registry.contains_key(name) {
+                // A known user function (forward or mutual recursion
+                // through the lambda): the compiled body calls it
+                // through the registry — but the lambda's AST form
+                // must still carry the function in its closure, or an
+                // escaped copy (bridged to a builtin, returned to
+                // interpreted code) hits "Undefined variable". The
+                // template example caught exactly that. Attached
+                // below via known_function_values; a registered name
+                // with no recorded value refuses.
+                if !self.known_function_values.contains_key(name) {
+                    return Err(BytecodeError::CompilationFailed(format!(
+                        "Lambda references function '{}' with no recorded value",
+                        name
+                    )));
+                }
+            } else if self.enclosing_bound_names.contains(name) {
+                return Err(BytecodeError::CompilationFailed(format!(
+                    "Lambda captures '{}' before the enclosing function binds it",
+                    name
+                )));
+            } else if !self.enclosing_closure.contains_key(name) {
+                // Not a local, not registered, not in the closure. It
+                // may still be a user function declared LATER (mutual
+                // recursion through the lambda): report it as an
+                // unresolved callee so the tier's dependency
+                // resolution can register and compile it, then retry.
+                // A name that isn't a known function rejects there.
+                return Err(BytecodeError::UnresolvedCallee(name.clone()));
+            }
+        }
+        // Deterministic capture order regardless of hash iteration
+        runtime_captures.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Attach only the entries the lambda actually references.
+        // Attaching the full closure would defeat call_function's
+        // empty-closure fast path: every call of a trivial lambda
+        // would materialize the entire prelude into its environment.
+        let captured: im::HashMap<String, Value> = free
+            .iter()
+            .filter(|name| !runtime_captures.iter().any(|(n, _)| n == *name))
+            .filter_map(|name| {
+                if let Some(value) = self.enclosing_closure.get(name) {
+                    return Some((name.clone(), value.clone()));
+                }
+                // Registry-resolved function: carried as a value so
+                // the escaped lambda resolves it interpreted too
+                self.known_function_values
+                    .get(name)
+                    .map(|f| (name.clone(), Value::Function(f.clone())))
+            })
+            .collect();
+
+        let function = crate::ast::Function {
+            name: self_name.map(|n| n.to_string()),
+            parameters: parameters.to_vec(),
+            body: std::sync::Arc::new(body.clone()),
+            // Values cloned from the enclosing snapshot — free
+            // variables resolve identically in both tiers
+            closure: std::sync::Arc::new(captured.clone()),
+            param_bounds: Vec::new(),
+        };
+
+        if runtime_captures.is_empty() && self_name.is_none() {
+            // No runtime state: the lambda is a compile-time constant
+            let const_idx = self
+                .emitter
+                .add_constant(OvmValue::new_ast_function(function));
+            let dst_reg = self.register_allocator.allocate_register();
+            self.emitter.emit_load_const(dst_reg, const_idx);
+            return Ok(dst_reg);
+        }
+
+        // Runtime captures: compile the body once as a standalone
+        // function whose trailing parameters are the captured names
+        // (call with [args..., captures...]), deferred to the VM
+        // because the compiler's per-function state cannot nest.
+        let capture_names: Vec<String> = runtime_captures.iter().map(|(n, _)| n.clone()).collect();
+        let capture_regs: Vec<Register> = runtime_captures.iter().map(|(_, r)| *r).collect();
+
+        let mut hidden_params = parameters.to_vec();
+        for name in &capture_names {
+            hidden_params.push(crate::ast::Parameter {
+                name: name.clone(),
+                type_annotation: None,
+                default_value: None,
+            });
+        }
+        let lambda_id = FunctionId::new();
+        self.pending_lambdas.push((
+            lambda_id,
+            FunctionDecl {
+                name: self_name.unwrap_or("<lambda>").to_string(),
+                type_params: Vec::new(),
+                type_param_bounds: Vec::new(),
+                parameters: hidden_params,
+                return_type: None,
+                body: body.clone(),
+            },
+            std::sync::Arc::new(captured),
+            self_name.map(|n| (n.to_string(), capture_names.len())),
+        ));
+
+        let template = crate::ovm::value::ClosureObject {
+            template: function,
+            capture_names,
+            captured: Vec::new(),
+            func_id: lambda_id,
+        };
+        let template_const = self
+            .emitter
+            .add_constant(OvmValue::new_closure(Arc::new(template)));
+        let dst_reg = self.register_allocator.allocate_register();
+        self.emitter.instructions.push(Instruction::MakeClosure {
+            dst: dst_reg,
+            template_const,
+            captures: capture_regs,
+        });
+        Ok(dst_reg)
+    }
+
     fn compile_pattern_test(
         &mut self,
         pattern: &crate::ast::Pattern,
@@ -5937,15 +6009,6 @@ impl BytecodeCompiler {
         match statement {
             crate::ast::Statement::Expression(expr) => self.compile_expression(expr),
             crate::ast::Statement::LetDecl(let_decl) => {
-                let name = match &let_decl.pattern {
-                    crate::ast::Pattern::Identifier(name) => name.clone(),
-                    other => {
-                        return Err(BytecodeError::CompilationFailed(format!(
-                            "Unsupported let pattern in bytecode tier: {:?}",
-                            std::mem::discriminant(other)
-                        )))
-                    }
-                };
                 let value_reg = match &let_decl.value {
                     Some(expr) => self.compile_expression(expr)?,
                     None => {
@@ -5955,34 +6018,39 @@ impl BytecodeCompiler {
                         reg
                     }
                 };
-                // Bind the name to its own register so later assignments
-                // don't clobber the (possibly shared) value register
-                let var_reg = self.register_allocator.allocate_register();
-                self.local_variables.insert(name, var_reg);
-                self.emitter.emit_move(var_reg, value_reg);
+                // Bind through the pattern machinery — an identifier binds
+                // (a fresh register, so later assignment doesn't clobber the
+                // shared value register), destructuring extracts, and a
+                // non-matching pattern raises the interpreter's
+                // PatternMatchFailed, exactly as eval_let_decl does.
+                let ok_label = self.emitter.create_label();
+                let fail_label = self.emitter.create_label();
+                self.compile_pattern_test(&let_decl.pattern, value_reg, fail_label)?;
+                self.emitter.emit_jump(ok_label);
+                self.emitter.place_label(fail_label);
+                self.emitter.instructions.push(Instruction::MatchFail);
+                self.emitter.place_label(ok_label);
 
-                // Let evaluates to Unit
-                let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));
-                let dst_reg = self.register_allocator.allocate_register();
-                self.emitter.emit_load_const(dst_reg, const_idx);
-                Ok(dst_reg)
+                // A let evaluates to the bound value — the interpreter's
+                // eval_let_decl returns it, observable when a block ends in
+                // a let. (This used to yield Unit: a real divergence, caught
+                // while extending let patterns.)
+                Ok(value_reg)
             }
             crate::ast::Statement::FunctionDecl(decl) => {
-                // A nested fn is a named closure over the current frame:
-                // compile the equivalent lambda (runtime captures via
-                // MakeClosure, declaration constants baked) and bind the
-                // name. Self-recursive nested fns refuse via the lambda
-                // machinery's bound-names rule.
-                let lambda = Expr::Lambda {
-                    parameters: decl.parameters.clone(),
-                    body: Box::new(decl.body.clone()),
-                    return_type: None,
-                };
-                let value_reg = self.compile_expression(&lambda)?;
+                // A nested fn is a NAMED closure over the current frame:
+                // compiled through the lambda machinery with its own name as
+                // a self-binding, so recursion resolves to its own compiled
+                // id and an escaped copy (which carries the name) recurses
+                // interpreted via the call-time self-definition.
+                let value_reg =
+                    self.compile_lambda(&decl.parameters, &decl.body, Some(&decl.name))?;
                 let var_reg = self.register_allocator.allocate_register();
                 self.local_variables.insert(decl.name.clone(), var_reg);
                 self.emitter.emit_move(var_reg, value_reg);
-                self.unit_register()
+                // The declaration evaluates to the function value, as
+                // eval_function_decl returns it
+                Ok(var_reg)
             }
             other => Err(BytecodeError::CompilationFailed(format!(
                 "Unsupported statement in bytecode tier: {:?}",

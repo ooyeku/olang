@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **The corpus tail: self-recursive nested fns, tuples, and a live
+  divergence.** Self-recursive nested `fn` declarations compile — the
+  name binds to its own compiled id during the body's compile (recursion
+  is a direct `CallFn`), with the body's capture parameters appended to
+  each recursive call, and the escaped form carries the name so
+  interpreted copies recurse through call-time self-definition. The
+  capture-appending detail was found the honest way: 03_algorithms'
+  `binary_search` recursed 2 arguments into a 4-parameter body at
+  runtime; the fix is pinned by a test. Tuple *expressions* compile (the
+  instruction existed; the compiler arm didn't), and `let` destructuring
+  goes through the full pattern machinery — tuples, lists, structs,
+  enums — with a non-matching let raising the interpreter's
+  PatternMatchFailed. And extending `let` exposed a **live divergence in
+  0.37.0**: the interpreter's `let` evaluates to the bound value
+  (observable when a block ends in one — `fn f() = { let x = 5 }`
+  returns 5), but the compiled form yielded Unit; nested-fn declarations
+  had the same gap. Both fixed and pinned. **Corpus: promoted 152 → 158,
+  rejections 14 → 6** — the six survivors are async (`spawn`, promises)
+  and global assignment, all by-design refusals.
+
 ## [0.37.0] - 2026-08-09
 
 ### Added

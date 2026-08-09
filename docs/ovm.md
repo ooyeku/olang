@@ -90,7 +90,13 @@ A function is eligible when its body uses only the subset the VM implements:
   (String raw; Int/Float/Bool via to_string; everything else through the
   value's display form)
 - nested `fn` declarations, compiled as named closures over the current
-  frame (self-recursive ones refuse and stay interpreted)
+  frame — including self-recursive ones, whose recursion resolves to
+  their own compiled id (with captures carried through each recursive
+  call) and whose escaped copies recurse interpreted through the
+  carried name
+- tuple expressions and `let` destructuring through the full pattern
+  machinery — a non-matching let raises the interpreter's
+  PatternMatchFailed
 - free identifiers that resolve in the function's own closure — global
   constants, module-level bindings, and named functions passed as values —
   baked as constants. Sound because the interpreter installs exactly that
@@ -368,9 +374,7 @@ These are real gaps, not oversights:
    for an expression with side effects. Pure receivers — locals, field
    chains, literals — compile (see below).
 2. ***Assigning* to a global is uncompiled** (reads bake as snapshot
-   constants). Self-recursive *nested* `fn` declarations refuse (the
-   name binds after the closure is built); non-recursive nested fns
-   compile. Async constructs (`spawn`, `await`, promises) stay
+   constants). Async constructs (`spawn`, `await`, promises) stay
    interpreted.
 3. **Bridged builtin calls cost a value round trip.** Builtins outside
    the native set convert arguments and results between the OVM and AST
