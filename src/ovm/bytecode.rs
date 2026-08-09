@@ -1203,7 +1203,7 @@ impl BytecodeVm {
             ValueData::Builtin(_) => "Builtin",
             ValueData::Struct(s) => s.type_name(),
             ValueData::Range(_) => "Range",
-            ValueData::Result { .. } => "Result",
+            ValueData::Result(_) => "Result",
             ValueData::Unit => "Unit",
             ValueData::Enum(e) => &e.type_name,
             ValueData::Map(_) => "Map",
@@ -2242,11 +2242,11 @@ impl BytecodeVm {
                 } => {
                     use crate::ovm::value::ValueData;
                     let matches = match &self.execution_state.register_ref(*value)?.data {
-                        ValueData::Result { ok, err } => {
+                        ValueData::Result(r) => {
                             if *want_ok {
-                                ok.is_some()
+                                r.ok.is_some()
                             } else {
-                                err.is_some()
+                                r.err.is_some()
                             }
                         }
                         _ => false,
@@ -2262,9 +2262,9 @@ impl BytecodeVm {
                 } => {
                     use crate::ovm::value::ValueData;
                     let inner = match &self.execution_state.register_ref(*value)?.data {
-                        ValueData::Result { ok, err } => {
-                            let side = if *want_ok { ok } else { err };
-                            side.as_ref().map(|boxed| (**boxed).clone())
+                        ValueData::Result(r) => {
+                            let side = if *want_ok { &r.ok } else { &r.err };
+                            side.as_ref().map(|v| v.clone_simple())
                         }
                         _ => None,
                     };

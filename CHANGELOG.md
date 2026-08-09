@@ -47,6 +47,18 @@ documented.
   property tests against naive references plus 12 tier-transparency
   integration tests (tests/ods_series_test.rs).
 
+- **Value-model slimming: OvmValue 32 -> 16 bytes — the P3 probe.** The
+  roadmap prescribed removing the per-value header first as a cheap
+  probe before NaN-boxing, and the probe paid: the ValueHeader (type
+  tag, tier, lazy state) was fully dead — the tag derivable from the
+  data, the tier never read, and no constructor ever produced a lazy
+  value — yet its 8 bytes copied on every register move. With it gone,
+  the lazy-forcing scaffolding went too, the two-slot Result variant
+  packed behind one Arc, and (in the ods workstream, coordinated) the
+  NativeHandle went thin, landing OvmValue at exactly 16 bytes, pinned
+  by a size test. **N-body: 400ms -> ~350ms (-13%)** purely from
+  layout; every differential suite byte-identical. The remaining rung
+  is NaN-boxing proper (16 -> 8), now with measured grounds.
 - **JIT call-graph groups: cross-function native calls.** The
   self-call-only restriction is gone. On a function's first call the
   JIT plans every function reachable through its CallFn sites, runs

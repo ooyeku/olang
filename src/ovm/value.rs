@@ -11,37 +11,34 @@ use std::sync::{Arc, Mutex};
 
 use crate::ast::{Expr, Value};
 
+/// Ok/Err payloads behind the Result variant's single Arc.
+#[derive(Debug)]
+pub struct ResultObject {
+    pub ok: Option<OvmValue>,
+    pub err: Option<OvmValue>,
+}
+
 /// Unified value representation for the OVM
 #[derive(Debug)]
 #[repr(C)]
 pub struct OvmValue {
-    /// GC and execution metadata
-    pub header: ValueHeader,
-
-    /// Actual value data
+    /// Actual value data. The old ValueHeader (type tag, tier, lazy state)
+    /// is gone: the tag is derivable from the data, the tier was never
+    /// read, and no constructor ever produced a lazy value — it was 8
+    /// bytes copied on every register move for nothing.
     pub data: ValueData,
 }
 
-/// Value metadata. Kept deliberately small and Copy: it is cloned on every
-/// register read in the bytecode dispatch loop.
-///
-/// The mark bits, refcount, age, and force counters of the old tracing-GC
-/// header are gone — Arc payloads handle reclamation, and the atomics made
-/// every value clone measurably more expensive.
+/// Type tags for fast runtime type checking
+/// Which tier produced or owns a compiled artifact. (Formerly part of
+/// the per-value header; now only compilation metadata uses it.)
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(C)]
-pub struct ValueHeader {
-    /// Value type tag for fast type checking
-    pub type_tag: TypeTag,
-
-    /// Current execution tier for this value
-    pub tier: ExecutionTier,
-
-    /// Lazy evaluation state
-    pub lazy_state: LazyState,
+pub enum ExecutionTier {
+    Interpreter = 0,
+    Bytecode = 1,
 }
 
-/// Type tags for fast runtime type checking
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TypeTag {
@@ -78,43 +75,6 @@ pub enum TypeTag {
 
     // Values owned by OVM modules (ods arrays, ...)
     Native = 60,
-}
-
-/// Execution tier for values
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum ExecutionTier {
-    /// Interpreted execution
-    Interpreter = 0,
-
-    /// Bytecode VM execution
-    Bytecode = 1,
-
-    /// JIT-compiled native code
-    Native = 2,
-
-    /// Mixed execution (e.g., lazy boundaries)
-    Hybrid = 3,
-}
-
-/// Lazy evaluation state
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum LazyState {
-    /// Value is computed and available
-    Eager = 0,
-
-    /// Value is lazy and not yet computed
-    Lazy = 1,
-
-    /// Value is currently being computed
-    Forcing = 2,
-
-    /// Value was lazy but is now cached
-    Cached = 3,
-
-    /// Value represents a stream/sequence
-    Stream = 4,
 }
 
 /// Value data variants
@@ -173,10 +133,9 @@ pub enum ValueData {
 
     // Error handling
     Error(Arc<ErrorObject>),
-    Result {
-        ok: Option<Box<OvmValue>>,
-        err: Option<Box<OvmValue>>,
-    },
+    /// Ok/Err behind one Arc so the variant is pointer-sized — the
+    /// two-slot inline form made every OvmValue 24 bytes instead of 16.
+    Result(Arc<ResultObject>),
 
     /// A value owned by an OVM module: the *same* Arc the interpreter's
     /// `Value::Native` holds, so the tier boundary is a refcount bump and
@@ -718,7 +677,7 @@ impl Clone for OvmValue {
 impl PartialEq for OvmValue {
     fn eq(&self, other: &Self) -> bool {
         // Compare type tags first for quick rejection
-        if self.header.type_tag as u8 != other.header.type_tag as u8 {
+        if std::mem::discriminant(&self.data) != std::mem::discriminant(&other.data) {
             return false;
         }
 
@@ -739,18 +698,9 @@ impl PartialEq for OvmValue {
                 a.start == b.start && a.end == b.end && a.inclusive == b.inclusive
             }
 
-            (
-                ValueData::Result {
-                    ok: a_ok,
-                    err: a_err,
-                },
-                ValueData::Result {
-                    ok: b_ok,
-                    err: b_err,
-                },
-            ) => match (a_ok, a_err, b_ok, b_err) {
-                (Some(a_val), None, Some(b_val), None) => a_val.as_ref() == b_val.as_ref(),
-                (None, Some(a_val), None, Some(b_val)) => a_val.as_ref() == b_val.as_ref(),
+            (ValueData::Result(a), ValueData::Result(b)) => match (&a.ok, &a.err, &b.ok, &b.err) {
+                (Some(a_val), None, Some(b_val), None) => a_val == b_val,
+                (None, Some(a_val), None, Some(b_val)) => a_val == b_val,
                 (None, None, None, None) => true,
                 _ => false,
             },
@@ -784,11 +734,6 @@ impl OvmValue {
     #[inline]
     pub fn new_integer(value: i64) -> Self {
         Self {
-            header: ValueHeader::new(
-                TypeTag::Integer,
-                ExecutionTier::Interpreter,
-                LazyState::Eager,
-            ),
             data: ValueData::Integer(value),
         }
     }
@@ -797,7 +742,6 @@ impl OvmValue {
     #[inline]
     pub fn new_float(value: f64) -> Self {
         Self {
-            header: ValueHeader::new(TypeTag::Float, ExecutionTier::Interpreter, LazyState::Eager),
             data: ValueData::Float(value),
         }
     }
@@ -806,11 +750,6 @@ impl OvmValue {
     #[inline]
     pub fn new_boolean(value: bool) -> Self {
         Self {
-            header: ValueHeader::new(
-                TypeTag::Boolean,
-                ExecutionTier::Interpreter,
-                LazyState::Eager,
-            ),
             data: ValueData::Boolean(value),
         }
     }
@@ -818,7 +757,6 @@ impl OvmValue {
     /// Create a new unit value
     pub fn new_unit() -> Self {
         Self {
-            header: ValueHeader::new(TypeTag::Unit, ExecutionTier::Interpreter, LazyState::Eager),
             data: ValueData::Unit,
         }
     }
@@ -837,25 +775,21 @@ impl OvmValue {
         match &self.data {
             ValueData::Integer(i) => {
                 return Self {
-                    header: self.header,
                     data: ValueData::Integer(*i),
                 }
             }
             ValueData::Float(f) => {
                 return Self {
-                    header: self.header,
                     data: ValueData::Float(*f),
                 }
             }
             ValueData::Boolean(b) => {
                 return Self {
-                    header: self.header,
                     data: ValueData::Boolean(*b),
                 }
             }
             ValueData::Unit => {
                 return Self {
-                    header: self.header,
                     data: ValueData::Unit,
                 }
             }
@@ -890,331 +824,63 @@ impl OvmValue {
             ValueData::CompiledFunction(p) => ValueData::CompiledFunction(p.clone()),
             ValueData::OptimizedValue(p) => ValueData::OptimizedValue(p.clone()),
             ValueData::Error(p) => ValueData::Error(p.clone()),
-            ValueData::Result { ok, err } => ValueData::Result {
-                ok: ok.clone(),
-                err: err.clone(),
-            },
+            ValueData::Result(p) => ValueData::Result(p.clone()),
         };
-        Self {
-            header: self.header,
-            data,
+        Self { data }
+    }
+
+    /// Get the type tag of this value, derived from the data itself
+    /// (reproducing exactly the tags the removed constructors assigned).
+    pub fn type_tag(&self) -> TypeTag {
+        match &self.data {
+            ValueData::Integer(_) => TypeTag::Integer,
+            ValueData::Float(_) => TypeTag::Float,
+            ValueData::Boolean(_) => TypeTag::Boolean,
+            ValueData::Unit => TypeTag::Unit,
+            ValueData::String(_) => TypeTag::String,
+            ValueData::List(_) | ValueData::LazyList(_) => TypeTag::List,
+            ValueData::Tuple(_) => TypeTag::Tuple,
+            ValueData::Function(_)
+            | ValueData::AstFunction(_)
+            | ValueData::Closure(_)
+            | ValueData::CompiledFunction(_) => TypeTag::Function,
+            ValueData::Range(_) => TypeTag::Range,
+            ValueData::Builtin(_) => TypeTag::Builtin,
+            ValueData::Promise(_) => TypeTag::Promise,
+            ValueData::Thunk(_) => TypeTag::Thunk,
+            ValueData::Stream(_) => TypeTag::Stream,
+            ValueData::Native(_) => TypeTag::Native,
+            ValueData::Result(_) => TypeTag::Result,
+            ValueData::Enum(_)
+            | ValueData::Map(_)
+            | ValueData::Struct(_)
+            | ValueData::OptimizedValue(_)
+            | ValueData::Error(_) => TypeTag::Struct,
         }
     }
 
-    /// Get the type tag of this value
-    pub fn type_tag(&self) -> TypeTag {
-        self.header.type_tag
-    }
-
-    /// Check if this value is lazy
+    /// Lazy values no longer exist (no constructor ever produced one).
     pub fn is_lazy(&self) -> bool {
-        matches!(self.header.lazy_state, LazyState::Lazy | LazyState::Stream)
+        false
     }
 
     /// Check if this value is immediate (no heap allocation)
     pub fn is_immediate(&self) -> bool {
         matches!(
-            self.header.type_tag,
+            self.type_tag(),
             TypeTag::Integer | TypeTag::Float | TypeTag::Boolean | TypeTag::Unit
         )
     }
 
-    /// Force evaluation of lazy values
+    /// Lazy forcing is gone with the header; nothing constructs lazy values.
     pub fn force(&mut self) -> Result<(), RuntimeError> {
-        if !self.is_lazy() {
-            return Ok(());
-        }
-
-        // Handle different lazy value types based on lazy state
-        let lazy_state = self.header.lazy_state;
-        match lazy_state {
-            LazyState::Lazy => {
-                // Extract the data temporarily to avoid borrowing issues
-                match &self.data {
-                    ValueData::Thunk(thunk_ptr) => {
-                        let thunk_ptr_copy = thunk_ptr.clone();
-                        self.force_thunk_impl(thunk_ptr_copy)?;
-                    }
-                    ValueData::LazyList(lazy_list_ptr) => {
-                        let lazy_list_ptr_copy = lazy_list_ptr.clone();
-                        self.force_lazy_list_impl(lazy_list_ptr_copy)?;
-                    }
-                    _ => {}
-                }
-            }
-            LazyState::Stream => {
-                // Streams remain lazy but may buffer more data
-                if let ValueData::Stream(stream_ptr) = &self.data {
-                    let stream_ptr_copy = stream_ptr.clone();
-                    self.advance_stream_buffer_impl(stream_ptr_copy)?;
-                }
-            }
-            _ => {}
-        }
         Ok(())
     }
 
-    /// Force evaluation of a thunk with memoization
-    fn force_thunk_impl(&mut self, thunk_ptr: Arc<ThunkObject>) -> Result<(), RuntimeError> {
-        // Prevent infinite recursion
-        if self.header.lazy_state == LazyState::Forcing {
-            return Err(RuntimeError::new("Circular thunk dependency detected"));
-        }
-
-        // Set forcing state
-        self.header.lazy_state = LazyState::Forcing;
-
-        // Access the thunk safely
-        let thunk_ref = &*thunk_ptr;
-
-        // Check if already memoized (with lock)
-        {
-            let memoized_guard = thunk_ref.memoized_value.lock().map_err(|_| {
-                RuntimeError::ConcurrencyError("Failed to acquire thunk lock".to_string())
-            })?;
-
-            if let Some(memoized) = &*memoized_guard {
-                // Use memoized value - create a simple copy instead of clone
-                match &memoized.data {
-                    ValueData::Integer(i) => self.data = ValueData::Integer(*i),
-                    ValueData::Float(f) => self.data = ValueData::Float(*f),
-                    ValueData::Boolean(b) => self.data = ValueData::Boolean(*b),
-                    ValueData::Unit => self.data = ValueData::Unit,
-                    _ => self.data = ValueData::Unit, // Fallback for complex types
-                }
-                self.header.type_tag = memoized.header.type_tag;
-                self.header.lazy_state = LazyState::Cached;
-                return Ok(());
-            }
-        }
-
-        // Evaluate the thunk
-        let evaluated_value = self.evaluate_thunk_expression(thunk_ref)?;
-
-        // Memoize the result in the thunk (with lock)
-        {
-            let mut memoized_guard = thunk_ref.memoized_value.lock().map_err(|_| {
-                RuntimeError::ConcurrencyError("Failed to acquire thunk lock".to_string())
-            })?;
-            *memoized_guard = Some(evaluated_value.clone_simple());
-        }
-
-        // Update this value with the result
-        match evaluated_value.data {
-            ValueData::Integer(i) => self.data = ValueData::Integer(i),
-            ValueData::Float(f) => self.data = ValueData::Float(f),
-            ValueData::Boolean(b) => self.data = ValueData::Boolean(b),
-            ValueData::Unit => self.data = ValueData::Unit,
-            data => self.data = data, // For other types that can be moved
-        }
-        self.header.type_tag = evaluated_value.header.type_tag;
-        self.header.lazy_state = LazyState::Cached;
-
-        Ok(())
-    }
-
-    /// Force evaluation of a lazy list
-    fn force_lazy_list_impl(
-        &mut self,
-        lazy_list_ptr: Arc<LazyListObject>,
-    ) -> Result<(), RuntimeError> {
-        // For now, materialize a reasonable prefix of the lazy list
-        let chunk_size = 100; // Configurable chunk size
-
-        let lazy_list_ref = &*lazy_list_ptr;
-
-        // Use locks to safely access and modify the materialized data
-        let mut materialized_guard = lazy_list_ref.materialized_prefix.lock().map_err(|_| {
-            RuntimeError::ConcurrencyError("Failed to acquire lazy list lock".to_string())
-        })?;
-        let mut materialization_point_guard =
-            lazy_list_ref.materialization_point.lock().map_err(|_| {
-                RuntimeError::ConcurrencyError(
-                    "Failed to acquire materialization point lock".to_string(),
-                )
-            })?;
-
-        // If we haven't materialized anything yet, start materializing
-        if materialized_guard.is_empty() {
-            match &lazy_list_ref.transformation {
-                TransformationChain::Identity => {
-                    // Copy from source - simplified implementation
-                    if let ValueData::List(source_list) = &lazy_list_ref.source.data {
-                        let mut materialized = 0;
-                        for item in source_list.iter().take(chunk_size) {
-                            materialized_guard.push(item.clone());
-                            materialized += 1;
-                        }
-                        *materialization_point_guard = materialized;
-                    }
-                }
-                TransformationChain::Map(_map_fn) => {
-                    // Apply map transformation - simplified for now
-                    if let ValueData::List(source_list) = &lazy_list_ref.source.data {
-                        let mut materialized = 0;
-                        for item in source_list.iter().take(chunk_size) {
-                            materialized_guard.push(item.clone());
-                            materialized += 1;
-                        }
-                        *materialization_point_guard = materialized;
-                    }
-                }
-                TransformationChain::Filter(_filter_fn) => {
-                    // Apply filter transformation - simplified for now
-                    if let ValueData::List(source_list) = &lazy_list_ref.source.data {
-                        let mut materialized = 0;
-                        for item in source_list.iter().take(chunk_size) {
-                            materialized_guard.push(item.clone());
-                            materialized += 1;
-                        }
-                        *materialization_point_guard = materialized;
-                    }
-                }
-                TransformationChain::Chain(_first, _second) => {
-                    // Apply chained transformations - simplified for now
-                    if let ValueData::List(source_list) = &lazy_list_ref.source.data {
-                        let mut materialized = 0;
-                        for item in source_list.iter().take(chunk_size) {
-                            materialized_guard.push(item.clone());
-                            materialized += 1;
-                        }
-                        *materialization_point_guard = materialized;
-                    }
-                }
-            }
-        }
-
-        // Convert the lazy list to a regular list with materialized items
-        // For now, create a simplified result
-        if !materialized_guard.is_empty() {
-            // Take the first item as a representative result (simplified)
-            let first_item = materialized_guard[0].clone();
-            self.data = first_item.data;
-            self.header = first_item.header;
-        }
-        self.header.type_tag = TypeTag::List;
-        self.header.lazy_state = LazyState::Cached;
-
-        Ok(())
-    }
-
-    /// Advance stream buffer for better performance
-    fn advance_stream_buffer_impl(
-        &mut self,
-        stream_ptr: Arc<StreamObject>,
-    ) -> Result<(), RuntimeError> {
-        let stream_ref = &*stream_ptr;
-
-        // Use locks to safely access and modify the stream data
-        let mut buffer_guard = stream_ref.buffer.lock().map_err(|_| {
-            RuntimeError::ConcurrencyError("Failed to acquire stream buffer lock".to_string())
-        })?;
-        let position_guard = stream_ref.buffer_position.lock().map_err(|_| {
-            RuntimeError::ConcurrencyError("Failed to acquire stream position lock".to_string())
-        })?;
-        let mut generator_guard = stream_ref.generator.lock().map_err(|_| {
-            RuntimeError::ConcurrencyError("Failed to acquire stream generator lock".to_string())
-        })?;
-
-        // Buffer more items if buffer is getting low
-        let buffer_threshold = stream_ref.chunk_size / 2;
-        if buffer_guard.len() - *position_guard < buffer_threshold {
-            let items_to_generate = stream_ref.chunk_size;
-
-            for _ in 0..items_to_generate {
-                match &mut *generator_guard {
-                    GeneratorFunction::Range { start, end, step } => {
-                        // Honor the step direction — a descending range
-                        // (negative step) never satisfies `start < end`
-                        let in_range = if *step >= 0 {
-                            *start < *end
-                        } else {
-                            *start > *end
-                        };
-                        if in_range {
-                            let value = OvmValue::new_integer(*start);
-                            buffer_guard.push(value);
-                            *start += *step;
-                        } else {
-                            break; // End of range
-                        }
-                    }
-                    GeneratorFunction::Map {
-                        source: _source,
-                        function: _function,
-                    } => {
-                        // Simplified - would need interpreter context for function calls
-                        break;
-                    }
-                    GeneratorFunction::Filter {
-                        source: _source,
-                        predicate: _predicate,
-                    } => {
-                        // Simplified - would need interpreter context for predicate calls
-                        break;
-                    }
-                    GeneratorFunction::Custom {
-                        function: _function,
-                    } => {
-                        // Simplified - would need interpreter context for function calls
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Evaluate thunk expression (simplified version)
-    fn evaluate_thunk_expression(&self, thunk: &ThunkObject) -> Result<OvmValue, RuntimeError> {
-        // For now, return a simple computed value based on the expression
-        // In a full implementation, this would use the interpreter with the thunk's environment
-        match &thunk.expression {
-            Expr::Integer(value) => Ok(OvmValue::new_integer(*value)),
-            Expr::Float(value) => Ok(OvmValue::new_float(*value)),
-            Expr::Boolean(value) => Ok(OvmValue::new_boolean(*value)),
-            Expr::String(value) => Ok(OvmValue::new_string((**value).clone())),
-            Expr::BinaryOp { left, op, right } => {
-                // Simplified binary operation evaluation
-                if let (Expr::Integer(a), Expr::Integer(b)) = (left.as_ref(), right.as_ref()) {
-                    match op {
-                        crate::ast::BinaryOp::Add => Ok(OvmValue::new_integer(a + b)),
-                        crate::ast::BinaryOp::Subtract => Ok(OvmValue::new_integer(a - b)),
-                        crate::ast::BinaryOp::Multiply => Ok(OvmValue::new_integer(a * b)),
-                        crate::ast::BinaryOp::Divide => {
-                            if *b != 0 {
-                                Ok(OvmValue::new_integer(a / b))
-                            } else {
-                                Err(RuntimeError::new("Division by zero"))
-                            }
-                        }
-                        _ => Ok(OvmValue::new_integer(*a)), // Fallback
-                    }
-                } else {
-                    Ok(OvmValue::new_unit())
-                }
-            }
-            _ => Ok(OvmValue::new_unit()), // Fallback for complex expressions
-        }
-    }
-
-    /// Convert AST value to OVM value (simplified)
-    fn _convert_ast_value_to_ovm(&self, _value: Value) -> OvmValue {
-        // This method is currently unused but kept for future use
-        OvmValue::new_unit()
-    }
-
-    /// Create a new string value using simplified GC allocation
     pub fn new_string(value: String) -> Self {
         let gc_ptr = Arc::new(value);
 
         Self {
-            header: ValueHeader::new(
-                TypeTag::String,
-                ExecutionTier::Interpreter,
-                LazyState::Eager,
-            ),
             data: ValueData::String(gc_ptr),
         }
     }
@@ -1224,7 +890,6 @@ impl OvmValue {
         let gc_ptr = Arc::new(values);
 
         Self {
-            header: ValueHeader::new(TypeTag::List, ExecutionTier::Interpreter, LazyState::Eager),
             data: ValueData::List(gc_ptr),
         }
     }
@@ -1242,11 +907,6 @@ impl OvmValue {
         let gc_ptr = Arc::new(builtin_obj);
 
         Self {
-            header: ValueHeader::new(
-                TypeTag::Builtin,
-                ExecutionTier::Interpreter,
-                LazyState::Eager,
-            ),
             data: ValueData::Builtin(gc_ptr),
         }
     }
@@ -1270,7 +930,7 @@ impl OvmValue {
             ValueData::Builtin(ptr) => ptr.execute(args),
             _ => Err(RuntimeError::TypeError {
                 expected: "builtin function".to_string(),
-                found: format!("{:?}", self.header.type_tag),
+                found: format!("{:?}", self.type_tag()),
             }),
         }
     }
@@ -1317,27 +977,17 @@ impl OvmValue {
             }
 
             Value::Ok(value) => Self {
-                header: ValueHeader::new(
-                    TypeTag::Result,
-                    ExecutionTier::Interpreter,
-                    LazyState::Eager,
-                ),
-                data: ValueData::Result {
-                    ok: Some(Box::new(Self::from_ast(*value))),
+                data: ValueData::Result(Arc::new(ResultObject {
+                    ok: Some(Self::from_ast(*value)),
                     err: None,
-                },
+                })),
             },
 
             Value::Err(value) => Self {
-                header: ValueHeader::new(
-                    TypeTag::Result,
-                    ExecutionTier::Interpreter,
-                    LazyState::Eager,
-                ),
-                data: ValueData::Result {
+                data: ValueData::Result(Arc::new(ResultObject {
                     ok: None,
-                    err: Some(Box::new(Self::from_ast(*value))),
-                },
+                    err: Some(Self::from_ast(*value)),
+                })),
             },
 
             Value::Range {
@@ -1356,11 +1006,6 @@ impl OvmValue {
                 let gc_ptr = Arc::new(range_obj);
 
                 Self {
-                    header: ValueHeader::new(
-                        TypeTag::Range,
-                        ExecutionTier::Interpreter,
-                        LazyState::Eager,
-                    ),
                     data: ValueData::Range(gc_ptr),
                 }
             }
@@ -1375,11 +1020,6 @@ impl OvmValue {
                 let gc_ptr = Arc::new(struct_obj);
 
                 Self {
-                    header: ValueHeader::new(
-                        TypeTag::Struct,
-                        ExecutionTier::Interpreter,
-                        LazyState::Eager,
-                    ),
                     data: ValueData::Struct(gc_ptr),
                 }
             }
@@ -1430,11 +1070,6 @@ impl OvmValue {
                 let gc_ptr = Arc::new(promise_obj);
 
                 Self {
-                    header: ValueHeader::new(
-                        TypeTag::Promise,
-                        ExecutionTier::Interpreter,
-                        LazyState::Eager,
-                    ),
                     data: ValueData::Promise(gc_ptr),
                 }
             }
@@ -1456,11 +1091,6 @@ impl OvmValue {
             // The same Arc, shared verbatim: crossing the boundary is a
             // refcount bump, never a conversion.
             Value::Native(handle) => Self {
-                header: ValueHeader::new(
-                    TypeTag::Native,
-                    ExecutionTier::Interpreter,
-                    LazyState::Eager,
-                ),
                 data: ValueData::Native(handle),
             },
         }
@@ -1475,9 +1105,7 @@ impl OvmValue {
         safepoint_manager.check_safepoint();
 
         // Convert from AST using the standard method
-        let mut ovm_value = Self::from_ast(ast_value);
-
-        ovm_value.header.tier = ExecutionTier::Interpreter; // Start at interpreter tier
+        let ovm_value = Self::from_ast(ast_value);
 
         // Record allocation with safepoint manager
         let allocation_size = std::mem::size_of::<OvmValue>()
@@ -1506,7 +1134,6 @@ impl OvmValue {
     /// Wrap a map value.
     pub fn new_map(map: Arc<HashMap<String, OvmValue>>) -> Self {
         Self {
-            header: ValueHeader::new(TypeTag::Struct, ExecutionTier::Bytecode, LazyState::Eager),
             data: ValueData::Map(map),
         }
     }
@@ -1514,7 +1141,6 @@ impl OvmValue {
     /// Wrap an enum value.
     pub fn new_enum(obj: Arc<EnumObject>) -> Self {
         Self {
-            header: ValueHeader::new(TypeTag::Struct, ExecutionTier::Bytecode, LazyState::Eager),
             data: ValueData::Enum(obj),
         }
     }
@@ -1522,7 +1148,6 @@ impl OvmValue {
     /// Wrap a struct object built by MakeStruct.
     pub fn new_struct(obj: Arc<StructObject>) -> Self {
         Self {
-            header: ValueHeader::new(TypeTag::Struct, ExecutionTier::Bytecode, LazyState::Eager),
             data: ValueData::Struct(obj),
         }
     }
@@ -1530,7 +1155,6 @@ impl OvmValue {
     /// Wrap a runtime closure built by MakeClosure.
     pub fn new_closure(closure: Arc<ClosureObject>) -> Self {
         Self {
-            header: ValueHeader::new(TypeTag::Function, ExecutionTier::Bytecode, LazyState::Eager),
             data: ValueData::Closure(closure),
         }
     }
@@ -1538,11 +1162,6 @@ impl OvmValue {
     /// Wrap an interpreter function verbatim so it converts back unchanged.
     pub fn new_ast_function(func: crate::ast::Function) -> Self {
         Self {
-            header: ValueHeader::new(
-                TypeTag::Function,
-                ExecutionTier::Interpreter,
-                LazyState::Eager,
-            ),
             data: ValueData::AstFunction(Arc::new(func)),
         }
     }
@@ -1555,15 +1174,10 @@ impl OvmValue {
             (None, Some(Box::new(inner)))
         };
         Self {
-            header: ValueHeader::new(
-                TypeTag::Result,
-                ExecutionTier::Interpreter,
-                LazyState::Eager,
-            ),
-            data: ValueData::Result {
-                ok: ok_slot,
-                err: err_slot,
-            },
+            data: ValueData::Result(Arc::new(ResultObject {
+                ok: ok_slot.map(|b| *b),
+                err: err_slot.map(|b| *b),
+            })),
         }
     }
 
@@ -1572,7 +1186,6 @@ impl OvmValue {
         let gc_ptr = Arc::new(values);
 
         Self {
-            header: ValueHeader::new(TypeTag::Tuple, ExecutionTier::Interpreter, LazyState::Eager),
             data: ValueData::Tuple(gc_ptr),
         }
     }
@@ -1695,26 +1308,16 @@ impl OvmValue {
             ValueData::Error(gc_ptr) => Ok(Value::Err(Box::new(Value::String(
                 std::sync::Arc::new(gc_ptr.message.clone()),
             )))),
-            ValueData::Result { ok, err } => {
-                if let Some(ok_val) = ok {
+            ValueData::Result(r) => {
+                if let Some(ok_val) = &r.ok {
                     Ok(Value::Ok(Box::new(ok_val.to_ast()?)))
-                } else if let Some(err_val) = err {
+                } else if let Some(err_val) = &r.err {
                     Ok(Value::Err(Box::new(err_val.to_ast()?)))
                 } else {
                     Err(RuntimeError::new("Result value has neither Ok nor Err"))
                 }
             }
             ValueData::Native(handle) => Ok(Value::Native(handle.clone())),
-        }
-    }
-}
-
-impl ValueHeader {
-    pub const fn new(type_tag: TypeTag, tier: ExecutionTier, lazy_state: LazyState) -> Self {
-        Self {
-            type_tag,
-            tier,
-            lazy_state,
         }
     }
 }
@@ -1769,7 +1372,7 @@ impl fmt::Display for OvmValue {
             ValueData::CompiledFunction(_) => write!(f, "<compiled-function>"),
             ValueData::OptimizedValue(_) => write!(f, "<optimized-value>"),
             ValueData::Error(_) => write!(f, "<error>"),
-            ValueData::Result { .. } => write!(f, "<result>"),
+            ValueData::Result(_) => write!(f, "<result>"),
         }
     }
 }
@@ -1781,12 +1384,6 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<OvmValue>()
 };
-
-impl Default for ValueHeader {
-    fn default() -> Self {
-        Self::new(TypeTag::Unit, ExecutionTier::Interpreter, LazyState::Eager)
-    }
-}
 
 impl Default for OptimizationData {
     fn default() -> Self {
@@ -1823,18 +1420,6 @@ mod tests {
     }
 
     #[test]
-    fn test_value_header() {
-        let header = ValueHeader::new(
-            TypeTag::Integer,
-            ExecutionTier::Interpreter,
-            LazyState::Eager,
-        );
-        assert_eq!(header.type_tag, TypeTag::Integer);
-        assert_eq!(header.tier, ExecutionTier::Interpreter);
-        assert_eq!(header.lazy_state, LazyState::Eager);
-    }
-
-    #[test]
     fn test_ast_conversion() {
         let ast_int = Value::Integer(42);
         let ovm_int = OvmValue::from_ast(ast_int);
@@ -1842,5 +1427,12 @@ mod tests {
 
         let converted_back = ovm_int.to_ast().unwrap();
         assert_eq!(converted_back, Value::Integer(42));
+    }
+    #[test]
+    fn ovm_value_is_sixteen_bytes() {
+        // The P3 probe: the dead ValueHeader is gone. 16 bytes = the data
+        // enum alone (8-byte payload + discriminant, padded). If this
+        // grows, every register move pays for it — treat as a regression.
+        assert_eq!(std::mem::size_of::<OvmValue>(), 16);
     }
 }
