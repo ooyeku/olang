@@ -130,15 +130,6 @@ pub struct BytecodeCompiler {
 
     // Function registry for calls
     function_registry: HashMap<String, FunctionId>,
-
-    /// Bake free identifiers from `enclosing_closure` into constants.
-    /// Enabled ONLY when compiling a detached function *value* (a lambda or
-    /// function passed to a higher-order builtin): the interpreter installs
-    /// exactly that value's closure as the call environment, so a closure
-    /// entry IS the value the name resolves to — verified snapshot
-    /// semantics, a global mutated after declaration is not seen. Off for
-    /// normal tier compilation, where the conservative refusal stands.
-    bake_closure_identifiers: bool,
 }
 
 /// Bytecode optimization engine
@@ -2074,9 +2065,7 @@ impl BytecodeVm {
             body: (*func.body).clone(),
         };
         let func_id = FunctionId::new();
-        self.compiler.bake_closure_identifiers = true;
         let compiled = self.compile_function_with_closure(func_id, &decl, func.closure.clone());
-        self.compiler.bake_closure_identifiers = false;
 
         let result = compiled.ok().map(|_| func_id);
         if self.hof_cache.len() >= 512 {
@@ -3147,7 +3136,6 @@ impl BytecodeCompiler {
             enclosing_bound_names: std::collections::HashSet::new(),
             _label_counter: 0,
             function_registry: HashMap::new(),
-            bake_closure_identifiers: false,
         }
     }
 
@@ -3259,12 +3247,28 @@ impl BytecodeCompiler {
                 if let Some(&reg) = self.local_variables.get(name) {
                     // The variable already lives in a register — nothing to emit
                     Ok(reg)
-                } else if self.bake_closure_identifiers {
-                    // Detached-value mode: the closure attached to the value
-                    // is the authoritative environment, so a hit is baked as
-                    // a constant. A miss (interpreter would fall back to the
-                    // caller's scope chain) still refuses.
+                } else {
+                    // A free identifier resolves through the function value's
+                    // own closure — which the interpreter installs verbatim as
+                    // the call environment, and closures are snapshots (a
+                    // global mutated after declaration is not seen; verified
+                    // before building on it). So a closure hit IS the value
+                    // the name will resolve to, baked as a constant. A miss
+                    // (the interpreter would fall back to the caller's scope
+                    // chain, which is runtime state) refuses compilation.
                     match self.enclosing_closure.get(name) {
+                        // A function value is wrapped verbatim (AstFunction),
+                        // the same representation the lambda machinery uses,
+                        // so it converts back unchanged and the native
+                        // higher-order path can compile it.
+                        Some(Value::Function(func)) => {
+                            let const_idx = self
+                                .emitter
+                                .add_constant(OvmValue::new_ast_function(func.clone()));
+                            let dst_reg = self.register_allocator.allocate_register();
+                            self.emitter.emit_load_const(dst_reg, const_idx);
+                            Ok(dst_reg)
+                        }
                         Some(value) if BytecodeVm::round_trips(value) => {
                             let const_idx =
                                 self.emitter.add_constant(OvmValue::from_ast(value.clone()));
@@ -3273,18 +3277,10 @@ impl BytecodeCompiler {
                             Ok(dst_reg)
                         }
                         _ => Err(BytecodeError::CompilationFailed(format!(
-                            "Unresolved identifier '{}' (not in the function value's closure)",
+                            "Unresolved identifier '{}' (absent from the function's closure, or not tier-representable)",
                             name
                         ))),
                     }
-                } else {
-                    // Refuse to compile references we can't resolve — loading
-                    // Unit instead silently changed program results when a
-                    // function was promoted to the bytecode tier
-                    Err(BytecodeError::CompilationFailed(format!(
-                        "Unresolved identifier '{}' (globals/closures not supported in bytecode tier)",
-                        name
-                    )))
                 }
             }
 

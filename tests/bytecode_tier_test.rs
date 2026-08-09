@@ -124,15 +124,50 @@ sum_to(10) + sum_to(100) + sum_to(1000)
 }
 
 #[test]
-fn functions_using_globals_keep_working() {
-    // Not compilable (references a global), must stay interpreted and correct
+fn functions_using_globals_now_promote_and_agree() {
+    // A free identifier resolving in the function's own closure compiles as
+    // a baked constant — sound because the interpreter installs exactly that
+    // closure as the call environment, and closures are snapshots.
     let src = r#"
 let base = 100
 fn offset(n) = n + base
 offset(1) + offset(2) + offset(3)
 "#;
-    assert_eq!(promotion_count(src, 1), 0);
+    assert_eq!(promotion_count(src, 1), 1, "offset should now compile");
     assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(306));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn baked_globals_are_declaration_time_snapshots() {
+    // The whole baking design rests on closures being snapshots: a global
+    // mutated after the function's declaration must NOT be seen — by either
+    // tier. Pin the exact value, not just agreement.
+    let src = r#"
+let mut base = 100
+fn offset(n) = n + base
+base = 200
+offset(1) + offset(2) + offset(3)
+"#;
+    assert_eq!(eval(src, None).unwrap(), Value::Integer(306));
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(306));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn baked_function_values_survive_redefinition_of_the_name() {
+    // `go` bakes the helper *value* from its own closure. Redefining the
+    // name afterwards must not change what go calls — in either tier —
+    // because go's closure still holds the original.
+    let src = r#"
+fn helper(x) = x + 1
+fn go(xs) = xs |> map(helper) |> sum
+let xs = [10, 20, 30]
+let before = go(xs) + go(xs)
+fn helper(x) = x + 1000
+before + go(xs)
+"#;
+    assert_eq!(eval(src, None).unwrap(), Value::Integer(63 * 3));
     assert_tier_transparent(src);
 }
 
@@ -296,11 +331,15 @@ d(1) + d(2) + d(3)
 
 #[test]
 fn caller_is_rejected_when_helper_cannot_compile() {
-    // `describe` references a global, so neither it nor its caller may be
-    // promoted — but the program must still produce the right answer.
+    // `describe` builds a map literal, which the tier does not compile, so
+    // neither it nor its caller may be promoted — but the program must
+    // still produce the right answer. (This used to use a global as the
+    // uncompilable feature; globals bake as closure constants now.)
     let src = r#"
-let prefix = "n="
-fn describe(n) = prefix + to_string(n)
+fn describe(n) = {
+    let m = #{"n": n}
+    to_string(map_get(m, "n"))
+}
 fn label(n) = describe(n) + "!"
 len(label(1)) + len(label(2))
 "#;

@@ -12,21 +12,21 @@ share type Body = struct {
     mass: Float
 }
 
+// Squared softening length: keeps the 1/r^2 force finite when bodies get
+// close (and makes a body's self-interaction contribute exactly zero).
+// This used to be inlined as a literal because a module-level binding kept
+// the kernels off the bytecode tier; the tier now bakes closure constants,
+// so the named constant compiles.
+let SOFTENING2 = 0.5
+
 // Acceleration components on `bi` from every body in `bodies`. These are the
 // hot kernels: a tight loop of field reads and floating-point math.
-//
-// The `+ 0.5` is a squared softening length — it keeps the 1/r^2 force finite
-// when bodies get close (and makes a body's self-interaction contribute
-// exactly zero). It is written inline rather than as a module constant on
-// purpose: a function that references a module-level binding can't promote to
-// the bytecode tier (the VM has no environment), which would keep these hot
-// kernels on the interpreter. Inlining the literal is what lets them compile.
 share fn accel_x(bi, bodies) = {
     let mut ax = 0.0
     for bj in bodies {
         let dx = bj.x - bi.x
         let dy = bj.y - bi.y
-        let d2 = dx * dx + dy * dy + 0.5
+        let d2 = dx * dx + dy * dy + SOFTENING2
         ax = ax + bj.mass * dx / (d2 * math.sqrt(d2))
     }
     ax
@@ -37,7 +37,7 @@ share fn accel_y(bi, bodies) = {
     for bj in bodies {
         let dx = bj.x - bi.x
         let dy = bj.y - bi.y
-        let d2 = dx * dx + dy * dy + 0.5
+        let d2 = dx * dx + dy * dy + SOFTENING2
         ay = ay + bj.mass * dy / (d2 * math.sqrt(d2))
     }
     ay

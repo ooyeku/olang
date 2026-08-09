@@ -12,6 +12,25 @@ documented.
 
 ### Changed
 
+- **Functions that read globals compile now.** A free identifier that
+  resolves in the function's own closure bakes as a constant — sound
+  because the interpreter installs exactly that closure as the call
+  environment, and closures are declaration-time snapshots (a global
+  mutated after the function's declaration is not seen; pinned by a new
+  test in both tiers before building on it). Function values bake in the
+  lossless `AstFunction` representation, so a named function passed to
+  `map`/`filter` now compiles end-to-end through the native higher-order
+  path. This retires one of the tier's oldest limitations: the N-body
+  example's softening constant, inlined as a literal specifically because
+  a module-level binding kept the kernels off the tier, is a named
+  constant again — kernels still promote, checksum bit-identical.
+  Measured over 1M elements: `map` with a named function 192ms → 31ms
+  (6.2×). Names absent from the closure (the interpreter would fall back
+  to the caller's runtime scope) still refuse, as do assignments to
+  globals. Tests updated: two asserted the old refusal as the expected
+  behavior; new tests pin snapshot semantics exactly and prove baked
+  function values survive redefinition of their name.
+
 - **The higher-order builtins loop inside the VM.** `map`, `filter`, and
   `sum` previously bridged out of the VM on every call — the list and
   function converted to AST values, the interpreter looped, and every

@@ -492,7 +492,11 @@ mod tests {
     }
 
     #[test]
-    fn body_referencing_a_capture_is_rejected() {
+    fn body_referencing_a_capture_compiles_it_as_a_constant() {
+        // A free identifier resolving in the function's own closure bakes as
+        // a constant — the closure is exactly the environment the interpreter
+        // would install, and closures are snapshots. (This used to assert
+        // rejection, back when any free identifier refused the function.)
         let mut tier = BytecodeTier::new(1);
         let mut closure = im::HashMap::new();
         closure.insert("captured".to_string(), Value::Integer(1));
@@ -508,11 +512,13 @@ mod tests {
             param_bounds: Vec::new(),
         };
 
-        assert!(matches!(
-            tier.try_call(&func, &[Value::Integer(5)]),
-            TierOutcome::Fallback
-        ));
-        assert_eq!(tier.stats().rejected, 1);
+        match tier.try_call(&func, &[Value::Integer(5)]) {
+            TierOutcome::Ran(Ok(Value::Integer(6))) => {}
+            TierOutcome::Ran(other) => panic!("expected Ok(6), got {:?}", other),
+            TierOutcome::Fallback => panic!("expected the capture to compile, got Fallback"),
+        }
+        assert_eq!(tier.stats().rejected, 0);
+        assert_eq!(tier.stats().promoted, 1);
     }
 
     #[test]
