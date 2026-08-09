@@ -333,18 +333,24 @@ workloads are algorithm-identical across languages and checksum-verified
 last digit). Since the tier is on by default, the olang numbers are what
 a plain `olang program.ol` gets — no flags.
 
-Three representative workloads against the field:
+Four representative workloads against the field (as of 0.38):
 
-| Workload | Rust | Node | Bun | CPython | Ruby | **olang** | olang `--no-ovm` |
-|---|---|---|---|---|---|---|---|
-| N-body (120 bodies × 150 steps) | 2.8 ms | 6 ms | 8 ms | 416 ms | 468 ms | **415 ms** | 23.6 s |
-| fib(30) (2.7M recursive calls) | 1.3 ms | 4 ms | 5 ms | 46 ms | 44 ms | **89 ms** | 1.1 s |
-| `map(λ) \|> sum` pipeline, 1M elements | ~0 ms | 9 ms | 4 ms | 31 ms | 21 ms | **26 ms** | 370 ms |
+| Workload | Rust | Node | Bun | CPython | Ruby | **olang** |
+|---|---|---|---|---|---|---|
+| N-body (120 bodies × 150 steps) | 2.5 ms | 6 ms | 8 ms | 404 ms | 474 ms | **400 ms** |
+| Word frequency (50k tokens × 20) | 5 ms | 17 ms | 12 ms | 16 ms | 62 ms | **26 ms** |
+| `map(λ) \|> sum` pipeline, 1M elements | ~0 ms | 9 ms | 4 ms | 24 ms | 21 ms | **27 ms** |
+| fib(30) (2.7M recursive calls) | 1.4 ms | 4 ms | 4 ms | 46 ms | 44 ms | **89 ms** |
 
-The shape of the result: on struct-and-float workloads olang runs ahead
-of Ruby and even with CPython; on idiomatic pipelines it is ahead of
-CPython; on raw call overhead (fib) it is within 2× of both, the
-remaining gap being dispatch cost that only threaded dispatch or a JIT
+(Interpreter-only mode runs the same programs at 23.6 s / — / 370 ms /
+1.1 s; the word-frequency workload exceeds the interpreter's allocation
+guard entirely, so the tier is what makes it runnable at this size.)
+
+The shape of the result: olang now runs ahead of BOTH CPython and Ruby
+on struct-and-float work, dramatically ahead of Ruby on map-heavy work
+(2.4×) and within striking distance of CPython there; pipelines sit
+between Ruby and CPython; raw call overhead (fib) remains within 2× of
+both, the gap being dispatch cost that only threaded dispatch or a JIT
 would close. The compiled-language tier (Rust, the JavaScript JITs)
 remains 30–150× away — that is the JIT-vs-bytecode-VM gap, and olang
 does not currently ship a JIT.
