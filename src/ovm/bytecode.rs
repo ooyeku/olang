@@ -1383,7 +1383,19 @@ impl BytecodeVm {
         #[cfg(feature = "native")]
         if self.jit.has(func_id) {
             let remaining = self.max_call_depth.saturating_sub(self.call_depth);
-            if let Some(result) = self.jit.try_call(func_id, &bytecode, args, remaining) {
+            // Disjoint field borrows: the JIT plans call graphs through
+            // this lookup while it holds &mut self.jit.
+            let hot = &self.bytecode_hot;
+            let cache = &self.bytecode_cache;
+            let lookup = |id: FunctionId| -> Option<Arc<CompiledBytecode>> {
+                hot.get(id.index())
+                    .and_then(|s| s.clone())
+                    .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
+            };
+            if let Some(result) = self
+                .jit
+                .try_call(func_id, &bytecode, args, remaining, &lookup)
+            {
                 return Ok(result);
             }
         }
@@ -1475,12 +1487,20 @@ impl BytecodeVm {
             }
             if extractable {
                 let remaining = self.max_call_depth.saturating_sub(self.call_depth);
+                let hot = &self.bytecode_hot;
+                let cache = &self.bytecode_cache;
+                let lookup = |id: FunctionId| -> Option<Arc<CompiledBytecode>> {
+                    hot.get(id.index())
+                        .and_then(|s| s.clone())
+                        .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
+                };
                 if let Some(result) = self.jit.try_call_raw(
                     func_id,
                     &bytecode,
                     &bits[..arg_regs.len()],
                     &kinds[..arg_regs.len()],
                     remaining,
+                    &lookup,
                 ) {
                     return Ok(result);
                 }

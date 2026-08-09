@@ -363,3 +363,105 @@ show(flip(2.5)) + " " + show(flip(-2.5)) + " " + show(flip(0.0) == 0.0)
 "#,
     );
 }
+
+// ── cross-function native calls ────────────────────────────────────────
+
+#[test]
+fn helper_calls_compile_and_agree() {
+    assert_jit_transparent(
+        r#"
+fn scale(x) = x * 3
+fn shift(x) = x + 7
+fn pipeline(x) = scale(shift(x)) - shift(scale(x))
+show(pipeline(5)) + " " + show(pipeline(-11))
+"#,
+    );
+}
+
+#[test]
+fn mutual_recursion_compiles_and_agrees() {
+    assert_jit_transparent(
+        r#"
+fn is_even(n) = if n == 0 => true else => is_odd(n - 1)
+fn is_odd(n) = if n == 0 => false else => is_even(n - 1)
+show(is_even(600)) + " " + show(is_odd(431))
+"#,
+    );
+}
+
+#[test]
+fn split_fib_across_two_functions_agrees() {
+    assert_jit_transparent(
+        r#"
+fn fib_a(n) = if n < 2 => n else => fib_b(n - 1) + fib_b(n - 2)
+fn fib_b(n) = if n < 2 => n else => fib_a(n - 1) + fib_a(n - 2)
+fib_a(22)
+"#,
+    );
+}
+
+#[test]
+fn call_chains_of_mixed_kinds_agree() {
+    assert_jit_transparent(
+        r#"
+fn to_ratio(n) = n / 4.0
+fn add_half(x) = x + 0.5
+fn score(n) = add_half(to_ratio(n)) * 2.0
+show(score(10)) + " " + show(score(7))
+"#,
+    );
+}
+
+#[test]
+fn deopt_deep_in_a_native_chain_matches() {
+    // The overflow happens two native calls deep; the whole chain must
+    // unwind and re-run on bytecode with the canonical error.
+    let src = r#"
+fn inner(n) = n * 3
+fn middle(n) = inner(n) + 1
+fn outer(n) = middle(n)
+outer(4611686018427387904)
+"#;
+    assert_eq!(eval(src, Some(1)), eval(src, None));
+}
+
+#[test]
+fn kind_mismatched_helper_refuses_but_agrees() {
+    // half() gets specialized for Float by its direct call; the later
+    // int-calling group must decline and stay correct on bytecode.
+    assert_jit_transparent(
+        r#"
+fn half(x) = x / 2.0
+fn use_float() = half(9.0)
+fn use_int(n) = half(n)
+show(use_float()) + " " + show(use_int(9))
+"#,
+    );
+}
+
+#[test]
+fn deep_mutual_recursion_depth_guard_matches() {
+    // Mutual recursion past the depth budget: native deopts, bytecode
+    // re-runs, the recursion guard error matches interpretation.
+    let src = r#"
+fn ping(n) = if n == 0 => 0 else => pong(n - 1)
+fn pong(n) = if n == 0 => 1 else => ping(n - 1)
+ping(3000)
+"#;
+    let interpreted = eval(src, None);
+    let tiered = eval(src, Some(1));
+    assert_eq!(tiered.is_err(), interpreted.is_err());
+    assert_eq!(tiered, interpreted);
+}
+
+#[test]
+fn three_function_cycle_agrees() {
+    assert_jit_transparent(
+        r#"
+fn red(n) = if n <= 0 => 0 else => green(n - 1) + 1
+fn green(n) = if n <= 0 => 0 else => blue(n - 1) + 2
+fn blue(n) = if n <= 0 => 0 else => red(n - 1) + 3
+show(red(30)) + " " + show(green(31)) + " " + show(blue(32))
+"#,
+    );
+}

@@ -4,19 +4,25 @@
 //! interpreter → bytecode ("can't compile identically → stay interpreted")
 //! → native ("can't compile natively → stay on bytecode"). A function
 //! prequalifies at promotion time when every instruction falls in a pure
-//! numeric/boolean whitelist — arithmetic, comparisons, branches,
-//! self-recursion, return. The actual compilation is **type-specialized
-//! and lazy**: it happens on the first call, using the argument kinds the
-//! call actually carries (Int/Float per parameter), and the compiled
-//! entry guards on exactly that signature — any other argument shape
-//! runs on bytecode as before. One specialization per function.
+//! numeric/boolean whitelist — arithmetic, comparisons, branches, calls
+//! to other olang functions, return. The actual compilation is
+//! **type-specialized, lazy, and call-graph aware**: on a function's
+//! first call, the JIT plans every function reachable through its CallFn
+//! sites, runs kind inference to a global fixpoint across the group
+//! (callee return kinds feed caller registers; masks only grow, so it
+//! converges), and compiles the whole group with direct native-to-native
+//! calls — helpers, chains, and mutual recursion all stay native. Each
+//! compiled function guards its entry on the exact argument kinds it was
+//! specialized for (one specialization per function); any other shape
+//! runs on bytecode as before.
 //!
-//! Pure is the load-bearing word: a qualifying function has no side
+//! Pure is the load-bearing word: a qualifying group has no side
 //! effects, so *any* guard failure (argument-kind mismatch, integer
-//! overflow, division by zero, depth exhaustion) simply abandons the
-//! native run and re-executes the same call on bytecode, which produces
-//! the exact result or error the VM would have produced anyway. The JIT
-//! never reproduces an error message; it only ever declines.
+//! overflow, division by zero, depth exhaustion — anywhere in the native
+//! call chain) simply abandons the native run and re-executes the
+//! original call on bytecode, which produces the exact result or error
+//! the VM would have produced anyway. The JIT never reproduces an error
+//! message; it only ever declines.
 //!
 //! Codegen notes:
 //! - Registers are typed by inference: i64 (integers, booleans as 0/1)
@@ -25,20 +31,25 @@
 //! - Checked integer arithmetic is hand-rolled flag math; float add/sub/
 //!   mul are plain IEEE (as in the VM), while float division guards
 //!   b == 0.0 because olang errors there rather than producing inf.
+//!   Float modulo is refused — fmod has no exact IR equivalent.
 //! - A register written with conflicting kinds is fine as long as nothing
-//!   reads it (an `if` statement's dead result slot): its stores are
-//!   skipped, but operation *guards* still run, because the VM would
-//!   still error on an overflowing dead computation.
-//! - Self-recursion is a direct native call carrying a depth budget; when
-//!   it reaches zero the whole call deopts, and the bytecode re-run hits
-//!   the VM's own max-call-depth error if the recursion really is runaway.
-//! - Each internal function returns (value, status); status != 0 deopts
-//!   the caller too, unwinding the native stack to the entry wrapper.
+//!   reads it (an `if` statement's dead result slot); liveness flows
+//!   backwards through copies. Dead stores are skipped, but operation
+//!   *guards* still run, because the VM would still error on an
+//!   overflowing dead computation.
+//! - Every call carries a depth budget clamped to the VM's own
+//!   max_call_depth; exhaustion deopts, so runaway recursion errors the
+//!   canonical way instead of smashing the native stack. Each internal
+//!   function returns (value, status); status != 0 deopts the caller
+//!   too, unwinding the native stack to the entry wrapper.
 
 use crate::ast::BinaryOp;
 use crate::ovm::bytecode::{CompiledBytecode, Instruction};
 use crate::ovm::value::{OvmValue, ValueData};
 use crate::ovm::FunctionId;
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlags, Type, Value as ClifValue};
@@ -52,8 +63,14 @@ use cranelift_module::{Linkage, Module};
 /// as their IEEE bit patterns in the i64 slots.
 type NativeEntry = unsafe extern "C" fn(*const i64, i64, *mut i64) -> i64;
 
+/// How the VM hands the JIT other functions' bytecode when planning a
+/// call graph.
+pub type BytecodeLookup<'a> = dyn Fn(FunctionId) -> Option<Arc<CompiledBytecode>> + 'a;
+
 const STATUS_OK: i64 = 0;
 const MAX_PARAMS: usize = 16;
+/// Sanity bound on how many functions one group may pull in.
+const MAX_GROUP: usize = 32;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -73,6 +90,8 @@ impl Kind {
 
 struct JittedFn {
     entry: NativeEntry,
+    /// The inner (fast-convention) function, callable from later groups.
+    clif_id: cranelift_module::FuncId,
     param_kinds: Vec<Kind>,
     ret_kind: Kind,
 }
@@ -154,7 +173,7 @@ impl JitCache {
         if self.table[idx].is_some() {
             return;
         }
-        if whitelist_ok(func_id, bytecode) {
+        if whitelist_ok(bytecode) {
             self.table[idx] = Some(Slot::Pending);
         } else {
             if jit_debug() {
@@ -183,15 +202,16 @@ impl JitCache {
     }
 
     /// Run the native body if the argument kinds fit (compiling the
-    /// specialization on first use). None means "no native run happened"
-    /// — the caller proceeds on bytecode exactly as before.
+    /// specialization group on first use). None means "no native run
+    /// happened" — the caller proceeds on bytecode exactly as before.
     #[inline]
     pub fn try_call(
         &mut self,
         func_id: FunctionId,
-        bytecode: &CompiledBytecode,
+        bytecode: &Arc<CompiledBytecode>,
         args: &[OvmValue],
         remaining_depth: u32,
+        lookup: &BytecodeLookup,
     ) -> Option<OvmValue> {
         let mut bits = [0i64; MAX_PARAMS];
         let mut kinds = [Kind::Int; MAX_PARAMS];
@@ -217,6 +237,7 @@ impl JitCache {
             &bits[..args.len()],
             &kinds[..args.len()],
             remaining_depth,
+            lookup,
         )
     }
 
@@ -224,32 +245,28 @@ impl JitCache {
     pub fn try_call_raw(
         &mut self,
         func_id: FunctionId,
-        bytecode: &CompiledBytecode,
+        bytecode: &Arc<CompiledBytecode>,
         bits: &[i64],
         kinds: &[Kind],
         remaining_depth: u32,
+        lookup: &BytecodeLookup,
     ) -> Option<OvmValue> {
         let idx = func_id.index();
         match self.table.get(idx)? {
             Some(Slot::Ready(_)) => {}
             Some(Slot::Pending) => {
-                // First call: specialize on the kinds this call carries.
-                let slot = match self.specialize(func_id, bytecode, kinds) {
-                    Some(jitted) => {
-                        if jit_debug() {
-                            eprintln!("[jit] fn#{} compiled to native for {:?}", idx, kinds);
-                        }
-                        self.compiled += 1;
-                        Slot::Ready(jitted)
+                // First call: specialize the whole reachable group on the
+                // kinds this call carries.
+                if self
+                    .specialize_group(func_id, bytecode, kinds, lookup)
+                    .is_none()
+                {
+                    if jit_debug() {
+                        eprintln!("[jit] fn#{} refused (inference or codegen)", idx);
                     }
-                    None => {
-                        if jit_debug() {
-                            eprintln!("[jit] fn#{} refused (inference or codegen)", idx);
-                        }
-                        Slot::Refused
-                    }
-                };
-                self.table[idx] = Some(slot);
+                    self.table[idx] = Some(Slot::Refused);
+                    return None;
+                }
             }
             _ => return None,
         }
@@ -274,121 +291,235 @@ impl JitCache {
         })
     }
 
-    fn specialize(
+    /// Plan, infer, and compile the call graph reachable from `entry_id`.
+    /// On success every group member becomes Ready. On failure the entry
+    /// alone becomes Refused (a helper may still compile later from its
+    /// own first call, with its own kinds).
+    fn specialize_group(
         &mut self,
-        func_id: FunctionId,
-        bytecode: &CompiledBytecode,
-        param_kinds: &[Kind],
-    ) -> Option<JittedFn> {
-        let debug = jit_debug();
-        let inference = match infer_kinds(func_id, bytecode, param_kinds) {
-            Some(inf) => inf,
-            None => {
-                if debug {
+        entry_id: FunctionId,
+        entry_bytecode: &Arc<CompiledBytecode>,
+        entry_kinds: &[Kind],
+        lookup: &BytecodeLookup,
+    ) -> Option<()> {
+        if entry_kinds.len() != entry_bytecode.param_count {
+            return None;
+        }
+
+        // ── plan + global inference fixpoint ──
+        let mut plans: Vec<PlanFn> = vec![PlanFn::new(
+            entry_id,
+            Arc::clone(entry_bytecode),
+            entry_kinds.to_vec(),
+        )];
+        let mut plan_pos: HashMap<usize, usize> = HashMap::new();
+        plan_pos.insert(entry_id.index(), 0);
+
+        loop {
+            let mut changed = false;
+
+            // Signature snapshot: kinds + current ret mask per function the
+            // group can call (plans lag one iteration; monotone, converges).
+            let mut sigs: HashMap<usize, (Vec<Kind>, u8)> = HashMap::new();
+            for p in &plans {
+                sigs.insert(p.func_id.index(), (p.param_kinds.clone(), p.ret_mask));
+            }
+            for (i, slot) in self.table.iter().enumerate() {
+                if let Some(Slot::Ready(j)) = slot {
+                    sigs.insert(i, (j.param_kinds.clone(), kind_mask(j.ret_kind)));
+                }
+            }
+
+            let mut requests: Vec<(FunctionId, Vec<Kind>)> = Vec::new();
+            for plan in plans.iter_mut() {
+                plan.infer_pass(&sigs, &mut requests, &mut changed)?;
+            }
+
+            for (fid, kinds) in requests {
+                let idx = fid.index();
+                if let Some(pos) = plan_pos.get(&idx) {
+                    if plans[*pos].param_kinds != kinds {
+                        return None; // one specialization per function
+                    }
+                    continue;
+                }
+                match self.table.get(idx) {
+                    Some(Some(Slot::Ready(j))) => {
+                        if j.param_kinds != kinds {
+                            return None;
+                        }
+                        continue; // already native; sigs covers it
+                    }
+                    Some(Some(Slot::Refused)) => return None,
+                    _ => {}
+                }
+                if plans.len() >= MAX_GROUP {
+                    return None;
+                }
+                let bytecode = lookup(fid)?;
+                if !whitelist_ok(&bytecode) || bytecode.param_count != kinds.len() {
+                    return None;
+                }
+                plan_pos.insert(idx, plans.len());
+                plans.push(PlanFn::new(fid, bytecode, kinds));
+                changed = true;
+            }
+
+            if !changed {
+                break;
+            }
+        }
+
+        // ── finalize each member's inference ──
+        let mut inferences: Vec<Inference> = Vec::with_capacity(plans.len());
+        for plan in &plans {
+            inferences.push(plan.finalize()?);
+        }
+
+        // ── codegen: declare everything, then define everything ──
+        // Snapshot previously compiled call targets before borrowing the
+        // module (both live in self).
+        let mut targets: HashMap<usize, (cranelift_module::FuncId, Kind)> = HashMap::new();
+        for (i, slot) in self.table.iter().enumerate() {
+            if let Some(Slot::Ready(j)) = slot {
+                targets.insert(i, (j.clif_id, j.ret_kind));
+            }
+        }
+        let module = self.module()?;
+        let mut clif_ids = Vec::with_capacity(plans.len());
+        for (plan, inf) in plans.iter().zip(&inferences) {
+            let mut sig = module.make_signature();
+            for k in &plan.param_kinds {
+                sig.params.push(AbiParam::new(k.clif_type()));
+            }
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(inf.ret_kind.clif_type()));
+            sig.returns.push(AbiParam::new(types::I64));
+            let name = format!("olang_jit_{}", plan.func_id.index());
+            let id = module.declare_function(&name, Linkage::Local, &sig).ok()?;
+            clif_ids.push(id);
+        }
+
+        // Call-site resolver: group members (by plan position) override
+        // any snapshot entry.
+        for ((plan, inf), clif_id) in plans.iter().zip(&inferences).zip(&clif_ids) {
+            targets.insert(plan.func_id.index(), (*clif_id, inf.ret_kind));
+        }
+
+        let mut fbc = FunctionBuilderContext::new();
+        for ((plan, inf), clif_id) in plans.iter().zip(&inferences).zip(&clif_ids) {
+            let mut ctx = module.make_context();
+            ctx.func.signature = {
+                let mut sig = module.make_signature();
+                for k in &plan.param_kinds {
+                    sig.params.push(AbiParam::new(k.clif_type()));
+                }
+                sig.params.push(AbiParam::new(types::I64));
+                sig.returns.push(AbiParam::new(inf.ret_kind.clif_type()));
+                sig.returns.push(AbiParam::new(types::I64));
+                sig
+            };
+            {
+                let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fbc);
+                translate_body(&mut builder, module, &targets, &plan.bytecode, inf)?;
+                builder.finalize();
+            }
+            if let Err(e) = module.define_function(*clif_id, &mut ctx) {
+                if jit_debug() {
                     eprintln!(
-                        "[jit] fn#{} kind inference failed for {:?}",
-                        func_id.index(),
-                        param_kinds
+                        "[jit] define fn#{} failed: {:?}\nIR:\n{}",
+                        plan.func_id.index(),
+                        e,
+                        ctx.func
                     );
                 }
                 return None;
             }
-        };
-        let ret_kind = inference.ret_kind;
-        let module = self.module()?;
-
-        // Internal function: (typed params..., depth i64) -> (value, status),
-        // cranelift's own fast calling convention so recursion stays in
-        // registers.
-        let mut inner_sig = module.make_signature();
-        for k in param_kinds {
-            inner_sig.params.push(AbiParam::new(k.clif_type()));
+            module.clear_context(&mut ctx);
         }
-        inner_sig.params.push(AbiParam::new(types::I64));
-        inner_sig.returns.push(AbiParam::new(ret_kind.clif_type()));
-        inner_sig.returns.push(AbiParam::new(types::I64));
 
-        let inner_name = format!("olang_jit_{}", func_id.index());
-        let inner_id = module
-            .declare_function(&inner_name, Linkage::Local, &inner_sig)
-            .ok()?;
+        // Entry wrappers (C ABI) for every member, so each is directly
+        // callable from the VM later. Float params/results travel as raw
+        // bits in the i64 slots — same bytes, no conversion.
+        let mut entries = Vec::with_capacity(plans.len());
+        for ((plan, inf), clif_id) in plans.iter().zip(&inferences).zip(&clif_ids) {
+            let mut entry_sig = module.make_signature();
+            entry_sig.params.push(AbiParam::new(types::I64));
+            entry_sig.params.push(AbiParam::new(types::I64));
+            entry_sig.params.push(AbiParam::new(types::I64));
+            entry_sig.returns.push(AbiParam::new(types::I64));
+            let entry_name = format!("olang_jit_{}_entry", plan.func_id.index());
+            let entry_fid = module
+                .declare_function(&entry_name, Linkage::Export, &entry_sig)
+                .ok()?;
 
-        let mut ctx = module.make_context();
-        ctx.func.signature = inner_sig.clone();
-        let mut fbc = FunctionBuilderContext::new();
-        {
-            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fbc);
-            translate_body(&mut builder, module, inner_id, bytecode, &inference)?;
-            builder.finalize();
-        }
-        if let Err(e) = module.define_function(inner_id, &mut ctx) {
-            if debug {
-                eprintln!("[jit] define inner failed: {:?}\nIR:\n{}", e, ctx.func);
+            let mut ctx = module.make_context();
+            ctx.func.signature = entry_sig;
+            {
+                let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fbc);
+                let block = builder.create_block();
+                builder.append_block_params_for_function_params(block);
+                builder.switch_to_block(block);
+                let args_ptr = builder.block_params(block)[0];
+                let depth = builder.block_params(block)[1];
+                let out_ptr = builder.block_params(block)[2];
+
+                let mut call_args = Vec::with_capacity(plan.param_kinds.len() + 1);
+                for (i, k) in plan.param_kinds.iter().enumerate() {
+                    call_args.push(builder.ins().load(
+                        k.clif_type(),
+                        MemFlags::trusted(),
+                        args_ptr,
+                        (i * 8) as i32,
+                    ));
+                }
+                call_args.push(depth);
+
+                let inner_ref = module.declare_func_in_func(*clif_id, builder.func);
+                let call = builder.ins().call(inner_ref, &call_args);
+                let value = builder.inst_results(call)[0];
+                let status = builder.inst_results(call)[1];
+                builder
+                    .ins()
+                    .store(MemFlags::trusted(), value, out_ptr, 0i32);
+                builder.ins().return_(&[status]);
+                builder.seal_all_blocks();
+                builder.finalize();
             }
-            return None;
+            module.define_function(entry_fid, &mut ctx).ok()?;
+            module.clear_context(&mut ctx);
+            entries.push(entry_fid);
+            let _ = inf; // ret kind used via targets
         }
-        module.clear_context(&mut ctx);
 
-        // Entry wrapper: C ABI (args_ptr, depth, out_ptr) -> status. Float
-        // params/results are read and written straight from the i64 slots
-        // as f64 — same bytes, no conversion.
-        let mut entry_sig = module.make_signature();
-        entry_sig.params.push(AbiParam::new(types::I64));
-        entry_sig.params.push(AbiParam::new(types::I64));
-        entry_sig.params.push(AbiParam::new(types::I64));
-        entry_sig.returns.push(AbiParam::new(types::I64));
-
-        let entry_name = format!("olang_jit_{}_entry", func_id.index());
-        let entry_id = module
-            .declare_function(&entry_name, Linkage::Export, &entry_sig)
-            .ok()?;
-
-        let mut ctx = module.make_context();
-        ctx.func.signature = entry_sig;
-        {
-            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fbc);
-            let block = builder.create_block();
-            builder.append_block_params_for_function_params(block);
-            builder.switch_to_block(block);
-            let args_ptr = builder.block_params(block)[0];
-            let depth = builder.block_params(block)[1];
-            let out_ptr = builder.block_params(block)[2];
-
-            let mut call_args = Vec::with_capacity(param_kinds.len() + 1);
-            for (i, k) in param_kinds.iter().enumerate() {
-                call_args.push(builder.ins().load(
-                    k.clif_type(),
-                    MemFlags::trusted(),
-                    args_ptr,
-                    (i * 8) as i32,
-                ));
-            }
-            call_args.push(depth);
-
-            let inner_ref = module.declare_func_in_func(inner_id, builder.func);
-            let call = builder.ins().call(inner_ref, &call_args);
-            let value = builder.inst_results(call)[0];
-            let status = builder.inst_results(call)[1];
-            builder
-                .ins()
-                .store(MemFlags::trusted(), value, out_ptr, 0i32);
-            builder.ins().return_(&[status]);
-            builder.seal_all_blocks();
-            builder.finalize();
-        }
-        module.define_function(entry_id, &mut ctx).ok()?;
-        module.clear_context(&mut ctx);
         module.finalize_definitions().ok()?;
 
-        let code = module.get_finalized_function(entry_id);
-        // SAFETY: the signature matches entry_sig exactly and the memory
-        // lives as long as the module (owned by this cache).
-        let entry: NativeEntry = unsafe { std::mem::transmute(code) };
-        Some(JittedFn {
-            entry,
-            param_kinds: param_kinds.to_vec(),
-            ret_kind,
-        })
+        for (((plan, inf), clif_id), entry_fid) in
+            plans.iter().zip(&inferences).zip(&clif_ids).zip(&entries)
+        {
+            let code = self.module.as_ref()?.get_finalized_function(*entry_fid);
+            // SAFETY: signature matches the entry ABI; memory lives as
+            // long as the module (owned by this cache).
+            let entry: NativeEntry = unsafe { std::mem::transmute(code) };
+            let idx = plan.func_id.index();
+            if self.table.len() <= idx {
+                self.table.resize_with(idx + 1, || None);
+            }
+            if jit_debug() {
+                eprintln!(
+                    "[jit] fn#{} compiled to native for {:?}",
+                    idx, plan.param_kinds
+                );
+            }
+            self.table[idx] = Some(Slot::Ready(JittedFn {
+                entry,
+                clif_id: *clif_id,
+                param_kinds: plan.param_kinds.clone(),
+                ret_kind: inf.ret_kind,
+            }));
+            self.compiled += 1;
+        }
+        Some(())
     }
 }
 
@@ -396,8 +527,9 @@ impl JitCache {
 
 /// Every instruction the JIT knows how to translate, checked without any
 /// type information — cheap enough to run at registration for every
-/// promoted function.
-fn whitelist_ok(self_id: FunctionId, bytecode: &CompiledBytecode) -> bool {
+/// promoted function. CallFn targets are resolved (and arity-checked)
+/// later, at group-planning time.
+fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
     if bytecode.param_count > MAX_PARAMS
         || bytecode.instructions.is_empty()
         || bytecode.entry_point >= bytecode.instructions.len()
@@ -433,12 +565,10 @@ fn whitelist_ok(self_id: FunctionId, bytecode: &CompiledBytecode) -> bool {
         | Instruction::Jump { .. }
         | Instruction::JumpIfTrue { .. }
         | Instruction::JumpIfFalse { .. }
-        | Instruction::MatchFail => true,
+        | Instruction::MatchFail
+        | Instruction::CallFn { .. } => true,
         Instruction::BinImm { imm, .. } => {
             matches!(imm.data, ValueData::Integer(_) | ValueData::Float(_))
-        }
-        Instruction::CallFn { func_id, args, .. } => {
-            *func_id == self_id && args.len() == bytecode.param_count
         }
         Instruction::Return { value } => value.is_some(),
         _ => false,
@@ -469,95 +599,121 @@ fn kind_mask(k: Kind) -> u8 {
     }
 }
 
+fn mask_singleton(mask: u8) -> Option<Kind> {
+    match mask {
+        K_INT => Some(Kind::Int),
+        K_BOOL => Some(Kind::Bool),
+        K_FLOAT => Some(Kind::Float),
+        _ => None,
+    }
+}
+
+/// One group member's inference state, carried across global fixpoint
+/// iterations.
+struct PlanFn {
+    func_id: FunctionId,
+    bytecode: Arc<CompiledBytecode>,
+    param_kinds: Vec<Kind>,
+    writes: Vec<u8>,
+    allowed: Vec<u8>,
+    was_read: Vec<bool>,
+    ret_mask: u8,
+    eq_pairs: Vec<(u32, u32)>,
+    return_regs: Vec<u32>,
+}
+
+/// The finalized result codegen consumes.
 struct Inference {
-    /// Singleton kind per register, None for dead (never-read) registers
-    /// whose writes are skipped in codegen.
     reg_kind: Vec<Option<Kind>>,
     param_kinds: Vec<Kind>,
     ret_kind: Kind,
 }
 
-/// Prove the function kind-sound for this parameter specialization.
-/// None = stay on bytecode (for every future call too — one shot).
-fn infer_kinds(
-    _self_id: FunctionId,
-    bytecode: &CompiledBytecode,
-    param_kinds: &[Kind],
-) -> Option<Inference> {
-    if param_kinds.len() != bytecode.param_count {
-        return None;
-    }
-    let nregs = bytecode.register_count as usize;
-    let mut writes: Vec<u8> = vec![0; nregs];
-    // Allowed-kind constraint per register; starts fully permissive and
-    // narrows at each read. K_ANY == "never read".
-    let mut allowed: Vec<u8> = vec![K_ANY; nregs];
-    let mut was_read: Vec<bool> = vec![false; nregs];
-    let mut eq_pairs: Vec<(u32, u32)> = Vec::new();
-    let mut return_regs: Vec<u32> = Vec::new();
-    let mut ret_mask: u8 = 0;
-
-    for (i, k) in param_kinds.iter().enumerate() {
-        writes[i] = kind_mask(*k);
-    }
-
-    let const_mask = |idx: u32| -> u8 {
-        match bytecode.constants.get(idx as usize).map(|c| &c.data) {
-            Some(ValueData::Integer(_)) => K_INT,
-            Some(ValueData::Boolean(_)) => K_BOOL,
-            Some(ValueData::Unit) => K_UNIT,
-            Some(ValueData::Float(_)) => K_FLOAT,
-            _ => 0,
+impl PlanFn {
+    fn new(func_id: FunctionId, bytecode: Arc<CompiledBytecode>, param_kinds: Vec<Kind>) -> Self {
+        let nregs = bytecode.register_count as usize;
+        let mut writes = vec![0u8; nregs];
+        for (i, k) in param_kinds.iter().enumerate() {
+            writes[i] = kind_mask(*k);
         }
-    };
+        Self {
+            func_id,
+            bytecode,
+            param_kinds,
+            writes,
+            allowed: vec![K_ANY; nregs],
+            was_read: vec![false; nregs],
+            ret_mask: 0,
+            eq_pairs: Vec::new(),
+            return_regs: Vec::new(),
+        }
+    }
 
-    // Fixpoint over monotone growth (writes gain bits, allowed loses
-    // bits, both bounded); terminates.
-    loop {
+    /// One inference pass. `sigs` maps callable functions to their
+    /// (param kinds, current ret mask); unknown callees whose argument
+    /// kinds have resolved are pushed onto `requests` for planning.
+    /// Returns None on a hard refusal.
+    fn infer_pass(
+        &mut self,
+        sigs: &HashMap<usize, (Vec<Kind>, u8)>,
+        requests: &mut Vec<(FunctionId, Vec<Kind>)>,
+        global_changed: &mut bool,
+    ) -> Option<()> {
+        let bytecode = self.bytecode.clone();
         let mut changed = false;
-        let grow = |slot: &mut u8, bits: u8, changed: &mut bool| {
-            if *slot | bits != *slot {
-                *slot |= bits;
-                *changed = true;
+
+        let const_mask = |idx: u32| -> u8 {
+            match bytecode.constants.get(idx as usize).map(|c| &c.data) {
+                Some(ValueData::Integer(_)) => K_INT,
+                Some(ValueData::Boolean(_)) => K_BOOL,
+                Some(ValueData::Unit) => K_UNIT,
+                Some(ValueData::Float(_)) => K_FLOAT,
+                _ => 0,
             }
         };
-        let narrow =
-            |allowed: &mut [u8], was_read: &mut [bool], r: u32, mask: u8, changed: &mut bool| {
-                let slot = &mut allowed[r as usize];
-                if *slot & mask != *slot {
-                    *slot &= mask;
-                    *changed = true;
+
+        self.eq_pairs.clear();
+        self.return_regs.clear();
+
+        macro_rules! grow {
+            ($slot:expr, $bits:expr) => {{
+                let bits = $bits;
+                let slot = &mut $slot;
+                if *slot | bits != *slot {
+                    *slot |= bits;
+                    changed = true;
                 }
-                if !was_read[r as usize] {
-                    was_read[r as usize] = true;
-                    *changed = true;
+            }};
+        }
+        macro_rules! narrow {
+            ($r:expr, $mask:expr) => {{
+                let r = $r as usize;
+                let mask = $mask;
+                if self.allowed[r] & mask != self.allowed[r] {
+                    self.allowed[r] &= mask;
+                    changed = true;
                 }
-            };
+                if !self.was_read[r] {
+                    self.was_read[r] = true;
+                    changed = true;
+                }
+            }};
+        }
 
         for inst in &bytecode.instructions {
             match inst {
                 Instruction::LoadConst { dst, const_idx } => {
-                    grow(
-                        &mut writes[dst.0 as usize],
-                        const_mask(*const_idx),
-                        &mut changed,
-                    );
+                    grow!(self.writes[dst.0 as usize], const_mask(*const_idx));
                 }
                 Instruction::Move { dst, src } => {
-                    let src_mask = writes[src.0 as usize];
-                    grow(&mut writes[dst.0 as usize], src_mask, &mut changed);
+                    let src_mask = self.writes[src.0 as usize];
+                    grow!(self.writes[dst.0 as usize], src_mask);
                     // Liveness flows backwards through copies: the move
                     // reads src only if someone reads dst, and the copied
                     // value must satisfy dst's constraint.
-                    if was_read[dst.0 as usize] {
-                        let dst_allowed = allowed[dst.0 as usize];
-                        narrow(
-                            &mut allowed,
-                            &mut was_read,
-                            src.0,
-                            dst_allowed,
-                            &mut changed,
-                        );
+                    if self.was_read[dst.0 as usize] {
+                        let dst_allowed = self.allowed[dst.0 as usize];
+                        narrow!(src.0, dst_allowed);
                     }
                 }
                 Instruction::Add { dst, lhs, rhs }
@@ -565,59 +721,44 @@ fn infer_kinds(
                 | Instruction::Mul { dst, lhs, rhs }
                 | Instruction::Div { dst, lhs, rhs }
                 | Instruction::Mod { dst, lhs, rhs } => {
-                    narrow(&mut allowed, &mut was_read, lhs.0, K_NUM, &mut changed);
-                    narrow(&mut allowed, &mut was_read, rhs.0, K_NUM, &mut changed);
-                    let l = writes[lhs.0 as usize];
-                    let r = writes[rhs.0 as usize];
-                    // Result: float if either side can be float; int only
-                    // when both sides can be int.
+                    narrow!(lhs.0, K_NUM);
+                    narrow!(rhs.0, K_NUM);
+                    let l = self.writes[lhs.0 as usize];
+                    let r = self.writes[rhs.0 as usize];
                     if (l | r) & K_FLOAT != 0 {
-                        grow(&mut writes[dst.0 as usize], K_FLOAT, &mut changed);
+                        grow!(self.writes[dst.0 as usize], K_FLOAT);
                     }
                     if l & K_INT != 0 && r & K_INT != 0 {
-                        grow(&mut writes[dst.0 as usize], K_INT, &mut changed);
+                        grow!(self.writes[dst.0 as usize], K_INT);
                     }
                 }
                 Instruction::Neg { dst, src } => {
-                    narrow(&mut allowed, &mut was_read, src.0, K_NUM, &mut changed);
-                    let s = writes[src.0 as usize];
-                    grow(&mut writes[dst.0 as usize], s & K_NUM, &mut changed);
+                    narrow!(src.0, K_NUM);
+                    let s = self.writes[src.0 as usize];
+                    grow!(self.writes[dst.0 as usize], s & K_NUM);
                 }
                 Instruction::Eq { dst, lhs, rhs } | Instruction::Ne { dst, lhs, rhs } => {
-                    // Equality: both numeric (mixed promotes) or both bool.
-                    narrow(
-                        &mut allowed,
-                        &mut was_read,
-                        lhs.0,
-                        K_NUM | K_BOOL,
-                        &mut changed,
-                    );
-                    narrow(
-                        &mut allowed,
-                        &mut was_read,
-                        rhs.0,
-                        K_NUM | K_BOOL,
-                        &mut changed,
-                    );
-                    eq_pairs.push((lhs.0, rhs.0));
-                    grow(&mut writes[dst.0 as usize], K_BOOL, &mut changed);
+                    narrow!(lhs.0, K_NUM | K_BOOL);
+                    narrow!(rhs.0, K_NUM | K_BOOL);
+                    self.eq_pairs.push((lhs.0, rhs.0));
+                    grow!(self.writes[dst.0 as usize], K_BOOL);
                 }
                 Instruction::Lt { dst, lhs, rhs }
                 | Instruction::Le { dst, lhs, rhs }
                 | Instruction::Gt { dst, lhs, rhs }
                 | Instruction::Ge { dst, lhs, rhs } => {
-                    narrow(&mut allowed, &mut was_read, lhs.0, K_NUM, &mut changed);
-                    narrow(&mut allowed, &mut was_read, rhs.0, K_NUM, &mut changed);
-                    grow(&mut writes[dst.0 as usize], K_BOOL, &mut changed);
+                    narrow!(lhs.0, K_NUM);
+                    narrow!(rhs.0, K_NUM);
+                    grow!(self.writes[dst.0 as usize], K_BOOL);
                 }
                 Instruction::And { dst, lhs, rhs } | Instruction::Or { dst, lhs, rhs } => {
-                    narrow(&mut allowed, &mut was_read, lhs.0, K_BOOL, &mut changed);
-                    narrow(&mut allowed, &mut was_read, rhs.0, K_BOOL, &mut changed);
-                    grow(&mut writes[dst.0 as usize], K_BOOL, &mut changed);
+                    narrow!(lhs.0, K_BOOL);
+                    narrow!(rhs.0, K_BOOL);
+                    grow!(self.writes[dst.0 as usize], K_BOOL);
                 }
                 Instruction::Not { dst, src } => {
-                    narrow(&mut allowed, &mut was_read, src.0, K_BOOL, &mut changed);
-                    grow(&mut writes[dst.0 as usize], K_BOOL, &mut changed);
+                    narrow!(src.0, K_BOOL);
+                    grow!(self.writes[dst.0 as usize], K_BOOL);
                 }
                 Instruction::BinImm { op, dst, lhs, imm } => {
                     let imm_mask = match imm.data {
@@ -631,13 +772,13 @@ fn infer_kinds(
                         | BinaryOp::Multiply
                         | BinaryOp::Divide
                         | BinaryOp::Modulo => {
-                            narrow(&mut allowed, &mut was_read, lhs.0, K_NUM, &mut changed);
-                            let l = writes[lhs.0 as usize];
+                            narrow!(lhs.0, K_NUM);
+                            let l = self.writes[lhs.0 as usize];
                             if (l | imm_mask) & K_FLOAT != 0 {
-                                grow(&mut writes[dst.0 as usize], K_FLOAT, &mut changed);
+                                grow!(self.writes[dst.0 as usize], K_FLOAT);
                             }
                             if l & K_INT != 0 && imm_mask == K_INT {
-                                grow(&mut writes[dst.0 as usize], K_INT, &mut changed);
+                                grow!(self.writes[dst.0 as usize], K_INT);
                             }
                         }
                         BinaryOp::Equal
@@ -646,8 +787,8 @@ fn infer_kinds(
                         | BinaryOp::LessThanEqual
                         | BinaryOp::GreaterThan
                         | BinaryOp::GreaterThanEqual => {
-                            narrow(&mut allowed, &mut was_read, lhs.0, K_NUM, &mut changed);
-                            grow(&mut writes[dst.0 as usize], K_BOOL, &mut changed);
+                            narrow!(lhs.0, K_NUM);
+                            grow!(self.writes[dst.0 as usize], K_BOOL);
                         }
                         _ => return None,
                     }
@@ -655,110 +796,93 @@ fn infer_kinds(
                 Instruction::Jump { .. } | Instruction::MatchFail => {}
                 Instruction::JumpIfTrue { condition, .. }
                 | Instruction::JumpIfFalse { condition, .. } => {
-                    narrow(
-                        &mut allowed,
-                        &mut was_read,
-                        condition.0,
-                        K_BOOL,
-                        &mut changed,
-                    );
+                    narrow!(condition.0, K_BOOL);
                 }
-                Instruction::CallFn { dst, args, .. } => {
-                    // whitelist_ok proved func_id == self and arity.
-                    for (i, a) in args.iter().enumerate() {
-                        narrow(
-                            &mut allowed,
-                            &mut was_read,
-                            a.0,
-                            kind_mask(param_kinds[i]),
-                            &mut changed,
-                        );
+                Instruction::CallFn { dst, func_id, args } => {
+                    if let Some((param_kinds, ret_mask)) = sigs.get(&func_id.index()) {
+                        if args.len() != param_kinds.len() {
+                            return None;
+                        }
+                        for (i, a) in args.iter().enumerate() {
+                            narrow!(a.0, kind_mask(param_kinds[i]));
+                        }
+                        let rm = *ret_mask;
+                        grow!(self.writes[dst.0 as usize], rm);
+                    } else {
+                        // Unknown callee: once every argument register has
+                        // resolved to a single numeric/bool kind, request it
+                        // for planning. Until then, keep iterating.
+                        let mut kinds = Vec::with_capacity(args.len());
+                        let mut resolved = true;
+                        for a in args {
+                            match mask_singleton(self.writes[a.0 as usize]) {
+                                Some(k) => kinds.push(k),
+                                None => {
+                                    resolved = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if resolved {
+                            requests.push((*func_id, kinds));
+                        }
                     }
-                    grow(&mut writes[dst.0 as usize], ret_mask, &mut changed);
                 }
                 Instruction::Return { value } => {
                     let reg = (*value)?;
-                    narrow(
-                        &mut allowed,
-                        &mut was_read,
-                        reg.0,
-                        K_NUM | K_BOOL,
-                        &mut changed,
-                    );
-                    return_regs.push(reg.0);
-                    grow(&mut ret_mask, writes[reg.0 as usize], &mut changed);
+                    narrow!(reg.0, K_NUM | K_BOOL);
+                    self.return_regs.push(reg.0);
+                    grow!(self.ret_mask, self.writes[reg.0 as usize]);
                 }
                 _ => return None,
             }
         }
-        if !changed {
-            break;
+
+        if changed {
+            *global_changed = true;
         }
-        eq_pairs.clear();
-        return_regs.clear();
+        Some(())
     }
 
-    let singleton = |mask: u8| -> Option<Kind> {
-        match mask {
-            K_INT => Some(Kind::Int),
-            K_BOOL => Some(Kind::Bool),
-            K_FLOAT => Some(Kind::Float),
-            _ => None,
+    /// After the global fixpoint: check singletons and produce the
+    /// codegen-facing result.
+    fn finalize(&self) -> Option<Inference> {
+        let nregs = self.writes.len();
+        let mut reg_kind: Vec<Option<Kind>> = vec![None; nregs];
+        for (r, slot) in reg_kind.iter_mut().enumerate() {
+            if self.was_read[r] {
+                let k = mask_singleton(self.writes[r])?;
+                if kind_mask(k) & self.allowed[r] == 0 {
+                    return None;
+                }
+                *slot = Some(k);
+            }
         }
-    };
 
-    // Every read register: writes must be a singleton within the allowed
-    // set. Unread registers are dead — codegen skips their stores.
-    let mut reg_kind: Vec<Option<Kind>> = vec![None; nregs];
-    for r in 0..nregs {
-        if was_read[r] {
-            let Some(k) = singleton(writes[r]) else {
-                if jit_debug() {
-                    eprintln!(
-                        "[jit]   r{} read but writes mask {:#b} not singleton (allowed {:#b})",
-                        r, writes[r], allowed[r]
-                    );
-                }
-                return None;
-            };
-            if kind_mask(k) & allowed[r] == 0 {
-                if jit_debug() {
-                    eprintln!(
-                        "[jit]   r{} kind {:?} outside allowed {:#b}",
-                        r, k, allowed[r]
-                    );
-                }
+        for (l, r) in &self.eq_pairs {
+            let lk = reg_kind[*l as usize]?;
+            let rk = reg_kind[*r as usize]?;
+            let both_num =
+                matches!(lk, Kind::Int | Kind::Float) && matches!(rk, Kind::Int | Kind::Float);
+            let both_bool = lk == Kind::Bool && rk == Kind::Bool;
+            if !both_num && !both_bool {
                 return None;
             }
-            reg_kind[r] = Some(k);
         }
-    }
 
-    // Equality pairs: both numeric (any mix) or both bool.
-    for (l, r) in eq_pairs {
-        let lk = reg_kind[l as usize]?;
-        let rk = reg_kind[r as usize]?;
-        let both_num =
-            matches!(lk, Kind::Int | Kind::Float) && matches!(rk, Kind::Int | Kind::Float);
-        let both_bool = lk == Kind::Bool && rk == Kind::Bool;
-        if !both_num && !both_bool {
-            return None;
+        let ret_kind = mask_singleton(self.ret_mask)?;
+        for r in &self.return_regs {
+            if reg_kind[*r as usize] != Some(ret_kind) {
+                return None;
+            }
         }
-    }
 
-    // All returns agree on one kind.
-    let ret_kind = singleton(ret_mask)?;
-    for r in &return_regs {
-        if reg_kind[*r as usize] != Some(ret_kind) {
-            return None;
-        }
+        Some(Inference {
+            reg_kind,
+            param_kinds: self.param_kinds.clone(),
+            ret_kind,
+        })
     }
-
-    Some(Inference {
-        reg_kind,
-        param_kinds: param_kinds.to_vec(),
-        ret_kind,
-    })
 }
 
 fn instruction_name(inst: &Instruction) -> &'static str {
@@ -836,7 +960,7 @@ impl Gen<'_> {
 fn translate_body(
     builder: &mut FunctionBuilder,
     module: &mut JITModule,
-    self_id: cranelift_module::FuncId,
+    targets: &HashMap<usize, (cranelift_module::FuncId, Kind)>,
     bytecode: &CompiledBytecode,
     inference: &Inference,
 ) -> Option<()> {
@@ -1093,9 +1217,11 @@ fn translate_body(
                 builder.ins().brif(cond, then_block, &[], else_block, &[]);
                 terminated = true;
             }
-            Instruction::CallFn { dst, args, .. } => {
-                // Self-recursion (whitelist guaranteed func_id == self):
-                // spend a unit of depth budget, deopt when exhausted.
+            Instruction::CallFn { dst, func_id, args } => {
+                // A native-to-native call (group member or previously
+                // compiled function): spend a unit of depth budget, deopt
+                // when exhausted.
+                let (callee_clif, _callee_ret) = *targets.get(&func_id.index())?;
                 let depth = builder.use_var(depth_var);
                 let one = builder.ins().iconst(types::I64, 1);
                 let new_depth = builder.ins().isub(depth, one);
@@ -1111,8 +1237,8 @@ fn translate_body(
                     call_args.push(gen.read(builder, a.0)?);
                 }
                 call_args.push(new_depth);
-                let self_ref = module.declare_func_in_func(self_id, builder.func);
-                let call = builder.ins().call(self_ref, &call_args);
+                let callee_ref = module.declare_func_in_func(callee_clif, builder.func);
+                let call = builder.ins().call(callee_ref, &call_args);
                 let value = builder.inst_results(call)[0];
                 let status = builder.inst_results(call)[1];
 
@@ -1231,9 +1357,9 @@ fn imm_float_cc(op: &BinaryOp) -> Option<FloatCC> {
 
 /// Arithmetic matching the VM's semantics exactly. Integer paths carry
 /// overflow/zero guards that branch to deopt; float add/sub/mul are plain
-/// IEEE; float division and modulo guard b == 0.0 (olang errors there).
-/// Float modulo itself is refused — Rust's `%` is fmod, which has no
-/// exact IR equivalent, and guessing is how divergence starts.
+/// IEEE; float division guards b == 0.0 (olang errors there). Float
+/// modulo itself is refused — Rust's `%` is fmod, which has no exact IR
+/// equivalent, and guessing is how divergence starts.
 fn emit_arith(
     builder: &mut FunctionBuilder,
     gen: &Gen,

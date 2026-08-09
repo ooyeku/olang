@@ -47,6 +47,23 @@ documented.
   property tests against naive references plus 12 tier-transparency
   integration tests (tests/ods_series_test.rs).
 
+- **JIT call-graph groups: cross-function native calls.** The
+  self-call-only restriction is gone. On a function's first call the
+  JIT plans every function reachable through its CallFn sites, runs
+  kind inference to a global fixpoint across the group (callee return
+  masks feed caller registers; masks only grow, so it converges), and
+  compiles the whole group with direct native-to-native calls —
+  helpers, chains, and mutual recursion all stay native, each member
+  entry-guarded on its own specialized signature and directly callable
+  from the VM afterwards. Kind-mismatched or already-differently-
+  specialized callees refuse the entry (fail-closed); the depth budget
+  and deopt status propagate through the whole chain, so an overflow
+  two native calls deep unwinds and re-runs on bytecode with the
+  canonical error. **fib(30) split across two mutually recursive
+  functions: 94ms → 5ms** — identical to single-function fib. Eight new
+  parity tests: helper pipelines, 2- and 3-function cycles, mixed-kind
+  chains, deopt-in-chain, kind-mismatched helpers, and depth guards
+  through mutual recursion.
 - **JIT type specialization: floats.** Compilation is now lazy and
   runtime-observed: a whitelisted function compiles on its first call,
   specialized to the Int/Float argument kinds that call carries, with
