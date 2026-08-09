@@ -44,12 +44,17 @@ pub trait NativeObject: fmt::Debug + Send + Sync {
 }
 
 /// Shared handle to a native value: the single allocation both tiers hold.
+///
+/// The inner Box keeps this a *thin* pointer (8 bytes): OvmValue is pinned
+/// at 16 bytes because registers copy it on every VM move, and a fat
+/// `Arc<dyn>` would push it to 24. The extra indirection is paid once per
+/// kernel call, never per element or per register move.
 #[derive(Clone)]
-pub struct NativeHandle(pub Arc<dyn NativeObject>);
+pub struct NativeHandle(pub Arc<Box<dyn NativeObject>>);
 
 impl NativeHandle {
     pub fn new(obj: impl NativeObject + 'static) -> Self {
-        Self(Arc::new(obj))
+        Self(Arc::new(Box::new(obj)))
     }
 
     /// Identity, not structural equality — true only for the same allocation.
@@ -66,7 +71,7 @@ impl fmt::Debug for NativeHandle {
 
 impl PartialEq for NativeHandle {
     fn eq(&self, other: &Self) -> bool {
-        self.0.native_eq(other.0.as_ref())
+        self.0.native_eq(other.0.as_ref().as_ref())
     }
 }
 

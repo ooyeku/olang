@@ -48,6 +48,7 @@ impl NativeObject for OdsSeries {
                 Scalar::F64(x) => Value::Float(x).to_string(),
                 Scalar::I64(x) => x.to_string(),
                 Scalar::Bool(b) => b.to_string(),
+                Scalar::Str(s) => format!("\"{}\"", s),
                 Scalar::Null => "null".to_string(),
             });
         }
@@ -82,15 +83,17 @@ pub(super) fn scalar_to_value(s: Scalar) -> Value {
         Scalar::F64(x) => Value::Float(x),
         Scalar::I64(x) => Value::Integer(x),
         Scalar::Bool(b) => Value::Boolean(b),
+        Scalar::Str(s) => Value::String(std::sync::Arc::new(s)),
         Scalar::Null => Value::Unit,
     }
 }
 
-fn value_to_scalar(v: &Value) -> Option<Scalar> {
+pub(super) fn value_to_scalar(v: &Value) -> Option<Scalar> {
     match v {
         Value::Float(x) => Some(Scalar::F64(*x)),
         Value::Integer(x) => Some(Scalar::I64(*x)),
         Value::Boolean(b) => Some(Scalar::Bool(*b)),
+        Value::String(s) => Some(Scalar::Str(s.as_ref().clone())),
         Value::Unit => Some(Scalar::Null),
         _ => None,
     }
@@ -107,23 +110,38 @@ pub fn series_of(value: &Value) -> Option<&Series> {
 /// any Float among numerics → Float (ints widen); all Bool → Bool;
 /// `()` is null and defers to the rest; an all-null or empty list is a
 /// Float series (the least surprising default for numeric work).
-fn series_from_list(items: &[Value]) -> Result<Series, String> {
+pub(super) fn series_from_list(items: &[Value]) -> Result<Series, String> {
     let mut saw_float = false;
     let mut saw_int = false;
     let mut saw_bool = false;
+    let mut saw_str = false;
     for item in items {
         match item {
             Value::Float(_) => saw_float = true,
             Value::Integer(_) => saw_int = true,
             Value::Boolean(_) => saw_bool = true,
+            Value::String(_) => saw_str = true,
             Value::Unit => {}
             other => {
                 return Err(format!(
-                    "ods.series: list elements must be Int, Float, Bool, or () for null — got {}",
+                    "ods.series: list elements must be Int, Float, Bool, String, or () for null — got {}",
                     other.type_name()
                 ))
             }
         }
+    }
+    if saw_str && (saw_float || saw_int || saw_bool) {
+        return Err("ods.series: cannot mix String with other element types".to_string());
+    }
+    if saw_str {
+        let opts = items
+            .iter()
+            .map(|v| match v {
+                Value::String(s) => Some(s.as_ref().clone()),
+                _ => None,
+            })
+            .collect();
+        return Ok(Series::from_str_options(opts));
     }
     if saw_bool && (saw_float || saw_int) {
         return Err("ods.series: cannot mix Bool with numeric elements".to_string());

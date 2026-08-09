@@ -26,10 +26,12 @@
 pub mod bitmap;
 #[cfg(feature = "stats")]
 pub mod dist;
+pub mod frame;
 #[cfg(feature = "stats")]
 pub mod stats;
 
 pub use bitmap::{merge_validity, Bitmap};
+pub use frame::{AggOp, AggSpec, Frame, JoinHow};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -41,6 +43,7 @@ pub enum DType {
     F64,
     I64,
     Bool,
+    Str,
 }
 
 impl fmt::Display for DType {
@@ -49,16 +52,18 @@ impl fmt::Display for DType {
             DType::F64 => write!(f, "Float"),
             DType::I64 => write!(f, "Int"),
             DType::Bool => write!(f, "Bool"),
+            DType::Str => write!(f, "String"),
         }
     }
 }
 
 /// A single element crossing the engine boundary.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Scalar {
     F64(f64),
     I64(i64),
     Bool(bool),
+    Str(String),
     Null,
 }
 
@@ -139,6 +144,10 @@ pub enum Series {
         values: Arc<Vec<bool>>,
         validity: Option<Bitmap>,
     },
+    Str {
+        values: Arc<Vec<String>>,
+        validity: Option<Bitmap>,
+    },
 }
 
 // ---------------------------------------------------------------------
@@ -200,6 +209,25 @@ impl Series {
         }
     }
 
+    pub fn from_str_values(values: Vec<String>) -> Self {
+        Series::Str {
+            values: Arc::new(values),
+            validity: None,
+        }
+    }
+
+    pub fn from_str_options(opts: Vec<Option<String>>) -> Self {
+        if opts.iter().all(|o| o.is_some()) {
+            return Self::from_str_values(opts.into_iter().flatten().collect());
+        }
+        let bits: Vec<bool> = opts.iter().map(|o| o.is_some()).collect();
+        let values = opts.into_iter().map(|o| o.unwrap_or_default()).collect();
+        Series::Str {
+            values: Arc::new(values),
+            validity: Some(Bitmap::from_bools(&bits)),
+        }
+    }
+
     pub fn zeros(len: usize) -> Self {
         Series::from_f64(vec![0.0; len])
     }
@@ -235,6 +263,7 @@ impl Series {
             Series::F64 { .. } => DType::F64,
             Series::I64 { .. } => DType::I64,
             Series::Bool { .. } => DType::Bool,
+            Series::Str { .. } => DType::Str,
         }
     }
 
@@ -243,6 +272,7 @@ impl Series {
             Series::F64 { values, .. } => values.len(),
             Series::I64 { values, .. } => values.len(),
             Series::Bool { values, .. } => values.len(),
+            Series::Str { values, .. } => values.len(),
         }
     }
 
@@ -254,7 +284,8 @@ impl Series {
         match self {
             Series::F64 { validity, .. }
             | Series::I64 { validity, .. }
-            | Series::Bool { validity, .. } => validity.as_ref(),
+            | Series::Bool { validity, .. }
+            | Series::Str { validity, .. } => validity.as_ref(),
         }
     }
 
@@ -279,6 +310,7 @@ impl Series {
             Series::F64 { values, .. } => Scalar::F64(values[i]),
             Series::I64 { values, .. } => Scalar::I64(values[i]),
             Series::Bool { values, .. } => Scalar::Bool(values[i]),
+            Series::Str { values, .. } => Scalar::Str(values[i].clone()),
         }
     }
 
@@ -349,22 +381,22 @@ impl Series {
         par: bool,
     ) -> Result<Series> {
         let validity = self.validity().cloned();
-        match (self, scalar) {
+        match (self, &scalar) {
             (_, Scalar::Null) => Err(OdsError::InvalidArgument(
                 "cannot apply arithmetic with a null scalar".to_string(),
             )),
             (Series::F64 { values, .. }, Scalar::F64(s)) => {
-                f64_arith_scalar(values, s, op, swapped, validity, par)
+                f64_arith_scalar(values, *s, op, swapped, validity, par)
             }
             (Series::F64 { values, .. }, Scalar::I64(s)) => {
-                f64_arith_scalar(values, s as f64, op, swapped, validity, par)
+                f64_arith_scalar(values, *s as f64, op, swapped, validity, par)
             }
             (Series::I64 { values, .. }, Scalar::F64(s)) => {
                 let a: Vec<f64> = values.iter().map(|&x| x as f64).collect();
-                f64_arith_scalar(&a, s, op, swapped, validity, par)
+                f64_arith_scalar(&a, *s, op, swapped, validity, par)
             }
             (Series::I64 { values, .. }, Scalar::I64(s)) => {
-                i64_arith_scalar(values, s, op, swapped, validity)
+                i64_arith_scalar(values, *s, op, swapped, validity)
             }
             _ => Err(OdsError::TypeMismatch(format!(
                 "cannot apply {} to Series[{}] and {:?}",
@@ -407,6 +439,13 @@ impl Series {
                     ))
                 }
             },
+            // Strings order lexicographically, like the language's own
+            // string comparisons.
+            (Series::Str { values: a, .. }, Series::Str { values: b, .. }) => a
+                .iter()
+                .zip(b.iter())
+                .map(|(x, y)| cmp_one(x.as_str(), y.as_str(), op))
+                .collect(),
             _ => {
                 return Err(OdsError::TypeMismatch(format!(
                     "cannot compare Series[{}] with Series[{}]",
@@ -425,22 +464,26 @@ impl Series {
         // a < s  ≡  swapped(s < a) with the operator mirrored.
         let op = if swapped { mirror_cmp(op) } else { op };
         let validity = self.validity().cloned();
-        let bits: Vec<bool> = match (self, scalar) {
+        let bits: Vec<bool> = match (self, &scalar) {
             (Series::F64 { values, .. }, Scalar::F64(s)) => {
-                values.iter().map(|&x| cmp_one(x, s, op)).collect()
+                values.iter().map(|&x| cmp_one(x, *s, op)).collect()
             }
             (Series::F64 { values, .. }, Scalar::I64(s)) => {
-                values.iter().map(|&x| cmp_one(x, s as f64, op)).collect()
+                values.iter().map(|&x| cmp_one(x, *s as f64, op)).collect()
             }
             (Series::I64 { values, .. }, Scalar::I64(s)) => {
-                values.iter().map(|&x| cmp_one(x, s, op)).collect()
+                values.iter().map(|&x| cmp_one(x, *s, op)).collect()
             }
             (Series::I64 { values, .. }, Scalar::F64(s)) => {
-                values.iter().map(|&x| cmp_one(x as f64, s, op)).collect()
+                values.iter().map(|&x| cmp_one(x as f64, *s, op)).collect()
             }
+            (Series::Str { values, .. }, Scalar::Str(s)) => values
+                .iter()
+                .map(|x| cmp_one(x.as_str(), s.as_str(), op))
+                .collect(),
             (Series::Bool { values, .. }, Scalar::Bool(s)) => match op {
-                CmpOp::Eq => values.iter().map(|&x| x == s).collect(),
-                CmpOp::Ne => values.iter().map(|&x| x != s).collect(),
+                CmpOp::Eq => values.iter().map(|&x| x == *s).collect(),
+                CmpOp::Ne => values.iter().map(|&x| x != *s).collect(),
                 _ => {
                     return Err(OdsError::TypeMismatch(
                         "Bool series support only == and != comparisons".to_string(),
@@ -484,6 +527,9 @@ impl Series {
             Series::Bool { .. } => Err(OdsError::TypeMismatch(
                 "sum is not defined for Bool series".to_string(),
             )),
+            Series::Str { .. } => Err(OdsError::TypeMismatch(
+                "sum is not defined for String series".to_string(),
+            )),
         }
     }
 
@@ -519,10 +565,11 @@ impl Series {
                 let cast: Vec<f64> = values.iter().map(|&x| x as f64).collect();
                 f64_sum_sq_dev(&cast, validity.as_ref(), mean, par)
             }
-            Series::Bool { .. } => {
-                return Err(OdsError::TypeMismatch(
-                    "var is not defined for Bool series".to_string(),
-                ))
+            Series::Bool { .. } | Series::Str { .. } => {
+                return Err(OdsError::TypeMismatch(format!(
+                    "var is not defined for {} series",
+                    self.dtype()
+                )))
             }
         };
         Ok(Some(ss / (n - 1) as f64))
@@ -583,6 +630,24 @@ impl Series {
             Series::Bool { .. } => Err(OdsError::TypeMismatch(
                 "min/max are not defined for Bool series".to_string(),
             )),
+            Series::Str { values, validity } => {
+                let mut best: Option<&String> = None;
+                for (i, v) in values.iter().enumerate() {
+                    if validity.as_ref().map(|b| b.get(i)).unwrap_or(true) {
+                        best = Some(match best {
+                            None => v,
+                            Some(b) => {
+                                if want_min == (v < b) {
+                                    v
+                                } else {
+                                    b
+                                }
+                            }
+                        });
+                    }
+                }
+                Ok(best.map(|s| Scalar::Str(s.clone())).unwrap_or(Scalar::Null))
+            }
         }
     }
 
@@ -617,9 +682,10 @@ impl Series {
                 .filter(|&i| validity.as_ref().map(|v| v.get(i)).unwrap_or(true))
                 .map(|i| values[i] as f64)
                 .collect()),
-            Series::Bool { .. } => Err(OdsError::TypeMismatch(
-                "numeric reduction is not defined for Bool series".to_string(),
-            )),
+            Series::Bool { .. } | Series::Str { .. } => Err(OdsError::TypeMismatch(format!(
+                "numeric reduction is not defined for {} series",
+                self.dtype()
+            ))),
         }
     }
 
@@ -655,9 +721,10 @@ impl Series {
         match self {
             Series::F64 { values, .. } => Ok(values.as_ref().clone()),
             Series::I64 { values, .. } => Ok(values.iter().map(|&x| x as f64).collect()),
-            Series::Bool { .. } => Err(OdsError::TypeMismatch(
-                "numeric reduction is not defined for Bool series".to_string(),
-            )),
+            Series::Bool { .. } | Series::Str { .. } => Err(OdsError::TypeMismatch(format!(
+                "numeric reduction is not defined for {} series",
+                self.dtype()
+            ))),
         }
     }
 
@@ -669,7 +736,7 @@ impl Series {
     /// sorts after +inf).
     pub fn sort(&self, par: bool) -> Result<Series> {
         match self {
-            Series::F64 { .. } | Series::I64 { .. } => {}
+            Series::F64 { .. } | Series::I64 { .. } | Series::Str { .. } => {}
             Series::Bool { .. } => {
                 return Err(OdsError::TypeMismatch(
                     "sort is not defined for Bool series".to_string(),
@@ -725,6 +792,32 @@ impl Series {
                     Series::from_i64,
                 ))
             }
+            Series::Str { values, validity } => {
+                let mut vals: Vec<String> = match validity {
+                    None => values.as_ref().clone(),
+                    Some(v) => (0..n)
+                        .filter(|&i| v.get(i))
+                        .map(|i| values[i].clone())
+                        .collect(),
+                };
+                #[cfg(feature = "parallel")]
+                if par {
+                    vals.par_sort_unstable();
+                } else {
+                    vals.sort_unstable();
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    let _ = par;
+                    vals.sort_unstable();
+                }
+                Ok(rebuild_with_trailing_nulls(
+                    vals,
+                    n,
+                    nulls,
+                    Series::from_str_values,
+                ))
+            }
             Series::Bool { .. } => unreachable!("rejected above"),
         }
     }
@@ -741,6 +834,9 @@ impl Series {
             }
             Series::I64 { values, .. } => {
                 valid_idx.sort_by_key(|&i| values[i]);
+            }
+            Series::Str { values, .. } => {
+                valid_idx.sort_by(|&a, &b| values[a].cmp(&values[b]));
             }
             Series::Bool { .. } => {
                 return Err(OdsError::TypeMismatch(
@@ -851,6 +947,18 @@ impl Series {
                     Series::from_bool(indices.iter().map(|&i| values[i]).collect())
                 }
             }
+            Series::Str { values, .. } => {
+                if opts_needed {
+                    Series::from_str_options(
+                        indices
+                            .iter()
+                            .map(|&i| self.is_valid(i).then(|| values[i].clone()))
+                            .collect(),
+                    )
+                } else {
+                    Series::from_str_values(indices.iter().map(|&i| values[i].clone()).collect())
+                }
+            }
         }
     }
 
@@ -887,9 +995,10 @@ impl Series {
                 }
                 Ok(Series::from_i64_options(out))
             }
-            Series::Bool { .. } => Err(OdsError::TypeMismatch(
-                "cumsum is not defined for Bool series".to_string(),
-            )),
+            Series::Bool { .. } | Series::Str { .. } => Err(OdsError::TypeMismatch(format!(
+                "cumsum is not defined for {} series",
+                self.dtype()
+            ))),
         }
     }
 
@@ -909,7 +1018,7 @@ impl Series {
         if self.validity().is_none() {
             return Ok(self);
         }
-        match (&mut self, fill) {
+        match (&mut self, &fill) {
             (Series::F64 { values, validity }, Scalar::F64(_) | Scalar::I64(_)) => {
                 let f = match fill {
                     Scalar::F64(x) => x,
@@ -925,6 +1034,7 @@ impl Series {
                 }
             }
             (Series::I64 { values, validity }, Scalar::I64(f)) => {
+                let f = *f;
                 let bm = validity.take().expect("checked above");
                 let vals = Arc::make_mut(values);
                 for (i, v) in vals.iter_mut().enumerate() {
@@ -934,11 +1044,22 @@ impl Series {
                 }
             }
             (Series::Bool { values, validity }, Scalar::Bool(f)) => {
+                let f = *f;
                 let bm = validity.take().expect("checked above");
                 let vals = Arc::make_mut(values);
                 for (i, v) in vals.iter_mut().enumerate() {
                     if !bm.get(i) {
                         *v = f;
+                    }
+                }
+            }
+            (Series::Str { values, validity }, Scalar::Str(f)) => {
+                let f = f.clone();
+                let bm = validity.take().expect("checked above");
+                let vals = Arc::make_mut(values);
+                for (i, v) in vals.iter_mut().enumerate() {
+                    if !bm.get(i) {
+                        v.clone_from(&f);
                     }
                 }
             }
@@ -1262,6 +1383,10 @@ fn rebuild_with_trailing_nulls<T: Default + Clone>(
             validity: Some(Bitmap::from_bools(&bits)),
         },
         Series::Bool { values, .. } => Series::Bool {
+            values,
+            validity: Some(Bitmap::from_bools(&bits)),
+        },
+        Series::Str { values, .. } => Series::Str {
             values,
             validity: Some(Bitmap::from_bools(&bits)),
         },

@@ -1,4 +1,4 @@
 [package]
 name = "dataproc"
 version = "1.0.0"
-description = "CSV -> aggregate -> JSON data pipeline with csv, col, json, fs"
+description = "CSV -> Frame -> aggregate -> JSON pipeline on the ods data stack"

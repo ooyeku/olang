@@ -8,9 +8,11 @@
 //! all thin tables over the engine (L2 of the layer cake). See
 //! `docs/design/ods.md`.
 
+mod frame;
 mod series;
 mod stats;
 
+pub use frame::OdsFrame;
 pub use series::{make_series_value, OdsSeries};
 
 use crate::ast::{BinaryOp, BuiltinFunction, Value};
@@ -72,6 +74,7 @@ impl OvmModule for OdsModule {
             .iter()
             .copied()
             .chain(series::FUNCTIONS.iter().copied())
+            .chain(frame::FUNCTIONS.iter().copied())
         {
             module.insert(
                 name.to_string(),
@@ -91,12 +94,22 @@ impl OvmModule for OdsModule {
     }
 
     fn dispatch(&self, func: &str, args: Vec<Value>) -> Result<Value, String> {
+        if frame::FUNCTIONS.iter().any(|(n, _)| *n == func) {
+            return frame::dispatch(func, args);
+        }
+        // filter/take are shared names: a Frame first argument routes to
+        // the frame verbs, everything else to the series kernels.
+        if matches!(func, "filter" | "take") {
+            if let Some(result) = frame::dispatch_shared(func, &args) {
+                return result;
+            }
+        }
         if series::FUNCTIONS.iter().any(|(n, _)| *n == func) {
             return series::dispatch(func, args).expect("membership checked above");
         }
         match func {
             "version" => Ok(Value::String(Arc::new(format!(
-                "{} (phase 2)",
+                "{} (phase 3)",
                 env!("CARGO_PKG_VERSION")
             )))),
             "probe" => match args.as_slice() {

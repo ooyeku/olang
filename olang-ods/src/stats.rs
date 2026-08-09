@@ -66,7 +66,7 @@ fn dense_f64(s: &Series) -> Result<Vec<f64>> {
     match s {
         Series::F64 { values, .. } => Ok(values.as_ref().clone()),
         Series::I64 { values, .. } => Ok(values.iter().map(|&x| x as f64).collect()),
-        Series::Bool { .. } => Err(OdsError::TypeMismatch(
+        Series::Bool { .. } | Series::Str { .. } => Err(OdsError::TypeMismatch(
             "statistic requires numeric series".to_string(),
         )),
     }

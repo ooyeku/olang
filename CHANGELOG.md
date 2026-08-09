@@ -12,6 +12,23 @@ documented.
 
 ### Added
 
+- **Frame — ods Phase 3, the columnar table** (`docs/design/ods.md`).
+  Series grew a String dtype (lexicographic comparisons, sort, gather,
+  fill_null), and the `ods` namespace grew the tidyverse verb set over
+  a new Frame type: `frame`, `read_csv` (type-inferring), 
+  `frame_from_records` (accepts `json.parse` output — JSON arrays
+  become Frames in one pipe), `select`, `with_column`, `filter`/`take`
+  (shared with Series, dispatched by argument type), `sort_by`,
+  `head`, `group_by` with count/sum/mean/min/max aggregations, inner
+  and left hash `join`, `to_records`, and introspection. Null keys
+  form their own group in `group_by` (R/Polars) but never match in
+  joins (SQL); groups keep first-seen order. **B6 gate met: a 10M-row,
+  1k-group sum+mean aggregates in 27.2 ms single-threaded vs 24.0 ms
+  for Polars on 18 threads** — an inline Fx hasher and L1-resident
+  accumulators, measured table in the design doc. `examples/dataproc`
+  is rewritten on the Frame pipeline: **3.0 s → 0.06 s at 200k rows
+  (50×)** with identical aggregates.
+
 - **The `stats` namespace — ods Phase 2, statistical inference**
   (`docs/design/ods.md`). Distributions (normal, t, chi², F — pdf/cdf/
   ppf/sample, statrs-backed), `stats.describe`, pairwise-complete

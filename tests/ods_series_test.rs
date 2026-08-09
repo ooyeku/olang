@@ -334,8 +334,11 @@ fn elementwise_eq_masks_via_ods_eq() {
 fn type_errors_are_informative() {
     let err = eval("ods.sum(3)", None).unwrap_err();
     assert!(err.contains("must be a Series"), "got: {}", err);
-    let err = eval("ods.series([\"nope\"])", None).unwrap_err();
+    // Strings became a real dtype in Phase 3; nested lists stay invalid.
+    let err = eval("ods.series([[1, 2]])", None).unwrap_err();
     assert!(err.contains("Int, Float, Bool"), "got: {}", err);
+    let err = eval("ods.series([\"a\", 1])", None).unwrap_err();
+    assert!(err.contains("cannot mix String"), "got: {}", err);
     let err = eval("ods.quantile(ods.series([1.0]), 2.0)", None).unwrap_err();
     assert!(err.contains("[0, 1]"), "got: {}", err);
 }

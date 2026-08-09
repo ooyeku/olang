@@ -28,3 +28,7 @@ harness = false
 [[bench]]
 name = "ols"
 harness = false
+
+[[bench]]
+name = "groupby"
+harness = false

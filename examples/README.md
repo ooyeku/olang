@@ -52,11 +52,13 @@ A two-package demonstration of the package manager (see
   `async`/`await` and `Promise.all`/`race`: four simulated fetches run
   concurrently (total time = the slowest, not the sum), and each is raced
   against a timeout budget
-- [`dataproc/`](dataproc/) — a CSV→aggregate→JSON pipeline: reads sales rows
-  with `csv.parse_with_headers`, types them (`lib/transform.ol`), aggregates
-  revenue by region (`lib/aggregate.ol`), emits a `json` report, then reads
-  it back and selects fields by a runtime key — a parsed JSON object reads
-  through the same `map_*` accessors as a map
+- [`dataproc/`](dataproc/) — a CSV→Frame→aggregate→JSON pipeline on the ods
+  data stack: `ods.read_csv` infers column types, revenue is one vectorized
+  column multiply, revenue-by-region is a `group_by`, then a `json` report
+  is emitted, read back, and selected by runtime key — a parsed JSON object
+  reads through the same `map_*` accessors as a map. (The records-and-fold
+  version of this pipeline ran 50× slower at 200k rows; see
+  `docs/design/ods.md`.)
 - [`template/`](template/) — a mustache-style template engine self-hosted in
   olang: a lexer, a parser building a nested node tree over a shared `Node`
   ADT (`lib/ast.ol`), and a renderer walking it against a JSON context.

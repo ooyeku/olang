@@ -311,6 +311,36 @@ Notes:
   transform from the `random` module's stream, so `random.seed(k)`
   makes statistical sampling reproducible — pinned by test.
 
+### Measured — Phase 3 (preliminary)
+
+Same machine and method. Group-by: 10M rows, 1k integer groups,
+sum + mean aggregation.
+
+| # | Benchmark | ods | Polars 1.43 | Verdict |
+|---|---|---|---|---|
+| B6 | group-by aggregate | 27.2 ms (single-threaded) | 24.0 ms (18 threads) | **met** — 1.13× of Polars, far inside the 3× target |
+| — | `examples/dataproc`, 200k-row CSV | 0.06 s (Frame pipeline) | 3.0 s (records + fold pipeline, same binary) | **gate met** — 50× |
+
+Notes:
+
+- **Why single-threaded group-by hangs with Polars here:** the hot loop
+  is one Fx-hashed id assignment per row (SipHash's DoS resistance buys
+  nothing against our own group keys and cost most of the budget) plus
+  vec-indexed accumulators per aggregation. At 1k groups the
+  accumulators live in L1 and the pass is memory-bound on the key
+  column; Polars' parallelism only starts paying at much higher group
+  cardinality or wider aggregations. Partitioned parallel grouping
+  remains available headroom if a workload needs it.
+- **dataproc semantics:** aggregates and totals are bit-identical to
+  the old pipeline. Two previously nondeterministic choices became
+  deterministic or differently arbitrary: the report's region list is
+  now sorted (was raw map-key order), and a revenue tie for "top sale"
+  resolves to a different tied row than `col.max_by`'s first-seen rule.
+- **Null-key and join semantics** follow R/Polars for grouping (null is
+  a group) and SQL for joins (null keys never match; left join keeps
+  the row). Groups keep first-seen order, so results are deterministic
+  without a sort.
+
 ## Phases
 
 Each phase is independently shippable and defensible; no phase begins until
