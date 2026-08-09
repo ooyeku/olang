@@ -1499,6 +1499,47 @@ n
     );
 }
 
+// ── the register slab (frame windows) ─────────────────────────────────
+
+#[test]
+fn deep_recursion_carries_heap_values_across_frame_windows() {
+    // Frames are windows on one shared slab. A window bug (overlap, stale
+    // base, missed reset) scrambles values BETWEEN frames — so recurse
+    // deep carrying strings and lists built per frame, and check both the
+    // result and that each frame's values survived its callees.
+    let src = r#"
+fn weave(n, tag) = {
+    if n <= 0 => len(tag)
+    else => {
+        let mine = tag + "-" + "x"
+        let below = weave(n - 1, mine)
+        let list = [n, below, len(mine)]
+        list[0] + list[1] + list[2] - len(mine)
+    }
+}
+weave(60, "seed") + weave(60, "seed")
+"#;
+    assert!(promotion_count(src, 2) >= 1, "weave should promote");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn interleaved_native_loops_and_recursion_agree() {
+    // A native map loop pushes a frame per element while the enclosing
+    // compiled function's window stays live below it; recursion inside the
+    // mapped function stacks further windows on top.
+    let src = r#"
+fn fact(n) = if n <= 1 => 1 else => n * fact(n - 1)
+fn go(xs, k) = xs |> map((x) => fact(x % 6) + x * k) |> sum
+let xs = range(0, 200)
+let mut t = 0
+for i in 0..20 { t = t + go(xs, i) }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 1);
+    assert_tier_transparent(src);
+}
+
 // ── function-valued callees (CallValue) ───────────────────────────────
 
 #[test]

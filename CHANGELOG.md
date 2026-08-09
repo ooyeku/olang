@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Changed
+
+- **Frames are windows on one register slab.** Every call used to swap a
+  whole `ExecutionState` in and out through a frame pool, re-size its
+  register and locals vectors, and reset per-call bookkeeping. The VM now
+  keeps a single contiguous `Vec<OvmValue>` for all live frames: entering
+  a function bumps a window past the caller's, returning restores two
+  integers, and the slab only grows — stale values above the logical top
+  are recycled in place with the immediate drop-skip when the next call
+  claims them (the Lua register-stack design). `CallFn` goes further:
+  arguments copy straight from the caller's window into the callee's, no
+  intermediate buffer. The dead `locals` array and per-frame bookkeeping
+  fields are gone; `LoadLocal`/`StoreLocal` (never emitted since locals
+  moved to registers) now error like other unreachable instructions. Two
+  new stress tests target the design's failure modes: deep recursion
+  carrying heap values across windows, and native map loops stacking
+  frames above a live caller. Measured: fib(30) 135ms → ~104ms, the
+  pipeline benchmark 38ms → ~27ms — **past CPython (31ms) on idiomatic
+  pipeline code** — N-body unchanged, checksum bit-identical.
+
 ## [0.35.0] - 2026-08-08
 
 ### Added

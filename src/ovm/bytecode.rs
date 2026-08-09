@@ -62,7 +62,6 @@ pub struct BytecodeVm {
     max_call_depth: u32,
     /// Spare execution frames, pooled so register/local vectors keep their
     /// allocated capacity across calls
-    frame_pool: Vec<ExecutionState>,
     /// Pooled argument buffers for Call* instructions, so marshaling a call's
     /// arguments does not malloc on every call.
     arg_pool: Vec<Vec<OvmValue>>,
@@ -667,32 +666,18 @@ pub struct SourceLocation {
 /// VM execution state
 #[derive(Debug)]
 pub struct ExecutionState {
-    // Register values
-    registers: Vec<OvmValue>,
-
-    // Local variables
-    locals: Vec<OvmValue>,
-
-    // Call stack
-    #[allow(dead_code)]
-    call_stack: Vec<StackFrame>,
-
-    // Program counter
-    pc: usize,
-
-    // Exception state
-    exception: Option<VmException>,
-    // Current bytecode being executed
-}
-
-/// Stack frame for function calls  
-#[derive(Debug, Clone)]
-pub struct StackFrame {
-    pub function_id: FunctionId,
-    pub return_pc: usize,
-    pub return_register: Option<Register>,
-    pub local_base: usize,
-    pub register_base: usize,
+    /// One contiguous slab holding every live frame's registers. A call is
+    /// a window `[base, top)` into it: entering a function bumps the window
+    /// past the caller's, returning restores two integers. The slab only
+    /// grows — stale values above the logical top are reset (drop-skipping
+    /// immediates) when the next call claims them, which is the same
+    /// recycle-in-place the old per-call frame pool did, minus the pool,
+    /// the ExecutionState swap, and the per-call Vec bookkeeping.
+    stack: Vec<OvmValue>,
+    /// Start of the current frame's register window.
+    base: usize,
+    /// End of the current frame's register window (== base + register_count).
+    top: usize,
 }
 
 /// VM performance statistics
@@ -951,7 +936,6 @@ impl BytecodeVm {
             builtins: BuiltinFunctions::new(),
             builtin_interpreter: None,
             call_depth: 0,
-            frame_pool: Vec::new(),
             arg_pool: Vec::new(),
             hof_cache: HashMap::new(),
             struct_defs: HashMap::new(),
@@ -1123,6 +1107,14 @@ impl BytecodeVm {
             }
         };
 
+        if args.len() != bytecode.param_count {
+            return Err(BytecodeError::RuntimeError(format!(
+                "Function expects {} argument(s), got {}",
+                bytecode.param_count,
+                args.len()
+            )));
+        }
+
         if self.call_depth >= self.max_call_depth {
             return Err(BytecodeError::RuntimeError(format!(
                 "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
@@ -1131,31 +1123,83 @@ impl BytecodeVm {
         }
         self.call_depth += 1;
 
-        // Give this call its own frame: nested calls (e.g. recursion through
-        // CallNamed) re-enter execute(), and sharing one ExecutionState would
-        // clobber the caller's registers and locals. Frames are pooled so the
-        // register/local vectors keep their capacity across calls instead of
-        // reallocating on every one.
-        let fresh = self.frame_pool.pop().unwrap_or_default();
-        let caller_state = std::mem::replace(&mut self.execution_state, fresh);
+        // The frame is a window on the shared register slab: entering bumps
+        // past the caller's window, returning restores two integers.
+        let saved = self
+            .execution_state
+            .push_frame(bytecode.register_count as usize, args);
 
-        let result = (|| {
-            self.execution_state
-                .prepare_for_execution(&bytecode, args)?;
+        self.stats.bytecode_cache_hits += 1;
+        self.stats.function_calls += 1;
 
-            // Record cache hit
-            self.stats.bytecode_cache_hits += 1;
-            self.stats.function_calls += 1;
+        let result = self.execute_bytecode(&bytecode);
 
-            self.execute_bytecode(&bytecode)
-        })();
+        // Restore the caller's window on both success and error paths
+        self.execution_state.pop_frame(saved);
+        self.call_depth -= 1;
 
-        // Restore the caller's frame on both success and error paths, and
-        // return this call's frame to the pool with its capacity intact.
-        let used = std::mem::replace(&mut self.execution_state, caller_state);
-        if self.frame_pool.len() < 64 {
-            self.frame_pool.push(used);
+        result
+    }
+
+    /// execute(), but the arguments come straight from the caller's
+    /// registers into the callee's window — the CallFn/CallValue hot path,
+    /// with no argument buffer in between.
+    fn execute_from_regs(
+        &mut self,
+        func_id: FunctionId,
+        arg_regs: &[Register],
+    ) -> Result<OvmValue, BytecodeError> {
+        let idx = func_id.index();
+        let bytecode = match self.bytecode_hot.get(idx).and_then(|slot| slot.as_ref()) {
+            Some(b) => b.clone(),
+            None => {
+                let fetched = self
+                    .bytecode_cache
+                    .read()
+                    .ok()
+                    .and_then(|cache| cache.get(&func_id).cloned())
+                    .ok_or_else(|| BytecodeError::FunctionNotFound(func_id))?;
+                if self.bytecode_hot.len() <= idx {
+                    self.bytecode_hot.resize(idx + 1, None);
+                }
+                self.bytecode_hot[idx] = Some(fetched.clone());
+                fetched
+            }
+        };
+
+        if arg_regs.len() != bytecode.param_count {
+            return Err(BytecodeError::RuntimeError(format!(
+                "Function expects {} argument(s), got {}",
+                bytecode.param_count,
+                arg_regs.len()
+            )));
         }
+
+        if self.call_depth >= self.max_call_depth {
+            return Err(BytecodeError::RuntimeError(format!(
+                "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
+                self.max_call_depth
+            )));
+        }
+        self.call_depth += 1;
+
+        let saved = match self
+            .execution_state
+            .push_frame_from_regs(bytecode.register_count as usize, arg_regs)
+        {
+            Ok(saved) => saved,
+            Err(e) => {
+                self.call_depth -= 1;
+                return Err(e);
+            }
+        };
+
+        self.stats.bytecode_cache_hits += 1;
+        self.stats.function_calls += 1;
+
+        let result = self.execute_bytecode(&bytecode);
+
+        self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
 
         result
@@ -1199,14 +1243,13 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, value.clone())?;
                 }
 
-                Instruction::LoadLocal { dst, local_idx } => {
-                    let value = self.execution_state.get_local(*local_idx)?;
-                    self.execution_state.set_register(*dst, value)?;
-                }
-
-                Instruction::StoreLocal { src, local_idx } => {
-                    let value = self.execution_state.get_register(*src)?;
-                    self.execution_state.set_local(*local_idx, value)?;
+                // Locals live in registers; the compiler has not emitted
+                // these since the register-window design. Reaching one means
+                // hand-written or stale bytecode.
+                Instruction::LoadLocal { .. } | Instruction::StoreLocal { .. } => {
+                    return Err(BytecodeError::RuntimeError(
+                        "LoadLocal/StoreLocal are not emitted by the compiler".to_string(),
+                    ));
                 }
 
                 Instruction::Move { dst, src } => {
@@ -1594,17 +1637,8 @@ impl BytecodeVm {
                 }
 
                 Instruction::CallFn { dst, func_id, args } => {
-                    let mut arg_values = self.arg_pool.pop().unwrap_or_default();
-                    arg_values.reserve(args.len());
-                    for arg_reg in args {
-                        arg_values.push(self.execution_state.get_register(*arg_reg)?);
-                    }
-                    let result = self.execute(*func_id, &arg_values);
-                    arg_values.clear();
-                    if self.arg_pool.len() < 64 {
-                        self.arg_pool.push(arg_values);
-                    }
-                    self.execution_state.set_register(*dst, result?)?;
+                    let result = self.execute_from_regs(*func_id, args)?;
+                    self.execution_state.set_register(*dst, result)?;
                 }
 
                 Instruction::CallNamed {
@@ -3430,65 +3464,85 @@ impl Default for ExecutionState {
 impl ExecutionState {
     pub fn new() -> Self {
         Self {
-            registers: Vec::new(),
-            locals: Vec::new(),
-            call_stack: Vec::new(),
-            pc: 0,
-            exception: None,
+            stack: Vec::new(),
+            base: 0,
+            top: 0,
         }
     }
 
-    pub fn prepare_for_execution(
-        &mut self,
-        bytecode: &CompiledBytecode,
-        args: &[OvmValue],
-    ) -> Result<(), BytecodeError> {
-        if args.len() != bytecode.param_count {
-            return Err(BytecodeError::RuntimeError(format!(
-                "Function expects {} argument(s), got {}",
-                bytecode.param_count,
-                args.len()
-            )));
+    /// Claim the next window on the slab for a new frame: arguments land in
+    /// the first registers (the compiler assigns parameters 0..n), the rest
+    /// reset to Unit with the drop-skip for immediates. Returns the caller's
+    /// (base, top) for pop_frame.
+    #[inline]
+    pub fn push_frame(&mut self, register_count: usize, args: &[OvmValue]) -> (usize, usize) {
+        let saved = (self.base, self.top);
+        let new_base = self.top;
+        let new_top = new_base + register_count;
+        if self.stack.len() < new_top {
+            self.stack.resize(new_top, OvmValue::new_unit());
         }
-
-        // Reset registers in place. `clear()` ran ValueData's drop glue --
-        // an out-of-line call over 20 variants -- once per register per
-        // call; resetting in place skips it for the immediates that fill
-        // almost every slot, and keeps the allocation.
-        let want = bytecode.register_count as usize;
-        self.registers.truncate(want);
-        for slot in self.registers.iter_mut() {
-            Self::reset_slot(slot);
-        }
-        self.registers.resize(want, OvmValue::new_unit());
-
-        // Arguments occupy the first registers (the compiler assigns
-        // parameters registers 0..n in declaration order)
-        for (i, arg) in args.iter().enumerate() {
-            if i < self.registers.len() {
-                self.registers[i] = arg.clone();
+        let window = &mut self.stack[new_base..new_top];
+        for (i, slot) in window.iter_mut().enumerate() {
+            match args.get(i) {
+                Some(arg) => Self::write_slot(slot, arg.clone()),
+                None => Self::reset_slot(slot),
             }
         }
+        self.base = new_base;
+        self.top = new_top;
+        saved
+    }
 
-        self.locals.clear();
-        self.locals
-            .resize(bytecode.local_count as usize, OvmValue::new_unit());
+    /// push_frame, but the arguments come straight from the CALLER's
+    /// registers — one clone from the caller's window into the callee's,
+    /// no intermediate buffer.
+    #[inline]
+    pub fn push_frame_from_regs(
+        &mut self,
+        register_count: usize,
+        arg_regs: &[Register],
+    ) -> Result<(usize, usize), BytecodeError> {
+        let saved = (self.base, self.top);
+        let new_base = self.top;
+        let new_top = new_base + register_count;
+        if self.stack.len() < new_top {
+            self.stack.resize(new_top, OvmValue::new_unit());
+        }
+        for (i, reg) in arg_regs.iter().enumerate() {
+            let src = self.base + reg.0 as usize;
+            if src >= self.top {
+                return Err(BytecodeError::InvalidRegister(*reg));
+            }
+            let value = self.stack[src].clone();
+            if new_base + i < new_top {
+                Self::write_slot(&mut self.stack[new_base + i], value);
+            }
+        }
+        for slot in &mut self.stack[new_base + arg_regs.len().min(register_count)..new_top] {
+            Self::reset_slot(slot);
+        }
+        self.base = new_base;
+        self.top = new_top;
+        Ok(saved)
+    }
 
-        // Reset program counter
-        self.pc = 0;
-
-        // Clear exception state
-        self.exception = None;
-
-        Ok(())
+    /// Return to the caller's window. The callee's values stay on the slab
+    /// above the logical top and are recycled by the next push_frame.
+    #[inline]
+    pub fn pop_frame(&mut self, saved: (usize, usize)) {
+        self.base = saved.0;
+        self.top = saved.1;
     }
 
     #[inline]
     pub fn get_register(&self, reg: Register) -> Result<OvmValue, BytecodeError> {
-        self.registers
-            .get(reg.0 as usize)
-            .cloned()
-            .ok_or_else(|| BytecodeError::InvalidRegister(reg))
+        let idx = self.base + reg.0 as usize;
+        if idx < self.top {
+            Ok(self.stack[idx].clone())
+        } else {
+            Err(BytecodeError::InvalidRegister(reg))
+        }
     }
 
     /// Borrow a register without cloning. Cloning an OvmValue rebuilds it
@@ -3496,9 +3550,12 @@ impl ExecutionState {
     /// loop when every operand read went through get_register.
     #[inline]
     pub fn register_ref(&self, reg: Register) -> Result<&OvmValue, BytecodeError> {
-        self.registers
-            .get(reg.0 as usize)
-            .ok_or_else(|| BytecodeError::InvalidRegister(reg))
+        let idx = self.base + reg.0 as usize;
+        if idx < self.top {
+            Ok(&self.stack[idx])
+        } else {
+            Err(BytecodeError::InvalidRegister(reg))
+        }
     }
 
     /// Borrow two registers at once (operands of a binary instruction).
@@ -3535,34 +3592,24 @@ impl ExecutionState {
 
     #[inline]
     pub fn set_register(&mut self, reg: Register, value: OvmValue) -> Result<(), BytecodeError> {
-        if let Some(slot) = self.registers.get_mut(reg.0 as usize) {
-            // Same trick as reset_slot: the value being overwritten is an
-            // immediate on nearly every write in a numeric kernel, and its
-            // drop glue was ~25% of VM samples in a profile.
-            if Self::owns_nothing(slot) {
-                std::mem::forget(std::mem::replace(slot, value));
-            } else {
-                *slot = value;
-            }
+        let idx = self.base + reg.0 as usize;
+        if idx < self.top {
+            Self::write_slot(&mut self.stack[idx], value);
             Ok(())
         } else {
             Err(BytecodeError::InvalidRegister(reg))
         }
     }
 
-    pub fn get_local(&self, local_idx: u32) -> Result<OvmValue, BytecodeError> {
-        self.locals
-            .get(local_idx as usize)
-            .cloned()
-            .ok_or_else(|| BytecodeError::InvalidLocalIndex(local_idx))
-    }
-
-    pub fn set_local(&mut self, local_idx: u32, value: OvmValue) -> Result<(), BytecodeError> {
-        if let Some(slot) = self.locals.get_mut(local_idx as usize) {
-            *slot = value;
-            Ok(())
+    /// Overwrite a slot, skipping drop glue when the old value owned
+    /// nothing — the common case in a numeric kernel, where the glue was
+    /// ~25% of VM samples in a profile.
+    #[inline]
+    fn write_slot(slot: &mut OvmValue, value: OvmValue) {
+        if Self::owns_nothing(slot) {
+            std::mem::forget(std::mem::replace(slot, value));
         } else {
-            Err(BytecodeError::InvalidLocalIndex(local_idx))
+            *slot = value;
         }
     }
 }
