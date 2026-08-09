@@ -3,8 +3,7 @@ use olang::analyze::Analyzer;
 use olang::parser::Parser;
 use std::path::Path;
 
-pub fn execute(file_path: Option<String>, verbose: bool) -> Result<()> {
-    let file_path = file_path.ok_or_else(|| anyhow::anyhow!("No file specified for checking"))?;
+pub fn execute(file_path: String, verbose: bool) -> Result<()> {
     let path = Path::new(&file_path);
 
     if verbose {

@@ -1,15 +1,6 @@
 pub mod check;
 pub mod deps;
-pub mod global;
-pub mod install;
 pub mod new;
-pub mod organize;
 pub mod ovm;
 pub mod pkg;
-pub mod refactor;
-pub mod repl;
-pub mod run;
-pub mod test;
-pub mod tree;
 pub mod unused;
-pub mod version;

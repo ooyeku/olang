@@ -36,6 +36,11 @@ pub struct OvmCommand {
 
 impl OvmCommand {
     pub fn execute(&self) -> anyhow::Result<()> {
+        // Programs run here may use par_map/par_filter; give them the same
+        // thread pool the olang binary sets up.
+        let _ = olang::parallel::initialize_parallelization(None);
+        olang::parallel::set_parallel_threshold(10_000);
+
         let source = fs::read_to_string(&self.file)
             .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", self.file.display(), e))?;
         let parser = Parser::new();

@@ -10,6 +10,35 @@ documented.
 
 ## [Unreleased]
 
+### Changed
+
+- **`otc` slimmed to the commands that earn their keep.** The toolchain
+  had drifted badly behind the language: `otc run` executed files
+  *without* package resolution (so any project with dependencies
+  failed), `otc new` scaffolded the pre-`olang::pkg` manifest format
+  the current toolchain can't read, and a whole legacy "git package
+  system" (`install`/`list`/`update`/`remove`/`clean`/`info`/`config`/
+  `cache`/`self`/`doctor`/`system-info`) coexisted with — and
+  contradicted — `otc pkg`. otc is now six commands, each verified
+  end-to-end: `new` (scaffolds the current `[package]` manifest, a
+  parse-validated `src/main.ol` with a `test` block, README pointing at
+  the `olang` binary), `pkg` (the real package manager: init/add/
+  remove/install/tree/publish), `check`, `deps`, `unused`, and `ovm`
+  (the tier-vs-interpreter divergence harness the OVM docs prescribe).
+
+### Removed
+
+- **`otc run` / `repl` / `test` / `build` / `version`** — running code
+  is the `olang` binary's job (`olang file.ol`, `olang`, `olang test`),
+  and `build` only ever copied source files into `build/`.
+- **The legacy git package system** (~2,300 lines: `git_package.rs`,
+  `global.rs`, `lock_file.rs`, `config.rs` and their commands),
+  superseded by `otc pkg` + `olang.lock`.
+- **The text-based refactor commands** (`move-fn`, `rename-fn`,
+  `extract-file`, `merge-files`, `fix-imports`) and the cosmetic
+  `tree` / `organize` — string-surgery on source trees predating the
+  current grammar.
+
 ### Added
 
 - **`par_map` / `par_filter` — the performance campaign's P1.** The
