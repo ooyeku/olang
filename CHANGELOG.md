@@ -12,6 +12,22 @@ documented.
 
 ### Changed
 
+- **Profile-guided dispatch-loop cuts: phantom errors and double dispatch.**
+  A CPU profile of the N-body run showed ~15% of VM time in
+  `drop_in_place<BytecodeError>` — the register/constant accessors used
+  eager `ok_or(...)`, constructing (and immediately dropping) an error
+  value on every *successful* access, and `BytecodeError`'s String
+  variants give it real drop glue. All hot-path accessors now construct
+  errors lazily. Second find: every arithmetic/comparison instruction
+  dispatched twice — the instruction match already knew the op, then
+  `execute_binary_op` re-matched it. A `binary_fast` helper inlined with a
+  constant op collapses each numeric instruction to a type check plus the
+  operation; mixed-type operands, overflow, and division by zero fall back
+  to `execute_binary_op`, which keeps owning the error messages. Measured:
+  N-body ~940ms → ~680ms (6.2M interactions/sec), fib(30) ~267ms → ~218ms,
+  checksum bit-identical. Cumulative for the whole performance arc:
+  N-body 2,511ms → 670ms (3.7×), fib(30) 736ms → 218ms (3.4×).
+
 - **The dispatch loop stopped paying for hashing and conversion it didn't
   need.** Three more measured per-operation taxes removed: (1) `GetField`
   cloned the field-name `Arc<String>` and the whole object value (two
