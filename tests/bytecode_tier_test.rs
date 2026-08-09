@@ -1400,6 +1400,111 @@ n
     );
 }
 
+// ── native higher-order builtins (map / filter / sum in the VM) ───────
+
+#[test]
+fn native_map_filter_sum_agree_with_the_interpreter() {
+    let src = r#"
+let scale = 7
+fn go(xs) = {
+    let a = xs |> map((x) => x + 1) |> sum
+    let b = xs |> filter((x) => x > 25) |> sum
+    let c = xs |> map((x) => x * scale) |> sum
+    let d = xs |> map((x) => x * 0.5) |> sum
+    a + b + c + d
+}
+let xs = range(0, 60)
+let mut t = 0.0
+for i in 0..10 { t = t + go(xs) }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 1, "go must be promoted");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn native_filter_keeps_only_exact_boolean_true() {
+    // The interpreter keeps an element only when the predicate returns
+    // exactly Boolean(true); any other value silently drops it. A native
+    // filter that used truthiness instead would keep every nonzero int.
+    let src = r#"
+fn go(xs) = xs |> filter((x) => x) |> len
+let xs = range(1, 50)
+let mut t = 0
+for i in 0..10 { t = t + go(xs) }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 1, "go must be promoted");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn native_map_over_strings_and_nested_maps_agree() {
+    let src = r#"
+fn go(xs) = {
+    let tagged = xs |> map((s) => s + "!")
+    let lens = tagged |> map((s) => len(s)) |> sum
+    lens + len(tagged)
+}
+let xs = ["a", "bc", "def"]
+let mut t = 0
+for i in 0..10 { t = t + go(xs) }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 1, "go must be promoted");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn native_sum_edge_cases_agree() {
+    // Empty list, int→float promotion mid-list, and both error paths
+    // (integer overflow, non-numeric element) must match the interpreter.
+    let src = r#"
+fn go() = {
+    let empty = [] |> sum
+    let mixed = [1, 2, 2.5, 3] |> sum
+    empty + mixed
+}
+let mut t = 0.0
+for i in 0..10 { t = t + go() }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 1, "go must be promoted");
+    assert_tier_transparent(src);
+
+    assert_tier_transparent(
+        r#"
+fn overflowing() = [9223372036854775807, 1] |> sum
+overflowing()
+overflowing()
+overflowing()
+"#,
+    );
+    assert_tier_transparent(
+        r#"
+fn bad() = [1, "two", 3] |> sum
+bad()
+bad()
+bad()
+"#,
+    );
+}
+
+#[test]
+fn native_map_propagates_element_errors_like_the_interpreter() {
+    // The 26th element divides by zero: both tiers must fail the whole
+    // call, and calls before it must have completed identically.
+    assert_tier_transparent(
+        r#"
+fn go(xs) = xs |> map((x) => 100 / (25 - x)) |> len
+let xs = range(0, 50)
+go([1, 2, 3])
+go([1, 2, 3])
+go(xs)
+"#,
+    );
+}
+
 // ── unary operators compile ───────────────────────────────────────────
 
 #[test]

@@ -66,6 +66,11 @@ pub struct BytecodeVm {
     /// Pooled argument buffers for Call* instructions, so marshaling a call's
     /// arguments does not malloc on every call.
     arg_pool: Vec<Vec<OvmValue>>,
+    /// Function *values* compiled on demand for the native higher-order
+    /// path, keyed by body-allocation identity and validated by Weak
+    /// upgrade (a freed-and-reused address yields a dead Weak, never a
+    /// stale hit). `None` records a failed compile so it is not retried.
+    hof_cache: HashMap<usize, (std::sync::Weak<Expr>, Option<FunctionId>)>,
 }
 
 /// Call frame for function execution
@@ -125,6 +130,15 @@ pub struct BytecodeCompiler {
 
     // Function registry for calls
     function_registry: HashMap<String, FunctionId>,
+
+    /// Bake free identifiers from `enclosing_closure` into constants.
+    /// Enabled ONLY when compiling a detached function *value* (a lambda or
+    /// function passed to a higher-order builtin): the interpreter installs
+    /// exactly that value's closure as the call environment, so a closure
+    /// entry IS the value the name resolves to — verified snapshot
+    /// semantics, a global mutated after declaration is not seen. Off for
+    /// normal tier compilation, where the conservative refusal stands.
+    bake_closure_identifiers: bool,
 }
 
 /// Bytecode optimization engine
@@ -809,6 +823,7 @@ impl BytecodeVm {
             call_depth: 0,
             frame_pool: Vec::new(),
             arg_pool: Vec::new(),
+            hof_cache: HashMap::new(),
             // Must match the interpreter's own limit: a program that recurses
             // 900 deep has to behave the same whether or not it was promoted
             max_call_depth: 1000,
@@ -2022,6 +2037,153 @@ impl BytecodeVm {
     /// that could drift from the interpreter; delegating makes them identical
     /// by construction. The cost is a value round trip per call, which is
     /// dominated by the builtin's own work.
+    /// Resolve a function *value* (a lambda constant or a function passed
+    /// by value) to compiled bytecode, compiling it on first sight. The
+    /// value's own attached closure is the compilation environment — the
+    /// interpreter installs exactly that closure when calling it, so baked
+    /// closure constants resolve identically. Returns None (caller bridges
+    /// to the interpreter) for arity mismatch, default parameters, trait
+    /// bounds, or an uncompilable body; failures are cached per body so
+    /// they are not retried.
+    fn hof_function_id(&mut self, func: &crate::ast::Function, arity: usize) -> Option<FunctionId> {
+        if func.parameters.len() != arity
+            || func.parameters.iter().any(|p| p.default_value.is_some())
+            || !func.param_bounds.is_empty()
+        {
+            return None;
+        }
+
+        let key = Arc::as_ptr(&func.body) as usize;
+        if let Some((weak, cached)) = self.hof_cache.get(&key) {
+            if let Some(live) = weak.upgrade() {
+                if Arc::ptr_eq(&live, &func.body) {
+                    return *cached;
+                }
+            }
+        }
+
+        let decl = FunctionDecl {
+            name: func
+                .name
+                .clone()
+                .unwrap_or_else(|| "<function value>".to_string()),
+            type_params: Vec::new(),
+            type_param_bounds: Vec::new(),
+            parameters: func.parameters.clone(),
+            return_type: None,
+            body: (*func.body).clone(),
+        };
+        let func_id = FunctionId::new();
+        self.compiler.bake_closure_identifiers = true;
+        let compiled = self.compile_function_with_closure(func_id, &decl, func.closure.clone());
+        self.compiler.bake_closure_identifiers = false;
+
+        let result = compiled.ok().map(|_| func_id);
+        if self.hof_cache.len() >= 512 {
+            self.hof_cache.clear();
+        }
+        self.hof_cache
+            .insert(key, (Arc::downgrade(&func.body), result));
+        result
+    }
+
+    /// Native execution for the higher-order builtins when the collection
+    /// is a list and the function argument compiles: the loop runs inside
+    /// the VM, one `execute()` per element, no AST conversion anywhere.
+    /// Returns None to route the call through the interpreter bridge,
+    /// which remains the semantic authority for everything declined here.
+    /// Never falls back mid-loop: once the loop starts, an element error is
+    /// the call's error, exactly as the interpreter propagates it.
+    fn try_native_higher_order(
+        &mut self,
+        name: &str,
+        args: &[OvmValue],
+    ) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        match name {
+            "map" | "filter" if args.len() == 2 => {
+                let items = match &args[0].data {
+                    ValueData::List(items) => items.clone(),
+                    _ => return None,
+                };
+                let func = match &args[1].data {
+                    ValueData::AstFunction(f) => f.clone(),
+                    _ => return None,
+                };
+                let func_id = self.hof_function_id(&func, 1)?;
+                let is_map = name == "map";
+                let mut run = || -> Result<OvmValue, BytecodeError> {
+                    let mut out = Vec::with_capacity(items.len());
+                    for item in items.iter() {
+                        let result = self.execute(func_id, std::slice::from_ref(item))?;
+                        if is_map {
+                            out.push(result);
+                        } else if matches!(result.data, ValueData::Boolean(true)) {
+                            // The interpreter keeps an element only when the
+                            // predicate is exactly Boolean(true); any other
+                            // result silently drops it.
+                            out.push(item.clone());
+                        }
+                    }
+                    Ok(OvmValue::new_list(out))
+                };
+                Some(run())
+            }
+            // Mirrors the interpreter's *sequential* sum exactly; lists past
+            // the parallel threshold bridge out so the parallel behavior
+            // (including its different overflow and float-order profile)
+            // stays the interpreter's.
+            "sum" if args.len() == 1 => {
+                let items = match &args[0].data {
+                    ValueData::List(items) => items.clone(),
+                    _ => return None,
+                };
+                if crate::parallel::should_parallelize(items.len()) {
+                    return None;
+                }
+                let mut int_acc: i64 = 0;
+                let mut float_acc: f64 = 0.0;
+                let mut is_float = false;
+                for item in items.iter() {
+                    match &item.data {
+                        ValueData::Integer(n) => {
+                            if is_float {
+                                float_acc += *n as f64;
+                            } else {
+                                match int_acc.checked_add(*n) {
+                                    Some(v) => int_acc = v,
+                                    None => {
+                                        return Some(Err(BytecodeError::RuntimeError(
+                                            "sum: integer overflow".to_string(),
+                                        )))
+                                    }
+                                }
+                            }
+                        }
+                        ValueData::Float(f) => {
+                            if !is_float {
+                                float_acc = int_acc as f64;
+                                is_float = true;
+                            }
+                            float_acc += *f;
+                        }
+                        _ => {
+                            return Some(Err(BytecodeError::TypeError(
+                                "sum: list must contain only numbers".to_string(),
+                            )))
+                        }
+                    }
+                }
+                Some(Ok(if is_float {
+                    OvmValue::new_float(float_acc)
+                } else {
+                    OvmValue::new_integer(int_acc)
+                }))
+            }
+            _ => None,
+        }
+    }
+
     /// The float-math fast path: `math` builtins that accept numbers and
     /// always return Float in the interpreter (see stdlib/math.rs). A
     /// CallBuiltin's builtin_id indexes this table; entries record arity.
@@ -2100,6 +2262,12 @@ impl BytecodeVm {
         name: &str,
         args: &[OvmValue],
     ) -> Result<OvmValue, BytecodeError> {
+        // Higher-order builtins loop natively when the function argument
+        // compiles — otherwise everything below bridges to the interpreter.
+        if let Some(result) = self.try_native_higher_order(name, args) {
+            return result;
+        }
+
         let mut ast_args = Vec::with_capacity(args.len());
         for arg in args {
             ast_args.push(
@@ -2979,6 +3147,7 @@ impl BytecodeCompiler {
             enclosing_bound_names: std::collections::HashSet::new(),
             _label_counter: 0,
             function_registry: HashMap::new(),
+            bake_closure_identifiers: false,
         }
     }
 
@@ -3090,6 +3259,24 @@ impl BytecodeCompiler {
                 if let Some(&reg) = self.local_variables.get(name) {
                     // The variable already lives in a register — nothing to emit
                     Ok(reg)
+                } else if self.bake_closure_identifiers {
+                    // Detached-value mode: the closure attached to the value
+                    // is the authoritative environment, so a hit is baked as
+                    // a constant. A miss (interpreter would fall back to the
+                    // caller's scope chain) still refuses.
+                    match self.enclosing_closure.get(name) {
+                        Some(value) if BytecodeVm::round_trips(value) => {
+                            let const_idx =
+                                self.emitter.add_constant(OvmValue::from_ast(value.clone()));
+                            let dst_reg = self.register_allocator.allocate_register();
+                            self.emitter.emit_load_const(dst_reg, const_idx);
+                            Ok(dst_reg)
+                        }
+                        _ => Err(BytecodeError::CompilationFailed(format!(
+                            "Unresolved identifier '{}' (not in the function value's closure)",
+                            name
+                        ))),
+                    }
                 } else {
                     // Refuse to compile references we can't resolve — loading
                     // Unit instead silently changed program results when a

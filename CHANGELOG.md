@@ -12,6 +12,32 @@ documented.
 
 ### Changed
 
+- **The higher-order builtins loop inside the VM.** `map`, `filter`, and
+  `sum` previously bridged out of the VM on every call — the list and
+  function converted to AST values, the interpreter looped, and every
+  element crossed the tier boundary individually. When the collection is a
+  list and the function argument compiles, the loop now runs natively:
+  one VM `execute()` per element, no conversion anywhere, and a mapped
+  list flows into `sum` without ever leaving the OVM value model.
+  Function *values* (lambda constants, functions passed by value) compile
+  on first sight, cached by body-allocation identity with Weak-upgrade
+  validation; a new compiler mode resolves their free identifiers from
+  the value's own attached closure — sound because the interpreter
+  installs exactly that closure as the call environment (and closures are
+  snapshots: a global mutated after declaration is not seen, verified).
+  Anything declined — arity mismatch, default parameters, trait bounds,
+  uncompilable body, non-list collection, `sum` past the parallel
+  threshold — still bridges to the interpreter, which remains the
+  semantic authority; a loop never falls back mid-flight, so element
+  errors propagate exactly as the interpreter would. Interpreter quirks
+  are mirrored, not "fixed": `filter` keeps an element only on exact
+  `Boolean(true)`, `sum` promotes int→float mid-list and overflow-checks
+  integers. Measured over 1M elements: `xs |> map((x) => x + 1) |> sum`
+  224ms → 31ms (7.2×), within 1.3× of the equivalent explicit loop. Five
+  new tier-agreement tests cover results, the exact-Boolean filter, string
+  and nested maps, sum edge cases (empty, mixed, overflow, non-numeric),
+  and mid-map error propagation.
+
 - **The tier stopped allocating a string per call.** `try_call` cloned the
   callee's name into a fresh `String` on every call of every named
   function, purely to probe three maps with it — the callee is the
