@@ -12,6 +12,12 @@ documented.
 
 ### Added
 
+- **`--ovm-stats` reports instructions retired.** The VM has always counted
+  them; nothing surfaced the number, so the tier's actual workload was
+  invisible and per-instruction cost could not be measured without
+  instrumenting a build. (The N-body example retires 126.8M bytecode
+  instructions.) Rejection *reasons* were already available under
+  `--verbose`.
 - **The bytecode tier compiles unary `-` and `!`.** The VM has had `Neg`
   and `Not` instructions, and an `execute_unary_op` matching the
   interpreter exactly (`checked_neg` with the same overflow message, `-x`

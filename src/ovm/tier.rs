@@ -40,6 +40,7 @@ pub struct TierStats {
     pub promoted: u32,
     pub rejected: u32,
     pub bytecode_calls: u64,
+    pub instructions_executed: u64,
 }
 
 pub struct BytecodeTier {
@@ -92,7 +93,12 @@ impl BytecodeTier {
     }
 
     pub fn stats(&self) -> TierStats {
-        self.stats
+        // The instruction counter lives on the VM, not in the tier's own
+        // tally, so it is read through at reporting time.
+        TierStats {
+            instructions_executed: self.vm.instructions_executed(),
+            ..self.stats
+        }
     }
 
     /// Record a user function declaration so calls to it can be compiled.

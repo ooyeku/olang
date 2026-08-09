@@ -951,6 +951,14 @@ impl BytecodeVm {
         result
     }
 
+    /// Bytecode instructions retired so far. The VM has always counted
+    /// these; surfacing them makes the tier's actual workload visible
+    /// (`--ovm-stats`), which is what a per-instruction cost is measured
+    /// against.
+    pub fn instructions_executed(&self) -> u64 {
+        self.stats.instructions_executed
+    }
+
     /// Execute bytecode instructions - Complete implementation
     fn execute_bytecode(&mut self, bytecode: &CompiledBytecode) -> Result<OvmValue, BytecodeError> {
         // Count instructions in a local and flush once: a stats-field write in
