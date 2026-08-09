@@ -69,6 +69,12 @@ A function is eligible when its body uses only the subset the VM implements:
   identifier, so a numeric kernel promotes instead of falling back on its
   first `sqrt`
 - pipelines (`|>`), desugared to the equivalent call
+- free identifiers that resolve in the function's own closure — global
+  constants, module-level bindings, and named functions passed as values —
+  baked as constants. Sound because the interpreter installs exactly that
+  closure as the call environment, and closures are declaration-time
+  snapshots: a global mutated after the function's declaration is not seen
+  by either tier (pinned by a test)
 - lambdas whose free variables all resolve in the enclosing function's
   declaration-time closure — which covers lambdas calling other user
   functions, builtins, and stdlib modules, and lambdas referencing global
@@ -82,7 +88,11 @@ A function is eligible when its body uses only the subset the VM implements:
 
 Anything else causes the function to stay interpreted:
 
-- referencing a global or captured variable — the VM has no environment
+- *assigning* to a global (reads bake as snapshot constants; a write
+  would need the interpreter's environment)
+- a free identifier absent from the function's closure — the interpreter
+  would resolve it through the caller's runtime scope chain, which no
+  compile-time snapshot can represent
 - maps, async, and struct/enum *construction* (reading fields off a struct
   argument is compiled; building a new struct in the body is not)
 - lambdas capturing the enclosing function's *runtime* state: a parameter,
@@ -114,7 +124,7 @@ rule is enforced by two test suites:
   recursion, loops, strings, lists, ranges, arity errors, and a set of
   aliasing cases specific to the register-window design. It also asserts the
   inverse: unsupported features must be *rejected*, never miscompiled.
-- `tests/bytecode_tier_test.rs` (80 tests) runs whole programs with and
+- `tests/bytecode_tier_test.rs` (100+ tests) runs whole programs with and
   without the tier enabled and asserts the observable results match,
   including mixed programs where some functions are promoted and others are
   not, transitive and mutual recursion, and function redefinition.
@@ -210,7 +220,14 @@ tests hold the VM to; delegating makes them identical by construction.
 
 The higher-order builtins became available when compiled lambdas gained
 closures: a lambda the VM builds itself can be handed to a delegated builtin
-as a function value. One category remains deliberately excluded:
+as a function value. `map`, `filter`, and `sum` go further: when the
+collection is a list and the function argument compiles (checked once and
+cached per function value), the loop runs *inside* the VM — one bytecode
+call per element, no conversion at the boundary — and a mapped list flows
+into `sum` without leaving the VM's value model. Anything declined bridges
+to the interpreter, which stays the semantic authority; a native loop never
+falls back mid-flight, so element errors propagate exactly as the
+interpreter would. One category remains deliberately excluded:
 
 - **Map-returning builtins** (`map_set`, `group_by`, ...) produce values that
   do not survive the round trip back to an AST value — a `Map` would come back
