@@ -12,6 +12,25 @@ documented.
 
 ### Changed
 
+- **Capturing lambdas compile.** A lambda that captures the enclosing
+  function's *runtime* state — a parameter, a local — no longer refuses
+  the whole function. The lambda body compiles once as a standalone
+  function whose trailing parameters are the captured names, and a new
+  `MakeClosure` instruction snapshots the capture registers at the lambda
+  expression — the interpreter's own capture-by-value moment, so a local
+  reassigned after the lambda is created is not seen, and a lambda built
+  in a loop captures each iteration's value (both pinned by tests). The
+  resulting closure value runs natively through `map`/`filter` (captures
+  appended to each element call), converts losslessly to an interpreter
+  function at the bridge (fold/reduce and friends agree), and survives
+  escaping — a compiled function can return the closure to interpreted
+  code and it behaves identically. Still refused: a lambda capturing a
+  name the enclosing function binds only later, and calling a
+  lambda-valued expression directly. Measured over 1M elements:
+  `map((x) => x * f + 1)` with `f` a runtime parameter went 417ms → 39ms
+  (10.7×) — the last slow row of the pipeline table. All four pipeline
+  forms now land within 1.6× of the explicit loop.
+
 - **Functions that read globals compile now.** A free identifier that
   resolves in the function's own closure bakes as a constant — sound
   because the interpreter installs exactly that closure as the call

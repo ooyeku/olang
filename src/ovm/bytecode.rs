@@ -130,7 +130,24 @@ pub struct BytecodeCompiler {
 
     // Function registry for calls
     function_registry: HashMap<String, FunctionId>,
+
+    /// Lambdas with runtime captures met during this compile: each is the
+    /// lambda body as a standalone declaration whose trailing parameters
+    /// are the captured names, compiled by the VM after the enclosing
+    /// function (the compiler's per-function state can't nest). If any of
+    /// them fails, the whole enclosing compilation fails — a MakeClosure
+    /// must never reference an id with no bytecode behind it.
+    pending_lambdas: Vec<PendingLambda>,
 }
+
+/// A deferred lambda compile: its id, the body as a standalone declaration
+/// (captures as trailing parameters), and the declaration-time closure to
+/// compile it against.
+type PendingLambda = (
+    FunctionId,
+    FunctionDecl,
+    std::sync::Arc<im::HashMap<String, Value>>,
+);
 
 /// Bytecode optimization engine
 #[allow(dead_code)]
@@ -277,6 +294,16 @@ pub enum Instruction {
         function: Register,
         args: Vec<Register>,
         arg_count: u32,
+    },
+    /// Build a runtime closure: clone the template ClosureObject stored at
+    /// `template_const` and fill its `captured` values from the given
+    /// registers, read at this instant — the interpreter's capture-by-value
+    /// moment. The template's func_id points at the lambda body compiled
+    /// with the captures as hidden trailing parameters.
+    MakeClosure {
+        dst: Register,
+        template_const: u32,
+        captures: Vec<Register>,
     },
     /// Call a user function resolved to its id at COMPILE time - no name
     /// hash on the call path. Emitted whenever the compiler sees the callee
@@ -878,7 +905,36 @@ impl BytecodeVm {
         self.compiler.builtin_names = self.builtin_names.clone();
         self.compiler.enclosing_closure = closure;
 
+        self.compiler.pending_lambdas.clear();
         let bytecode = self.compiler.compile_function(func_id, func)?;
+
+        // Compile the runtime-capture lambdas this function created, each
+        // as a standalone function with the captures as trailing
+        // parameters. Compiling one can queue more (nested lambdas); a
+        // failure fails the whole compilation, because a MakeClosure must
+        // never point at an id with no bytecode behind it.
+        let mut rounds = 0;
+        while !self.compiler.pending_lambdas.is_empty() {
+            rounds += 1;
+            if rounds > 32 {
+                return Err(BytecodeError::CompilationFailed(
+                    "lambda nesting too deep in the bytecode tier".to_string(),
+                ));
+            }
+            let pending = std::mem::take(&mut self.compiler.pending_lambdas);
+            for (lambda_id, decl, lambda_closure) in pending {
+                self.compiler.enclosing_closure = lambda_closure;
+                let lambda_bytecode = Arc::new(self.compiler.compile_function(lambda_id, &decl)?);
+                let idx = lambda_id.index();
+                if self.bytecode_hot.len() <= idx {
+                    self.bytecode_hot.resize(idx + 1, None);
+                }
+                self.bytecode_hot[idx] = Some(lambda_bytecode.clone());
+                if let Ok(mut cache) = self.bytecode_cache.write() {
+                    cache.insert(lambda_id, lambda_bytecode);
+                }
+            }
+        }
 
         let bytecode = Arc::new(bytecode);
         let idx = func_id.index();
@@ -1242,6 +1298,37 @@ impl BytecodeVm {
                         self.execute_builtin_call(name, &arg_values)?
                     };
                     self.execution_state.set_register(*dst, result)?;
+                }
+
+                Instruction::MakeClosure {
+                    dst,
+                    template_const,
+                    captures,
+                } => {
+                    let template = match bytecode
+                        .constants
+                        .get(*template_const as usize)
+                        .map(|c| &c.data)
+                    {
+                        Some(crate::ovm::value::ValueData::Closure(t)) => t.clone(),
+                        _ => {
+                            return Err(BytecodeError::RuntimeError(
+                                "MakeClosure: template constant is not a closure".to_string(),
+                            ))
+                        }
+                    };
+                    let mut captured = Vec::with_capacity(captures.len());
+                    for reg in captures {
+                        captured.push(self.execution_state.get_register(*reg)?);
+                    }
+                    let closure = crate::ovm::value::ClosureObject {
+                        template: template.template.clone(),
+                        capture_names: template.capture_names.clone(),
+                        captured,
+                        func_id: template.func_id,
+                    };
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_closure(Arc::new(closure)))?;
                 }
 
                 Instruction::CallFn { dst, func_id, args } => {
@@ -2095,16 +2182,29 @@ impl BytecodeVm {
                     ValueData::List(items) => items.clone(),
                     _ => return None,
                 };
-                let func = match &args[1].data {
-                    ValueData::AstFunction(f) => f.clone(),
+                // Plain function values compile on demand and are called
+                // with just the element; runtime closures carry a func_id
+                // already compiled with their captures as trailing
+                // parameters, appended after the element on every call.
+                let (func_id, captures) = match &args[1].data {
+                    ValueData::AstFunction(f) => {
+                        let f = f.clone();
+                        (self.hof_function_id(&f, 1)?, Vec::new())
+                    }
+                    ValueData::Closure(c) if c.template.parameters.len() == 1 => {
+                        (c.func_id, c.captured.clone())
+                    }
                     _ => return None,
                 };
-                let func_id = self.hof_function_id(&func, 1)?;
                 let is_map = name == "map";
+                let mut call_args = Vec::with_capacity(1 + captures.len());
                 let mut run = || -> Result<OvmValue, BytecodeError> {
                     let mut out = Vec::with_capacity(items.len());
                     for item in items.iter() {
-                        let result = self.execute(func_id, std::slice::from_ref(item))?;
+                        call_args.clear();
+                        call_args.push(item.clone());
+                        call_args.extend(captures.iter().cloned());
+                        let result = self.execute(func_id, &call_args)?;
                         if is_map {
                             out.push(result);
                         } else if matches!(result.data, ValueData::Boolean(true)) {
@@ -3136,6 +3236,7 @@ impl BytecodeCompiler {
             enclosing_bound_names: std::collections::HashSet::new(),
             _label_counter: 0,
             function_registry: HashMap::new(),
+            pending_lambdas: Vec::new(),
         }
     }
 
@@ -3575,26 +3676,33 @@ impl BytecodeCompiler {
                     ));
                 }
 
-                // Every free variable must resolve in the enclosing function's
-                // declaration-time closure — the snapshot the interpreter
-                // layers over the call-site chain, so a closure hit resolves
-                // identically in both tiers. A name the enclosing function
-                // ever binds or assigns is a capture of runtime state, which
-                // an attached snapshot cannot represent.
+                // Free variables split three ways. A name currently living
+                // in a register (a parameter or an already-bound local) is a
+                // RUNTIME capture: its value is snapshotted at the lambda
+                // expression by MakeClosure, the interpreter's own
+                // capture-by-value moment. A name in the declaration-time
+                // closure resolves identically in both tiers and is baked
+                // into the template. A name the enclosing function binds
+                // only LATER (in scope for the interpreter's resolution
+                // rules but with no register yet) refuses compilation.
+                let mut runtime_captures: Vec<(String, Register)> = Vec::new();
                 for name in &free {
-                    if self.enclosing_bound_names.contains(name) {
+                    if let Some(&reg) = self.local_variables.get(name) {
+                        runtime_captures.push((name.clone(), reg));
+                    } else if self.enclosing_bound_names.contains(name) {
                         return Err(BytecodeError::CompilationFailed(format!(
-                            "Lambda captures '{}' from the enclosing function's runtime scope",
+                            "Lambda captures '{}' before the enclosing function binds it",
                             name
                         )));
-                    }
-                    if !self.enclosing_closure.contains_key(name) {
+                    } else if !self.enclosing_closure.contains_key(name) {
                         return Err(BytecodeError::CompilationFailed(format!(
                             "Lambda references '{}', which is not in the enclosing closure",
                             name
                         )));
                     }
                 }
+                // Deterministic capture order regardless of hash iteration
+                runtime_captures.sort_by(|a, b| a.0.cmp(&b.0));
 
                 // Attach only the entries the lambda actually references.
                 // Attaching the full closure would defeat call_function's
@@ -3602,6 +3710,7 @@ impl BytecodeCompiler {
                 // would materialize the entire prelude into its environment.
                 let captured: im::HashMap<String, Value> = free
                     .iter()
+                    .filter(|name| !runtime_captures.iter().any(|(n, _)| n == *name))
                     .filter_map(|name| {
                         self.enclosing_closure
                             .get(name)
@@ -3615,15 +3724,66 @@ impl BytecodeCompiler {
                     body: std::sync::Arc::new((**body).clone()),
                     // Values cloned from the enclosing snapshot — free
                     // variables resolve identically in both tiers
-                    closure: std::sync::Arc::new(captured),
+                    closure: std::sync::Arc::new(captured.clone()),
                     param_bounds: Vec::new(),
                 };
 
-                let const_idx = self
+                if runtime_captures.is_empty() {
+                    // No runtime state: the lambda is a compile-time constant
+                    let const_idx = self
+                        .emitter
+                        .add_constant(OvmValue::new_ast_function(function));
+                    let dst_reg = self.register_allocator.allocate_register();
+                    self.emitter.emit_load_const(dst_reg, const_idx);
+                    return Ok(dst_reg);
+                }
+
+                // Runtime captures: compile the body once as a standalone
+                // function whose trailing parameters are the captured names
+                // (call with [args..., captures...]), deferred to the VM
+                // because the compiler's per-function state cannot nest.
+                let capture_names: Vec<String> =
+                    runtime_captures.iter().map(|(n, _)| n.clone()).collect();
+                let capture_regs: Vec<Register> =
+                    runtime_captures.iter().map(|(_, r)| *r).collect();
+
+                let mut hidden_params = parameters.clone();
+                for name in &capture_names {
+                    hidden_params.push(crate::ast::Parameter {
+                        name: name.clone(),
+                        type_annotation: None,
+                        default_value: None,
+                    });
+                }
+                let lambda_id = FunctionId::new();
+                self.pending_lambdas.push((
+                    lambda_id,
+                    FunctionDecl {
+                        name: "<lambda>".to_string(),
+                        type_params: Vec::new(),
+                        type_param_bounds: Vec::new(),
+                        parameters: hidden_params,
+                        return_type: None,
+                        body: (**body).clone(),
+                    },
+                    std::sync::Arc::new(captured),
+                ));
+
+                let template = crate::ovm::value::ClosureObject {
+                    template: function,
+                    capture_names,
+                    captured: Vec::new(),
+                    func_id: lambda_id,
+                };
+                let template_const = self
                     .emitter
-                    .add_constant(OvmValue::new_ast_function(function));
+                    .add_constant(OvmValue::new_closure(Arc::new(template)));
                 let dst_reg = self.register_allocator.allocate_register();
-                self.emitter.emit_load_const(dst_reg, const_idx);
+                self.emitter.instructions.push(Instruction::MakeClosure {
+                    dst: dst_reg,
+                    template_const,
+                    captures: capture_regs,
+                });
                 Ok(dst_reg)
             }
 

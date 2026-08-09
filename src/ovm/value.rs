@@ -135,6 +135,12 @@ pub enum ValueData {
     /// and hands to builtins; FunctionObject drops parameter metadata and
     /// rewrites the closure, so it cannot round-trip.
     AstFunction(Arc<crate::ast::Function>),
+    /// A lambda over *runtime* captures, built by the MakeClosure
+    /// instruction: the template carries parameters, body, and the
+    /// declaration-time closure part; `captured` holds the values
+    /// snapshotted from the enclosing frame when the lambda expression
+    /// evaluated — exactly the interpreter's capture-by-value moment.
+    Closure(Arc<ClosureObject>),
     Struct(Arc<StructObject>),
     Range(Arc<RangeObject>),
     Builtin(Arc<BuiltinObject>),
@@ -169,6 +175,20 @@ pub struct FunctionObject {
     pub compilation_tier: ExecutionTier,
     pub call_count: AtomicU32,
     pub optimization_data: OptimizationData,
+}
+
+/// A compiled lambda plus its runtime captures. Convertible back to an
+/// interpreter `Function` (template closure + captured entries) so it can
+/// cross the tier boundary losslessly, and executable natively via
+/// `func_id`, whose bytecode takes the captures as hidden trailing
+/// parameters: call with `[args..., captured...]`.
+#[derive(Debug)]
+pub struct ClosureObject {
+    pub template: crate::ast::Function,
+    /// Names of the runtime captures, parallel to `captured`.
+    pub capture_names: Vec<String>,
+    pub captured: Vec<OvmValue>,
+    pub func_id: crate::ovm::FunctionId,
 }
 
 /// Struct object representation
@@ -610,6 +630,7 @@ impl PartialEq for OvmValue {
             // For complex types, fall back to pointer comparison for now
             (ValueData::Function(a), ValueData::Function(b)) => Arc::ptr_eq(a, b),
             (ValueData::AstFunction(a), ValueData::AstFunction(b)) => Arc::ptr_eq(a, b),
+            (ValueData::Closure(a), ValueData::Closure(b)) => Arc::ptr_eq(a, b),
             (ValueData::Struct(a), ValueData::Struct(b)) => Arc::ptr_eq(a, b),
             (ValueData::Builtin(a), ValueData::Builtin(b)) => Arc::ptr_eq(a, b),
             (ValueData::Promise(a), ValueData::Promise(b)) => Arc::ptr_eq(a, b),
@@ -725,6 +746,7 @@ impl OvmValue {
             ValueData::Tuple(p) => ValueData::Tuple(p.clone()),
             ValueData::Function(p) => ValueData::Function(p.clone()),
             ValueData::AstFunction(p) => ValueData::AstFunction(p.clone()),
+            ValueData::Closure(p) => ValueData::Closure(p.clone()),
             ValueData::Struct(p) => ValueData::Struct(p.clone()),
             ValueData::Range(p) => ValueData::Range(p.clone()),
             ValueData::Builtin(p) => ValueData::Builtin(p.clone()),
@@ -1391,6 +1413,7 @@ impl OvmValue {
                 ValueData::Tuple(gc_ptr) => gc_ptr.len() * std::mem::size_of::<OvmValue>(),
                 ValueData::Function(_) => std::mem::size_of::<FunctionObject>(),
                 ValueData::AstFunction(_) => std::mem::size_of::<crate::ast::Function>(),
+                ValueData::Closure(_) => std::mem::size_of::<ClosureObject>(),
                 ValueData::Struct(_) => std::mem::size_of::<StructObject>(),
                 ValueData::Range(_) => std::mem::size_of::<RangeObject>(),
                 ValueData::Promise(_) => std::mem::size_of::<PromiseObject>(),
@@ -1402,6 +1425,14 @@ impl OvmValue {
         safepoint_manager.record_allocation(allocation_size);
 
         Ok(ovm_value)
+    }
+
+    /// Wrap a runtime closure built by MakeClosure.
+    pub fn new_closure(closure: Arc<ClosureObject>) -> Self {
+        Self {
+            header: ValueHeader::new(TypeTag::Function, ExecutionTier::Bytecode, LazyState::Eager),
+            data: ValueData::Closure(closure),
+        }
     }
 
     /// Wrap an interpreter function verbatim so it converts back unchanged.
@@ -1469,6 +1500,22 @@ impl OvmValue {
                 Ok(Value::Tuple(std::sync::Arc::new(ast_values)))
             }
             ValueData::AstFunction(func) => Ok(Value::Function((**func).clone())),
+            // Rebuild the interpreter function the lambda evaluation would
+            // have produced: the declaration-time closure with the runtime
+            // captures layered on top. The body Arc is shared verbatim.
+            ValueData::Closure(c) => {
+                let mut closure_map = (*c.template.closure).clone();
+                for (name, val) in c.capture_names.iter().zip(c.captured.iter()) {
+                    closure_map.insert(name.clone(), val.to_ast()?);
+                }
+                Ok(Value::Function(crate::ast::Function {
+                    name: None,
+                    parameters: c.template.parameters.clone(),
+                    body: c.template.body.clone(),
+                    closure: Arc::new(closure_map),
+                    param_bounds: Vec::new(),
+                }))
+            }
             ValueData::Function(_) => {
                 // Functions return unit for now
                 Ok(Value::Unit)
@@ -1570,7 +1617,9 @@ impl fmt::Display for OvmValue {
                 }
                 write!(f, ")")
             }
-            ValueData::Function(_) | ValueData::AstFunction(_) => write!(f, "<function>"),
+            ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
+                write!(f, "<function>")
+            }
             ValueData::Struct(_) => write!(f, "<struct>"),
             ValueData::Range(gc_ptr) => {
                 if gc_ptr.inclusive {

@@ -297,11 +297,6 @@ fn unsupported_features_fail_compilation() {
         // immediately-invoked lambda: calling a lambda-valued expression is
         // not compiled (only passing one to a builtin is)
         ("fn f(x) = ((y) => y)(x)", "f"),
-        // capturing lambda: needs a closure the tier cannot build
-        ("fn f(x) = map([1, 2], (y) => y * x)", "f"),
-        // lambda calling a function: the callee is not resolvable from an
-        // empty closure
-        ("fn f(x) = map([1, 2], (y) => to_string(y))", "f"),
     ];
     for (src, target) in cases {
         let result = bytecode_result(src, target, &ints(&[1]));
@@ -311,6 +306,20 @@ fn unsupported_features_fail_compilation() {
             src,
             result
         );
+    }
+}
+
+#[test]
+fn capturing_lambdas_compile_and_agree() {
+    // Formerly on the rejection list: a lambda capturing the enclosing
+    // function's runtime state now compiles (MakeClosure + hidden trailing
+    // capture parameters) and must agree with the interpreter for every
+    // argument value — the captures are per-closure, not baked constants.
+    // (A lambda calling a builtin still rejects in THIS harness, which
+    // compiles against an empty closure; the tier-level suite covers it
+    // with the real prelude closure.)
+    for arg in [1i64, 3, 10] {
+        assert_same("fn f(x) = map([1, 2], (y) => y * x)", "f", &ints(&[arg]));
     }
 }
 

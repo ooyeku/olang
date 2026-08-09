@@ -1019,15 +1019,18 @@ total(doubled([1, 2, 3])) + total(evens([1, 2, 3, 4]))
 }
 
 #[test]
-fn capturing_lambda_falls_back() {
-    // The lambda references `factor` from the enclosing scope, so it cannot
-    // be built with an empty closure — the function must stay interpreted
-    // and still be correct.
+fn capturing_lambda_now_compiles_with_runtime_captures() {
+    // The lambda captures `factor`, a runtime parameter. MakeClosure
+    // snapshots the register at the lambda expression — the interpreter's
+    // capture-by-value moment — and the body runs compiled with the capture
+    // as a hidden trailing parameter. Two different factors in one program
+    // prove the captures are per-closure, not baked.
     let src = r#"
 fn scale(xs, factor) = map(xs, (x) => x * factor)
 sum(scale([1, 2, 3], 10)) + sum(scale([1, 2], 5))
 "#;
-    assert_eq!(promotion_count(src, 1), 0);
+    assert_eq!(promotion_count(src, 1), 1, "scale should now compile");
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(60 + 15));
     assert_tier_transparent(src);
 }
 
@@ -1144,17 +1147,17 @@ sum(scale([1, 2, 3]))
 }
 
 #[test]
-fn lambda_capturing_enclosing_param_still_falls_back() {
+fn lambda_capturing_enclosing_param_compiles() {
     let src = r#"
 fn scale(xs, k) = map(xs, (x) => x * k)
 sum(scale([1, 2, 3], 10)) + sum(scale([1, 2], 5))
 "#;
-    assert_eq!(promotion_count(src, 1), 0);
+    assert_eq!(promotion_count(src, 1), 1);
     assert_tier_transparent(src);
 }
 
 #[test]
-fn lambda_capturing_enclosing_local_still_falls_back() {
+fn lambda_capturing_enclosing_local_compiles() {
     let src = r#"
 fn work(xs) = {
     let offset = 3
@@ -1162,7 +1165,64 @@ fn work(xs) = {
 }
 sum(work([1, 2, 3]))
 "#;
-    assert_eq!(promotion_count(src, 1), 0);
+    assert_eq!(promotion_count(src, 1), 1);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn captures_snapshot_at_lambda_creation_not_at_call() {
+    // The local is reassigned after the lambda is created; the closure must
+    // hold the creation-time value in both tiers. Also: a lambda created in
+    // a loop captures each iteration's value, not the last one.
+    let src = r#"
+fn snap(xs) = {
+    let mut k = 10
+    let f = (x) => x * k
+    k = 99
+    map(xs, f) |> sum
+}
+fn per_iteration(xs) = {
+    let mut fs_total = 0
+    for i in 0..3 {
+        let f = (x) => x + i
+        fs_total = fs_total + (map(xs, f) |> sum)
+    }
+    fs_total
+}
+snap([1, 2, 3]) + per_iteration([10, 20])
+"#;
+    assert!(promotion_count(src, 1) >= 1);
+    assert_eq!(
+        eval(src, None).unwrap(),
+        Value::Integer(60 + (30 + 0 + 0) + (30 + 1 + 1) + (30 + 2 + 2))
+    );
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn escaping_closures_convert_back_to_interpreter_functions() {
+    // A compiled function RETURNS the closure; the caller (interpreted, at
+    // top level) invokes it. The closure crosses the tier boundary as a
+    // value and must behave as the interpreter-built one.
+    let src = r#"
+fn adder(n) = (x) => x + n
+let add5 = adder(5)
+let add9 = adder(9)
+add5(1) + add9(1) + sum(map([1, 2, 3], add5))
+"#;
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(6 + 10 + 21));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn capturing_lambda_through_bridged_builtins_agrees() {
+    // fold is not on the native path; the closure converts to an AST
+    // function at the bridge and runs interpreted. Same answer required.
+    let src = r#"
+fn total(xs, k) = fold(xs, 0, (acc, x) => acc + x * k)
+total([1, 2, 3], 10) + total([1, 2], 5)
+"#;
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(60 + 15));
     assert_tier_transparent(src);
 }
 
