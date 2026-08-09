@@ -71,6 +71,15 @@ pub struct BytecodeVm {
     /// upgrade (a freed-and-reused address yields a dead Weak, never a
     /// stale hit). `None` records a failed compile so it is not retried.
     hof_cache: HashMap<usize, (std::sync::Weak<Expr>, Option<FunctionId>)>,
+    /// Declared struct shapes (type name -> field names), mirrored from the
+    /// interpreter's registry so struct literals validate at compile time
+    /// with exactly the interpreter's rules.
+    struct_defs: HashMap<String, Vec<String>>,
+    /// Types redeclared with a *different* field set. Compile-time
+    /// validation would go stale for them, so their literals are never
+    /// compiled again — the interpreter (whose registry is live) stays the
+    /// authority.
+    poisoned_structs: std::collections::HashSet<String>,
 }
 
 /// Call frame for function execution
@@ -130,6 +139,10 @@ pub struct BytecodeCompiler {
 
     // Function registry for calls
     function_registry: HashMap<String, FunctionId>,
+
+    /// Declared struct shapes for compile-time literal validation
+    /// (mirrored from the interpreter; poisoned types are absent).
+    struct_defs: HashMap<String, Vec<String>>,
 
     /// Lambdas with runtime captures met during this compile: each is the
     /// lambda body as a standalone declaration whose trailing parameters
@@ -294,6 +307,15 @@ pub enum Instruction {
         function: Register,
         args: Vec<Register>,
         arg_count: u32,
+    },
+    /// Build a struct (or anonymous object) from field registers. The
+    /// literal was validated against the declared field set at compile
+    /// time with the interpreter's exact rules, so execution just
+    /// assembles the value.
+    MakeStruct {
+        dst: Register,
+        type_name: String,
+        fields: Vec<(String, Register)>,
     },
     /// Build a runtime closure: clone the template ClosureObject stored at
     /// `template_const` and fill its `captured` values from the given
@@ -842,6 +864,8 @@ impl BytecodeVm {
             frame_pool: Vec::new(),
             arg_pool: Vec::new(),
             hof_cache: HashMap::new(),
+            struct_defs: HashMap::new(),
+            poisoned_structs: std::collections::HashSet::new(),
             // Must match the interpreter's own limit: a program that recurses
             // 900 deep has to behave the same whether or not it was promoted
             max_call_depth: 1000,
@@ -849,6 +873,29 @@ impl BytecodeVm {
     }
 
     /// Register a function for dynamic calls
+    /// Record a struct declaration's field-name set. A redeclaration with
+    /// a different set poisons the type: baked compile-time validation
+    /// cannot follow a live registry, so literals of that type refuse from
+    /// then on. Returns true when the shape landscape changed in a way that
+    /// invalidates previously compiled functions.
+    pub fn note_struct(&mut self, name: String, fields: Vec<String>) -> bool {
+        if self.poisoned_structs.contains(&name) {
+            return false;
+        }
+        match self.struct_defs.get(&name) {
+            Some(existing) if *existing == fields => false,
+            Some(_) => {
+                self.struct_defs.remove(&name);
+                self.poisoned_structs.insert(name);
+                true
+            }
+            None => {
+                self.struct_defs.insert(name, fields);
+                false
+            }
+        }
+    }
+
     pub fn register_function(&mut self, name: String, func_id: FunctionId) {
         self.function_registry.insert(name, func_id);
     }
@@ -903,6 +950,7 @@ impl BytecodeVm {
         // Set up registries so the compiler can validate callees
         self.compiler.function_registry = self.function_registry.clone();
         self.compiler.builtin_names = self.builtin_names.clone();
+        self.compiler.struct_defs = self.struct_defs.clone();
         self.compiler.enclosing_closure = closure;
 
         self.compiler.pending_lambdas.clear();
@@ -1298,6 +1346,24 @@ impl BytecodeVm {
                         self.execute_builtin_call(name, &arg_values)?
                     };
                     self.execution_state.set_register(*dst, result)?;
+                }
+
+                Instruction::MakeStruct {
+                    dst,
+                    type_name,
+                    fields,
+                } => {
+                    let mut field_map = crate::ovm::value::FieldMap::default();
+                    for (name, reg) in fields {
+                        let value = self.execution_state.get_register(*reg)?;
+                        field_map.insert(name.clone(), value);
+                    }
+                    let obj = crate::ovm::value::StructObject {
+                        type_name: type_name.clone(),
+                        fields: field_map,
+                    };
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_struct(Arc::new(obj)))?;
                 }
 
                 Instruction::MakeClosure {
@@ -3236,6 +3302,7 @@ impl BytecodeCompiler {
             enclosing_bound_names: std::collections::HashSet::new(),
             _label_counter: 0,
             function_registry: HashMap::new(),
+            struct_defs: HashMap::new(),
             pending_lambdas: Vec::new(),
         }
     }
@@ -3651,6 +3718,69 @@ impl BytecodeCompiler {
                         Ok(dst_reg)
                     }
                 }
+            }
+
+            // Struct literals validate against the declared field set at
+            // compile time with the interpreter's exact rules (unknown
+            // type, missing field, surprise field). A literal that would
+            // fail refuses compilation, so the function stays interpreted
+            // and the interpreter raises its own error — never a divergent
+            // one. Field values compile in literal order, preserving
+            // side-effect order.
+            Expr::StructLiteral(literal) => {
+                let declared = self.struct_defs.get(&literal.type_name).ok_or_else(|| {
+                    BytecodeError::CompilationFailed(format!(
+                        "struct type '{}' is unknown to the bytecode tier (undeclared, or                          redeclared with a different shape)",
+                        literal.type_name
+                    ))
+                })?;
+                let given: Vec<&String> = literal.fields.iter().map(|f| &f.name).collect();
+                for required in declared {
+                    if !given.contains(&required) {
+                        return Err(BytecodeError::CompilationFailed(format!(
+                            "struct '{}' literal is missing field '{}'",
+                            literal.type_name, required
+                        )));
+                    }
+                }
+                for name in &given {
+                    if !declared.contains(name) {
+                        return Err(BytecodeError::CompilationFailed(format!(
+                            "struct '{}' literal has surprise field '{}'",
+                            literal.type_name, name
+                        )));
+                    }
+                }
+
+                let mut field_regs = Vec::with_capacity(literal.fields.len());
+                for field in &literal.fields {
+                    let reg = self.compile_expression(&field.value)?;
+                    field_regs.push((field.name.clone(), reg));
+                }
+                let dst_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::MakeStruct {
+                    dst: dst_reg,
+                    type_name: literal.type_name.clone(),
+                    fields: field_regs,
+                });
+                Ok(dst_reg)
+            }
+
+            // Anonymous objects are free-form: no validation, type name
+            // "Object", exactly as the interpreter builds them.
+            Expr::AnonymousObject { fields } => {
+                let mut field_regs = Vec::with_capacity(fields.len());
+                for field in fields {
+                    let reg = self.compile_expression(&field.value)?;
+                    field_regs.push((field.name.clone(), reg));
+                }
+                let dst_reg = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::MakeStruct {
+                    dst: dst_reg,
+                    type_name: "Object".to_string(),
+                    fields: field_regs,
+                });
+                Ok(dst_reg)
             }
 
             Expr::Lambda {
@@ -4329,6 +4459,16 @@ impl BytecodeCompiler {
                 Self::collect_bound_names(inner, names)
             }
             Expr::FieldAccess { object, .. } => Self::collect_bound_names(object, names),
+            Expr::StructLiteral(literal) => {
+                for field in &literal.fields {
+                    Self::collect_bound_names(&field.value, names);
+                }
+            }
+            Expr::AnonymousObject { fields } => {
+                for field in fields {
+                    Self::collect_bound_names(&field.value, names);
+                }
+            }
             // Leaves and forms with no binding constructs worth descending
             // into: anything unhandled compiles to a rejection elsewhere, so
             // missing names here cannot reach a compiled lambda.
@@ -4409,6 +4549,14 @@ impl BytecodeCompiler {
             }
 
             Expr::FieldAccess { object, .. } => Self::collect_free_vars(object, bound, free),
+
+            Expr::StructLiteral(literal) => literal
+                .fields
+                .iter()
+                .all(|f| Self::collect_free_vars(&f.value, bound, free)),
+            Expr::AnonymousObject { fields } => fields
+                .iter()
+                .all(|f| Self::collect_free_vars(&f.value, bound, free)),
 
             // Assignment target must be lambda-local: assigning to a closure
             // name would rely on write-through semantics we don't replicate

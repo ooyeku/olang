@@ -64,6 +64,12 @@ A function is eligible when its body uses only the subset the VM implements:
   `...rest`), and tuples — nested to any depth
 - `Ok(..)` / `Err(..)` construction
 - field access (`p.x`) and indexing (`xs[i]`, negatives from the end)
+- struct literals and anonymous objects. Literals validate against the
+  declared field set at *compile* time with the interpreter's exact rules
+  (unknown type, missing field, surprise field all refuse, so the
+  interpreter raises its own error); a type redeclared with a different
+  shape invalidates compiled functions and its literals refuse from then
+  on, keeping the interpreter's live registry the authority
 - calls to the pure `math` module functions (`math.sqrt`, `math.sin`,
   `math.pow`, ...) — recognized as builtins when the module is a bare
   identifier, so a numeric kernel promotes instead of falling back on its
@@ -96,8 +102,8 @@ Anything else causes the function to stay interpreted:
 - a free identifier absent from the function's closure — the interpreter
   would resolve it through the caller's runtime scope chain, which no
   compile-time snapshot can represent
-- maps, async, and struct/enum *construction* (reading fields off a struct
-  argument is compiled; building a new struct in the body is not)
+- maps, async, and *enum* construction (struct construction compiles;
+  enums convert lossily and stay interpreted)
 - a lambda capturing a name the enclosing function binds only *later*
   (no register holds it yet at the lambda expression); calling a
   lambda-valued expression directly

@@ -1427,6 +1427,14 @@ impl OvmValue {
         Ok(ovm_value)
     }
 
+    /// Wrap a struct object built by MakeStruct.
+    pub fn new_struct(obj: Arc<StructObject>) -> Self {
+        Self {
+            header: ValueHeader::new(TypeTag::Struct, ExecutionTier::Bytecode, LazyState::Eager),
+            data: ValueData::Struct(obj),
+        }
+    }
+
     /// Wrap a runtime closure built by MakeClosure.
     pub fn new_closure(closure: Arc<ClosureObject>) -> Self {
         Self {

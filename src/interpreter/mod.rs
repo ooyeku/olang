@@ -1712,10 +1712,13 @@ impl Interpreter {
         // Struct declarations register their shape: construction validates
         // the field-name set against it (values stay dynamic).
         if let TypeDefinition::Struct { fields } = &type_decl.definition {
-            self.struct_defs.insert(
-                type_decl.name.clone(),
-                fields.iter().map(|f| f.name.clone()).collect(),
-            );
+            let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+            // The bytecode tier validates literals at compile time against
+            // the same shape
+            if let Some(tier) = self.bytecode_tier.as_mut() {
+                tier.note_struct(type_decl.name.clone(), field_names.clone());
+            }
+            self.struct_defs.insert(type_decl.name.clone(), field_names);
         }
 
         Ok(Value::Unit)

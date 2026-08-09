@@ -101,6 +101,16 @@ impl BytecodeTier {
         }
     }
 
+    /// Record a struct declaration so literals of the type can validate at
+    /// compile time. A redeclaration with a different field set invalidates
+    /// every compiled function (their baked validation may be stale); they
+    /// recompile on next call, and literals of the changed type refuse.
+    pub fn note_struct(&mut self, name: String, fields: Vec<String>) {
+        if self.vm.note_struct(name, fields) {
+            self.compiled.clear();
+        }
+    }
+
     /// Record a user function declaration so calls to it can be compiled.
     pub fn note_function(&mut self, name: String, func: Function) {
         // Already known to be ambiguous: a second module's same-named function

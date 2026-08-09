@@ -1166,7 +1166,8 @@ fn work(xs) = {
 sum(work([1, 2, 3]))
 "#;
     assert_eq!(promotion_count(src, 1), 1);
-    assert_tier_transparent(src);
+    // work runs once, so compare under the threshold where it promotes
+    assert_eq!(eval(src, Some(1)).unwrap(), eval(src, None).unwrap());
 }
 
 #[test]
@@ -1192,11 +1193,11 @@ fn per_iteration(xs) = {
 snap([1, 2, 3]) + per_iteration([10, 20])
 "#;
     assert!(promotion_count(src, 1) >= 1);
-    assert_eq!(
-        eval(src, None).unwrap(),
-        Value::Integer(60 + (30 + 0 + 0) + (30 + 1 + 1) + (30 + 2 + 2))
-    );
-    assert_tier_transparent(src);
+    let expected = Value::Integer(60 + (30 + 0 + 0) + (30 + 1 + 1) + (30 + 2 + 2));
+    assert_eq!(eval(src, None).unwrap(), expected);
+    // Compare under threshold 1, where promotion actually happens — the
+    // functions here run once each, so the threshold-2 comparison is inert.
+    assert_eq!(eval(src, Some(1)).unwrap(), expected);
 }
 
 #[test]
@@ -1497,6 +1498,93 @@ for i in 0..30 { n = n + use_it(M { sqrt: 41 }) }
 n
 "#,
     );
+}
+
+// ── struct construction compiles ──────────────────────────────────────
+
+#[test]
+fn struct_construction_promotes_and_agrees() {
+    let src = r#"
+type Pair = struct { a: Int, b: Int }
+fn shift(p) = Pair { a: p.b, b: p.a + p.b }
+let mut p = Pair { a: 0, b: 1 }
+for i in 0..30 { p = shift(p) }
+p.b
+"#;
+    assert!(promotion_count(src, 2) >= 1, "shift should be promoted");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn anonymous_objects_promote_and_agree() {
+    let src = r#"
+fn tag(x) = { value: x, doubled: x * 2 }
+let mut t = 0
+for i in 0..30 { t = t + tag(i).doubled + tag(i).value }
+t
+"#;
+    assert!(promotion_count(src, 2) >= 1, "tag should be promoted");
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn struct_literals_in_lambdas_promote() {
+    // The nbody shape: a capturing lambda building structs inside map.
+    let src = r#"
+type P = struct { x: Float, v: Float }
+fn advance(ps, dt) = ps |> map((p) => P { x: p.x + p.v * dt, v: p.v })
+fn run(ps) = {
+    let mut cur = ps
+    for i in 0..20 { cur = advance(cur, 0.5) }
+    cur
+}
+let start = [P { x: 0.0, v: 1.0 }, P { x: 2.0, v: -0.5 }]
+let done = run(start)
+done[0].x + done[1].x
+"#;
+    assert!(promotion_count(src, 2) >= 1);
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn invalid_struct_literals_error_identically() {
+    // Validation failures refuse compilation, so the interpreter raises its
+    // own error — success/failure must match in every case.
+    for body in [
+        "Nope { a: 1 }",             // unknown type
+        "Pair { a: 1 }",             // missing field
+        "Pair { a: 1, b: 2, c: 3 }", // surprise field
+    ] {
+        let src = format!(
+            r#"
+type Pair = struct {{ a: Int, b: Int }}
+fn bad(n) = {}
+bad(1)
+bad(2)
+bad(3)
+"#,
+            body
+        );
+        assert_tier_transparent(&src);
+    }
+}
+
+#[test]
+fn struct_redeclaration_with_new_shape_falls_back_and_agrees() {
+    // `make` compiles against Pair's first shape; redeclaring Pair with a
+    // different field set must invalidate that compile — the interpreter's
+    // registry is live, so the second `make` call validates against the new
+    // shape and errors, and the tier must do exactly the same.
+    let src = r#"
+type Pair = struct { a: Int, b: Int }
+fn make(n) = Pair { a: n, b: n + 1 }
+let first = make(1)
+make(2)
+make(3)
+type Pair = struct { a: Int, b: Int, c: Int }
+make(4)
+"#;
+    assert_tier_transparent(src);
 }
 
 // ── native higher-order builtins (map / filter / sum in the VM) ───────

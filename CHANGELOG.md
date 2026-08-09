@@ -12,6 +12,23 @@ documented.
 
 ### Changed
 
+- **Struct construction compiles.** `Body { x: 1.0, ... }` and anonymous
+  objects now build natively in the VM via a `MakeStruct` instruction.
+  Literals validate against the declared field set at *compile* time with
+  the interpreter's exact rules — unknown type, missing field, and
+  surprise field all refuse compilation, so the function stays
+  interpreted and the interpreter raises its own error. The interpreter
+  feeds struct declarations to the tier as they evaluate; a type
+  redeclared with a *different* field set invalidates every compiled
+  function (their baked validation could go stale) and its literals
+  refuse from then on, keeping the interpreter's live registry the
+  authority — pinned by a redeclaration test. With this, **every function
+  in the N-body example promotes**: 6 promoted, 0 rejected, 7 tier
+  crossings for the whole run (127M instructions, all inside the VM),
+  ~525ms → ~453ms. The whole pipeline arc closes: `make_bodies`, `step`
+  (struct-building capturing lambda inside `map`), and `simulate` were
+  the last holdouts.
+
 - **Capturing lambdas compile.** A lambda that captures the enclosing
   function's *runtime* state — a parameter, a local — no longer refuses
   the whole function. The lambda body compiles once as a standalone
