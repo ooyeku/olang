@@ -77,7 +77,7 @@ impl NativeObject for OdsSeries {
 // Value ↔ engine translation
 // ---------------------------------------------------------------------
 
-fn scalar_to_value(s: Scalar) -> Value {
+pub(super) fn scalar_to_value(s: Scalar) -> Value {
     match s {
         Scalar::F64(x) => Value::Float(x),
         Scalar::I64(x) => Value::Integer(x),

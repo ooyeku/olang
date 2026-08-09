@@ -46,7 +46,7 @@ native = [
 # The ods numerical engine (docs/design/ods.md): pure kernels, no olang
 # dependency. default-features off keeps rayon out of wasm builds; the
 # native feature turns its parallel kernels on.
-olang-ods = { path = "olang-ods", optional = true, default-features = false }
+olang-ods = { path = "olang-ods", optional = true, default-features = false, features = ["stats"] }
 
 # Core parsing and AST
 pest = "2.7"

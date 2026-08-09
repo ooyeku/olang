@@ -6,18 +6,25 @@ description = "ods — the numerical engine behind olang's data stack. Pure kern
 license = "MIT"
 
 [features]
-default = ["parallel"]
+default = ["parallel", "stats"]
 # Rayon data parallelism. Off for wasm builds; every parallel kernel has a
 # sequential twin selected by the caller-provided `par` flag, so disabling
 # the feature only changes speed, never results.
 parallel = ["dep:rayon"]
+# Distributions (statrs) and inference kernels: t-tests, chi2, OLS.
+stats = ["dep:statrs"]
 
 [dependencies]
 rayon = { version = "1.8", optional = true }
+statrs = { version = "0.19", default-features = false, optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
 
 [[bench]]
 name = "series"
+harness = false
+
+[[bench]]
+name = "ols"
 harness = false

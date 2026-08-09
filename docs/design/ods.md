@@ -283,6 +283,34 @@ Notes recorded per the revision rule:
   (order differs from left-to-right by design, like NumPy's pairwise
   sum).
 
+### Measured — Phase 2 (preliminary)
+
+Same machine and method. OLS: 1M rows × 20 regressors + intercept.
+
+| # | Benchmark | ods seq | ods par | NumPy | Verdict |
+|---|---|---|---|---|---|
+| B4 | OLS fit (coef + SE + t + p + R²) | 90 ms | 36.4 ms | 137.8 ms (`lstsq`, SVD) | **met** — 1.5× / 3.8× ahead of target reference |
+
+Notes:
+
+- **faer deferred, with reasons recorded.** `stats.lm` solves the
+  normal equations: the Gram matrix `X'X` is a rayon-parallel pass, and
+  the k×k system uses a 20-line in-crate Cholesky. For regression-sized
+  k (tens of columns) this is textbook, not a worse LAPACK — the
+  "no hand-rolled linalg" rule targets the big decompositions, which
+  arrive with faer when the Phase 3 matrix type creates real demand
+  (SVD, PCA, QR). Stretch context: NumPy's own normal-equations path
+  (BLAS gemm) runs 7.1 ms — closing that gap is a faer `matmul` swap
+  inside the same API when it matters.
+- **Inference is pinned, not eyeballed.** Every distribution value,
+  test statistic, p-value, and regression coefficient is asserted
+  against scipy/NumPy reference constants recorded in
+  `olang-ods/tests/stats.rs` and `tests/ods_stats_test.rs`, with the
+  generating snippets noted inline.
+- **Seeding governs sampling.** `stats.*.sample` draws by inverse
+  transform from the `random` module's stream, so `random.seed(k)`
+  makes statistical sampling reproducible — pinned by test.
+
 ## Phases
 
 Each phase is independently shippable and defensible; no phase begins until
@@ -292,7 +320,7 @@ the previous phase's gate is met.
 |---|---|---|
 | **0 — the seam** | `OvmModule` trait + registry; `Value::Native` / `ValueData::Native` through both tiers (`typeof`, display, equality, serialization); operator-interception arms; feature flag; empty ods module registered | All existing suites green with the feature on and off; a pinned test shows a native value crossing the tier boundary as the same Arc |
 | **1 — Series** | f64/i64/bool arrays with validity bitmaps: constructors (`series(list)`, `ods.zeros`, `ods.linspace`, range conversion), operator arithmetic with scalar broadcasting, reductions (`sum mean var std min max quantile`), `sort argsort take mask filter cumsum dot` | B1, B2, B3, B5 met; benchmark table published in this doc; property tests pin every kernel against a naive interpreter-level reference implementation |
-| **2 — stats** | `describe`, correlation/covariance, distributions (normal, t, chi², F: pdf/cdf/ppf/sample), one- and two-sample t-tests, chi² test, `stats.lm` (OLS via faer: coefficients, SE, R², p-values) | B4 met; results pinned against published reference values (R/scipy outputs recorded as constants in tests) |
+| **2 — stats** | `describe`, correlation/covariance, distributions (normal, t, chi², F: pdf/cdf/ppf/sample), one- and two-sample t-tests, chi² test, `stats.lm` (OLS — normal equations + in-crate Cholesky; faer deferred to Phase 3, see Measured notes) | B4 met; results pinned against published reference values (R/scipy outputs recorded as constants in tests) |
 | **3 — Frame** | Columnar table = named Series + string columns; `select filter with group_by agg join sort`; CSV/JSON bridges to the existing stdlib modules; the tidyverse verb layer | B6 met; `examples/dataproc` rewritten on Frame with a measured speedup recorded |
 | **4 — plot + lazy** | `plot` as an SVG-text emitter (composes with the playground); *evaluate* lazy expression fusion — bytecode already flows ods ops through instructions, so peephole fusion is possible without surface changes | Explicitly gated on 1–3 being done; lazy work requires its own design doc |
 

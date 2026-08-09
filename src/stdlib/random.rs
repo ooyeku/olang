@@ -14,6 +14,14 @@ fn get_rng() -> &'static Mutex<StdRng> {
     RNG.get_or_init(|| Mutex::new(StdRng::from_entropy()))
 }
 
+/// Draw `n` uniforms in [0, 1) from the module's RNG — the same stream
+/// `random.random()` uses, so `random.seed(k)` makes statistical
+/// sampling (stats.norm.sample, ...) deterministic too.
+pub(crate) fn draw_uniforms(n: usize) -> Vec<f64> {
+    let mut rng = get_rng().lock().unwrap();
+    (0..n).map(|_| rng.gen::<f64>()).collect()
+}
+
 /// Error types for random operations
 #[derive(Debug, thiserror::Error)]
 pub enum RandomError {

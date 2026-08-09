@@ -1,11 +1,15 @@
 //! ods — the Olang Data Stack.
 //!
 //! Phase 0 landed the seam: the module registry, Native values, and the
-//! probe type that pins the plumbing. Phase 1 adds Series — a typed,
+//! probe type that pins the plumbing. Phase 1 added Series — a typed,
 //! null-aware 1-D array backed by the `olang-ods` engine crate (pure
-//! kernels, no olang dependency). See `docs/design/ods.md`.
+//! kernels, no olang dependency). Phase 2 adds the `stats` namespace:
+//! distributions, t-tests, chi-squared, correlation, and `stats.lm`,
+//! all thin tables over the engine (L2 of the layer cake). See
+//! `docs/design/ods.md`.
 
 mod series;
+mod stats;
 
 pub use series::{make_series_value, OdsSeries};
 
@@ -92,7 +96,7 @@ impl OvmModule for OdsModule {
         }
         match func {
             "version" => Ok(Value::String(Arc::new(format!(
-                "{} (phase 1)",
+                "{} (phase 2)",
                 env!("CARGO_PKG_VERSION")
             )))),
             "probe" => match args.as_slice() {
@@ -131,5 +135,37 @@ impl OvmModule for OdsModule {
             // native_eq fallback; everything else is a type error.
             _ => None,
         }
+    }
+}
+
+/// The `stats` namespace as its own registry module, so
+/// `stats.norm.pdf(...)` routes through the same seam as `ods.*`.
+/// Its values are ods Series; it defines no native types or operators
+/// of its own.
+pub struct StatsModule;
+
+impl OvmModule for StatsModule {
+    fn name(&self) -> &'static str {
+        "stats"
+    }
+
+    fn namespaces(&self) -> Vec<(String, Value)> {
+        vec![("stats".to_string(), stats::namespace())]
+    }
+
+    fn dispatch(&self, func: &str, args: Vec<Value>) -> Result<Value, String> {
+        if !stats::handles(func) {
+            return Err(format!("unknown stats function: stats.{}", func));
+        }
+        stats::dispatch(func, args)
+    }
+
+    fn binary_op(
+        &self,
+        _op: &BinaryOp,
+        _lhs: &Value,
+        _rhs: &Value,
+    ) -> Option<Result<Value, String>> {
+        None
     }
 }

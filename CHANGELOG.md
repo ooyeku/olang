@@ -12,6 +12,21 @@ documented.
 
 ### Added
 
+- **The `stats` namespace — ods Phase 2, statistical inference**
+  (`docs/design/ods.md`). Distributions (normal, t, chi², F — pdf/cdf/
+  ppf/sample, statrs-backed), `stats.describe`, pairwise-complete
+  correlation and covariance, one-sample and Welch t-tests (the second
+  argument picks the test: Series → two-sample, number → null mean),
+  chi² goodness of fit, and `stats.lm` — OLS with coefficients, SE,
+  t statistics, p-values, R², and R-style `na.omit` row handling,
+  returned as an olang map of parallel Series. Sampling draws from the
+  `random` module's stream, so `random.seed(k)` makes
+  `stats.norm.sample(...)` reproducible. Every statistic is pinned
+  against scipy/NumPy reference constants in tests, and **the B4 gate
+  is met: a 1M×20 OLS fits in 36.4 ms parallel (90 ms sequential) vs
+  137.8 ms for `numpy.linalg.lstsq`** — measured table and the
+  faer-deferral rationale recorded in the design doc.
+
 - **Series — ods Phase 1, the numerical engine** (`docs/design/ods.md`).
   A typed, null-aware 1-D array backed by the new `olang-ods` workspace
   crate: pure Rust kernels with no olang dependency, contiguous

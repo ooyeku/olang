@@ -24,6 +24,10 @@
 //!   the `parallel` feature only changes speed, never results.
 
 pub mod bitmap;
+#[cfg(feature = "stats")]
+pub mod dist;
+#[cfg(feature = "stats")]
+pub mod stats;
 
 pub use bitmap::{merge_validity, Bitmap};
 

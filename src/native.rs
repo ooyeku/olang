@@ -120,6 +120,8 @@ pub fn registered_modules() -> &'static [Arc<dyn OvmModule>] {
         let mut modules: Vec<Arc<dyn OvmModule>> = Vec::new();
         #[cfg(feature = "ods")]
         modules.push(Arc::new(crate::ods::OdsModule));
+        #[cfg(feature = "ods")]
+        modules.push(Arc::new(crate::ods::StatsModule));
         modules
     });
     &MODULES
