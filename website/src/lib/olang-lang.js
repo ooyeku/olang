@@ -86,7 +86,7 @@ export const olangTheme = {
   name: 'olang-dark',
   type: 'dark',
   colors: {
-    'editor.background': '#0D1626',
+    'editor.background': '#11161D',
     'editor.foreground': '#D6E2EC'
   },
   tokenColors: [

@@ -15,40 +15,113 @@
   <div class="container">
     <div>
       <h1><img src="/brand/logo.svg" alt="olang" /></h1>
-      <p class="tag">pipelines · pattern matching · <b>batteries included</b> · tiered execution</p>
       <p class="lede">
-        A dynamic functional language with pipeline-oriented data flow,
-        algebraic data types, Result-based error handling, thread-backed
-        concurrency, and a conservative bytecode tier that accelerates hot
-        code without changing program semantics.
+        A batteries-included dynamic functional language: pipelines, pattern
+        matching, algebraic data types, <b>Result</b>-based errors — with a
+        built-in data stack, real no-GIL parallelism, and a three-tier runtime
+        where every tier must agree with the interpreter exactly, or refuse.
       </p>
+      <dl class="spec">
+        <div>
+          <dt>runtime</dt>
+          <dd>interpreter → bytecode VM → Cranelift JIT; falling back is always correct</dd>
+        </div>
+        <div>
+          <dt>parallelism</dt>
+          <dd><code>spawn</code> on OS threads; <code>par_map</code> fans across every core — no GIL</dd>
+        </div>
+        <div>
+          <dt>data stack</dt>
+          <dd><code>ods.series([12.5, 8.0, 15.25]) * 1.07 |&gt; ods.mean</code> — in every build, no import</dd>
+        </div>
+        <div>
+          <dt>playground</dt>
+          <dd>the whole language compiled to WebAssembly, <a href="/playground">sandboxed in your browser</a></dd>
+        </div>
+      </dl>
       <div class="cta-row">
-        <a class="btn btn-primary" href="/book">Read the book</a>
-        <a class="btn btn-ghost" href="/examples">Browse examples</a>
+        <a class="btn btn-primary" href="/playground">Run it in the browser</a>
+        <a class="btn btn-ghost" href="/book">Read the book</a>
       </div>
       <div class="copybox">
-        <span class="prompt">$</span>
-        <span>{install}</span>
+        <div class="lines">
+          <div><span class="prompt">$</span> git clone https://github.com/ooyeku/olang</div>
+          <div><span class="prompt">$</span> cd olang && cargo install --path .</div>
+        </div>
         <button on:click={copy}>{copied ? 'copied' : 'copy'}</button>
       </div>
     </div>
-    <div class="terminal">
-      <div class="terminal-bar">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="name">shapes.ol</span>
+    <div class="hero-code">
+      <div class="code-head">
+        <span class="file">shapes.ol</span>
+        <span class="note">from README.md — executed by the test suite</span>
       </div>
       {@html data.heroHtml}
     </div>
   </div>
 </section>
 
-<section class="section">
+<section class="section" id="numbers">
+  <div class="container">
+    <p class="kicker">measured, not asserted</p>
+    <h2>The numbers</h2>
+    <p class="sub">
+      Defaults, no flags — what a plain <code>olang program.ol</code> gets.
+      Methodology and the full tables are in
+      <a href="/book/ovm">the OVM chapter</a>.
+    </p>
+    <div class="table-scroll">
+    <table class="bench-table">
+      <thead>
+        <tr>
+          <th>workload</th>
+          <th class="num">olang</th>
+          <th class="num">node</th>
+          <th class="num">bun</th>
+          <th class="num">cpython</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="label">fib(30) — 2.7M recursive calls</td>
+          <td class="num self">5 ms</td>
+          <td class="num">4 ms</td>
+          <td class="num">4 ms</td>
+          <td class="num">46 ms</td>
+        </tr>
+        <tr>
+          <td class="label">map(λ) |&gt; sum — 1M elements</td>
+          <td class="num self">13 ms</td>
+          <td class="num">9 ms</td>
+          <td class="num">4 ms</td>
+          <td class="num">24 ms</td>
+        </tr>
+        <tr>
+          <td class="label">par_map on compute-heavy kernels</td>
+          <td class="num self wide" colspan="4">9–13× across cores, no GIL</td>
+        </tr>
+        <tr>
+          <td class="label">10M-row, 1k-group aggregation</td>
+          <td class="num self wide" colspan="4">27.2 ms single-threaded — Polars: 24.0 ms on 18 threads</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="bench-note">
+      fib(30) went 89 ms → 5 ms when the Cranelift tier landed — level with
+      the JavaScript JITs, 9× ahead of CPython. Interpreter-only mode runs the
+      same programs; the tiers are an optimization, never a semantic.
+    </p>
+  </div>
+</section>
+
+<section class="section alt" id="principles">
   <div class="container">
     <p class="kicker">overview</p>
     <h2>Design principles</h2>
     <p class="sub">
       Each of these properties is enforced by the test suite: documentation
-      examples execute in CI, both execution tiers are required to agree,
+      examples execute in CI, all execution tiers are required to agree,
       and the standard library is differential-tested against itself.
     </p>
     <div class="grid-3">
@@ -75,26 +148,21 @@
       </div>
       <div class="card">
         <h3><span class="glyph">&gt;&gt;</span> Tiered execution</h3>
-        <p>Hot functions compile to register bytecode (9× on the N-body
-        benchmark); unsupported constructs fall back to the interpreter,
+        <p>Hot functions promote to register bytecode, hot numeric functions
+        to native code via Cranelift; unsupported constructs fall back,
         never diverging.</p>
       </div>
       <div class="card">
-        <h3><span class="glyph">✓</span> Batteries included</h3>
-        <p>18 stdlib modules: JSON, CSV, SQLite, HTTP client + server, regex,
-        crypto, time, files — plus a package manager with lockfiles.</p>
+        <h3><span class="glyph">##</span> Batteries included</h3>
+        <p>19 stdlib modules: JSON, CSV, SQLite, HTTP client + server, regex,
+        crypto, time, files, the data stack — plus a package manager with
+        lockfiles.</p>
       </div>
-    </div>
-    <div class="stat-row">
-      <div class="stat"><b>9×</b><span>N-body on the bytecode tier</span></div>
-      <div class="stat"><b>45</b><span>test binaries in CI</span></div>
-      <div class="stat"><b>38</b><span>runnable example programs</span></div>
-      <div class="stat"><b>18</b><span>stdlib modules</span></div>
     </div>
   </div>
 </section>
 
-<section class="section alt">
+<section class="section" id="book">
   <div class="container">
     <p class="kicker">documentation</p>
     <h2>The olang book</h2>
@@ -114,7 +182,7 @@
   </div>
 </section>
 
-<section class="section">
+<section class="section alt" id="examples">
   <div class="container">
     <p class="kicker">examples</p>
     <h2>Working programs</h2>

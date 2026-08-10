@@ -193,7 +193,7 @@
   }
   .intro code {
     font-family: var(--mono);
-    color: var(--amber);
+    color: var(--paper);
     font-size: 0.92em;
   }
 
@@ -207,16 +207,16 @@
     background: var(--surface);
     color: var(--body);
     border: 1px solid var(--line-bright);
-    border-radius: 8px;
+    border-radius: var(--radius);
     font-family: var(--mono);
     font-size: 0.9rem;
     padding: 0.45rem 0.6rem;
   }
   .run {
     background: var(--teal);
-    color: var(--ink);
+    color: #04211c;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius);
     font-family: var(--mono);
     font-weight: 700;
     font-size: 0.92rem;
