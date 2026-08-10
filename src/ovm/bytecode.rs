@@ -3370,7 +3370,7 @@ impl BytecodeVm {
     /// CallBuiltin's builtin_id indexes this table; entries record arity.
     /// Excluded on purpose: abs/min/max (integer-preserving), log (optional
     /// base), and the integer functions (factorial, gcd, lcm, ...).
-    const FLOAT_MATH: &'static [(&'static str, usize)] = &[
+    pub(crate) const FLOAT_MATH: &'static [(&'static str, usize)] = &[
         ("math.sqrt", 1),
         ("math.cbrt", 1),
         ("math.floor", 1),
@@ -3407,7 +3407,7 @@ impl BytecodeVm {
 
     /// Mirrors the interpreter implementations exactly: every entry is a
     /// pure f64 operation from std. atan2 is y.atan2(x) with y = args[0].
-    fn eval_float_math(id: usize, a: f64, b: f64) -> f64 {
+    pub(crate) fn eval_float_math(id: usize, a: f64, b: f64) -> f64 {
         match id {
             0 => a.sqrt(),
             1 => a.cbrt(),

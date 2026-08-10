@@ -186,6 +186,14 @@ const FIELD_BOOL: u64 = 2;
 /// # Safety
 /// Called only from JIT code compiled by this module, with pointers the
 /// entry guard extracted from live argument slots.
+/// Host helper for the float-math builtins: calls the VM's own
+/// eval_float_math, so native results are exact by construction (same
+/// function, same bits). Unary ops receive b = 0.0, matching the VM's
+/// unused-slot default. Total — never deopts.
+extern "C" fn olang_jit_math(id: i64, a: f64, b: f64) -> f64 {
+    crate::ovm::bytecode::BytecodeVm::eval_float_math(id as usize, a, b)
+}
+
 unsafe extern "C" fn olang_jit_field(
     obj: *const crate::ovm::value::StructObject,
     idx: u64,
@@ -229,6 +237,7 @@ impl JitCache {
             )
             .ok()?;
             builder.symbol("olang_jit_field", olang_jit_field as *const u8);
+            builder.symbol("olang_jit_math", olang_jit_math as *const u8);
             self.module = Some(JITModule::new(builder));
         }
         self.module.as_mut()
@@ -511,6 +520,16 @@ impl JitCache {
                 .declare_function("olang_jit_field", Linkage::Import, &sig)
                 .ok()?
         };
+        let math_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::F64));
+            sig.params.push(AbiParam::new(types::F64));
+            sig.returns.push(AbiParam::new(types::F64));
+            module
+                .declare_function("olang_jit_math", Linkage::Import, &sig)
+                .ok()?
+        };
         let mut clif_ids = Vec::with_capacity(plans.len());
         for (plan, inf) in plans.iter().zip(&inferences) {
             let mut sig = module.make_signature();
@@ -554,6 +573,7 @@ impl JitCache {
                     inf,
                     shapes,
                     field_helper,
+                    math_helper,
                 )?;
                 builder.finalize();
             }
@@ -704,6 +724,12 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         Instruction::BinImm { imm, .. } => {
             matches!(imm.data, ValueData::Integer(_) | ValueData::Float(_))
         }
+        Instruction::CallBuiltin {
+            builtin_id, args, ..
+        } => matches!(
+            crate::ovm::bytecode::BytecodeVm::FLOAT_MATH.get(*builtin_id as usize),
+            Some((_, arity)) if args.len() == *arity && *arity <= 2
+        ),
         Instruction::Return { value } => value.is_some(),
         _ => false,
     })
@@ -973,6 +999,12 @@ impl PlanFn {
                         kind_mask(spec.field_kinds[idx])
                     );
                 }
+                Instruction::CallBuiltin { dst, args, .. } => {
+                    for a in args.iter() {
+                        narrow!(a.0, K_NUM);
+                    }
+                    grow!(self.writes[dst.0 as usize], K_FLOAT);
+                }
                 Instruction::Jump { .. } | Instruction::MatchFail => {}
                 Instruction::JumpIfTrue { condition, .. }
                 | Instruction::JumpIfFalse { condition, .. } => {
@@ -1163,6 +1195,7 @@ fn translate_body(
     inference: &Inference,
     shapes: &HashMap<u32, ShapeSpec>,
     field_helper: cranelift_module::FuncId,
+    math_helper: cranelift_module::FuncId,
 ) -> Option<()> {
     let n = bytecode.instructions.len();
     let param_count = inference.param_kinds.len();
@@ -1397,6 +1430,40 @@ fn translate_body(
                     }
                     _ => return None,
                 }
+            }
+            Instruction::CallBuiltin {
+                dst,
+                builtin_id,
+                args,
+            } => {
+                let mut fargs = [None, None];
+                for (i, a) in args.iter().enumerate().take(2) {
+                    let k = gen.kind(a.0)?;
+                    let v = builder.use_var(Variable::from_u32(a.0));
+                    fargs[i] = Some(gen.to_float(builder, v, k));
+                }
+                let a = fargs[0]?;
+                // The VM leaves the unused slot at 0.0 for unary ops.
+                let b = fargs[1].unwrap_or_else(|| builder.ins().f64const(0.0));
+                // sqrt/floor/ceil/trunc are bit-exact IEEE operations with
+                // native instructions; everything else goes through the
+                // imported helper, which IS the VM's eval_float_math.
+                let name = crate::ovm::bytecode::BytecodeVm::FLOAT_MATH
+                    .get(*builtin_id as usize)?
+                    .0;
+                let val = match name {
+                    "math.sqrt" => builder.ins().sqrt(a),
+                    "math.floor" => builder.ins().floor(a),
+                    "math.ceil" => builder.ins().ceil(a),
+                    "math.trunc" => builder.ins().trunc(a),
+                    _ => {
+                        let id_v = builder.ins().iconst(types::I64, *builtin_id as i64);
+                        let helper_ref = module.declare_func_in_func(math_helper, builder.func);
+                        let call = builder.ins().call(helper_ref, &[id_v, a, b]);
+                        builder.inst_results(call)[0]
+                    }
+                };
+                gen.write(builder, dst.0, val);
             }
             Instruction::GetField {
                 dst,

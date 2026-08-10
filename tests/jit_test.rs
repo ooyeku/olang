@@ -519,3 +519,24 @@ show(taxi(P { x: 1.0, y: 1.0 }, P { x: 4.0, y: 9.0 }))
 "#,
     );
 }
+
+#[test]
+fn math_builtins_agree_bit_exactly() {
+    assert_jit_transparent(
+        r#"
+fn kernel(x) = math.sqrt(x * x + 1.0) + math.sin(x) * math.cos(x) + math.pow(x, 2.0)
+fn probe(x) = math.floor(x) + math.ceil(x) + math.trunc(x) + math.atan2(x, 2.0)
+show(kernel(1.7)) + " " + show(kernel(-3.2)) + " " + show(probe(2.6)) + " " + show(math.sqrt(-1.0))
+"#,
+    );
+}
+
+#[test]
+fn math_on_int_args_promotes_like_the_vm() {
+    assert_jit_transparent(
+        r#"
+fn f(n) = math.sqrt(n * n)
+show(f(12)) + " " + show(f(-5))
+"#,
+    );
+}

@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **JIT: the float-math builtins join the whitelist.** All 25
+  `math.*` float builtins compile in JIT functions: sqrt, floor, ceil,
+  and trunc as native IEEE instructions (bit-exact by definition), the
+  other 21 through an imported helper that calls the VM's own
+  eval_float_math — exactness by construction, not by reimplementation.
+  Inference types them totally (numeric in, Float out, never deopts).
+  A synthetic sqrt/sin/cos/pow kernel runs bit-identically and ~20%
+  faster even when driven from bytecode. Measuring N-body exposed the
+  true remaining blocker in its force loops: list indexing and tuple
+  extraction ("other" in the refusal listings) — recorded on the
+  roadmap as the heap-values rung. 42 JIT parity tests green.
+
 ## [0.40.0] - 2026-08-09
 
 ### Added

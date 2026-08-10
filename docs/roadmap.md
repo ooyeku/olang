@@ -107,11 +107,16 @@ As of 0.40 all three levers are resolved: P1 landed, P2 landed through
 struct field access, and P3's probe landed with the full rewrite
 deferred on its own measurement. The open rungs, in order:
 
-- **`math.sqrt` (then the rest of the pure `math` builtins) in the JIT
-  whitelist** — N-body's inner kernel is the one function between the
-  simulation and native code; everything else in it already qualifies.
-- **JIT strings and other heap values** — extending the whitelist beyond
-  numeric and struct-field work.
+- ~~**`math.sqrt` (and the rest of the pure `math` builtins) in the JIT
+  whitelist**~~ — landed post-0.40: all 25 float-math builtins compile
+  (sqrt/floor/ceil/trunc as native IEEE instructions, the rest through
+  a helper that *is* the VM's own eval_float_math, exact by
+  construction). Measuring it exposed the real remaining blocker in
+  N-body's hot loops: list indexing and tuple extraction — the heap
+  rung below.
+- **JIT heap values (list indexing, tuple extraction, then strings)** —
+  the instruction listings from N-body's refusals name these precisely;
+  this rung is what lets its force loops compile whole.
 - **Parallel `for`** — P1's remaining item.
 
 ## The data campaign (0.40)
