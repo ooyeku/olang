@@ -1343,7 +1343,21 @@ impl BuiltinFunctions {
 
         match &args[0] {
             Value::Integer(n) => Ok(Value::Integer(*n)),
-            Value::Float(x) => Ok(Value::Integer(*x as i64)),
+            // `as i64` saturates NaN to 0 and infinities to i64::MIN/MAX,
+            // silently inventing a number. A non-finite float has no integer
+            // value, so reject it instead.
+            Value::Float(x) => {
+                if x.is_finite() {
+                    Ok(Value::Integer(*x as i64))
+                } else {
+                    Err(InterpreterError::TypeError {
+                        message: format!(
+                            "to_int: cannot convert {} to an integer",
+                            crate::ast::format_float(*x)
+                        ),
+                    })
+                }
+            }
             Value::String(s) => {
                 s.parse::<i64>()
                     .map(Value::Integer)
@@ -1605,6 +1619,41 @@ impl BuiltinFunctions {
             }
         };
         let list = list_rc.as_ref();
+
+        // Sorting needs a total order over comparable elements. Numbers
+        // (Int/Float) compare with each other and strings compare with
+        // strings, but a list mixing numbers and strings (or containing
+        // booleans, lists, structs, …) has no meaningful order — the old
+        // comparator silently declared such pairs Equal and returned a
+        // half-sorted list. Reject a heterogeneous list up front.
+        #[derive(PartialEq)]
+        enum SortClass {
+            Numeric,
+            Str,
+            Other,
+        }
+        fn class_of(v: &Value) -> SortClass {
+            match v {
+                Value::Integer(_) | Value::Float(_) => SortClass::Numeric,
+                Value::String(_) => SortClass::Str,
+                _ => SortClass::Other,
+            }
+        }
+        if let Some(first) = list.first() {
+            let cls = class_of(first);
+            if cls == SortClass::Other {
+                return Err(InterpreterError::TypeError {
+                    message: format!("sort: cannot compare values of type {}", first.type_name()),
+                });
+            }
+            for item in list.iter() {
+                if class_of(item) != cls {
+                    return Err(InterpreterError::TypeError {
+                        message: "sort: cannot compare values of different types (mix of numbers and strings)".to_string(),
+                    });
+                }
+            }
+        }
 
         let mut result: Vec<Value> = list.to_vec();
 

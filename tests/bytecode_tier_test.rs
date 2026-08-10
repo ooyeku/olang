@@ -2751,3 +2751,22 @@ to_string(acc)
 "#,
     );
 }
+
+#[test]
+fn to_int_rejects_non_finite_floats() {
+    // Saturating conversion silently invented a number; now it errors.
+    assert_tier_transparent("to_int(1.5)"); // valid still works
+    assert_tier_transparent(
+        r#"
+let bad = to_float("nan")
+try to_int(bad) catch e => -1
+"#,
+    );
+}
+
+#[test]
+fn sort_rejects_incomparable_mixed_types() {
+    assert_tier_transparent("to_string(sort([3, 1, 2]))"); // homogeneous ok
+    assert_tier_transparent("to_string(sort([\"b\", \"a\"]))"); // strings ok
+    assert_tier_transparent(r#"try to_string(sort([1, "a", 2])) catch e => "rejected""#);
+}
