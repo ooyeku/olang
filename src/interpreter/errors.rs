@@ -421,6 +421,13 @@ impl IntuitiveErrorFormatter {
     /// Calculate Levenshtein distance for "did you mean" suggestions
     #[allow(clippy::needless_range_loop)] // matrix DP is clearest indexed
     pub fn levenshtein_distance(a: &str, b: &str) -> usize {
+        // Compare by Unicode scalar values, not bytes. Sizing the matrix by
+        // byte length (a.len()) while indexing by character (chars().nth())
+        // produced wrong distances for any multibyte identifier — the tail
+        // rows compared None == None as a zero-cost match — and the repeated
+        // nth() calls were quadratic. Collect the chars once and index them.
+        let a: Vec<char> = a.chars().collect();
+        let b: Vec<char> = b.chars().collect();
         let len_a = a.len();
         let len_b = b.len();
 
@@ -442,11 +449,7 @@ impl IntuitiveErrorFormatter {
 
         for i in 1..=len_a {
             for j in 1..=len_b {
-                let cost = if a.chars().nth(i - 1) == b.chars().nth(j - 1) {
-                    0
-                } else {
-                    1
-                };
+                let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
                 matrix[i][j] = (matrix[i - 1][j] + 1)
                     .min(matrix[i][j - 1] + 1)
                     .min(matrix[i - 1][j - 1] + cost);
@@ -470,5 +473,46 @@ impl IntuitiveErrorFormatter {
             .take(self.max_suggestions)
             .map(|(suggestion, _)| suggestion)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod levenshtein_tests {
+    use super::IntuitiveErrorFormatter;
+
+    #[test]
+    fn ascii_distances_are_correct() {
+        assert_eq!(
+            IntuitiveErrorFormatter::levenshtein_distance("kitten", "sitting"),
+            3
+        );
+        assert_eq!(
+            IntuitiveErrorFormatter::levenshtein_distance("compute", "compute"),
+            0
+        );
+        assert_eq!(IntuitiveErrorFormatter::levenshtein_distance("", "abc"), 3);
+    }
+
+    #[test]
+    fn multibyte_identifiers_measure_by_character_not_byte() {
+        // "café" is 5 bytes but 4 chars. Byte-sized dimensions with
+        // char-indexed comparison gave wrong distances; these are the
+        // true character edit distances.
+        assert_eq!(
+            IntuitiveErrorFormatter::levenshtein_distance("café", "cafe"),
+            1
+        );
+        assert_eq!(
+            IntuitiveErrorFormatter::levenshtein_distance("café", "café"),
+            0
+        );
+        assert_eq!(
+            IntuitiveErrorFormatter::levenshtein_distance("naïve", "naive"),
+            1
+        );
+        assert_eq!(
+            IntuitiveErrorFormatter::levenshtein_distance("αβγ", "αβδ"),
+            1
+        );
     }
 }
