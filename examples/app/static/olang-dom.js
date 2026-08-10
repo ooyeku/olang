@@ -84,6 +84,18 @@
     fetch("/olang.wasm").then((r) => r.arrayBuffer()),
     fetch("/app.ol").then((r) => r.text()),
   ]);
+  if (wasmBytes.byteLength < 8) {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<pre style="color:#c33;padding:1rem">/olang.wasm came back empty.
+Two known causes:
+  1. the server binary predates body_file support — reinstall olang (make install)
+  2. static/olang_playground.wasm is missing — build it:
+     cargo build -p olang-playground --target wasm32-unknown-unknown --release
+     cp target/wasm32-unknown-unknown/release/olang_playground.wasm examples/app/static/</pre>`
+    );
+    return;
+  }
   ({ instance: { exports: ex } } = await WebAssembly.instantiate(wasmBytes, imports));
 
   const enc = new TextEncoder().encode(source);

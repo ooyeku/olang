@@ -46,6 +46,15 @@ let olang_html = unwrap(fs.read_file("static/index.html"))
 let olang_shim = unwrap(fs.read_file("static/olang-dom.js"))
 let app_ol = unwrap(fs.read_file("static/app.ol"))
 
+// The wasm artifact is gitignored; fail loudly at boot when missing.
+let wasm_check = fs.read_file("static/olang_playground.wasm")
+if is_err(wasm_check) => {
+    println("WARNING: static/olang_playground.wasm is missing — the frontend cannot boot.")
+    println("Build and copy it:")
+    println("  cargo build -p olang-playground --target wasm32-unknown-unknown --release")
+    println("  cp target/wasm32-unknown-unknown/release/olang_playground.wasm examples/app/static/")
+}
+
 // ── the olang frontend: the same tracker with its logic in app.ol,
 //    running in the browser as wasm (see docs: the dom module) ──
 fn olang_page(req, params) =
