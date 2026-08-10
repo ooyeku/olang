@@ -118,8 +118,21 @@ pub fn fetch_git(url: &str, git_ref: &GitRef) -> Result<Fetched, CacheError> {
             ],
         )?;
     } else {
-        // Refresh refs (ignore failure so offline reuse still works)
-        let _ = git(Some(&bare_dir), &["fetch", "--quiet", "--all", "--tags"]);
+        // Refresh refs (ignore failure so offline reuse still works). The
+        // refspecs are explicit because a `clone --bare` repo has no fetch
+        // refspec configured — a plain `fetch --all` would update nothing
+        // and branch refs would stay frozen at clone time forever.
+        let _ = git(
+            Some(&bare_dir),
+            &[
+                "fetch",
+                "--quiet",
+                "--force",
+                url,
+                "+refs/heads/*:refs/heads/*",
+                "+refs/tags/*:refs/tags/*",
+            ],
+        );
     }
 
     // Resolve the ref to an exact commit SHA.

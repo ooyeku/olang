@@ -131,6 +131,7 @@ fn frozen_install_rejects_a_stale_lock() {
     let frozen = InstallOptions {
         frozen: true,
         registry: None,
+        refresh: false,
     };
     assert!(
         install(&app, &frozen).is_err(),
@@ -289,5 +290,139 @@ fn bare_use_imports_all_exports() {
         interp.eval_program(program).unwrap(),
         olang::Value::Integer(9 + 8)
     );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// Make a tiny local git repo usable as a git dependency; returns its path
+/// (usable as a file:// URL for git) after committing `index.ol`.
+fn git_lib(ws: &std::path::Path, source: &str) -> PathBuf {
+    let repo = ws.join("gitlib");
+    write(
+        &repo.join("olang.toml"),
+        "[package]\nname = \"gitlib\"\nversion = \"1.0.0\"\n",
+    );
+    write(&repo.join("index.ol"), source);
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(&repo)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {:?}: {:?}", args, out);
+    };
+    git(&["init", "--quiet", "--initial-branch=main"]);
+    git(&["add", "."]);
+    git(&["commit", "--quiet", "-m", "v1"]);
+    repo
+}
+
+#[test]
+fn install_replays_the_lock_but_update_moves_the_pin() {
+    let ws = workspace("replay");
+    let repo = git_lib(&ws, "share fn answer() = 1\n");
+    let app = ws.join("app");
+    write(
+        &app.join("olang.toml"),
+        &format!(
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngitlib = {{ git = \"{}\" }}\n",
+            repo.display()
+        ),
+    );
+
+    // First install pins the current commit.
+    let map = install(&app, &InstallOptions::default()).expect("first install");
+    let v1_dir = map.get("gitlib").unwrap().clone();
+    let lock_v1 = fs::read_to_string(app.join("olang.lock")).unwrap();
+    assert!(fs::read_to_string(v1_dir.join("index.ol"))
+        .unwrap()
+        .contains("= 1"));
+
+    // The upstream moves on.
+    write(&ws.join("gitlib/index.ol"), "share fn answer() = 2\n");
+    let commit = std::process::Command::new("git")
+        .current_dir(&repo)
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@t")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@t")
+        .args(["commit", "--quiet", "-am", "v2"])
+        .output()
+        .unwrap();
+    assert!(commit.status.success());
+
+    // A plain install replays the pin: same checkout, lock untouched.
+    let map = install(&app, &InstallOptions::default()).expect("replay install");
+    assert_eq!(map.get("gitlib").unwrap(), &v1_dir);
+    assert_eq!(
+        fs::read_to_string(app.join("olang.lock")).unwrap(),
+        lock_v1,
+        "replayed install must not rewrite the lock"
+    );
+
+    // An explicit update re-resolves to the new head and rewrites the lock.
+    let refresh = InstallOptions {
+        refresh: true,
+        ..Default::default()
+    };
+    let map = install(&app, &refresh).expect("update");
+    let v2_dir = map.get("gitlib").unwrap().clone();
+    assert_ne!(v2_dir, v1_dir, "update must move to the new commit");
+    assert!(fs::read_to_string(v2_dir.join("index.ol"))
+        .unwrap()
+        .contains("= 2"));
+    assert_ne!(fs::read_to_string(app.join("olang.lock")).unwrap(), lock_v1);
+
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn changing_the_requested_git_ref_re_resolves_without_update() {
+    let ws = workspace("refchange");
+    let repo = git_lib(&ws, "share fn answer() = 1\n");
+    // Tag the first commit, then advance main.
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(&repo)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {:?}: {:?}", args, out);
+    };
+    git(&["tag", "v1"]);
+    write(&ws.join("gitlib/index.ol"), "share fn answer() = 2\n");
+    git(&["commit", "--quiet", "-am", "v2"]);
+    git(&["tag", "v2"]);
+
+    let app = ws.join("app");
+    let manifest_with = |tag: &str| {
+        format!(
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngitlib = {{ git = \"{}\", tag = \"{}\" }}\n",
+            repo.display(),
+            tag
+        )
+    };
+    write(&app.join("olang.toml"), &manifest_with("v1"));
+    let map = install(&app, &InstallOptions::default()).expect("install v1");
+    let v1_dir = map.get("gitlib").unwrap().clone();
+
+    // Editing the manifest's tag must re-resolve on a plain install — the
+    // lock covers v1, not v2.
+    write(&app.join("olang.toml"), &manifest_with("v2"));
+    let map = install(&app, &InstallOptions::default()).expect("install v2");
+    assert_ne!(map.get("gitlib").unwrap(), &v1_dir);
+    assert!(
+        fs::read_to_string(map.get("gitlib").unwrap().join("index.ol"))
+            .unwrap()
+            .contains("= 2")
+    );
+
     let _ = fs::remove_dir_all(&ws);
 }

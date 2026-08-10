@@ -42,9 +42,23 @@ pub struct LockedPackage {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum LockedSource {
-    Path { path: String },
-    Git { git: String, rev: String },
-    Registry { registry: String },
+    Path {
+        path: String,
+    },
+    Git {
+        git: String,
+        rev: String,
+        /// The ref the manifest asked for when this rev was pinned (a tag,
+        /// branch, or explicit rev; None = default HEAD). Lets install tell
+        /// "manifest unchanged, replay the pin" from "the requested ref
+        /// changed, re-resolve". Absent in pre-existing lockfiles, which
+        /// simply re-resolve once and are then stamped.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
+    },
+    Registry {
+        registry: String,
+    },
 }
 
 impl Lockfile {

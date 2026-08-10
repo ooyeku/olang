@@ -52,6 +52,10 @@ pub struct InstallOptions {
     pub frozen: bool,
     /// Registry index directory, if registry dependencies are used.
     pub registry: Option<PathBuf>,
+    /// Ignore the existing lockfile and re-resolve everything to the newest
+    /// satisfying sources (`otc pkg update`). Without this, an existing lock
+    /// that still covers the manifest is replayed exactly.
+    pub refresh: bool,
 }
 
 /// Resolve and fetch all dependencies of the project rooted at `root`,
@@ -60,6 +64,17 @@ pub struct InstallOptions {
 /// This is the heart of `otc install` and of loading a project to run it.
 pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, PkgError> {
     let manifest = Manifest::load(root).map_err(|e| PkgError::Manifest(e.to_string()))?;
+
+    // A lockfile that still covers the manifest is replayed exactly: the
+    // pinned revs are fetched (offline once cached) and the lock is left
+    // byte-identical. Only a manifest edit the lock doesn't cover — or an
+    // explicit refresh — re-resolves.
+    if !options.refresh {
+        if let Some(map) = replay_lock(root, &manifest, options)? {
+            return Ok(map);
+        }
+    }
+
     let mut lock = Lockfile::new();
     let mut dep_map = DependencyMap::new();
 
@@ -177,6 +192,7 @@ fn resolve_dependency(
                     source: LockedSource::Git {
                         git: git.clone(),
                         rev: fetched.rev.unwrap_or_default(),
+                        reference: requested_git_ref(rev, tag, branch),
                     },
                     checksum,
                     dependencies: deps,
@@ -210,6 +226,134 @@ fn resolve_dependency(
             ))
         }
     }
+}
+
+/// The ref a manifest git dependency asks for, in the same precedence order
+/// resolve_dependency fetches it (rev, then tag, then branch; None = HEAD).
+/// Stored in the lock so a later install can tell whether the request changed.
+fn requested_git_ref(
+    rev: &Option<String>,
+    tag: &Option<String>,
+    branch: &Option<String>,
+) -> Option<String> {
+    rev.clone()
+        .or_else(|| tag.clone())
+        .or_else(|| branch.clone())
+}
+
+/// Try to satisfy the manifest exactly from the existing lockfile, fetching
+/// the pinned sources without re-resolving. Returns Ok(None) when the lock
+/// doesn't cover the manifest — no lockfile, a dependency added/removed, a
+/// source or requested git ref changed, or a pinned registry version that no
+/// longer satisfies its requirement — in which case the caller re-resolves.
+fn replay_lock(
+    root: &Path,
+    manifest: &Manifest,
+    options: &InstallOptions,
+) -> Result<Option<DependencyMap>, PkgError> {
+    let Ok(lock) = Lockfile::load(root) else {
+        return Ok(None);
+    };
+    if lock.package.is_empty() {
+        return Ok(None);
+    }
+
+    // Every manifest dependency must be pinned compatibly.
+    for (name, dep) in &manifest.dependencies {
+        let Some(locked) = lock.package.get(name) else {
+            return Ok(None);
+        };
+        let covered = match (dep, &locked.source) {
+            (Dependency::Path { path }, LockedSource::Path { path: locked_path }) => {
+                path == locked_path
+            }
+            (
+                Dependency::Git {
+                    git,
+                    tag,
+                    rev,
+                    branch,
+                },
+                LockedSource::Git {
+                    git: locked_git,
+                    reference,
+                    ..
+                },
+            ) => git == locked_git && *reference == requested_git_ref(rev, tag, branch),
+            (dep, LockedSource::Registry { .. }) if dep.is_registry() => {
+                match (&locked.version, dep.version_req()) {
+                    (Some(v), Some(req)) => {
+                        match (semver::Version::parse(v), semver::VersionReq::parse(req)) {
+                            (Ok(v), Ok(req)) => req.matches(&v),
+                            _ => false,
+                        }
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if !covered {
+            return Ok(None);
+        }
+    }
+
+    // Lock entries beyond the manifest: a path/git entry means a removed
+    // dependency (stale lock); a registry entry is legitimate only while
+    // another locked package still needs it transitively.
+    for (name, locked) in &lock.package {
+        if manifest.dependencies.contains_key(name) {
+            continue;
+        }
+        match &locked.source {
+            LockedSource::Registry { .. } => {
+                let needed = lock
+                    .package
+                    .values()
+                    .any(|p| p.dependencies.iter().any(|d| d == name));
+                if !needed {
+                    return Ok(None);
+                }
+            }
+            _ => return Ok(None),
+        }
+    }
+
+    // Fetch exactly what the lock pins. Fetch failures propagate: a pinned
+    // rev that can't be produced is a real problem, not a reason to silently
+    // drift off the lock.
+    let mut map = DependencyMap::new();
+    for (name, locked) in &lock.package {
+        let dir = match &locked.source {
+            LockedSource::Path { path } => normalize(root, path),
+            LockedSource::Git { git, rev, .. } => {
+                cache::fetch_git(git, &cache::GitRef::Rev(rev.clone()))
+                    .map_err(|e| PkgError::Fetch(e.to_string()))?
+                    .dir
+            }
+            LockedSource::Registry { .. } => {
+                let version = locked.version.as_deref().ok_or_else(|| {
+                    PkgError::Lock(format!("locked registry package '{}' has no version", name))
+                })?;
+                let version =
+                    semver::Version::parse(version).map_err(|e| PkgError::Lock(e.to_string()))?;
+                let reg_root = options.registry.clone().ok_or_else(|| {
+                    PkgError::Registry(
+                        "lockfile pins registry packages but no registry is configured".into(),
+                    )
+                })?;
+                let reg = registry::Registry::at(&reg_root);
+                let release = reg
+                    .release(name, &version)
+                    .map_err(|e| PkgError::Registry(e.to_string()))?;
+                cache::fetch_git(&release.git, &cache::GitRef::Rev(release.rev.clone()))
+                    .map_err(|e| PkgError::Fetch(e.to_string()))?
+                    .dir
+            }
+        };
+        map.insert(name.clone(), dir);
+    }
+    Ok(Some(map))
 }
 
 /// The direct dependency names of a sub-package (for the lock graph), read
