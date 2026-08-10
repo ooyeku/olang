@@ -430,3 +430,24 @@ fn changing_the_requested_git_ref_re_resolves_without_update() {
 
     let _ = fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn install_fails_on_a_path_dependency_that_does_not_exist() {
+    // A path dependency pointing nowhere must be a resolve error, not a
+    // silent lock of an empty checksum that fails opaquely at run time.
+    let ws = workspace("missing_path_dep");
+    let app = ws.join("app");
+    write(
+        &app.join("olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nmylib = { path = \"../no_such_lib\" }\n",
+    );
+    let err = install(&app, &InstallOptions::default()).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("mylib"), "should name the dependency: {msg}");
+    assert!(msg.contains("does not exist"), "should explain: {msg}");
+    assert!(
+        !app.join("olang.lock").exists(),
+        "no lockfile should be written for an unresolvable dependency"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}

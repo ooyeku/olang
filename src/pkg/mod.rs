@@ -155,6 +155,19 @@ fn resolve_dependency(
     match dep {
         Dependency::Path { path } => {
             let dir = normalize(root, path);
+            // A path dependency pointing nowhere used to resolve silently:
+            // checksum_dir(...).ok() swallowed the error, the lock recorded a
+            // checksum of nothing, and the failure only surfaced much later
+            // as an opaque "Cannot find module" at run time. Fail here,
+            // naming the dependency and its bad path.
+            if !dir.exists() {
+                return Err(PkgError::Resolve(format!(
+                    "dependency '{}' points at path '{}' ({}), which does not exist",
+                    name,
+                    path,
+                    dir.display()
+                )));
+            }
             let checksum = cache::checksum_dir(&dir).ok();
             Ok((
                 dir.clone(),
