@@ -40,6 +40,25 @@ cd editors/vscode && npm install && npx vsce package && code --install-extension
 
 If `olang` is not on VS Code's PATH, set `olang.serverPath` in settings.
 
+## Zed
+
+The Zed extension lives in [`editors/zed/`](../editors/zed/), with a
+minimal tree-sitter grammar in
+[`editors/tree-sitter-olang/`](../editors/tree-sitter-olang/) (token-level,
+for highlighting only — the pest grammar in the compiler stays
+authoritative). Install it as a dev extension:
+
+1. `zed: install dev extension` from the command palette,
+2. pick the `editors/zed/` directory — Zed compiles the extension and
+   fetches the grammar,
+3. open a `.ol` file: highlighting plus the full server (diagnostics,
+   completions, hover, go-to-definition, formatting) via `olang` from
+   your PATH.
+
+The grammar reference in `extension.toml` points at this repository
+(`editors/tree-sitter-olang`), so the dev-extension flow needs the repo
+present locally or the ref pushed.
+
 ## Any other LSP editor
 
 Point your editor's LSP client at the command `olang lsp` for the

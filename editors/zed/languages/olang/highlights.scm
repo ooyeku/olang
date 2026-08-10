@@ -1,0 +1,9 @@
+(comment) @comment
+(string) @string
+(number) @number
+(keyword) @keyword
+(boolean) @constant
+(type_identifier) @type
+(identifier) @variable
+(operator) @operator
+(punctuation) @punctuation
