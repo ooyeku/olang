@@ -24,7 +24,7 @@ impl Interpreter {
         let has_entry = self.module_cache.contains_key(module_path);
         if !has_entry {
             self.cache_statistics.cache_misses += 1;
-            return self.load_from_persistent_cache(module_path);
+            return Ok(None);
         }
 
         // Get file path from the cached entry itself to avoid recursion
@@ -65,65 +65,6 @@ impl Interpreter {
             Ok(Some(entry.clone()))
         } else {
             Ok(None)
-        }
-    }
-
-    /// Feature 8: Load module from persistent cache
-    fn load_from_persistent_cache(
-        &mut self,
-        module_path: &str,
-    ) -> Result<Option<ModuleCacheEntry>, InterpreterError> {
-        if let Some(ref cache_manager) = self.persistent_cache_manager {
-            match cache_manager.load_cache_entry(module_path)? {
-                Some(mut entry) => {
-                    // Validate persistent cache entry
-                    if self.is_persistent_cache_valid(&entry, module_path)? {
-                        // Update access statistics
-                        entry.access_count += 1;
-                        entry.last_accessed = system_now();
-                        self.cache_statistics.persistent_loads += 1;
-
-                        // Store in memory cache for faster access
-                        self.module_cache
-                            .insert(module_path.to_string(), entry.clone());
-                        Ok(Some(entry))
-                    } else {
-                        // Persistent cache is stale
-                        Ok(None)
-                    }
-                }
-                _ => Ok(None),
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Feature 8: Validate persistent cache entry
-    fn is_persistent_cache_valid(
-        &self,
-        entry: &ModuleCacheEntry,
-        _module_path: &str,
-    ) -> Result<bool, InterpreterError> {
-        if let Some(file_path) = &entry.file_path {
-            if self.smart_cache_config.enable_content_hashing {
-                let current_hash = self.calculate_file_hash(file_path)?;
-                Ok(current_hash == entry.content_hash)
-            } else {
-                // Fallback to timestamp validation
-                if let Ok(metadata) = std::fs::metadata(file_path) {
-                    if let Ok(modified) = metadata.modified() {
-                        Ok(entry.last_modified.is_some_and(|lm| modified <= lm))
-                    } else {
-                        Ok(false)
-                    }
-                } else {
-                    Ok(false)
-                }
-            }
-        } else {
-            // Stdlib modules are always valid
-            Ok(true)
         }
     }
 
@@ -387,46 +328,12 @@ impl Interpreter {
         Ok(())
     }
 
-    /// Feature 8: Enhanced module cache clearing with persistent cache cleanup
+    /// Enhanced module cache clearing.
     pub fn clear_module_cache(&mut self) {
         self.module_cache.clear();
         self.dependency_tracker = ModuleDependencyTracker::new();
         self.cache_statistics = CacheStatistics::default();
         crate::log::get_logger().debug("interpreter", "Smart module cache cleared");
-
-        // Optionally clear persistent cache
-        if let Some(ref mut cache_manager) = self.persistent_cache_manager
-            && cache_manager.cleanup_cache().is_ok()
-        {
-            crate::log::get_logger().debug("interpreter", "Persistent cache cleaned up");
-        }
-    }
-
-    /// Feature 8: Get comprehensive cache statistics
-    pub fn get_smart_cache_statistics(&mut self) -> CacheStatistics {
-        // Update memory usage statistics
-        self.cache_statistics.total_memory_usage = self.calculate_total_cache_memory();
-
-        // Calculate cache efficiency
-        let total_requests = self.cache_statistics.cache_hits + self.cache_statistics.cache_misses;
-        self.cache_statistics.cache_efficiency = if total_requests > 0 {
-            (self.cache_statistics.cache_hits as f64 / total_requests as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        // Calculate average compilation time
-        if !self.module_cache.is_empty() {
-            let total_time: Duration = self
-                .module_cache
-                .values()
-                .map(|entry| entry.compilation_time)
-                .sum();
-            self.cache_statistics.average_compilation_time =
-                total_time / self.module_cache.len() as u32;
-        }
-
-        self.cache_statistics.clone()
     }
 
     /// Feature 8: Calculate total memory usage of cached data
@@ -480,13 +387,6 @@ impl Interpreter {
             }
         }
 
-        // Clean up persistent cache
-        if let Some(ref mut cache_manager) = self.persistent_cache_manager {
-            let persistent_stats = cache_manager.cleanup_cache()?;
-            cleanup_stats.bytes_freed += persistent_stats.bytes_freed;
-            cleanup_stats.files_removed += persistent_stats.files_removed;
-        }
-
         cleanup_stats.cleanup_time = start_time.elapsed();
         self.cache_statistics.cleanup_operations += 1;
 
@@ -509,26 +409,6 @@ impl Interpreter {
 
         // Combine scores: recent + frequent + expensive to compile = higher priority
         recency_score * 0.4 + frequency_score * 0.4 + compilation_cost_score * 0.2
-    }
-
-    /// Feature 8: Prepare cache directory structure (persistent caching disabled for thread safety)
-    pub fn save_cache_to_persistent_storage(&mut self) -> Result<(), InterpreterError> {
-        if let Some(ref mut cache_manager) = self.persistent_cache_manager {
-            for (module_path, entry) in &self.module_cache {
-                cache_manager.save_cache_entry(module_path, entry)?;
-                self.cache_statistics.persistent_saves += 1;
-            }
-        }
-        Ok(())
-    }
-
-    /// Get dependency information for a module
-    pub fn get_module_dependencies(&self, module_path: &str) -> Vec<String> {
-        self.dependency_tracker
-            .dependencies
-            .get(module_path)
-            .cloned()
-            .unwrap_or_default()
     }
 
     /// Get modules that depend on a given module
@@ -620,21 +500,6 @@ impl Interpreter {
     /// Export module dependency information for debugging
     pub fn export_dependency_graph(&self) -> HashMap<String, Vec<String>> {
         self.dependency_tracker.dependencies.clone()
-    }
-
-    /// Feature 7: Get current module loading stack (for debugging)
-    pub fn get_module_loading_stack(&self) -> &Vec<String> {
-        &self.module_loading_stack
-    }
-
-    /// Feature 7: Check if module loading stack is empty
-    pub fn is_module_loading_stack_empty(&self) -> bool {
-        self.module_loading_stack.is_empty()
-    }
-
-    /// Feature 7: Detect all potential circular dependencies in the current dependency graph
-    pub fn detect_all_circular_dependencies(&self) -> Vec<Vec<String>> {
-        self.dependency_tracker.find_all_cycles()
     }
 
     /// Load a module from the file system or standard library

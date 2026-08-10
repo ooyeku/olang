@@ -81,7 +81,6 @@ pub struct Interpreter {
 
     // Feature 8: Smart caching system
     smart_cache_config: SmartCacheConfig,
-    persistent_cache_manager: Option<PersistentCacheManager>,
     cache_statistics: CacheStatistics,
 
     // Feature 9: Intuitive error messages
@@ -156,11 +155,6 @@ impl Interpreter {
     pub fn new() -> Self {
         // Feature 8: Initialize smart caching
         let smart_cache_config = SmartCacheConfig::default();
-        let persistent_cache_manager = if smart_cache_config.enable_persistent_cache {
-            PersistentCacheManager::new(smart_cache_config.clone()).ok()
-        } else {
-            None
-        };
 
         let mut interpreter = Self {
             environment: Environment::new(),
@@ -178,7 +172,6 @@ impl Interpreter {
 
             // Feature 8: Smart caching system
             smart_cache_config,
-            persistent_cache_manager,
             cache_statistics: CacheStatistics::default(),
             error_formatter: IntuitiveErrorFormatter::default(),
 
@@ -1550,7 +1543,6 @@ impl Interpreter {
 
             // Feature 8: Smart caching system
             smart_cache_config: self.smart_cache_config.clone(),
-            persistent_cache_manager: None, // Each thread manages its own cache connections
             cache_statistics: self.cache_statistics.clone(),
 
             // Feature 9: Intuitive error messages
@@ -2674,8 +2666,7 @@ mod spawn_registry;
 
 mod module_cache;
 pub use module_cache::{
-    CacheCleanupStats, CacheStatistics, ModuleCacheEntry, ModuleDependencyTracker,
-    PersistentCacheManager, SmartCacheConfig,
+    CacheCleanupStats, CacheStatistics, ModuleCacheEntry, ModuleDependencyTracker, SmartCacheConfig,
 };
 
 #[cfg(test)]
