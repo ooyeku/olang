@@ -125,7 +125,12 @@ deferred on its own measurement. The open rungs, in order:
   native returns), then struct construction (scratch-owned MakeStruct
   with entry-boundary ownership transfer; constructors compile, 
   allocating loops deliberately stay on bytecode driving them);
-  strings remain.
+  strings landed last — parameters,
+  fields, and constants as borrowed pointers, equality and lexicographic
+  ordering through helpers running the VM's own operators, concat
+  scratch-owned under the straight-line discipline. **The JIT lane the
+  campaign opened is now closed**; what remains anywhere is parallel
+  `for` (P1) and the recorded deferrals.
 - **Parallel `for`** — P1's remaining item.
 
 ## The data campaign (0.40)

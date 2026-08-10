@@ -749,3 +749,55 @@ show(build_sum(200))
 "#,
     );
 }
+
+// ── strings ────────────────────────────────────────────────────────────
+
+#[test]
+fn string_kernels_agree() {
+    assert_jit_transparent(
+        r#"
+type User = struct { name: String, score: Int }
+fn label(u) = u.name + ": " + (if u.score > 90 => "gold" else => "std")
+fn pick(a, b) = if a.name < b.name => a else => b
+let u1 = User { name: "ada", score: 95 }
+let u2 = User { name: "bob", score: 80 }
+label(u1) + " | " + label(u2) + " | " + pick(u1, u2).name
+"#,
+    );
+}
+
+#[test]
+fn string_comparisons_agree() {
+    assert_jit_transparent(
+        r#"
+fn rel(a, b) = show(a == b) + show(a != b) + show(a < b) + show(a <= b) + show(a > b) + show(a >= b)
+rel("abc", "abd") + " " + rel("z", "z") + " " + rel("", "a") + " " + rel("ab", "a")
+"#,
+    );
+}
+
+#[test]
+fn string_returns_and_concat_chains_agree() {
+    assert_jit_transparent(
+        r#"
+fn greet(name) = "hello, " + name + "!"
+fn twice(s) = greet(s) + " " + greet(s)
+twice("world")
+"#,
+    );
+}
+
+#[test]
+fn concat_in_loops_stays_on_bytecode_and_agrees() {
+    assert_jit_transparent(
+        r#"
+fn join_n(s, n) = {
+    let mut acc = ""
+    let mut i = 0
+    while i < n { acc = acc + s; i = i + 1 }
+    acc
+}
+join_n("ab", 50)
+"#,
+    );
+}

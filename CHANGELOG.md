@@ -12,6 +12,18 @@ documented.
 
 ### Added
 
+- **JIT strings — the lane closes.** String parameters, struct fields,
+  and constants enter native code as borrowed pointers (a constant's
+  Arc lives in the bytecode the JittedFn owns, so its pointer bakes
+  into the code). Equality and lexicographic ordering run through a
+  helper executing the VM's own comparison operators; concat is an
+  allocation and follows the exact struct discipline — scratch-owned,
+  straight-line only, ownership transferred once at the entry boundary
+  by a string retain twin, loops driving native concat from bytecode.
+  Mixed string/number `+` (formatting) stays on bytecode. Also fixed
+  the same first-pass monotonicity trap for `+` operands that Return
+  had: unresolved operands defer instead of narrowing irreversibly.
+  59 JIT parity tests; tier output byte-identical on string kernels.
 - **JIT struct construction — allocation with sound ownership.**
   MakeStruct compiles natively through a scratch-context model: every
   struct a native call builds is owned by a VM-side list for exactly

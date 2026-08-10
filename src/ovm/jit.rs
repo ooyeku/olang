@@ -72,6 +72,9 @@ pub struct ScratchCtx {
     allocs: Vec<Arc<crate::ovm::value::StructObject>>,
     args: Vec<Arc<crate::ovm::value::StructObject>>,
     retained: Option<Arc<crate::ovm::value::StructObject>>,
+    str_allocs: Vec<Arc<String>>,
+    str_args: Vec<Arc<String>>,
+    retained_str: Option<Arc<String>>,
 }
 
 /// How the VM hands the JIT other functions' bytecode when planning a
@@ -139,10 +142,11 @@ pub fn note_shapes(v: &OvmValue, shapes: &mut HashMap<u32, ShapeSpec>) {
 fn observe_struct(obj: &crate::ovm::value::StructObject) -> Option<(Kind, ShapeSpec)> {
     let mut field_kinds = Vec::with_capacity(obj.values.len());
     for v in &obj.values {
-        field_kinds.push(match v.data {
+        field_kinds.push(match &v.data {
             ValueData::Integer(_) => Kind::Int,
             ValueData::Float(_) => Kind::Float,
             ValueData::Boolean(_) => Kind::Bool,
+            ValueData::String(_) => Kind::Str,
             _ => return None,
         });
     }
@@ -175,6 +179,10 @@ pub enum Kind {
     ListFloat,
     ListInt,
     ListStruct(u32),
+    /// A string argument or field, passed as a borrowed pointer to the
+    /// String behind its Arc. Concat allocates through the scratch
+    /// context under the same straight-line discipline as structs.
+    Str,
 }
 
 impl Kind {
@@ -250,6 +258,7 @@ fn jit_debug() -> bool {
 const FIELD_INT: u64 = 0;
 const FIELD_FLOAT: u64 = 1;
 const FIELD_BOOL: u64 = 2;
+const FIELD_STR: u64 = 4;
 
 /// Host helper the native code calls for `obj.field`. `obj` is a borrowed
 /// StructObject pointer (valid for the duration of the synchronous native
@@ -390,6 +399,68 @@ unsafe extern "C" fn olang_jit_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
     1
 }
 
+/// Host helper for string comparisons: the same Rust operators the VM
+/// uses, on borrowed strings. Op codes: 0 ==, 1 !=, 2 <, 3 <=, 4 >, 5 >=.
+///
+/// # Safety
+/// Called only from JIT code with pointers extracted from live slots.
+unsafe extern "C" fn olang_jit_str_cmp(a: *const String, b: *const String, op: i64) -> i64 {
+    let (a, b) = (&*a, &*b);
+    (match op {
+        0 => a == b,
+        1 => a != b,
+        2 => a < b,
+        3 => a <= b,
+        4 => a > b,
+        _ => a >= b,
+    }) as i64
+}
+
+/// Host helper for string concatenation, scratch-owned like MakeStruct.
+/// Null return = cap reached, deopt.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx and live pointers.
+unsafe extern "C" fn olang_jit_str_concat(
+    ctx: *mut ScratchCtx,
+    a: *const String,
+    b: *const String,
+) -> i64 {
+    let ctx = &mut *ctx;
+    if ctx.str_allocs.len() >= 1_000_000 {
+        return 0;
+    }
+    let s = Arc::new(format!("{}{}", &*a, &*b));
+    let ptr = Arc::as_ptr(&s) as i64;
+    ctx.str_allocs.push(s);
+    ptr
+}
+
+/// String twin of olang_jit_retain: resolve a returned borrowed pointer
+/// to an owned Arc at the entry boundary.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_str_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
+    let ctx = &mut *ctx;
+    if let Some(last) = ctx.str_allocs.last() {
+        if Arc::as_ptr(last) as i64 == ptr {
+            ctx.retained_str = Some(last.clone());
+            return 0;
+        }
+    }
+    if let Some(s) = ctx
+        .str_allocs
+        .iter()
+        .chain(ctx.str_args.iter())
+        .find(|s| Arc::as_ptr(s) as i64 == ptr)
+    {
+        ctx.retained_str = Some(s.clone());
+        return 0;
+    }
+    1
+}
+
 unsafe extern "C" fn olang_jit_field(
     obj: *const crate::ovm::value::StructObject,
     idx: u64,
@@ -408,6 +479,10 @@ unsafe extern "C" fn olang_jit_field(
         }
         Some(ValueData::Boolean(b)) if expect == FIELD_BOOL => {
             *out = *b as i64;
+            0
+        }
+        Some(ValueData::String(s)) if expect == FIELD_STR => {
+            *out = Arc::as_ptr(s) as i64;
             0
         }
         _ => 1,
@@ -438,6 +513,9 @@ impl JitCache {
             builder.symbol("olang_jit_len", olang_jit_len as *const u8);
             builder.symbol("olang_jit_make_struct", olang_jit_make_struct as *const u8);
             builder.symbol("olang_jit_retain", olang_jit_retain as *const u8);
+            builder.symbol("olang_jit_str_cmp", olang_jit_str_cmp as *const u8);
+            builder.symbol("olang_jit_str_concat", olang_jit_str_concat as *const u8);
+            builder.symbol("olang_jit_str_retain", olang_jit_str_retain as *const u8);
             self.module = Some(JITModule::new(builder));
         }
         self.module.as_mut()
@@ -516,6 +594,10 @@ impl JitCache {
                     kinds[i] = classify_list(items)?;
                     bits[i] = Arc::as_ptr(items) as i64;
                 }
+                ValueData::String(s) => {
+                    bits[i] = Arc::as_ptr(s) as i64;
+                    kinds[i] = Kind::Str;
+                }
                 _ => return None,
             }
         }
@@ -538,9 +620,13 @@ impl JitCache {
             }
         }
         let mut struct_args: Vec<Arc<crate::ovm::value::StructObject>> = Vec::new();
+        let mut str_args: Vec<Arc<String>> = Vec::new();
         for arg in args {
             if let ValueData::Struct(obj) = &arg.data {
                 struct_args.push(obj.clone());
+            }
+            if let ValueData::String(s) = &arg.data {
+                str_args.push(s.clone());
             }
         }
         self.try_call_raw_with_shapes(
@@ -552,6 +638,7 @@ impl JitCache {
             lookup,
             &shapes,
             &struct_args,
+            &str_args,
         )
     }
 
@@ -583,6 +670,7 @@ impl JitCache {
             lookup,
             &shapes,
             &[],
+            &[],
         )
     }
 
@@ -597,6 +685,7 @@ impl JitCache {
         lookup: &BytecodeLookup,
         shapes: &HashMap<u32, ShapeSpec>,
         args_for_ctx: &[Arc<crate::ovm::value::StructObject>],
+        str_args_for_ctx: &[Arc<String>],
     ) -> Option<OvmValue> {
         let idx = func_id.index();
         match self.table.get(idx)? {
@@ -629,6 +718,9 @@ impl JitCache {
         for arg in args_for_ctx {
             ctx.args.push(arg.clone());
         }
+        for s in str_args_for_ctx {
+            ctx.str_args.push(s.clone());
+        }
         let status = unsafe {
             (jitted.entry)(
                 bits.as_ptr(),
@@ -657,12 +749,18 @@ impl JitCache {
             let arc = ctx.retained.take()?;
             return Some(OvmValue::new_struct(arc));
         }
+        if let Kind::Str = jitted.ret_kind {
+            let arc = ctx.retained_str.take()?;
+            return Some(OvmValue {
+                data: ValueData::String(arc),
+            });
+        }
         let out = out[0];
         Some(match jitted.ret_kind {
             Kind::Int => OvmValue::new_integer(out),
             Kind::Bool => OvmValue::new_boolean(out != 0),
             Kind::Float => OvmValue::new_float(f64::from_bits(out as u64)),
-            Kind::Struct(_) => unreachable!("handled above"),
+            Kind::Struct(_) | Kind::Str => unreachable!("handled above"),
             Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) => {
                 unreachable!("list returns are refused by inference")
             }
@@ -866,6 +964,35 @@ impl JitCache {
                 .declare_function("olang_jit_make_struct", Linkage::Import, &sig)
                 .ok()?
         };
+        let str_cmp_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..3 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_str_cmp", Linkage::Import, &sig)
+                .ok()?
+        };
+        let str_concat_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..3 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_str_concat", Linkage::Import, &sig)
+                .ok()?
+        };
+        let str_retain_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_str_retain", Linkage::Import, &sig)
+                .ok()?
+        };
         let retain_helper = {
             let mut sig = module.make_signature();
             sig.params.push(AbiParam::new(types::I64));
@@ -952,6 +1079,8 @@ impl JitCache {
                         index: index_helper,
                         len: len_helper,
                         make_struct: make_struct_helper,
+                        str_cmp: str_cmp_helper,
+                        str_concat: str_concat_helper,
                     },
                 )
                 .is_none()
@@ -1026,7 +1155,7 @@ impl JitCache {
                         .store(MemFlags::trusted(), *v, out_ptr, (slot_i * 8) as i32);
                 }
                 let status = results[n_vals];
-                if matches!(inf.ret_kind, Kind::Struct(_)) {
+                if matches!(inf.ret_kind, Kind::Struct(_) | Kind::Str) {
                     // Ownership boundary: resolve the pointer to an owned
                     // Arc in ctx.retained; unknown pointers deopt.
                     let ok_block = builder.create_block();
@@ -1036,7 +1165,12 @@ impl JitCache {
                     builder.ins().brif(status, fail_block, &[], ok_block, &[]);
 
                     builder.switch_to_block(ok_block);
-                    let retain_ref = module.declare_func_in_func(retain_helper, builder.func);
+                    let which = if matches!(inf.ret_kind, Kind::Str) {
+                        str_retain_helper
+                    } else {
+                        retain_helper
+                    };
+                    let retain_ref = module.declare_func_in_func(which, builder.func);
                     let rcall = builder.ins().call(retain_ref, &[ctx_ptr, results[0]]);
                     let rstatus = builder.inst_results(rcall)[0];
                     builder.ins().jump(done_block, &[rstatus.into()]);
@@ -1113,6 +1247,7 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
                     | ValueData::Boolean(_)
                     | ValueData::Unit
                     | ValueData::Float(_)
+                    | ValueData::String(_)
             )
         ),
         Instruction::Move { .. }
@@ -1195,10 +1330,11 @@ const K_FLOAT: u8 = 8;
 const K_STRUCT: u8 = 16;
 const K_LIST: u8 = 32;
 const K_TUPLE: u8 = 64;
+const K_STR: u8 = 128;
 /// Largest tuple the JIT returns natively (multi-value return slots).
 const MAX_TUPLE: usize = 4;
 const K_NUM: u8 = K_INT | K_FLOAT;
-const K_ANY: u8 = K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT | K_LIST | K_TUPLE;
+const K_ANY: u8 = K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT | K_LIST | K_TUPLE | K_STR;
 
 fn kind_mask(k: Kind) -> u8 {
     match k {
@@ -1207,6 +1343,7 @@ fn kind_mask(k: Kind) -> u8 {
         Kind::Float => K_FLOAT,
         Kind::Struct(_) => K_STRUCT,
         Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) => K_LIST,
+        Kind::Str => K_STR,
     }
 }
 
@@ -1215,6 +1352,7 @@ fn mask_singleton(mask: u8) -> Option<Kind> {
         K_INT => Some(Kind::Int),
         K_BOOL => Some(Kind::Bool),
         K_FLOAT => Some(Kind::Float),
+        K_STR => Some(Kind::Str),
         _ => None,
     }
 }
@@ -1306,6 +1444,7 @@ impl PlanFn {
                 Some(ValueData::Boolean(_)) => K_BOOL,
                 Some(ValueData::Unit) => K_UNIT,
                 Some(ValueData::Float(_)) => K_FLOAT,
+                Some(ValueData::String(_)) => K_STR,
                 _ => 0,
             }
         };
@@ -1380,6 +1519,29 @@ impl PlanFn {
                 | Instruction::Mul { dst, lhs, rhs }
                 | Instruction::Div { dst, lhs, rhs }
                 | Instruction::Mod { dst, lhs, rhs } => {
+                    // String + string is concat: an allocation, under the
+                    // same straight-line rule as MakeStruct. Mixed
+                    // string/number Add (formatting) stays on bytecode.
+                    if matches!(inst, Instruction::Add { .. })
+                        && (self.writes[lhs.0 as usize] == 0 || self.writes[rhs.0 as usize] == 0)
+                    {
+                        // Operand kinds not yet resolved (e.g. a call dst
+                        // mid-fixpoint): defer — narrowing now on a guess
+                        // would be irreversible.
+                        continue;
+                    }
+                    if matches!(inst, Instruction::Add { .. })
+                        && self.writes[lhs.0 as usize] == K_STR
+                        && self.writes[rhs.0 as usize] == K_STR
+                    {
+                        if has_backward_jump(&self.bytecode) {
+                            return None;
+                        }
+                        narrow!(lhs.0, K_STR);
+                        narrow!(rhs.0, K_STR);
+                        grow!(self.writes[dst.0 as usize], K_STR);
+                        continue;
+                    }
                     narrow!(lhs.0, K_NUM);
                     narrow!(rhs.0, K_NUM);
                     let l = self.writes[lhs.0 as usize];
@@ -1397,8 +1559,8 @@ impl PlanFn {
                     grow!(self.writes[dst.0 as usize], s & K_NUM);
                 }
                 Instruction::Eq { dst, lhs, rhs } | Instruction::Ne { dst, lhs, rhs } => {
-                    narrow!(lhs.0, K_NUM | K_BOOL);
-                    narrow!(rhs.0, K_NUM | K_BOOL);
+                    narrow!(lhs.0, K_NUM | K_BOOL | K_STR);
+                    narrow!(rhs.0, K_NUM | K_BOOL | K_STR);
                     self.eq_pairs.push((lhs.0, rhs.0));
                     grow!(self.writes[dst.0 as usize], K_BOOL);
                 }
@@ -1406,8 +1568,8 @@ impl PlanFn {
                 | Instruction::Le { dst, lhs, rhs }
                 | Instruction::Gt { dst, lhs, rhs }
                 | Instruction::Ge { dst, lhs, rhs } => {
-                    narrow!(lhs.0, K_NUM);
-                    narrow!(rhs.0, K_NUM);
+                    narrow!(lhs.0, K_NUM | K_STR);
+                    narrow!(rhs.0, K_NUM | K_STR);
                     grow!(self.writes[dst.0 as usize], K_BOOL);
                 }
                 Instruction::And { dst, lhs, rhs } | Instruction::Or { dst, lhs, rhs } => {
@@ -1669,6 +1831,9 @@ impl PlanFn {
                                 changed = true;
                             }
                         }
+                        if *ret_mask == K_STR && has_backward_jump(&self.bytecode) {
+                            return None; // same discipline as struct returns
+                        }
                         if let Some(sid) = ret_struct {
                             // Struct-returning callees allocate into the
                             // ENTRY call's scratch context. Straight-line
@@ -1742,6 +1907,10 @@ impl PlanFn {
                         }
                         self.return_regs.push(reg.0);
                         grow!(self.ret_mask, K_TUPLE);
+                    } else if self.writes[reg.0 as usize] == K_STR {
+                        narrow!(reg.0, K_STR);
+                        self.return_regs.push(reg.0);
+                        grow!(self.ret_mask, K_STR);
                     } else if self.writes[reg.0 as usize] == 0 {
                         // Unresolved (e.g. dst of a call whose return kind
                         // isn't known yet) — contribute nothing this pass;
@@ -1804,12 +1973,20 @@ impl PlanFn {
             let both_num =
                 matches!(lk, Kind::Int | Kind::Float) && matches!(rk, Kind::Int | Kind::Float);
             let both_bool = lk == Kind::Bool && rk == Kind::Bool;
-            if !both_num && !both_bool {
+            let both_str = lk == Kind::Str && rk == Kind::Str;
+            if !both_num && !both_bool && !both_str {
                 return None;
             }
         }
 
-        let (ret_kind, ret_tuple) = if self.ret_mask == K_STRUCT {
+        let (ret_kind, ret_tuple) = if self.ret_mask == K_STR {
+            for r in &self.return_regs {
+                if mask_singleton(self.writes[*r as usize]) != Some(Kind::Str) {
+                    return None;
+                }
+            }
+            (Kind::Str, None)
+        } else if self.ret_mask == K_STRUCT {
             let sid = self.ret_struct?;
             for r in &self.return_regs {
                 if self.exotic[*r as usize] != Some(Kind::Struct(sid)) {
@@ -1899,6 +2076,8 @@ struct Helpers {
     index: cranelift_module::FuncId,
     len: cranelift_module::FuncId,
     make_struct: cranelift_module::FuncId,
+    str_cmp: cranelift_module::FuncId,
+    str_concat: cranelift_module::FuncId,
 }
 
 struct Gen<'a> {
@@ -1950,6 +2129,8 @@ fn translate_body(
         index: index_helper,
         len: len_helper,
         make_struct: make_struct_helper,
+        str_cmp: str_cmp_helper,
+        str_concat: str_concat_helper,
     } = helpers;
     let n = bytecode.instructions.len();
     let param_count = inference.param_kinds.len();
@@ -2079,6 +2260,11 @@ fn translate_body(
                         builder.ins().iconst(types::I64, *b as i64)
                     }
                     (ValueData::Float(f), Kind::Float) => builder.ins().f64const(*f),
+                    // The constant's Arc lives in the bytecode, which the
+                    // JittedFn owns — a baked borrowed pointer is sound.
+                    (ValueData::String(s), Kind::Str) => {
+                        builder.ins().iconst(types::I64, Arc::as_ptr(s) as i64)
+                    }
                     _ => return None,
                 };
                 builder.def_var(Variable::from_u32(dst.0), val);
@@ -2112,6 +2298,23 @@ fn translate_body(
             | Instruction::Mod { dst, lhs, rhs } => {
                 let lk = gen.kind(lhs.0)?;
                 let rk = gen.kind(rhs.0)?;
+                if lk == Kind::Str && rk == Kind::Str {
+                    if !matches!(inst, Instruction::Add { .. }) {
+                        return None;
+                    }
+                    let a = builder.use_var(Variable::from_u32(lhs.0));
+                    let b = builder.use_var(Variable::from_u32(rhs.0));
+                    let ctx = builder.use_var(ctx_var);
+                    let helper_ref = module.declare_func_in_func(str_concat_helper, builder.func);
+                    let call = builder.ins().call(helper_ref, &[ctx, a, b]);
+                    let ptr = builder.inst_results(call)[0];
+                    let null = builder.ins().icmp_imm(IntCC::Equal, ptr, 0);
+                    let ok_block = builder.create_block();
+                    builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
+                    builder.switch_to_block(ok_block);
+                    gen.write(builder, dst.0, ptr);
+                    continue;
+                }
                 let a = builder.use_var(Variable::from_u32(lhs.0));
                 let b = builder.use_var(Variable::from_u32(rhs.0));
                 let op = arith_op(inst);
@@ -2146,6 +2349,25 @@ fn translate_body(
                 let rk = gen.kind(rhs.0)?;
                 let a = builder.use_var(Variable::from_u32(lhs.0));
                 let b = builder.use_var(Variable::from_u32(rhs.0));
+                if lk == Kind::Str && rk == Kind::Str {
+                    let opcode: i64 = match inst {
+                        Instruction::Eq { .. } => 0,
+                        Instruction::Ne { .. } => 1,
+                        Instruction::Lt { .. } => 2,
+                        Instruction::Le { .. } => 3,
+                        Instruction::Gt { .. } => 4,
+                        _ => 5,
+                    };
+                    let op_v = builder.ins().iconst(types::I64, opcode);
+                    let helper_ref = module.declare_func_in_func(str_cmp_helper, builder.func);
+                    let call = builder.ins().call(helper_ref, &[a, b, op_v]);
+                    let val = builder.inst_results(call)[0];
+                    gen.write(builder, dst.0, val);
+                    continue;
+                }
+                if (lk == Kind::Str) != (rk == Kind::Str) {
+                    return None; // string-vs-other comparisons stay on bytecode
+                }
                 let flag = if lk == Kind::Float || rk == Kind::Float {
                     let fa = gen.to_float(builder, a, lk);
                     let fb = gen.to_float(builder, b, rk);
@@ -2420,6 +2642,7 @@ fn translate_body(
                     Kind::Int => FIELD_INT,
                     Kind::Float => FIELD_FLOAT,
                     Kind::Bool => FIELD_BOOL,
+                    Kind::Str => FIELD_STR,
                     _ => return None,
                 };
 
@@ -2508,6 +2731,13 @@ fn translate_body(
             }
             Instruction::Return { value } => {
                 let reg = (*value)?;
+                if gen.kind(reg.0) == Some(Kind::Str) && inference.ret_kind == Kind::Str {
+                    let ptr = builder.use_var(Variable::from_u32(reg.0));
+                    let ok = builder.ins().iconst(types::I64, STATUS_OK);
+                    builder.ins().return_(&[ptr, ok]);
+                    terminated = true;
+                    continue;
+                }
                 if matches!(gen.kind(reg.0), Some(Kind::Struct(_)))
                     && inference.ret_struct.is_some()
                 {

@@ -1483,6 +1483,10 @@ impl BytecodeVm {
                         bits[i] = std::sync::Arc::as_ptr(obj) as i64;
                         kinds[i] = JitKind::Struct(obj.shape.id);
                     }
+                    Ok(crate::ovm::value::ValueData::String(s)) => {
+                        bits[i] = std::sync::Arc::as_ptr(s) as i64;
+                        kinds[i] = JitKind::Str;
+                    }
                     Ok(crate::ovm::value::ValueData::List(items)) => {
                         match crate::ovm::jit::classify_list(items) {
                             Some(k) => {
@@ -1522,10 +1526,14 @@ impl BytecodeVm {
                 };
                 let mut struct_args: Vec<std::sync::Arc<crate::ovm::value::StructObject>> =
                     Vec::new();
+                let mut str_args: Vec<std::sync::Arc<String>> = Vec::new();
                 for reg in arg_regs {
                     if let Ok(v) = self.execution_state.register_ref(*reg) {
                         if let crate::ovm::value::ValueData::Struct(obj) = &v.data {
                             struct_args.push(obj.clone());
+                        }
+                        if let crate::ovm::value::ValueData::String(s) = &v.data {
+                            str_args.push(s.clone());
                         }
                     }
                 }
@@ -1538,6 +1546,7 @@ impl BytecodeVm {
                     &lookup,
                     &shapes,
                     &struct_args,
+                    &str_args,
                 ) {
                     return Ok(result);
                 }
