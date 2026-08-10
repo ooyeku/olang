@@ -1334,6 +1334,29 @@ impl Interpreter {
         self.bytecode_tier.as_ref().map(|t| t.stats())
     }
 
+    /// Seed the declaration-level state a *bridge* interpreter needs to run
+    /// user code faithfully. The bytecode VM bridges builtins it cannot run
+    /// natively (e.g. `fold`) back to a throwaway interpreter; when such a
+    /// builtin invokes a user lambda that dispatches a trait method
+    /// (`x.tag()`) or constructs a declared struct, that interpreter must
+    /// carry the same trait/struct/variant tables the program declared, or the
+    /// call diverges from the tree-walk (a spurious "Field not found"). The VM
+    /// mirrors these facts as declarations evaluate and installs them here.
+    pub fn seed_bridge_state(
+        &mut self,
+        trait_impls: HashMap<(String, String), Function>,
+        trait_defaults: HashMap<(String, String), Function>,
+        type_traits: HashMap<String, Vec<String>>,
+        struct_defs: HashMap<String, Vec<String>>,
+        unit_variant_names: HashSet<String>,
+    ) {
+        self.trait_impls = trait_impls;
+        self.trait_defaults = trait_defaults;
+        self.type_traits = type_traits;
+        self.struct_defs = struct_defs;
+        self.unit_variant_names = unit_variant_names;
+    }
+
     pub fn call_function(
         &mut self,
         callee: Value,

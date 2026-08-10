@@ -2625,3 +2625,129 @@ to_string(g) + " | " + to_string(by_letter) + " | " + to_string(by_letter[0][0] 
 "#,
     );
 }
+
+// ── Trait dispatch through the tier: a bare method name resolves to different
+// bodies by receiver type. The tier caches compiled functions by name, so
+// without a body guard it would replay one type's method for another. These
+// assert the two tiers agree even when a single call site sees several types.
+
+#[test]
+fn trait_default_and_override_dispatch_through_map() {
+    // `desc` is a trait default for A and an override for B. One `map` call
+    // site sees both types; the compiled tier must not replay A's default for
+    // B. Repeats force compilation, then a differing body at the same name.
+    assert_tier_transparent(
+        r#"
+type A = struct { n: Int }
+type B = struct { n: Int }
+trait D { fn desc(self) = "default" }
+impl D for A { }
+impl D for B { fn desc(self) = "override-b" }
+let items = [A { n: 1 }, B { n: 2 }, A { n: 3 }, B { n: 4 }, A { n: 5 }]
+join(items |> map((i) => i.desc()), ";")
+"#,
+    );
+}
+
+#[test]
+fn trait_dispatch_three_types_default_and_overrides() {
+    assert_tier_transparent(
+        r#"
+type A = struct { n: Int }
+type B = struct { n: Int }
+type C = struct { n: Int }
+trait D { fn desc(self) = "def" }
+impl D for A { }
+impl D for B { fn desc(self) = "b" }
+impl D for C { fn desc(self) = "c" }
+let items = [A { n: 1 }, B { n: 2 }, C { n: 3 }, A { n: 4 }, C { n: 5 }, B { n: 6 }]
+join(items |> map((i) => i.desc()), ";")
+"#,
+    );
+}
+
+#[test]
+fn trait_default_and_override_dispatch_direct_calls() {
+    // Not through a higher-order builtin: a helper called in a loop over
+    // alternating types promotes, and each call resolves the method itself.
+    assert_tier_transparent(
+        r#"
+type A = struct { n: Int }
+type B = struct { n: Int }
+trait D { fn desc(self) = "default" }
+impl D for A { }
+impl D for B { fn desc(self) = "override-b" }
+fn describe(x) = x.desc()
+let mut acc = ""
+for i in range(50) {
+    acc = describe(A { n: 1 }) + "," + describe(B { n: 2 })
+}
+acc
+"#,
+    );
+}
+
+#[test]
+fn trait_method_in_fold_inside_promoted_function() {
+    // A promoted function whose fold-lambda calls a trait method. `fold`
+    // bridges to an interpreter that must carry the program's trait tables,
+    // or `x.tag()` raises a spurious "Field not found". The loop promotes
+    // `total`; mixed types also exercise the by-type resolution.
+    assert_tier_transparent(
+        r#"
+type A = struct { v: Int }
+type B = struct { v: Int }
+trait T { fn tag(self) = 1 }
+impl T for A { }
+impl T for B { fn tag(self) = 10 }
+fn total(items) = items |> fold(0, (acc, x) => acc + x.tag())
+let data = [A { v: 1 }, B { v: 2 }, A { v: 3 }, B { v: 4 }]
+let mut acc = 0
+for i in range(50) {
+    acc = total(data)
+}
+to_string(acc)
+"#,
+    );
+}
+
+#[test]
+fn trait_default_via_fold_default_only() {
+    // The exact isolated repro: a type that only takes the trait default,
+    // used inside a fold-lambda in a promoted function.
+    assert_tier_transparent(
+        r#"
+type A = struct { v: Int }
+trait T { fn tag(self) = 1 }
+impl T for A { }
+fn total(items) = items |> fold(0, (acc, x) => acc + x.tag())
+let data = [A { v: 1 }, A { v: 2 }, A { v: 3 }]
+let mut acc = 0
+for i in range(50) {
+    acc = total(data)
+}
+to_string(acc)
+"#,
+    );
+}
+
+#[test]
+fn trait_method_default_builds_struct_in_fold() {
+    // The bridged fold-lambda's trait default constructs a *declared* struct,
+    // so the bridge interpreter needs the struct tables too, not just traits.
+    assert_tier_transparent(
+        r#"
+type A = struct { v: Int }
+type W = struct { w: Int }
+trait T { fn wrap(self) = W { w: 99 } }
+impl T for A { }
+fn firstw(items) = items |> fold(W { w: 0 }, (acc, x) => x.wrap())
+let data = [A { v: 1 }, A { v: 2 }]
+let mut acc = 0
+for i in range(50) {
+    acc = firstw(data).w
+}
+to_string(acc)
+"#,
+    );
+}

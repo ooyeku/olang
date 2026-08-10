@@ -47,7 +47,13 @@ pub struct BytecodeTier {
     vm: BytecodeVm,
     threshold: u32,
     call_counts: HashMap<String, u32>,
-    compiled: HashMap<String, FunctionId>,
+    /// Name -> (compiled id, the exact body it was compiled from). The body is
+    /// part of the key on purpose: trait dispatch resolves a bare method name
+    /// (`desc`) to *different* function bodies depending on the receiver's
+    /// type — a trait default for one type, an `impl` override for another.
+    /// The name alone cannot tell those apart, so `try_call` guards a cache
+    /// hit on body identity and treats a mismatch as a polymorphic name.
+    compiled: HashMap<String, (FunctionId, Arc<crate::ast::Expr>)>,
     /// Names that failed compilation — never retried
     rejected: HashSet<String>,
     /// User functions the interpreter has declared, so a promoted function
@@ -203,8 +209,25 @@ impl BytecodeTier {
             return TierOutcome::Fallback;
         }
 
-        let func_id = match self.compiled.get(name) {
-            Some(id) => *id,
+        // A cache hit is only valid for the *same* body. Trait methods share a
+        // bare name across distinct bodies (a trait default and a type's
+        // override), and the interpreter hands us whichever body its
+        // receiver-type dispatch resolved. Replaying the first-seen body for a
+        // second type would compute a wrong result, so a body mismatch makes
+        // the name ambiguous: the interpreter owns it from here on, resolving
+        // by receiver type. (The end-to-end guard also covers the case a trait
+        // default reaches the tier through a channel `note_function` never
+        // sees.)
+        let cached = self
+            .compiled
+            .get(name)
+            .map(|(id, body)| (*id, Arc::ptr_eq(body, &func.body)));
+        let func_id = match cached {
+            Some((id, true)) => id,
+            Some((_, false)) => {
+                self.mark_ambiguous(name);
+                return TierOutcome::Fallback;
+            }
             None => {
                 let count = self.call_counts.entry(name.to_string()).or_insert(0);
                 *count += 1;
@@ -280,7 +303,8 @@ impl BytecodeTier {
                 .compile_function_with_closure(func_id, &decl, func.closure.clone())
             {
                 Ok(()) => {
-                    self.compiled.insert(name.to_string(), func_id);
+                    self.compiled
+                        .insert(name.to_string(), (func_id, func.body.clone()));
                     self.stats.promoted += 1;
                     if self.verbose {
                         eprintln!("[ovm] promoted '{}' to the bytecode tier", name);
@@ -381,6 +405,23 @@ impl BytecodeTier {
         self.rejected.insert(name.to_string());
         self.compiled.remove(name);
         self.stats.rejected += 1;
+    }
+
+    /// A bare name has resolved to more than one distinct function body —
+    /// two `impl` overrides of the same trait method, or a trait default and
+    /// an override. The tier resolves and caches callees by name and cannot
+    /// tell such bodies apart, so the name can never be tiered soundly: the
+    /// interpreter runs it from here on, dispatching by receiver type. Mirrors
+    /// the module-collision cleanup in `note_function` (including the wholesale
+    /// `compiled.clear()`, since a previously compiled caller may have baked
+    /// the now-withdrawn id).
+    fn mark_ambiguous(&mut self, name: &str) {
+        self.ambiguous.insert(name.to_string());
+        self.known_functions.remove(name);
+        self.call_counts.remove(name);
+        self.rejected.remove(name);
+        self.vm.unregister_function(name);
+        self.compiled.clear();
     }
 
     /// Values the OVM model round-trips losslessly.

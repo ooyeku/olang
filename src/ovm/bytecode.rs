@@ -1097,6 +1097,7 @@ impl BytecodeVm {
     /// then on. Returns true when the shape landscape changed in a way that
     /// invalidates previously compiled functions.
     pub fn note_struct(&mut self, name: String, fields: Vec<String>) -> bool {
+        self.builtin_interpreter = None;
         if self.poisoned_structs.contains(&name) {
             return false;
         }
@@ -1129,6 +1130,9 @@ impl BytecodeVm {
         method: String,
         func: crate::ast::Function,
     ) -> bool {
+        // The bridge interpreter snapshots these tables at creation; a change
+        // invalidates that snapshot.
+        self.builtin_interpreter = None;
         match self.trait_impls.insert((type_name, method), func.clone()) {
             Some(old) => !std::sync::Arc::ptr_eq(&old.body, &func.body),
             None => true,
@@ -1143,6 +1147,7 @@ impl BytecodeVm {
         method: String,
         func: crate::ast::Function,
     ) -> bool {
+        self.builtin_interpreter = None;
         match self
             .trait_defaults
             .insert((trait_name, method), func.clone())
@@ -1155,6 +1160,7 @@ impl BytecodeVm {
     /// Record that a type implements a trait (registration order matters:
     /// default lookup scans it in order, as the interpreter does).
     pub fn note_type_trait(&mut self, type_name: String, trait_name: String) -> bool {
+        self.builtin_interpreter = None;
         let traits = self.type_traits.entry(type_name).or_default();
         if traits.contains(&trait_name) {
             false
@@ -1220,6 +1226,7 @@ impl BytecodeVm {
     /// bare-identifier pattern of this name as a binding, which is now an
     /// equality match, so they must recompile.
     pub fn note_unit_variant(&mut self, name: String) -> bool {
+        self.builtin_interpreter = None;
         self.unit_variant_names.insert(name)
     }
 
@@ -3027,6 +3034,30 @@ impl BytecodeVm {
     /// the bridge interpreter, whose call_function owns the exact semantics
     /// of arity errors, default parameters, trait bounds, and the
     /// "Cannot call non-function value" error.
+    /// Ensure the bridge interpreter exists and carries the program's
+    /// declaration-level state. Builtins the VM cannot run natively (`fold`,
+    /// and any function value declined by `call_function_value`) bridge to
+    /// this interpreter; when they invoke a user lambda that dispatches a
+    /// trait method or builds a declared struct, it must see the same
+    /// trait/struct/variant tables the VM has accumulated — otherwise a
+    /// promoted function's fold-lambda calling `x.tag()` raises a spurious
+    /// "Field not found" that the tree-walk never would. Recreated (not
+    /// mutated in place) whenever those tables change, which is why the
+    /// `note_*` methods drop it.
+    fn ensure_bridge_interpreter(&mut self) {
+        if self.builtin_interpreter.is_none() {
+            let mut interp = Box::new(crate::interpreter::Interpreter::new());
+            interp.seed_bridge_state(
+                self.trait_impls.clone(),
+                self.trait_defaults.clone(),
+                self.type_traits.clone(),
+                self.struct_defs.clone(),
+                self.unit_variant_names.clone(),
+            );
+            self.builtin_interpreter = Some(interp);
+        }
+    }
+
     fn call_function_value(
         &mut self,
         callee: &OvmValue,
@@ -3061,9 +3092,8 @@ impl BytecodeVm {
                     .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?,
             );
         }
-        let interpreter = self
-            .builtin_interpreter
-            .get_or_insert_with(|| Box::new(crate::interpreter::Interpreter::new()));
+        self.ensure_bridge_interpreter();
+        let interpreter = self.builtin_interpreter.as_mut().expect("just ensured");
         let result = interpreter
             .call_function(callee_ast, ast_args)
             .map_err(|e| BytecodeError::RuntimeError(e.to_string()))?;
@@ -3468,7 +3498,7 @@ impl BytecodeVm {
         match id {
             0 => a < 0.0,                          // sqrt
             10 | 11 => !(-1.0..=1.0).contains(&a), // asin, acos
-            18..=20 => a <= 0.0,                  // ln, log2, log10
+            18..=20 => a <= 0.0,                   // ln, log2, log10
             _ => false,
         }
     }
@@ -3523,9 +3553,8 @@ impl BytecodeVm {
             );
         }
 
-        let interpreter = self
-            .builtin_interpreter
-            .get_or_insert_with(|| Box::new(crate::interpreter::Interpreter::new()));
+        self.ensure_bridge_interpreter();
+        let interpreter = self.builtin_interpreter.as_mut().expect("just ensured");
 
         let result = BuiltinFunctions::call(&self.builtins, name, ast_args, interpreter)
             .map_err(|e| BytecodeError::RuntimeError(e.to_string()))?;
