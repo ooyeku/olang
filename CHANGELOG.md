@@ -12,6 +12,23 @@ documented.
 
 ### Added
 
+- **`examples/app` — the tracker grows a real backend.** The
+  full-stack issue tracker now runs on a persistent, schema-migrated
+  SQLite store (a `schema_version` table; migrations append, run once,
+  in transactions) with request validation (422s naming each field
+  problem), filtered/paginated listing (`?status= assignee= q= sort=
+  order= limit= offset=` returning `{items, total, ...}`), comments
+  with transactional cascade delete, an audit trail of every mutation
+  (`/api/activity`), stats blending SQL rollups with ods point
+  quantiles, CSV export, JSON backups, and optional bearer-token auth
+  for writes (`TRACKER_TOKEN`). The router became a middleware layer:
+  per-request ids and timing logs, one JSON error envelope everywhere,
+  method-aware 405s with `Allow`, and HEAD riding GET so probes see
+  200. The whole contract is locked by `tests/tracker_app_test.rs`,
+  which boots the actual app on an ephemeral port and drives it over
+  the wire — validation shapes, filter fallbacks, 404/405/400/401
+  semantics, the audit sequence, cascade deletes, and auth gating.
+
 - **`os.read_line()` — stdin, at last.** One line from stdin as
   `Ok(line)` (newline stripped), `Err("eof")` when the stream ends: the
   missing primitive for prompts, REPLs, and shells, and for reading

@@ -1,47 +1,44 @@
 // tracker — a full web app served entirely by olang.
 //
-//   olang main.ol [port]        (default 7000)
+//   olang main.ol [port] [db_path]     (defaults: 7000, tracker.db)
 //
-// The backend is an in-memory SQLite issue store behind a JSON API; the
-// frontend is a spreadsheet-style grid (plain HTML + JS) served by the
-// same process from static/. One command runs the whole thing.
+// The backend is a persistent SQLite issue store (schema-migrated,
+// transactional, audit-logged) behind a JSON API with validation,
+// filtering, pagination, comments, stats (via the ods data stack),
+// CSV export, and optional bearer-token auth for writes. The frontend
+// is a spreadsheet-style grid served by the same process from static/.
 //
-//   GET    /                  the app
-//   GET    /api/issues        all issues
-//   POST   /api/issues        create  {title?, status?, priority?, assignee?, points?, notes?}
-//   PATCH  /api/issues/:id    partial update, any subset of the columns
-//   DELETE /api/issues/:id    remove
-//   GET    /health            liveness
+//   GET    /                             the app
+//   GET    /health                       liveness: uptime, issue count
+//   GET    /api/issues                   ?status= &assignee= &q= &sort= &order= &limit= &offset=
+//   POST   /api/issues                   create (validated; 422 lists problems)
+//   GET    /api/issues/:id               one issue, comments embedded
+//   PATCH  /api/issues/:id               partial update (validated)
+//   DELETE /api/issues/:id               remove issue + comments, one transaction
+//   GET    /api/issues/:id/comments      comments
+//   POST   /api/issues/:id/comments      add {text, author?}
+//   GET    /api/activity                 the audit trail, newest first (?limit=)
+//   GET    /api/stats                    rollups + point quantiles (ods)
+//   GET    /api/export.csv               every issue as CSV
+//   POST   /api/admin/backup             JSON snapshot into backups/
+//
+// Set TRACKER_TOKEN to require `Authorization: Bearer <token>` on all
+// mutating requests. Reads stay open.
 
-use lib.router { route, dispatch, json_response }
+use lib.router { route, dispatch, json_response, error_response, error_with_details, q_str, q_int, q_enum }
+use lib.store {
+    open_store, seed_if_empty, list_issues, get_issue, create_issue, update_issue,
+    delete_issue, list_comments, add_comment, recent_events, stats, all_issues
+}
+use lib.validate { validate_issue, validate_comment, validate_id }
 
-// ── the store ──
+let args = unwrap(os.args())
+let port = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 7000
+let db_path = if len(args) > 2 => args[2] else => "tracker.db"
 
-let conn = unwrap(db.open(":memory:"))
-unwrap(db.execute(conn, "CREATE TABLE issues (
-    id       INTEGER PRIMARY KEY,
-    title    TEXT NOT NULL,
-    status   TEXT NOT NULL DEFAULT 'open',
-    priority TEXT NOT NULL DEFAULT 'medium',
-    assignee TEXT NOT NULL DEFAULT '',
-    points   INTEGER NOT NULL DEFAULT 0,
-    notes    TEXT NOT NULL DEFAULT '',
-    updated  TEXT NOT NULL
-)"))
-
-fn seed(title, status, priority, assignee, points, notes) =
-    unwrap(db.execute(conn,
-        "INSERT INTO issues (title, status, priority, assignee, points, notes, updated)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [title, status, priority, assignee, points, notes, dates.utc_now()]))
-
-seed("Ship the tracker example", "in-progress", "high", "ada", 3, "the app you are looking at")
-seed("Spreadsheet keyboard nav", "open", "medium", "grace", 2, "enter commits + moves down")
-seed("Wire up column sorting", "done", "low", "ada", 1, "click a header")
-seed("Decide on dark mode", "open", "low", "", 1, "")
-
-let columns = ["title", "status", "priority", "assignee", "points", "notes"]
-let select_cols = "id, title, status, priority, assignee, points, notes, updated"
+let conn = open_store(db_path)
+seed_if_empty(conn)
+let boot_ms = time.monotonic_ms()
 
 // ── static files, read once at startup ──
 
@@ -53,71 +50,150 @@ fn page(req, params) =
 fn script(req, params) =
     http.response_with_headers(200, app_js, #{ "Content-Type": "text/javascript; charset=utf-8" })
 
-// ── the API ──
+// ── request-body plumbing ──
 
-fn list_issues(req, params) =
-    json_response(200, unwrap(db.query(conn,
-        "SELECT " + select_cols + " FROM issues ORDER BY id")))
-
-fn field_or(doc, key, fallback) =
-    if map_has_key(doc, key) => map_get(doc, key) else => fallback
-
-fn create_issue(req, params) = {
+fn parse_body(req) = {
     let body = if len(req.body) == 0 => "{}" else => req.body
-    match json.parse(body) {
-        Ok(doc) => {
-            let made = unwrap(db.query_one(conn,
-                "INSERT INTO issues (title, status, priority, assignee, points, notes, updated)
-                 VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING " + select_cols,
-                [field_or(doc, "title", "New issue"),
-                 field_or(doc, "status", "open"),
-                 field_or(doc, "priority", "medium"),
-                 field_or(doc, "assignee", ""),
-                 field_or(doc, "points", 0),
-                 field_or(doc, "notes", ""),
-                 dates.utc_now()]))
-            json_response(201, made)
-        },
-        Err(e) => json_response(400, { message: "body must be JSON" })
+    json.parse(body)
+}
+
+// ── issues ──
+
+fn issues_list(req, params) = {
+    let filters = {
+        status: q_enum(req, "status", ["open", "in-progress", "done"], ""),
+        assignee: q_str(req, "assignee", ""),
+        q: q_str(req, "q", ""),
+        sort: q_enum(req, "sort", ["id", "title", "status", "priority", "points", "updated"], "id"),
+        order: q_enum(req, "order", ["asc", "desc"], "asc"),
+        limit: q_int(req, "limit", 100, 1, 500),
+        offset: q_int(req, "offset", 0, 0, 1000000)
+    }
+    let page = list_issues(conn, filters)
+    json_response(200, {
+        items: page.items, total: page.total,
+        limit: filters.limit, offset: filters.offset
+    })
+}
+
+fn issues_create(req, params) = match parse_body(req) {
+    Err(e) => error_response(400, "bad_json", "body must be JSON"),
+    Ok(doc) => match validate_issue(doc, false) {
+        Err(problems) => error_with_details(422, "invalid", "validation failed", problems),
+        Ok(fields) => json_response(201, create_issue(conn, fields))
     }
 }
 
-fn update_issue(req, params) = {
-    let id = map_get(params, "id")
-    match json.parse(req.body) {
-        Ok(doc) => {
-            // Build the UPDATE from the columns actually present, so a cell
-            // edit sends only its own field. Column names come from the
-            // whitelist, never the request.
-            let mut sets = []
-            let mut vals = []
-            for col in columns {
-                if map_has_key(doc, col) => {
-                    sets = concat(sets, [col + " = ?"])
-                    vals = concat(vals, [map_get(doc, col)])
-                }
-            }
-            if len(sets) == 0 => json_response(400, { message: "no known fields in body" })
-            else => {
-                let sql = "UPDATE issues SET " + join(sets, ", ") +
-                    ", updated = ? WHERE id = ? RETURNING " + select_cols
-                let rows = unwrap(db.query(conn, sql,
-                    concat(vals, [dates.utc_now(), id])))
-                if len(rows) == 0 => json_response(404, { message: "no issue " + id })
-                else => json_response(200, rows[0])
-            }
-        },
-        Err(e) => json_response(400, { message: "body must be JSON" })
+fn issues_get(req, params) = match validate_id(map_get(params, "id")) {
+    Err(msg) => error_response(400, "bad_id", msg),
+    Ok(id) => match get_issue(conn, id) {
+        Err(e) => error_response(404, "not_found", "no issue " + show(id)),
+        Ok(issue) => json_response(200, map_set(issue, "comments", list_comments(conn, id)))
     }
 }
 
-fn delete_issue(req, params) = {
-    let id = map_get(params, "id")
-    unwrap(db.execute(conn, "DELETE FROM issues WHERE id = ?", [id]))
-    json_response(200, { deleted: id })
+fn issues_update(req, params) = match validate_id(map_get(params, "id")) {
+    Err(msg) => error_response(400, "bad_id", msg),
+    Ok(id) => match parse_body(req) {
+        Err(e) => error_response(400, "bad_json", "body must be JSON"),
+        Ok(doc) => match validate_issue(doc, true) {
+            Err(problems) => error_with_details(422, "invalid", "validation failed", problems),
+            Ok(fields) => match update_issue(conn, id, fields) {
+                Err(e) => error_response(404, "not_found", "no issue " + show(id)),
+                Ok(updated) => json_response(200, updated)
+            }
+        }
+    }
 }
 
-fn health(req, params) = json_response(200, { status: "ok", service: "olang-tracker" })
+fn issues_delete(req, params) = match validate_id(map_get(params, "id")) {
+    Err(msg) => error_response(400, "bad_id", msg),
+    Ok(id) => match delete_issue(conn, id) {
+        Err(e) => error_response(404, "not_found", "no issue " + show(id)),
+        Ok(gone) => json_response(200, { deleted: map_get(gone, "id"), title: map_get(gone, "title") })
+    }
+}
+
+// ── comments ──
+
+fn comments_list(req, params) = match validate_id(map_get(params, "id")) {
+    Err(msg) => error_response(400, "bad_id", msg),
+    Ok(id) => match get_issue(conn, id) {
+        Err(e) => error_response(404, "not_found", "no issue " + show(id)),
+        Ok(issue) => json_response(200, list_comments(conn, id))
+    }
+}
+
+fn comments_add(req, params) = match validate_id(map_get(params, "id")) {
+    Err(msg) => error_response(400, "bad_id", msg),
+    Ok(id) => match get_issue(conn, id) {
+        Err(e) => error_response(404, "not_found", "no issue " + show(id)),
+        Ok(issue) => match parse_body(req) {
+            Err(e) => error_response(400, "bad_json", "body must be JSON"),
+            Ok(doc) => match validate_comment(doc) {
+                Err(problems) => error_with_details(422, "invalid", "validation failed", problems),
+                Ok(c) => json_response(201, add_comment(conn, id, c.author, c.text))
+            }
+        }
+    }
+}
+
+// ── activity, stats, export, admin ──
+
+fn activity(req, params) =
+    json_response(200, recent_events(conn, q_int(req, "limit", 50, 1, 500)))
+
+fn stats_endpoint(req, params) = {
+    let s = stats(conn)
+    // The ods data stack computes the distribution shape SQL can't:
+    // point quantiles across the whole backlog.
+    let quantiles = if len(s.point_values) == 0 => { p25: 0.0, p50: 0.0, p75: 0.0 }
+        else => {
+            let series = ods.series(s.point_values)
+            { p25: ods.quantile(series, 0.25),
+              p50: ods.quantile(series, 0.5),
+              p75: ods.quantile(series, 0.75) }
+        }
+    json_response(200, {
+        totals: s.totals, by_status: s.by_status,
+        by_assignee: s.by_assignee, point_quantiles: quantiles
+    })
+}
+
+fn export_csv(req, params) = {
+    let rows = all_issues(conn)
+    let headers = ["id", "title", "status", "priority", "assignee", "points", "notes", "updated"]
+    // DB rows read through map_get; build the cell grid explicitly so the
+    // CSV layer only ever sees lists of strings.
+    let grid = concat([headers],
+        rows |> map((r) => headers |> map((h) => show(map_get(r, h)))))
+    // csv.stringify returns the text directly on success, an Err value
+    // on failure — check the shape rather than pattern-matching Ok.
+    let out = csv.stringify(grid)
+    if typeof(out) == "String" => http.response_with_headers(200, out, #{
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": "attachment; filename=issues.csv"
+    })
+    else => error_response(500, "export_failed", show(out))
+}
+
+fn backup(req, params) = {
+    fs.create_dir_all("backups")
+    let snapshot = { taken: dates.utc_now(), issues: all_issues(conn) }
+    let name = "backups/tracker-" + show(time.now_ms()) + ".json"
+    match fs.write_file(name, unwrap(json.stringify(snapshot))) {
+        Ok(v) => json_response(201, { backup: name, issues: len(map_get(snapshot, "issues")) }),
+        Err(e) => error_response(500, "backup_failed", show(e))
+    }
+}
+
+fn health(req, params) = {
+    let n = map_get(unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM issues")), "n")
+    json_response(200, {
+        status: "ok", service: "olang-tracker", db: db_path,
+        issues: n, uptime_ms: time.monotonic_ms() - boot_ms
+    })
+}
 
 // ── wiring ──
 
@@ -125,15 +201,20 @@ let routes = [
     route("GET", "/", page),
     route("GET", "/app.js", script),
     route("GET", "/health", health),
-    route("GET", "/api/issues", list_issues),
-    route("POST", "/api/issues", create_issue),
-    route("PATCH", "/api/issues/:id", update_issue),
-    route("DELETE", "/api/issues/:id", delete_issue)
+    route("GET", "/api/issues", issues_list),
+    route("POST", "/api/issues", issues_create),
+    route("GET", "/api/issues/:id", issues_get),
+    route("PATCH", "/api/issues/:id", issues_update),
+    route("DELETE", "/api/issues/:id", issues_delete),
+    route("GET", "/api/issues/:id/comments", comments_list),
+    route("POST", "/api/issues/:id/comments", comments_add),
+    route("GET", "/api/activity", activity),
+    route("GET", "/api/stats", stats_endpoint),
+    route("GET", "/api/export.csv", export_csv),
+    route("POST", "/api/admin/backup", backup)
 ]
 
 fn app(req) = dispatch(routes, req)
 
-let args = unwrap(os.args())
-let port = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 7000
-println("tracker running on http://127.0.0.1:" + show(port))
+println("tracker db=" + db_path + (match os.get_env("TRACKER_TOKEN") { Ok(t) => " auth=on", Err(e) => " auth=off" }))
 http.serve(port, app)

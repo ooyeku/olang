@@ -139,12 +139,15 @@ A two-package demonstration of the package manager (see
   `try`/`catch` survives worker failure. Prints sequential-vs-parallel
   timings and self-checks that both agree
 - [`app/`](app/) — a full-stack issue tracker run entirely by
-  `olang main.ol`: an in-memory SQLite backend serving a JSON API
-  (GET/POST/PATCH/DELETE with `RETURNING`, a whitelist-driven partial
-  UPDATE) plus its own spreadsheet-style frontend — `index.html` and
-  `app.js` served straight from disk with correct content types. Inline
-  cell edits, dropdown status/priority, sortable headers, live filter,
-  Enter-to-add rows. Long-running — `run_all.ol` skips it
+  `olang main.ol`: a persistent, schema-migrated SQLite backend behind a
+  JSON API with request validation (422s that name each field problem),
+  filtered/paginated listing, comments, an audit trail, stats through
+  the ods data stack, CSV export, JSON backups, optional bearer-token
+  auth for writes, and a router with method-aware 405s, HEAD support,
+  per-request logging, and one error envelope — plus its own
+  spreadsheet-style frontend served from disk. The API contract is
+  locked by `tests/tracker_app_test.rs`, which boots the real app.
+  Long-running — `run_all.ol` skips it
 - [`markdown/`](markdown/) — a markdown→HTML converter: a block parser
   (`lib/blocks.ol` — headings, lists, blockquotes, fenced code, rules,
   paragraphs) over a recursive inline renderer (`lib/inline.ol` — `code`,

@@ -25,7 +25,9 @@ async function api(method, path, body) {
 }
 
 async function load() {
-  issues = await api("GET", "/api/issues");
+  // The list endpoint returns a paged envelope: { items, total, limit, offset }.
+  const page = await api("GET", "/api/issues?limit=500");
+  issues = page.items;
   render();
 }
 
