@@ -5,17 +5,32 @@
   "version": "0.1.0",
   "publisher": "olang-lang",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/ooyeku/olang" },
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Programming Languages", "Formatters", "Linters"],
-  "activationEvents": [],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ooyeku/olang"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:olang"
+  ],
   "main": "./extension.js",
   "contributes": {
     "languages": [
       {
         "id": "olang",
-        "aliases": ["olang"],
-        "extensions": [".ol"],
+        "aliases": [
+          "olang"
+        ],
+        "extensions": [
+          ".ol"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
