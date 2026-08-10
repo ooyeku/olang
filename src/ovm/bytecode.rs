@@ -1856,7 +1856,14 @@ impl BytecodeVm {
                             }
                         }
                     }
-                    let result = if all_numeric {
+                    // The eval_float_math shortcut computes raw results and so
+                    // cannot raise the domain errors the interpreter's math
+                    // module does (sqrt of a negative, ln of a non-positive,
+                    // asin/acos out of range). When an argument is out of
+                    // domain, fall through to execute_builtin_call — the exact
+                    // code the interpreter runs — so the error is byte-identical
+                    // across tiers rather than a silent NaN.
+                    let result = if all_numeric && !Self::float_math_out_of_domain(id, nums[0]) {
                         OvmValue::new_float(Self::eval_float_math(id, nums[0], nums[1]))
                     } else {
                         let mut arg_values = Vec::with_capacity(args.len());
@@ -3454,6 +3461,18 @@ impl BytecodeVm {
 
     /// Mirrors the interpreter implementations exactly: every entry is a
     /// pure f64 operation from std. atan2 is y.atan2(x) with y = args[0].
+    /// Whether a float-math builtin's argument falls outside the domain the
+    /// interpreter's math module rejects. The ids match the FLOAT_MATH table.
+    /// Domain-free functions (sin, exp, floor, pow, …) always return false.
+    pub(crate) fn float_math_out_of_domain(id: usize, a: f64) -> bool {
+        match id {
+            0 => a < 0.0,                          // sqrt
+            10 | 11 => !(-1.0..=1.0).contains(&a), // asin, acos
+            18..=20 => a <= 0.0,                  // ln, log2, log10
+            _ => false,
+        }
+    }
+
     pub(crate) fn eval_float_math(id: usize, a: f64, b: f64) -> f64 {
         match id {
             0 => a.sqrt(),

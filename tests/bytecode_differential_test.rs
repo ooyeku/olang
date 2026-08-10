@@ -493,3 +493,18 @@ fn modulo_matches_interpreter() {
     assert_same(src, "m", &ints(&[1, 0])); // both must error
     assert_same(src, "m", &[Value::Integer(i64::MIN), Value::Integer(-1)]);
 }
+
+#[test]
+fn math_domain_errors_agree_across_tiers() {
+    // The compiled float-math shortcut must raise the same domain errors
+    // the interpreter does, not silently return NaN. Both tiers erroring
+    // is agreement; the bug was the bytecode tier returning Ok(NaN).
+    let floats = |xs: &[f64]| xs.iter().map(|x| Value::Float(*x)).collect::<Vec<_>>();
+    assert_same("fn f(x) = math.sqrt(x)", "f", &floats(&[-4.0]));
+    assert_same("fn f(x) = math.sqrt(x)", "f", &floats(&[9.0])); // valid: agree on value
+    assert_same("fn f(x) = math.asin(x)", "f", &floats(&[2.0]));
+    assert_same("fn f(x) = math.acos(x)", "f", &floats(&[5.0]));
+    assert_same("fn f(x) = math.ln(x)", "f", &floats(&[0.0]));
+    assert_same("fn f(x) = math.log2(x)", "f", &floats(&[-1.0]));
+    assert_same("fn f(x) = math.log10(x)", "f", &floats(&[0.0]));
+}

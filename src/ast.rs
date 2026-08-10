@@ -829,7 +829,7 @@ pub fn format_float(x: f64) -> String {
         return if x < 0.0 { "-inf" } else { "inf" }.to_string();
     }
     let a = x.abs();
-    if a != 0.0 && (a >= 1e16 || a < 1e-4) {
+    if a != 0.0 && !(1e-4..1e16).contains(&a) {
         // Shortest exponent form, e.g. "1e301", "1.5e-5".
         return format!("{:e}", x);
     }

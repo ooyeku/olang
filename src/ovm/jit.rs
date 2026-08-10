@@ -1304,12 +1304,19 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         Instruction::BinImm { imm, .. } => {
             matches!(imm.data, ValueData::Integer(_) | ValueData::Float(_))
         }
+        // Domain-constrained math builtins (sqrt, asin, acos, ln, log2,
+        // log10) stay off the JIT: native code would compute a raw NaN
+        // where the interpreter raises a domain error. Excluded here, they
+        // run on bytecode, which routes out-of-domain inputs through the
+        // interpreter's checked path. The domain-free builtins still compile.
         Instruction::CallBuiltin {
             builtin_id, args, ..
-        } => matches!(
-            crate::ovm::bytecode::BytecodeVm::FLOAT_MATH.get(*builtin_id as usize),
-            Some((_, arity)) if args.len() == *arity && *arity <= 2
-        ),
+        } => {
+            matches!(
+                crate::ovm::bytecode::BytecodeVm::FLOAT_MATH.get(*builtin_id as usize),
+                Some((_, arity)) if args.len() == *arity && *arity <= 2
+            ) && !matches!(*builtin_id as usize, 0 | 10 | 11 | 18 | 19 | 20)
+        }
         Instruction::Return { value } => value.is_some(),
         _ => false,
     })
