@@ -825,10 +825,31 @@ impl Parser {
             Rule::literal => self.build_literal(pair.into_inner()),
             Rule::identifier => Ok(Expr::Identifier(pair.as_str().to_string())),
             Rule::block => self.build_block(pair.into_inner()),
+            Rule::paren_expr => self.build_paren_expr(pair.into_inner()),
             Rule::expr => self.build_expr(pair.into_inner()),
             _ => Err(ParseError::InvalidSyntax {
                 message: format!("Invalid primary rule: {:?}", pair.as_rule()),
             }),
+        }
+    }
+
+    /// Build a parenthesized expression: a single inner expression is a
+    /// grouping (unwrapped to that expression), two or more comma-separated
+    /// expressions form a tuple. Grouping and tuples share one grammar rule so
+    /// the inner expression list is parsed exactly once — see `paren_expr` in
+    /// grammar.pest for why two separate `(`-prefixed alternatives caused
+    /// exponential backtracking on nested parentheses.
+    fn build_paren_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut items = Vec::new();
+        for p in pairs {
+            if p.as_rule() == Rule::expr {
+                items.push(self.build_expr(p.into_inner())?);
+            }
+        }
+        if items.len() == 1 {
+            Ok(items.into_iter().next().unwrap())
+        } else {
+            Ok(Expr::Tuple(items.into()))
         }
     }
 
@@ -2234,15 +2255,6 @@ impl Parser {
                     }
                 }
                 Ok(Expr::List(items.into()))
-            }
-            Rule::tuple => {
-                let mut items = Vec::new();
-                for p in pair.into_inner() {
-                    if p.as_rule() == Rule::expr {
-                        items.push(self.build_expr(p.into_inner())?);
-                    }
-                }
-                Ok(Expr::Tuple(items.into()))
             }
             _ => Err(ParseError::invalid_syntax_at(
                 format!("Invalid literal rule: {:?}", pair.as_rule()),
@@ -3965,5 +3977,96 @@ mod tests {
                 panic!("Expected function call, got: {:?}", program.statements[0]);
             }
         }
+    }
+
+    // Regression: deeply nested parentheses once triggered catastrophic
+    // exponential-time backtracking because grouping `(e)` and the `tuple`
+    // literal were two separate `(`-prefixed alternatives in `primary`. A plain
+    // `((((…))))` made the tuple branch parse the inner expression, fail at the
+    // missing comma, then the grouping branch re-parse it — doubling the work at
+    // every nesting level, so ~25 levels hung indefinitely. `paren_expr` now
+    // parses the inner expression exactly once. Parsing must be roughly linear;
+    // a generous wall-clock bound turns any regression back into a hang into a
+    // failing test rather than a stuck suite.
+    #[test]
+    fn test_deeply_nested_parens_parse_in_linear_time() {
+        use std::time::{Duration, Instant};
+
+        // Recursive-descent AST building needs a deep stack for 100 nested
+        // levels; a debug test thread's default 2 MiB stack overflows on the
+        // recursion alone (unrelated to the backtracking bug this guards). Run
+        // on a generously sized stack so the test is deterministic in both debug
+        // and release, then let the time bound catch any exponential regression.
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| {
+                let parser = Parser::new();
+                for depth in [25usize, 100] {
+                    let input = format!("{}1{}", "(".repeat(depth), ")".repeat(depth));
+                    let start = Instant::now();
+                    let result = parser.parse(&input);
+                    let elapsed = start.elapsed();
+                    assert!(
+                        result.is_ok(),
+                        "Failed to parse {depth}-deep parenthesized expression: {result:?}",
+                    );
+                    assert!(
+                        elapsed < Duration::from_secs(2),
+                        "Parsing {depth}-deep parens took {elapsed:?}; expected roughly linear \
+                         time (exponential backtracking has regressed)",
+                    );
+                }
+            })
+            .expect("spawn parser thread")
+            .join()
+            .expect("deeply-nested-paren parsing panicked or overflowed its stack");
+    }
+
+    // Guard the semantics the exponential-backtracking fix had to preserve: one
+    // inner expression is a grouping (unwrapped), two or more is a tuple, and
+    // nesting composes both.
+    #[test]
+    fn test_paren_grouping_vs_tuple_semantics() {
+        let parser = Parser::new();
+
+        let grouping = parser.parse("(2 + 3) * 4").expect("grouping should parse");
+        assert!(
+            matches!(
+                &grouping.statements[0],
+                Statement::Expression(Expr::BinaryOp { .. })
+            ),
+            "grouping should unwrap to its inner expression, got: {:?}",
+            grouping.statements[0]
+        );
+
+        let tuple = parser.parse("(1, 2, 3)").expect("tuple should parse");
+        if let Statement::Expression(Expr::Tuple(items)) = &tuple.statements[0] {
+            assert_eq!(items.len(), 3, "expected a 3-element tuple");
+        } else {
+            panic!("expected a tuple, got: {:?}", tuple.statements[0]);
+        }
+
+        let nested = parser
+            .parse("((1, 2), (3, 4))")
+            .expect("nested tuple should parse");
+        if let Statement::Expression(Expr::Tuple(items)) = &nested.statements[0] {
+            assert_eq!(items.len(), 2, "outer tuple should have 2 elements");
+            assert!(
+                matches!(&items[0], Expr::Tuple(inner) if inner.len() == 2),
+                "first element should itself be a 2-tuple, got: {:?}",
+                items[0]
+            );
+        } else {
+            panic!("expected a nested tuple, got: {:?}", nested.statements[0]);
+        }
+
+        assert!(
+            parser.parse("(x) => x + 1").is_ok(),
+            "single-parameter lambda should still parse"
+        );
+        assert!(
+            parser.parse("(a, b) => a * b").is_ok(),
+            "multi-parameter lambda should still parse"
+        );
     }
 }

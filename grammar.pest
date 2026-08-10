@@ -33,7 +33,15 @@ number      = { float | binary | octal | hex | integer }
 
 // Lists and tuples
 list        = { "[" ~ NL* ~ (expr ~ (NL* ~ "," ~ NL* ~ expr)* ~ NL* ~ ","? ~ NL*)? ~ "]" }
-tuple       = { "(" ~ NL* ~ expr ~ NL* ~ "," ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ expr)* ~ NL* ~ ")" }
+// Parenthesized expressions unify grouping `(e)` and tuples `(a, b, ...)` into a
+// single rule so the inner expression list is parsed exactly ONCE. Previously
+// `primary` had two `(`-prefixed alternatives — the `tuple` literal followed by
+// the `"(" ~ expr ~ ")"` grouping — and a plain `(e)` made the tuple branch
+// parse the whole inner expression, fail at the missing comma, then the grouping
+// branch re-parse it. Nested `((((…))))` doubled that work at every level, giving
+// catastrophic exponential-time backtracking (a 25-deep expression never
+// returned). One expr child means a grouping; two or more means a tuple.
+paren_expr  = { "(" ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ expr)* ~ NL* ~ ")" }
 
 // Program structure - Put share_decl and use_decl BEFORE expr to ensure they are matched first
 program     = { SOI ~ NL* ~ (statement ~ (";" | NL)* )* ~ EOI }
@@ -137,7 +145,7 @@ try_catch_expr = { "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block }
 postfix_op = { "?" }
 
 // Primary expressions
-primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | anonymous_object | map_literal | literal | identifier | "(" ~ expr ~ ")" | block }
+primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | anonymous_object | map_literal | literal | identifier | paren_expr | block }
 
 // Lambda functions
 lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ NL* ~ (block | expr) }
@@ -181,7 +189,7 @@ block       = { "{" ~ NL* ~ (statement ~ (";" | NL)* )* ~ "}" }
 if_expr     = { "if" ~ expr ~ "=>" ~ NL* ~ (block | expr) ~ (NL* ~ "else" ~ NL* ~ (if_expr | ("=>" ~ NL* ~ (block | expr))))? }
 
 // Literals
-literal     = { float | binary | octal | hex | integer | char_literal | raw_string | template_string | string | boolean | list | tuple }
+literal     = { float | binary | octal | hex | integer | char_literal | raw_string | template_string | string | boolean | list }
 
 // Built-in types (for future type system)
 builtin_type = _{ "Int" | "Float" | "String" | "Bool" | "List" | "Tuple" }
