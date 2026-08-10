@@ -109,6 +109,8 @@ pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
             ..Default::default()
         }),
         document_formatting_provider: Some(OneOf::Left(true)),
+        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+        definition_provider: Some(OneOf::Left(true)),
         ..Default::default()
     };
     let init_params = connection.initialize(serde_json::to_value(capabilities)?)?;
@@ -183,6 +185,27 @@ fn handle_request(
                 .unwrap_or("");
             let items = completions(text);
             respond(connection, id, &CompletionResponse::Array(items))?;
+        }
+        lsp_types::request::HoverRequest::METHOD => {
+            let (id, params): (RequestId, lsp_types::HoverParams) =
+                req.extract(lsp_types::request::HoverRequest::METHOD)?;
+            let pos = params.text_document_position_params;
+            let text = docs
+                .get(&pos.text_document.uri)
+                .map(String::as_str)
+                .unwrap_or("");
+            respond(connection, id, &hover(text, pos.position))?;
+        }
+        lsp_types::request::GotoDefinition::METHOD => {
+            let (id, params): (RequestId, lsp_types::GotoDefinitionParams) =
+                req.extract(lsp_types::request::GotoDefinition::METHOD)?;
+            let pos = params.text_document_position_params;
+            let uri = pos.text_document.uri.clone();
+            let text = docs.get(&uri).map(String::as_str).unwrap_or("");
+            let loc = definition(text, pos.position).map(|range| {
+                lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location { uri, range })
+            });
+            respond(connection, id, &loc)?;
         }
         Formatting::METHOD => {
             let (id, params): (RequestId, lsp_types::DocumentFormattingParams) =
@@ -266,20 +289,27 @@ fn diagnostics(text: &str) -> Vec<Diagnostic> {
                         ..Default::default()
                     }]
                 }
-                Ok(report) => report
-                    .unused_variables
-                    .iter()
-                    .filter_map(|name| {
-                        let range = find_declaration(text, name)?;
-                        Some(Diagnostic {
-                            range,
-                            severity: Some(DiagnosticSeverity::WARNING),
-                            source: Some("olang".to_string()),
-                            message: format!("unused variable: {}", name),
-                            ..Default::default()
+                Ok(report) => {
+                    let decls = declarations(text);
+                    report
+                        .unused_variables
+                        .iter()
+                        .filter_map(|name| {
+                            let range = decls
+                                .iter()
+                                .find(|(n, _, _)| n == name)
+                                .map(|(n, _, span)| span_range(*span, n.len()))
+                                .or_else(|| find_declaration(text, name))?;
+                            Some(Diagnostic {
+                                range,
+                                severity: Some(DiagnosticSeverity::WARNING),
+                                source: Some("olang".to_string()),
+                                message: format!("unused variable: {}", name),
+                                ..Default::default()
+                            })
                         })
-                    })
-                    .collect(),
+                        .collect()
+                }
             }
         }
     }
@@ -425,6 +455,106 @@ fn completions(text: &str) -> Vec<CompletionItem> {
         }
     }
     items
+}
+
+// ── declarations by span (the spans rung) ──────────────────────────────
+
+/// A top-level declaration's name, kind label, and 1-based span.
+fn declarations(text: &str) -> Vec<(String, String, (u32, u32))> {
+    let parser = OlangParser::new();
+    let Ok(program) = parser.parse(text) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for stmt in &program.statements {
+        use crate::ast::{Pattern, Statement};
+        match stmt {
+            Statement::FunctionDecl(f) => {
+                if let Some(span) = f.name_span {
+                    let params: Vec<&str> = f.parameters.iter().map(|p| p.name.as_str()).collect();
+                    out.push((
+                        f.name.clone(),
+                        format!("fn {}({})", f.name, params.join(", ")),
+                        span,
+                    ));
+                }
+            }
+            Statement::TypeDecl(t) => {
+                if let Some(span) = t.name_span {
+                    out.push((t.name.clone(), format!("type {}", t.name), span));
+                }
+            }
+            Statement::LetDecl(l) => {
+                if let (Some(span), Pattern::Identifier(name)) = (l.name_span, &l.pattern) {
+                    out.push((name.clone(), format!("let {}", name), span));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The identifier under the cursor (0-based LSP position).
+fn word_at(text: &str, pos: Position) -> Option<String> {
+    let line = text.lines().nth(pos.line as usize)?;
+    let chars: Vec<char> = line.chars().collect();
+    let mut start = (pos.character as usize).min(chars.len());
+    while start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') {
+        start -= 1;
+    }
+    let mut end = start;
+    while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
+        end += 1;
+    }
+    (end > start).then(|| chars[start..end].iter().collect())
+}
+
+fn span_range(span: (u32, u32), name_len: usize) -> Range {
+    let (line, col) = (span.0.saturating_sub(1), span.1.saturating_sub(1));
+    Range::new(
+        Position::new(line, col),
+        Position::new(line, col + name_len as u32),
+    )
+}
+
+fn hover(text: &str, pos: Position) -> Option<lsp_types::Hover> {
+    let word = word_at(text, pos)?;
+    let (name, detail, _span) = declarations(text)
+        .into_iter()
+        .find(|(n, _, _)| *n == word)?;
+    Some(lsp_types::Hover {
+        contents: lsp_types::HoverContents::Scalar(lsp_types::MarkedString::LanguageString(
+            lsp_types::LanguageString {
+                language: "olang".to_string(),
+                value: detail,
+            },
+        )),
+        range: Some(span_range_at_cursor(text, pos, &name)),
+    })
+}
+
+fn span_range_at_cursor(text: &str, pos: Position, name: &str) -> Range {
+    // Highlight the word under the cursor itself.
+    let line = pos.line;
+    let col = pos.character.saturating_sub(
+        word_at(text, pos)
+            .map(|w| w.len() as u32)
+            .unwrap_or(0)
+            .min(pos.character),
+    );
+    Range::new(
+        Position::new(line, col),
+        Position::new(line, col + name.len() as u32),
+    )
+}
+
+fn definition(text: &str, pos: Position) -> Option<Range> {
+    let word = word_at(text, pos)?;
+    declarations(text)
+        .into_iter()
+        .find(|(n, _, _)| *n == word)
+        .map(|(n, _, span)| span_range(span, n.len()))
 }
 
 // ── formatting ─────────────────────────────────────────────────────────

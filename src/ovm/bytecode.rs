@@ -2989,6 +2989,7 @@ impl BytecodeVm {
         }
 
         let decl = FunctionDecl {
+            name_span: None,
             name: func
                 .name
                 .clone()
@@ -5615,6 +5616,7 @@ impl BytecodeCompiler {
         self.pending_lambdas.push((
             lambda_id,
             FunctionDecl {
+                name_span: None,
                 name: self_name.unwrap_or("<lambda>").to_string(),
                 type_params: Vec::new(),
                 type_param_bounds: Vec::new(),
@@ -6761,6 +6763,7 @@ mod tests {
 
         // Create a simple function: fn test() -> int { 42 }
         let func = FunctionDecl {
+            name_span: None,
             name: "test".to_string(),
             type_params: Vec::new(),
             type_param_bounds: Vec::new(),
@@ -6784,6 +6787,7 @@ mod tests {
 
         // Create function: fn add(a: int, b: int) -> int { a + b }
         let func = FunctionDecl {
+            name_span: None,
             name: "add".to_string(),
             type_params: Vec::new(),
             type_param_bounds: Vec::new(),
@@ -7017,6 +7021,7 @@ mod tests {
 
         // Create a simpler function first: fn simple() -> Int = 5 + 3
         let func = FunctionDecl {
+            name_span: None,
             name: "simple".to_string(),
             type_params: vec![],
             type_param_bounds: Vec::new(),
@@ -7062,6 +7067,7 @@ mod tests {
 
         // Create a function with constant folding opportunity: fn const_expr() -> Int = 10 + 20 + 30
         let func = FunctionDecl {
+            name_span: None,
             name: "const_expr".to_string(),
             type_params: vec![],
             type_param_bounds: Vec::new(),
@@ -7102,6 +7108,7 @@ mod tests {
 
         // Create a function with conditional: fn simple_if() -> Int = if 10 > 5 then 10 else 5
         let func = FunctionDecl {
+            name_span: None,
             name: "simple_if".to_string(),
             type_params: vec![],
             type_param_bounds: Vec::new(),
@@ -7142,6 +7149,7 @@ mod tests {
 
         // Create a function that works with ranges: fn range_test() -> Range = 1..10
         let func = FunctionDecl {
+            name_span: None,
             name: "range_test".to_string(),
             type_params: vec![],
             type_param_bounds: Vec::new(),
@@ -7181,6 +7189,7 @@ mod tests {
         // A string body: stays on bytecode (the JIT's pure-integer
         // whitelist declines it), so dispatch-loop stats keep counting.
         let func = FunctionDecl {
+            name_span: None,
             name: "simple".to_string(),
             type_params: vec![],
             type_param_bounds: Vec::new(),
@@ -7223,6 +7232,7 @@ mod tests {
         // Try to execute with wrong number of arguments
         let func_id = FunctionId::new();
         let func = FunctionDecl {
+            name_span: None,
             name: "two_param".to_string(),
             type_params: vec![],
             type_param_bounds: Vec::new(),

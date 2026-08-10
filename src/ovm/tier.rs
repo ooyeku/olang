@@ -364,6 +364,7 @@ impl BytecodeTier {
     /// parameters and locals.
     fn declaration(name: &str, func: &Function) -> Option<FunctionDecl> {
         Some(FunctionDecl {
+            name_span: None,
             name: name.to_string(),
             type_params: Vec::new(),
             type_param_bounds: Vec::new(),

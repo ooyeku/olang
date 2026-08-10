@@ -13,9 +13,14 @@ Part of [the olang book](README.md) ·
 
 | capability | source |
 |---|---|
-| Diagnostics as you type | the real parser (with its line/column info) and the semantic analyzer (unused variables at their declaration sites) |
+| Diagnostics as you type | the real parser (with its line/column info) and the semantic analyzer; warnings sit on the exact declaration span |
 | Completions | keywords, the global builtins, the 19 stdlib modules, and `fn`/`type`/`let` names from the open file |
+| Hover | the declaration's rendered signature (`fn dist(a, b)`, `type Body`, `let total`) |
+| Go to definition | jumps to the name's declaration span in the file |
 | Formatting | the `olang fmt` engine — AST-verified, whitespace-only |
+
+Positions come from the AST itself: `fn`, `let`, and `type` declarations
+carry the source span of the name they bind.
 
 The server re-parses whole files on every edit. olang files are small
 and the parser is fast; correctness stays trivial.

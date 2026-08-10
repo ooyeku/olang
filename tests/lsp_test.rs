@@ -138,6 +138,24 @@ fn full_protocol_loop() {
     let fmt = c.recv_until(|m| m["id"] == 3);
     assert!(fmt["result"].is_array());
 
+    // Hover over the call site of f: shows the signature.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"textDocument/hover","params":{
+            "textDocument":{"uri":uri},"position":{"line":4,"character":14}}
+    }));
+    let hov = c.recv_until(|m| m["id"] == 4);
+    let val = hov["result"]["contents"]["value"].as_str().unwrap_or("");
+    assert_eq!(val, "fn f(x)", "hover: {val}");
+
+    // Go-to-definition from the call site lands on the declaration name.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":5,"method":"textDocument/definition","params":{
+            "textDocument":{"uri":uri},"position":{"line":4,"character":14}}
+    }));
+    let def = c.recv_until(|m| m["id"] == 5);
+    assert_eq!(def["result"]["range"]["start"]["line"], 0);
+    assert_eq!(def["result"]["range"]["start"]["character"], 3);
+
     // Clean shutdown.
     c.send(&serde_json::json!({"jsonrpc":"2.0","id":9,"method":"shutdown","params":null}));
     c.recv_until(|m| m["id"] == 9);

@@ -71,12 +71,19 @@ pub struct LetDecl {
     pub pattern: Pattern,
     pub type_annotation: Option<TypeAnnotation>,
     pub value: Option<Expr>,
+    /// 1-based (line, column) of the binding's first name, when parsed
+    /// from source. Desugared/synthetic declarations carry None.
+    #[serde(default)]
+    pub name_span: Option<(u32, u32)>,
 }
 
 /// Function declaration for named/recursive functions
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FunctionDecl {
     pub name: String,
+    /// 1-based (line, column) of the function name in source.
+    #[serde(default)]
+    pub name_span: Option<(u32, u32)>,
     pub type_params: Vec<String>, // Type parameters for generic functions
     /// Trait bounds per type parameter: (param name, required trait names).
     /// From `<T: Show + Ord>`. Enforced at runtime against argument types.
@@ -703,6 +710,9 @@ pub struct ExportDecl {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TypeDecl {
     pub name: String,
+    /// 1-based (line, column) of the type name in source.
+    #[serde(default)]
+    pub name_span: Option<(u32, u32)>,
     pub type_params: Vec<String>, // Type parameters for generic types
     pub definition: TypeDefinition,
 }

@@ -48,6 +48,15 @@ documented.
   design — every edit re-parses whole files. Tested at the protocol
   level: tests/lsp_test.rs drives the real binary over stdio through
   the complete loop, including clean shutdown.
+- **Declaration spans in the AST; hover and go-to-definition in the
+  server.** `fn`, `let`, and `type` declarations now carry the 1-based
+  source position of the name they bind (serde-defaulted, so cached
+  ASTs stay readable; synthetic/desugared declarations carry None).
+  On top of them the language server gains hover (the declaration's
+  rendered signature) and go-to-definition, and unused-variable
+  warnings move from text-search positions to exact declaration spans.
+  Protocol test extended: hover content and definition target are
+  asserted to the character.
 - **VS Code extension (editors/vscode/).** TextMate grammar (par for,
   pipelines, template strings, module names), bracket/indent config,
   and a thin client launching `olang lsp`; `olang.serverPath` setting

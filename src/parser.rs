@@ -326,6 +326,8 @@ impl Parser {
             })?;
         }
 
+        let (span_line, span_col) = pattern_pair.as_span().start_pos().line_col();
+        let name_span = Some((span_line as u32, span_col as u32));
         let pattern = self.build_pattern(pattern_pair.into_inner())?;
 
         let mut type_annotation = None;
@@ -347,6 +349,7 @@ impl Parser {
             pattern,
             type_annotation,
             value,
+            name_span,
         })
     }
 
@@ -2411,13 +2414,12 @@ impl Parser {
     }
 
     fn build_function_decl(&self, mut pairs: Pairs<Rule>) -> Result<FunctionDecl, ParseError> {
-        let name = pairs
-            .next()
-            .ok_or_else(|| ParseError::InvalidSyntax {
-                message: "Missing function name".to_string(),
-            })?
-            .as_str()
-            .to_string();
+        let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing name".to_string(),
+        })?;
+        let (nl, nc) = name_pair.as_span().start_pos().line_col();
+        let name_span = Some((nl as u32, nc as u32));
+        let name = name_pair.as_str().to_string();
 
         let mut type_params = Vec::new();
         let mut type_param_bounds = Vec::new();
@@ -2451,6 +2453,7 @@ impl Parser {
 
         Ok(FunctionDecl {
             name,
+            name_span,
             type_params,
             type_param_bounds,
             parameters,
@@ -2509,13 +2512,12 @@ impl Parser {
     }
 
     fn build_type_decl(&self, mut pairs: Pairs<Rule>) -> Result<TypeDecl, ParseError> {
-        let name = pairs
-            .next()
-            .ok_or_else(|| ParseError::InvalidSyntax {
-                message: "Missing type name".to_string(),
-            })?
-            .as_str()
-            .to_string();
+        let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing name".to_string(),
+        })?;
+        let (nl, nc) = name_pair.as_span().start_pos().line_col();
+        let name_span = Some((nl as u32, nc as u32));
+        let name = name_pair.as_str().to_string();
 
         let mut type_params = Vec::new();
         let mut definition = None;
@@ -2539,6 +2541,7 @@ impl Parser {
 
         Ok(TypeDecl {
             name,
+            name_span,
             type_params,
             definition,
         })
@@ -2804,6 +2807,7 @@ impl Parser {
             None => body_expr,
             Some(names) => Expr::Block(vec![
                 crate::ast::Statement::LetDecl(crate::ast::LetDecl {
+                    name_span: None,
                     pattern: crate::ast::Pattern::Tuple(
                         names
                             .into_iter()
