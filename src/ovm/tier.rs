@@ -271,6 +271,17 @@ impl BytecodeTier {
                     crate::ovm::bytecode::BytecodeError::RuntimeError(msg) => msg,
                     other => other.to_string(),
                 };
+                // Some builtin errors arrive already carrying the
+                // interpreter's own "Runtime error: " prefix (they wrap an
+                // InterpreterError's Display). The consumer re-wraps this
+                // string in an InterpreterError::RuntimeError that prepends
+                // the same words, so a redundant leading copy would double
+                // the prefix relative to the interpreter. Strip one so the
+                // result reads with a single prefix either way.
+                let message = message
+                    .strip_prefix("Runtime error: ")
+                    .map(str::to_string)
+                    .unwrap_or(message);
                 TierOutcome::Ran(Err(message))
             }
         }
