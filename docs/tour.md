@@ -152,6 +152,34 @@ println(to_string(parse_pair("20", "22")))
 println(to_string(unwrap_or(parse_pair("20", "oops"), -1)))
 ```
 
+## Parallelism, without a GIL
+
+`spawn` runs an expression on a real OS thread; `par_map` is `map`
+fanned across every core; and `par for` is the parallel loop — the same
+fan-out for effects and heavy per-iteration work, with an implicit
+barrier at the end. All of them snapshot their environment (capture by
+value, like closures), which is what makes them safe:
+
+```olang
+fn weigh(n) = {
+    let mut acc = 0
+    for i in 0..2000 { acc = acc + (n * i) % 13 }
+    acc
+}
+
+let weights = range(1, 9) |> par_map(weigh)   // values back, in order
+println(to_string(len(weights)))
+
+par for n in range(1, 9) {                    // effects; no values back
+    let w = weigh(n)
+    if w < 0 => println("impossible")
+}
+```
+
+Measured 9–13× on compute-heavy kernels. The
+[language reference](language.md#async-and-concurrency) covers the
+semantics; [`examples/parmap/`](../examples/parmap/) measures itself.
+
 ## The data stack
 
 `ods` (Series and Frames), `stats` (inference), and `plot` (SVG charts)

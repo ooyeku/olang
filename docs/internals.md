@@ -49,8 +49,8 @@ and the spawn registry.
 
 **`src/ovm/`** is the acceleration machinery: functions that get called
 often are compiled to register bytecode and re-executed there, and
-bytecode that qualifies for the pure numeric whitelist compiles further
-to native machine code via Cranelift (`src/ovm/jit.rs`). Both are on by
+bytecode that qualifies for the JIT whitelist compiles further to
+native machine code via Cranelift (`src/ovm/jit.rs`). Both are on by
 default.
 
 ## The three-tier execution model
@@ -69,7 +69,11 @@ OVM compiler returns `CompilationFailed` for anything it does not
 support (global assignment, `return`/`break value`, async, and more —
 see [ovm.md](ovm.md#known-limitations)), and the function transparently
 stays on the interpreter. The JIT only compiles functions whose every
-instruction is in a pure numeric/boolean whitelist, and every guard
+instruction is in its whitelist — numbers and booleans, the float
+`math` builtins, struct field reads and construction, list indexing and
+`for` iteration, tuple returns, and strings, with allocation compiling
+only in straight-line code (allocating loops stay on bytecode and drive
+native constructors call by call) — and every guard
 failure at runtime (argument kinds, overflow, division by zero, depth)
 **deopts**: the native run is abandoned and the call re-executes on
 bytecode, which owns every error message. **Falling back is always
@@ -206,7 +210,7 @@ src/
                           model (value.rs), tier manager (tier.rs),
                           Cranelift JIT (jit.rs), NaN-boxing primitives
                           (nanbox.rs)
-  parallel.rs             par_map / par_filter worker fan-out
+  parallel.rs             par_map / par_filter / par for worker config
   pkg/                    package manager (see packages.md)
   tools/                  olang test (test_runner.rs), olang fmt (fmt.rs)
   repl.rs, help.rs        interactive mode

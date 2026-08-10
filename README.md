@@ -59,8 +59,9 @@ olang fmt --check .        # formatter (whitespace hygiene, AST-safe)
   place; closures snapshot their environment.
 - **Errors as values** — `Result`, `?` propagation, `try`/`catch`.
 - **Concurrency, honestly labeled** — `spawn` runs on a real OS thread
-  (await joins it); `par_map`/`par_filter` fan pipelines across every
-  core with no GIL (9–13× measured on compute-heavy kernels);
+  (await joins it); `par_map`/`par_filter` fan pipelines — and `par for`
+  fans loop iterations — across every core with no GIL (9–13× measured
+  on compute-heavy kernels), all with spawn's snapshot semantics;
   `Promise.delay`/`all`/`race` are deterministic, deadline-based timing
   simulation.
 - **Modules and packages** — `use`/`share`, plus `olang.toml` packages
@@ -116,10 +117,13 @@ Falling back is always correct; diverging is never acceptable.
 
 The bytecode tier covers the language people actually write — 158 of
 the 164 functions in the example corpus promote (the six holdouts are
-async and global assignment, by design). The JIT puts hot numeric code
-in native territory: fib(30) 89 ms → 5 ms, level with Node and Bun;
-integer kernels 20–30×; float kernels ~4.5×; struct-field kernels 8×.
-Details and measured tables: [docs/internals.md](docs/internals.md),
+async and global assignment, by design). The JIT lane is complete as of
+0.43: ints, floats, structs, lists, tuples, and strings all either
+compile or refuse by a tested rule (allocating loops, for instance,
+deliberately stay on bytecode driving native constructors). Measured:
+fib(30) 89 ms → 4 ms, level with Node and Bun; N-body 400 ms → 48 ms;
+integer kernels 20–30×; float kernels ~4.5×. Details and measured
+tables: [docs/internals.md](docs/internals.md),
 [docs/ovm.md](docs/ovm.md).
 
 ## Examples
@@ -133,7 +137,8 @@ served by `olang main.ol`), a CSV→Frame→aggregate pipeline (`dataproc/`),
 a full statistical study — permutation test and bootstrap fanned over
 `par_map`, OLS, SVG charts, 10,000 subjects in under half a second
 (`statlab/`) — and data-parallel prime counting that measures its own
-speedup (`parmap/`) — all run by the self-hosted harness
+speedup with `par_map` and `par for` (`parmap/`) — all run by the
+self-hosted harness
 (`olang run_all.ol`) and in CI.
 
 ## Maturity

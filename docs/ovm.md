@@ -16,7 +16,7 @@ Olang has three execution tiers.
 |---|---|---|
 | **Interpreter** | Tree-walking evaluator over the AST | Always; the default and the semantics reference |
 | **Bytecode** | Register-based VM (`src/ovm/bytecode.rs`) | Eligible functions, on by default (compiled at first call) |
-| **JIT** | Native machine code via Cranelift (`src/ovm/jit.rs`) | Bytecode functions on the pure numeric whitelist, specialized lazily at first call |
+| **JIT** | Native machine code via Cranelift (`src/ovm/jit.rs`) | Bytecode functions on the JIT whitelist — numbers, math builtins, structs, lists, tuples, strings — specialized lazily at first call |
 
 The interpreter is the source of truth. The lower tiers are optimizations
 that must be **observationally identical** to it — see
@@ -292,15 +292,17 @@ details).
 
 ## The JIT
 
-The third tier (`src/ovm/jit.rs`, 0.40): hot bytecode compiled to native
-machine code via Cranelift, extending the correctness ladder unchanged —
-"can't compile identically → stay interpreted" gained a rung: "can't
-compile natively → stay on bytecode".
+The third tier (`src/ovm/jit.rs`, 0.40; lane completed across
+0.41–0.42): hot bytecode compiled to native machine code via Cranelift,
+extending the correctness ladder unchanged — "can't compile identically
+→ stay interpreted" gained a rung: "can't compile natively → stay on
+bytecode".
 
 A function prequalifies at promotion time when every instruction falls
-in a **pure numeric/boolean whitelist**: arithmetic, comparisons, logic,
-branches, struct field reads, calls to other olang functions, and
-return. Compilation is
+in a **pure whitelist**: arithmetic, comparisons, logic, branches,
+calls to other olang functions, return, the float `math.*` builtins,
+struct field reads and construction, list indexing and `for` iteration,
+tuple returns, and strings. Compilation is
 **type-specialized, lazy, and call-graph aware**: on a function's first
 call, the JIT plans every function reachable through its call sites,
 runs kind inference to a global fixpoint across the group (callee
@@ -322,6 +324,43 @@ host helper that deopts on any surprise, so no layout assumption leaks
 into the VM. Everything else stays on bytecode with zero overhead beyond
 one table lookup per call.
 
+The lane closed rung by rung across 0.41 and 0.42, each on the same
+borrowed-pointer discipline:
+
+- **The float `math` builtins** (0.41): all 25 compile — `sqrt`,
+  `floor`, `ceil`, and `trunc` as native IEEE instructions (bit-exact
+  by definition), the other 21 through an imported helper that calls
+  the VM's own `eval_float_math` — exactness by construction, not by
+  reimplementation.
+- **List indexing and `for` iteration** (0.41): lists enter native code
+  as borrowed pointers, classified at specialization by element kind
+  (float, int, or one struct shape); `xs[i]` and the iteration
+  instructions run through guarded host helpers reproducing the VM's
+  exact semantics — subscripts wrap negative indices, iteration does
+  not, bounds violations deopt to bytecode's canonical error.
+- **Tuple returns** (0.41): functions returning tuples of up to four
+  scalar elements become multi-value native returns; destructuring
+  callers receive the elements directly in registers, and a deopt deep
+  in a tuple-returning callee still yields the VM's canonical error.
+- **Struct construction** (0.42): `MakeStruct` compiles under a
+  scratch-ownership model — every struct a native call builds is owned
+  by a VM-side list for exactly that call, so a deopt at any point can
+  never leak or dangle; struct returns transfer ownership once, at the
+  entry boundary, where a retain helper resolves the borrowed pointer
+  to an owned Arc.
+- **Strings** (0.42): parameters, fields, and constants enter as
+  borrowed pointers; equality and lexicographic ordering run through a
+  helper executing the VM's own comparison operators; concat is an
+  allocation and follows the struct discipline exactly.
+
+Two deliberate **refusal rules**, learned by measurement, keep the
+model where it wins: allocation (struct construction, string concat)
+compiles only in straight-line code — constructors — while **allocating
+loops stay on bytecode and drive the native constructors call by call**
+(an unbounded native loop of allocations held memory until call end,
+and a cap-triggered mid-loop deopt cost more than never compiling); and
+mixed string/number `+` (formatting) stays on bytecode.
+
 Purity is the load-bearing property. A qualifying function has no side
 effects, so every guard failure — argument-kind mismatch at entry,
 integer overflow, division by zero (integer *and* float — olang errors
@@ -337,15 +376,15 @@ runaway recursion errors exactly as it does on bytecode instead of
 overflowing the native stack, and a deopt anywhere in a native call
 chain unwinds the whole chain back to the bytecode entry.
 
-What this buys, measured: fib(30) 89 ms → **5 ms** (18×, now level with
-the JavaScript JITs) — and fib split across two mutually recursive
-functions runs at the same 5 ms where the self-call-only JIT managed
-94 ms; integer loop kernels 20–30×; float kernels (Mandelbrot-style
-orbit loops) ~4.5×; a struct-field kernel 143 ms → 18 ms (8×); and
-`par_map` over a jitted kernel compounds both campaigns — workers carry
-their own tier and JIT. Strings and other heap values are future
-expansions, as is whitelisting the pure `math` builtins: N-body's inner
-kernel awaits `math.sqrt`.
+What this buys, measured: fib(30) 89 ms → **4 ms** (level with the
+JavaScript JITs) — and fib split across two mutually recursive
+functions runs at the same speed where the self-call-only JIT managed
+94 ms; N-body — structs, floats, lists, tuples, and `math.sqrt` in a
+hot loop — 400 ms → **48 ms**, its force loops compiling whole; integer
+loop kernels 20–30×; float kernels (Mandelbrot-style orbit loops)
+~4.5×; a struct-field kernel 143 ms → 18 ms (8×); and `par_map` (or
+`par for`) over a jitted kernel compounds both campaigns — workers
+carry their own tier and JIT.
 
 `tests/jit_test.rs` holds the parity suite: every guard edge runs tiered
 and interpreted and must agree byte-for-byte.
@@ -401,40 +440,40 @@ the user's definition in compiled code too.
 
 ## Performance
 
-Measured on an Apple Silicon laptop, release build, as of 0.40. All
-workloads are algorithm-identical across languages and checksum-verified
-(the N-body sample position matches across every implementation to the
-last digit). Since the tier is on by default, the olang numbers are what
-a plain `olang program.ol` gets — no flags.
+Measured on an Apple Silicon laptop, release build, as of 0.43 —
+best-of-3, inner timings. All workloads are algorithm-identical across
+languages and checksum-verified (the N-body sample position matches
+across every implementation to the last digit). Since the tier is on by
+default, the olang numbers are what a plain `olang program.ol` gets —
+no flags.
 
-Four representative workloads against the field (as of 0.40, with the
-baseline JIT):
+Four representative workloads against the field (as of 0.43, with the
+JIT lane complete):
 
 | Workload | Rust | Node | Bun | CPython | Ruby | **olang** |
 |---|---|---|---|---|---|---|
-| N-body (120 bodies × 150 steps) | 2.5 ms | 6 ms | 8 ms | 404 ms | 474 ms | **~322 ms** |
-| Word frequency (50k tokens × 20) | 5 ms | 17 ms | 12 ms | 16 ms | 62 ms | **26 ms** |
-| `map(λ) \|> sum` pipeline, 1M elements | ~0 ms | 9 ms | 4 ms | 24 ms | 21 ms | **13 ms** |
-| fib(30) (2.7M recursive calls) | 1.4 ms | 4 ms | 4 ms | 46 ms | 44 ms | **5 ms** |
+| N-body (120 bodies × 150 steps) | 2.5 ms | 6 ms | 8 ms | 396 ms | 470 ms | **48 ms** |
+| Word frequency (50k tokens × 20) | 5 ms | 16 ms | 12 ms | 15 ms | 61 ms | **26 ms** |
+| `map(λ) \|> sum` pipeline, 1M elements | ~0 ms | 9 ms | 4 ms | 23 ms | 21 ms | **20 ms** |
+| fib(30) (2.7M recursive calls) | 1.2 ms | 4 ms | 4 ms | 46 ms | 43 ms | **4 ms** |
 
 (Interpreter-only mode runs the same programs at 23.6 s / — / 370 ms /
 1.1 s; the word-frequency workload exceeds the interpreter's allocation
 guard entirely, so the tier is what makes it runnable at this size.)
 
 The shape of the result: on pure numeric work the JIT puts olang
-**level with the JavaScript JITs** — fib(30) at 5 ms sits beside Node
-and Bun's 4 ms and runs 9× ahead of CPython and Ruby; the pipeline
+**level with the JavaScript JITs** — fib(30) at 4 ms sits beside Node
+and Bun's 4 ms and runs ~11× ahead of CPython and Ruby; the pipeline
 workload (a jitted lambda inside the VM's native map loop) leads CPython
-and Ruby outright. N-body — structs, floats, and `math.sqrt` in a hot
-loop — went 400 → ~322 ms across 0.40 (the 16-byte value model plus JIT
-struct field access) and stays ahead of both; its inner kernel is one
-whitelist entry away from native (`math.sqrt` is not yet a JIT builtin).
-The remaining gap to Rust is the price of guards, boxing at tier
-boundaries, and the not-yet-whitelisted heap paths — the rungs the
-roadmap sequences next.
+and Ruby. N-body — structs, floats, lists, tuples, and `math.sqrt` in a
+hot loop — went 400 → 48 ms across the campaign (the 16-byte value
+model, then the JIT lane rung by rung until its force loops compiled
+whole), 8× ahead of CPython and nearly 10× ahead of Ruby. The remaining
+gap to Rust is the price of guards, boxing at tier boundaries, and the
+deliberate refusal rules around allocation in loops.
 
-Against its own interpreter, the tiers are worth roughly 73× (N-body)
-to 220× (fib, bytecode + JIT): the whole N-body simulation —
+Against its own interpreter, the tiers are worth roughly 275× (fib,
+bytecode + JIT) to ~490× (N-body): the whole N-body simulation —
 construction, stepping, capturing lambdas, struct building, field
 access, `math.sqrt` — runs as 6 promoted functions, 0 rejected, with 7
 tier crossings.
@@ -458,8 +497,9 @@ These are real gaps, not oversights:
    for an expression with side effects. Pure receivers — locals, field
    chains, literals — compile (see below).
 2. ***Assigning* to a global is uncompiled** (reads bake as snapshot
-   constants). Async constructs (`spawn`, `await`, promises) stay
-   interpreted.
+   constants). Async constructs (`spawn`, `await`, promises) and
+   `par for` stay interpreted — the compiler refuses the parallel loop
+   fail-closed; it is interpreter-owned by design.
 3. **Bridged builtin calls cost a value round trip.** Builtins outside
    the native set convert arguments and results between the OVM and AST
    value models per call. The native set now spans the higher-order

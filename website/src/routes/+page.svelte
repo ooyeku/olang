@@ -28,7 +28,7 @@
         </div>
         <div>
           <dt>parallelism</dt>
-          <dd><code>spawn</code> on OS threads; <code>par_map</code> fans across every core — no GIL</dd>
+          <dd><code>spawn</code> on OS threads; <code>par_map</code> and <code>par for</code> fan across every core — no GIL</dd>
         </div>
         <div>
           <dt>data stack</dt>
@@ -84,20 +84,27 @@
       <tbody>
         <tr>
           <td class="label">fib(30) — 2.7M recursive calls</td>
-          <td class="num self">5 ms</td>
+          <td class="num self">4 ms</td>
           <td class="num">4 ms</td>
           <td class="num">4 ms</td>
           <td class="num">46 ms</td>
         </tr>
         <tr>
-          <td class="label">map(λ) |&gt; sum — 1M elements</td>
-          <td class="num self">13 ms</td>
-          <td class="num">9 ms</td>
-          <td class="num">4 ms</td>
-          <td class="num">24 ms</td>
+          <td class="label">N-body — 120 bodies × 150 steps</td>
+          <td class="num self">48 ms</td>
+          <td class="num">6 ms</td>
+          <td class="num">8 ms</td>
+          <td class="num">396 ms</td>
         </tr>
         <tr>
-          <td class="label">par_map on compute-heavy kernels</td>
+          <td class="label">map(λ) |&gt; sum — 1M elements</td>
+          <td class="num self">20 ms</td>
+          <td class="num">9 ms</td>
+          <td class="num">4 ms</td>
+          <td class="num">23 ms</td>
+        </tr>
+        <tr>
+          <td class="label">par_map / par for on compute-heavy kernels</td>
           <td class="num self wide" colspan="4">9–13× across cores, no GIL</td>
         </tr>
         <tr>
@@ -108,8 +115,9 @@
     </table>
     </div>
     <p class="bench-note">
-      fib(30) went 89 ms → 5 ms when the Cranelift tier landed — level with
-      the JavaScript JITs, 9× ahead of CPython. Interpreter-only mode runs the
+      fib(30) went 89 ms → 4 ms and N-body 400 ms → 48 ms as the Cranelift
+      JIT lane landed and closed — level with the JavaScript JITs on numeric
+      work, ~11× ahead of CPython on fib. Interpreter-only mode runs the
       same programs; the tiers are an optimization, never a semantic.
     </p>
   </div>

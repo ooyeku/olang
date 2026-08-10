@@ -4,17 +4,22 @@
 // clone per worker (each with its own bytecode tier), contiguous chunks,
 // order preserved. olang has no GIL — immutable values and capture-by-value
 // closures make this safe in a way CPython structurally cannot offer.
+// `par for` (0.43) is the loop-construct twin: the same fan-out, for
+// per-iteration effects rather than values, with an implicit barrier.
 //
 // The one semantic difference from `map`, by design: the function runs
 // against worker snapshots (exactly like `spawn`), so mutating enclosing
 // state from inside it does nothing visible here.
 //
-// This program counts primes in 48 blocks of 1000 numbers, both ways,
-// checks the answers agree exactly, and reports the speedup.
+// This program counts primes in 48 blocks of 20,000 numbers, both ways,
+// checks the answers agree exactly, and reports the speedup. (The block
+// size is chosen so there is real work per element: as of 0.43 the JIT
+// compiles count_primes to native code, so small blocks finish before
+// the fan-out can pay for itself.)
 
 fn count_primes(block) = {
-    let lo = block * 1000 + 2
-    let hi = lo + 1000
+    let lo = block * 20000 + 2
+    let hi = lo + 20000
     let mut count = 0
     let mut n = lo
     while n < hi {
@@ -41,7 +46,7 @@ let t2 = time.monotonic_ms()
 let seq_ms = t1 - t0
 let par_ms = t2 - t1
 
-println("blocks: " + show(len(blocks)) + " x 1000 numbers")
+println("blocks: " + show(len(blocks)) + " x 20000 numbers")
 println("primes found: " + show(sum(parallel)))
 println("map:     " + show(seq_ms) + "ms")
 println("par_map: " + show(par_ms) + "ms")
@@ -55,13 +60,38 @@ if sequential != parallel => {
 }
 
 // par_filter: same fan-out, filter's keep-on-true rule.
-let dense = par_filter(blocks, (b) => count_primes(b) > 100)
-println("blocks with >100 primes: " + show(dense))
+let dense = par_filter(blocks, (b) => count_primes(b) > 1700)
+println("blocks with >1700 primes: " + show(len(dense)))
+
+// par for: the same fan-out as a loop construct. Use it for effects and
+// heavy per-iteration work; when you want values back, that's par_map.
+let t3 = time.monotonic_ms()
+par for block in blocks {
+    let c = count_primes(block)
+    if c < 0 => println("unreachable: negative prime count")
+}
+let t4 = time.monotonic_ms()
+println("par for: " + show(t4 - t3) + "ms (same fan-out, as a loop)")
+
+// The snapshot rule, demonstrated: like spawn and par_map, each
+// iteration runs against a worker snapshot, so this write never lands
+// on our binding — values come back via par_map, never via shared state.
+let mut sink = 0
+par for block in blocks { sink = sink + 1 }
+println("sink after par for: " + show(sink) + " (snapshot semantics)")
 
 test "par_map and par_filter agree with their sequential twins" {
     assert_eq(par_map([1, 2, 3], (x) => x * 2), map([1, 2, 3], (x) => x * 2))
-    assert_eq(head(map(range(0, 48), count_primes)), 168)   // pi(1000) = 168
+    assert_eq(head(map(range(0, 1), count_primes)), 2262)   // pi(20000) = 2262
     assert_eq(sequential, parallel)
     assert_eq(sum(sequential), sum(parallel))
     assert_eq(par_filter(1..20, (x) => x % 5 == 0), filter(1..20, (x) => x % 5 == 0))
+}
+
+test "par for honors the spawn/par_map snapshot model" {
+    let mut counter = 0
+    par for x in [1, 2, 3] { counter = counter + x }
+    assert_eq(counter, 0)                       // writes stay on worker snapshots
+    let squares = par_map(0..4, (x) => x * x)   // values come back via par_map
+    assert_eq(squares, map(0..4, (x) => x * x))
 }
