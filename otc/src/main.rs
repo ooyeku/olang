@@ -29,6 +29,10 @@ enum Commands {
     New {
         /// Project name (also the directory to create)
         name: String,
+        /// Scaffold a library package (index.ol at the root, usable as a
+        /// dependency) instead of an application
+        #[arg(long)]
+        lib: bool,
     },
     /// Manage packages (olang.toml, olang.lock, registry)
     #[command(subcommand)]
@@ -59,7 +63,7 @@ fn main() {
     let verbose = cli.verbose;
 
     let result = match cli.command {
-        Commands::New { name } => commands::new::execute(name, verbose),
+        Commands::New { name, lib } => commands::new::execute(name, lib, verbose),
         Commands::Pkg(cmd) => cmd.execute(verbose),
         Commands::Check { file } => commands::check::execute(file, verbose),
         Commands::Deps { file } => commands::deps::execute(file, verbose),

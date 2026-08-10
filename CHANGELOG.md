@@ -12,6 +12,23 @@ documented.
 
 ### Added
 
+- **`otc pkg update`, and `install` finally honors the lock.** A
+  lockfile that still covers `olang.toml` is now replayed exactly:
+  pinned revs fetched (offline once cached), lock left byte-identical —
+  so repeated installs and every `olang` run (which installs
+  implicitly) stopped re-resolving branch deps and rewriting the lock
+  on each invocation. The lock records which tag/branch a git pin came
+  from, so repointing a dependency in the manifest still re-resolves on
+  a plain `install`; moving a branch dep to its new upstream head is
+  the explicit `otc pkg update`. Fixed along the way: the bare git
+  mirrors in `~/.olang/cache` were cloned without a fetch refspec, so
+  the "refresh refs" fetch had never actually updated a branch ref.
+
+- **`otc new --lib`.** Scaffolds a library package the resolver can
+  actually consume: `index.ol` at the package root (where `use <name>`
+  looks) with a `share`d function and a passing test block, plus a
+  README showing how a depending package adds and imports it.
+
 - **The tracker's frontend catches up with its backend.** Still plain
   HTML + JS with zero dependencies, now surfacing the whole API:
   server-driven search/filter/sort/paging with the view state mirrored
@@ -116,6 +133,12 @@ documented.
   target/wasm32-unknown-unknown/release/olang_playground.wasm).
 
 ### Fixed
+
+- **`otc unused` stopped flagging live code.** Usage now counts
+  wildcard and bare imports (`use m { * }` / `use m` marks every shared
+  function of `m` used) and namespace references (`m.f(...)`) — not
+  just `use m { f }`. Over-counting is the deliberate direction: a
+  linter that cries wolf gets ignored.
 
 - `print` now flushes stdout, so a partial line — a shell prompt, a
   progress indicator — appears immediately instead of waiting for the

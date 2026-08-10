@@ -67,8 +67,9 @@ otc pkg add lib --path ../lib      # add a path dependency
 otc pkg add http --git URL --tag v1.0.0   # add a git dependency
 otc pkg add json --version "^1.0"  # add a registry dependency
 otc pkg remove lib                 # drop a dependency
-otc pkg install                    # resolve + fetch, write olang.lock
+otc pkg install                    # fetch, honoring olang.lock
 otc pkg install --frozen           # fail if the lock would change (CI)
+otc pkg update                     # re-resolve everything, rewrite the lock
 otc pkg tree                       # show the resolved dependency graph
 ```
 
@@ -130,6 +131,15 @@ This works for the embedded `colx` collections module too (`:help colx`).
 registry version, or a path — plus a sha256 checksum of the source tree.
 Commit it: a fresh `otc pkg install` on another machine reproduces
 byte-identical code, and `--frozen` makes CI fail if resolution drifts.
+
+`install` *honors* the lock: while it still covers `olang.toml`, the pinned
+sources are fetched exactly and the lock is left untouched, so repeated
+installs (and every `olang` run, which installs implicitly) are reproducible
+and offline once cached. Editing the manifest re-resolves just what changed
+the coverage — adding, removing, or repointing a dependency (the lock records
+which tag/branch a git pin came from, so changing the requested ref is
+detected). Moving a branch dependency to its new upstream head is always
+explicit: `otc pkg update`.
 
 ## Version resolution (MVS)
 

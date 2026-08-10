@@ -41,12 +41,16 @@ pub enum PkgCommand {
         /// Dependency name
         name: String,
     },
-    /// Resolve and fetch dependencies, writing olang.lock
+    /// Fetch dependencies, honoring olang.lock (resolving only what the
+    /// lock doesn't cover)
     Install {
         /// Fail if the lockfile would change (for CI)
         #[arg(long)]
         frozen: bool,
     },
+    /// Re-resolve all dependencies to the newest satisfying sources and
+    /// rewrite olang.lock
+    Update,
     /// Show the resolved dependency tree
     Tree,
     /// Publish a release into a registry index
@@ -75,7 +79,8 @@ impl PkgCommand {
                 version_req,
             } => add(name, path, git, tag, version_req),
             PkgCommand::Remove { name } => remove(name),
-            PkgCommand::Install { frozen } => do_install(*frozen, verbose),
+            PkgCommand::Install { frozen } => do_install(*frozen, false, verbose),
+            PkgCommand::Update => do_install(false, true, verbose),
             PkgCommand::Tree => tree(),
             PkgCommand::Publish { registry, git, rev } => publish(registry, git, rev),
         }
@@ -159,11 +164,13 @@ fn remove(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn do_install(frozen: bool, verbose: bool) -> anyhow::Result<()> {
+fn do_install(frozen: bool, refresh: bool, verbose: bool) -> anyhow::Result<()> {
     let root = project_root()?;
+    let lock_before = std::fs::read_to_string(root.join("olang.lock")).ok();
     let opts = InstallOptions {
         frozen,
         registry: registry_from_env(),
+        refresh,
     };
     let map = install(&root, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
     println!(
@@ -176,7 +183,12 @@ fn do_install(frozen: bool, verbose: bool) -> anyhow::Result<()> {
             println!("  {} -> {}", name, dir.display());
         }
     }
-    println!("Wrote olang.lock");
+    let lock_after = std::fs::read_to_string(root.join("olang.lock")).ok();
+    if lock_before == lock_after {
+        println!("olang.lock unchanged");
+    } else {
+        println!("Wrote olang.lock");
+    }
     Ok(())
 }
 
@@ -215,7 +227,9 @@ fn tree() -> anyhow::Result<()> {
 fn describe_source(source: &LockedSource) -> String {
     match source {
         LockedSource::Path { path } => format!("(path {})", path),
-        LockedSource::Git { git, rev } => format!("(git {} @ {})", git, &rev[..rev.len().min(8)]),
+        LockedSource::Git { git, rev, .. } => {
+            format!("(git {} @ {})", git, &rev[..rev.len().min(8)])
+        }
         LockedSource::Registry { .. } => "(registry)".to_string(),
     }
 }

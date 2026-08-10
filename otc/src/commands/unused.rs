@@ -1,6 +1,15 @@
+//! `otc unused` — shared functions no other file in the tree imports.
+//!
+//! Usage is counted three ways, so the report errs toward "used" rather
+//! than flagging live code:
+//! - a specific import: `use utils { helper }`
+//! - a wildcard or bare import of the module: `use utils { * }` / `use utils`
+//!   (every shared function of that module counts as used)
+//! - a namespace reference: `utils.helper(...)` anywhere in a file
+
 use anyhow::{Context, Result};
 use olang::parser::Parser;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub fn execute(dir_path: String, verbose: bool) -> Result<()> {
@@ -21,54 +30,131 @@ pub fn execute(dir_path: String, verbose: bool) -> Result<()> {
 
 #[derive(Debug)]
 struct UnusedAnalysis {
-    shared_functions: HashMap<String, Vec<String>>, // file -> functions
-    used_functions: HashSet<String>,
-    unused_functions: HashMap<String, Vec<String>>, // file -> unused functions
+    /// module (file stem) -> its shared functions
+    shared_functions: BTreeMap<String, Vec<String>>,
+    /// module -> the shared functions nothing else imports or references
+    unused_functions: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Default)]
+struct Usage {
+    /// Names imported specifically: `use m { name }`.
+    named: HashSet<String>,
+    /// Modules imported wholesale: `use m { * }` or bare `use m`.
+    whole_modules: HashSet<String>,
+    /// Raw source of every scanned file, for namespace references (`m.f`).
+    sources: Vec<String>,
 }
 
 fn analyze_unused_functions(dir_path: &Path) -> Result<UnusedAnalysis> {
-    let mut shared_functions = HashMap::new();
-    let mut used_functions = HashSet::new();
-
-    // Find all .ol files
     let ol_files = find_ol_files(dir_path)?;
 
-    // First pass: collect all shared functions
+    let mut shared_functions = BTreeMap::new();
+    let mut usage = Usage::default();
+
     for file_path in &ol_files {
-        let functions = extract_shared_functions(file_path)?;
-        if !functions.is_empty() {
-            shared_functions.insert(
-                file_path.file_stem().unwrap().to_string_lossy().to_string(),
-                functions,
-            );
+        let source = std::fs::read_to_string(file_path)
+            .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
+        let parser = Parser::new();
+        let ast = parser
+            .parse(&source)
+            .with_context(|| format!("Failed to parse file: {}", file_path.display()))?;
+
+        let module = file_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        let mut functions = Vec::new();
+        for statement in &ast.statements {
+            match statement {
+                olang::ast::Statement::ShareDecl(olang::ast::ShareDecl::Function(func)) => {
+                    functions.push(func.name.clone());
+                }
+                olang::ast::Statement::UseDecl(use_decl) => {
+                    let mut whole = use_decl.items.is_empty();
+                    for item in &use_decl.items {
+                        match item {
+                            olang::ast::UseItem::Specific(name) => {
+                                usage.named.insert(name.clone());
+                            }
+                            olang::ast::UseItem::Wildcard => whole = true,
+                        }
+                    }
+                    if whole {
+                        // `use foo` / `use foo.bar { * }`: both the head (a
+                        // dependency name) and the last segment (a sibling
+                        // file's stem) are how the module may be known here.
+                        for segment in [use_decl.path.first(), use_decl.path.last()]
+                            .into_iter()
+                            .flatten()
+                        {
+                            usage.whole_modules.insert(segment.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
+        if !functions.is_empty() {
+            shared_functions.insert(module, functions);
+        }
+        usage.sources.push(source);
     }
 
-    // Second pass: collect all used functions
-    for file_path in &ol_files {
-        let used = extract_used_functions(file_path)?;
-        used_functions.extend(used);
-    }
-
-    // Calculate unused functions
-    let mut unused_functions = HashMap::new();
-    for (file, functions) in &shared_functions {
+    let mut unused_functions = BTreeMap::new();
+    for (module, functions) in &shared_functions {
         let unused: Vec<String> = functions
             .iter()
-            .filter(|func| !used_functions.contains(*func))
+            .filter(|func| !is_used(module, func, &usage))
             .cloned()
             .collect();
 
         if !unused.is_empty() {
-            unused_functions.insert(file.clone(), unused);
+            unused_functions.insert(module.clone(), unused);
         }
     }
 
     Ok(UnusedAnalysis {
         shared_functions,
-        used_functions,
         unused_functions,
     })
+}
+
+fn is_used(module: &str, func: &str, usage: &Usage) -> bool {
+    if usage.named.contains(func) || usage.whole_modules.contains(module) {
+        return true;
+    }
+    // Namespace reference: `module.func` as a standalone token pair.
+    let needle = format!("{}.{}", module, func);
+    usage
+        .sources
+        .iter()
+        .any(|source| contains_token(source, &needle))
+}
+
+/// Whether `needle` occurs in `haystack` with no identifier character on
+/// either side — so `geometry.area` matches, but `mygeometry.area` and
+/// `geometry.area_of` don't. Occurrences inside strings or comments still
+/// count; for a linter, over-counting usage is the safe direction.
+fn contains_token(haystack: &str, needle: &str) -> bool {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let begin = start + pos;
+        let end = begin + needle.len();
+        let before_ok = haystack[..begin]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_ident(c));
+        let after_ok = haystack[end..].chars().next().is_none_or(|c| !is_ident(c));
+        if before_ok && after_ok {
+            return true;
+        }
+        start = begin + 1;
+    }
+    false
 }
 
 fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
@@ -93,52 +179,6 @@ fn find_ol_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
     }
 
     Ok(files)
-}
-
-fn extract_shared_functions(file_path: &Path) -> Result<Vec<String>> {
-    let source = std::fs::read_to_string(file_path)
-        .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
-
-    let parser = Parser::new();
-    let ast = parser
-        .parse(&source)
-        .with_context(|| format!("Failed to parse file: {}", file_path.display()))?;
-
-    let mut functions = Vec::new();
-
-    for statement in &ast.statements {
-        if let olang::ast::Statement::ShareDecl(olang::ast::ShareDecl::Function(func)) = statement {
-            functions.push(func.name.clone());
-        }
-    }
-
-    Ok(functions)
-}
-
-fn extract_used_functions(file_path: &Path) -> Result<Vec<String>> {
-    let source = std::fs::read_to_string(file_path)
-        .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
-
-    let parser = Parser::new();
-    let ast = parser
-        .parse(&source)
-        .with_context(|| format!("Failed to parse file: {}", file_path.display()))?;
-
-    let mut used = Vec::new();
-
-    for statement in &ast.statements {
-        if let olang::ast::Statement::UseDecl(use_decl) = statement {
-            for item in &use_decl.items {
-                if let olang::ast::UseItem::Specific(name) = item {
-                    used.push(name.clone());
-                }
-                // Note: Wildcard imports can't be tracked for unused analysis
-                // since we don't know what specific functions they import
-            }
-        }
-    }
-
-    Ok(used)
 }
 
 fn display_unused_analysis(analysis: &UnusedAnalysis, verbose: bool) {
@@ -170,7 +210,6 @@ fn display_unused_analysis(analysis: &UnusedAnalysis, verbose: bool) {
             .sum::<usize>();
 
         println!("Total shared functions: {}", total_shared);
-        println!("Total used functions: {}", analysis.used_functions.len());
         println!("Total unused functions: {}", total_unused);
 
         if total_shared > 0 {
