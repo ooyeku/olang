@@ -1,10 +1,15 @@
 name: CI
 
+# PAUSED: automatic push/PR triggers are disabled while GitHub Actions is
+# blocked on account billing (jobs were refused before starting, showing a
+# red X on every push without running). To restore once billing is fixed,
+# re-add the `push`/`pull_request` triggers below (or `git revert` the
+# commit that paused them). `workflow_dispatch` still allows a manual run.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
+  # push:
+  #   branches: [main]
+  # pull_request:
 
 env:
   CARGO_TERM_COLOR: always
