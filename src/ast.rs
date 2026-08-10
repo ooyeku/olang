@@ -808,11 +808,44 @@ impl From<Vec<Value>> for Value {
     }
 }
 
+/// Render a float for human display so a `Float` is always distinguishable
+/// from an `Int` and never expands into hundreds of fake-precision digits.
+///
+/// Rust's default `f64` Display drops the fractional part of whole values
+/// (`2.0` prints as `2`) and writes very large or very small magnitudes as
+/// full decimal (`1e301` becomes a 302-digit integer). Both violate the
+/// "shows a value's shape" contract of `to_string`/`show`, so:
+/// - whole finite values keep a trailing `.0` (`2.0`, not `2`);
+/// - magnitudes at or beyond 1e16, or nonzero below 1e-4, use exponent form;
+/// - NaN and infinities render as `NaN` / `inf` / `-inf`.
+///
+/// The output still round-trips (the underlying formats are shortest-form),
+/// and it is used by every human-facing path so all three tiers agree.
+pub fn format_float(x: f64) -> String {
+    if x.is_nan() {
+        return "NaN".to_string();
+    }
+    if x.is_infinite() {
+        return if x < 0.0 { "-inf" } else { "inf" }.to_string();
+    }
+    let a = x.abs();
+    if a != 0.0 && (a >= 1e16 || a < 1e-4) {
+        // Shortest exponent form, e.g. "1e301", "1.5e-5".
+        return format!("{:e}", x);
+    }
+    let s = format!("{}", x);
+    if s.contains('.') || s.contains('e') || s.contains('E') {
+        s
+    } else {
+        format!("{}.0", s)
+    }
+}
+
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Integer(n) => write!(f, "{}", n),
-            Value::Float(x) => write!(f, "{}", x),
+            Value::Float(x) => write!(f, "{}", format_float(*x)),
             Value::String(s) => write!(f, "\"{}\"", s),
             Value::Boolean(b) => write!(f, "{}", b),
             Value::List(items_rc) => {
@@ -1029,4 +1062,50 @@ pub struct UseDecl {
 pub struct TestDecl {
     pub name: String,
     pub body: Vec<Statement>,
+}
+
+#[cfg(test)]
+mod float_format_tests {
+    use super::format_float;
+
+    #[test]
+    fn whole_values_keep_a_decimal() {
+        assert_eq!(format_float(2.0), "2.0");
+        assert_eq!(format_float(-3.0), "-3.0");
+        assert_eq!(format_float(0.0), "0.0");
+        assert_eq!(format_float(1234567890.0), "1234567890.0");
+    }
+
+    #[test]
+    fn fractional_values_are_shortest() {
+        assert_eq!(format_float(3.5), "3.5");
+        assert_eq!(format_float(0.1), "0.1");
+        assert_eq!(format_float(-2.25), "-2.25");
+    }
+
+    #[test]
+    fn extremes_use_exponent_not_hundreds_of_digits() {
+        assert_eq!(format_float(1e301), "1e301");
+        assert_eq!(format_float(1e-5), "1e-5");
+        assert!(format_float(1e301).len() < 10);
+        // The 1e16 boundary: just below stays decimal, at/above goes exponent.
+        assert_eq!(format_float(9.9e15), "9900000000000000.0");
+        assert_eq!(format_float(1e16), "1e16");
+    }
+
+    #[test]
+    fn non_finite_values_render_plainly() {
+        assert_eq!(format_float(f64::NAN), "NaN");
+        assert_eq!(format_float(f64::INFINITY), "inf");
+        assert_eq!(format_float(f64::NEG_INFINITY), "-inf");
+    }
+
+    #[test]
+    fn every_output_round_trips_back_to_the_same_float() {
+        for x in [2.0, 3.5, -0.0, 1234567890.0, 1e301, 1e-5, 0.1, 9.9e15, 1e16] {
+            let s = format_float(x);
+            let back: f64 = s.parse().unwrap();
+            assert_eq!(back.to_bits(), x.to_bits(), "round-trip failed for {s}");
+        }
+    }
 }

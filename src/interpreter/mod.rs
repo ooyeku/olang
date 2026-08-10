@@ -902,7 +902,7 @@ impl Interpreter {
                             match val {
                                 Value::String(s) => result.push_str(&s),
                                 Value::Integer(n) => result.push_str(&n.to_string()),
-                                Value::Float(x) => result.push_str(&x.to_string()),
+                                Value::Float(x) => result.push_str(&crate::ast::format_float(x)),
                                 Value::Boolean(b) => result.push_str(&b.to_string()),
                                 other => result.push_str(&format!("{}", other)),
                             }
@@ -1876,7 +1876,7 @@ impl Interpreter {
             let key_str = match key {
                 Value::String(s) => s.as_ref().clone(),
                 Value::Integer(i) => i.to_string(),
-                Value::Float(f) => f.to_string(),
+                Value::Float(f) => crate::ast::format_float(f),
                 Value::Boolean(b) => b.to_string(),
                 _ => {
                     return Err(InterpreterError::TypeError {

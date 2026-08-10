@@ -1892,7 +1892,7 @@ impl BytecodeVm {
                         let key = match &self.execution_state.register_ref(*key_reg)?.data {
                             ValueData::String(s) => s.as_ref().clone(),
                             ValueData::Integer(i) => i.to_string(),
-                            ValueData::Float(f) => f.to_string(),
+                            ValueData::Float(f) => crate::ast::format_float(*f),
                             ValueData::Boolean(b) => b.to_string(),
                             _ => {
                                 return Err(BytecodeError::TypeError(
@@ -1919,7 +1919,9 @@ impl BytecodeVm {
                                 match &value.data {
                                     ValueData::String(s) => out.push_str(s),
                                     ValueData::Integer(n) => out.push_str(&n.to_string()),
-                                    ValueData::Float(f) => out.push_str(&f.to_string()),
+                                    ValueData::Float(f) => {
+                                        out.push_str(&crate::ast::format_float(*f))
+                                    }
                                     ValueData::Boolean(b) => out.push_str(&b.to_string()),
                                     _ => {
                                         // The interpreter formats everything
@@ -3303,7 +3305,7 @@ impl BytecodeVm {
                 let key = match &args[1].data {
                     ValueData::String(st) => st.as_ref().clone(),
                     ValueData::Integer(i) => i.to_string(),
-                    ValueData::Float(f) => f.to_string(),
+                    ValueData::Float(f) => crate::ast::format_float(*f),
                     ValueData::Boolean(b) => b.to_string(),
                     _ => {
                         return Err(BytecodeError::TypeError(

@@ -1326,7 +1326,7 @@ impl fmt::Display for OvmValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.data {
             ValueData::Integer(i) => write!(f, "{}", i),
-            ValueData::Float(fl) => write!(f, "{}", fl),
+            ValueData::Float(fl) => write!(f, "{}", crate::ast::format_float(*fl)),
             ValueData::Boolean(b) => write!(f, "{}", b),
             ValueData::Unit => write!(f, "()"),
             ValueData::Native(handle) => write!(f, "{}", handle.0.display()),
