@@ -106,6 +106,7 @@ mod tests {
                 source: LockedSource::Git {
                     git: "https://example.com/beta".to_string(),
                     rev: "deadbeef".to_string(),
+                    reference: Some("v1.2.0".to_string()),
                 },
                 checksum: Some("abc".to_string()),
                 dependencies: vec!["gamma".to_string()],
