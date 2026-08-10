@@ -444,8 +444,9 @@ let svg = plot.line(x, north, #{ "title": "north station" })
 println(to_string(str.contains(svg, "<svg")))
 ```
 
-The [stdlib chapters](stdlib.md#ods--series-and-frames) document every
-verb; [`examples/statlab/`](../examples/statlab/) is a complete
+[The Data Stack](ods.md) is the full chapter — every Series and Frame
+verb, the complete `stats` and `plot` modules, and the performance
+story; [`examples/statlab/`](../examples/statlab/) is a complete
 statistical study built on this stack.
 
 ## Testing
@@ -543,13 +544,16 @@ The playground engine also powers olang in the browser as a *frontend*
 language: the `dom` module lets an olang program drive a real page —
 queries, events, fetch — which is how
 [`examples/app/`](../examples/app/) serves an issue tracker whose
-frontend is itself written in olang. The
-[dom chapter](stdlib.md#dom--the-browser) tells that story.
+frontend is itself written in olang.
+[olang in the Browser](wasm.md) tells that story whole, architecture
+to application.
 
 ## Where to next
 
 - [The Language Reference](language.md) — every construct, precisely.
 - [The Standard Library](stdlib.md) — every builtin and module.
+- [The Data Stack](ods.md) — Series, Frames, inference, and charts, in depth.
+- [olang in the Browser](wasm.md) — the same language as a frontend language.
 - [Packages](packages.md) — multi-file programs and dependencies.
 - [`examples/`](../examples/) — complete programs: a task CLI, a template
   engine, a regex engine, a parser combinator library, a Lisp interpreter

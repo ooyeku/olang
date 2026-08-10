@@ -54,6 +54,8 @@ export const BOOK = [
   { slug: 'tour', file: 'tour.md', title: 'The Tour' },
   { slug: 'language', file: 'language.md', title: 'The Language' },
   { slug: 'stdlib', file: 'stdlib.md', title: 'The Standard Library' },
+  { slug: 'ods', file: 'ods.md', title: 'The Data Stack' },
+  { slug: 'wasm', file: 'wasm.md', title: 'olang in the Browser' },
   { slug: 'packages', file: 'packages.md', title: 'Packages' },
   { slug: 'internals', file: 'internals.md', title: 'Internals' },
   { slug: 'ovm', file: 'ovm.md', title: 'The OVM' },

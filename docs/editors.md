@@ -8,7 +8,8 @@ reports and what the runtime does, and every diagnostic comes from the
 real parser rather than a reimplementation of it.
 
 Part of [the olang book](README.md) ·
-[Tour](tour.md) · [Language](language.md) · [Stdlib](stdlib.md)
+[Tour](tour.md) · [Language](language.md) · [Stdlib](stdlib.md) ·
+[Data Stack](ods.md) · [Browser](wasm.md)
 
 ---
 

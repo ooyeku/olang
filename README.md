@@ -76,7 +76,9 @@ and a keep-alive server), `db` (SQLite), `testing`, `dom` (the browser,
 in the wasm build), and the data stack (`ods`, `stats`, `plot`) — plus
 two olang-source modules (`colx`, `mathx`) compiled into the binary and
 differential-tested against their native twins. Reference:
-[docs/stdlib.md](docs/stdlib.md).
+[docs/stdlib.md](docs/stdlib.md); the browser story — olang as a
+frontend language over the wasm build — has its own chapter,
+[docs/wasm.md](docs/wasm.md).
 
 ## The data stack
 
@@ -101,7 +103,8 @@ println(to_string(map_get(fit, "r2") > 0.99))
 Measured, not asserted: reductions at NumPy parity sequentially and
 2.7× ahead in parallel; a 10M-row, 1k-group aggregation in 27.2 ms
 single-threaded against 24.0 ms for Polars on 18 threads; a 1M×20 OLS
-3.8× ahead of `numpy.linalg.lstsq`. The full benchmark tables and every
+3.8× ahead of `numpy.linalg.lstsq`. The stack's chapter:
+[docs/ods.md](docs/ods.md). The full benchmark tables and every
 recorded deferral: [docs/design/ods.md](docs/design/ods.md).
 
 ## Execution model

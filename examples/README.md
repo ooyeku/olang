@@ -57,8 +57,9 @@ A two-package demonstration of the package manager (see
   column multiply, revenue-by-region is a `group_by`, then a `json` report
   is emitted, read back, and selected by runtime key — a parsed JSON object
   reads through the same `map_*` accessors as a map. (The records-and-fold
-  version of this pipeline ran 50× slower at 200k rows; see
-  `docs/design/ods.md`.)
+  version of this pipeline ran 50× slower at 200k rows — the measurement
+  that opens [the Data Stack chapter](../docs/ods.md), which teaches every
+  verb this program uses.)
 - [`template/`](template/) — a mustache-style template engine self-hosted in
   olang: a lexer, a parser building a nested node tree over a shared `Node`
   ADT (`lib/ast.ol`), and a renderer walking it against a JSON context.
@@ -123,7 +124,9 @@ A two-package demonstration of the package manager (see
   Monte Carlos fanned across every core with `par_map`), a 3-predictor
   OLS at n=5,000 recovering its true coefficients, and SVG charts of
   the bootstrap distribution and the fit — the whole study in under
-  half a second. A `test` block pins every inference
+  half a second. A `test` block pins every inference. The `stats` and
+  `plot` workflow it scales up is taught in
+  [the Data Stack chapter](../docs/ods.md)
 - [`parmap/`](parmap/) — data-parallel pipelines with `par_map` /
   `par_filter` and the `par for` loop: counts primes in 48 blocks both
   sequentially and fanned out across every core, asserts the answers
@@ -145,7 +148,9 @@ A two-package demonstration of the package manager (see
   the ods data stack, CSV export, JSON backups, optional bearer-token
   auth for writes, and a router with method-aware 405s, HEAD support,
   per-request logging, and one error envelope — plus its own
-  spreadsheet-style frontend served from disk. The API contract is
+  spreadsheet-style frontend, written in olang and run in the browser
+  as WebAssembly (the worked example behind
+  [the Browser chapter](../docs/wasm.md)). The API contract is
   locked by `tests/tracker_app_test.rs`, which boots the real app.
   Long-running — `run_all.ol` skips it
 - [`markdown/`](markdown/) — a markdown→HTML converter: a block parser

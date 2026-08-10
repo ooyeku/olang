@@ -260,7 +260,8 @@ the module registry through which a Rust component registers stdlib-style
 namespaces, native value types, and operator behavior into *both*
 execution tiers at once. Its proving instance is the ods data stack
 (`src/ods/` — Series, Frames, stats, plot — over the pure-Rust
-`olang-ods/` workspace crate). Native values cross the tier boundary as
+`olang-ods/` workspace crate; the user-facing chapter is
+[The Data Stack](ods.md)). Native values cross the tier boundary as
 one shared Arc — a refcount bump, never a conversion — so the lossy
 round-trip failure mode is unrepresentable for them.
 
@@ -356,3 +357,8 @@ docs/                     this book
 examples/                 runnable programs + run_all.ol harness
 tests/                    integration suites
 ```
+
+Two of these subsystems have user-facing chapters of their own:
+`src/ods/` and `olang-ods/` are taught in [The Data Stack](ods.md), and
+`src/playground.rs` — the wasm boundary, the persistent browser
+session, and the `dom` bridge — in [olang in the Browser](wasm.md).

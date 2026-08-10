@@ -19,7 +19,9 @@ the implementation.
 |---|---|
 | **[A Tour of olang](tour.md)** | The language, taught by building one small program end-to-end — from a list of strings to a parallel statistical report |
 | **[The Language Reference](language.md)** | Every construct, precisely: values and mutability, evaluation order, operators, control flow, pattern matching, functions and closure semantics, types, traits, errors, concurrency, modules, testing |
-| **[The Standard Library](stdlib.md)** | Every global builtin and all twenty-two modules, each with its design rationale and examples — including the ods data stack (Series, Frames, stats, SVG charts) and the browser `dom` module |
+| **[The Standard Library](stdlib.md)** | Every global builtin and all twenty-two modules, each with its design rationale and examples |
+| **[The Data Stack](ods.md)** | `ods`, `stats`, and `plot` in depth: why columns beat rows (measured), every Series and Frame verb, a complete inference workflow, charts as SVG text, and the stack's performance characteristics |
+| **[olang in the Browser](wasm.md)** | The same language end to end: the WebAssembly build, the `dom` module, stateless frontends and event delegation, and a guided reading of a complete olang frontend |
 | **[Packages](packages.md)** | Scaffolding projects and libraries, manifests, dependencies, the lockfile model, versioning, the registry |
 
 Complete worked programs live in [`examples/`](../examples/) — a task CLI,
@@ -48,7 +50,9 @@ run_all.ol`.
 
 New to olang? **Tour → Language Reference** (skim, then keep as reference)
 **→ examples/**. Building something specific? Go straight to the
-[stdlib](stdlib.md) chapter for your domain. Contributing?
+[stdlib](stdlib.md) chapter for your domain — data work has its own
+chapter in [The Data Stack](ods.md), and frontends in
+[olang in the Browser](wasm.md). Contributing?
 **Internals → Stability**, then the reference chapters as needed.
 
 ## Conventions used throughout

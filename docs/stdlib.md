@@ -8,7 +8,8 @@ the implementation. (Blocks marked `no-run` are parse-checked only: they
 need a file system, a network, or a browser.)
 
 Part of [the olang book](README.md) ·
-[Tour](tour.md) · [Language](language.md) · [Packages](packages.md) ·
+[Tour](tour.md) · [Language](language.md) ·
+[Data Stack](ods.md) · [Browser](wasm.md) · [Packages](packages.md) ·
 [Internals](internals.md) · [Stability](stability.md)
 
 ---
@@ -746,18 +747,9 @@ unwrap(db.close(conn))
 When olang runs in a browser (as the WebAssembly build behind the
 playground), the page itself becomes a device the program can drive:
 `dom` is that device's API. It is deliberately small — nine functions —
-because its design philosophy is the opposite of a widget toolkit's:
-olang does not wrap the DOM object model, it treats the page as a
-*rendering target*. You query elements, wire events, fetch data, and
-render by writing HTML. Everything else is ordinary olang.
-
-`dom` is the one browser-only module: in a native build every call
-reports that it needs the wasm build (mirroring how `fs`, `os`, `http`,
-and `db` are absent from the browser). The examples in this section are
-therefore `no-run` — they run on a page, not in the test harness. For a
-complete working application, read them alongside
-[`examples/app/`](../examples/app/), the issue tracker whose frontend is
-`app.ol`.
+because olang does not wrap the DOM object model: it treats the page as
+a *rendering target*. You query elements, wire events, fetch data, and
+render by writing HTML; everything else is ordinary olang.
 
 | Function | Description |
 |---|---|
@@ -769,125 +761,24 @@ complete working application, read them alongside
 | `dom.on(el, event, handler)` | attach an event handler |
 | `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page |
 
-### Elements are handles
-
-`dom.query` returns an opaque **handle** — pass it back into the other
-functions; there is nothing else to do with it. A handle stays attached
-to the specific element it named, so a handle taken *before* a
-`set_html` re-render points at a node that no longer exists afterwards.
-The discipline that follows: query fresh handles inside handlers, at the
-moment of use, rather than caching them at startup.
+`dom` is the one browser-only module: in a native build every call
+reports that it needs the wasm build (mirroring how `fs`, `os`, `http`,
+and `db` are absent from the browser). The example is therefore
+`no-run` — it runs on a page, not in the test harness:
 
 ```olang no-run
-let title = dom.query("#title")
-dom.set_text(title, "olang was here")
-dom.set_html(dom.query("#list"), ["a", "b"] |> map((s) => "<li>" + s + "</li>") |> join(""))
-```
-
-### Events and their payloads
-
-`dom.on(el, event, handler)` registers a handler for the element. The
-handler receives at most one argument — a **payload string** whose
-contents depend on the event name (a zero-parameter handler simply
-ignores it):
-
-| Event | Fires on | Payload |
-|---|---|---|
-| `"enter"` | the Enter key in that element | the element's current value |
-| `"click"` | any click on or inside the element | the **id of the clicked target** (empty if it has none) |
-| `"change"` | a change on or inside the element | the target's id and new value, separated by a newline |
-| any other name | that DOM event, verbatim | empty string |
-
-Two of these conventions carry the module's whole event philosophy.
-`"enter"` exists because "text field + Enter" is the fundamental input
-gesture, and wiring `keydown` by hand for it is boilerplate. And
-`"click"`/`"change"` deliver the *target's id*, which makes **event
-delegation** the natural style: attach one handler to a container, give
-the elements inside it ids that encode their action (`del-17`,
-`adv-17`), and dispatch on the prefix — surviving any number of
-re-renders, because the handler is on the container, not on the
-short-lived rows.
-
-```olang no-run
-dom.on(dom.query("#rows"), "click", (target_id) => {
-    let id = str.substring(target_id, 4, len(target_id))
-    if starts_with(target_id, "del-") => remove_item(id)
-    else if starts_with(target_id, "adv-") => advance_item(id)
-})
-
+dom.set_html(dom.query("#list"),
+    ["a", "b"] |> map((s) => "<li>" + s + "</li>") |> join(""))
 dom.on(dom.query("#new-title"), "enter", (title) => add_item(title))
-
-dom.on(dom.query("#rows"), "change", (payload) => {
-    let parts = split(payload, "\n")     // [target id, new value]
-    update_item(parts[0], parts[1])
-})
+dom.fetch("GET", "/api/items", "", (resp) => render(unwrap(json.parse(resp))))
 ```
 
-### `dom.fetch`
-
-`dom.fetch(method, path, body, callback)` issues the request through
-the browser and returns immediately; when the response arrives, the
-callback receives its **body text** (parse it with `json.parse` if it
-is JSON). A non-empty body is sent as JSON. A network failure delivers
-`{"error": "..."}` — so one `map_has_key(parsed, "error")` check covers
-the failure path uniformly. There is no status code in the callback;
-design the API so the body says what happened.
-
-```olang no-run
-dom.fetch("GET", "/api/issues", "", (resp) => {
-    let parsed = unwrap(json.parse(resp))
-    if map_has_key(parsed, "error") => show_error(map_get(parsed, "error"))
-    else => render(map_get(parsed, "items"))
-})
-```
-
-### The stateless frontend pattern
-
-Now the pieces assemble into an architecture — the one
-[`examples/app/`](../examples/app/) uses, and the one this module is
-shaped for. Recall from the language reference that olang closures
-[capture by value](language.md#closures-capture-by-value): an event
-handler that wrote to a module-level `let mut items` would update its
-own snapshot and lose the write. So a dom frontend keeps **no state in
-the program at all**. The server is the source of truth for data; the
-DOM itself holds the current value of every cell; and each event runs
-the same loop:
-
-```text
-event → dom.fetch mutation → callback → reload() → GET → render() → one set_html
-```
-
-```olang no-run
-fn row_html(item) =
-    "<tr><td>" + esc(map_get(item, "title")) + "</td>" +
-    "<td><button id=\"adv-" + map_get(item, "id") + "\">" +
-    map_get(item, "status") + "</button></td></tr>"
-
-fn render(items) =
-    dom.set_html(dom.query("#rows"), items |> map(row_html) |> join(""))
-
-fn reload() =
-    dom.fetch("GET", "/api/issues", "", (resp) => {
-        render(map_get(unwrap(json.parse(resp)), "items"))
-    })
-
-fn patch(id, body) =
-    dom.fetch("PATCH", "/api/issues/" + id, body, (resp) => reload())
-
-// Boot: a handful of delegated listeners, bound once, then the first load.
-dom.on(dom.query("#rows"), "click", (tid) => on_click(tid))
-dom.on(dom.query("#new-title"), "enter", (title) => add_issue(title))
-reload()
-```
-
-Note what is absent: no model objects, no store, no synchronization
-between a cached list and the screen — a status *is* its button's
-label, read back with `dom.get_text` when needed. The pattern costs one
-round trip per action and buys total freedom from state bugs; for the
-tools-and-dashboards class of application this module targets, that is
-the right trade. Serving such an app from olang — including the wasm
-engine itself — takes one `http.serve` handler; `examples/app/main.ol`
-shows the complete recipe.
+The module has its own chapter, **[olang in the Browser](wasm.md)**:
+element handles and their lifetime, the event payload conventions that
+make delegation the natural style, `dom.fetch`'s callback contract, the
+stateless-frontend architecture, and a guided reading of
+[`examples/app/`](../examples/app/) — the issue tracker whose frontend
+is olang running as WebAssembly.
 
 ## `testing` — assertions
 
@@ -922,148 +813,75 @@ them with reporting built in.
 
 ## `ods` — Series and Frames
 
-The data stack ([design](design/ods.md)): typed, null-aware columns and
-tables over contiguous native buffers, measured at NumPy parity for
-reductions and within 1.13× of Polars for group-by — see the design doc's
-benchmark tables. A **Series** is a 1-D column of `Int`, `Float`, `Bool`,
-or `String`; a **Frame** is named, equal-length Series.
-
-Two ideas carry everything. **Operators are vectorized**: `s * 2.0 + 1.0`
-runs native kernels over the whole column, `s > 2` yields a Bool-series
-mask for `ods.filter`, and a scalar on either side broadcasts. **Nulls are
-first-class**: a `()` value in a source list (a missed `map_get`, an empty
-CSV cell, a missing JSON key) becomes a null that propagates through
-arithmetic and is skipped by reductions.
-
-| Function | Description |
-|---|---|
-| `ods.series(xs)` | Series from a list or range; dtype inferred, `()` is null |
-| `ods.zeros(n)` / `ods.linspace(a, b, n)` | constructors |
-| `ods.to_list(s)` / `ods.get(s, i)` / `ods.len(s)` | back to values (null → `()`; negative `i` from the end) |
-| `ods.null_count(s)` / `ods.is_null(s)` / `ods.fill_null(s, v)` | null tools |
-| `ods.sum` `mean` `var` `std` `min` `max` | reductions, skipping nulls (`var`/`std` are sample, n−1) |
-| `ods.quantile(s, q)` | linear interpolation, like NumPy |
-| `ods.sort(s)` / `ods.argsort(s)` | ascending, nulls last |
-| `ods.take(s, idx)` / `ods.filter(s, mask)` | selection |
-| `ods.cumsum(s)` / `ods.dot(a, b)` | running sum; inner product |
-| `ods.eq(a, b)` / `ods.ne(a, b)` | *elementwise* equality masks — `a == b` between Series stays structural, like every olang collection |
-
-```olang
-let prices = ods.series([12.5, 8.0, 15.25, 4.0])
-let taxed = prices * 1.07
-println(to_string(ods.mean(taxed)))
-
-let missing = map_get(#{}, "absent")          // Unit → null
-let s = ods.series([1.0, missing, 3.0])
-println(to_string(ods.null_count(s * 2.0)))   // nulls propagate: 1
-println(to_string(ods.mean(s)))               // reductions skip them: 2
-println(to_string(ods.to_list(ods.filter(prices, prices > 10.0))))
-println(to_string(ods.series(1..4) == ods.series([1, 2, 3])))
-```
-
-Frames add the table verbs — all pipeline-friendly:
-
-| Function | Description |
-|---|---|
-| `ods.frame(pairs)` | from `[[name, series-or-list], ...]` |
-| `ods.read_csv(text)` | CSV text → Frame, column types inferred, empty cells null |
-| `ods.frame_from_records(xs)` | list of maps (what `json.parse` gives for an array of objects) |
-| `ods.to_records(f)` | back to a list of maps |
-| `ods.columns` `column` `n_rows` `n_cols` | introspection |
-| `ods.select(f, names)` / `ods.with_column(f, name, col)` | shape the columns |
-| `ods.filter(f, mask)` / `ods.take(f, idx)` / `ods.head(f, n)` | shape the rows |
-| `ods.sort_by(f, col, descending)` | one key, nulls last either way |
-| `ods.group_by(f, keys, aggs)` | aggs are `[[out, op, col], ...]` with ops `count` `sum` `mean` `min` `max` (`count` may omit the column: `["n", "count"]`); a null key is its own group |
-| `ods.join(a, b, on_a, on_b)` / `ods.join_left(...)` | hash joins; null keys never match, collisions suffix `_right` |
+The heart of the data stack: a **Series** is a typed, null-aware 1-D
+column of `Int`, `Float`, `Bool`, or `String` over a contiguous native
+buffer; a **Frame** is a table of named, equal-length Series. Operators
+are vectorized (`s * 2.0` runs one kernel over the whole column;
+`s > 2` yields a Bool mask for `ods.filter`), nulls propagate through
+arithmetic and are skipped by reductions, and the Frame verbs —
+`read_csv`, `select`, `with_column`, `filter`, `sort_by`, `group_by`,
+`join`, `to_records` — all chain with `|>`.
 
 ```olang
 let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,80.0,4\n")
 let full = ods.with_column(sales, "revenue",
     ods.column(sales, "amount") * ods.column(sales, "qty"))
-
 let summary = full
     |> ods.group_by("region", [["total", "sum", "revenue"], ["n", "count"]])
     |> ods.sort_by("total", true)
 for rec in ods.to_records(summary) {
     println(map_get(rec, "region") + ": " + to_string(map_get(rec, "total")))
 }
-
-let tax = ods.frame([["name", ["east", "west"]], ["rate", [0.07, 0.09]]])
-let joined = ods.join(summary, tax, "region", "name")
-println(to_string(ods.columns(joined)))
 ```
+
+The stack has its own chapter, **[The Data Stack](ods.md)**: why the
+columnar model wins (with the measured 50× rewrite behind it), every
+Series and Frame verb with its semantics, null handling, joins and
+grouped aggregation, and the performance characteristics — all taught
+rather than merely listed. Engineering history and benchmark method
+live in [the design document](design/ods.md).
 
 ## `stats` — statistical inference
 
-Distributions, hypothesis tests, and regression, every result pinned
-against scipy reference values in the test suite. Tests and fits return
-maps — destructure them with `map_get`.
-
-| Function | Description |
-|---|---|
-| `stats.describe(s)` | count, nulls, mean, std, min, quartiles, max as a map |
-| `stats.corr(a, b)` / `stats.cov(a, b)` | Pearson r and sample covariance, pairwise-complete |
-| `stats.t_test(a, b)` | Welch's two-sample when `b` is a Series; one-sample vs the null mean when `b` is a number |
-| `stats.chi2_test(observed, expected)` | goodness of fit |
-| `stats.lm(y, xs)` | OLS with an intercept; `xs` is one Series or a list of them; rows with nulls drop; returns coef/se/t/p_value Series plus `r2`, `adj_r2`, `n` |
-| `stats.norm` / `stats.t` / `stats.chi2` / `stats.f` | distribution families |
-| `stats.<fam>.pdf` / `cdf` / `ppf` | density, cumulative, quantile (`norm` takes `mu, sigma`; `t`/`chi2` take `df`; `f` takes `d1, d2`) |
-| `stats.<fam>.sample(n, ...)` | draw a Series — from the `random` module's stream, so `random.seed` makes it reproducible |
+Distributions (`norm`, `t`, `chi2`, `f` — each with `pdf`/`cdf`/`ppf`/
+`sample`), `describe`, correlation and covariance, t-tests (one- and
+two-sample), the χ² goodness-of-fit test, and OLS regression via
+`stats.lm` — every statistic pinned against scipy reference values in
+the test suite. Tests and fits return maps; sampling draws from the
+`random` module's seeded stream, so `random.seed` makes simulations
+reproducible.
 
 ```olang
-println(to_string(stats.norm.ppf(0.975, 0.0, 1.0)))   // 1.9599...
-
 let a = ods.series([5.1, 4.9, 6.2, 5.7, 5.5, 4.8, 5.9, 6.1])
 let b = ods.series([4.2, 4.8, 4.5, 5.0, 4.4, 4.1, 4.9])
 let t = stats.t_test(a, b)
 println("p = " + to_string(map_get(t, "p_value")))
-println("significant: " + to_string(map_get(t, "p_value") < 0.05))
-
-let x = ods.series([1.0, 2.0, 3.0, 4.0, 5.0])
-let y = ods.series([2.1, 3.9, 6.2, 8.1, 9.8])
-let fit = stats.lm(y, x)
-println("slope = " + to_string(ods.get(map_get(fit, "coef"), 1)))
-println("r2 = " + to_string(map_get(fit, "r2")))
-
-random.seed(42)
-let draws = stats.norm.sample(1000, 100.0, 15.0)
-println(to_string(ods.mean(draws) > 95.0))
+println(to_string(stats.norm.ppf(0.975, 0.0, 1.0)))   // 1.9599...
 ```
+
+**[The Data Stack](ods.md#stats--from-description-to-inference)**
+teaches the module end to end — including a complete regression
+workflow and how to read p-values and `r2` honestly.
 
 ## `plot` — charts as SVG text
 
-Charts render to complete standalone SVG documents as strings — write one
-with `fs.write_file`, serve it over `http`, or return it from the
-playground. Defaults follow a colorblind-validated palette with hues
-assigned in fixed series order, so a chart is presentable with an empty
-options map.
-
-| Function | Description |
-|---|---|
-| `plot.line(x, y, opts)` / `plot.scatter(x, y, opts)` | one xy series; null pairs drop |
-| `plot.lines(x, pairs, opts)` | multiple series as `[[label, y], ...]` (≤ 8), legend included |
-| `plot.bar(labels, values, opts)` | labels are a Series or list; null values refuse |
-| `plot.hist(s, bins, opts)` | binned counts of a numeric Series |
-
-Options ride in one map — `title`, `x_label`, `y_label`, `width`,
-`height` — and an unknown key is an error, because it is always a typo.
+Charts render to complete standalone SVG documents as strings — write
+one with `fs.write_file`, serve it over `http`, or return it from the
+playground. `plot.line`, `plot.scatter`, `plot.lines` (multi-series
+with legend), `plot.bar`, and `plot.hist` take Series data plus one
+options map (`title`, `x_label`, `y_label`, `width`, `height`; unknown
+keys are errors). Defaults follow a colorblind-validated palette, so a
+chart is presentable with `#{}`.
 
 ```olang
 let x = ods.linspace(0.0, 6.28, 50)
 let y = ods.series(map(ods.to_list(x), (v) => math.sin(v)))
 let svg = plot.line(x, y, #{ "title": "sin(t)", "x_label": "t" })
 println(to_string(str.contains(svg, "<svg")))
-
-let by_region = ods.read_csv("region,rev\neast,2415.0\nwest,5167.5\n")
-let bars = plot.bar(ods.column(by_region, "region"),
-                    ods.column(by_region, "rev"), #{})
-println(to_string(str.length(bars) > 500))
 ```
 
-```olang no-run
-// The usual ending: a chart on disk, viewable in any browser.
-unwrap(fs.write_file("chart.svg", svg))
-```
+**[The Data Stack](ods.md#plot--charts-as-svg-text)** covers the
+SVG-as-text philosophy, each chart type, and null handling per chart.
 
 ---
 
