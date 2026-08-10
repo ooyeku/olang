@@ -70,12 +70,13 @@ olang fmt --check .        # formatter (whitespace hygiene, AST-safe)
 
 ## The standard library
 
-Nineteen native modules — `str`, `col`, `math`, `json`, `csv`, `re`,
+Twenty native modules — `str`, `col`, `math`, `json`, `csv`, `re`,
 `dates`, `time`, `random`, `crypto`, `base64`, `fs`, `os`, `http` (client
-and a keep-alive server), `db` (SQLite), `testing`, and the data stack
-(`ods`, `stats`, `plot`) — plus two olang-source modules (`colx`,
-`mathx`) compiled into the binary and differential-tested against their
-native twins. Reference: [docs/stdlib.md](docs/stdlib.md).
+and a keep-alive server), `db` (SQLite), `testing`, `dom` (the browser,
+in the wasm build), and the data stack (`ods`, `stats`, `plot`) — plus
+two olang-source modules (`colx`, `mathx`) compiled into the binary and
+differential-tested against their native twins. Reference:
+[docs/stdlib.md](docs/stdlib.md).
 
 ## The data stack
 
@@ -117,12 +118,12 @@ Falling back is always correct; diverging is never acceptable.
 
 The bytecode tier covers the language people actually write — 158 of
 the 164 functions in the example corpus promote (the six holdouts are
-async and global assignment, by design). The JIT lane is complete as of
-0.43: ints, floats, structs, lists, tuples, and strings all either
-compile or refuse by a tested rule (allocating loops, for instance,
-deliberately stay on bytecode driving native constructors). Measured:
-fib(30) 89 ms → 4 ms, level with Node and Bun; N-body 400 ms → 48 ms;
-integer kernels 20–30×; float kernels ~4.5×. Details and measured
+async and global assignment, by design). The JIT covers ints, floats,
+structs, lists, tuples, and strings: each either compiles or refuses by
+a tested rule (allocating loops, for instance, deliberately stay on
+bytecode driving native constructors). Measured: fib(30) at 4 ms, level
+with Node and Bun; N-body at 48 ms, 8× ahead of CPython; integer
+kernels 20–30× over bytecode; float kernels ~4.5×. Details and measured
 tables: [docs/internals.md](docs/internals.md),
 [docs/ovm.md](docs/ovm.md).
 

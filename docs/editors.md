@@ -2,7 +2,10 @@
 
 olang ships its own language server: `olang lsp` speaks the Language
 Server Protocol over stdio, straight from the same binary that runs your
-programs — no separate install, always in sync with the compiler.
+programs. Building the server into the compiler is a deliberate
+trade — no separate install, no version skew between what the editor
+reports and what the runtime does, and every diagnostic comes from the
+real parser rather than a reimplementation of it.
 
 Part of [the olang book](README.md) ·
 [Tour](tour.md) · [Language](language.md) · [Stdlib](stdlib.md)
@@ -14,7 +17,7 @@ Part of [the olang book](README.md) ·
 | capability | source |
 |---|---|
 | Diagnostics as you type | the real parser (with its line/column info) and the semantic analyzer; warnings sit on the exact declaration span |
-| Completions | keywords, the global builtins, the 19 stdlib modules, and `fn`/`type`/`let` names from the open file |
+| Completions | keywords, the global builtins, the stdlib modules, and `fn`/`type`/`let` names from the open file |
 | Hover | the declaration's rendered signature (`fn dist(a, b)`, `type Body`, `let total`) |
 | Go to definition | jumps to the name's declaration span in the file |
 | Formatting | the `olang fmt` engine — AST-verified, whitespace-only |

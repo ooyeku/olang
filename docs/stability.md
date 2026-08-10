@@ -48,11 +48,11 @@ the global builtins.
 
 - **Async and concurrency** — the documented API (`async`/`await`,
   `Promise.resolve/reject/delay/all/race`, `spawn`, `par_map`,
-  `par_filter`) is stable. `spawn` runs on a real OS thread (as of 0.29);
+  `par_filter`, `par for`) is stable. `spawn` runs on a real OS thread;
   `par_map`/`par_filter` carry spawn's snapshot semantics and are
-  differential-tested against `map`/`filter`; the deterministic deadline
-  model for `Promise.delay` is unchanged. The scheduling model may gain
-  further capability without changing what existing programs observe.
+  differential-tested against `map`/`filter`; `Promise.delay` keeps its
+  deterministic deadline model. The scheduling model may gain further
+  capability without changing what existing programs observe.
 - **The OVM and JIT tiers** — which functions get promoted or compiled
   to native code, and how fast they run, changes freely; results never
   do.
@@ -60,9 +60,9 @@ the global builtins.
   behave as the stdlib chapters state, pinned by doc tests, engine
   property tests, and scipy/NumPy reference constants; the *scope* grows
   (new dtypes, verbs, statistics, chart kinds) under the append-mostly
-  rule. All four design phases shipped against measured gates
-  ([the design doc](design/ods.md)); deferrals (lazy evaluation, faer)
-  are recorded there with reopening conditions.
+  rule. Design decisions and their measured justifications live in
+  [the design doc](design/ods.md), including recorded deferrals (lazy
+  evaluation, faer) with the conditions that would reopen them.
 - **Type annotations** — all documented annotation forms keep parsing. A
   future static checker will be **opt-in** when introduced; annotations
   will not start rejecting today's running programs by default.
@@ -73,20 +73,24 @@ the global builtins.
   and response-struct returns) is settled and integration-tested; the
   *execution model* (bounded worker pool, blocking caller, localhost-only)
   may grow further without changing existing handlers.
-- `testing.run_test` (closure-based test execution)
+- The `dom` module — browser-only, and young: the nine-function surface
+  may grow (and payload conventions may gain fields) as frontend
+  programs demand more; the element-handle model and the stateless
+  pattern it supports are the stable core.
+- `testing.run_test`, `testing.test_summary`, `testing.reset_tests` —
+  reserved harness hooks, placeholders today.
 - The `--enable-parallel` / `set_parallel` evaluation modes
 - Assignment to an undeclared name (`x = 1` without `let`) currently
   creates a binding; prefer `let` — a future release may warn here.
+- A bare block's `let` bindings currently remain visible after the
+  block ([language reference](language.md#scope)); write code as if
+  blocks scoped — a future release may tighten this.
 
 ### Reserved — parses today, semantics later
 
 - Union (`A | B`) and intersection type *annotations*; union type
   *declarations* are not yet accepted
 - Literal types in annotations
-
-(`error` declarations graduated from this list: they now have full
-semantics — see the
-[language reference](language.md#error-declarations).)
 
 Reserved constructs are safe to avoid entirely; when they gain semantics it
 will be additive.

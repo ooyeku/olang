@@ -6,76 +6,108 @@ Part of [the olang book](README.md) ·
 olang has a source-based package manager: a package is a directory of `.ol`
 files plus an `olang.toml` manifest. There is no build step and no compiled
 artifact — dependencies are fetched as source and resolved by the same `use`
-mechanism as local modules.
+mechanism as local modules, so a dependency behaves exactly like code you
+wrote, minus the writing.
 
 The package commands live in the companion tool, `otc`.
 
-## A package
+## Starting a package
 
-```
-mathlib/
-  olang.toml
-  index.ol      # the public API surface (re-exports what's shared)
-```
+`otc new` scaffolds a project — an application by default, a library with
+`--lib`:
 
-```toml
-# olang.toml
-[package]
-name = "mathlib"
-version = "1.0.0"
+```bash
+otc new myapp             # application: olang.toml + src/main.ol
+otc new geometry --lib    # library: olang.toml + index.ol at the root
 ```
 
-```olang
-# index.ol
-share fn square(x) = x * x
-share fn cube(x) = x * x * x
+Both shapes come with a README, a `.gitignore`, and a working `test`
+block, and the generated source is parse-checked before it is written.
+The difference is the entry point. An application's life is
+`olang src/main.ol`; a library's public API lives in `index.ol`:
+
+```olang no-run
+// geometry/index.ol — `share` marks the public API;
+// anything unshared stays private to the package.
+share fn area(w, h) = w * h
+share let ORIGIN = (0, 0)
+
+fn helper(x) = x + 1        // private: invisible to consumers
+
+test "area works" {
+    assert_eq(area(3, 4), 12)
+}
 ```
 
-`share` marks a binding public. A package's root module is `index.ol` (or
-`mod.ol`, or `<name>.ol`) — that is what `use <name>` resolves to.
+That is all a consumable library is: an `olang.toml` (so the resolver can
+find the package and name it) plus a root module with `share`d bindings.
+`share` is the package boundary — there is no separate export manifest to
+maintain.
 
-## Depending on a package
+## The manifest
 
 ```toml
 [package]
 name = "app"
-version = "0.1.0"
+version = "0.1.0"        # strict semver: three components
+description = "..."      # optional, as are authors and license
 
 [dependencies]
-# three kinds of dependency:
-mathlib = { path = "../mathlib" }                         # local directory
-http    = { git = "https://github.com/u/http", tag = "v1.2.0" }   # git
-json    = "^1.0"                                          # registry version
+geometry = { path = "../geometry" }                        # local directory
+httplib  = { git = "https://github.com/u/httplib", tag = "v1.2.0" }
+json     = "^1.0"                                          # registry version
 ```
 
-Then use it like any module — a `use` whose first segment is a dependency
-name resolves inside that dependency:
+Git dependencies take one of `tag`, `rev`, `branch` — or none, meaning the
+default branch's head. Registry requirements accept the usual semver
+operator syntax (`^1.0`, `>=1.2, <2.0`, an exact `1.4.0`).
 
-```olang
-use mathlib { square, cube }
-println(square(5))     // 25
+Then use a dependency like any module — a `use` whose first segment is a
+dependency name resolves inside that package:
+
+```olang no-run
+use geometry { area, ORIGIN }
+println(to_string(area(5, 5)))
 ```
 
-Dependency names win over local files, so `use mathlib` always means the
-package, never a sibling `mathlib.ol`.
+### How `use` finds a package
+
+Dependency names win over local files, so `use geometry` always means the
+package, never a sibling `geometry.ol`. Within the dependency's
+directory, a bare `use geometry` resolves the root module — the first of
+`index.ol`, `mod.ol`, `geometry.ol`, `src/index.ol` that exists — and a
+dotted path like `use geometry.shapes.circle` resolves below it
+(`shapes/circle.ol`, or `shapes/circle/index.ol`, `shapes/circle/mod.ol`,
+`src/shapes/circle.ol`). A package can also `use` itself by name, which
+is what lets its own tests import its public surface.
 
 ## Commands
 
 ```bash
-otc pkg init                       # scaffold olang.toml
+otc new NAME [--lib]               # scaffold a project or library
+otc pkg init [--name NAME]         # write olang.toml in the current directory
 otc pkg add lib --path ../lib      # add a path dependency
 otc pkg add http --git URL --tag v1.0.0   # add a git dependency
 otc pkg add json --version "^1.0"  # add a registry dependency
 otc pkg remove lib                 # drop a dependency
-otc pkg install                    # fetch, honoring olang.lock
-otc pkg install --frozen           # fail if the lock would change (CI)
+otc pkg install                    # fetch, replaying olang.lock when it covers the manifest
+otc pkg install --frozen           # fail if resolution would rewrite the lock (CI)
 otc pkg update                     # re-resolve everything, rewrite the lock
-otc pkg tree                       # show the resolved dependency graph
+otc pkg tree                       # show the dependency graph with locked versions
+otc pkg publish --registry PATH --git URL --rev COMMIT   # cut a release
 ```
 
-Running a file inside a package resolves dependencies automatically — `olang
-main.ol` reads `olang.toml`, installs, and runs — so `otc pkg install` is
-mainly for pre-fetching and inspecting the lock.
+Every `pkg` command except `init` finds the project root by walking up to
+the nearest `olang.toml`; `init` writes into the directory you are in.
+`otc pkg add` covers the common dependency forms — a git `rev` or
+`branch` pin is written into `olang.toml` by hand.
+
+You rarely need `otc pkg install` day to day: **running a file inside a
+package resolves dependencies automatically**. `olang main.ol` reads
+`olang.toml`, installs (replaying the lockfile — see below), and runs.
+`olang test` does the same for test files, with one caveat: it does not
+read `OLANG_REGISTRY`, so packages with registry dependencies should be
+tested via a normal run or after an explicit `otc pkg install`.
 
 ## In the REPL
 
@@ -83,10 +115,9 @@ Start `olang` from a directory inside a package (one containing an
 `olang.toml`, or any subdirectory of it) and the REPL resolves its
 dependencies automatically:
 
-```
+```text
 $ cd examples/packages/demo
 $ olang
-Olang v0.43.0
 Package 'demo' loaded — its dependencies are available via `use`
 
 olang> use geometry { circle, area }
@@ -99,13 +130,9 @@ resolvable. `:cd` into another package re-resolves; `:pkg` re-resolves the
 current one (after editing `olang.toml`) or reports that there is no
 package here.
 
-A package is also referable by its own name from within itself, so you can
-test a package in its own REPL — `use geometry { circle }` works from
-inside the `geometry` package, not only from a package that depends on it.
-
 To use a package **without cd-ing into it**, load it by path:
 
-```
+```text
 olang> :pkg load ../geometry          # or an absolute path
 Loaded package 'geometry' — use it with `use geometry`
 olang> use geometry { * }             # import everything it shares
@@ -127,19 +154,52 @@ This works for the embedded `colx` collections module too (`:help colx`).
 
 ## The lockfile
 
-`olang.lock` pins every dependency exactly — a git commit SHA, a resolved
-registry version, or a path — plus a sha256 checksum of the source tree.
-Commit it: a fresh `otc pkg install` on another machine reproduces
-byte-identical code, and `--frozen` makes CI fail if resolution drifts.
+`olang.lock` records, for every package in the dependency graph, exactly
+which source produced it: the path for a path dependency; the git URL,
+the resolved commit, and the ref the manifest asked for; the resolved
+version for a registry dependency — plus a checksum of the source tree
+and the package's own direct dependencies. Commit it.
 
-`install` *honors* the lock: while it still covers `olang.toml`, the pinned
-sources are fetched exactly and the lock is left untouched, so repeated
-installs (and every `olang` run, which installs implicitly) are reproducible
-and offline once cached. Editing the manifest re-resolves just what changed
-the coverage — adding, removing, or repointing a dependency (the lock records
-which tag/branch a git pin came from, so changing the requested ref is
-detected). Moving a branch dependency to its new upstream head is always
-explicit: `otc pkg update`.
+The mental model has one moving part: **a lockfile either *covers* the
+manifest or it doesn't**, and every install starts by asking which.
+
+- **Covered → replay.** `otc pkg install` (and every implicit install —
+  `olang main.ol`, the REPL) fetches exactly what the lock pins and
+  leaves the file byte-for-byte untouched. No resolution runs, nothing
+  is consulted over the network that isn't already needed for the
+  pinned sources, and with a warm cache the whole operation is offline.
+  Repeated runs are reproducible by construction.
+- **Not covered → re-resolve.** Resolution runs against the manifest,
+  the graph is fetched, and `olang.lock` is rewritten. This is the
+  *only* path that writes the lock.
+
+"Covers" is checked dependency by dependency:
+
+- a **path** dependency is covered when the lock has a path entry with
+  the same path;
+- a **git** dependency is covered when the URL matches *and* the lock's
+  recorded ref matches what the manifest now requests — so retagging or
+  repointing a git dependency in the manifest re-resolves it, but a
+  branch dependency stays on its pinned commit until you ask to move
+  (`otc pkg update` is that ask);
+- a **registry** dependency is covered when the locked version satisfies
+  the manifest's requirement — so loosening a requirement changes
+  nothing, and tightening it past the locked version re-resolves;
+- a lock entry for a package the manifest no longer needs (and that no
+  other locked package depends on) breaks coverage, so removals clean
+  the lock up rather than leaving fossils.
+
+`otc pkg update` skips the coverage question entirely: it always
+re-resolves and rewrites the lock — the explicit "move everything
+forward" action. `--frozen` guards the other direction in CI: if
+resolution runs and would change an existing lock, the command fails
+with `lockfile is out of date` instead of writing. (With no lockfile at
+all, `--frozen` writes the first one — pair it with a committed lock.)
+
+Fetched sources are cached content-addressed by commit under
+`~/.olang/cache` (override with `OLANG_CACHE`), so any given revision is
+downloaded once and shared across every project on the machine. Path
+dependencies are used in place, never copied.
 
 ## Version resolution (MVS)
 
@@ -165,14 +225,18 @@ Publish a release:
 otc pkg publish --registry PATH --git URL --rev COMMIT
 ```
 
+The published entry records the release's *registry* dependencies so MVS
+can resolve through it; a library meant for the registry should therefore
+depend on registry versions itself, not on paths or git branches.
+
 Point installs at a registry with the `OLANG_REGISTRY` environment variable
-(a local directory or a checkout of the index repo). Fetched sources are
-cached, content-addressed by commit, under `~/.olang/cache` (override with
-`OLANG_CACHE`), so a revision is downloaded once and shared across projects.
+(a local directory or a checkout of the index repo).
 
 ## Trust model
 
-Checksums in the lockfile detect tampering when a dependency is re-fetched.
-The first fetch of a git or registry dependency is trust-on-first-use; pin
-git dependencies by `rev` (not just `tag`) when you need the source to be
-immutable.
+The first fetch of a git or registry dependency is trust-on-first-use.
+The lockfile records a sha256 checksum of each fetched source tree;
+checksums are recorded for auditability but are not yet re-verified on
+later installs — the commit pin is what fixes the content. Pin git
+dependencies by `rev` (not just `tag`) when you need the source to be
+immutable, since a tag can be moved and a rev cannot.

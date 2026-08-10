@@ -1,10 +1,11 @@
 # The olang Standard Library Reference
 
 Everything the runtime ships: the global builtins (always in scope) and the
-nineteen native modules plus two olang-source modules compiled into the
+twenty native modules plus two olang-source modules compiled into the
 binary. As in the [language reference](language.md), every `olang` code
-block here is executed by the test suite — the examples are guaranteed
-current.
+block here is executed by the test suite — the examples cannot drift from
+the implementation. (Blocks marked `no-run` are parse-checked only: they
+need a file system, a network, or a browser.)
 
 Part of [the olang book](README.md) ·
 [Tour](tour.md) · [Language](language.md) · [Packages](packages.md) ·
@@ -31,6 +32,7 @@ Part of [the olang book](README.md) ·
 - [`os` — operating system](#os--operating-system)
 - [`http` — HTTP](#http--http)
 - [`db` — SQLite](#db--sqlite)
+- [`dom` — the browser](#dom--the-browser)
 - [`testing` — assertions](#testing--assertions)
 - [`ods` — Series and Frames](#ods--series-and-frames)
 - [`stats` — statistical inference](#stats--statistical-inference)
@@ -40,7 +42,14 @@ Part of [the olang book](README.md) ·
 
 **Modules are always in scope.** `str.trim(...)`, `json.parse(...)`, and the
 rest work without any `use`. (The olang-source modules `colx` and `mathx`
-are the exception: import them with `use colx`.)
+are the exception: import them with `use colx`.) A `use str` still works —
+useful when you want the import list of a file to be explicit — but is
+never required.
+
+**One environment note:** `fs`, `os`, `http`, and `db` need an operating
+system and are absent from the browser playground build, where calling
+them reports exactly that; `dom` is the reverse — browser-only, an error
+everywhere else.
 
 **Fallible functions return `Result`.** Anything that can fail — parsing,
 I/O, lookups that may miss — returns `Ok(v)` or `Err(e)`. Unwrap it, pattern
@@ -62,7 +71,7 @@ their value directly.
 | Function | Description |
 |---|---|
 | `print(v)` | write without newline |
-| `println(v)` | write with newline |
+| `println(...)` | write with newline; several arguments print space-separated |
 
 ### Introspection and conversion
 
@@ -245,8 +254,7 @@ println(to_string(unwrap_or(Err("nope"), -1)))
 
 **olang is eager.** A builtin receives its argument already evaluated, so
 `lazy` cannot defer anything — both functions are the identity, kept for
-source compatibility. (Earlier releases wrapped values in lazy handles and
-immediately forced them; the observable behavior was always eager.)
+source compatibility with code written against them.
 
 ```olang
 let deferred = lazy([1, 2, 3] |> map((x) => x * 10))
@@ -255,8 +263,13 @@ println(to_string(force(deferred)))
 
 ## `str` — strings
 
-The complete string toolkit. Pure functions return strings/ints directly;
-the parsers return `Result`.
+The complete string toolkit. The module's one convention does a lot of
+work: pure transformations (`trim`, `replace`, `to_upper`, ...) return
+their value directly and never fail — out-of-range positions clamp,
+absent substrings report `-1` — while the two genuine *parsers*
+(`parse_int`, `parse_float`) return `Result`, because "this text is not
+a number" is the caller's decision to make. Strings are immutable, so
+every function returns a new string.
 
 | Function | Description |
 |---|---|
@@ -290,9 +303,14 @@ println(str.fmt("{} scored {} ({}%)", "ada", 99, 97.5))
 
 ## `col` / `colx` — collections
 
-Higher-order operations beyond the global builtins. `colx` is the same API
-implemented *in olang* and embedded in the binary (`use colx`) — the two are
-differential-tested against each other.
+Higher-order operations beyond the global builtins. The design principle:
+the *global* builtins cover what nearly every program touches (`map`,
+`filter`, `fold`, `sort`); `col` holds the next ring out — quantifiers,
+partitions, key-function variants — so the global namespace stays small
+while the full toolkit stays one dot away. `colx` is the same API
+implemented *in olang* and embedded in the binary (`use colx`) — the two
+are differential-tested against each other, so the language is exercised
+by its own standard library.
 
 | Function | Description |
 |---|---|
@@ -334,7 +352,10 @@ println(to_string(col.last([1, 2, 3])))
 
 ## `math` / `mathx` — mathematics
 
-`mathx` (`use mathx`) is the olang-source twin of the pure subset.
+Pure numeric functions — every one takes numbers to numbers with no
+`Result` wrapping, which lets them ride the fastest execution paths (the
+float functions compile all the way to native code in hot loops; see
+[the OVM chapter](ovm.md#the-jit)).
 
 | Group | Functions |
 |---|---|
@@ -345,12 +366,18 @@ println(to_string(col.last([1, 2, 3])))
 | Trig | `sin` `cos` `tan` `asin` `acos` `atan` `atan2` |
 | Hyperbolic | `sinh` `cosh` `tanh` |
 | Angles | `radians` `degrees` |
+| Constants | `math.PI` `math.E` `math.TAU` `math.SQRT_2` `math.SQRT_3` `math.LN_2` `math.LN_10` `math.LOG2_E` `math.LOG10_E` |
 
 ```olang
 println(to_string(math.pow(2, 10)) + " " + to_string(math.sqrt(2.25)))
 println(to_string(math.gcd(12, 18)) + " " + to_string(math.factorial(5)))
 println(to_string(math.round(2.6)) + " " + to_string(math.fract(2.75)))
+println(to_string((math.PI > 3.14159) && (math.TAU > 6.28)))
 ```
+
+`mathx` (`use mathx`) is an olang-source module covering the integer and
+rounding core (`abs` through `sqrt`, plus `PI`) — smaller in scope than
+`math`, and differential-tested against it.
 
 ## `json` — JSON
 
@@ -394,7 +421,8 @@ name (all cells are strings — convert explicitly).
 | `csv.read_row` `csv.read_column` `csv.read_cell` `csv.set_cell` | access |
 | `csv.add_row` `csv.add_column` | build tables |
 | `csv.filter_rows` `csv.sort_by_column` | table operations |
-| `csv.to_json(s)` / `csv.from_json(s)` | format conversion |
+| `csv.to_json(rows, with_headers)` | parsed rows → JSON text (`with_headers`: treat row 0 as column names) |
+| `csv.from_json(json, headers)` | JSON text + header list → CSV text |
 
 ```olang
 let raw = "name,score\nada,99\nbob,82"
@@ -405,7 +433,11 @@ println(rows[0].name + ", total " + to_string(total))
 
 ## `re` — regular expressions
 
-Rust regex syntax. Matching functions return `Result`.
+Rust regex syntax (no backtracking, so patterns run in linear time and a
+hostile input cannot hang a program). Matching functions return `Result`
+because the *pattern* can be malformed — the usual shape is one
+`unwrap` around a pattern you wrote yourself, or `re.is_valid` first
+for a pattern that arrives at runtime.
 
 | Function | Description |
 |---|---|
@@ -430,8 +462,8 @@ ISO-8601 strings in, ISO-8601 strings out; fallible operations return
 
 | Group | Functions |
 |---|---|
-| Now | `now` `utc_now` `today` `time` |
-| Build | `date(y, m, d)` `datetime(y, m, d, h, mi, s)` |
+| Now | `now` `utc_now` `today` |
+| Build | `date(y, m, d)` `datetime(y, m, d, h, mi, s)` `time(h, mi, s)` |
 | Parse/format | `parse_date` `parse_datetime` `parse_time` `format_date` `format_datetime` `format_time` |
 | Fields | `year` `month` `day` `hour` `minute` `second` `weekday` |
 | Arithmetic | `add_days` `add_weeks` `add_months` `add_years` `diff_days` |
@@ -446,8 +478,9 @@ println("leap 2028: " + to_string(dates.is_leap_year(2028)))
 println("days apart: " + to_string(unwrap(dates.diff_days(d, later))))
 ```
 
-`dates.timestamp(dates.now())` is the idiom for "seconds since the epoch,
-now".
+`unwrap(dates.timestamp(dates.now()))` is the idiom for "seconds since
+the epoch, now" (`timestamp` parses its argument, so it returns a
+`Result`; for a plain millisecond clock, `time.now_ms()` is simpler).
 
 ## `time` — clocks and sleeping
 
@@ -467,7 +500,11 @@ println(show(time.monotonic_ms() - t0 >= 20))   // true
 
 ## `random` — randomness
 
-Seedable (making runs reproducible) and covering the usual distributions.
+One global, seedable generator. `random.seed(n)` makes every subsequent
+draw deterministic — which turns a simulation, a shuffled test fixture,
+or a [`stats` sample](#stats--statistical-inference) into something you
+can reproduce exactly, so randomized code stays debuggable and
+testable.
 
 | Function | Description |
 |---|---|
@@ -494,7 +531,12 @@ println(to_string(str.length(random.randstr_alpha(8))))
 
 ## `crypto` — hashing and encryption
 
-Digests return lowercase hex strings; key operations return `Result`.
+The primitives applications actually reach for — digests, HMACs,
+password hashing, AES and RSA — with string-friendly conventions:
+digests return lowercase hex strings, and key operations return
+`Result`. `secure_compare` exists because comparing secrets with `==`
+leaks timing; use it for anything an attacker might submit guesses
+against.
 
 | Group | Functions |
 |---|---|
@@ -512,6 +554,10 @@ println(to_string(crypto.secure_compare("abc", "abc")))
 
 ## `base64` — base64
 
+Binary-safe text encoding in its three practical variants — standard,
+URL-safe, and unpadded. Encoding always succeeds; decoding returns
+`Result`, since arbitrary text may not be valid base64.
+
 | Function | Description |
 |---|---|
 | `base64.encode(s)` / `base64.decode(s)` | standard alphabet (decode returns `Result`) |
@@ -526,8 +572,12 @@ println(enc + " -> " + unwrap(base64.decode(enc)))
 
 ## `fs` — file system
 
-All fallible; all return `Result`. (Examples are `no-run`: they touch the
-disk.)
+Whole-value I/O: `read_file` returns the entire contents as one string,
+`write_file` replaces them — no file handles, no open/close lifecycle to
+manage, which fits a language whose programs transform values. Every
+function returns `Result`, because the file system is the classic source
+of failures that are the *caller's* business (missing file, permissions)
+rather than bugs. (Examples are `no-run`: they touch the disk.)
 
 | Group | Functions |
 |---|---|
@@ -549,6 +599,12 @@ println(show(len(unwrap(fs.walk("docs")))) + " files under docs/")
 ```
 
 ## `os` — operating system
+
+The process's view of its world: arguments, environment, directories,
+stdin, and the ability to run other programs. Together with `fs` it is
+what makes olang a scripting language in the practical sense — the
+[task CLI](../examples/) and the examples harness are built on little
+else.
 
 | Group | Functions |
 |---|---|
@@ -575,13 +631,20 @@ else => println("git failed: " + r.stderr)
 
 ## `http` — HTTP
 
-Requests return `Result` responses with status, headers, and body — and
-`http.serve` is a real, blocking HTTP/1.1 server. (`no-run`: network.)
+Both sides of HTTP in one module: a client for calling APIs, and
+`http.serve` — a real, blocking HTTP/1.1 server with keep-alive and a
+bounded worker pool. The design leans on the rest of the language rather
+than inventing its own idioms: requests are fallible so they return
+`Result`, a response is an ordinary struct-like value, and a server
+handler is just a function from request to response. (`no-run`: network.)
+
+A client response carries `status` (Int), `body` (String), and `success`
+(Bool, true for 2xx):
 
 | Function | Description |
 |---|---|
 | `http.get(url)` / `http.post(url, body)` / `http.put` / `http.delete` | requests |
-| `http.request(method, url, body, headers)` | full control |
+| `http.request(method, url, body)` | any method |
 | `http.parse_url(url)` | split a URL into parts |
 | `http.encode_query(map)` / `http.decode_query(s)` | query strings |
 | `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
@@ -678,25 +741,184 @@ for row in rows {
 unwrap(db.close(conn))
 ```
 
-## `testing` — assertions
+## `dom` — the browser
 
-The same assertions available in [`test` blocks](language.md#testing), as
-callable functions — failures raise errors. `reset_tests`/`test_summary`
-maintain counters for custom harnesses.
+When olang runs in a browser (as the WebAssembly build behind the
+playground), the page itself becomes a device the program can drive:
+`dom` is that device's API. It is deliberately small — nine functions —
+because its design philosophy is the opposite of a widget toolkit's:
+olang does not wrap the DOM object model, it treats the page as a
+*rendering target*. You query elements, wire events, fetch data, and
+render by writing HTML. Everything else is ordinary olang.
+
+`dom` is the one browser-only module: in a native build every call
+reports that it needs the wasm build (mirroring how `fs`, `os`, `http`,
+and `db` are absent from the browser). The examples in this section are
+therefore `no-run` — they run on a page, not in the test harness. For a
+complete working application, read them alongside
+[`examples/app/`](../examples/app/), the issue tracker whose frontend is
+`app.ol`.
 
 | Function | Description |
 |---|---|
-| `testing.assert_eq(a, b, msg)` / `assert_ne` | equality assertions |
-| `testing.assert_true(x, msg)` / `assert_false` | boolean assertions |
-| `testing.assert_ok(r, msg)` / `assert_err` | Result assertions |
-| `testing.fail(msg)` | unconditional failure |
-| `testing.reset_tests()` / `testing.test_summary()` | counter management |
+| `dom.query(sel)` | first element matching a CSS selector — an error if none matches |
+| `dom.get_text(el)` / `dom.set_text(el, s)` | read / write an element's text content |
+| `dom.set_html(el, html)` | replace an element's inner HTML — the render primitive |
+| `dom.value(el)` / `dom.set_value(el, s)` | read / write a form control's value |
+| `dom.focus(el)` | focus an element |
+| `dom.on(el, event, handler)` | attach an event handler |
+| `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page |
+
+### Elements are handles
+
+`dom.query` returns an opaque **handle** — pass it back into the other
+functions; there is nothing else to do with it. A handle stays attached
+to the specific element it named, so a handle taken *before* a
+`set_html` re-render points at a node that no longer exists afterwards.
+The discipline that follows: query fresh handles inside handlers, at the
+moment of use, rather than caching them at startup.
+
+```olang no-run
+let title = dom.query("#title")
+dom.set_text(title, "olang was here")
+dom.set_html(dom.query("#list"), ["a", "b"] |> map((s) => "<li>" + s + "</li>") |> join(""))
+```
+
+### Events and their payloads
+
+`dom.on(el, event, handler)` registers a handler for the element. The
+handler receives at most one argument — a **payload string** whose
+contents depend on the event name (a zero-parameter handler simply
+ignores it):
+
+| Event | Fires on | Payload |
+|---|---|---|
+| `"enter"` | the Enter key in that element | the element's current value |
+| `"click"` | any click on or inside the element | the **id of the clicked target** (empty if it has none) |
+| `"change"` | a change on or inside the element | the target's id and new value, separated by a newline |
+| any other name | that DOM event, verbatim | empty string |
+
+Two of these conventions carry the module's whole event philosophy.
+`"enter"` exists because "text field + Enter" is the fundamental input
+gesture, and wiring `keydown` by hand for it is boilerplate. And
+`"click"`/`"change"` deliver the *target's id*, which makes **event
+delegation** the natural style: attach one handler to a container, give
+the elements inside it ids that encode their action (`del-17`,
+`adv-17`), and dispatch on the prefix — surviving any number of
+re-renders, because the handler is on the container, not on the
+short-lived rows.
+
+```olang no-run
+dom.on(dom.query("#rows"), "click", (target_id) => {
+    let id = str.substring(target_id, 4, len(target_id))
+    if starts_with(target_id, "del-") => remove_item(id)
+    else if starts_with(target_id, "adv-") => advance_item(id)
+})
+
+dom.on(dom.query("#new-title"), "enter", (title) => add_item(title))
+
+dom.on(dom.query("#rows"), "change", (payload) => {
+    let parts = split(payload, "\n")     // [target id, new value]
+    update_item(parts[0], parts[1])
+})
+```
+
+### `dom.fetch`
+
+`dom.fetch(method, path, body, callback)` issues the request through
+the browser and returns immediately; when the response arrives, the
+callback receives its **body text** (parse it with `json.parse` if it
+is JSON). A non-empty body is sent as JSON. A network failure delivers
+`{"error": "..."}` — so one `map_has_key(parsed, "error")` check covers
+the failure path uniformly. There is no status code in the callback;
+design the API so the body says what happened.
+
+```olang no-run
+dom.fetch("GET", "/api/issues", "", (resp) => {
+    let parsed = unwrap(json.parse(resp))
+    if map_has_key(parsed, "error") => show_error(map_get(parsed, "error"))
+    else => render(map_get(parsed, "items"))
+})
+```
+
+### The stateless frontend pattern
+
+Now the pieces assemble into an architecture — the one
+[`examples/app/`](../examples/app/) uses, and the one this module is
+shaped for. Recall from the language reference that olang closures
+[capture by value](language.md#closures-capture-by-value): an event
+handler that wrote to a module-level `let mut items` would update its
+own snapshot and lose the write. So a dom frontend keeps **no state in
+the program at all**. The server is the source of truth for data; the
+DOM itself holds the current value of every cell; and each event runs
+the same loop:
+
+```text
+event → dom.fetch mutation → callback → reload() → GET → render() → one set_html
+```
+
+```olang no-run
+fn row_html(item) =
+    "<tr><td>" + esc(map_get(item, "title")) + "</td>" +
+    "<td><button id=\"adv-" + map_get(item, "id") + "\">" +
+    map_get(item, "status") + "</button></td></tr>"
+
+fn render(items) =
+    dom.set_html(dom.query("#rows"), items |> map(row_html) |> join(""))
+
+fn reload() =
+    dom.fetch("GET", "/api/issues", "", (resp) => {
+        render(map_get(unwrap(json.parse(resp)), "items"))
+    })
+
+fn patch(id, body) =
+    dom.fetch("PATCH", "/api/issues/" + id, body, (resp) => reload())
+
+// Boot: a handful of delegated listeners, bound once, then the first load.
+dom.on(dom.query("#rows"), "click", (tid) => on_click(tid))
+dom.on(dom.query("#new-title"), "enter", (title) => add_issue(title))
+reload()
+```
+
+Note what is absent: no model objects, no store, no synchronization
+between a cached list and the screen — a status *is* its button's
+label, read back with `dom.get_text` when needed. The pattern costs one
+round trip per action and buys total freedom from state bugs; for the
+tools-and-dashboards class of application this module targets, that is
+the right trade. Serving such an app from olang — including the wasm
+engine itself — takes one `http.serve` handler; `examples/app/main.ol`
+shows the complete recipe.
+
+## `testing` — assertions
+
+olang has two assertion surfaces, and the difference matters. Inside
+[`test` blocks](language.md#testing), `assert_eq(a, b, "msg")` and
+friends are *language-level* forms that **raise** on failure — that is
+what makes a failing test fail. The `testing` module is the other
+surface: assertion *functions* that return the outcome as a `Result`
+value (`Ok(())` on success, `Err(message)` on failure) so a program can
+inspect, collect, and report failures itself — the raw material for a
+custom harness. A returned `Err` does nothing on its own; `unwrap` it
+(or match it) to act on it.
+
+| Function | Description |
+|---|---|
+| `testing.assert_eq(a, b)` / `assert_ne(a, b)` | equality checks |
+| `testing.assert_true(x)` / `assert_false(x)` | boolean checks (non-boolean input is an `Err`) |
+| `testing.assert_ok(r)` / `assert_err(r)` | Result checks |
+| `testing.fail(msg)` | unconditional `Err` |
+| `testing.reset_tests()` / `testing.test_summary()` / `testing.run_test(name, f)` | reserved harness hooks — placeholders today (see [Stability](stability.md)) |
 
 ```olang
-testing.assert_eq(2 + 2, 4, "arithmetic works")
-testing.assert_ok(str.parse_int("5"), "parses")
+println(to_string(is_ok(testing.assert_eq(2 + 2, 4))))
+println(to_string(is_err(testing.assert_eq(2 + 2, 5))))
+unwrap(testing.assert_ok(str.parse_int("5")))   // unwrap makes it fatal
 println("assertions passed")
 ```
+
+For ordinary tests, prefer `test` blocks and the language-level
+assertions — [`olang test`](tooling.md#olang-test) discovers and runs
+them with reporting built in.
 
 ## `ods` — Series and Frames
 
@@ -751,7 +973,7 @@ Frames add the table verbs — all pipeline-friendly:
 | `ods.select(f, names)` / `ods.with_column(f, name, col)` | shape the columns |
 | `ods.filter(f, mask)` / `ods.take(f, idx)` / `ods.head(f, n)` | shape the rows |
 | `ods.sort_by(f, col, descending)` | one key, nulls last either way |
-| `ods.group_by(f, keys, aggs)` | aggs are `[[out, op, col], ...]` with ops `count` `sum` `mean` `min` `max`; a null key is its own group |
+| `ods.group_by(f, keys, aggs)` | aggs are `[[out, op, col], ...]` with ops `count` `sum` `mean` `min` `max` (`count` may omit the column: `["n", "count"]`); a null key is its own group |
 | `ods.join(a, b, on_a, on_b)` / `ods.join_left(...)` | hash joins; null keys never match, collisions suffix `_right` |
 
 ```olang

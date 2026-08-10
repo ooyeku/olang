@@ -3,14 +3,17 @@
 Part of [the olang book](README.md) ·
 [Internals](internals.md) · [Stability](stability.md)
 
-This document describes how Olang executes code, what parts of the OVM are
-real today, and what is still scaffolding. It is deliberately explicit about
-the second category: knowing what *isn't* implemented is more useful than a
-feature list that overstates the system.
+This chapter describes how olang executes code: the bytecode tier and the
+JIT in depth — what each compiles, how they stay exactly faithful to the
+interpreter, and what they deliberately refuse. It is explicit about the
+refusals: knowing what a tier does *not* do is as much a part of the
+design as what it does. For the design rationale behind the tiered
+architecture itself, start with
+[Internals](internals.md#why-an-interpreter-is-the-authority).
 
 ## Execution model
 
-Olang has three execution tiers.
+olang has three execution tiers.
 
 | Tier | What it is | When it runs |
 |---|---|---|
@@ -68,8 +71,7 @@ A function is eligible when its body uses only the subset the VM implements:
 - enum values end to end: unit variants bake as closure constants,
   tuple-variant constructors (`Circle(2.0)`) compile to a `MakeEnum`
   instruction with arity checked at compile time, `==`/`!=` compare
-  structurally, and enums round-trip the tier boundary losslessly (they
-  used to be crushed into a struct shape that could not convert back)
+  structurally, and enums round-trip the tier boundary losslessly
 - map literals (`#{...}`), with the interpreter's key coercion (String
   raw, Int/Float/Bool via to_string), and the map builtins (`map_get`,
   `map_set`, `entries`, `map_merge`, `group_by`, ...) — maps are
@@ -131,8 +133,8 @@ A function is eligible when its body uses only the subset the VM implements:
   lambdas, and aliased functions from the closure. Compiled function
   values run in the VM; anything declined runs through the bridge
   interpreter, which owns arity errors, default parameters, and the
-  non-callable error. Function values also round-trip the tier boundary
-  now (wrapped verbatim), so higher-order user functions promote
+  non-callable error. Function values round-trip the tier boundary
+  (wrapped verbatim), so higher-order user functions promote
 - calls to ANY native stdlib module function (`db.query`, `fs.read`,
   `json.parse`, `col.frequencies`, `re.find`, ...): the module resolves
   in the closure to its Module value, the function's existence is
@@ -181,13 +183,13 @@ the interpreter, which is why enabling the tier can never break a program.
 handle is rejected at compile time rather than approximated at runtime. This
 rule is enforced by two test suites:
 
-- `tests/bytecode_differential_test.rs` (32 groups) runs programs through
+- `tests/bytecode_differential_test.rs` runs programs through
   *both* the interpreter and the VM and asserts identical results —
   arithmetic and overflow errors, float semantics, comparisons, branches,
   recursion, loops, strings, lists, ranges, arity errors, and a set of
   aliasing cases specific to the register-window design. It also asserts the
   inverse: unsupported features must be *rejected*, never miscompiled.
-- `tests/bytecode_tier_test.rs` (130+ tests) runs whole programs with and
+- `tests/bytecode_tier_test.rs` runs whole programs with and
   without the tier enabled and asserts the observable results match,
   including mixed programs where some functions are promoted and others are
   not, transitive and mutual recursion, and function redefinition.
@@ -201,29 +203,27 @@ interpreter defines the language.
 `OvmValue` (`src/ovm/value.rs`) is the VM's runtime value: **exactly 16
 bytes, pinned by a size test**. Immediate values (integer, float, boolean,
 unit) are stored inline; heap values (string, list, tuple, function,
-struct, range, native handles) hold `Arc` payloads. The former per-value
-header (type tag, tier, lazy state) was measured fully dead and removed
-in 0.40 — the 32 → 16 byte slimming alone bought 13% on the most
-value-bound workload, since every register move copies a value.
+struct, range, native handles) hold `Arc` payloads. Value size is a
+first-order performance input for a register machine — every register
+move copies a value — which is why the representation carries no header,
+no type tag beyond the enum discriminant, and no per-value bookkeeping:
+anything that widens the value slows every instruction.
 
 **Memory is managed by reference counting.** There is no tracing collector.
 Values are reclaimed deterministically when the last reference drops, which
 suits a language whose values are overwhelmingly immutable and acyclic.
-
-`src/ovm/gc.rs` holds only the safepoint flags the interpreter polls in
-loops; the former tracing-GC machinery, region allocator, and the `:gc` REPL
-command were deleted in the 0.24 cleanup — with reference counting there is
-nothing to force.
+(`src/ovm/gc.rs` holds only the safepoint flags the interpreter polls in
+loops.)
 
 The next slimming rung — NaN-boxing to 8 bytes — has its primitives
-landed and proven (`src/ovm/nanbox.rs`: canonicalized floats, 48-bit
-small integers and pointers, boundary-tested) but is **deliberately not
-wired**: the 16-byte measurement re-priced the win at roughly another
-10%, against the cost of manual refcounting at every register move — the
-exact raw-pointer failure mode this codebase already measured, found
-leaking, and deleted in 0.23. The verdict is recorded in
-[the roadmap](roadmap.md#the-performance-campaign-039) so the rung is
-not re-attempted without new data.
+implemented and boundary-tested (`src/ovm/nanbox.rs`: canonicalized
+floats, 48-bit small integers and pointers) but is **deliberately not
+wired**. Measurement priced the remaining win at roughly 10% on the most
+value-bound workloads, against the cost of manual reference counting at
+every register move — a raw-pointer discipline with a demonstrated
+leak-prone failure mode. The verdict and its evidence are recorded in
+[the roadmap](roadmap.md#the-performance-campaign-039) so the question
+is not reopened without new data.
 
 ## Bytecode VM
 
@@ -281,22 +281,20 @@ A register machine. Key design points:
 
 Optimizations land as compile-time instruction *selection* (immediate
 operands, resolved call targets, interned shapes), not as passes over
-emitted bytecode. The previous pass pipeline (dead code elimination,
-register renaming, peephole rewrites) was removed because each was
-incorrect. One measured negative result is on record: fusing
-compare+branch pairs retired 3.5% of executed instructions and ran 3–4%
-*slower* — growing the instruction set perturbs the dispatch loop's code
-layout more than the saved dispatches earn back — so instruction-count
-reduction is not pursued for its own sake (see the changelog for the
-details).
+emitted bytecode. Instruction-count reduction is not pursued for its own
+sake, on recorded evidence: fusing compare+branch pairs retired 3.5% of
+executed instructions and ran 3–4% *slower*, because growing the
+instruction set perturbs the dispatch loop's code layout more than the
+saved dispatches earn back. The dispatch loop's performance is a property
+of its shape, and changes to it are judged by measurement, not by
+instruction arithmetic.
 
 ## The JIT
 
-The third tier (`src/ovm/jit.rs`, 0.40; lane completed across
-0.41–0.42): hot bytecode compiled to native machine code via Cranelift,
-extending the correctness ladder unchanged — "can't compile identically
-→ stay interpreted" gained a rung: "can't compile natively → stay on
-bytecode".
+The third tier (`src/ovm/jit.rs`): hot bytecode compiled to native
+machine code via Cranelift, extending the correctness ladder unchanged.
+"Can't compile identically → stay interpreted" has a second rung:
+"can't compile natively → stay on bytecode".
 
 A function prequalifies at promotion time when every instruction falls
 in a **pure whitelist**: arithmetic, comparisons, logic, branches,
@@ -316,49 +314,49 @@ on bytecode. Register kinds are proven by the same fixpoint inference
 integer side exactly as the VM does; a register may hold mixed kinds
 only if nothing ever reads it — the dead result slot of an `if`
 statement, say — with liveness flowing backwards through copies).
-Struct arguments pass into native code as *borrowed* pointers — JIT
-calls are synchronous and the caller's slot outlives the call, so no
-refcount is ever touched — specialized per interned shape with field
-indices resolved at compile time; every read goes through one guarded
-host helper that deopts on any surprise, so no layout assumption leaks
-into the VM. Everything else stays on bytecode with zero overhead beyond
-one table lookup per call.
+Everything else stays on bytecode with zero overhead beyond one table
+lookup per call.
 
-The lane closed rung by rung across 0.41 and 0.42, each on the same
-borrowed-pointer discipline:
+Heap values cross into native code on a **borrowed-pointer discipline**
+(JIT calls are synchronous and the caller's slot outlives the call, so
+no refcount is ever touched on the way in):
 
-- **The float `math` builtins** (0.41): all 25 compile — `sqrt`,
-  `floor`, `ceil`, and `trunc` as native IEEE instructions (bit-exact
-  by definition), the other 21 through an imported helper that calls
-  the VM's own `eval_float_math` — exactness by construction, not by
+- **Struct field access**: struct arguments pass as borrowed pointers,
+  specialized per interned shape with field indices resolved at compile
+  time; every read goes through one guarded host helper that deopts on
+  any surprise, so no layout assumption leaks into the VM.
+- **The float `math` builtins**: all 25 compile — `sqrt`, `floor`,
+  `ceil`, and `trunc` as native IEEE instructions (bit-exact by
+  definition), the other 21 through an imported helper that calls the
+  VM's own float-math evaluator — exactness by construction, not by
   reimplementation.
-- **List indexing and `for` iteration** (0.41): lists enter native code
-  as borrowed pointers, classified at specialization by element kind
+- **List indexing and `for` iteration**: lists enter native code as
+  borrowed pointers, classified at specialization by element kind
   (float, int, or one struct shape); `xs[i]` and the iteration
   instructions run through guarded host helpers reproducing the VM's
   exact semantics — subscripts wrap negative indices, iteration does
   not, bounds violations deopt to bytecode's canonical error.
-- **Tuple returns** (0.41): functions returning tuples of up to four
-  scalar elements become multi-value native returns; destructuring
-  callers receive the elements directly in registers, and a deopt deep
-  in a tuple-returning callee still yields the VM's canonical error.
-- **Struct construction** (0.42): `MakeStruct` compiles under a
-  scratch-ownership model — every struct a native call builds is owned
-  by a VM-side list for exactly that call, so a deopt at any point can
-  never leak or dangle; struct returns transfer ownership once, at the
-  entry boundary, where a retain helper resolves the borrowed pointer
-  to an owned Arc.
-- **Strings** (0.42): parameters, fields, and constants enter as
-  borrowed pointers; equality and lexicographic ordering run through a
-  helper executing the VM's own comparison operators; concat is an
+- **Tuple returns**: functions returning tuples of up to four scalar
+  elements become multi-value native returns; destructuring callers
+  receive the elements directly in registers, and a deopt deep in a
+  tuple-returning callee still yields the VM's canonical error.
+- **Struct construction**: `MakeStruct` compiles under the
+  [scratch-ownership model](internals.md#the-scratch-ownership-model) —
+  every struct a native call builds is owned by a VM-side list for
+  exactly that call, so a deopt at any point can never leak or dangle;
+  struct returns transfer ownership once, at the entry boundary, where
+  a retain helper resolves the borrowed pointer to an owned Arc.
+- **Strings**: parameters, fields, and constants enter as borrowed
+  pointers; equality and lexicographic ordering run through a helper
+  executing the VM's own comparison operators; concatenation is an
   allocation and follows the struct discipline exactly.
 
-Two deliberate **refusal rules**, learned by measurement, keep the
-model where it wins: allocation (struct construction, string concat)
-compiles only in straight-line code — constructors — while **allocating
-loops stay on bytecode and drive the native constructors call by call**
-(an unbounded native loop of allocations held memory until call end,
-and a cap-triggered mid-loop deopt cost more than never compiling); and
+Two deliberate **refusal rules**, set by measurement, keep the model
+where it wins: allocation (struct construction, string concat) compiles
+only in straight-line code — constructors — while **allocating loops
+stay on bytecode and drive the native constructors call by call** (an
+unbounded native loop of allocations holds memory until call end, and a
+cap-triggered mid-loop deopt costs more than never compiling); and
 mixed string/number `+` (formatting) stays on bytecode.
 
 Purity is the load-bearing property. A qualifying function has no side
@@ -378,13 +376,13 @@ chain unwinds the whole chain back to the bytecode entry.
 
 What this buys, measured: fib(30) 89 ms → **4 ms** (level with the
 JavaScript JITs) — and fib split across two mutually recursive
-functions runs at the same speed where the self-call-only JIT managed
+functions runs at the same speed, where a self-call-only design managed
 94 ms; N-body — structs, floats, lists, tuples, and `math.sqrt` in a
 hot loop — 400 ms → **48 ms**, its force loops compiling whole; integer
 loop kernels 20–30×; float kernels (Mandelbrot-style orbit loops)
 ~4.5×; a struct-field kernel 143 ms → 18 ms (8×); and `par_map` (or
-`par for`) over a jitted kernel compounds both campaigns — workers
-carry their own tier and JIT.
+`par for`) over a jitted kernel multiplies further — workers carry
+their own tier and JIT.
 
 `tests/jit_test.rs` holds the parity suite: every guard edge runs tiered
 and interpreted and must agree byte-for-byte.
@@ -400,7 +398,9 @@ construction. The one measured exception: ten collection builtins (`len`,
 `map_has_key`, `entries`) run natively on the VM value model with zero
 boundary conversion, each mirroring the interpreter's checks in the same
 order with the same messages — the boundary tax on `map_get`/`map_set`
-was what kept environment-threading code slow (see the 0.38 changelog).
+is what environment-threading code lives on, so these ten earn their
+second implementation and are held to the differential suite like
+everything else.
 
 The enabled set spans the core builtins below plus the pure `math`
 module (33 functions), the pure `str` module (30 functions), and `show`:
@@ -417,8 +417,8 @@ module (33 functions), the pure `str` module (30 functions), and `show`:
 | Numeric | `clamp` |
 | Output | `print`, `println` |
 
-The higher-order builtins became available when compiled lambdas gained
-closures: a lambda the VM builds itself can be handed to a delegated builtin
+The higher-order builtins work because compiled lambdas carry closures:
+a lambda the VM builds itself can be handed to a delegated builtin
 as a function value. `map`, `filter`, and `sum` go further: when the
 collection is a list and the function argument compiles (checked once and
 cached per function value), the loop runs *inside* the VM — one bytecode
@@ -428,11 +428,13 @@ to the interpreter, which stays the semantic authority; a native loop never
 falls back mid-flight, so element errors propagate exactly as the
 interpreter would.
 
-`BytecodeVm::round_trips` is the single definition of which values survive the
-boundary; the tier uses it to decide whether a call's arguments and result can
-cross. Keeping a second copy in the tier caused a silent regression once — it
-omitted `Ok`/`Err`, so every call passing a `Result` fell back to the
-interpreter despite Results converting fine.
+`BytecodeVm::round_trips` is the single definition of which values survive
+the boundary; the tier uses it to decide whether a call's arguments and
+result can cross. It is deliberately the *only* copy of that knowledge —
+a duplicate list in the tier is the kind of thing that silently drifts
+(omit `Ok`/`Err` from it and every call passing a `Result` quietly falls
+back to the interpreter, costing speed while changing nothing observable —
+the hardest regression class to notice).
 
 A user function shadows a builtin of the same name, matching the interpreter's
 environment lookup: declaring `fn clamp(...)` makes calls to `clamp` resolve to
@@ -440,15 +442,13 @@ the user's definition in compiled code too.
 
 ## Performance
 
-Measured on an Apple Silicon laptop, release build, as of 0.43 —
-best-of-3, inner timings. All workloads are algorithm-identical across
-languages and checksum-verified (the N-body sample position matches
-across every implementation to the last digit). Since the tier is on by
-default, the olang numbers are what a plain `olang program.ol` gets —
-no flags.
+Measured on an Apple Silicon laptop, release build — best-of-3, inner
+timings. All workloads are algorithm-identical across languages and
+checksum-verified (the N-body sample position matches across every
+implementation to the last digit). Since the tier is on by default, the
+olang numbers are what a plain `olang program.ol` gets — no flags.
 
-Four representative workloads against the field (as of 0.43, with the
-JIT lane complete):
+Four representative workloads against the field:
 
 | Workload | Rust | Node | Bun | CPython | Ruby | **olang** |
 |---|---|---|---|---|---|---|
@@ -466,11 +466,10 @@ The shape of the result: on pure numeric work the JIT puts olang
 and Bun's 4 ms and runs ~11× ahead of CPython and Ruby; the pipeline
 workload (a jitted lambda inside the VM's native map loop) leads CPython
 and Ruby. N-body — structs, floats, lists, tuples, and `math.sqrt` in a
-hot loop — went 400 → 48 ms across the campaign (the 16-byte value
-model, then the JIT lane rung by rung until its force loops compiled
-whole), 8× ahead of CPython and nearly 10× ahead of Ruby. The remaining
-gap to Rust is the price of guards, boxing at tier boundaries, and the
-deliberate refusal rules around allocation in loops.
+hot loop — runs 8× ahead of CPython and nearly 10× ahead of Ruby. The
+remaining gap to Rust is the price of guards, boxing at tier
+boundaries, and the deliberate refusal rules around allocation in
+loops.
 
 Against its own interpreter, the tiers are worth roughly 275× (fib,
 bytecode + JIT) to ~490× (N-body): the whole N-body simulation —
@@ -485,40 +484,42 @@ ways, verifies the results agree, and reports timings.
 
 `cargo bench` measures the interpreter itself (`benches/interpreter_bench.rs`,
 ten representative programs). Use it when changing the evaluator; use
-`tier_compare` when changing the VM.
+`otc ovm --compare` when changing the VM.
 
 ## Known limitations
 
-These are real gaps, not oversights:
+These are real boundaries, stated so you can predict them:
 
 1. **Method calls on *effectful* receiver expressions stay interpreted.**
    `make_thing().m(..)` refuses because the interpreter's dispatch
    fallthrough re-evaluates the receiver, which the VM will not replicate
    for an expression with side effects. Pure receivers — locals, field
-   chains, literals — compile (see below).
+   chains, literals — compile.
 2. ***Assigning* to a global is uncompiled** (reads bake as snapshot
    constants). Async constructs (`spawn`, `await`, promises) and
    `par for` stay interpreted — the compiler refuses the parallel loop
    fail-closed; it is interpreter-owned by design.
 3. **Bridged builtin calls cost a value round trip.** Builtins outside
    the native set convert arguments and results between the OVM and AST
-   value models per call. The native set now spans the higher-order
+   value models per call. The native set spans the higher-order
    loops (`map`/`filter`/`sum`) and the collection core (`len`, `head`,
    `tail`, `cons`, `concat`, `skip`, `map_get`, `map_set`,
    `map_has_key`, `entries`), which is what environment-threading and
-   list-building code lives on; `reduce`, `fold`, and the rest still
-   bridge.
+   list-building code lives on; `reduce`, `fold`, and the rest bridge.
 
 ## Not implemented
 
 - **Tracing garbage collection.** Memory is reference-counted; `gc.rs` holds
-  only the safepoint flags the interpreter polls.
-- **Full NaN-boxing.** The 8-byte value scheme's primitives are landed
-  and proven (`src/ovm/nanbox.rs`) but deliberately not wired — the
-  measured verdict is in [the roadmap](roadmap.md#the-performance-campaign-039).
-- **Automatic SIMD vectorization** and pipeline fusion: the speculative
-  engines were deleted rather than finished — explicit bulk stdlib
-  operations are the honest route if vectorization matters later.
+  only the safepoint flags the interpreter polls. olang values are
+  immutable and acyclic, so there are no cycles to collect.
+- **Full NaN-boxing.** The 8-byte value scheme's primitives are
+  implemented and tested (`src/ovm/nanbox.rs`) but deliberately not
+  wired — the measured verdict is in
+  [the roadmap](roadmap.md#the-performance-campaign-039).
+- **Automatic SIMD vectorization** and pipeline fusion. If bulk numeric
+  throughput matters, the honest route is explicit vectorized
+  operations — which is what [the ods data stack](stdlib.md#ods--series-and-frames)
+  provides — rather than a speculative auto-vectorizer inside the VM.
 
 ## Source map
 
@@ -534,10 +535,3 @@ These are real gaps, not oversights:
 | `src/ovm/gc.rs` | Safepoint flags the interpreter polls in loops |
 | `src/native.rs` | Module registry for native values, spanning both tiers |
 | `src/ods/`, `olang-ods/` | The data stack: language surface and pure-Rust engine |
-
-Deleted in the 0.24 cleanup (~12,000 lines): the `OlangVirtualMachine`
-routing layer and `ovm_integration` (measured ~70% slower than the plain
-interpreter, and the default path until 0.24), the placeholder JIT
-scaffolding, the tracing-GC/region-allocator remnants, and the pipeline,
-SIMD, lazy, fusion, and adaptive engines — none of which were wired into
-execution.

@@ -173,6 +173,38 @@ counter = counter + 1
 println(to_string(fixed + counter))
 ```
 
+### The mutability model
+
+It is worth being precise about what assignment does, because olang
+separates two things that many languages fuse: *bindings* are mutable,
+*values* are not.
+
+- A **binding** is a name-to-value association. Assignment (`counter =
+  counter + 1`) points the name at a different value. This is always
+  allowed.
+- A **value** — a list, map, struct, string — is immutable. No
+  operation modifies a value in place; operations like `map_set`,
+  list `+`, and `str.replace` build and return *new* values, sharing
+  structure with the old ones where possible (which keeps the copies
+  cheap).
+
+The consequence: aliasing is always safe. Two names bound to the same
+list can never observe each other's "changes", because there is no such
+thing as changing a list — only rebinding a name to a new one:
+
+```olang
+let a = [1, 2]
+let mut b = a
+b = b + [3]
+println(to_string(a))   // [1, 2] — a never changes
+println(to_string(b))   // [1, 2, 3]
+```
+
+This one property underwrites much of the language: closures can
+snapshot their environment cheaply, `spawn` and `par_map` can hand
+values to other threads without locks, and the execution tiers can
+share values by reference without defensive copies.
+
 Assignment (`name = expr`) updates an existing binding — or creates one if
 the name is unbound. Prefer `let` for first bindings; it reads better and
 survives future tightening of this rule (see [Stability](stability.md)).
@@ -208,11 +240,48 @@ let Point { x, y } = p
 println(to_string(x + y))
 ```
 
-### Scope and closures
+### Scope
 
-Blocks, functions, and match arms introduce scopes. Closures **capture by
-value**: a lambda sees the bindings as they were when it was created, and
-assigning inside a closure does not write back to the enclosing scope:
+Function bodies (including lambdas and nested `fn`s), `match` arms, and
+`for` bodies introduce fresh scopes: a `let` inside them — and a `for`
+loop's iteration variable — is gone when they end. A bare block
+expression, by contrast, does **not** currently fence its bindings: a
+`let` made inside `{ ... }` remains visible after the block. Write code
+as if blocks scoped (the tooling assumes it, and a future release may
+tighten the rule); when you need real encapsulation, use a function.
+
+```olang
+fn f() = {
+    let inner = 5      // scoped: gone when f returns
+    inner
+}
+println(to_string(f()))
+
+for i in 0..3 { }      // i is scoped to the loop
+let msg = match 1 { n => "arm bindings are scoped too" }
+println(msg)
+```
+
+Shadowing is allowed and idiomatic: a new `let` for the same name binds
+a fresh variable from that point on, which keeps transformation
+pipelines readable without inventing `x2`, `x3` names:
+
+```olang
+let text = "  Hello  "
+let text = str.trim(text)
+let text = str.to_lower(text)
+println(text)
+```
+
+### Closures capture by value
+
+A lambda (or nested `fn`) closes over the bindings it references — and
+it captures them **by value**: the closure carries a snapshot of the
+environment as it was at the moment the closure was created. Two rules
+follow, and both are worth internalizing early because they shape how
+olang programs are structured.
+
+**Rule one: later rebinding does not reach into a closure.**
 
 ```olang
 let base = 10
@@ -221,8 +290,78 @@ let base = 99                 // rebinding does not affect the closure
 println(to_string(add_base(5)))   // 15
 ```
 
-To thread state through a computation, return the new value (or use `fold`)
-rather than mutating an outer variable from inside a closure.
+**Rule two: assignment inside a closure writes to the closure's own
+snapshot, never back to the enclosing scope** — and the snapshot is
+restored on each call, so a closure cannot accumulate hidden state:
+
+```olang
+let mut clicks = 0
+let record = () => {
+    clicks = clicks + 1    // updates this call's copy only
+    clicks
+}
+println(to_string(record()))   // 1
+println(to_string(record()))   // 1 — each call starts from the snapshot
+println(to_string(clicks))     // 0 — the outer binding never moved
+```
+
+This is a deliberate design, not a missing feature, and three major
+pieces of the language rest on it:
+
+- **Parallelism is safe by construction.** `spawn`, `par_map`, and
+  `par for` hand closures to other threads. Because a closure owns an
+  immutable snapshot, no thread can see another's writes — there is
+  nothing shared to race on, and no locks exist in the language.
+- **Modules are self-contained.** An exported function closes over its
+  module's complete scope at load time; nothing a caller does can
+  reach in and alter what the module's functions see.
+- **The execution tiers can optimize.** A snapshot fixed at creation
+  time is a compile-time constant to the bytecode compiler and the
+  JIT; capture-by-reference would forbid most of what makes tiered
+  execution fast.
+
+**Programming without shared mutable state.** The idiom that replaces
+"mutate an outer variable from inside a callback" is: *make the data
+flow through returns*. Accumulate with `fold`, transform with `map`,
+and let each function return the new state:
+
+```olang
+let events = ["add", "add", "remove", "add"]
+let count = events |> fold(0, (n, e) =>
+    if e == "add" => n + 1 else => n - 1)
+println(to_string(count))   // 2
+```
+
+When a program is *built around* callbacks — a browser frontend is the
+clearest case — the same principle scales up to an architecture: keep
+no state in the program at all, and treat an external store as the one
+source of truth. An event handler that tried `let mut items = [...]`
+would lose every write to its own snapshot; instead, each handler asks
+the authority (a server, the DOM) for current state, computes, and
+writes back:
+
+```olang no-run
+// The stateless frontend pattern (see the dom chapter of the stdlib).
+// State lives on the server; every handler re-renders from it.
+fn render(items) =
+    dom.set_html(dom.query("#rows"), items |> map(row_html) |> join(""))
+
+fn reload() =
+    dom.fetch("GET", "/api/items", "", (resp) => {
+        render(map_get(unwrap(json.parse(resp)), "items"))
+    })
+
+dom.on(dom.query("#add"), "click", (id) => {
+    dom.fetch("POST", "/api/items", new_item_body(), (resp) => reload())
+})
+reload()
+```
+
+No handler holds state, so capture-by-value costs nothing — and the
+architecture that falls out (event → request → re-render) is the same
+one large frameworks arrive at deliberately. The
+[dom chapter](stdlib.md#dom--the-browser) develops this pattern in
+full with a working application.
 
 ## Operators and Precedence
 
@@ -242,6 +381,28 @@ From loosest to tightest binding:
 
 When in doubt, parenthesize — especially around comparisons feeding `&&`,
 which read best fully grouped: `(a >= lo) && (a <= hi)`.
+
+### Evaluation order
+
+Evaluation is strict (arguments are evaluated before a call runs) and
+proceeds **left to right** everywhere: binary operands, call arguments,
+and the elements of list, tuple, and map literals all evaluate in
+source order. The exceptions are the constructs whose entire purpose is
+*not* evaluating something: `&&`/`||` skip the right operand when the
+left settles the answer, and `if`/`match` evaluate only the taken arm.
+
+```olang
+fn side(tag, v) = {
+    println(tag)
+    v
+}
+let sum = side("left", 1) + side("right", 2)     // prints left, right
+let xs = [side("first", 10), side("second", 20)] // prints first, second
+println(to_string(sum + xs[0] + xs[1]))
+```
+
+A pipeline `a |> f(b)` evaluates like the call it desugars to,
+`f(a, b)`.
 
 ### Arithmetic
 
@@ -264,11 +425,42 @@ let c = "7"
 println(to_string((c >= "0") && (c <= "9")))   // character-range check
 ```
 
-Equality is structural for lists, tuples, maps, structs, and enum values:
+Equality is **structural** for lists, tuples, maps, structs, and enum
+values — two values are equal when they have the same shape and equal
+parts, not when they are the same object (olang has no object identity
+to observe):
 
 ```olang
 println(to_string([1, 2] == [1, 2]))
 println(to_string((1, "a") == (1, "a")))
+println(to_string(#{ "a": 1 } == #{ "a": 1 }))
+```
+
+The precise rules:
+
+- **Numbers compare numerically across Int and Float** at the operator:
+  `1 == 1.0` is `true`. Inside a *structural* comparison, however, kinds
+  are strict — `[1] == [1.0]` is `false`, because the elements are an
+  Int and a Float.
+- **Struct equality includes the type name**: two structs with the same
+  fields but different declared types are not equal.
+- **Comparing unrelated kinds is a type error, not `false`** — `1 ==
+  "1"` and `true == 1` raise rather than quietly answering. Convert
+  explicitly (`to_string`, `to_int`) when you mean a cross-type
+  comparison.
+- **`Result` values are not compared with `==`.** Match on
+  `Ok(v)`/`Err(e)` (or test with `is_ok`/`is_err`) and compare the
+  payloads — the pattern is clearer than a comparison would be, and it
+  is the supported form.
+- Within a structural comparison, a kind mismatch between elements makes
+  the values unequal (`false`) rather than raising.
+
+```olang
+type A = struct { x: Int }
+type B = struct { x: Int }
+println(to_string(A { x: 1 } == A { x: 1 }))   // true
+println(to_string(A { x: 1 } == B { x: 1 }))   // false: type names differ
+println(to_string(1 == 1.0))                   // true: numeric comparison
 ```
 
 ### Logical operators
@@ -1135,13 +1327,35 @@ use lib.geometry {
 }
 ```
 
-Paths are dot-separated and resolve relative to the importing file, then the
-project root (`use lib.geometry` → `lib/geometry.ol`). Importing a shared
-**enum type also imports its variant constructors**, so `Sq(2)` constructs
-in the importer. A `use` also binds the module's name as a namespace
-(`geometry.area(3, 4)`).
+Importing a shared **enum type also imports its variant constructors**,
+so `Sq(2)` constructs in the importer. A `use` also binds the module's
+name as a namespace (`geometry.area(3, 4)`).
 
 `share use other { name }` re-exports an import (transitive sharing).
+
+### How `use` resolves
+
+Paths are dot-separated. The first segment decides where the search
+goes, in this order:
+
+1. **Embedded stdlib modules** (`colx`, `mathx`) — olang source shipped
+   inside the binary.
+2. **Package dependencies** — if the first segment names a dependency
+   from `olang.toml`, resolution continues inside that package (see
+   [Packages](packages.md#how-use-finds-a-package)). Dependency names
+   win over local files, so a dependency can never be shadowed by a
+   sibling `.ol` file.
+3. **The importing file's directory** — `use lib.geometry` from
+   `src/main.ol` tries `src/lib/geometry.ol`.
+4. **The project root** — then `lib/geometry.ol` from the root.
+5. **The native stdlib** — `use str` (or `use std.str`) resolves the
+   built-in module, though the native modules are in scope without any
+   `use`.
+
+Loading a module executes its file once in a fresh environment and
+collects the `share`d bindings; a module's exports can call its private
+helpers regardless of declaration order, because exports are closed
+over the module's *complete* scope after the whole file has run.
 
 Native stdlib modules (`str`, `col`, `math`, `json`, ...) are always in
 scope — no `use` needed. Embedded olang-source modules (`colx`, `mathx`)
@@ -1174,9 +1388,13 @@ test "addition works" {
 println("tests passed")
 ```
 
-The `testing` stdlib module provides the same assertions as functions plus
-counters (`testing.run_test`, `testing.test_summary`) for building custom
-harnesses — see the [stdlib reference](stdlib.md#testing--assertions).
+These assertions (`assert`, `assert_eq`, `assert_ne`, `assert_true`,
+`assert_false`, with an optional trailing message) are language-level
+forms: they raise on failure, which is what makes a failing test abort.
+The `testing` stdlib module offers a related but different tool —
+assertion *functions* that return `Result` values for building custom
+harnesses — see the [stdlib reference](stdlib.md#testing--assertions)
+for the distinction.
 
 ## Type Annotations
 
