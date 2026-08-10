@@ -9,6 +9,6 @@ repository = "https://github.com/ooyeku/olang"
 
 [dependencies]
 anyhow = "1.0"
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 olang = { path = ".." }
 semver = "1.0"

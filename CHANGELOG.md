@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Changed
+
+- **A years-newer SQLite under the `db` module.** rusqlite 0.31 → 0.40
+  brings its bundled SQLite engine forward several years of upstream
+  releases — query-planner, correctness, and performance work land under
+  every `db.*` call with no API change on the olang side.
+- **Prettier crash reports.** miette 5 → 7 brings its reworked
+  graphical reporter to the CLI's panic hook — internal errors render
+  with cleaner layout and labels instead of a raw Rust backtrace.
+- **A better REPL.** rustyline 13 → 18 carries five majors of
+  line-editing fixes — more robust history handling, completion, and
+  terminal behavior in `olang repl`.
+- **Faster regex and CSV paths.** regex 1.10 → 1.13 and csv 1.3 → 1.4
+  pick up upstream performance work behind the `re` and `csv` modules;
+  pest, serde, tokio, rayon, clap, base64, and thiserror move to their
+  current releases in the same batch. No olang-visible API changes.
+
 ## [0.44.0] - 2026-08-10
 
 ### Added

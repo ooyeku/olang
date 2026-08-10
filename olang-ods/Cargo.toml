@@ -15,7 +15,7 @@ parallel = ["dep:rayon"]
 stats = ["dep:statrs"]
 
 [dependencies]
-rayon = { version = "1.8", optional = true }
+rayon = { version = "1.12", optional = true }
 statrs = { version = "0.19", default-features = false, optional = true }
 
 [dev-dependencies]
