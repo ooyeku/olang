@@ -488,11 +488,12 @@ println(to_string(1 << 4) + " " + to_string(32 >> 2))
 
 ### String and list `+`
 
-`+` concatenates strings (coercing a number operand to text) and
-concatenates lists:
+`+` concatenates two strings and concatenates two lists. Mixing a number
+and a string is a type error, not a silent coercion — convert the number
+with `to_string(...)` first:
 
 ```olang
-println("count: " + 42)
+println("count: " + to_string(42))
 println(to_string([1, 2] + [3]))
 let mut acc = []
 acc = acc + ["grown"]        // the idiomatic append

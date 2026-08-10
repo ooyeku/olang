@@ -2826,22 +2826,28 @@ impl BytecodeVm {
                     )));
                 }
             },
-            // Mixed string-number concatenation, mirroring the interpreter:
-            // "n=" + 5, 5 + "!", "x" + 0.5, 0.5 + "x" all stringify the
-            // number. This was unreachable in compiled code until maps made
-            // the formatting-heavy functions promotable — the differential
-            // suite now pins it.
-            (ValueData::String(a), ValueData::Integer(b)) if matches!(op, BinaryOp::Add) => {
-                OvmValue::new_string(format!("{}{}", a, b))
+            // Mixing a number and a string under `+` is a type error, not a
+            // silent stringify (Python-3 style), mirroring the interpreter.
+            // Concatenation stays string+string; convert with to_string(...).
+            (ValueData::String(_), ValueData::Integer(_)) if matches!(op, BinaryOp::Add) => {
+                return Err(BytecodeError::TypeError(
+                    "cannot add String and Int; use to_string(...) to convert".to_string(),
+                ));
             }
-            (ValueData::Integer(a), ValueData::String(b)) if matches!(op, BinaryOp::Add) => {
-                OvmValue::new_string(format!("{}{}", a, b))
+            (ValueData::Integer(_), ValueData::String(_)) if matches!(op, BinaryOp::Add) => {
+                return Err(BytecodeError::TypeError(
+                    "cannot add Int and String; use to_string(...) to convert".to_string(),
+                ));
             }
-            (ValueData::String(a), ValueData::Float(b)) if matches!(op, BinaryOp::Add) => {
-                OvmValue::new_string(format!("{}{}", a, b))
+            (ValueData::String(_), ValueData::Float(_)) if matches!(op, BinaryOp::Add) => {
+                return Err(BytecodeError::TypeError(
+                    "cannot add String and Float; use to_string(...) to convert".to_string(),
+                ));
             }
-            (ValueData::Float(a), ValueData::String(b)) if matches!(op, BinaryOp::Add) => {
-                OvmValue::new_string(format!("{}{}", a, b))
+            (ValueData::Float(_), ValueData::String(_)) if matches!(op, BinaryOp::Add) => {
+                return Err(BytecodeError::TypeError(
+                    "cannot add Float and String; use to_string(...) to convert".to_string(),
+                ));
             }
             (ValueData::Enum(_), ValueData::Enum(_))
             | (ValueData::Struct(_), ValueData::Struct(_))

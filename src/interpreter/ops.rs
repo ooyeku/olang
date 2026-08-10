@@ -263,25 +263,30 @@ impl Interpreter {
                 s.push_str(&b);
                 Ok(Value::String(std::sync::Arc::new(s)))
             }
-            (Value::String(a), BinaryOp::Add, Value::Integer(b)) => {
-                let mut s = (*a).clone();
-                s.push_str(&b.to_string());
-                Ok(Value::String(std::sync::Arc::new(s)))
+            // Mixing a number and a string under `+` is a type error, not a
+            // silent stringify (Python-3 style). Concatenation stays
+            // string+string; convert the number with to_string(...) first.
+            (Value::String(_), BinaryOp::Add, Value::Integer(_)) => {
+                Err(InterpreterError::TypeError {
+                    message: "cannot add String and Int; use to_string(...) to convert".to_string(),
+                })
             }
-            (Value::Integer(a), BinaryOp::Add, Value::String(b)) => {
-                let mut s = a.to_string();
-                s.push_str(&b);
-                Ok(Value::String(std::sync::Arc::new(s)))
+            (Value::Integer(_), BinaryOp::Add, Value::String(_)) => {
+                Err(InterpreterError::TypeError {
+                    message: "cannot add Int and String; use to_string(...) to convert".to_string(),
+                })
             }
-            (Value::String(a), BinaryOp::Add, Value::Float(b)) => {
-                let mut s = (*a).clone();
-                s.push_str(&b.to_string());
-                Ok(Value::String(std::sync::Arc::new(s)))
+            (Value::String(_), BinaryOp::Add, Value::Float(_)) => {
+                Err(InterpreterError::TypeError {
+                    message: "cannot add String and Float; use to_string(...) to convert"
+                        .to_string(),
+                })
             }
-            (Value::Float(a), BinaryOp::Add, Value::String(b)) => {
-                let mut s = a.to_string();
-                s.push_str(&b);
-                Ok(Value::String(std::sync::Arc::new(s)))
+            (Value::Float(_), BinaryOp::Add, Value::String(_)) => {
+                Err(InterpreterError::TypeError {
+                    message: "cannot add Float and String; use to_string(...) to convert"
+                        .to_string(),
+                })
             }
             (Value::List(a), BinaryOp::Add, Value::List(b)) => {
                 let mut items = Vec::with_capacity(a.len() + b.len());

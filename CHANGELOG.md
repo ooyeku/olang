@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Changed
+
+- **Mixing a number and a string under `+` is now a type error, not a
+  silent coercion (breaking).** `"count: " + 5` and `1 + "x"` previously
+  stringified the number and concatenated; they now raise a type error
+  (`cannot add String and Int; use to_string(...) to convert`),
+  Python-3 style. Convert the number explicitly with `to_string(...)`
+  (or `show(...)`) first. String+string concatenation and
+  number+number arithmetic are unchanged. The behavior is identical
+  across all three tiers (interpreter, bytecode, and JIT) and pinned by
+  differential regression tests.
+
 ## [0.45.0] - 2026-08-10
 
 ### Changed
@@ -1869,5 +1883,5 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.45.0...HEAD
 [0.23.0]: https://github.com/ooyeku/olang/releases/tag/v0.23.0

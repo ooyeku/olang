@@ -2770,3 +2770,108 @@ fn sort_rejects_incomparable_mixed_types() {
     assert_tier_transparent("to_string(sort([\"b\", \"a\"]))"); // strings ok
     assert_tier_transparent(r#"try to_string(sort([1, "a", 2])) catch e => "rejected""#);
 }
+
+#[test]
+fn mixed_string_number_add_is_a_type_error_on_all_tiers() {
+    // Mixing a number and a string under `+` is a type error (Python-3
+    // style), not a silent stringify — and the interpreter and the bytecode
+    // tier reject it identically. String+string still concatenates and
+    // number+number still adds.
+    assert!(
+        eval(
+            r#"fn f() = "a" + 1
+f()"#,
+            None
+        )
+        .is_err(),
+        "\"a\" + 1 must error in the interpreter"
+    );
+    assert!(
+        eval(
+            r#"fn f() = "a" + 1
+f()"#,
+            Some(2)
+        )
+        .is_err(),
+        "\"a\" + 1 must error on the bytecode tier"
+    );
+    assert!(
+        eval(
+            r#"fn f() = 1 + "a"
+f()"#,
+            None
+        )
+        .is_err(),
+        "1 + \"a\" must error in the interpreter"
+    );
+    assert!(
+        eval(
+            r#"fn f() = 1 + "a"
+f()"#,
+            Some(2)
+        )
+        .is_err(),
+        "1 + \"a\" must error on the bytecode tier"
+    );
+
+    // Both tiers agree (both error) on the mixed cases...
+    assert_tier_transparent(
+        r#"fn f() = "a" + 1
+f()"#,
+    );
+    assert_tier_transparent(
+        r#"fn f() = 1 + "a"
+f()"#,
+    );
+    assert_tier_transparent(
+        r#"fn f() = "x" + 0.5
+f()"#,
+    );
+
+    // ...and still agree (both succeed) on the operations that stay valid.
+    assert_eq!(
+        eval(r#""a" + "b""#, None).unwrap(),
+        Value::String(std::sync::Arc::new("ab".to_string())),
+        "string+string still concatenates"
+    );
+    assert_tier_transparent(r#""a" + "b""#);
+    assert_eq!(
+        eval("1 + 2", None).unwrap(),
+        Value::Integer(3),
+        "1 + 2 still adds"
+    );
+    assert_tier_transparent("1 + 2");
+
+    // A try/catch wrapped around the type error behaves identically on both
+    // tiers. olang's try/catch is Result-based — it unwraps a `Value::Err`,
+    // it does not trap a hard runtime type error — so the error propagates
+    // out of the try on every tier, and it does so transparently.
+    let try_catch = r#"fn bad() = "a" + 1
+try { bad() } catch (e) { "caught" }"#;
+    assert!(
+        eval(try_catch, None).is_err(),
+        "the type error propagates through try/catch in the interpreter"
+    );
+    assert!(
+        eval(try_catch, Some(2)).is_err(),
+        "the type error propagates through try/catch on the bytecode tier"
+    );
+    assert_tier_transparent(try_catch);
+
+    // A try/catch that recovers a `Value::Err` — the shape try/catch is
+    // actually for — still works and stays tier-transparent.
+    assert_eq!(
+        eval(
+            r#"fn safe() = Err("boom")
+try { safe() } catch (e) { "caught: " + e }"#,
+            None
+        )
+        .unwrap(),
+        Value::String(std::sync::Arc::new("caught: boom".to_string())),
+        "try/catch still unwraps a Value::Err"
+    );
+    assert_tier_transparent(
+        r#"fn safe() = Err("boom")
+try { safe() } catch (e) { "caught: " + e }"#,
+    );
+}

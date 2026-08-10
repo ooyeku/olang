@@ -323,11 +323,11 @@ fn capturing_lambdas_compile_and_agree() {
 }
 
 #[test]
-fn mixed_string_number_concatenation_agrees() {
-    // The interpreter stringifies the number in String+Int, Int+String,
-    // String+Float, Float+String. The VM lacked these arms and errored —
-    // unreachable in compiled code until map support made the workflow
-    // example's formatting functions promotable, which is how it surfaced.
+fn mixed_string_number_add_is_rejected_on_both_tiers() {
+    // Mixing a number and a string under `+` is a type error (Python-3
+    // style), not a silent stringify — and the interpreter and the VM
+    // reject it identically. String+String concatenation still works, so
+    // convert the number with to_string(...) first.
     for arg in [0i64, 5, -3] {
         assert_same(r#"fn f(x) = "n=" + x"#, "f", &ints(&[arg]));
         assert_same(r#"fn f(x) = x + "!""#, "f", &ints(&[arg]));
@@ -336,6 +336,8 @@ fn mixed_string_number_concatenation_agrees() {
             "f",
             &ints(&[arg]),
         );
+        // The valid path — stringify, then concatenate — still agrees.
+        assert_same(r#"fn f(x) = "n=" + to_string(x)"#, "f", &ints(&[arg]));
     }
 }
 

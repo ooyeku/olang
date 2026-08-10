@@ -10,7 +10,7 @@ use lib.turnstile
 fn event(name, actor) = { name: name, actor: actor }
 
 fn show_ctx(ctx) = {
-    let parts = map_keys(ctx) |> sort |> map((k) => k + "=" + map_get(ctx, k))
+    let parts = map_keys(ctx) |> sort |> map((k) => k + "=" + to_string(map_get(ctx, k)))
     "{" + join(parts, ", ") + "}"
 }
 

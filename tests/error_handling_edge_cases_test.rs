@@ -31,13 +31,14 @@ fn test_type_mismatch_errors() {
     let parser = Parser::new();
     let mut interpreter = Interpreter::new();
 
-    // Test adding incompatible types
+    // Test adding incompatible types: mixing a string and a number under
+    // `+` is a type error (Python-3 style), not a silent stringify.
     let source = "\"hello\" + 42";
     let program = parser.parse(source).expect("Failed to parse");
     let result = interpreter.eval_program(program);
 
-    // Should succeed with string concatenation
-    assert!(result.is_ok());
+    // Should error rather than concatenate
+    assert!(result.is_err());
 
     // Test comparing incompatible types
     let source = "\"hello\" > 42";

@@ -558,7 +558,7 @@ fn test_default_parameters_multiple_defaults() {
     let mut interpreter = Interpreter::new();
 
     let source = r#"
-        fn create_person(name = "Unknown", age = 0) = name + " is " + age + " years old";
+        fn create_person(name = "Unknown", age = 0) = name + " is " + to_string(age) + " years old";
         create_person()
     "#;
     let program = parser.parse(source).expect("Failed to parse");
@@ -578,7 +578,7 @@ fn test_default_parameters_partial_override() {
     let mut interpreter = Interpreter::new();
 
     let source = r#"
-        fn create_person(name = "Unknown", age = 0) = name + " is " + age + " years old";
+        fn create_person(name = "Unknown", age = 0) = name + " is " + to_string(age) + " years old";
         create_person("Alice")
     "#;
     let program = parser.parse(source).expect("Failed to parse");
