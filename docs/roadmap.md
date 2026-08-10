@@ -122,7 +122,9 @@ deferred on its own measurement. The open rungs, in order:
   on any surprise. **N-body: 332 -> 56ms** — the force loops compile
   whole, closing the campaign's original acceptance target (400ms ->
   tens of ms). Tuple extraction landed next (multi-value
-  native returns; N-body 56 -> 50ms with every hot function compiled);
+  native returns), then struct construction (scratch-owned MakeStruct
+  with entry-boundary ownership transfer; constructors compile, 
+  allocating loops deliberately stay on bytecode driving them);
   strings remain.
 - **Parallel `for`** — P1's remaining item.
 

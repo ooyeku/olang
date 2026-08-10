@@ -61,7 +61,18 @@ use cranelift_module::{Linkage, Module};
 /// Status 0 means `*out` holds the result (raw bits; the caller knows the
 /// kind); anything else means deopt. Float arguments and results travel
 /// as their IEEE bit patterns in the i64 slots.
-type NativeEntry = unsafe extern "C" fn(*const i64, i64, *mut i64) -> i64;
+type NativeEntry = unsafe extern "C" fn(*const i64, i64, *mut ScratchCtx, *mut i64) -> i64;
+
+/// Per-call allocation context, owned by the VM for exactly one native
+/// call. Every struct a native body builds lands here (so deopt can
+/// never leak), and `retained` carries the one Arc a struct return
+/// hands back. Registered args make returning a parameter sound.
+#[derive(Default)]
+pub struct ScratchCtx {
+    allocs: Vec<Arc<crate::ovm::value::StructObject>>,
+    args: Vec<Arc<crate::ovm::value::StructObject>>,
+    retained: Option<Arc<crate::ovm::value::StructObject>>,
+}
 
 /// How the VM hands the JIT other functions' bytecode when planning a
 /// call graph.
@@ -69,11 +80,12 @@ pub type BytecodeLookup<'a> = dyn Fn(FunctionId) -> Option<Arc<CompiledBytecode>
 
 /// One callable's signature in the group-inference snapshot: parameter
 /// kinds, current return mask, and element kinds when it returns a tuple.
-type SigSnapshot = HashMap<usize, (Vec<Kind>, u8, Option<Vec<Kind>>)>;
+type SigSnapshot = HashMap<usize, (Vec<Kind>, u8, Option<Vec<Kind>>, Option<u32>)>;
 
 /// A struct shape observed at the entry: the interned shape plus the
 /// field kinds of the argument instance the specialization keys on.
 /// Per-read helper guards keep same-shape/different-kind instances safe.
+#[derive(Clone)]
 pub struct ShapeSpec {
     pub shape: Arc<crate::ovm::value::StructShape>,
     pub field_kinds: Vec<Kind>,
@@ -183,6 +195,11 @@ struct JittedFn {
     /// Element kinds when this function returns a tuple (the entry
     /// wrapper then writes one out slot per element).
     ret_tuple: Option<Vec<Kind>>,
+    /// Owns the bytecode this body was compiled from: MakeStruct sites
+    /// bake pointers to shape Arcs living inside its instructions, so
+    /// the native code must never outlive it (note-channel invalidation
+    /// can drop the VM's own copy while this stays Ready).
+    _bytecode: Arc<CompiledBytecode>,
 }
 
 enum Slot {
@@ -304,6 +321,75 @@ unsafe extern "C" fn olang_jit_len(list: *const Vec<OvmValue>) -> i64 {
     (*list).len() as i64
 }
 
+/// Host helper for MakeStruct: build the object from raw field bits
+/// (4-bit kind codes packed in `kinds`: 0 int, 1 float, 2 bool), push
+/// the Arc into the call's scratch context — so a later deopt can never
+/// leak it — and hand native code a borrowed pointer.
+///
+/// # Safety
+/// Called only from JIT code; `shape` points at the Arc inside the
+/// owning CompiledBytecode (kept alive by the JittedFn), `fields` at a
+/// stack buffer of `n` slots.
+unsafe extern "C" fn olang_jit_make_struct(
+    ctx: *mut ScratchCtx,
+    shape: *const Arc<crate::ovm::value::StructShape>,
+    fields: *const i64,
+    n: i64,
+    kinds: i64,
+) -> i64 {
+    let mut values = Vec::with_capacity(n as usize);
+    for i in 0..n as usize {
+        let bits = *fields.add(i);
+        values.push(match (kinds >> (i * 4)) & 0xF {
+            0 => OvmValue::new_integer(bits),
+            2 => OvmValue::new_boolean(bits != 0),
+            _ => OvmValue::new_float(f64::from_bits(bits as u64)),
+        });
+    }
+    let ctx = &mut *ctx;
+    // Everything allocated in one native call lives until the call
+    // resolves; cap it so allocation-heavy loops deopt to bytecode
+    // instead of holding unbounded memory. Null tells codegen to deopt.
+    if ctx.allocs.len() >= 1_000_000 {
+        return 0;
+    }
+    let obj = Arc::new(crate::ovm::value::StructObject {
+        shape: (*shape).clone(),
+        values,
+    });
+    let ptr = Arc::as_ptr(&obj) as i64;
+    ctx.allocs.push(obj);
+    ptr
+}
+
+/// Host helper for returning a struct: resolve the borrowed pointer back
+/// to an owned Arc — a scratch allocation or an entry argument — and
+/// park it in `retained` for the VM to take. Unknown pointers (e.g. a
+/// list element) deopt; the bytecode re-run returns it the ordinary way.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
+    let ctx = &mut *ctx;
+    // Called exactly once, at the entry boundary. The returned struct is
+    // almost always the newest allocation; check it first, then scan.
+    if let Some(last) = ctx.allocs.last() {
+        if Arc::as_ptr(last) as i64 == ptr {
+            ctx.retained = Some(last.clone());
+            return 0;
+        }
+    }
+    if let Some(a) = ctx.allocs.iter().find(|a| Arc::as_ptr(a) as i64 == ptr) {
+        ctx.retained = Some(a.clone());
+        return 0;
+    }
+    if let Some(a) = ctx.args.iter().find(|a| Arc::as_ptr(a) as i64 == ptr) {
+        ctx.retained = Some(a.clone());
+        return 0;
+    }
+    1
+}
+
 unsafe extern "C" fn olang_jit_field(
     obj: *const crate::ovm::value::StructObject,
     idx: u64,
@@ -350,6 +436,8 @@ impl JitCache {
             builder.symbol("olang_jit_math", olang_jit_math as *const u8);
             builder.symbol("olang_jit_index", olang_jit_index as *const u8);
             builder.symbol("olang_jit_len", olang_jit_len as *const u8);
+            builder.symbol("olang_jit_make_struct", olang_jit_make_struct as *const u8);
+            builder.symbol("olang_jit_retain", olang_jit_retain as *const u8);
             self.module = Some(JITModule::new(builder));
         }
         self.module.as_mut()
@@ -449,6 +537,12 @@ impl JitCache {
                 }
             }
         }
+        let mut struct_args: Vec<Arc<crate::ovm::value::StructObject>> = Vec::new();
+        for arg in args {
+            if let ValueData::Struct(obj) = &arg.data {
+                struct_args.push(obj.clone());
+            }
+        }
         self.try_call_raw_with_shapes(
             func_id,
             bytecode,
@@ -457,6 +551,7 @@ impl JitCache {
             remaining_depth,
             lookup,
             &shapes,
+            &struct_args,
         )
     }
 
@@ -487,6 +582,7 @@ impl JitCache {
             remaining_depth,
             lookup,
             &shapes,
+            &[],
         )
     }
 
@@ -500,6 +596,7 @@ impl JitCache {
         remaining_depth: u32,
         lookup: &BytecodeLookup,
         shapes: &HashMap<u32, ShapeSpec>,
+        args_for_ctx: &[Arc<crate::ovm::value::StructObject>],
     ) -> Option<OvmValue> {
         let idx = func_id.index();
         match self.table.get(idx)? {
@@ -528,8 +625,18 @@ impl JitCache {
             return None;
         }
         let mut out = [0i64; MAX_TUPLE];
-        let status =
-            unsafe { (jitted.entry)(bits.as_ptr(), remaining_depth as i64, out.as_mut_ptr()) };
+        let mut ctx = ScratchCtx::default();
+        for arg in args_for_ctx {
+            ctx.args.push(arg.clone());
+        }
+        let status = unsafe {
+            (jitted.entry)(
+                bits.as_ptr(),
+                remaining_depth as i64,
+                &mut ctx as *mut ScratchCtx,
+                out.as_mut_ptr(),
+            )
+        };
         if status != STATUS_OK {
             return None;
         }
@@ -546,13 +653,18 @@ impl JitCache {
                 .collect();
             return Some(OvmValue::new_tuple(elems));
         }
+        if let Kind::Struct(_) = jitted.ret_kind {
+            let arc = ctx.retained.take()?;
+            return Some(OvmValue::new_struct(arc));
+        }
         let out = out[0];
         Some(match jitted.ret_kind {
             Kind::Int => OvmValue::new_integer(out),
             Kind::Bool => OvmValue::new_boolean(out != 0),
             Kind::Float => OvmValue::new_float(f64::from_bits(out as u64)),
-            Kind::Struct(_) | Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) => {
-                unreachable!("heap returns are refused by inference")
+            Kind::Struct(_) => unreachable!("handled above"),
+            Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) => {
+                unreachable!("list returns are refused by inference")
             }
         })
     }
@@ -582,6 +694,11 @@ impl JitCache {
         let mut plan_pos: HashMap<usize, usize> = HashMap::new();
         plan_pos.insert(entry_id.index(), 0);
 
+        let mut group_shapes: HashMap<u32, ShapeSpec> = HashMap::new();
+        for (k, v) in shapes {
+            group_shapes.insert(*k, v.clone());
+        }
+
         loop {
             let mut changed = false;
 
@@ -591,7 +708,12 @@ impl JitCache {
             for p in &plans {
                 sigs.insert(
                     p.func_id.index(),
-                    (p.param_kinds.clone(), p.ret_mask, p.ret_tuple.clone()),
+                    (
+                        p.param_kinds.clone(),
+                        p.ret_mask,
+                        p.ret_tuple.clone(),
+                        p.ret_struct,
+                    ),
                 );
             }
             for (i, slot) in self.table.iter().enumerate() {
@@ -605,6 +727,10 @@ impl JitCache {
                                 None => kind_mask(j.ret_kind),
                             },
                             j.ret_tuple.clone(),
+                            match j.ret_kind {
+                                Kind::Struct(sid) => Some(sid),
+                                _ => None,
+                            },
                         ),
                     );
                 }
@@ -613,13 +739,26 @@ impl JitCache {
             let mut requests: Vec<(FunctionId, Vec<Kind>)> = Vec::new();
             for plan in plans.iter_mut() {
                 if plan
-                    .infer_pass(&sigs, shapes, &mut requests, &mut changed)
+                    .infer_pass(&sigs, &group_shapes, &mut requests, &mut changed)
                     .is_none()
                 {
                     if jit_debug() {
                         eprintln!("[jit] fn#{} infer_pass failed", plan.func_id.index());
                     }
                     return None;
+                }
+            }
+
+            for plan in &plans {
+                for (sid, spec) in &plan.made_shapes {
+                    match group_shapes.get(sid) {
+                        None => {
+                            group_shapes.insert(*sid, spec.clone());
+                            changed = true;
+                        }
+                        Some(prev) if prev.field_kinds != spec.field_kinds => return None,
+                        _ => {}
+                    }
                 }
             }
 
@@ -717,6 +856,25 @@ impl JitCache {
                 .declare_function("olang_jit_len", Linkage::Import, &sig)
                 .ok()?
         };
+        let make_struct_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..5 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_make_struct", Linkage::Import, &sig)
+                .ok()?
+        };
+        let retain_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_retain", Linkage::Import, &sig)
+                .ok()?
+        };
         let index_helper = {
             let mut sig = module.make_signature();
             for _ in 0..5 {
@@ -733,6 +891,7 @@ impl JitCache {
             for k in &plan.param_kinds {
                 sig.params.push(AbiParam::new(k.clif_type()));
             }
+            sig.params.push(AbiParam::new(types::I64));
             sig.params.push(AbiParam::new(types::I64));
             match &inf.ret_tuple {
                 Some(tk) => {
@@ -766,6 +925,7 @@ impl JitCache {
                     sig.params.push(AbiParam::new(k.clif_type()));
                 }
                 sig.params.push(AbiParam::new(types::I64));
+                sig.params.push(AbiParam::new(types::I64));
                 match &inf.ret_tuple {
                     Some(tk) => {
                         for k in tk {
@@ -785,11 +945,14 @@ impl JitCache {
                     &targets,
                     &plan.bytecode,
                     inf,
-                    shapes,
-                    field_helper,
-                    math_helper,
-                    index_helper,
-                    len_helper,
+                    &group_shapes,
+                    Helpers {
+                        field: field_helper,
+                        math: math_helper,
+                        index: index_helper,
+                        len: len_helper,
+                        make_struct: make_struct_helper,
+                    },
                 )
                 .is_none()
                 {
@@ -820,9 +983,9 @@ impl JitCache {
         let mut entries = Vec::with_capacity(plans.len());
         for ((plan, inf), clif_id) in plans.iter().zip(&inferences).zip(&clif_ids) {
             let mut entry_sig = module.make_signature();
-            entry_sig.params.push(AbiParam::new(types::I64));
-            entry_sig.params.push(AbiParam::new(types::I64));
-            entry_sig.params.push(AbiParam::new(types::I64));
+            for _ in 0..4 {
+                entry_sig.params.push(AbiParam::new(types::I64));
+            }
             entry_sig.returns.push(AbiParam::new(types::I64));
             let entry_name = format!("olang_jit_{}_entry", plan.func_id.index());
             let entry_fid = module
@@ -838,7 +1001,8 @@ impl JitCache {
                 builder.switch_to_block(block);
                 let args_ptr = builder.block_params(block)[0];
                 let depth = builder.block_params(block)[1];
-                let out_ptr = builder.block_params(block)[2];
+                let ctx_ptr = builder.block_params(block)[2];
+                let out_ptr = builder.block_params(block)[3];
 
                 let mut call_args = Vec::with_capacity(plan.param_kinds.len() + 1);
                 for (i, k) in plan.param_kinds.iter().enumerate() {
@@ -850,6 +1014,7 @@ impl JitCache {
                     ));
                 }
                 call_args.push(depth);
+                call_args.push(ctx_ptr);
 
                 let inner_ref = module.declare_func_in_func(*clif_id, builder.func);
                 let call = builder.ins().call(inner_ref, &call_args);
@@ -861,7 +1026,30 @@ impl JitCache {
                         .store(MemFlags::trusted(), *v, out_ptr, (slot_i * 8) as i32);
                 }
                 let status = results[n_vals];
-                builder.ins().return_(&[status]);
+                if matches!(inf.ret_kind, Kind::Struct(_)) {
+                    // Ownership boundary: resolve the pointer to an owned
+                    // Arc in ctx.retained; unknown pointers deopt.
+                    let ok_block = builder.create_block();
+                    let fail_block = builder.create_block();
+                    let done_block = builder.create_block();
+                    builder.append_block_param(done_block, types::I64);
+                    builder.ins().brif(status, fail_block, &[], ok_block, &[]);
+
+                    builder.switch_to_block(ok_block);
+                    let retain_ref = module.declare_func_in_func(retain_helper, builder.func);
+                    let rcall = builder.ins().call(retain_ref, &[ctx_ptr, results[0]]);
+                    let rstatus = builder.inst_results(rcall)[0];
+                    builder.ins().jump(done_block, &[rstatus.into()]);
+
+                    builder.switch_to_block(fail_block);
+                    builder.ins().jump(done_block, &[status.into()]);
+
+                    builder.switch_to_block(done_block);
+                    let final_status = builder.block_params(done_block)[0];
+                    builder.ins().return_(&[final_status]);
+                } else {
+                    builder.ins().return_(&[status]);
+                }
                 builder.seal_all_blocks();
                 builder.finalize();
             }
@@ -896,6 +1084,7 @@ impl JitCache {
                 param_kinds: plan.param_kinds.clone(),
                 ret_kind: inf.ret_kind,
                 ret_tuple: inf.ret_tuple.clone(),
+                _bytecode: Arc::clone(&plan.bytecode),
             }));
             self.compiled += 1;
         }
@@ -955,6 +1144,14 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::ExtractElement { .. }
         | Instruction::TupleGet { .. }
         | Instruction::CallFn { .. } => true,
+        // Allocation is allowed only in straight-line code (constructors).
+        // In a native loop every allocation would live until the call
+        // ends — the scratch model's memory cost — and a cap-triggered
+        // mid-loop deopt costs more than never compiling. Loops that
+        // build structs stay on bytecode and call native constructors.
+        Instruction::MakeStruct { field_regs, .. } => {
+            field_regs.len() <= 16 && !has_backward_jump(bytecode)
+        }
         Instruction::BinImm { imm, .. } => {
             matches!(imm.data, ValueData::Integer(_) | ValueData::Float(_))
         }
@@ -966,6 +1163,19 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         ),
         Instruction::Return { value } => value.is_some(),
         _ => false,
+    })
+}
+
+fn has_backward_jump(bytecode: &CompiledBytecode) -> bool {
+    bytecode.instructions.iter().enumerate().any(|(i, inst)| {
+        let target = match inst {
+            Instruction::Jump { target } => Some(target.0 as usize),
+            Instruction::JumpIfTrue { target, .. } | Instruction::JumpIfFalse { target, .. } => {
+                Some(target.0 as usize)
+            }
+            _ => None,
+        };
+        matches!(target, Some(t) if t <= i)
     })
 }
 
@@ -1027,6 +1237,11 @@ struct PlanFn {
     tuples: HashMap<u32, Vec<Kind>>,
     /// Set when Return hands back a tuple register.
     ret_tuple: Option<Vec<Kind>>,
+    /// Shapes this function synthesizes with MakeStruct, merged into the
+    /// group's spec map each fixpoint iteration.
+    made_shapes: HashMap<u32, ShapeSpec>,
+    /// Set when Return hands back a struct register (the shape id).
+    ret_struct: Option<u32>,
     ret_mask: u8,
     eq_pairs: Vec<(u32, u32)>,
     return_regs: Vec<u32>,
@@ -1039,6 +1254,7 @@ struct Inference {
     ret_kind: Kind,
     tuples: HashMap<u32, Vec<Kind>>,
     ret_tuple: Option<Vec<Kind>>,
+    ret_struct: Option<u32>,
 }
 
 impl PlanFn {
@@ -1062,6 +1278,8 @@ impl PlanFn {
             exotic,
             tuples: HashMap::new(),
             ret_tuple: None,
+            made_shapes: HashMap::new(),
+            ret_struct: None,
             ret_mask: 0,
             eq_pairs: Vec::new(),
             return_regs: Vec::new(),
@@ -1348,6 +1566,42 @@ impl PlanFn {
                         grow!(self.writes[dst.0 as usize], kind_mask(k));
                     }
                 }
+                Instruction::MakeStruct {
+                    dst,
+                    shape,
+                    field_regs,
+                } => {
+                    let mut kinds = Vec::with_capacity(field_regs.len());
+                    let mut resolved = true;
+                    for r in field_regs {
+                        narrow!(r.0, K_NUM | K_BOOL);
+                        match mask_singleton(self.writes[r.0 as usize]) {
+                            Some(k) => kinds.push(k),
+                            None => {
+                                resolved = false;
+                                break;
+                            }
+                        }
+                    }
+                    grow!(self.writes[dst.0 as usize], K_STRUCT);
+                    let k = Kind::Struct(shape.id);
+                    if self.exotic[dst.0 as usize].is_none() {
+                        self.exotic[dst.0 as usize] = Some(k);
+                        changed = true;
+                    } else if self.exotic[dst.0 as usize] != Some(k) {
+                        return None;
+                    }
+                    if resolved && !self.made_shapes.contains_key(&shape.id) {
+                        self.made_shapes.insert(
+                            shape.id,
+                            ShapeSpec {
+                                shape: shape.clone(),
+                                field_kinds: kinds,
+                            },
+                        );
+                        changed = true;
+                    }
+                }
                 Instruction::IterLen { dst, src } => {
                     narrow!(src.0, K_LIST);
                     if !matches!(
@@ -1389,7 +1643,9 @@ impl PlanFn {
                     narrow!(condition.0, K_BOOL);
                 }
                 Instruction::CallFn { dst, func_id, args } => {
-                    if let Some((param_kinds, ret_mask, ret_tuple)) = sigs.get(&func_id.index()) {
+                    if let Some((param_kinds, ret_mask, ret_tuple, ret_struct)) =
+                        sigs.get(&func_id.index())
+                    {
                         if args.len() != param_kinds.len() {
                             return None;
                         }
@@ -1411,6 +1667,25 @@ impl PlanFn {
                             } else {
                                 self.tuples.insert(dst.0, tk.clone());
                                 changed = true;
+                            }
+                        }
+                        if let Some(sid) = ret_struct {
+                            // Struct-returning callees allocate into the
+                            // ENTRY call's scratch context. Straight-line
+                            // callers are bounded (a few allocations per
+                            // call); a caller with a loop would accumulate
+                            // until the cap and waste the whole run on a
+                            // mid-loop deopt — those stay on bytecode and
+                            // drive native constructors call by call.
+                            if has_backward_jump(&self.bytecode) {
+                                return None;
+                            }
+                            let k = Kind::Struct(*sid);
+                            if self.exotic[dst.0 as usize].is_none() {
+                                self.exotic[dst.0 as usize] = Some(k);
+                                changed = true;
+                            } else if self.exotic[dst.0 as usize] != Some(k) {
+                                return None;
                             }
                         }
                     } else {
@@ -1439,20 +1714,38 @@ impl PlanFn {
                 }
                 Instruction::Return { value } => {
                     let reg = (*value)?;
-                    if self.writes[reg.0 as usize] == K_TUPLE {
-                        narrow!(reg.0, K_TUPLE);
-                        if let Some(tk) = self.tuples.get(&reg.0).cloned() {
-                            match &self.ret_tuple {
-                                None => {
-                                    self.ret_tuple = Some(tk);
-                                    changed = true;
-                                }
-                                Some(prev) if *prev != tk => return None,
-                                _ => {}
+                    // Decide the return shape by RESOLVED state, never by a
+                    // mid-fixpoint writes mask: narrowing on a premature
+                    // mask is irreversible (allowed only shrinks) and
+                    // poisoned struct returns on the first pass.
+                    if let Some(Kind::Struct(sid)) = self.exotic[reg.0 as usize] {
+                        narrow!(reg.0, K_STRUCT);
+                        match self.ret_struct {
+                            None => {
+                                self.ret_struct = Some(sid);
+                                changed = true;
                             }
+                            Some(prev) if prev != sid => return None,
+                            _ => {}
+                        }
+                        self.return_regs.push(reg.0);
+                        grow!(self.ret_mask, K_STRUCT);
+                    } else if let Some(tk) = self.tuples.get(&reg.0).cloned() {
+                        narrow!(reg.0, K_TUPLE);
+                        match &self.ret_tuple {
+                            None => {
+                                self.ret_tuple = Some(tk);
+                                changed = true;
+                            }
+                            Some(prev) if *prev != tk => return None,
+                            _ => {}
                         }
                         self.return_regs.push(reg.0);
                         grow!(self.ret_mask, K_TUPLE);
+                    } else if self.writes[reg.0 as usize] == 0 {
+                        // Unresolved (e.g. dst of a call whose return kind
+                        // isn't known yet) — contribute nothing this pass;
+                        // the fixpoint keeps iterating until it resolves.
                     } else {
                         narrow!(reg.0, K_NUM | K_BOOL);
                         self.return_regs.push(reg.0);
@@ -1516,7 +1809,15 @@ impl PlanFn {
             }
         }
 
-        let (ret_kind, ret_tuple) = if self.ret_mask == K_TUPLE {
+        let (ret_kind, ret_tuple) = if self.ret_mask == K_STRUCT {
+            let sid = self.ret_struct?;
+            for r in &self.return_regs {
+                if self.exotic[*r as usize] != Some(Kind::Struct(sid)) {
+                    return None;
+                }
+            }
+            (Kind::Struct(sid), None)
+        } else if self.ret_mask == K_TUPLE {
             let tk = self.ret_tuple.clone()?;
             for r in &self.return_regs {
                 if self.tuples.get(r) != Some(&tk) {
@@ -1542,6 +1843,7 @@ impl PlanFn {
             ret_kind,
             tuples: self.tuples.clone(),
             ret_tuple,
+            ret_struct: self.ret_struct,
         })
     }
 }
@@ -1589,6 +1891,16 @@ fn instruction_name(inst: &Instruction) -> &'static str {
 
 // ── codegen ────────────────────────────────────────────────────────────
 
+/// The imported host helpers, declared once per group.
+#[derive(Clone, Copy)]
+struct Helpers {
+    field: cranelift_module::FuncId,
+    math: cranelift_module::FuncId,
+    index: cranelift_module::FuncId,
+    len: cranelift_module::FuncId,
+    make_struct: cranelift_module::FuncId,
+}
+
 struct Gen<'a> {
     inference: &'a Inference,
     deopt_block: cranelift_codegen::ir::Block,
@@ -1630,11 +1942,15 @@ fn translate_body(
     bytecode: &CompiledBytecode,
     inference: &Inference,
     shapes: &HashMap<u32, ShapeSpec>,
-    field_helper: cranelift_module::FuncId,
-    math_helper: cranelift_module::FuncId,
-    index_helper: cranelift_module::FuncId,
-    len_helper: cranelift_module::FuncId,
+    helpers: Helpers,
 ) -> Option<()> {
+    let Helpers {
+        field: field_helper,
+        math: math_helper,
+        index: index_helper,
+        len: len_helper,
+        make_struct: make_struct_helper,
+    } = helpers;
     let n = bytecode.instructions.len();
     let param_count = inference.param_kinds.len();
 
@@ -1690,10 +2006,12 @@ fn translate_body(
     }
     let depth_var = Variable::from_u32(nregs as u32);
     builder.declare_var(depth_var, types::I64);
+    let ctx_var = Variable::from_u32(nregs as u32 + 1);
+    builder.declare_var(ctx_var, types::I64);
     // Tuple registers: one variable per element, allocated past the
     // scalar space. Register r's element i lives at
     // tuple_base + r*MAX_TUPLE + i.
-    let tuple_base = nregs as u32 + 1;
+    let tuple_base = nregs as u32 + 2;
     let tuple_var =
         |r: u32, i: usize| Variable::from_u32(tuple_base + r * MAX_TUPLE as u32 + i as u32);
     for (r, tk) in &inference.tuples {
@@ -1729,6 +2047,7 @@ fn translate_body(
         }
     }
     builder.def_var(depth_var, params[param_count]);
+    builder.def_var(ctx_var, params[param_count + 1]);
     let first = blocks[bytecode.entry_point]
         .or(blocks[0])
         .expect("entry leader");
@@ -1967,6 +2286,51 @@ fn translate_body(
                 let v = builder.use_var(tuple_var(tuple.0, *index as usize));
                 gen.write(builder, dst.0, v);
             }
+            Instruction::MakeStruct {
+                dst,
+                shape,
+                field_regs,
+            } => {
+                let n = field_regs.len();
+                let slot =
+                    builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                        cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                        (n.max(1) * 8) as u32,
+                        3,
+                    ));
+                let mut kinds_desc: i64 = 0;
+                for (i, r) in field_regs.iter().enumerate() {
+                    let k = gen.kind(r.0)?;
+                    let v = builder.use_var(Variable::from_u32(r.0));
+                    builder.ins().stack_store(v, slot, (i * 8) as i32);
+                    let code: i64 = match k {
+                        Kind::Int => 0,
+                        Kind::Float => 1,
+                        Kind::Bool => 2,
+                        _ => return None,
+                    };
+                    kinds_desc |= code << (i * 4);
+                }
+                let ctx = builder.use_var(ctx_var);
+                // The Arc lives inside this instruction, which the owning
+                // JittedFn keeps alive together with its bytecode.
+                let shape_ptr = builder
+                    .ins()
+                    .iconst(types::I64, shape as *const Arc<_> as i64);
+                let fields_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                let n_v = builder.ins().iconst(types::I64, n as i64);
+                let kinds_v = builder.ins().iconst(types::I64, kinds_desc);
+                let helper_ref = module.declare_func_in_func(make_struct_helper, builder.func);
+                let call = builder
+                    .ins()
+                    .call(helper_ref, &[ctx, shape_ptr, fields_ptr, n_v, kinds_v]);
+                let ptr = builder.inst_results(call)[0];
+                let null = builder.ins().icmp_imm(IntCC::Equal, ptr, 0);
+                let ok_block = builder.create_block();
+                builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
+                builder.switch_to_block(ok_block);
+                gen.write(builder, dst.0, ptr);
+            }
             Instruction::IterLen { dst, src } => {
                 let list_ptr = builder.use_var(Variable::from_u32(src.0));
                 let helper_ref = module.declare_func_in_func(len_helper, builder.func);
@@ -2120,6 +2484,7 @@ fn translate_body(
                     call_args.push(gen.read(builder, a.0)?);
                 }
                 call_args.push(new_depth);
+                call_args.push(builder.use_var(ctx_var));
                 let callee_ref = module.declare_func_in_func(callee_clif, builder.func);
                 let call = builder.ins().call(callee_ref, &call_args);
                 let results = builder.inst_results(call).to_vec();
@@ -2143,6 +2508,17 @@ fn translate_body(
             }
             Instruction::Return { value } => {
                 let reg = (*value)?;
+                if matches!(gen.kind(reg.0), Some(Kind::Struct(_)))
+                    && inference.ret_struct.is_some()
+                {
+                    // Raw pointer out; the scratch list keeps it alive.
+                    // Ownership transfers once, in the entry wrapper.
+                    let ptr = builder.use_var(Variable::from_u32(reg.0));
+                    let ok = builder.ins().iconst(types::I64, STATUS_OK);
+                    builder.ins().return_(&[ptr, ok]);
+                    terminated = true;
+                    continue;
+                }
                 if let Some(tk) = inference.tuples.get(&reg.0) {
                     let mut vals: Vec<ClifValue> = (0..tk.len())
                         .map(|i| builder.use_var(tuple_var(reg.0, i)))

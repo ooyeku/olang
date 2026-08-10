@@ -683,3 +683,69 @@ show(ok) + " " + show(bad)
 "#,
     );
 }
+
+// ── struct construction ────────────────────────────────────────────────
+
+#[test]
+fn native_constructors_agree() {
+    assert_jit_transparent(
+        r#"
+type V = struct { x: Float, y: Float }
+fn add(a, b) = V { x: a.x + b.x, y: a.y + b.y }
+fn scale(v, k) = V { x: v.x * k, y: v.y * k }
+fn step(v) = scale(add(v, V { x: 0.1, y: 0.2 }), 0.999)
+fn orbit(v, steps) = {
+    let mut cur = v
+    let mut i = 0
+    while i < steps { cur = step(cur); i = i + 1 }
+    cur.x + cur.y
+}
+show(orbit(V { x: 1.0, y: 2.0 }, 50))
+"#,
+    );
+}
+
+#[test]
+fn mixed_field_constructors_agree() {
+    assert_jit_transparent(
+        r#"
+type Row = struct { id: Int, w: Float, live: Bool }
+fn make(id, w) = Row { id: id, w: w * 2.0, live: id > 0 }
+fn probe(id, w) = {
+    let r = make(id, w)
+    if r.live => r.w + to_float(r.id) else => 0.0 - r.w
+}
+show(probe(3, 1.5)) + " " + show(probe(-1, 4.0))
+"#,
+    );
+}
+
+#[test]
+fn returning_a_parameter_struct_agrees() {
+    // Returning an entry argument exercises the args side of retain.
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float }
+fn pick(a, b, flip) = if flip => a else => b
+show(pick(P { x: 1.5 }, P { x: 2.5 }, true).x + pick(P { x: 1.5 }, P { x: 2.5 }, false).x)
+"#,
+    );
+}
+
+#[test]
+fn allocating_loops_stay_on_bytecode_and_agree() {
+    // The refusal rule: loops that build structs are driven from
+    // bytecode; results must be identical either way.
+    assert_jit_transparent(
+        r#"
+type A = struct { v: Float }
+fn build_sum(n) = {
+    let mut acc = 0.0
+    let mut i = 0
+    while i < n { acc = acc + A { v: to_float(i) * 0.5 }.v; i = i + 1 }
+    acc
+}
+show(build_sum(200))
+"#,
+    );
+}

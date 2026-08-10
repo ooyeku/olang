@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **JIT struct construction — allocation with sound ownership.**
+  MakeStruct compiles natively through a scratch-context model: every
+  struct a native call builds is owned by a VM-side list for exactly
+  that call, so a deopt at any point can never leak or dangle; struct
+  returns transfer ownership once, at the entry boundary, where a
+  retain helper resolves the borrowed pointer to an owned Arc (scratch
+  allocation or entry argument — anything else deopts). A context
+  pointer now threads through the whole native ABI. Two deliberate
+  refusal rules keep the model where it wins, learned by measurement:
+  an unbounded native loop of allocations held memory until call end
+  and a cap-triggered mid-loop deopt cost more than never compiling —
+  so MakeStruct compiles only in straight-line code (constructors),
+  loops with struct-returning callees stay on bytecode and drive
+  native constructors call by call. Also fixed a first-pass
+  monotonicity bug where Return narrowed a not-yet-resolved register's
+  allowed-set irreversibly. Constructor-driving kernel: 88 -> 81ms;
+  55 JIT parity tests including returning-a-parameter, mixed-field
+  constructors, and the allocating-loop refusal.
+
 ## [0.41.0] - 2026-08-09
 
 ### Added

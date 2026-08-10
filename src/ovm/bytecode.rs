@@ -1520,6 +1520,15 @@ impl BytecodeVm {
                         .and_then(|s| s.clone())
                         .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
                 };
+                let mut struct_args: Vec<std::sync::Arc<crate::ovm::value::StructObject>> =
+                    Vec::new();
+                for reg in arg_regs {
+                    if let Ok(v) = self.execution_state.register_ref(*reg) {
+                        if let crate::ovm::value::ValueData::Struct(obj) = &v.data {
+                            struct_args.push(obj.clone());
+                        }
+                    }
+                }
                 if let Some(result) = self.jit.try_call_raw_with_shapes(
                     func_id,
                     &bytecode,
@@ -1528,6 +1537,7 @@ impl BytecodeVm {
                     remaining,
                     &lookup,
                     &shapes,
+                    &struct_args,
                 ) {
                     return Ok(result);
                 }
