@@ -134,14 +134,46 @@ fn fmt_leaves_multiline_template_strings_alone() {
 }
 
 #[test]
-fn fmt_skips_files_that_do_not_parse() {
+fn fmt_reports_and_fails_on_files_that_do_not_parse() {
     let dir = fixture_dir("fmt_bad");
     let file = dir.join("broken.ol");
     std::fs::write(&file, "let = = 1   \n").unwrap();
     let out = olang().arg("fmt").arg(&dir).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("skipped"), "got: {stdout}");
-    // untouched
+    // An unparseable file is a real error fmt must surface and fail on, not
+    // silently claim "all formatted".
+    assert!(stdout.contains("does not parse"), "got: {stdout}");
+    assert!(
+        !out.status.success(),
+        "fmt should exit nonzero on an unparseable file"
+    );
+    // The broken file is never rewritten.
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "let = = 1   \n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_and_fmt_fail_on_missing_paths() {
+    // A named path that doesn't exist must be an error, not silent success.
+    let t = olang()
+        .arg("test")
+        .arg("/no/such/path.ol")
+        .output()
+        .unwrap();
+    assert!(!t.status.success(), "test on a missing path should fail");
+    let f = olang().arg("fmt").arg("/no/such/path.ol").output().unwrap();
+    assert!(!f.status.success(), "fmt on a missing path should fail");
+}
+
+#[test]
+fn test_fails_on_a_file_that_does_not_parse() {
+    let dir = fixture_dir("test_bad");
+    let file = dir.join("broken.ol");
+    std::fs::write(&file, "fn oops( = 1\n").unwrap();
+    let out = olang().arg("test").arg(&file).output().unwrap();
+    assert!(
+        !out.status.success(),
+        "a syntax error in a test file must fail the run, not pass CI"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

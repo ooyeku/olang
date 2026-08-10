@@ -15,11 +15,19 @@ use std::path::Path;
 
 pub fn run(path: &Path) -> i32 {
     let started = std::time::Instant::now();
+
+    // A path the user named that doesn't exist is a mistake, not "no tests":
+    // reporting success for a typo'd path lets CI pass over nothing.
+    if !path.exists() {
+        eprintln!("error: path not found: {}", path.display());
+        return 1;
+    }
     let files = super::discover_ol_files(path);
 
     let mut total_passed = 0usize;
     let mut total_failed = 0usize;
     let mut file_errors = 0usize;
+    let mut parse_errors = 0usize;
     let mut test_files = 0usize;
 
     let parser = Parser::new();
@@ -31,9 +39,14 @@ pub fn run(path: &Path) -> i32 {
         };
         let program = match parser.parse(&source) {
             Ok(p) => p,
-            // Unparseable files are simply not test files (the compiler of
-            // record for parse errors is `olang <file>` itself).
-            Err(_) => continue,
+            // A file that fails to parse is a real error, not "no tests here".
+            // Silently skipping it lets a syntax error in a test file pass CI.
+            Err(e) => {
+                parse_errors += 1;
+                println!("  {} {}", "✗".red().bold(), file.display());
+                println!("      {}", e.to_string().red());
+                continue;
+            }
         };
         let has_tests = program
             .statements
@@ -105,7 +118,8 @@ pub fn run(path: &Path) -> i32 {
             path.display(),
             files.len()
         );
-        return 0;
+        // Unparseable files still make the run fail, even with no test blocks.
+        return if parse_errors > 0 { 1 } else { 0 };
     }
     let summary = format!(
         "  {} passed, {} failed  ({} test file{}, {}ms)",
@@ -115,7 +129,7 @@ pub fn run(path: &Path) -> i32 {
         if test_files == 1 { "" } else { "s" },
         elapsed
     );
-    if total_failed + file_errors > 0 {
+    if total_failed + file_errors + parse_errors > 0 {
         println!("{}", summary.red().bold());
         1
     } else {

@@ -146,9 +146,18 @@ pub fn format_source(source: &str) -> String {
 
 /// Format files under the given paths. Returns the process exit code.
 pub fn run(paths: &[std::path::PathBuf], check: bool) -> i32 {
+    // A named path that doesn't exist is a mistake, not "nothing to format".
+    for path in paths {
+        if !path.exists() {
+            eprintln!("error: path not found: {}", path.display());
+            return 1;
+        }
+    }
+
     let parser = Parser::new();
     let mut changed: Vec<String> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
+    let mut parse_errors = 0usize;
     let mut scanned = 0usize;
 
     for path in paths {
@@ -158,24 +167,30 @@ pub fn run(paths: &[std::path::PathBuf], check: bool) -> i32 {
                 Ok(s) => s,
                 Err(_) => continue,
             };
+            // Parse up front: a file that doesn't parse is a real problem
+            // fmt must surface (and fail on), not silently report as
+            // "all formatted".
+            let before = match parser.parse(&original) {
+                Ok(p) => p,
+                Err(e) => {
+                    parse_errors += 1;
+                    println!("  {} {} (does not parse)", "✗".red().bold(), file.display());
+                    println!("      {}", e.to_string().red());
+                    continue;
+                }
+            };
             let formatted = format_source(&original);
             if formatted == original {
                 continue;
             }
 
             // Safety gate: identical AST or nothing.
-            let before = parser.parse(&original);
-            let after = parser.parse(&formatted);
-            match (before, after) {
-                (Ok(a), Ok(b)) if a == b => {
+            match parser.parse(&formatted) {
+                Ok(after) if before == after => {
                     changed.push(file.display().to_string());
                     if !check && std::fs::write(&file, &formatted).is_err() {
                         eprintln!("  could not write {}", file.display());
                     }
-                }
-                (Err(_), _) => {
-                    // Unparseable source: not ours to touch.
-                    skipped.push(format!("{} (does not parse)", file.display()));
                 }
                 _ => {
                     skipped.push(format!(
@@ -191,6 +206,14 @@ pub fn run(paths: &[std::path::PathBuf], check: bool) -> i32 {
         println!("  {} {}", "~ skipped".yellow(), s);
     }
     if changed.is_empty() {
+        if parse_errors > 0 {
+            println!(
+                "  {} file{} did not parse",
+                parse_errors,
+                if parse_errors == 1 { "" } else { "s" }
+            );
+            return 1;
+        }
         println!(
             "  {} ({} file{} scanned)",
             "all formatted".green(),
@@ -213,7 +236,8 @@ pub fn run(paths: &[std::path::PathBuf], check: bool) -> i32 {
         for f in &changed {
             println!("  {} {}", "reformatted".green(), f);
         }
-        0
+        // Reformatted the good files, but an unparseable file still fails.
+        if parse_errors > 0 { 1 } else { 0 }
     }
 }
 
