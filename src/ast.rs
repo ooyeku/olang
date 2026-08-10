@@ -609,6 +609,69 @@ pub enum TypeAnnotation {
     },
 }
 
+/// A struct field's declared type reduced to the subset the runtime can
+/// reliably enforce when a struct is constructed. Only these annotations are
+/// checked; every other annotation (a generic type parameter, a list/map,
+/// a function type, a union, an absent/unknown type) reduces to `None` and
+/// leaves the field unchecked — construction never rejects what it cannot
+/// reliably verify.
+///
+/// The check itself is a single string comparison: the declared type's name
+/// against the value's runtime type name. `Value::type_name` and
+/// `OvmValue::type_name` spell primitives identically (`Int`, `Float`,
+/// `Bool`, `String`) and report a struct/enum's declared name, so the same
+/// comparison enforces the same rule byte-for-byte on every tier. An `Int`
+/// value does NOT satisfy a `Float` field: the match is exact, no numeric
+/// widening.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum FieldTypeCheck {
+    Int,
+    Float,
+    Bool,
+    String,
+    /// A declared struct or enum type, matched by name against the value's
+    /// runtime type name.
+    Named(String),
+}
+
+impl FieldTypeCheck {
+    /// Reduce a declared field annotation to a checkable type, or `None` to
+    /// leave the field unchecked. `type_params` are the enclosing type's
+    /// generic parameters, which are erased at runtime and never checked.
+    pub fn from_annotation(ann: &TypeAnnotation, type_params: &[String]) -> Option<Self> {
+        match ann {
+            TypeAnnotation::Int => Some(Self::Int),
+            TypeAnnotation::Float => Some(Self::Float),
+            TypeAnnotation::Bool => Some(Self::Bool),
+            TypeAnnotation::String => Some(Self::String),
+            // A bare custom name is a declared struct or enum — unless it is
+            // one of this type's generic parameters, which has no runtime
+            // identity to check against.
+            TypeAnnotation::Custom(name) if !type_params.iter().any(|p| p == name) => {
+                Some(Self::Named(name.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// The declared type's name, as it must appear as a value's runtime type
+    /// name to satisfy the field.
+    pub fn expected_name(&self) -> &str {
+        match self {
+            Self::Int => "Int",
+            Self::Float => "Float",
+            Self::Bool => "Bool",
+            Self::String => "String",
+            Self::Named(name) => name,
+        }
+    }
+
+    /// Does a value whose runtime type name is `actual` satisfy this field?
+    pub fn accepts(&self, actual: &str) -> bool {
+        self.expected_name() == actual
+    }
+}
+
 /// Generic type definition
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenericTypeDefinition {

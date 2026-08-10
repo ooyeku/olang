@@ -117,8 +117,13 @@ impl BytecodeTier {
     /// compile time. A redeclaration with a different field set invalidates
     /// every compiled function (their baked validation may be stale); they
     /// recompile on next call, and literals of the changed type refuse.
-    pub fn note_struct(&mut self, name: String, fields: Vec<String>) {
-        if self.vm.note_struct(name, fields) {
+    pub fn note_struct(
+        &mut self,
+        name: String,
+        fields: Vec<String>,
+        field_checks: HashMap<String, crate::ast::FieldTypeCheck>,
+    ) {
+        if self.vm.note_struct(name, fields, field_checks) {
             self.compiled.clear();
         }
     }

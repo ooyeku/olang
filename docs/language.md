@@ -1008,15 +1008,28 @@ Struct values are immutable; build a new one to "change" a field.
 must name a declared struct type and supply exactly the declared fields —
 a missing or surprise field is an error naming it, and an undeclared
 struct-literal name is an error (use an anonymous `{ ... }` object for
-free-form records). Field *values* are not type-checked: olang is
-dynamically typed — **declarations fix shape, not types**.
+free-form records).
+
+**Field values are checked against their declared types.** When a field's
+annotation is one the runtime can verify — `Int`, `Float`, `Bool`,
+`String`, or a declared struct or enum type — a value of the wrong type is
+an error naming the field, the type, what was expected, and what was
+supplied. The match is exact: an `Int` value does **not** satisfy a
+`Float` field (there is no widening at construction). Fields whose
+annotation the runtime cannot reliably check — a generic type parameter, a
+list or map, a function type — stay dynamic and accept any value, as do all
+fields of an anonymous `{ ... }` object.
 
 ```olang no-run
 type Point = struct { x: Int, y: Int }
 Point { x: 1 }                    // error: missing field 'y'
 Point { x: 1, y: 2, z: 3 }        // error: no field 'z'
 NeverDeclared { s: 42 }           // error: unknown struct type
-Point { x: "dynamic", y: 2 }      // fine: values are dynamic
+Point { x: "hi", y: 2 }           // error: field 'x' of Point expects Int, got String
+
+type Box<T> = struct { value: T }
+Box { value: "anything" }         // fine: a generic field stays dynamic
+{ x: "anything", y: 2 }           // fine: anonymous objects are free-form
 ```
 
 ### Enums (algebraic data types)

@@ -23,6 +23,20 @@ documented.
 
 ### Changed
 
+- **Struct field type annotations are now enforced at construction
+  (breaking).** Constructing a declared struct with a field value whose
+  runtime type does not match the field's declared annotation is now a type
+  error (e.g. `field 'x' of Point expects Int, got String`), where it was
+  previously accepted — annotations were advisory. Enforcement covers the
+  annotations the runtime can reliably check: `Int`, `Float`, `Bool`,
+  `String`, and declared struct/enum type names. The match is exact — an
+  `Int` value does not satisfy a `Float` field (no widening at
+  construction). Fields whose annotation cannot be reliably checked (a
+  generic type parameter, a list/map, a function type) stay dynamic, as do
+  all fields of an anonymous `{ ... }` object. The behavior is identical
+  across all three tiers (interpreter, bytecode, and JIT) and pinned by
+  differential regression tests.
+
 - **Mixing a number and a string under `+` is now a type error, not a
   silent coercion (breaking).** `"count: " + 5` and `1 + "x"` previously
   stringified the number and concatenated; they now raise a type error

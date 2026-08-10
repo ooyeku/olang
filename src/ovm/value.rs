@@ -730,6 +730,37 @@ impl PartialEq for OvmValue {
 impl Eq for OvmValue {}
 
 impl OvmValue {
+    /// Runtime type name, spelled exactly as `crate::ast::Value::type_name`
+    /// so a struct field-type check compares the same strings on either
+    /// tier: `Int`, `Float`, `Bool`, `String`, `List`, `Map`, `Tuple`,
+    /// `Function`, `Range`, `Result`, `Unit`, `Promise`, or a struct/enum's
+    /// declared type name.
+    pub fn type_name(&self) -> &str {
+        match &self.data {
+            ValueData::Integer(_) => "Int",
+            ValueData::Float(_) => "Float",
+            ValueData::Boolean(_) => "Bool",
+            ValueData::String(_) => "String",
+            ValueData::List(_) | ValueData::LazyList(_) | ValueData::Stream(_) => "List",
+            ValueData::Map(_) => "Map",
+            ValueData::Tuple(_) => "Tuple",
+            ValueData::Function(_)
+            | ValueData::AstFunction(_)
+            | ValueData::Closure(_)
+            | ValueData::CompiledFunction(_) => "Function",
+            ValueData::Builtin(_) => "Builtin",
+            ValueData::Struct(s) => &s.shape.type_name,
+            ValueData::Enum(e) => &e.type_name,
+            ValueData::Range(_) => "Range",
+            ValueData::Result(_) => "Result",
+            ValueData::Unit => "Unit",
+            ValueData::Promise(_) => "Promise",
+            ValueData::Thunk(_) | ValueData::OptimizedValue(_) => "Value",
+            ValueData::Error(_) => "Error",
+            ValueData::Native(handle) => handle.0.type_name(),
+        }
+    }
+
     /// Create a new integer value
     #[inline]
     pub fn new_integer(value: i64) -> Self {

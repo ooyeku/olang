@@ -134,9 +134,16 @@ pub struct Interpreter {
 
     /// Declared struct types: name -> field names. Construction of a
     /// declared struct validates its field set; an undeclared struct-literal
-    /// name is an error. (Field VALUES are dynamic — declarations fix shape,
-    /// not types.)
+    /// name is an error.
     struct_defs: HashMap<String, Vec<String>>,
+
+    /// Declared struct field types, for the fields whose annotation the
+    /// runtime can enforce: struct name -> (field name -> checkable type).
+    /// Construction rejects a field value whose runtime type does not match
+    /// its declared annotation. Fields with an unenforceable annotation
+    /// (generic parameter, list, map, function, union, ...) are absent and
+    /// stay unchecked.
+    struct_field_checks: HashMap<String, HashMap<String, crate::ast::FieldTypeCheck>>,
 
     /// Package dependency map: dependency name -> the directory whose `.ol`
     /// files it exposes. A `use foo.bar` whose first segment is a dependency
@@ -194,6 +201,7 @@ impl Interpreter {
             test_mode: false,
             test_results: Vec::new(),
             struct_defs: HashMap::new(),
+            struct_field_checks: HashMap::new(),
             dependency_map: HashMap::new(),
         };
 
@@ -1354,12 +1362,14 @@ impl Interpreter {
         trait_defaults: HashMap<(String, String), Function>,
         type_traits: HashMap<String, Vec<String>>,
         struct_defs: HashMap<String, Vec<String>>,
+        struct_field_checks: HashMap<String, HashMap<String, crate::ast::FieldTypeCheck>>,
         unit_variant_names: HashSet<String>,
     ) {
         self.trait_impls = trait_impls;
         self.trait_defaults = trait_defaults;
         self.type_traits = type_traits;
         self.struct_defs = struct_defs;
+        self.struct_field_checks = struct_field_checks;
         self.unit_variant_names = unit_variant_names;
     }
 
@@ -1571,7 +1581,14 @@ impl Interpreter {
             bytecode_tier: self.bytecode_tier.as_ref().map(|t| {
                 let mut tier = crate::ovm::tier::BytecodeTier::new(t.threshold());
                 for (name, fields) in &self.struct_defs {
-                    tier.note_struct(name.clone(), fields.clone());
+                    tier.note_struct(
+                        name.clone(),
+                        fields.clone(),
+                        self.struct_field_checks
+                            .get(name)
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
                 }
                 for name in &self.unit_variant_names {
                     tier.note_unit_variant(name.clone());
@@ -1602,6 +1619,7 @@ impl Interpreter {
             test_mode: false,
             test_results: Vec::new(),
             struct_defs: self.struct_defs.clone(),
+            struct_field_checks: self.struct_field_checks.clone(),
             dependency_map: self.dependency_map.clone(),
         }
     }
@@ -1796,16 +1814,34 @@ impl Interpreter {
             }
         }
 
-        // Struct declarations register their shape: construction validates
-        // the field-name set against it (values stay dynamic).
+        // Struct declarations register their shape (the field-name set) and
+        // the field types the runtime can enforce. Construction validates the
+        // field set and rejects a field value whose runtime type does not
+        // match its declared annotation.
         if let TypeDefinition::Struct { fields } = &type_decl.definition {
             let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
-            // The bytecode tier validates literals at compile time against
-            // the same shape
+            let field_checks: HashMap<String, crate::ast::FieldTypeCheck> = fields
+                .iter()
+                .filter_map(|f| {
+                    crate::ast::FieldTypeCheck::from_annotation(
+                        &f.field_type,
+                        &type_decl.type_params,
+                    )
+                    .map(|check| (f.name.clone(), check))
+                })
+                .collect();
+            // The bytecode tier validates literals against the same shape and
+            // enforces the same field types.
             if let Some(tier) = self.bytecode_tier.as_mut() {
-                tier.note_struct(type_decl.name.clone(), field_names.clone());
+                tier.note_struct(
+                    type_decl.name.clone(),
+                    field_names.clone(),
+                    field_checks.clone(),
+                );
             }
             self.struct_defs.insert(type_decl.name.clone(), field_names);
+            self.struct_field_checks
+                .insert(type_decl.name.clone(), field_checks);
         }
 
         Ok(Value::Unit)
@@ -1819,8 +1855,11 @@ impl Interpreter {
         // the field-name set against the declaration — missing or surprise
         // fields are errors, and an undeclared name is an error (use an
         // anonymous `{ ... }` object for free-form records). Field VALUES are
-        // not type-checked: olang is dynamically typed; declarations fix
-        // shape, not types.
+        // also checked against their declared annotations where the runtime
+        // can: a value whose runtime type does not match a field's declared
+        // Int/Float/Bool/String or struct/enum type is a type error. Fields
+        // with an unenforceable annotation (a generic parameter, a list, a
+        // function, ...) stay dynamic.
         let declared = match self.struct_defs.get(&struct_literal.type_name) {
             Some(fields) => fields.clone(),
             None => {
@@ -1863,6 +1902,27 @@ impl Interpreter {
         let mut fields = std::collections::HashMap::new();
         for field_value in &struct_literal.fields {
             let value = self.eval_expr(&field_value.value)?;
+            // Enforce the declared field type where the runtime can check it.
+            // A field with an unenforceable annotation (generic parameter,
+            // list, function, ...) has no entry and stays dynamic.
+            if let Some(check) = self
+                .struct_field_checks
+                .get(&struct_literal.type_name)
+                .and_then(|c| c.get(&field_value.name))
+            {
+                let actual = value.type_name();
+                if !check.accepts(&actual) {
+                    return Err(InterpreterError::TypeError {
+                        message: format!(
+                            "field '{}' of {} expects {}, got {}",
+                            field_value.name,
+                            struct_literal.type_name,
+                            check.expected_name(),
+                            actual
+                        ),
+                    });
+                }
+            }
             fields.insert(field_value.name.clone(), value);
         }
 

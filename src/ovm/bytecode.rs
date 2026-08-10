@@ -73,6 +73,11 @@ pub struct BytecodeVm {
     /// interpreter's registry so struct literals validate at compile time
     /// with exactly the interpreter's rules.
     struct_defs: HashMap<String, Vec<String>>,
+    /// Declared struct field types (type name -> field name -> checkable
+    /// type), mirrored from the interpreter. MakeStruct enforces these at
+    /// run time so a field value whose runtime type does not match its
+    /// declared annotation is the same error the interpreter raises.
+    struct_field_checks: HashMap<String, HashMap<String, crate::ast::FieldTypeCheck>>,
     /// User function VALUES by name, mirrored from the tier's
     /// declarations. Used when a lambda's free variable is a registered
     /// function: the compiled body calls it through the registry, but the
@@ -139,6 +144,10 @@ pub struct BytecodeCompiler {
     /// Declared struct shapes for compile-time literal validation
     /// (mirrored from the interpreter; poisoned types are absent).
     struct_defs: HashMap<String, Vec<String>>,
+
+    /// Declared struct field types for run-time MakeStruct enforcement
+    /// (mirrored from the interpreter).
+    struct_field_checks: HashMap<String, HashMap<String, crate::ast::FieldTypeCheck>>,
 
     /// Declared unit enum variant names (see BytecodeVm::unit_variant_names).
     unit_variant_names: std::collections::HashSet<String>,
@@ -370,6 +379,11 @@ pub enum Instruction {
         dst: Register,
         shape: Arc<crate::ovm::value::StructShape>,
         field_regs: Vec<Register>,
+        /// Declared field types in the shape's field order, parallel to
+        /// `field_regs`. `Some` fields are checked against the value's
+        /// runtime type at construction; `None` fields (anonymous objects,
+        /// or fields with an unenforceable annotation) stay dynamic.
+        field_types: Arc<[Option<crate::ast::FieldTypeCheck>]>,
     },
     /// Build a map from (key, value) register pairs, coercing keys with
     /// the interpreter's exact rule: String raw, Int/Float/Bool via
@@ -927,6 +941,7 @@ impl BytecodeVm {
             arg_pool: Vec::new(),
             hof_cache: HashMap::new(),
             struct_defs: HashMap::new(),
+            struct_field_checks: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
             known_function_values: HashMap::new(),
             trait_impls: HashMap::new(),
@@ -947,7 +962,12 @@ impl BytecodeVm {
     /// cannot follow a live registry, so literals of that type refuse from
     /// then on. Returns true when the shape landscape changed in a way that
     /// invalidates previously compiled functions.
-    pub fn note_struct(&mut self, name: String, fields: Vec<String>) -> bool {
+    pub fn note_struct(
+        &mut self,
+        name: String,
+        fields: Vec<String>,
+        field_checks: HashMap<String, crate::ast::FieldTypeCheck>,
+    ) -> bool {
         self.builtin_interpreter = None;
         if self.poisoned_structs.contains(&name) {
             return false;
@@ -956,10 +976,12 @@ impl BytecodeVm {
             Some(existing) if *existing == fields => false,
             Some(_) => {
                 self.struct_defs.remove(&name);
+                self.struct_field_checks.remove(&name);
                 self.poisoned_structs.insert(name);
                 true
             }
             None => {
+                self.struct_field_checks.insert(name.clone(), field_checks);
                 self.struct_defs.insert(name, fields);
                 false
             }
@@ -1135,6 +1157,7 @@ impl BytecodeVm {
         self.compiler.function_registry = self.function_registry.clone();
         self.compiler.builtin_names = self.builtin_names.clone();
         self.compiler.struct_defs = self.struct_defs.clone();
+        self.compiler.struct_field_checks = self.struct_field_checks.clone();
         self.compiler.known_function_values = self.known_function_values.clone();
         self.compiler.unit_variant_names = self.unit_variant_names.clone();
         self.compiler.enclosing_closure = closure;
@@ -1737,10 +1760,29 @@ impl BytecodeVm {
                     dst,
                     shape,
                     field_regs,
+                    field_types,
                 } => {
                     let mut values = Vec::with_capacity(field_regs.len());
                     for reg in field_regs {
                         values.push(self.execution_state.get_register(*reg)?);
+                    }
+                    // Enforce declared field types where the runtime can check
+                    // them — the same rule and the same message the
+                    // interpreter raises. `field_types` is in shape order, so
+                    // it aligns with `values` and `shape.field_names`.
+                    for (i, check) in field_types.iter().enumerate() {
+                        if let Some(check) = check {
+                            let actual = values[i].type_name();
+                            if !check.accepts(actual) {
+                                return Err(BytecodeError::TypeError(format!(
+                                    "field '{}' of {} expects {}, got {}",
+                                    shape.field_names[i],
+                                    shape.type_name,
+                                    check.expected_name(),
+                                    actual
+                                )));
+                            }
+                        }
                     }
                     let obj = crate::ovm::value::StructObject {
                         shape: shape.clone(),
@@ -2693,6 +2735,7 @@ impl BytecodeVm {
                 self.trait_defaults.clone(),
                 self.type_traits.clone(),
                 self.struct_defs.clone(),
+                self.struct_field_checks.clone(),
                 self.unit_variant_names.clone(),
             );
             self.builtin_interpreter = Some(interp);
@@ -3658,6 +3701,7 @@ impl BytecodeCompiler {
             _label_counter: 0,
             function_registry: HashMap::new(),
             struct_defs: HashMap::new(),
+            struct_field_checks: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
             known_function_values: HashMap::new(),
             self_call: None,
@@ -4311,7 +4355,9 @@ impl BytecodeCompiler {
             // fail refuses compilation, so the function stays interpreted
             // and the interpreter raises its own error — never a divergent
             // one. Field values compile in literal order, preserving
-            // side-effect order.
+            // side-effect order. Declared field types travel with the
+            // instruction so MakeStruct enforces them at run time, exactly as
+            // the interpreter does.
             Expr::StructLiteral(literal) => {
                 let declared = self.struct_defs.get(&literal.type_name).ok_or_else(|| {
                     BytecodeError::CompilationFailed(format!(
@@ -4349,11 +4395,22 @@ impl BytecodeCompiler {
                     pairs.iter().map(|(n, _)| n.clone()).collect(),
                 );
                 pairs.sort_by(|a, b| a.0.cmp(&b.0));
+                // Field types in shape order, parallel to field_regs. Fields
+                // with an unenforceable annotation carry `None` and stay
+                // dynamic.
+                let field_types: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]> = {
+                    let checks = self.struct_field_checks.get(&literal.type_name);
+                    pairs
+                        .iter()
+                        .map(|(name, _)| checks.and_then(|c| c.get(name)).cloned())
+                        .collect()
+                };
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter.instructions.push(Instruction::MakeStruct {
                     dst: dst_reg,
                     shape,
                     field_regs: pairs.into_iter().map(|(_, r)| r).collect(),
+                    field_types,
                 });
                 Ok(dst_reg)
             }
@@ -4371,11 +4428,15 @@ impl BytecodeCompiler {
                     pairs.iter().map(|(n, _)| n.clone()).collect(),
                 );
                 pairs.sort_by(|a, b| a.0.cmp(&b.0));
+                // Anonymous objects declare no field types: nothing to check.
+                let field_types: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]> =
+                    pairs.iter().map(|_| None).collect();
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter.instructions.push(Instruction::MakeStruct {
                     dst: dst_reg,
                     shape,
                     field_regs: pairs.into_iter().map(|(_, r)| r).collect(),
+                    field_types,
                 });
                 Ok(dst_reg)
             }

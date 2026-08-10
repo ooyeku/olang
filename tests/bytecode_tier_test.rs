@@ -1517,6 +1517,102 @@ n
     assert!(eval(src, Some(1)).is_err());
 }
 
+#[test]
+fn type_correct_struct_constructs_across_tiers() {
+    // Every checkable field kind, built by a hot function, must construct and
+    // agree on the interpreter, the bytecode tier, and the JIT.
+    assert_tier_transparent(
+        r#"
+type Rec = struct { n: Int, f: Float, s: String, b: Bool }
+fn build(i) = Rec { n: i, f: 1.5, s: "x", b: true }
+let mut n = 0
+for i in 0..200 { n = n + build(i).n }
+n
+"#,
+    );
+}
+
+#[test]
+fn mismatched_field_type_errors_across_tiers() {
+    // A struct built with a value whose runtime type contradicts the declared
+    // field type is a type error on BOTH tiers. `build` is warmed up with
+    // matching Int values (so it promotes to the bytecode tier), then handed a
+    // String — the error must come from the promoted MakeStruct exactly as it
+    // does from the interpreter.
+    let src = r#"
+type P = struct { x: Int }
+fn build(v) = P { x: v }
+let mut n = 0
+for i in 0..100 { n = n + build(i).x }
+build("boom").x
+"#;
+    let interpreted = eval(src, None);
+    let promoted = eval(src, Some(2));
+    assert!(
+        interpreted.is_err(),
+        "interpreter should reject: {interpreted:?}"
+    );
+    assert!(
+        promoted.is_err(),
+        "promoted tier should reject: {promoted:?}"
+    );
+    // The message content is identical on both paths.
+    assert!(
+        interpreted
+            .unwrap_err()
+            .contains("field 'x' of P expects Int, got String"),
+        "interpreter message"
+    );
+    assert!(
+        promoted
+            .unwrap_err()
+            .contains("field 'x' of P expects Int, got String"),
+        "promoted message"
+    );
+}
+
+#[test]
+fn int_into_float_field_errors_across_tiers() {
+    // Enforcement is strict — no Int->Float widening — and identically so on
+    // both tiers.
+    let src = r#"
+type V = struct { x: Float }
+fn build(v) = V { x: v }
+let mut n = 0
+for i in 0..100 { n = n + build(1.0 * i).x }
+build(3).x
+"#;
+    assert!(eval(src, None).is_err());
+    assert!(eval(src, Some(2)).is_err());
+}
+
+#[test]
+fn untyped_and_generic_fields_unaffected_across_tiers() {
+    // Anonymous objects declare no field types, and a generic type parameter
+    // has no runtime identity to check — both accept any value, on every tier.
+    assert_tier_transparent(
+        r#"
+type Box<T> = struct { value: T }
+fn wrap(i) = Box { value: i }
+fn anon(i) = { tag: "n", v: i }
+let mut n = 0
+for i in 0..120 { n = n + wrap(i).value + anon(i).v }
+n
+"#,
+    );
+    // A generic field even accepts a value of a different type than earlier
+    // calls used, with no error on either tier.
+    let src = r#"
+type Box<T> = struct { value: T }
+fn wrap(v) = Box { value: v }
+let mut n = 0
+for i in 0..100 { n = n + wrap(i).value }
+to_string(wrap("done").value)
+"#;
+    assert_eq!(eval(src, None), eval(src, Some(2)));
+    assert!(eval(src, Some(2)).is_ok());
+}
+
 // ── module math builtins compile in the tier ──────────────────────────
 
 #[test]

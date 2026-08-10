@@ -1745,13 +1745,34 @@ impl PlanFn {
                     dst,
                     shape,
                     field_regs,
+                    field_types,
                 } => {
                     let mut kinds = Vec::with_capacity(field_regs.len());
                     let mut resolved = true;
-                    for r in field_regs {
+                    for (i, r) in field_regs.iter().enumerate() {
                         narrow!(r.0, K_NUM | K_BOOL);
                         match mask_singleton(self.writes[r.0 as usize]) {
-                            Some(k) => kinds.push(k),
+                            Some(k) => {
+                                // A field whose provably-known kind contradicts
+                                // its declared type can never satisfy the
+                                // run-time check. Refuse the whole function so
+                                // it stays on bytecode, which raises the same
+                                // error the interpreter would — the JIT never
+                                // builds a mistyped struct.
+                                if let Some(Some(check)) = field_types.get(i) {
+                                    use crate::ast::FieldTypeCheck;
+                                    let ok = matches!(
+                                        (check, k),
+                                        (FieldTypeCheck::Int, Kind::Int)
+                                            | (FieldTypeCheck::Float, Kind::Float)
+                                            | (FieldTypeCheck::Bool, Kind::Bool)
+                                    );
+                                    if !ok {
+                                        return None;
+                                    }
+                                }
+                                kinds.push(k);
+                            }
                             None => {
                                 resolved = false;
                                 break;
@@ -2532,6 +2553,10 @@ fn translate_body(
                 dst,
                 shape,
                 field_regs,
+                // Type mismatches are caught by the inference pass, which
+                // refuses to compile any function that could build a mistyped
+                // struct; codegen only runs for structs already proven sound.
+                field_types: _,
             } => {
                 let n = field_regs.len();
                 let slot =
