@@ -80,6 +80,24 @@ documented.
   for custom binary locations. The book gains an Editors chapter with
   Neovim wiring included.
 
+## [Unreleased]
+
+### Added
+
+- **The `dom` module — olang as a frontend language.** A new stdlib
+  module (query, get/set_text, set_html, value/set_value, on) whose
+  operations cross the wasm boundary as host imports the page
+  implements; elements are opaque handles. The playground boundary
+  gains a persistent session: olang_session_start runs a program and
+  keeps its interpreter alive, dom.on registers olang functions in a
+  handler registry, and olang_dispatch_event re-enters the live
+  interpreter per event — click handlers are ordinary olang closures.
+  Native builds error clearly ("only available in the browser").
+  Proven end-to-end by playground/dom_harness.mjs: a fake DOM over the
+  host imports, an olang counter program, two dispatched clicks, and
+  asserted mutations (run: bun playground/dom_harness.mjs
+  target/wasm32-unknown-unknown/release/olang_playground.wasm).
+
 ## [0.43.0] - 2026-08-09
 
 ### Added

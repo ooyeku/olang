@@ -22,6 +22,7 @@ pub mod random;
 pub mod regex_mod;
 pub mod string;
 pub mod testing;
+pub mod dom;
 pub mod time;
 
 pub fn get_stdlib() -> HashMap<String, Value> {
@@ -46,6 +47,7 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("str".to_string(), string::create_string_module());
     stdlib.insert("re".to_string(), regex_mod::create_regex_module());
     stdlib.insert("time".to_string(), time::create_time_module());
+    stdlib.insert("dom".to_string(), dom::create_dom_module());
     // OVM extension modules (ods, ...) contribute their namespaces through
     // the registry, so both tiers and the stdlib agree on one module set.
     for module in crate::native::registered_modules() {

@@ -651,6 +651,15 @@ impl BuiltinFunctions {
                 });
         }
 
+        // Handle dom functions (browser-only; native errors clearly)
+        if let Some(dom_function) = name.strip_prefix("dom.") {
+            return crate::stdlib::dom::call_dom_function(dom_function, arguments).map_err(|e| {
+                InterpreterError::RuntimeError {
+                    message: e.to_string(),
+                }
+            });
+        }
+
         // Handle time functions
         if let Some(time_function) = name.strip_prefix("time.") {
             return crate::stdlib::time::call_time_function(time_function, arguments).map_err(

@@ -89,6 +89,206 @@ fn run_source(source: &str) -> (String, Option<String>, Option<String>) {
     }
 }
 
+// ── the dom bridge: olang as a frontend language ───────────────────────
+//
+// Elements are opaque handles minted by the page. Strings cross the
+// boundary as (ptr, len) into linear memory; the page returns strings by
+// writing them into a buffer it allocates with olang_alloc, returning a
+// 4-byte-length-prefixed pointer (freed by us). Event handlers live in
+// SESSION's registry; the page calls olang_dispatch_event(id) and the
+// persistent interpreter re-enters.
+
+#[cfg(target_arch = "wasm32")]
+extern "C" {
+    fn host_dom_query(sel: *const u8, len: usize) -> i64;
+    fn host_dom_set_text(handle: i64, ptr: *const u8, len: usize);
+    fn host_dom_get_text(handle: i64) -> *const u8;
+    fn host_dom_set_html(handle: i64, ptr: *const u8, len: usize);
+    fn host_dom_get_value(handle: i64) -> *const u8;
+    fn host_dom_set_value(handle: i64, ptr: *const u8, len: usize);
+    fn host_dom_on(handle: i64, event: *const u8, len: usize, callback_id: i64);
+}
+
+use std::cell::RefCell;
+
+thread_local! {
+    /// The persistent browser session: the interpreter that ran the
+    /// program stays alive so event handlers can re-enter it.
+    static SESSION: RefCell<Option<Interpreter>> = const { RefCell::new(None) };
+    /// Registered handlers. Separate from SESSION because dom.on runs
+    /// DURING the initial program run, before the interpreter is parked.
+    static HANDLERS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_host_string(ptr: *const u8) -> String {
+    if ptr.is_null() {
+        return String::new();
+    }
+    unsafe {
+        let mut len_bytes = [0u8; 4];
+        len_bytes.copy_from_slice(std::slice::from_raw_parts(ptr, 4));
+        let len = u32::from_le_bytes(len_bytes) as usize;
+        let s = String::from_utf8_lossy(std::slice::from_raw_parts(ptr.add(4), len)).into_owned();
+        // The page allocated via olang_alloc(4 + len); free it.
+        drop(Vec::from_raw_parts(ptr as *mut u8, 0, (4 + len).max(1)));
+        s
+    }
+}
+
+/// Dispatch for dom.* builtins on the wasm build.
+#[cfg(target_arch = "wasm32")]
+pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let handle = |v: &Value| -> Result<i64, Box<dyn std::error::Error>> {
+        match v {
+            Value::Integer(h) => Ok(*h),
+            _ => Err("dom: expected an element handle".into()),
+        }
+    };
+    let text = |v: &Value| -> Result<String, Box<dyn std::error::Error>> {
+        match v {
+            Value::String(s) => Ok(s.as_ref().clone()),
+            other => Ok(format!("{}", other)),
+        }
+    };
+    match (name, args.as_slice()) {
+        ("query", [sel]) => {
+            let s = text(sel)?;
+            let h = unsafe { host_dom_query(s.as_ptr(), s.len()) };
+            if h == 0 {
+                Err(format!("dom.query: no element matches {:?}", s).into())
+            } else {
+                Ok(Value::Integer(h))
+            }
+        }
+        ("set_text", [el, v]) => {
+            let s = text(v)?;
+            unsafe { host_dom_set_text(handle(el)?, s.as_ptr(), s.len()) };
+            Ok(Value::Unit)
+        }
+        ("get_text", [el]) => Ok(Value::String(std::sync::Arc::new(read_host_string(
+            unsafe { host_dom_get_text(handle(el)?) },
+        )))),
+        ("set_html", [el, v]) => {
+            let s = text(v)?;
+            unsafe { host_dom_set_html(handle(el)?, s.as_ptr(), s.len()) };
+            Ok(Value::Unit)
+        }
+        ("value", [el]) => Ok(Value::String(std::sync::Arc::new(read_host_string(
+            unsafe { host_dom_get_value(handle(el)?) },
+        )))),
+        ("set_value", [el, v]) => {
+            let s = text(v)?;
+            unsafe { host_dom_set_value(handle(el)?, s.as_ptr(), s.len()) };
+            Ok(Value::Unit)
+        }
+        ("on", [el, event, callback]) => {
+            let ev = text(event)?;
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe { host_dom_on(handle(el)?, ev.as_ptr(), ev.len(), id) };
+            Ok(Value::Unit)
+        }
+        _ => Err(format!("dom.{}: unknown function or wrong arity", name).into()),
+    }
+}
+
+/// Run a program and KEEP the interpreter alive as the page's session,
+/// so dom.on handlers can re-enter it. Result buffer as olang_run.
+///
+/// # Safety
+/// Same contract as olang_run.
+#[no_mangle]
+pub unsafe extern "C" fn olang_session_start(ptr: *const u8, len: usize) -> *mut u8 {
+    let source = match std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            return result_buffer(
+                r#"{"output":"","value":null,"error":"source was not valid UTF-8","ms":0}"#
+                    .to_string(),
+            )
+        }
+    };
+    SESSION.with(|s| *s.borrow_mut() = None);
+    HANDLERS.with(|h| h.borrow_mut().clear());
+    let started = crate::clock::Instant::now();
+    let parser = OlangParser::new();
+    let (output, value, error) = match parser.parse(&source) {
+        Err(e) => (crate::output::drain_captured(), None, Some(e.to_string())),
+        Ok(program) => {
+            let mut interpreter = Interpreter::new();
+            interpreter.enable_bytecode_tier(1, false);
+            let r = match interpreter.eval_program(program) {
+                Ok(v) => {
+                    let shown = match v {
+                        Value::Unit => None,
+                        other => Some(format!("{}", other)),
+                    };
+                    (crate::output::drain_captured(), shown, None)
+                }
+                Err(e) => (crate::output::drain_captured(), None, Some(e.to_string())),
+            };
+            SESSION.with(|s| *s.borrow_mut() = Some(interpreter));
+            r
+        }
+    };
+    let ms = started.elapsed().as_secs_f64() * 1000.0;
+    let json = format!(
+        r#"{{"output":{},"value":{},"error":{},"ms":{:.1},"version":{}}}"#,
+        json_escape(&output),
+        value
+            .as_deref()
+            .map(json_escape)
+            .unwrap_or_else(|| "null".to_string()),
+        error
+            .as_deref()
+            .map(json_escape)
+            .unwrap_or_else(|| "null".to_string()),
+        ms,
+        json_escape(crate::version::VERSION),
+    );
+    result_buffer(json)
+}
+
+/// Re-enter the session for one event. Returns a result buffer whose
+/// JSON carries any printed output and error from the handler.
+///
+/// # Safety
+/// Called by the page with an id previously given to host_dom_on.
+#[no_mangle]
+pub unsafe extern "C" fn olang_dispatch_event(callback_id: i64) -> *mut u8 {
+    let handler = HANDLERS.with(|h| h.borrow().get(callback_id as usize).cloned());
+    let outcome = SESSION.with(|s| {
+        let mut s = s.borrow_mut();
+        let Some(interpreter) = s.as_mut() else {
+            return Err("no active session".to_string());
+        };
+        let Some(handler) = handler else {
+            return Err(format!("unknown handler id {}", callback_id));
+        };
+        interpreter
+            .call_function(handler, vec![])
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    });
+    let output = crate::output::drain_captured();
+    let json = match outcome {
+        Ok(()) => format!(
+            r#"{{"output":{},"value":null,"error":null,"ms":0}}"#,
+            json_escape(&output)
+        ),
+        Err(e) => format!(
+            r#"{{"output":{},"value":null,"error":{},"ms":0}}"#,
+            json_escape(&output),
+            json_escape(&e)
+        ),
+    };
+    result_buffer(json)
+}
+
 fn json_escape(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }

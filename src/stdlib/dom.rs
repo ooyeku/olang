@@ -1,0 +1,55 @@
+//! The `dom` module: olang as a frontend language.
+//!
+//! Elements are opaque integer handles. Every operation crosses the wasm
+//! boundary as a host import the page implements (see src/playground.rs);
+//! on native builds each call errors clearly instead. Event handlers are
+//! olang functions kept in the persistent browser session's registry and
+//! re-entered through olang_dispatch_event.
+
+use crate::ast::Value;
+use std::collections::HashMap;
+
+pub fn create_dom_module() -> Value {
+    let mut module = HashMap::new();
+    for (name, arity) in [
+        ("query", 1),
+        ("set_text", 2),
+        ("get_text", 1),
+        ("set_html", 2),
+        ("value", 1),
+        ("set_value", 2),
+        ("on", 3),
+    ] {
+        module.insert(
+            name.to_string(),
+            Value::Builtin(crate::ast::BuiltinFunction {
+                name: format!("dom.{}", name),
+                arity,
+            }),
+        );
+    }
+    Value::Struct {
+        type_name: "Module".to_string(),
+        fields: module,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn call_dom_function(
+    name: &str,
+    _args: Vec<Value>,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    Err(format!(
+        "dom.{}: the dom module is only available in the browser (wasm build)",
+        name
+    )
+    .into())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn call_dom_function(
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    crate::playground::dom_call(name, args)
+}
