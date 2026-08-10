@@ -1,0 +1,155 @@
+# Release binaries — fires on every v* tag push (the tag the release
+# runbook in RELEASING.md ends with). Builds olang + otc for the three
+# supported desktop targets plus the playground wasm artifact, checksums
+# everything, and attaches it all to a GitHub Release for the tag.
+#
+# Nothing here publishes to Homebrew, the VS Code Marketplace, or the Zed
+# registry — those are manual per-channel steps, also in RELEASING.md.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macos-x64
+            os: macos-latest
+            target: x86_64-apple-darwin
+          - name: linux-x64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # reqwest uses native-tls, which needs OpenSSL headers on Linux
+      - name: Install OpenSSL (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} -p olang -p otc
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGE="olang-${VERSION}-${{ matrix.name }}"
+          mkdir "$STAGE"
+          cp "target/${{ matrix.target }}/release/olang" "target/${{ matrix.target }}/release/otc" "$STAGE/"
+          strip "$STAGE/olang" "$STAGE/otc"
+          cp LICENSE README.md "$STAGE/"
+          tar -czf "$STAGE.tar.gz" "$STAGE"
+          shasum -a 256 "$STAGE.tar.gz"
+
+      # macos-latest runners are arm64; the x64 cross-build only runs here
+      # under Rosetta, so keep the smoke test to targets the host executes
+      # natively.
+      - name: Smoke test
+        if: matrix.name != 'macos-x64'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          "./olang-${VERSION}-${{ matrix.name }}/olang" --version
+          "./olang-${VERSION}-${{ matrix.name }}/otc" --version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ matrix.name }}
+          path: olang-*.tar.gz
+          if-no-files-found: error
+
+  wasm:
+    name: Build (playground wasm)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32-unknown-unknown
+
+      - name: Build playground wasm
+        run: cargo build -p olang-playground --target wasm32-unknown-unknown --release
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cp target/wasm32-unknown-unknown/release/olang_playground.wasm \
+             "olang-playground-${VERSION}.wasm"
+          shasum -a 256 "olang-playground-${VERSION}.wasm"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: playground-wasm
+          path: olang-playground-*.wasm
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: [build, wasm]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd assets
+          shasum -a 256 -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          draft: false
+          files: |
+            assets/*.tar.gz
+            assets/*.wasm
+            assets/SHA256SUMS
+          body: >
+            Release ${{ github.ref_name }}. See
+            [CHANGELOG.md](https://github.com/ooyeku/olang/blob/main/CHANGELOG.md)
+            for what changed. `SHA256SUMS` covers every attached file; the
+            Homebrew formula in `dist/homebrew/` consumes the macOS/Linux
+            tarballs.
