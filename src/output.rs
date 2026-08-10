@@ -16,7 +16,13 @@ thread_local! {
 /// Write `text` with no trailing newline.
 pub fn emit(text: &str) {
     #[cfg(feature = "native")]
-    print!("{}", text);
+    {
+        print!("{}", text);
+        // Flush so partial lines appear immediately — a shell prompt or
+        // progress indicator printed with `print` must not sit in the
+        // buffer waiting for a newline.
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+    }
     #[cfg(not(feature = "native"))]
     CAPTURE.with(|c| c.borrow_mut().push_str(text));
 }

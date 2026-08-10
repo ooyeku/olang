@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **`os.read_line()` — stdin, at last.** One line from stdin as
+  `Ok(line)` (newline stripped), `Err("eof")` when the stream ends: the
+  missing primitive for prompts, REPLs, and shells, and for reading
+  piped input line by line.
+
+- **`examples/oshell/` — a Unix-like shell written in olang.** An
+  interactive `os.read_line` loop where every operation is the stdlib:
+  pipelines thread stdout→stdin through `os.exec`, redirection
+  (`< > >>`) and globbing ride on `fs`, `grep` is `re`, and 25 builtins
+  (`cd ls cat head tail grep wc mkdir rm cp mv touch env export alias
+  history which type ...`) shell out to nothing. Quoting, `$VAR`/`~`/`$?`
+  expansion, `;`/`&&`/`||` with real short-circuit semantics, exit-code
+  propagation (127 for not-found, `exit N` as the process code), and
+  history persisted across sessions. The long-running systems-work
+  proof: 1,000 mixed commands — 250 child processes among them — soak
+  through one session in ~1.4 s with state consistent throughout.
+
+### Fixed
+
+- `print` now flushes stdout, so a partial line — a shell prompt, a
+  progress indicator — appears immediately instead of waiting for the
+  next newline.
+
 ## [0.43.0] - 2026-08-09
 
 ### Added

@@ -549,6 +549,7 @@ println(show(len(unwrap(fs.walk("docs")))) + " files under docs/")
 | Group | Functions |
 |---|---|
 | Process | `args` `exit(code)` `pid` `exe_path` `exec(program, args)` |
+| Input | `read_line()` — one line from stdin as `Ok(line)`, `Err("eof")` at end; the primitive behind prompts, REPLs, and shells (see `examples/oshell/`) |
 | Environment | `get_env` `set_env` `remove_env` `has_env` `list_env` |
 | Directories | `cwd` `chdir` `home_dir` `temp_dir` |
 | System | `hostname` `username` `os_type` `arch` `family` `path_separator` |

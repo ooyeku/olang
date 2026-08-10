@@ -101,6 +101,14 @@ A two-package demonstration of the package manager (see
   `math.sqrt` in a hot loop — exactly what the tier accelerates. Times itself
   and reports throughput; ~9x faster on the tier than the interpreter. A
   `test` block locks determinism and momentum conservation
+- [`oshell/`](oshell/) — a Unix-like shell written in olang: an interactive
+  `os.read_line` loop with pipelines threading stdout→stdin through
+  `os.exec`, redirection and globbing on `fs`, `$VAR`/`~`/`$?` expansion,
+  quoting, `;`/`&&`/`||` sequencing, 25 builtins implemented on the stdlib,
+  aliases, and history persisted across sessions — the long-running
+  systems-work proof (1,000 mixed commands soak through one session in
+  ~1.4 s). Interactive, so `run_all.ol` skips it; scripted stdin drives it
+  in CI-style checks
 - [`minilisp/`](minilisp/) — a small Lisp interpreted by olang: reader and
   evaluator over `LVal` enum trees, maps as functional environments, Err
   values as the only error channel, and call-time self-binding for recursive

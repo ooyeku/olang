@@ -1,0 +1,4 @@
+[package]
+name = "oshell"
+version = "1.0.0"
+description = "A Unix-like shell written in olang: pipelines, redirection, globbing, aliases, history — long-running systems work on the stdlib"

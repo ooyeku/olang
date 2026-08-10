@@ -80,6 +80,10 @@ pub fn create_os_module() -> Value {
 
     // Run an external program and capture its result
     module.insert("exec".to_string(), create_builtin_function("exec", 2));
+    module.insert(
+        "read_line".to_string(),
+        create_builtin_function("read_line", 0),
+    );
 
     Value::Struct {
         type_name: "Module".to_string(),
@@ -118,6 +122,7 @@ pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "temp_dir" => os_temp_dir(args),
         "exit" => os_exit(args),
         "exec" => os_exec(args),
+        "read_line" => os_read_line(args),
         _ => Err(format!("Unknown os function: {}", name).into()),
     }
 }
@@ -589,6 +594,39 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "exec: failed to run '{}': {}",
             program, e
+        )))))),
+    }
+}
+
+/// Read one line from stdin: Ok(line) without the trailing newline, or
+/// Err("eof") when the stream ends. The missing primitive for interactive
+/// programs — REPLs, shells, prompts — and for reading piped input line
+/// by line.
+/// Usage: os.read_line() -> Result<String, Error>
+fn os_read_line(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "read_line expects no arguments, got {}",
+            args.len()
+        ))))));
+    }
+    let mut line = String::new();
+    match std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line) {
+        Ok(0) => Ok(Value::Err(Box::new(Value::String(Arc::new(
+            "eof".to_string(),
+        ))))),
+        Ok(_) => {
+            if line.ends_with('\n') {
+                line.pop();
+                if line.ends_with('\r') {
+                    line.pop();
+                }
+            }
+            Ok(Value::Ok(Box::new(Value::String(Arc::new(line)))))
+        }
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "read_line: {}",
+            e
         )))))),
     }
 }
