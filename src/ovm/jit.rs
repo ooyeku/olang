@@ -67,6 +67,10 @@ type NativeEntry = unsafe extern "C" fn(*const i64, i64, *mut i64) -> i64;
 /// call graph.
 pub type BytecodeLookup<'a> = dyn Fn(FunctionId) -> Option<Arc<CompiledBytecode>> + 'a;
 
+/// One callable's signature in the group-inference snapshot: parameter
+/// kinds, current return mask, and element kinds when it returns a tuple.
+type SigSnapshot = HashMap<usize, (Vec<Kind>, u8, Option<Vec<Kind>>)>;
+
 /// A struct shape observed at the entry: the interned shape plus the
 /// field kinds of the argument instance the specialization keys on.
 /// Per-read helper guards keep same-shape/different-kind instances safe.
@@ -583,7 +587,7 @@ impl JitCache {
 
             // Signature snapshot: kinds + current ret mask per function the
             // group can call (plans lag one iteration; monotone, converges).
-            let mut sigs: HashMap<usize, (Vec<Kind>, u8, Option<Vec<Kind>>)> = HashMap::new();
+            let mut sigs: SigSnapshot = HashMap::new();
             for p in &plans {
                 sigs.insert(
                     p.func_id.index(),
@@ -1070,7 +1074,7 @@ impl PlanFn {
     /// Returns None on a hard refusal.
     fn infer_pass(
         &mut self,
-        sigs: &HashMap<usize, (Vec<Kind>, u8, Option<Vec<Kind>>)>,
+        sigs: &SigSnapshot,
         shapes: &HashMap<u32, ShapeSpec>,
         requests: &mut Vec<(FunctionId, Vec<Kind>)>,
         global_changed: &mut bool,
@@ -2129,8 +2133,8 @@ fn translate_body(
                 match &callee_tuple {
                     Some(tk) => {
                         if inference.tuples.contains_key(&dst.0) {
-                            for i in 0..tk.len() {
-                                builder.def_var(tuple_var(dst.0, i), values[i]);
+                            for (i, v) in values.iter().take(tk.len()).enumerate() {
+                                builder.def_var(tuple_var(dst.0, i), *v);
                             }
                         }
                     }
