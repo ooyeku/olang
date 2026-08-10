@@ -11,11 +11,22 @@
 // Stateless throughout: the server is the source of truth; a cell's
 // current value lives in the DOM (a status IS its button label).
 
+// HTML-escape for rendering text into the page. Used only at render time.
 fn esc(s) = s
     |> str.replace("&", "&amp;")
     |> str.replace("<", "&lt;")
     |> str.replace(">", "&gt;")
     |> str.replace("\"", "&quot;")
+
+// JSON-string-escape for building request bodies. A distinct concern from
+// HTML escaping: a title containing a backslash or quote must round-trip
+// through JSON intact (using esc() here produced invalid JSON and lost the
+// issue). Backslash is replaced first so it doesn't double-escape the rest.
+fn json_esc(s) = s
+    |> str.replace("\\", "\\\\")
+    |> str.replace("\"", "\\\"")
+    |> str.replace("\n", "\\n")
+    |> str.replace("\t", "\\t")
 
 fn next_status(s) = if s == "open" => "in-progress" else => {
     if s == "in-progress" => "done" else => "open"
@@ -91,7 +102,7 @@ fn on_change(payload) = {
     let value = parts[1]
     let id = str.substring(tid, 4, len(tid))
     if starts_with(tid, "asg-") => {
-        patch(id, "{\"assignee\": \"" + esc(value) + "\"}")
+        patch(id, "{\"assignee\": \"" + json_esc(value) + "\"}")
     } else => { if starts_with(tid, "pts-") => {
         let pts = unwrap_or(str.parse_int(str.trim(value)), 0)
         patch(id, "{\"points\": " + show(pts) + "}")
@@ -101,7 +112,7 @@ fn on_change(payload) = {
 fn add_issue(raw) = {
     let title = str.trim(raw)
     if title != "" => {
-        dom.fetch("POST", "/api/issues", "{\"title\": \"" + esc(title) + "\"}", (resp) => {
+        dom.fetch("POST", "/api/issues", "{\"title\": \"" + json_esc(title) + "\"}", (resp) => {
             let input = dom.query("#new-title")
             dom.set_value(input, "")
             dom.focus(input)
