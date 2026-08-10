@@ -156,6 +156,10 @@ worker, no GIL. Use them when `f` does real computation per element;
 `spawn`, the function runs against worker snapshots, so mutating enclosing
 state from inside it is not visible to the caller. If several elements
 would fail, the error reported is the one `map` would have hit first.
+For per-element *effects* rather than values, the language has a
+loop-construct twin:
+[`par for`](language.md#par-for--parallel-iteration) — the same
+fan-out and snapshot semantics, with an implicit barrier.
 
 ```olang
 fn weight(n) = {

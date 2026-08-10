@@ -125,10 +125,14 @@ A two-package demonstration of the package manager (see
   the bootstrap distribution and the fit — the whole study in under
   half a second. A `test` block pins every inference
 - [`parmap/`](parmap/) — data-parallel pipelines with `par_map` /
-  `par_filter`: counts primes in 48 blocks both sequentially and fanned
-  out across every core, asserts the answers are identical, and reports
-  the measured speedup (~9× on an M-series). A `test` block pins
-  parallel == sequential on every run
+  `par_filter` and the `par for` loop: counts primes in 48 blocks both
+  sequentially and fanned out across every core, asserts the answers
+  are identical, and reports the measured speedup (~7× on an M-series,
+  now that the JIT compiles the kernel natively on every worker);
+  then runs the same work through `par for` and demonstrates its
+  spawn-style snapshot semantics (effects fan out, shared state does
+  not). `test` blocks pin parallel == sequential and the snapshot rule
+  on every run
 - [`pargrep/`](pargrep/) — parallel code search on real `spawn` threads:
   files are dealt into chunks, one worker thread per chunk searches with
   `re` + `fs`, results merge after `await Promise.all`, and per-task
