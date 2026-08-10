@@ -1,18 +1,21 @@
-// app.ol — the tracker frontend, in olang. Runs in the browser: the
-// page shim (olang-dom.js) boots this file in a persistent wasm session;
-// every handler below is an ordinary olang closure re-entered per event.
+// app.ol — the tracker frontend, in olang, event-delegated.
 //
-// Deliberately stateless: olang closures capture environments by value
-// (the same snapshot semantics as spawn/par_map), so cross-handler
-// mutable state does not exist — and is not needed. The server is the
-// source of truth; each response flows DOWN through arguments, and the
-// only client state is the DOM itself (a row's current status is its
-// button's label).
+// Architecture: rows are pure HTML; exactly THREE listeners exist for
+// the whole table (click and change on #rows via bubbling, enter on the
+// new-issue input), bound once at boot. The shim's payload conventions
+// carry the target: clicks deliver the clicked element's id, changes
+// deliver "id\nvalue". No per-row binding, so re-renders are one
+// set_html and the handler registry stays constant — the fix for the
+// sluggish per-row rebinding this replaces.
+//
+// Stateless throughout: the server is the source of truth; a cell's
+// current value lives in the DOM (a status IS its button label).
 
 fn esc(s) = s
     |> str.replace("&", "&amp;")
     |> str.replace("<", "&lt;")
     |> str.replace(">", "&gt;")
+    |> str.replace("\"", "&quot;")
 
 fn next_status(s) = if s == "open" => "in-progress" else => {
     if s == "in-progress" => "done" else => "open"
@@ -31,8 +34,10 @@ fn row_html(issue) = {
         + "<td><button class=\"status\" id=\"adv-" + id + "\">" + status + "</button></td>"
         + "<td><button class=\"status pri\" id=\"pri-" + id + "\">"
         + esc(map_get(issue, "priority")) + "</button></td>"
-        + "<td>" + esc(map_get(issue, "assignee")) + "</td>"
-        + "<td class=\"num\">" + show(map_get(issue, "points")) + "</td>"
+        + "<td><input class=\"cell\" id=\"asg-" + id + "\" value=\""
+        + esc(map_get(issue, "assignee")) + "\"></td>"
+        + "<td class=\"num\"><input class=\"cell num\" id=\"pts-" + id + "\" value=\""
+        + show(map_get(issue, "points")) + "\"></td>"
         + "<td class=\"del\"><button id=\"del-" + id + "\">×</button></td>"
         + "</tr>"
 }
@@ -45,32 +50,12 @@ fn update_footer(items) = {
         + " in progress · " + show(by("done")) + " done")
 }
 
-fn bind_row(id) = {
-    let adv = dom.query("#adv-" + id)
-    dom.on(adv, "click", () => {
-        // The button's own label is the row's current status.
-        let body = "{\"status\": \"" + next_status(dom.get_text(adv)) + "\"}"
-        dom.fetch("PATCH", "/api/issues/" + id, body, (resp) => { reload() })
-    })
-    let pri = dom.query("#pri-" + id)
-    dom.on(pri, "click", () => {
-        let body = "{\"priority\": \"" + next_priority(dom.get_text(pri)) + "\"}"
-        dom.fetch("PATCH", "/api/issues/" + id, body, (resp) => { reload() })
-    })
-    dom.on(dom.query("#del-" + id), "click", () => {
-        dom.fetch("DELETE", "/api/issues/" + id, "", (resp) => { reload() })
-    })
-}
+fn flash(msg) = dom.set_text(dom.query("#backend-note"), msg)
 
 fn render(items) = {
     dom.set_html(dom.query("#rows"), items |> map(row_html) |> join(""))
     update_footer(items)
-    for issue in items {
-        bind_row(show(map_get(issue, "id")))
-    }
 }
-
-fn flash(msg) = dom.set_text(dom.query("#backend-note"), msg)
 
 fn reload() = {
     dom.fetch("GET", "/api/issues", "", (resp) => {
@@ -82,6 +67,35 @@ fn reload() = {
             flash("frontend: olang (wasm) · backend: olang · in-memory sqlite")
         }
     })
+}
+
+fn patch(id, body) =
+    dom.fetch("PATCH", "/api/issues/" + id, body, (resp) => { reload() })
+
+// One delegated click handler: route by the target id's prefix.
+fn on_click(tid) = {
+    let id = str.substring(tid, 4, len(tid))
+    if starts_with(tid, "adv-") => {
+        patch(id, "{\"status\": \"" + next_status(dom.get_text(dom.query("#" + tid))) + "\"}")
+    } else => { if starts_with(tid, "pri-") => {
+        patch(id, "{\"priority\": \"" + next_priority(dom.get_text(dom.query("#" + tid))) + "\"}")
+    } else => { if starts_with(tid, "del-") => {
+        dom.fetch("DELETE", "/api/issues/" + id, "", (resp) => { reload() })
+    }}}
+}
+
+// One delegated change handler: assignee and points inputs.
+fn on_change(payload) = {
+    let parts = split(payload, "\n")
+    let tid = parts[0]
+    let value = parts[1]
+    let id = str.substring(tid, 4, len(tid))
+    if starts_with(tid, "asg-") => {
+        patch(id, "{\"assignee\": \"" + esc(value) + "\"}")
+    } else => { if starts_with(tid, "pts-") => {
+        let pts = unwrap_or(str.parse_int(str.trim(value)), 0)
+        patch(id, "{\"points\": " + show(pts) + "}")
+    }}
 }
 
 fn add_issue(raw) = {
@@ -96,10 +110,9 @@ fn add_issue(raw) = {
     }
 }
 
-// Enter in the input delivers its value as the payload; the button
-// reads the field itself.
+dom.on(dom.query("#rows"), "click", (tid) => { on_click(tid) })
+dom.on(dom.query("#rows"), "change", (payload) => { on_change(payload) })
 dom.on(dom.query("#new-title"), "enter", (val) => { add_issue(val) })
-dom.on(dom.query("#add-btn"), "click", () => { add_issue(dom.value(dom.query("#new-title"))) })
-dom.set_text(dom.query("#backend-note"),
-    "frontend: olang (wasm) · backend: olang · in-memory sqlite")
+dom.on(dom.query("#add-btn"), "click", (tid) => { add_issue(dom.value(dom.query("#new-title"))) })
+flash("frontend: olang (wasm) · backend: olang · in-memory sqlite")
 reload()

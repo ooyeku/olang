@@ -63,12 +63,19 @@
         const cb = Number(id);
         const ev = readStr(ptr, len);
         const el = elements[Number(h)];
+        // Payload conventions (delivered to 1-argument handlers):
+        //   "enter"  keydown filtered to Enter; payload = element value
+        //   "click"  payload = the clicked target's id (delegation)
+        //   "change" payload = target id + "\n" + target value
         if (ev === "enter") {
-          // Convention: "enter" = keydown filtered to the Enter key,
-          // dispatched with the element's current value as payload.
           el.addEventListener("keydown", (e) => {
             if (e.key === "Enter") dispatch(cb, el.value ?? "");
           });
+        } else if (ev === "click") {
+          el.addEventListener("click", (e) => dispatch(cb, e.target.id ?? ""));
+        } else if (ev === "change") {
+          el.addEventListener("change", (e) =>
+            dispatch(cb, (e.target.id ?? "") + "\n" + (e.target.value ?? "")));
         } else {
           el.addEventListener(ev, () => dispatch(cb, null));
         }

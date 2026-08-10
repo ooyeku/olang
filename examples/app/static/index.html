@@ -32,6 +32,11 @@
   tr.status-done button.status { color:#8a97a5 }
   td.del button { border:0; background:none; color:#b04a4a; cursor:pointer;
                   font-size:1rem }
+  input.cell { width:100%; border:1px solid transparent; border-radius:3px;
+               padding:0.2rem 0.35rem; font:inherit; background:transparent }
+  input.cell:hover { border-color:#cfd8e0 }
+  input.cell:focus { border-color:#2dd4bf; outline:none; background:#fff }
+  input.cell.num { text-align:right; width:3.5rem }
   #newrow { display:flex; gap:0.6rem; margin-top:0.8rem }
   #new-title { flex:1; padding:0.5rem 0.7rem; border:1px solid #cfd8e0;
                border-radius:3px; font-size:0.95rem }
