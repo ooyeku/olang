@@ -1,0 +1,8 @@
+# The .vsix ships the bundled dist/extension.js (built by the
+# vscode:prepublish script), so sources and node_modules stay out.
+.vscodeignore
+PUBLISHING.md
+package-lock.json
+*.vsix
+node_modules/**
+extension.js

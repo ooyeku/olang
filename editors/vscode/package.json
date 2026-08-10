@@ -3,12 +3,18 @@
   "displayName": "olang",
   "description": "olang language support: syntax highlighting, diagnostics, completions, and formatting via the built-in language server (olang lsp).",
   "version": "0.1.0",
-  "publisher": "olang-lang",
+  "publisher": "ooyeku",
   "license": "MIT",
+  "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ooyeku/olang"
+    "url": "https://github.com/ooyeku/olang",
+    "directory": "editors/vscode"
   },
+  "bugs": {
+    "url": "https://github.com/ooyeku/olang/issues"
+  },
+  "homepage": "https://github.com/ooyeku/olang",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -17,10 +23,21 @@
     "Formatters",
     "Linters"
   ],
+  "keywords": [
+    "olang",
+    "language server",
+    "lsp",
+    "syntax highlighting",
+    "formatter"
+  ],
   "activationEvents": [
     "onLanguage:olang"
   ],
-  "main": "./extension.js",
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "esbuild extension.js --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "vscode:prepublish": "npm run build"
+  },
   "contributes": {
     "languages": [
       {
@@ -56,6 +73,7 @@
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
-    "@vscode/vsce": "^2.24.0"
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.28.2"
   }
 }
