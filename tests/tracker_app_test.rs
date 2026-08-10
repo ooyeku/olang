@@ -118,7 +118,10 @@ fn crud_validation_filters_and_stats() {
     );
     assert_eq!(status, 422, "got: {body}");
     for field in ["title", "points", "status"] {
-        assert!(body.contains(&format!("\"{field}\"")), "missing {field}: {body}");
+        assert!(
+            body.contains(&format!("\"{field}\"")),
+            "missing {field}: {body}"
+        );
     }
 
     // Filtering + pagination envelope; rows carry their comment count.
@@ -135,7 +138,13 @@ fn crud_validation_filters_and_stats() {
     assert!(body.contains("\"total\":1"), "got: {body}");
 
     // Comments: 404 for a missing issue, then add + embed.
-    let (status, _) = call(port, "POST", "/api/issues/999/comments", r#"{"text":"x"}"#, "");
+    let (status, _) = call(
+        port,
+        "POST",
+        "/api/issues/999/comments",
+        r#"{"text":"x"}"#,
+        "",
+    );
     assert_eq!(status, 404);
     let (status, _) = call(
         port,
@@ -155,7 +164,10 @@ fn crud_validation_filters_and_stats() {
     let (status, body) = call(port, "GET", "/api/activity?limit=10", "", "");
     assert_eq!(status, 200);
     for action in ["seed", "create", "comment", "update"] {
-        assert!(body.contains(&format!("\"{action}\"")), "missing {action}: {body}");
+        assert!(
+            body.contains(&format!("\"{action}\"")),
+            "missing {action}: {body}"
+        );
     }
 
     // Stats: SQL rollups plus ods point quantiles.
