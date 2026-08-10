@@ -2875,3 +2875,14 @@ try { safe() } catch (e) { "caught: " + e }"#,
 try { safe() } catch (e) { "caught: " + e }"#,
     );
 }
+
+#[test]
+fn min_max_average_raise_on_empty_list_like_head() {
+    // These returned a Result value (Err "EmptyList") on [] but a bare
+    // value otherwise — an inconsistent type that produced a misleading
+    // downstream "type mismatch". They now raise, matching head/tail.
+    assert_tier_transparent("to_string(min([3, 1, 2]))"); // non-empty still works
+    assert_tier_transparent(r#"try to_string(min([])) catch e => "empty""#);
+    assert_tier_transparent(r#"try to_string(max([])) catch e => "empty""#);
+    assert_tier_transparent(r#"try to_string(average([])) catch e => "empty""#);
+}

@@ -1951,9 +1951,9 @@ impl BuiltinFunctions {
             }
         };
         if list_rc.is_empty() {
-            return Ok(Value::Err(Box::new(Value::String(
-                "EmptyList".to_string().into(),
-            ))));
+            return Err(InterpreterError::TypeError {
+                message: "average: cannot take average of an empty list".to_string(),
+            });
         }
         let sum_val = self.sum(vec![Value::List(list_rc.clone())])?;
         match sum_val {
@@ -1979,9 +1979,9 @@ impl BuiltinFunctions {
             }
         };
         if list_rc.is_empty() {
-            return Ok(Value::Err(Box::new(Value::String(
-                "EmptyList".to_string().into(),
-            ))));
+            return Err(InterpreterError::TypeError {
+                message: "min: cannot take min of an empty list".to_string(),
+            });
         }
         use std::cmp::Ordering;
         let mut min = list_rc[0].clone();
@@ -2011,9 +2011,9 @@ impl BuiltinFunctions {
             }
         };
         if list_rc.is_empty() {
-            return Ok(Value::Err(Box::new(Value::String(
-                "EmptyList".to_string().into(),
-            ))));
+            return Err(InterpreterError::TypeError {
+                message: "max: cannot take max of an empty list".to_string(),
+            });
         }
         use std::cmp::Ordering;
         let mut max = list_rc[0].clone();
