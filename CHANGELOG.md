@@ -12,6 +12,17 @@ documented.
 
 ### Added
 
+- **JIT tuple extraction — multi-value native returns.** Functions
+  returning tuples (up to 4 scalar elements) compile natively: MakeTuple
+  becomes per-element SSA variables, Return becomes a multi-value native
+  return (N elements + status), destructuring callers receive elements
+  directly in registers (PatternTestTuple is statically proven and
+  folds to true; ExtractElement/TupleGet read the element variables),
+  and the entry wrapper writes one out-slot per element. Deopt unwinds
+  through tuple producers exactly as scalars — a division by zero deep
+  in a tuple-returning callee still yields the VM's canonical error.
+  N-body: 56 -> 50ms, with force-style tuple producers and their
+  destructuring consumers both native. 51 JIT parity tests.
 - **JIT heap values: list indexing and `for` iteration — N-body
   compiles whole (332 -> 56ms).** Lists pass into native code as
   borrowed pointers, classified at specialization by element kind

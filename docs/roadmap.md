@@ -121,8 +121,9 @@ deferred on its own measurement. The open rungs, in order:
   semantics (subscripts wrap negatives, iteration does not) and deopt
   on any surprise. **N-body: 332 -> 56ms** — the force loops compile
   whole, closing the campaign's original acceptance target (400ms ->
-  tens of ms). Still open here: tuple extraction (the force function's
-  multi-value return) and strings.
+  tens of ms). Tuple extraction landed next (multi-value
+  native returns; N-body 56 -> 50ms with every hot function compiled);
+  strings remain.
 - **Parallel `for`** — P1's remaining item.
 
 ## The data campaign (0.40)

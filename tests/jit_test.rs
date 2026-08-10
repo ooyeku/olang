@@ -621,3 +621,65 @@ show(first([1, 2.5]))
 "#,
     );
 }
+
+// ── tuple extraction ───────────────────────────────────────────────────
+
+#[test]
+fn tuple_returning_functions_agree() {
+    assert_jit_transparent(
+        r#"
+fn force(a, b) = {
+    let dx = b - a
+    (dx, dx * 2.0, dx * 3.0)
+}
+fn use_force(a, b) = {
+    let (fx, fy, fz) = force(a, b)
+    fx + fy + fz
+}
+show(use_force(1.0, 3.0)) + " " + show(use_force(-2.5, 2.5))
+"#,
+    );
+}
+
+#[test]
+fn mixed_kind_tuples_agree() {
+    assert_jit_transparent(
+        r#"
+fn divmod(a, b) = (a / b, a % b, a > b)
+fn f(a, b) = {
+    let (q, r, big) = divmod(a, b)
+    if big => q * 100 + r else => r
+}
+show(f(47, 10)) + " " + show(f(3, 10))
+"#,
+    );
+}
+
+#[test]
+fn tuple_get_by_index_agrees() {
+    assert_jit_transparent(
+        r#"
+fn pair(x) = (x + 1.0, x * 2.0)
+fn f(x) = pair(x).0 + pair(x).1
+show(f(4.0))
+"#,
+    );
+}
+
+#[test]
+fn deopt_inside_tuple_producer_agrees() {
+    // Division by zero deep in the tuple producer must yield the VM's
+    // canonical error through deopt re-execution.
+    assert_jit_transparent(
+        r#"
+fn danger(a, b) = (a / b, a * b)
+fn f(a, b) = {
+    let (q, p) = danger(a, b)
+    q + p
+}
+let ok = f(10, 2)
+let bad = try f(1, 0) catch e => -1
+show(ok) + " " + show(bad)
+"#,
+    );
+}

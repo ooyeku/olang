@@ -176,6 +176,9 @@ struct JittedFn {
     clif_id: cranelift_module::FuncId,
     param_kinds: Vec<Kind>,
     ret_kind: Kind,
+    /// Element kinds when this function returns a tuple (the entry
+    /// wrapper then writes one out slot per element).
+    ret_tuple: Option<Vec<Kind>>,
 }
 
 enum Slot {
@@ -520,13 +523,26 @@ impl JitCache {
         if kinds != jitted.param_kinds.as_slice() {
             return None;
         }
-        let mut out = 0i64;
+        let mut out = [0i64; MAX_TUPLE];
         let status =
-            unsafe { (jitted.entry)(bits.as_ptr(), remaining_depth as i64, &mut out as *mut i64) };
+            unsafe { (jitted.entry)(bits.as_ptr(), remaining_depth as i64, out.as_mut_ptr()) };
         if status != STATUS_OK {
             return None;
         }
         self.native_calls += 1;
+        if let Some(tk) = &jitted.ret_tuple {
+            let elems: Vec<OvmValue> = tk
+                .iter()
+                .zip(out.iter())
+                .map(|(k, bits)| match k {
+                    Kind::Int => OvmValue::new_integer(*bits),
+                    Kind::Bool => OvmValue::new_boolean(*bits != 0),
+                    _ => OvmValue::new_float(f64::from_bits(*bits as u64)),
+                })
+                .collect();
+            return Some(OvmValue::new_tuple(elems));
+        }
+        let out = out[0];
         Some(match jitted.ret_kind {
             Kind::Int => OvmValue::new_integer(out),
             Kind::Bool => OvmValue::new_boolean(out != 0),
@@ -567,13 +583,26 @@ impl JitCache {
 
             // Signature snapshot: kinds + current ret mask per function the
             // group can call (plans lag one iteration; monotone, converges).
-            let mut sigs: HashMap<usize, (Vec<Kind>, u8)> = HashMap::new();
+            let mut sigs: HashMap<usize, (Vec<Kind>, u8, Option<Vec<Kind>>)> = HashMap::new();
             for p in &plans {
-                sigs.insert(p.func_id.index(), (p.param_kinds.clone(), p.ret_mask));
+                sigs.insert(
+                    p.func_id.index(),
+                    (p.param_kinds.clone(), p.ret_mask, p.ret_tuple.clone()),
+                );
             }
             for (i, slot) in self.table.iter().enumerate() {
                 if let Some(Slot::Ready(j)) = slot {
-                    sigs.insert(i, (j.param_kinds.clone(), kind_mask(j.ret_kind)));
+                    sigs.insert(
+                        i,
+                        (
+                            j.param_kinds.clone(),
+                            match &j.ret_tuple {
+                                Some(_) => K_TUPLE,
+                                None => kind_mask(j.ret_kind),
+                            },
+                            j.ret_tuple.clone(),
+                        ),
+                    );
                 }
             }
 
@@ -647,10 +676,11 @@ impl JitCache {
         // ── codegen: declare everything, then define everything ──
         // Snapshot previously compiled call targets before borrowing the
         // module (both live in self).
-        let mut targets: HashMap<usize, (cranelift_module::FuncId, Kind)> = HashMap::new();
+        let mut targets: HashMap<usize, (cranelift_module::FuncId, Kind, Option<Vec<Kind>>)> =
+            HashMap::new();
         for (i, slot) in self.table.iter().enumerate() {
             if let Some(Slot::Ready(j)) = slot {
-                targets.insert(i, (j.clif_id, j.ret_kind));
+                targets.insert(i, (j.clif_id, j.ret_kind, j.ret_tuple.clone()));
             }
         }
         let module = self.module()?;
@@ -700,7 +730,14 @@ impl JitCache {
                 sig.params.push(AbiParam::new(k.clif_type()));
             }
             sig.params.push(AbiParam::new(types::I64));
-            sig.returns.push(AbiParam::new(inf.ret_kind.clif_type()));
+            match &inf.ret_tuple {
+                Some(tk) => {
+                    for k in tk {
+                        sig.returns.push(AbiParam::new(k.clif_type()));
+                    }
+                }
+                None => sig.returns.push(AbiParam::new(inf.ret_kind.clif_type())),
+            }
             sig.returns.push(AbiParam::new(types::I64));
             let name = format!("olang_jit_{}", plan.func_id.index());
             let id = module.declare_function(&name, Linkage::Local, &sig).ok()?;
@@ -710,7 +747,10 @@ impl JitCache {
         // Call-site resolver: group members (by plan position) override
         // any snapshot entry.
         for ((plan, inf), clif_id) in plans.iter().zip(&inferences).zip(&clif_ids) {
-            targets.insert(plan.func_id.index(), (*clif_id, inf.ret_kind));
+            targets.insert(
+                plan.func_id.index(),
+                (*clif_id, inf.ret_kind, inf.ret_tuple.clone()),
+            );
         }
 
         let mut fbc = FunctionBuilderContext::new();
@@ -722,7 +762,14 @@ impl JitCache {
                     sig.params.push(AbiParam::new(k.clif_type()));
                 }
                 sig.params.push(AbiParam::new(types::I64));
-                sig.returns.push(AbiParam::new(inf.ret_kind.clif_type()));
+                match &inf.ret_tuple {
+                    Some(tk) => {
+                        for k in tk {
+                            sig.returns.push(AbiParam::new(k.clif_type()));
+                        }
+                    }
+                    None => sig.returns.push(AbiParam::new(inf.ret_kind.clif_type())),
+                }
                 sig.returns.push(AbiParam::new(types::I64));
                 sig
             };
@@ -802,11 +849,14 @@ impl JitCache {
 
                 let inner_ref = module.declare_func_in_func(*clif_id, builder.func);
                 let call = builder.ins().call(inner_ref, &call_args);
-                let value = builder.inst_results(call)[0];
-                let status = builder.inst_results(call)[1];
-                builder
-                    .ins()
-                    .store(MemFlags::trusted(), value, out_ptr, 0i32);
+                let results = builder.inst_results(call).to_vec();
+                let n_vals = results.len() - 1;
+                for (slot_i, v) in results[..n_vals].iter().enumerate() {
+                    builder
+                        .ins()
+                        .store(MemFlags::trusted(), *v, out_ptr, (slot_i * 8) as i32);
+                }
+                let status = results[n_vals];
                 builder.ins().return_(&[status]);
                 builder.seal_all_blocks();
                 builder.finalize();
@@ -841,6 +891,7 @@ impl JitCache {
                 clif_id: *clif_id,
                 param_kinds: plan.param_kinds.clone(),
                 ret_kind: inf.ret_kind,
+                ret_tuple: inf.ret_tuple.clone(),
             }));
             self.compiled += 1;
         }
@@ -895,6 +946,10 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::IndexGet { .. }
         | Instruction::IterLen { .. }
         | Instruction::IterGet { .. }
+        | Instruction::MakeTuple { .. }
+        | Instruction::PatternTestTuple { .. }
+        | Instruction::ExtractElement { .. }
+        | Instruction::TupleGet { .. }
         | Instruction::CallFn { .. } => true,
         Instruction::BinImm { imm, .. } => {
             matches!(imm.data, ValueData::Integer(_) | ValueData::Float(_))
@@ -925,8 +980,11 @@ const K_UNIT: u8 = 4;
 const K_FLOAT: u8 = 8;
 const K_STRUCT: u8 = 16;
 const K_LIST: u8 = 32;
+const K_TUPLE: u8 = 64;
+/// Largest tuple the JIT returns natively (multi-value return slots).
+const MAX_TUPLE: usize = 4;
 const K_NUM: u8 = K_INT | K_FLOAT;
-const K_ANY: u8 = K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT | K_LIST;
+const K_ANY: u8 = K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT | K_LIST | K_TUPLE;
 
 fn kind_mask(k: Kind) -> u8 {
     match k {
@@ -959,6 +1017,12 @@ struct PlanFn {
     /// The full kind of a struct- or list-holding register (masks only
     /// say "some struct"/"some list"; this carries which).
     exotic: Vec<Option<Kind>>,
+    /// Element kinds of a tuple-holding register (scalars only, len <=
+    /// MAX_TUPLE). Tuples never enter as parameters; they arise from
+    /// MakeTuple and from calls to tuple-returning group members.
+    tuples: HashMap<u32, Vec<Kind>>,
+    /// Set when Return hands back a tuple register.
+    ret_tuple: Option<Vec<Kind>>,
     ret_mask: u8,
     eq_pairs: Vec<(u32, u32)>,
     return_regs: Vec<u32>,
@@ -969,6 +1033,8 @@ struct Inference {
     reg_kind: Vec<Option<Kind>>,
     param_kinds: Vec<Kind>,
     ret_kind: Kind,
+    tuples: HashMap<u32, Vec<Kind>>,
+    ret_tuple: Option<Vec<Kind>>,
 }
 
 impl PlanFn {
@@ -990,6 +1056,8 @@ impl PlanFn {
             allowed: vec![K_ANY; nregs],
             was_read: vec![false; nregs],
             exotic,
+            tuples: HashMap::new(),
+            ret_tuple: None,
             ret_mask: 0,
             eq_pairs: Vec::new(),
             return_regs: Vec::new(),
@@ -1002,7 +1070,7 @@ impl PlanFn {
     /// Returns None on a hard refusal.
     fn infer_pass(
         &mut self,
-        sigs: &HashMap<usize, (Vec<Kind>, u8)>,
+        sigs: &HashMap<usize, (Vec<Kind>, u8, Option<Vec<Kind>>)>,
         shapes: &HashMap<u32, ShapeSpec>,
         requests: &mut Vec<(FunctionId, Vec<Kind>)>,
         global_changed: &mut bool,
@@ -1056,6 +1124,16 @@ impl PlanFn {
                 Instruction::Move { dst, src } => {
                     let src_mask = self.writes[src.0 as usize];
                     grow!(self.writes[dst.0 as usize], src_mask);
+                    if let Some(tk) = self.tuples.get(&src.0).cloned() {
+                        match self.tuples.get(&dst.0) {
+                            None => {
+                                self.tuples.insert(dst.0, tk);
+                                changed = true;
+                            }
+                            Some(prev) if *prev != tk => return None,
+                            _ => {}
+                        }
+                    }
                     if let Some(k) = self.exotic[src.0 as usize] {
                         if self.exotic[dst.0 as usize].is_none() {
                             self.exotic[dst.0 as usize] = Some(k);
@@ -1215,6 +1293,57 @@ impl PlanFn {
                         }
                     }
                 }
+                Instruction::MakeTuple { dst, elements } => {
+                    if elements.len() > MAX_TUPLE {
+                        return None;
+                    }
+                    let mut kinds = Vec::with_capacity(elements.len());
+                    let mut resolved = true;
+                    for e in elements {
+                        narrow!(e.0, K_NUM | K_BOOL);
+                        match mask_singleton(self.writes[e.0 as usize]) {
+                            Some(k) => kinds.push(k),
+                            None => {
+                                resolved = false;
+                                break;
+                            }
+                        }
+                    }
+                    grow!(self.writes[dst.0 as usize], K_TUPLE);
+                    if resolved {
+                        match self.tuples.get(&dst.0) {
+                            None => {
+                                self.tuples.insert(dst.0, kinds);
+                                changed = true;
+                            }
+                            Some(prev) if *prev != kinds => return None,
+                            _ => {}
+                        }
+                    }
+                }
+                Instruction::PatternTestTuple { dst, value, len } => {
+                    narrow!(value.0, K_TUPLE);
+                    if let Some(tk) = self.tuples.get(&value.0) {
+                        if tk.len() != *len {
+                            return None; // statically false: stay on bytecode
+                        }
+                    }
+                    grow!(self.writes[dst.0 as usize], K_BOOL);
+                }
+                Instruction::ExtractElement { dst, value, index } => {
+                    narrow!(value.0, K_TUPLE);
+                    if let Some(tk) = self.tuples.get(&value.0) {
+                        let k = *tk.get(*index)?;
+                        grow!(self.writes[dst.0 as usize], kind_mask(k));
+                    }
+                }
+                Instruction::TupleGet { dst, tuple, index } => {
+                    narrow!(tuple.0, K_TUPLE);
+                    if let Some(tk) = self.tuples.get(&tuple.0) {
+                        let k = *tk.get(*index as usize)?;
+                        grow!(self.writes[dst.0 as usize], kind_mask(k));
+                    }
+                }
                 Instruction::IterLen { dst, src } => {
                     narrow!(src.0, K_LIST);
                     if !matches!(
@@ -1256,7 +1385,7 @@ impl PlanFn {
                     narrow!(condition.0, K_BOOL);
                 }
                 Instruction::CallFn { dst, func_id, args } => {
-                    if let Some((param_kinds, ret_mask)) = sigs.get(&func_id.index()) {
+                    if let Some((param_kinds, ret_mask, ret_tuple)) = sigs.get(&func_id.index()) {
                         if args.len() != param_kinds.len() {
                             return None;
                         }
@@ -1270,6 +1399,16 @@ impl PlanFn {
                         }
                         let rm = *ret_mask;
                         grow!(self.writes[dst.0 as usize], rm);
+                        if let Some(tk) = ret_tuple {
+                            if let Some(prev) = self.tuples.get(&dst.0) {
+                                if prev != tk {
+                                    return None;
+                                }
+                            } else {
+                                self.tuples.insert(dst.0, tk.clone());
+                                changed = true;
+                            }
+                        }
                     } else {
                         // Unknown callee: once every argument register has
                         // resolved to a single numeric/bool kind, request it
@@ -1296,9 +1435,25 @@ impl PlanFn {
                 }
                 Instruction::Return { value } => {
                     let reg = (*value)?;
-                    narrow!(reg.0, K_NUM | K_BOOL);
-                    self.return_regs.push(reg.0);
-                    grow!(self.ret_mask, self.writes[reg.0 as usize]);
+                    if self.writes[reg.0 as usize] == K_TUPLE {
+                        narrow!(reg.0, K_TUPLE);
+                        if let Some(tk) = self.tuples.get(&reg.0).cloned() {
+                            match &self.ret_tuple {
+                                None => {
+                                    self.ret_tuple = Some(tk);
+                                    changed = true;
+                                }
+                                Some(prev) if *prev != tk => return None,
+                                _ => {}
+                            }
+                        }
+                        self.return_regs.push(reg.0);
+                        grow!(self.ret_mask, K_TUPLE);
+                    } else {
+                        narrow!(reg.0, K_NUM | K_BOOL);
+                        self.return_regs.push(reg.0);
+                        grow!(self.ret_mask, self.writes[reg.0 as usize]);
+                    }
                 }
                 other => {
                     if jit_debug() {
@@ -1330,6 +1485,14 @@ impl PlanFn {
                     *slot = Some(k);
                     continue;
                 }
+                if self.writes[r] == K_TUPLE {
+                    // Tuple registers have no single Kind; codegen reads
+                    // them through the tuples map. Requires resolution.
+                    if !self.tuples.contains_key(&(r as u32)) || self.allowed[r] & K_TUPLE == 0 {
+                        return None;
+                    }
+                    continue;
+                }
                 let k = mask_singleton(self.writes[r])?;
                 if kind_mask(k) & self.allowed[r] == 0 {
                     return None;
@@ -1349,17 +1512,32 @@ impl PlanFn {
             }
         }
 
-        let ret_kind = mask_singleton(self.ret_mask)?;
-        for r in &self.return_regs {
-            if reg_kind[*r as usize] != Some(ret_kind) {
-                return None;
+        let (ret_kind, ret_tuple) = if self.ret_mask == K_TUPLE {
+            let tk = self.ret_tuple.clone()?;
+            for r in &self.return_regs {
+                if self.tuples.get(r) != Some(&tk) {
+                    return None;
+                }
             }
-        }
+            // The scalar slot is unused for tuple returns; Int is a
+            // placeholder for signatures that never carry it.
+            (Kind::Int, Some(tk))
+        } else {
+            let k = mask_singleton(self.ret_mask)?;
+            for r in &self.return_regs {
+                if reg_kind[*r as usize] != Some(k) {
+                    return None;
+                }
+            }
+            (k, None)
+        };
 
         Some(Inference {
             reg_kind,
             param_kinds: self.param_kinds.clone(),
             ret_kind,
+            tuples: self.tuples.clone(),
+            ret_tuple,
         })
     }
 }
@@ -1444,7 +1622,7 @@ impl Gen<'_> {
 fn translate_body(
     builder: &mut FunctionBuilder,
     module: &mut JITModule,
-    targets: &HashMap<usize, (cranelift_module::FuncId, Kind)>,
+    targets: &HashMap<usize, (cranelift_module::FuncId, Kind, Option<Vec<Kind>>)>,
     bytecode: &CompiledBytecode,
     inference: &Inference,
     shapes: &HashMap<u32, ShapeSpec>,
@@ -1508,6 +1686,17 @@ fn translate_body(
     }
     let depth_var = Variable::from_u32(nregs as u32);
     builder.declare_var(depth_var, types::I64);
+    // Tuple registers: one variable per element, allocated past the
+    // scalar space. Register r's element i lives at
+    // tuple_base + r*MAX_TUPLE + i.
+    let tuple_base = nregs as u32 + 1;
+    let tuple_var =
+        |r: u32, i: usize| Variable::from_u32(tuple_base + r * MAX_TUPLE as u32 + i as u32);
+    for (r, tk) in &inference.tuples {
+        for (i, k) in tk.iter().enumerate() {
+            builder.declare_var(tuple_var(*r, i), k.clif_type());
+        }
+    }
 
     builder.switch_to_block(entry_block);
     let params: Vec<ClifValue> = builder.block_params(entry_block).to_vec();
@@ -1524,6 +1713,15 @@ fn translate_body(
                 _ => builder.ins().iconst(types::I64, 0),
             };
             builder.def_var(Variable::from_u32(r as u32), zero);
+        }
+    }
+    for (r, tk) in &inference.tuples {
+        for (i, k) in tk.iter().enumerate() {
+            let zero = match k {
+                Kind::Float => builder.ins().f64const(0.0),
+                _ => builder.ins().iconst(types::I64, 0),
+            };
+            builder.def_var(tuple_var(*r, i), zero);
         }
     }
     builder.def_var(depth_var, params[param_count]);
@@ -1569,6 +1767,15 @@ fn translate_body(
                 terminated = true;
             }
             Instruction::Move { dst, src } => {
+                if let Some(tk) = inference.tuples.get(&src.0) {
+                    if inference.tuples.contains_key(&dst.0) {
+                        for i in 0..tk.len() {
+                            let v = builder.use_var(tuple_var(src.0, i));
+                            builder.def_var(tuple_var(dst.0, i), v);
+                        }
+                    }
+                    continue;
+                }
                 if gen.kind(dst.0).is_none() {
                     continue; // dead store, no observable effect
                 }
@@ -1721,6 +1928,41 @@ fn translate_body(
                 };
                 gen.write(builder, dst.0, val);
             }
+            Instruction::MakeTuple { dst, elements } => {
+                if !inference.tuples.contains_key(&dst.0) {
+                    return None;
+                }
+                for (i, e) in elements.iter().enumerate() {
+                    let v = gen.read(builder, e.0)?;
+                    builder.def_var(tuple_var(dst.0, i), v);
+                }
+            }
+            Instruction::PatternTestTuple { dst, value, len } => {
+                // Inference proved the register holds a tuple of exactly
+                // this arity, so the test is statically true.
+                let tk = inference.tuples.get(&value.0)?;
+                if tk.len() != *len {
+                    return None;
+                }
+                let one = builder.ins().iconst(types::I64, 1);
+                gen.write(builder, dst.0, one);
+            }
+            Instruction::ExtractElement { dst, value, index } => {
+                let tk = inference.tuples.get(&value.0)?;
+                if *index >= tk.len() {
+                    return None;
+                }
+                let v = builder.use_var(tuple_var(value.0, *index));
+                gen.write(builder, dst.0, v);
+            }
+            Instruction::TupleGet { dst, tuple, index } => {
+                let tk = inference.tuples.get(&tuple.0)?;
+                if *index as usize >= tk.len() {
+                    return None;
+                }
+                let v = builder.use_var(tuple_var(tuple.0, *index as usize));
+                gen.write(builder, dst.0, v);
+            }
             Instruction::IterLen { dst, src } => {
                 let list_ptr = builder.use_var(Variable::from_u32(src.0));
                 let helper_ref = module.declare_func_in_func(len_helper, builder.func);
@@ -1857,7 +2099,8 @@ fn translate_body(
                 // A native-to-native call (group member or previously
                 // compiled function): spend a unit of depth budget, deopt
                 // when exhausted.
-                let (callee_clif, _callee_ret) = *targets.get(&func_id.index())?;
+                let (callee_clif, _callee_ret, callee_tuple) =
+                    targets.get(&func_id.index())?.clone();
                 let depth = builder.use_var(depth_var);
                 let one = builder.ins().iconst(types::I64, 1);
                 let new_depth = builder.ins().isub(depth, one);
@@ -1875,20 +2118,38 @@ fn translate_body(
                 call_args.push(new_depth);
                 let callee_ref = module.declare_func_in_func(callee_clif, builder.func);
                 let call = builder.ins().call(callee_ref, &call_args);
-                let value = builder.inst_results(call)[0];
-                let status = builder.inst_results(call)[1];
+                let results = builder.inst_results(call).to_vec();
+                let values = &results[..results.len() - 1];
+                let status = results[results.len() - 1];
 
                 // A deopt anywhere below unwinds the whole native call.
                 let ok_block = builder.create_block();
                 builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
                 builder.switch_to_block(ok_block);
-                gen.write(builder, dst.0, value);
+                match &callee_tuple {
+                    Some(tk) => {
+                        if inference.tuples.contains_key(&dst.0) {
+                            for i in 0..tk.len() {
+                                builder.def_var(tuple_var(dst.0, i), values[i]);
+                            }
+                        }
+                    }
+                    None => gen.write(builder, dst.0, values[0]),
+                }
             }
             Instruction::Return { value } => {
                 let reg = (*value)?;
-                let val = gen.read(builder, reg.0)?;
-                let ok = builder.ins().iconst(types::I64, STATUS_OK);
-                builder.ins().return_(&[val, ok]);
+                if let Some(tk) = inference.tuples.get(&reg.0) {
+                    let mut vals: Vec<ClifValue> = (0..tk.len())
+                        .map(|i| builder.use_var(tuple_var(reg.0, i)))
+                        .collect();
+                    vals.push(builder.ins().iconst(types::I64, STATUS_OK));
+                    builder.ins().return_(&vals);
+                } else {
+                    let val = gen.read(builder, reg.0)?;
+                    let ok = builder.ins().iconst(types::I64, STATUS_OK);
+                    builder.ins().return_(&[val, ok]);
+                }
                 terminated = true;
             }
             _ => return None,
@@ -1901,12 +2162,23 @@ fn translate_body(
     }
 
     builder.switch_to_block(deopt_block);
-    let zero = match inference.ret_kind {
-        Kind::Float => builder.ins().f64const(0.0),
-        _ => builder.ins().iconst(types::I64, 0),
-    };
-    let one = builder.ins().iconst(types::I64, 1);
-    builder.ins().return_(&[zero, one]);
+    let mut vals: Vec<ClifValue> = Vec::new();
+    match &inference.ret_tuple {
+        Some(tk) => {
+            for k in tk {
+                vals.push(match k {
+                    Kind::Float => builder.ins().f64const(0.0),
+                    _ => builder.ins().iconst(types::I64, 0),
+                });
+            }
+        }
+        None => vals.push(match inference.ret_kind {
+            Kind::Float => builder.ins().f64const(0.0),
+            _ => builder.ins().iconst(types::I64, 0),
+        }),
+    }
+    vals.push(builder.ins().iconst(types::I64, 1));
+    builder.ins().return_(&vals);
 
     builder.seal_all_blocks();
     Some(())
