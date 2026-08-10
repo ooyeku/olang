@@ -34,12 +34,6 @@ pub struct BytecodeVm {
     // Performance statistics
     stats: VmStatistics,
 
-    // Call stack for nested function calls
-    call_stack: Vec<CallFrame>,
-
-    // Exception handler stack
-    exception_handlers: Vec<ExceptionHandler>,
-
     // Function registry for dynamic calls
     function_registry: HashMap<String, FunctionId>,
 
@@ -104,28 +98,6 @@ pub struct BytecodeVm {
     /// compiled again — the interpreter (whose registry is live) stays the
     /// authority.
     poisoned_structs: std::collections::HashSet<String>,
-}
-
-/// Call frame for function execution
-#[derive(Debug, Clone)]
-struct CallFrame {
-    #[allow(dead_code)]
-    function_id: FunctionId,
-    #[allow(dead_code)]
-    return_address: usize,
-    #[allow(dead_code)]
-    base_register: usize,
-    #[allow(dead_code)]
-    local_count: usize,
-}
-
-/// Exception handler for error recovery
-#[derive(Debug, Clone)]
-struct ExceptionHandler {
-    #[allow(dead_code)]
-    handler_address: usize,
-    #[allow(dead_code)]
-    stack_depth: usize,
 }
 
 /// Bytecode compiler that transforms AST to bytecode
@@ -523,20 +495,6 @@ pub enum Instruction {
         dst: Register,
         elements: Vec<Register>,
     },
-    ListGet {
-        dst: Register,
-        list: Register,
-        index: Register,
-    },
-    ListSet {
-        list: Register,
-        index: Register,
-        value: Register,
-    },
-    ListLen {
-        dst: Register,
-        list: Register,
-    },
     /// Iteration count for a `for` loop source (a list or a range).
     /// Ranges are not materialized — this is the count the interpreter's
     /// loop would produce.
@@ -614,14 +572,6 @@ pub enum Instruction {
     },
     /// No match arm applied to the scrutinee.
     MatchFail,
-    ListPush {
-        list: Register,
-        value: Register,
-    },
-    ListPop {
-        dst: Register,
-        list: Register,
-    },
 
     // Range operations
     MakeRange {
@@ -636,96 +586,9 @@ pub enum Instruction {
         dst: Register,
         elements: Vec<Register>,
     },
-    TupleGet {
-        dst: Register,
-        tuple: Register,
-        index: u32,
-    },
 
-    // String operations
-    StringConcat {
-        dst: Register,
-        lhs: Register,
-        rhs: Register,
-    },
-    StringLen {
-        dst: Register,
-        src: Register,
-    },
-    StringSlice {
-        dst: Register,
-        src: Register,
-        start: Register,
-        end: Register,
-    },
-
-    // Type operations
-    TypeOf {
-        dst: Register,
-        src: Register,
-    },
-    CheckType {
-        dst: Register,
-        src: Register,
-        type_id: u32,
-    },
-
-    // Pipeline operations (Olang-specific)
-    PipelineMap {
-        dst: Register,
-        source: Register,
-        function: Register,
-    },
-    PipelineFilter {
-        dst: Register,
-        source: Register,
-        predicate: Register,
-    },
-    PipelineReduce {
-        dst: Register,
-        source: Register,
-        initial: Register,
-        function: Register,
-    },
-
-    // Lazy evaluation operations
-    MakeThunk {
-        dst: Register,
-        expr_idx: u32,
-    },
-    ForceThunk {
-        dst: Register,
-        thunk: Register,
-    },
-
-    // Exception handling
-    TryBegin {
-        handler: Label,
-    },
-    TryEnd,
-    Throw {
-        exception: Register,
-    },
-
-    // Memory operations
-    Allocate {
-        dst: Register,
-        size: Register,
-    },
-    LoadField {
-        dst: Register,
-        object: Register,
-        field_idx: u32,
-    },
-    StoreField {
-        object: Register,
-        field_idx: u32,
-        value: Register,
-    },
     /// Field access by name: `dst = object.<constants[name_const]>`. Reads a
-    /// struct/object/module field, matching the interpreter (the older
-    /// `LoadField` indexes `HashMap::values()` positionally, which is
-    /// nondeterministic, so it is unused by the compiler).
+    /// struct/object/module field, matching the interpreter.
     GetField {
         dst: Register,
         object: Register,
@@ -744,16 +607,6 @@ pub enum Instruction {
 
     // Debug operations
     Nop,
-    DebugPrint {
-        src: Register,
-    },
-    Breakpoint,
-    ProfileEnter {
-        function_id: u32,
-    },
-    ProfileExit {
-        function_id: u32,
-    },
 }
 
 /// Register identifier
@@ -1066,8 +919,6 @@ impl BytecodeVm {
             bytecode_hot: Vec::new(),
             execution_state: ExecutionState::new(),
             stats: VmStatistics::default(),
-            call_stack: Vec::new(),
-            exception_handlers: Vec::new(),
             function_registry: HashMap::new(),
             builtin_names,
             builtins: BuiltinFunctions::new(),
@@ -2228,27 +2079,6 @@ impl BytecodeVm {
                         .set_register(*dst, OvmValue::from_ast(range_value))?;
                 }
 
-                Instruction::ListGet { dst, list, index } => {
-                    let list_value = self.execution_state.get_register(*list)?;
-                    let index_value = self.execution_state.get_register(*index)?;
-                    let result = self.execute_list_get(&list_value, &index_value)?;
-                    self.execution_state.set_register(*dst, result)?;
-                }
-
-                Instruction::ListSet { list, index, value } => {
-                    let list_value = self.execution_state.get_register(*list)?;
-                    let index_value = self.execution_state.get_register(*index)?;
-                    let new_value = self.execution_state.get_register(*value)?;
-                    let result = self.execute_list_set(&list_value, &index_value, &new_value)?;
-                    self.execution_state.set_register(*list, result)?;
-                }
-
-                Instruction::ListLen { dst, list } => {
-                    let list_value = self.execution_state.get_register(*list)?;
-                    let length = self.execute_list_len(&list_value)?;
-                    self.execution_state.set_register(*dst, length)?;
-                }
-
                 Instruction::IterLen { dst, src } => {
                     let source = self.execution_state.register_ref(*src)?;
                     let len = Self::iter_len(source)?;
@@ -2420,20 +2250,6 @@ impl BytecodeVm {
                     ));
                 }
 
-                Instruction::ListPush { list, value } => {
-                    let list_value = self.execution_state.get_register(*list)?;
-                    let new_value = self.execution_state.get_register(*value)?;
-                    let result = self.execute_list_push(&list_value, &new_value)?;
-                    self.execution_state.set_register(*list, result)?;
-                }
-
-                Instruction::ListPop { dst, list } => {
-                    let list_value = self.execution_state.get_register(*list)?;
-                    let (new_list, popped_value) = self.execute_list_pop(&list_value)?;
-                    self.execution_state.set_register(*list, new_list)?;
-                    self.execution_state.set_register(*dst, popped_value)?;
-                }
-
                 // Tuple operations
                 Instruction::MakeTuple { dst, elements } => {
                     let mut tuple_values = Vec::with_capacity(elements.len());
@@ -2444,190 +2260,9 @@ impl BytecodeVm {
                         .set_register(*dst, OvmValue::new_tuple(tuple_values))?;
                 }
 
-                Instruction::TupleGet { dst, tuple, index } => {
-                    let tuple_value = self.execution_state.get_register(*tuple)?;
-                    let result = self.execute_tuple_get(&tuple_value, *index)?;
-                    self.execution_state.set_register(*dst, result)?;
-                }
-
-                // String operations
-                Instruction::StringConcat { dst, lhs, rhs } => {
-                    let left = self.execution_state.get_register(*lhs)?;
-                    let right = self.execution_state.get_register(*rhs)?;
-                    let result = self.execute_string_concat(&left, &right)?;
-                    self.execution_state.set_register(*dst, result)?;
-                }
-
-                Instruction::StringLen { dst, src } => {
-                    let string_value = self.execution_state.get_register(*src)?;
-                    let length = self.execute_string_len(&string_value)?;
-                    self.execution_state.set_register(*dst, length)?;
-                }
-
-                // Type operations
-                Instruction::TypeOf { dst, src } => {
-                    let value = self.execution_state.get_register(*src)?;
-                    let type_name = self.get_type_name(&value);
-                    let type_value =
-                        OvmValue::from_ast(Value::String(Arc::new(type_name.to_string())));
-                    self.execution_state.set_register(*dst, type_value)?;
-                }
-
                 // Debug operations
                 Instruction::Nop => {
                     // No operation
-                }
-
-                Instruction::DebugPrint { src } => {
-                    let value = self.execution_state.get_register(*src)?;
-                    println!("[DEBUG] Register r{}: {:?}", src.0, value);
-                }
-
-                Instruction::Breakpoint => {
-                    // In a complete implementation, this would trigger the debugger
-                    println!(
-                        "[BREAKPOINT] PC: {}, Function: {:?}",
-                        pc, bytecode.function_id
-                    );
-                }
-
-                Instruction::ProfileEnter { function_id } => {
-                    // Record function entry for profiling
-                    self.stats.function_calls += 1;
-                    if self.stats.function_calls.is_multiple_of(1000) {
-                        println!(
-                            "[PROFILE] Function {:?} entered (total calls: {})",
-                            function_id, self.stats.function_calls
-                        );
-                    }
-                }
-
-                Instruction::ProfileExit { function_id: _ } => {
-                    // Record function exit for profiling
-                    // In a complete implementation, this would measure execution time
-                }
-
-                // Exception handling
-                Instruction::TryBegin { handler } => {
-                    self.exception_handlers.push(ExceptionHandler {
-                        handler_address: handler.0 as usize,
-                        stack_depth: self.call_stack.len(),
-                    });
-                }
-
-                Instruction::TryEnd => {
-                    self.exception_handlers.pop();
-                }
-
-                Instruction::Throw { exception } => {
-                    let exception_value = self.execution_state.get_register(*exception)?;
-                    let exception_msg = self.value_to_string(&exception_value)?;
-                    return Err(BytecodeError::ExceptionThrown(exception_msg));
-                }
-
-                // String slice operations
-                Instruction::StringSlice {
-                    dst,
-                    src,
-                    start,
-                    end,
-                } => {
-                    let string_value = self.execution_state.get_register(*src)?;
-                    let start_value = self.execution_state.get_register(*start)?;
-                    let end_value = self.execution_state.get_register(*end)?;
-                    let result =
-                        self.execute_string_slice(&string_value, &start_value, &end_value)?;
-                    self.execution_state.set_register(*dst, result)?;
-                }
-
-                // Type checking operations
-                Instruction::CheckType { dst, src, type_id } => {
-                    let value = self.execution_state.get_register(*src)?;
-                    let type_matches = self.check_type(&value, *type_id)?;
-                    self.execution_state
-                        .set_register(*dst, OvmValue::from_ast(Value::Boolean(type_matches)))?;
-                }
-
-                // Pipeline operations (Olang-specific)
-                Instruction::PipelineMap {
-                    dst,
-                    source,
-                    function,
-                } => {
-                    let source_value = self.execution_state.get_register(*source)?;
-                    let function_value = self.execution_state.get_register(*function)?;
-                    let result = self.execute_pipeline_map(&source_value, &function_value)?;
-                    self.execution_state.set_register(*dst, result)?;
-                }
-
-                Instruction::PipelineFilter {
-                    dst,
-                    source,
-                    predicate,
-                } => {
-                    let source_value = self.execution_state.get_register(*source)?;
-                    let predicate_value = self.execution_state.get_register(*predicate)?;
-                    let result = self.execute_pipeline_filter(&source_value, &predicate_value)?;
-                    self.execution_state.set_register(*dst, result)?;
-                }
-
-                Instruction::PipelineReduce {
-                    dst,
-                    source,
-                    initial,
-                    function,
-                } => {
-                    let source_value = self.execution_state.get_register(*source)?;
-                    let initial_value = self.execution_state.get_register(*initial)?;
-                    let function_value = self.execution_state.get_register(*function)?;
-                    let result = self.execute_pipeline_reduce(
-                        &source_value,
-                        &initial_value,
-                        &function_value,
-                    )?;
-                    self.execution_state.set_register(*dst, result)?;
-                }
-
-                // Lazy evaluation operations
-                Instruction::MakeThunk { dst, expr_idx } => {
-                    // For now, create a simple thunk placeholder
-                    let thunk_value =
-                        OvmValue::from_ast(Value::String(Arc::new(format!("thunk_{}", expr_idx))));
-                    self.execution_state.set_register(*dst, thunk_value)?;
-                }
-
-                Instruction::ForceThunk { dst, thunk } => {
-                    // For now, just return the thunk value as-is
-                    let thunk_value = self.execution_state.get_register(*thunk)?;
-                    self.execution_state.set_register(*dst, thunk_value)?;
-                }
-
-                // Memory operations
-                Instruction::Allocate { dst, size } => {
-                    let size_value = self.execution_state.get_register(*size)?;
-                    let result = self.execute_allocate(&size_value)?;
-                    self.execution_state.set_register(*dst, result)?;
-                }
-
-                Instruction::LoadField {
-                    dst,
-                    object,
-                    field_idx,
-                } => {
-                    let object_value = self.execution_state.get_register(*object)?;
-                    let result = self.execute_load_field(&object_value, *field_idx)?;
-                    self.execution_state.set_register(*dst, result)?;
-                }
-
-                Instruction::StoreField {
-                    object,
-                    field_idx,
-                    value,
-                } => {
-                    let object_value = self.execution_state.get_register(*object)?;
-                    let new_value = self.execution_state.get_register(*value)?;
-                    let result = self.execute_store_field(&object_value, *field_idx, &new_value)?;
-                    self.execution_state.set_register(*object, result)?;
                 }
 
                 Instruction::GetField {
@@ -3708,253 +3343,6 @@ impl BytecodeVm {
         }
     }
 
-    /// Execute list get operation
-    fn execute_list_get(
-        &self,
-        list: &OvmValue,
-        index: &OvmValue,
-    ) -> Result<OvmValue, BytecodeError> {
-        let list_value = list
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-        let index_value = index
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match (list_value, index_value) {
-            (Value::List(list), Value::Integer(idx)) => {
-                let idx = if idx < 0 {
-                    list.len() as i64 + idx
-                } else {
-                    idx
-                };
-
-                if idx < 0 || idx >= list.len() as i64 {
-                    return Err(BytecodeError::IndexOutOfBounds {
-                        index: idx,
-                        length: list.len(),
-                    });
-                }
-
-                Ok(OvmValue::from_ast(list[idx as usize].clone()))
-            }
-            _ => Err(BytecodeError::TypeError(
-                "List get requires a list and integer index".to_string(),
-            )),
-        }
-    }
-
-    /// Execute list set operation
-    fn execute_list_set(
-        &self,
-        list: &OvmValue,
-        index: &OvmValue,
-        value: &OvmValue,
-    ) -> Result<OvmValue, BytecodeError> {
-        let list_value = list
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-        let index_value = index
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-        let new_value = value
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match (list_value, index_value) {
-            (Value::List(list), Value::Integer(idx)) => {
-                let idx = if idx < 0 {
-                    list.len() as i64 + idx
-                } else {
-                    idx
-                };
-
-                if idx < 0 || idx >= list.len() as i64 {
-                    return Err(BytecodeError::IndexOutOfBounds {
-                        index: idx,
-                        length: list.len(),
-                    });
-                }
-
-                let mut list_vec = list.to_vec();
-                list_vec[idx as usize] = new_value;
-                Ok(OvmValue::from_ast(Value::List(list_vec.into())))
-            }
-            _ => Err(BytecodeError::TypeError(
-                "List set requires a list and integer index".to_string(),
-            )),
-        }
-    }
-
-    /// Execute list length operation
-    fn execute_list_len(&self, list: &OvmValue) -> Result<OvmValue, BytecodeError> {
-        let list_value = list
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match list_value {
-            Value::List(list) => Ok(OvmValue::from_ast(Value::Integer(list.len() as i64))),
-            _ => Err(BytecodeError::TypeError(
-                "List length requires a list".to_string(),
-            )),
-        }
-    }
-
-    /// Execute list push operation
-    fn execute_list_push(
-        &self,
-        list: &OvmValue,
-        value: &OvmValue,
-    ) -> Result<OvmValue, BytecodeError> {
-        let list_value = list
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-        let new_value = value
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match list_value {
-            Value::List(list) => {
-                let mut list_vec = list.to_vec();
-                list_vec.push(new_value);
-                Ok(OvmValue::from_ast(Value::List(list_vec.into())))
-            }
-            _ => Err(BytecodeError::TypeError(
-                "List push requires a list".to_string(),
-            )),
-        }
-    }
-
-    /// Execute list pop operation
-    fn execute_list_pop(&self, list: &OvmValue) -> Result<(OvmValue, OvmValue), BytecodeError> {
-        let list_value = list
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match list_value {
-            Value::List(list) => {
-                if list.is_empty() {
-                    return Err(BytecodeError::RuntimeError(
-                        "Cannot pop from empty list".to_string(),
-                    ));
-                }
-
-                let mut list_vec = list.to_vec();
-                let popped = list_vec.pop().ok_or_else(|| {
-                    BytecodeError::RuntimeError(
-                        "List became empty during pop operation".to_string(),
-                    )
-                })?;
-                Ok((
-                    OvmValue::from_ast(Value::List(list_vec.into())),
-                    OvmValue::from_ast(popped),
-                ))
-            }
-            _ => Err(BytecodeError::TypeError(
-                "List pop requires a list".to_string(),
-            )),
-        }
-    }
-
-    /// Execute tuple get operation
-    fn execute_tuple_get(&self, tuple: &OvmValue, index: u32) -> Result<OvmValue, BytecodeError> {
-        let tuple_value = tuple
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match tuple_value {
-            Value::Tuple(tuple) => {
-                if index >= tuple.len() as u32 {
-                    return Err(BytecodeError::IndexOutOfBounds {
-                        index: index as i64,
-                        length: tuple.len(),
-                    });
-                }
-
-                Ok(OvmValue::from_ast(tuple[index as usize].clone()))
-            }
-            _ => Err(BytecodeError::TypeError(
-                "Tuple get requires a tuple".to_string(),
-            )),
-        }
-    }
-
-    /// Execute string concatenation
-    fn execute_string_concat(
-        &self,
-        left: &OvmValue,
-        right: &OvmValue,
-    ) -> Result<OvmValue, BytecodeError> {
-        let left_value = left
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-        let right_value = right
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match (left_value, right_value) {
-            (Value::String(a), Value::String(b)) => {
-                let result = format!("{}{}", a, b);
-                Ok(OvmValue::from_ast(Value::String(Arc::new(result))))
-            }
-            _ => Err(BytecodeError::TypeError(
-                "String concatenation requires two strings".to_string(),
-            )),
-        }
-    }
-
-    /// Execute string length operation
-    fn execute_string_len(&self, string: &OvmValue) -> Result<OvmValue, BytecodeError> {
-        let string_value = string
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match string_value {
-            Value::String(s) => Ok(OvmValue::from_ast(Value::Integer(s.len() as i64))),
-            _ => Err(BytecodeError::TypeError(
-                "String length requires a string".to_string(),
-            )),
-        }
-    }
-
-    /// Get type name of a value
-    fn get_type_name(&self, value: &OvmValue) -> &'static str {
-        match value.to_ast() {
-            Ok(Value::Integer(_)) => "int",
-            Ok(Value::Float(_)) => "float",
-            Ok(Value::String(_)) => "string",
-            Ok(Value::Boolean(_)) => "bool",
-            Ok(Value::List(_)) => "list",
-            Ok(Value::Tuple(_)) => "tuple",
-            Ok(Value::Struct { .. }) => "struct",
-            Ok(Value::Function(_)) => "function",
-            Ok(Value::Builtin(_)) => "builtin",
-            Ok(Value::Range { .. }) => "range",
-            Ok(Value::Unit) => "unit",
-            Ok(Value::Ok(_)) => "result",
-            Ok(Value::Err(_)) => "result",
-            Ok(Value::Enum { .. }) => {
-                // Return a static string for enum types
-                // In a real implementation, we might want to cache type names
-                "enum"
-            }
-            Ok(Value::EnumConstructor { .. }) => "enum_constructor",
-            Ok(Value::Native(handle)) => handle.0.type_name(),
-            Ok(Value::Promise { .. }) => "promise",
-            Ok(Value::Map(_)) => "map",
-            Err(_) => "unknown",
-            Ok(crate::ast::Value::TypeInfo { .. }) => "type",
-        }
-    }
-
-    /// Convert value to string for error messages
-    fn value_to_string(&self, value: &OvmValue) -> Result<String, BytecodeError> {
-        let ast_value = value
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-        Ok(format!("{}", ast_value))
-    }
-
     /// Check if value is truthy
     fn is_truthy(&self, value: &OvmValue) -> bool {
         use crate::ovm::value::ValueData;
@@ -3971,193 +3359,6 @@ impl BytecodeVm {
     /// Get VM statistics
     pub fn get_stats(&self) -> &VmStatistics {
         &self.stats
-    }
-
-    /// Execute string slice operation
-    fn execute_string_slice(
-        &self,
-        string: &OvmValue,
-        start: &OvmValue,
-        end: &OvmValue,
-    ) -> Result<OvmValue, BytecodeError> {
-        let string_value = string
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-        let start_value = start
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-        let end_value = end
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match (string_value, start_value, end_value) {
-            (Value::String(s), Value::Integer(start_idx), Value::Integer(end_idx)) => {
-                // Slice by chars: byte slicing panics inside multibyte
-                // characters (and on reversed indices)
-                let start_idx = start_idx.max(0) as usize;
-                let end_idx = end_idx.max(0) as usize;
-                let slice: String = if end_idx > start_idx {
-                    s.chars()
-                        .skip(start_idx)
-                        .take(end_idx - start_idx)
-                        .collect()
-                } else {
-                    String::new()
-                };
-                Ok(OvmValue::from_ast(Value::String(Arc::new(slice))))
-            }
-            _ => Err(BytecodeError::TypeError(
-                "String slice requires string and integer indices".to_string(),
-            )),
-        }
-    }
-
-    /// Check if value matches a type ID
-    fn check_type(&self, value: &OvmValue, type_id: u32) -> Result<bool, BytecodeError> {
-        let ast_value = value
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        let matches = matches!(
-            (type_id, ast_value),
-            (0, Value::Integer(_))
-                | (1, Value::Float(_))
-                | (2, Value::Boolean(_))
-                | (3, Value::String(_))
-                | (4, Value::List(_))
-                | (5, Value::Tuple(_))
-                | (6, Value::Function(_))
-                | (7, Value::Unit)
-                | (8, Value::Struct { .. })
-                | (9, Value::Range { .. })
-        );
-
-        Ok(matches)
-    }
-
-    /// Execute pipeline map operation
-    fn execute_pipeline_map(
-        &self,
-        source: &OvmValue,
-        _function: &OvmValue,
-    ) -> Result<OvmValue, BytecodeError> {
-        // Simplified implementation - in a complete implementation, this would apply the function to each element
-        let source_ast = source
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match source_ast {
-            Value::List(list) => {
-                // For now, just return the original list
-                // In a complete implementation, this would apply the function to each element
-                Ok(OvmValue::from_ast(Value::List(list)))
-            }
-            _ => Err(BytecodeError::TypeError(
-                "Pipeline map requires a list".to_string(),
-            )),
-        }
-    }
-
-    /// Execute pipeline filter operation
-    fn execute_pipeline_filter(
-        &self,
-        source: &OvmValue,
-        _predicate: &OvmValue,
-    ) -> Result<OvmValue, BytecodeError> {
-        // Simplified implementation - in a complete implementation, this would filter elements
-        let source_ast = source
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match source_ast {
-            Value::List(list) => {
-                // For now, just return the original list
-                // In a complete implementation, this would filter elements based on the predicate
-                Ok(OvmValue::from_ast(Value::List(list)))
-            }
-            _ => Err(BytecodeError::TypeError(
-                "Pipeline filter requires a list".to_string(),
-            )),
-        }
-    }
-
-    /// Execute pipeline reduce operation
-    fn execute_pipeline_reduce(
-        &self,
-        source: &OvmValue,
-        initial: &OvmValue,
-        _function: &OvmValue,
-    ) -> Result<OvmValue, BytecodeError> {
-        // Simplified implementation - in a complete implementation, this would reduce the list
-        let _source_ast = source
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        // For now, just return the initial value
-        // In a complete implementation, this would apply the function to reduce the list
-        Ok(initial.clone())
-    }
-
-    /// Execute memory allocation
-    fn execute_allocate(&self, size: &OvmValue) -> Result<OvmValue, BytecodeError> {
-        let size_ast = size
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match size_ast {
-            Value::Integer(size) => {
-                if size < 0 {
-                    return Err(BytecodeError::RuntimeError(
-                        "Cannot allocate negative size".to_string(),
-                    ));
-                }
-                // For now, create a placeholder allocation
-                let allocation_id = format!("alloc_{}", size);
-                Ok(OvmValue::from_ast(Value::String(Arc::new(allocation_id))))
-            }
-            _ => Err(BytecodeError::TypeError(
-                "Allocation size must be an integer".to_string(),
-            )),
-        }
-    }
-
-    /// Execute field load operation
-    fn execute_load_field(
-        &self,
-        object: &OvmValue,
-        field_idx: u32,
-    ) -> Result<OvmValue, BytecodeError> {
-        let object_ast = object
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match object_ast {
-            Value::Struct { fields, .. } => {
-                // For struct field access by index, we need to convert to a vector first
-                let field_values: Vec<_> = fields.values().cloned().collect();
-                if let Some(field_value) = field_values.get(field_idx as usize) {
-                    Ok(OvmValue::from_ast(field_value.clone()))
-                } else {
-                    Err(BytecodeError::IndexOutOfBounds {
-                        index: field_idx as i64,
-                        length: field_values.len(),
-                    })
-                }
-            }
-            Value::Tuple(tuple) => {
-                if let Some(field_value) = tuple.get(field_idx as usize) {
-                    Ok(OvmValue::from_ast(field_value.clone()))
-                } else {
-                    Err(BytecodeError::IndexOutOfBounds {
-                        index: field_idx as i64,
-                        length: tuple.len(),
-                    })
-                }
-            }
-            _ => Err(BytecodeError::TypeError(
-                "Field access requires a struct or tuple".to_string(),
-            )),
-        }
     }
 
     /// GetField's miss path: resolve by name, refill the inline cache when
@@ -4272,54 +3473,6 @@ impl BytecodeVm {
             }
             _ => Err(BytecodeError::TypeError(
                 "Only lists, tuples, and strings can be indexed".to_string(),
-            )),
-        }
-    }
-
-    /// Execute field store operation
-    fn execute_store_field(
-        &self,
-        object: &OvmValue,
-        field_idx: u32,
-        value: &OvmValue,
-    ) -> Result<OvmValue, BytecodeError> {
-        let object_ast = object
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-        let new_value_ast = value
-            .to_ast()
-            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-
-        match object_ast {
-            Value::Struct {
-                type_name,
-                mut fields,
-            } => {
-                // For struct field store by index, we need to work with field order
-                let field_keys: Vec<_> = fields.keys().cloned().collect();
-                if field_idx as usize >= field_keys.len() {
-                    return Err(BytecodeError::IndexOutOfBounds {
-                        index: field_idx as i64,
-                        length: field_keys.len(),
-                    });
-                }
-                let field_key = &field_keys[field_idx as usize];
-                fields.insert(field_key.clone(), new_value_ast);
-                Ok(OvmValue::from_ast(Value::Struct { type_name, fields }))
-            }
-            Value::Tuple(tuple) => {
-                if field_idx as usize >= tuple.len() {
-                    return Err(BytecodeError::IndexOutOfBounds {
-                        index: field_idx as i64,
-                        length: tuple.len(),
-                    });
-                }
-                let mut tuple_vec = tuple.to_vec();
-                tuple_vec[field_idx as usize] = new_value_ast;
-                Ok(OvmValue::from_ast(Value::Tuple(Arc::new(tuple_vec))))
-            }
-            _ => Err(BytecodeError::TypeError(
-                "Field store requires a struct or tuple".to_string(),
             )),
         }
     }
@@ -6890,41 +6043,6 @@ mod tests {
     }
 
     #[test]
-    fn test_list_operations() {
-        let vm = BytecodeVm::new();
-
-        // Test list creation and access
-        let list_value = OvmValue::from_ast(Value::List(
-            vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)].into(),
-        ));
-
-        let index_value = OvmValue::from_ast(Value::Integer(1));
-        let result = vm.execute_list_get(&list_value, &index_value);
-
-        assert!(result.is_ok(), "List get should succeed");
-        match result.unwrap().to_ast() {
-            Ok(Value::Integer(n)) => assert_eq!(n, 2, "Should get second element"),
-            _ => panic!("Expected integer result"),
-        }
-    }
-
-    #[test]
-    fn test_string_operations() {
-        let vm = BytecodeVm::new();
-
-        let left = OvmValue::from_ast(Value::String(Arc::new("Hello".to_string())));
-        let right = OvmValue::from_ast(Value::String(Arc::new(" World".to_string())));
-
-        let result = vm.execute_string_concat(&left, &right);
-        assert!(result.is_ok(), "String concatenation should succeed");
-
-        match result.unwrap().to_ast() {
-            Ok(Value::String(s)) => assert_eq!(*s, "Hello World", "Concatenation should work"),
-            _ => panic!("Expected string result"),
-        }
-    }
-
-    #[test]
     fn test_arithmetic_operations() {
         let vm = BytecodeVm::new();
 
@@ -6955,19 +6073,6 @@ mod tests {
             BytecodeError::DivisionByZero => {}
             _ => panic!("Expected division by zero error"),
         }
-    }
-
-    #[test]
-    fn test_type_operations() {
-        let vm = BytecodeVm::new();
-
-        let int_value = OvmValue::from_ast(Value::Integer(42));
-        let string_value = OvmValue::from_ast(Value::String(Arc::new("test".to_string())));
-        let bool_value = OvmValue::from_ast(Value::Boolean(true));
-
-        assert_eq!(vm.get_type_name(&int_value), "int");
-        assert_eq!(vm.get_type_name(&string_value), "string");
-        assert_eq!(vm.get_type_name(&bool_value), "bool");
     }
 
     #[test]

@@ -1291,7 +1291,6 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::MakeTuple { .. }
         | Instruction::PatternTestTuple { .. }
         | Instruction::ExtractElement { .. }
-        | Instruction::TupleGet { .. }
         | Instruction::CallFn { .. } => true,
         // Allocation is allowed only in straight-line code (constructors).
         // In a native loop every allocation would live until the call
@@ -1739,13 +1738,6 @@ impl PlanFn {
                     narrow!(value.0, K_TUPLE);
                     if let Some(tk) = self.tuples.get(&value.0) {
                         let k = *tk.get(*index)?;
-                        grow!(self.writes[dst.0 as usize], kind_mask(k));
-                    }
-                }
-                Instruction::TupleGet { dst, tuple, index } => {
-                    narrow!(tuple.0, K_TUPLE);
-                    if let Some(tk) = self.tuples.get(&tuple.0) {
-                        let k = *tk.get(*index as usize)?;
                         grow!(self.writes[dst.0 as usize], kind_mask(k));
                     }
                 }
@@ -2534,14 +2526,6 @@ fn translate_body(
                     return None;
                 }
                 let v = builder.use_var(tuple_var(value.0, *index));
-                r#gen.write(builder, dst.0, v);
-            }
-            Instruction::TupleGet { dst, tuple, index } => {
-                let tk = inference.tuples.get(&tuple.0)?;
-                if *index as usize >= tk.len() {
-                    return None;
-                }
-                let v = builder.use_var(tuple_var(tuple.0, *index as usize));
                 r#gen.write(builder, dst.0, v);
             }
             Instruction::MakeStruct {
