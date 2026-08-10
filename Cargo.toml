@@ -22,7 +22,6 @@ native = [
     "dep:rusqlite",
     "dep:rustyline",
     "dep:reqwest",
-    "dep:memmap2",
     "dep:hostname",
     "dep:whoami",
     "dep:dirs",
@@ -78,9 +77,6 @@ colored = "2.0"  # Terminal colors for better display
 anyhow = "1.0"
 thiserror = "2.0"
 miette = { version = "7.6", features = ["fancy"] }
-
-# High-performance filesystem libraries for stdlib
-memmap2 = { version = "0.9", optional = true }  # Memory-mapped file I/O for maximum speed
 
 # HTTP libraries for stdlib. reqwest (hyper 1 under the hood) is the whole
 # client stack — it brings its own async runtime for the blocking API, so
@@ -146,12 +142,6 @@ getrandom02 = { package = "getrandom", version = "0.2", features = ["custom"] }
 criterion = "0.5"
 proptest = "1.3"
 tempfile = "3.8"
-
-# Fuzzing and stress testing dependencies
-arbitrary = "1.3"         # Generate arbitrary data for fuzzing
-fake = "2.9"              # Generate fake data for testing
-quickcheck = "1.0"        # Property-based testing
-lazy_static = "1.4"       # Static variables for test infrastructure
 rand_chacha = "0.10"      # Deterministic random number generation
 
 [profile.release]
