@@ -15,7 +15,7 @@
 
 use super::series::{make_series_value, series_of};
 use crate::ast::{BuiltinFunction, Value};
-use olang_ods::{dist, stats, Series};
+use olang_ods::{Series, dist, stats};
 use std::collections::HashMap;
 use std::sync::Arc;
 

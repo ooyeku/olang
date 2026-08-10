@@ -1246,10 +1246,9 @@ impl BytecodeVm {
 
     /// Check if function has compiled bytecode
     pub fn has_bytecode(&self, func_id: FunctionId) -> bool {
-        if let Ok(cache) = self.bytecode_cache.read() {
-            cache.contains_key(&func_id)
-        } else {
-            false
+        match self.bytecode_cache.read() {
+            Ok(cache) => cache.contains_key(&func_id),
+            _ => false,
         }
     }
 
@@ -1899,7 +1898,7 @@ impl BytecodeVm {
                                 return Err(BytecodeError::TypeError(
                                     "Map keys must be strings, integers, floats, or booleans"
                                         .to_string(),
-                                ))
+                                ));
                             }
                         };
                         let value = self.execution_state.get_register(*value_reg)?;
@@ -2114,7 +2113,7 @@ impl BytecodeVm {
                         _ => {
                             return Err(BytecodeError::RuntimeError(
                                 "MakeClosure: template constant is not a closure".to_string(),
-                            ))
+                            ));
                         }
                     };
                     let mut captured = Vec::with_capacity(captures.len());
@@ -2191,7 +2190,7 @@ impl BytecodeVm {
                         _ => {
                             return Err(BytecodeError::RuntimeError(
                                 "Range start must be integer".to_string(),
-                            ))
+                            ));
                         }
                     };
 
@@ -2200,7 +2199,7 @@ impl BytecodeVm {
                         _ => {
                             return Err(BytecodeError::RuntimeError(
                                 "Range end must be integer".to_string(),
-                            ))
+                            ));
                         }
                     };
 
@@ -2247,7 +2246,7 @@ impl BytecodeVm {
                         _ => {
                             return Err(BytecodeError::TypeError(
                                 "Iteration index must be an integer".to_string(),
-                            ))
+                            ));
                         }
                     };
                     let source = self.execution_state.register_ref(*src)?;
@@ -2319,7 +2318,7 @@ impl BytecodeVm {
                         None => {
                             return Err(BytecodeError::RuntimeError(
                                 "Result payload extraction on a non-matching value".to_string(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -2368,7 +2367,7 @@ impl BytecodeVm {
                         None => {
                             return Err(BytecodeError::RuntimeError(
                                 "Destructuring element out of bounds".to_string(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -2388,7 +2387,7 @@ impl BytecodeVm {
                         None => {
                             return Err(BytecodeError::RuntimeError(
                                 "Rest binding on a non-list value".to_string(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -2772,7 +2771,7 @@ impl BytecodeVm {
                     return Err(BytecodeError::TypeError(format!(
                         "Unsupported operation: {:?}",
                         op
-                    )))
+                    )));
                 }
             },
             (ValueData::Float(a), ValueData::Float(b)) => {
@@ -2796,7 +2795,7 @@ impl BytecodeVm {
                     return Err(BytecodeError::TypeError(format!(
                         "Unsupported operation: {:?}",
                         op
-                    )))
+                    )));
                 }
             },
             (ValueData::Boolean(a), ValueData::Boolean(b)) => match op {
@@ -2808,7 +2807,7 @@ impl BytecodeVm {
                     return Err(BytecodeError::TypeError(format!(
                         "Unsupported operation: {:?}",
                         op
-                    )))
+                    )));
                 }
             },
             // Mixed string-number concatenation, mirroring the interpreter:
@@ -2837,7 +2836,7 @@ impl BytecodeVm {
                     return Err(BytecodeError::TypeError(format!(
                         "Unsupported operation: {:?}",
                         op
-                    )))
+                    )));
                 }
             },
             (ValueData::List(a), ValueData::List(b)) => match op {
@@ -2851,13 +2850,13 @@ impl BytecodeVm {
                     return Err(BytecodeError::TypeError(format!(
                         "Unsupported operation: {:?}",
                         op
-                    )))
+                    )));
                 }
             },
             _ => {
                 return Err(BytecodeError::TypeError(
                     "Type mismatch in binary operation".to_string(),
-                ))
+                ));
             }
         };
 
@@ -2898,7 +2897,7 @@ impl BytecodeVm {
                 return Err(BytecodeError::TypeError(format!(
                     "Unsupported operation: {:?}",
                     op
-                )))
+                )));
             }
         })
     }
@@ -2980,12 +2979,11 @@ impl BytecodeVm {
         }
 
         let key = Arc::as_ptr(&func.body) as usize;
-        if let Some((weak, cached)) = self.hof_cache.get(&key) {
-            if let Some(live) = weak.upgrade() {
-                if Arc::ptr_eq(&live, &func.body) {
-                    return *cached;
-                }
-            }
+        if let Some((weak, cached)) = self.hof_cache.get(&key)
+            && let Some(live) = weak.upgrade()
+            && Arc::ptr_eq(&live, &func.body)
+        {
+            return *cached;
         }
 
         let decl = FunctionDecl {
@@ -3088,7 +3086,7 @@ impl BytecodeVm {
                 return Err(BytecodeError::TypeError(format!(
                     "{}: first argument must be a map or object",
                     who
-                )))
+                )));
             }
         };
         let key_string;
@@ -3110,7 +3108,7 @@ impl BytecodeVm {
                 return Err(BytecodeError::TypeError(format!(
                     "{}: key must be string, integer, float, or boolean",
                     who
-                )))
+                )));
             }
         };
         Ok(match recv {
@@ -3130,7 +3128,7 @@ impl BytecodeVm {
             _ => {
                 return Err(BytecodeError::TypeError(
                     "map_has_key: first argument must be a map or object".to_string(),
-                ))
+                ));
             }
         };
         let key_string;
@@ -3151,7 +3149,7 @@ impl BytecodeVm {
             _ => {
                 return Err(BytecodeError::TypeError(
                     "map_has_key: key must be string, integer, float, or boolean".to_string(),
-                ))
+                ));
             }
         };
         Ok(OvmValue::new_boolean(contains(key_str)))
@@ -3281,7 +3279,7 @@ impl BytecodeVm {
                     _ => {
                         return Err(BytecodeError::TypeError(
                             "skip: second argument must be a non-negative integer".to_string(),
-                        ))
+                        ));
                     }
                 };
                 match &args[0].data {
@@ -3310,7 +3308,7 @@ impl BytecodeVm {
                     _ => {
                         return Err(BytecodeError::TypeError(
                             "map_set: key must be string, integer, float, or boolean".to_string(),
-                        ))
+                        ));
                     }
                 };
                 match &args[0].data {
@@ -3344,7 +3342,7 @@ impl BytecodeVm {
                     _ => {
                         return Err(BytecodeError::TypeError(
                             "entries: argument must be a map or object".to_string(),
-                        ))
+                        ));
                     }
                 };
                 // The interpreter sorts keys, so entries is deterministic
@@ -3383,7 +3381,7 @@ impl BytecodeVm {
                                     None => {
                                         return Some(Err(BytecodeError::RuntimeError(
                                             "sum: integer overflow".to_string(),
-                                        )))
+                                        )));
                                     }
                                 }
                             }
@@ -3398,7 +3396,7 @@ impl BytecodeVm {
                         _ => {
                             return Some(Err(BytecodeError::TypeError(
                                 "sum: list must contain only numbers".to_string(),
-                            )))
+                            )));
                         }
                     }
                 }
@@ -3879,7 +3877,7 @@ impl BytecodeVm {
             Ok(Value::Unit) => "unit",
             Ok(Value::Ok(_)) => "result",
             Ok(Value::Err(_)) => "result",
-            Ok(Value::Enum { type_name: _, .. }) => {
+            Ok(Value::Enum { .. }) => {
                 // Return a static string for enum types
                 // In a real implementation, we might want to cache type names
                 "enum"
@@ -4127,13 +4125,13 @@ impl BytecodeVm {
             _ => {
                 return Err(BytecodeError::RuntimeError(
                     "GetField: field name constant is not a string".to_string(),
-                ))
+                ));
             }
         };
-        if let crate::ovm::value::ValueData::Struct(st) = &object.data {
-            if let Some(idx) = st.shape.field_index(name) {
-                cache.store(st.shape.id, idx);
-            }
+        if let crate::ovm::value::ValueData::Struct(st) = &object.data
+            && let Some(idx) = st.shape.field_index(name)
+        {
+            cache.store(st.shape.id, idx);
         }
         Self::execute_get_field(object, name)
     }
@@ -4170,7 +4168,7 @@ impl BytecodeVm {
             _ => {
                 return Err(BytecodeError::TypeError(
                     "Index must be an integer".to_string(),
-                ))
+                ));
             }
         };
         // Resolve a possibly-negative index against a length; None if OOB.
@@ -4762,7 +4760,7 @@ impl BytecodeCompiler {
                         return Err(BytecodeError::CompilationFailed(format!(
                             "Unsupported binary operator: {:?}",
                             op
-                        )))
+                        )));
                     }
                 }
 
@@ -4961,7 +4959,7 @@ impl BytecodeCompiler {
                             return Err(BytecodeError::CompilationFailed(
                                 "Named arguments are not supported in the bytecode tier"
                                     .to_string(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -4989,19 +4987,19 @@ impl BytecodeCompiler {
                 // A nested fn calling ITSELF: CallFn to its own id, with the
                 // body's capture parameters appended so recursion keeps its
                 // captures.
-                if let Some((self_name, self_id, real_params, captures)) = &self.self_call {
-                    if *self_name == function_name {
-                        let mut full_args = arg_regs;
-                        for i in 0..*captures {
-                            full_args.push(Register((real_params + i) as u32));
-                        }
-                        self.emitter.instructions.push(Instruction::CallFn {
-                            dst: dst_reg,
-                            func_id: *self_id,
-                            args: full_args,
-                        });
-                        return Ok(dst_reg);
+                if let Some((self_name, self_id, real_params, captures)) = &self.self_call
+                    && *self_name == function_name
+                {
+                    let mut full_args = arg_regs;
+                    for i in 0..*captures {
+                        full_args.push(Register((real_params + i) as u32));
                     }
+                    self.emitter.instructions.push(Instruction::CallFn {
+                        dst: dst_reg,
+                        func_id: *self_id,
+                        args: full_args,
+                    });
+                    return Ok(dst_reg);
                 }
                 // User functions shadow builtins (same order as the runtime
                 // path); resolving the id here removes the per-call name hash.
@@ -5392,7 +5390,7 @@ impl BytecodeCompiler {
                         return Err(BytecodeError::CompilationFailed(format!(
                             "Assignment to unresolved variable '{}' (globals not supported in bytecode tier)",
                             target
-                        )))
+                        )));
                     }
                 };
                 let value_reg = self.compile_expression(value)?;
@@ -5695,7 +5693,7 @@ impl BytecodeCompiler {
                             return Err(BytecodeError::CompilationFailed(format!(
                                 "unit variant '{}' resolves through runtime scope, not the closure",
                                 name
-                            )))
+                            )));
                         }
                     }
                 }
@@ -6269,10 +6267,10 @@ impl BytecodeCompiler {
                             }
                         }
                         Statement::LetDecl(decl) => {
-                            if let Some(value) = &decl.value {
-                                if !Self::collect_free_vars(value, &scope, free) {
-                                    return false;
-                                }
+                            if let Some(value) = &decl.value
+                                && !Self::collect_free_vars(value, &scope, free)
+                            {
+                                return false;
                             }
                             Self::pattern_binding_names(&decl.pattern, &mut scope);
                         }
@@ -6969,9 +6967,10 @@ mod tests {
             Value::Integer(1)
         ))));
         // sanity: the delegation path still works for a representable result
-        assert!(vm
-            .execute_builtin_call("to_string", &[OvmValue::new_integer(7)])
-            .is_ok());
+        assert!(
+            vm.execute_builtin_call("to_string", &[OvmValue::new_integer(7)])
+                .is_ok()
+        );
     }
 
     #[test]

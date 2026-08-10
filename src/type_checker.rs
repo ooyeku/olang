@@ -488,7 +488,7 @@ impl TypeChecker {
                             self.bind_pattern_variables(pattern, element_type)?;
                         }
                         // If there's a rest pattern, bind it to the full list type
-                        if let Some(ref rest_name) = rest {
+                        if let Some(rest_name) = rest {
                             self.context
                                 .variables
                                 .insert(rest_name.clone(), value_type.clone());
@@ -500,7 +500,7 @@ impl TypeChecker {
                         for pattern in patterns {
                             self.bind_pattern_variables(pattern, &TypeAnnotation::Unknown)?;
                         }
-                        if let Some(ref rest_name) = rest {
+                        if let Some(rest_name) = rest {
                             self.context
                                 .variables
                                 .insert(rest_name.clone(), TypeAnnotation::Unknown);
@@ -672,7 +672,10 @@ impl TypeChecker {
                                             (None, _) => {
                                                 // Unit variant with patterns - error
                                                 Err(TypeError::InvalidOperation {
-                                                    op: format!("variant '{}' is a unit variant but patterns were provided", variant_name),
+                                                    op: format!(
+                                                        "variant '{}' is a unit variant but patterns were provided",
+                                                        variant_name
+                                                    ),
                                                     left_type: value_type.clone(),
                                                     right_type: None,
                                                 })

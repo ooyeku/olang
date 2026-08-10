@@ -373,7 +373,7 @@ fn str_fmt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 "str.fmt: first argument must be a format string, got {}",
                 other.type_name()
             )
-            .into())
+            .into());
         }
         None => return Err("str.fmt: missing format string".into()),
     };
@@ -429,7 +429,7 @@ fn str_join(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 "str.join: first argument must be a list, got {}",
                 other.type_name()
             )
-            .into())
+            .into());
         }
         None => return Err("str.join: missing argument 1".into()),
     };

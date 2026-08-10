@@ -214,7 +214,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                     return Err(format!(
                         "ods.frame_from_records expects a list of maps, got {}",
                         other.type_name()
-                    ))
+                    ));
                 }
             };
             frame_from_records(records)
@@ -266,7 +266,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                         return Err(format!(
                             "ods.with_column: column must be a Series or list, got {}",
                             other.type_name()
-                        ))
+                        ));
                     }
                 },
             };
@@ -283,7 +283,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                     return Err(format!(
                         "ods.sort_by: descending flag must be a Bool, got {}",
                         other.type_name()
-                    ))
+                    ));
                 }
             };
             f.sort_by(&name, descending)
@@ -298,7 +298,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                     return Err(format!(
                         "ods.head: n must be a non-negative Int, got {}",
                         other
-                    ))
+                    ));
                 }
             };
             Ok(OdsFrame::into_value(f.head(n)))
@@ -354,7 +354,7 @@ fn parse_aggs(value: &Value) -> Result<Vec<AggSpec>, String> {
             return Err(format!(
                 "ods.group_by: aggregations must be a list of [name, op, column] triples, got {}",
                 other.type_name()
-            ))
+            ));
         }
     };
     items

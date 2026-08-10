@@ -69,10 +69,10 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
     // pinned revs are fetched (offline once cached) and the lock is left
     // byte-identical. Only a manifest edit the lock doesn't cover — or an
     // explicit refresh — re-resolves.
-    if !options.refresh {
-        if let Some(map) = replay_lock(root, &manifest, options)? {
-            return Ok(map);
-        }
+    if !options.refresh
+        && let Some(map) = replay_lock(root, &manifest, options)?
+    {
+        return Ok(map);
     }
 
     let mut lock = Lockfile::new();

@@ -2,8 +2,8 @@
 //! regressors, vs numpy.linalg.lstsq. Run with
 //! `cargo bench -p olang-ods --bench ols`.
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use olang_ods::{stats, Series};
+use criterion::{Criterion, criterion_group, criterion_main};
+use olang_ods::{Series, stats};
 use std::hint::black_box;
 
 const N: usize = 1_000_000;

@@ -15,10 +15,10 @@ impl Interpreter {
         // operation touching them; no arm below can apply to one. The VM's
         // execute_binary_op calls the same hook on the same Arc-shared
         // value, which is what keeps the tiers observationally identical.
-        if matches!(left, Value::Native(_)) || matches!(right, Value::Native(_)) {
-            if let Some(result) = crate::native::binary_op_hook(&op, &left, &right) {
-                return result.map_err(|message| InterpreterError::RuntimeError { message });
-            }
+        if (matches!(left, Value::Native(_)) || matches!(right, Value::Native(_)))
+            && let Some(result) = crate::native::binary_op_hook(&op, &left, &right)
+        {
+            return result.map_err(|message| InterpreterError::RuntimeError { message });
         }
         match (left, op, right) {
             (Value::Integer(a), BinaryOp::Add, Value::Integer(b)) => a
@@ -351,7 +351,7 @@ impl Interpreter {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "Range start must be an integer".to_string(),
-                })
+                });
             }
         };
 
@@ -360,7 +360,7 @@ impl Interpreter {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "Range end must be an integer".to_string(),
-                })
+                });
             }
         };
 

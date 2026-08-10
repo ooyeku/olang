@@ -1,7 +1,7 @@
 [package]
 name = "olang-ods"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "ods — the numerical engine behind olang's data stack. Pure kernels, no olang dependency."
 license = "MIT"
 

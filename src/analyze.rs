@@ -752,10 +752,11 @@ impl Analyzer {
     /// Insert a name into the current scope's set, first saving any
     /// outer-scope tracking entry it shadows so exit_scope can restore it.
     fn declare_in_scope(&mut self, name: String) {
-        if self.current_scope > 0 && !self.scopes[self.current_scope].contains(&name) {
-            if let Some(existing) = self.variables.get(&name) {
-                self.shadowed[self.current_scope - 1].push((name.clone(), existing.clone()));
-            }
+        if self.current_scope > 0
+            && !self.scopes[self.current_scope].contains(&name)
+            && let Some(existing) = self.variables.get(&name)
+        {
+            self.shadowed[self.current_scope - 1].push((name.clone(), existing.clone()));
         }
         self.scopes[self.current_scope].insert(name);
     }
@@ -856,11 +857,11 @@ impl Analyzer {
                 // Check if there's another variable with the same name in outer scope
                 let mut found_outer = false;
                 for scope_idx in 0..info.scope {
-                    if let Some(scope) = self.scopes.get(scope_idx) {
-                        if scope.contains(name) {
-                            found_outer = true;
-                            break;
-                        }
+                    if let Some(scope) = self.scopes.get(scope_idx)
+                        && scope.contains(name)
+                    {
+                        found_outer = true;
+                        break;
                     }
                 }
                 if found_outer {

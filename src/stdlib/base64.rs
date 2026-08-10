@@ -1,5 +1,5 @@
 use crate::ast::Value;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -109,7 +109,7 @@ fn base64_encode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "encode: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -132,7 +132,7 @@ fn base64_decode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "decode: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -166,7 +166,7 @@ fn base64_encode_url_safe(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "encode_url_safe: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -189,7 +189,7 @@ fn base64_decode_url_safe(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "decode_url_safe: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -223,7 +223,7 @@ fn base64_validate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "validate: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -252,7 +252,7 @@ fn base64_encode_no_pad(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "encode_no_pad: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -275,7 +275,7 @@ fn base64_decode_no_pad(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "decode_no_pad: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -664,10 +664,12 @@ mod tests {
         // Test unknown function
         let result = call_base64_function("unknown_function", vec![string_val(test_data)]);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unknown base64 function"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown base64 function")
+        );
     }
 
     #[test]

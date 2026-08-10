@@ -116,10 +116,10 @@ impl Environment {
         for _ in 0..depth {
             env = env.parent.as_deref()?;
         }
-        if let Some((slot_name, value)) = env.locals.get(slot as usize) {
-            if slot_name == name {
-                return Some(value.clone());
-            }
+        if let Some((slot_name, value)) = env.locals.get(slot as usize)
+            && slot_name == name
+        {
+            return Some(value.clone());
         }
         self.get(name)
     }
@@ -135,11 +135,11 @@ impl Environment {
     ) -> Result<(), InterpreterError> {
         // Walk mutably: hop through Arc parents with make_mut
         if depth == 0 {
-            if let Some((slot_name, slot_value)) = self.locals.get_mut(slot as usize) {
-                if slot_name == name {
-                    *slot_value = value;
-                    return Ok(());
-                }
+            if let Some((slot_name, slot_value)) = self.locals.get_mut(slot as usize)
+                && slot_name == name
+            {
+                *slot_value = value;
+                return Ok(());
             }
             return self.set(name, value);
         }

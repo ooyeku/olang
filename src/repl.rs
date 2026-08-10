@@ -9,7 +9,7 @@ use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
-use rustyline::{history::DefaultHistory, Config, Context, Editor, Helper};
+use rustyline::{Config, Context, Editor, Helper, history::DefaultHistory};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::time::Instant;
@@ -405,15 +405,20 @@ impl Repl {
 
     pub fn with_tier(verbose: bool, enable_tier: bool) -> Result<Self, ReplError> {
         // Initialize parallelization for optimal performance
-        if let Err(e) = crate::parallel::initialize_parallelization(None) {
-            if verbose {
-                eprintln!("Warning: Failed to initialize parallel processing: {}", e);
+        match crate::parallel::initialize_parallelization(None) {
+            Err(e) => {
+                if verbose {
+                    eprintln!("Warning: Failed to initialize parallel processing: {}", e);
+                }
             }
-        } else if verbose {
-            println!(
-                "Multi-threading enabled: {} CPU cores detected",
-                num_cpus::get()
-            );
+            _ => {
+                if verbose {
+                    println!(
+                        "Multi-threading enabled: {} CPU cores detected",
+                        num_cpus::get()
+                    );
+                }
+            }
         }
 
         // Set a very aggressive parallel threshold for maximum multi-threading by default
@@ -465,10 +470,10 @@ impl Repl {
             "{}/.olang_history",
             std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
         );
-        if let Err(e) = editor.load_history(&history_file) {
-            if verbose {
-                eprintln!("Could not load history: {}", e);
-            }
+        if let Err(e) = editor.load_history(&history_file)
+            && verbose
+        {
+            eprintln!("Could not load history: {}", e);
         }
 
         // Create OVM configuration with auto mode (OVM ENABLED by default for performance)
@@ -838,7 +843,10 @@ impl Repl {
                                 {
                                     println!("{}", self.help_system.format_tutorial(tutorial));
                                 } else {
-                                    println!("Tutorial '{}' not found. Use ':help tutorials' to see available tutorials.", tutorial_name);
+                                    println!(
+                                        "Tutorial '{}' not found. Use ':help tutorials' to see available tutorials.",
+                                        tutorial_name
+                                    );
                                 }
                             } else {
                                 println!("{}", self.help_system.format_tutorial_list());
@@ -877,7 +885,10 @@ impl Repl {
                                         self.help_system.format_search_results(&results)
                                     );
                                 } else {
-                                    println!("No help found for '{}'. Try 'help search {}' for advanced search.", topic, topic);
+                                    println!(
+                                        "No help found for '{}'. Try 'help search {}' for advanced search.",
+                                        topic, topic
+                                    );
                                 }
                             }
                         }
@@ -1415,45 +1426,43 @@ impl Repl {
                     let mut search_query = query.clone();
 
                     // Check for category filter
-                    if query.contains("category:") {
-                        if let Some(category_part) = query.split("category:").nth(1) {
-                            let category = category_part.split_whitespace().next().unwrap_or("");
-                            filters.category = Some(category.to_string());
-                            search_query = query
-                                .replace(&format!("category:{}", category), "")
-                                .trim()
-                                .to_string();
-                        }
+                    if query.contains("category:")
+                        && let Some(category_part) = query.split("category:").nth(1)
+                    {
+                        let category = category_part.split_whitespace().next().unwrap_or("");
+                        filters.category = Some(category.to_string());
+                        search_query = query
+                            .replace(&format!("category:{}", category), "")
+                            .trim()
+                            .to_string();
                     }
 
                     // Check for return type filter
-                    if query.contains("returns:") {
-                        if let Some(return_part) = query.split("returns:").nth(1) {
-                            let return_type = return_part.split_whitespace().next().unwrap_or("");
-                            filters.return_type = Some(return_type.to_string());
-                            search_query = query
-                                .replace(&format!("returns:{}", return_type), "")
-                                .trim()
-                                .to_string();
-                        }
+                    if query.contains("returns:")
+                        && let Some(return_part) = query.split("returns:").nth(1)
+                    {
+                        let return_type = return_part.split_whitespace().next().unwrap_or("");
+                        filters.return_type = Some(return_type.to_string());
+                        search_query = query
+                            .replace(&format!("returns:{}", return_type), "")
+                            .trim()
+                            .to_string();
                     }
 
                     // Check for max results filter
-                    if query.contains("limit:") {
-                        if let Some(limit_part) = query.split("limit:").nth(1) {
-                            if let Ok(limit) = limit_part
-                                .split_whitespace()
-                                .next()
-                                .unwrap_or("")
-                                .parse::<usize>()
-                            {
-                                filters.max_results = limit;
-                                search_query = query
-                                    .replace(&format!("limit:{}", limit), "")
-                                    .trim()
-                                    .to_string();
-                            }
-                        }
+                    if query.contains("limit:")
+                        && let Some(limit_part) = query.split("limit:").nth(1)
+                        && let Ok(limit) = limit_part
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .parse::<usize>()
+                    {
+                        filters.max_results = limit;
+                        search_query = query
+                            .replace(&format!("limit:{}", limit), "")
+                            .trim()
+                            .to_string();
                     }
 
                     let results = self.help_system.search(&search_query, Some(filters));
@@ -1816,7 +1825,7 @@ impl Repl {
             Value::Ok(_) => "result",
             Value::Err(_) => "result",
             Value::EnumConstructor { .. } => "enum_constructor",
-            Value::Enum { type_name: _, .. } => {
+            Value::Enum { .. } => {
                 // Use a static string for REPL display
                 "enum"
             }
@@ -2471,13 +2480,12 @@ impl Repl {
 
                     // Look ahead for compound operators
                     let mut op = ch.to_string();
-                    if let Some(&next_ch) = chars.peek() {
-                        if (next_ch == '=' && matches!(ch, '=' | '!' | '<' | '>'))
+                    if let Some(&next_ch) = chars.peek()
+                        && ((next_ch == '=' && matches!(ch, '=' | '!' | '<' | '>'))
                             || (ch == '&' && next_ch == '&')
-                            || (ch == '|' && next_ch == '|')
-                        {
-                            op.push(chars.next().unwrap());
-                        }
+                            || (ch == '|' && next_ch == '|'))
+                    {
+                        op.push(chars.next().unwrap());
                     }
                     result.push_str(&format!("{}", op.bright_yellow()));
                 }
@@ -2707,8 +2715,10 @@ impl Repl {
                     got.to_string().bright_yellow()
                 );
 
-                println!("\n  {}: Check the function signature and provide the correct number of arguments", 
-                    "Hint".bright_blue().bold());
+                println!(
+                    "\n  {}: Check the function signature and provide the correct number of arguments",
+                    "Hint".bright_blue().bold()
+                );
             }
             InterpreterError::PatternMatchFailed => {
                 println!(

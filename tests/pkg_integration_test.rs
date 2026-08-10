@@ -3,7 +3,7 @@
 //! resolves `use <dep>` through the dependency map across the package
 //! boundary.
 
-use olang::pkg::{install, InstallOptions};
+use olang::pkg::{InstallOptions, install};
 use olang::{Interpreter, Parser};
 use std::fs;
 use std::path::PathBuf;
@@ -337,9 +337,11 @@ fn install_replays_the_lock_but_update_moves_the_pin() {
     let map = install(&app, &InstallOptions::default()).expect("first install");
     let v1_dir = map.get("gitlib").unwrap().clone();
     let lock_v1 = fs::read_to_string(app.join("olang.lock")).unwrap();
-    assert!(fs::read_to_string(v1_dir.join("index.ol"))
-        .unwrap()
-        .contains("= 1"));
+    assert!(
+        fs::read_to_string(v1_dir.join("index.ol"))
+            .unwrap()
+            .contains("= 1")
+    );
 
     // The upstream moves on.
     write(&ws.join("gitlib/index.ol"), "share fn answer() = 2\n");
@@ -371,9 +373,11 @@ fn install_replays_the_lock_but_update_moves_the_pin() {
     let map = install(&app, &refresh).expect("update");
     let v2_dir = map.get("gitlib").unwrap().clone();
     assert_ne!(v2_dir, v1_dir, "update must move to the new commit");
-    assert!(fs::read_to_string(v2_dir.join("index.ol"))
-        .unwrap()
-        .contains("= 2"));
+    assert!(
+        fs::read_to_string(v2_dir.join("index.ol"))
+            .unwrap()
+            .contains("= 2")
+    );
     assert_ne!(fs::read_to_string(app.join("olang.lock")).unwrap(), lock_v1);
 
     let _ = fs::remove_dir_all(&ws);

@@ -2,7 +2,7 @@
 //! Run with `cargo bench -p olang-ods`. NumPy reference numbers are
 //! collected separately and recorded in the design doc.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use olang_ods::{ArithOp, Scalar, Series};
 use std::hint::black_box;
 

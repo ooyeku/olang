@@ -13,10 +13,10 @@
 //! and enums off the bytecode tier is unrepresentable for native values.
 
 use crate::ast::{BinaryOp, Value};
-use once_cell::sync::Lazy;
 use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 /// A value type owned by an OVM module (e.g. an ods array).
 ///
@@ -120,7 +120,7 @@ pub trait OvmModule: Send + Sync {
 /// is static so both tiers observe the identical registry with no locks.
 #[allow(clippy::vec_init_then_push)] // push sites are cfg-gated per module
 pub fn registered_modules() -> &'static [Arc<dyn OvmModule>] {
-    static MODULES: Lazy<Vec<Arc<dyn OvmModule>>> = Lazy::new(|| {
+    static MODULES: LazyLock<Vec<Arc<dyn OvmModule>>> = LazyLock::new(|| {
         #[allow(unused_mut)]
         let mut modules: Vec<Arc<dyn OvmModule>> = Vec::new();
         modules.push(Arc::new(crate::ods::OdsModule));
@@ -149,10 +149,10 @@ pub fn binary_op_hook(op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<
         (_, Value::Native(h)) => h.0.module(),
         _ => return None,
     };
-    if let Some(module) = module_named(owner) {
-        if let Some(result) = module.binary_op(op, lhs, rhs) {
-            return Some(result);
-        }
+    if let Some(module) = module_named(owner)
+        && let Some(result) = module.binary_op(op, lhs, rhs)
+    {
+        return Some(result);
     }
     if let (Value::Native(a), Value::Native(b)) = (lhs, rhs) {
         match op {

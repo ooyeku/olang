@@ -379,7 +379,7 @@ fn sum_by(args: Vec<Value>, interpreter: &mut Interpreter) -> Result<Value, Inte
                         "col.sum_by: function must return a number, got {}",
                         other.type_name()
                     ),
-                })
+                });
             }
         }
     }
@@ -411,12 +411,12 @@ fn window(args: Vec<Value>) -> Result<Value, InterpreterError> {
         Some(Value::Integer(_)) => {
             return Err(InterpreterError::RuntimeError {
                 message: "col.window: size must be positive".to_string(),
-            })
+            });
         }
         _ => {
             return Err(InterpreterError::TypeError {
                 message: "col.window: second argument must be a positive integer".to_string(),
-            })
+            });
         }
     };
     let items: Vec<Value> = list.iter().cloned().collect();

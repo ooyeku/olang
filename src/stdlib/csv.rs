@@ -167,7 +167,7 @@ fn csv_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "parse: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -212,7 +212,7 @@ fn csv_parse_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "parse_with_headers: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -275,7 +275,7 @@ fn csv_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "stringify: argument must be a list of lists".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -347,7 +347,7 @@ fn csv_stringify_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "stringify_with_headers: first argument must be a list of objects".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -356,7 +356,7 @@ fn csv_stringify_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "stringify_with_headers: second argument must be a list of strings".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -450,7 +450,7 @@ fn csv_read_row(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "read_row: first argument must be a list".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -459,7 +459,7 @@ fn csv_read_row(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "read_row: second argument must be an integer".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -489,7 +489,7 @@ fn csv_read_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "read_column: first argument must be a list".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -498,7 +498,7 @@ fn csv_read_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "read_column: second argument must be an integer".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -538,7 +538,7 @@ fn csv_read_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "read_cell: first argument must be a list".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -547,7 +547,7 @@ fn csv_read_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "read_cell: second argument must be an integer".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -556,7 +556,7 @@ fn csv_read_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "read_cell: third argument must be an integer".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -600,7 +600,7 @@ fn csv_get_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "get_headers: argument must be a list".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -628,7 +628,7 @@ fn csv_row_count(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "row_count: argument must be a list".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -650,7 +650,7 @@ fn csv_column_count(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "column_count: argument must be a list".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -682,7 +682,7 @@ fn csv_add_row(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "add_row: first argument must be CSV data (list of lists)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -691,7 +691,7 @@ fn csv_add_row(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "add_row: second argument must be a list (row data)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -716,7 +716,7 @@ fn csv_add_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "add_column: first argument must be CSV data (list of lists)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -725,7 +725,7 @@ fn csv_add_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "add_column: second argument must be a list (column data)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -734,7 +734,7 @@ fn csv_add_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "add_column: third argument must be a string (header)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -751,7 +751,7 @@ fn csv_add_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
             _ => {
                 return Ok(Value::Err(Box::new(Value::String(Arc::new(
                     "add_column: invalid CSV data structure".to_string(),
-                )))))
+                )))));
             }
         };
 
@@ -788,7 +788,7 @@ fn csv_set_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "set_cell: first argument must be CSV data (list of lists)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -797,7 +797,7 @@ fn csv_set_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "set_cell: second argument must be an integer (row index)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -806,7 +806,7 @@ fn csv_set_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "set_cell: third argument must be an integer (column index)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -823,7 +823,7 @@ fn csv_set_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "set_cell: invalid CSV data structure".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -858,7 +858,7 @@ fn csv_set_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "set_headers: first argument must be CSV data (list of lists)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -867,7 +867,7 @@ fn csv_set_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "set_headers: second argument must be a list of strings (headers)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -908,7 +908,7 @@ fn csv_filter_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "filter_rows: first argument must be CSV data (list of lists)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -917,7 +917,7 @@ fn csv_filter_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "filter_rows: second argument must be an integer (column index)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -928,7 +928,7 @@ fn csv_filter_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "filter_rows: third argument must be a string (filter value)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -946,7 +946,7 @@ fn csv_filter_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
             _ => {
                 return Ok(Value::Err(Box::new(Value::String(Arc::new(
                     "filter_rows: invalid CSV data structure".to_string(),
-                )))))
+                )))));
             }
         };
 
@@ -980,7 +980,7 @@ fn csv_sort_by_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "sort_by_column: first argument must be CSV data (list of lists)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -989,7 +989,7 @@ fn csv_sort_by_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "sort_by_column: second argument must be an integer (column index)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -998,7 +998,7 @@ fn csv_sort_by_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "sort_by_column: third argument must be a boolean (ascending)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1065,7 +1065,7 @@ fn csv_to_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "to_json: first argument must be CSV data (list of lists)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1074,7 +1074,7 @@ fn csv_to_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "to_json: second argument must be a boolean (include_headers)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1097,7 +1097,7 @@ fn csv_to_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             _ => {
                 return Ok(Value::Err(Box::new(Value::String(Arc::new(
                     "to_json: invalid CSV data structure".to_string(),
-                )))))
+                )))));
             }
         }
     } else {
@@ -1159,7 +1159,7 @@ fn csv_from_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "from_json: first argument must be a string (JSON data)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1168,7 +1168,7 @@ fn csv_from_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "from_json: second argument must be a list of strings (headers)".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1178,7 +1178,7 @@ fn csv_from_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
             return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
                 "from_json: invalid JSON: {}",
                 e
-            ))))))
+            ))))));
         }
     };
 
@@ -1187,7 +1187,7 @@ fn csv_from_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "from_json: JSON data must be an array".to_string(),
-            )))))
+            )))));
         }
     };
 

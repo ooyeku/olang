@@ -4,7 +4,7 @@ use crate::ast::{
     Statement, StructField, StructLiteral, TemplatePart, TestDecl, TypeAnnotation, TypeDecl,
     TypeDefinition, UnaryOp, UseDecl,
 };
-use pest::{iterators::Pair, iterators::Pairs, Parser as PestParser};
+use pest::{Parser as PestParser, iterators::Pair, iterators::Pairs};
 use pest_derive::Parser;
 use std::sync::Arc as Rc;
 use std::sync::Arc;
@@ -599,48 +599,49 @@ impl Parser {
                 }
                 Rule::function_call => {
                     // Special case: Check if this is Ok(...) or Err(...) pattern
-                    if let Expr::Identifier(ref name) = expr {
-                        if (name == "Ok" || name == "Err") && pending_args.is_empty() {
-                            // This is a result expression, not a function call
-                            let args = if let Some(arg_list_pair) = pair.into_inner().next() {
-                                self.build_arg_list(arg_list_pair.into_inner())?
-                            } else {
-                                Vec::new()
+                    if let Expr::Identifier(ref name) = expr
+                        && (name == "Ok" || name == "Err")
+                        && pending_args.is_empty()
+                    {
+                        // This is a result expression, not a function call
+                        let args = if let Some(arg_list_pair) = pair.into_inner().next() {
+                            self.build_arg_list(arg_list_pair.into_inner())?
+                        } else {
+                            Vec::new()
+                        };
+                        if args.len() == 1 {
+                            let arg = args.into_iter().next().ok_or_else(|| {
+                                ParseError::InvalidSyntax {
+                                    message: format!("{} expression missing argument", name),
+                                }
+                            })?;
+                            let inner = match arg {
+                                Argument::Positional(e) => e,
+                                Argument::Named { .. } => {
+                                    return Err(ParseError::InvalidSyntax {
+                                        message: format!(
+                                            "{} expressions cannot use named arguments",
+                                            name
+                                        ),
+                                    });
+                                }
                             };
-                            if args.len() == 1 {
-                                let arg = args.into_iter().next().ok_or_else(|| {
-                                    ParseError::InvalidSyntax {
-                                        message: format!("{} expression missing argument", name),
-                                    }
-                                })?;
-                                let inner = match arg {
-                                    Argument::Positional(e) => e,
-                                    Argument::Named { .. } => {
-                                        return Err(ParseError::InvalidSyntax {
-                                            message: format!(
-                                                "{} expressions cannot use named arguments",
-                                                name
-                                            ),
-                                        });
-                                    }
-                                };
-                                // Keep looping so trailing postfix operations
-                                // (`?`, `.field`, indexing) still apply —
-                                // returning here silently dropped them
-                                expr = match name.as_str() {
-                                    "Ok" => Expr::ResultOk(Box::new(inner)),
-                                    "Err" => Expr::ResultErr(Box::new(inner)),
-                                    _ => unreachable!(),
-                                };
-                                continue;
-                            } else {
-                                return Err(ParseError::InvalidSyntax {
-                                    message: format!(
-                                        "{} expressions must have exactly one argument",
-                                        name
-                                    ),
-                                });
-                            }
+                            // Keep looping so trailing postfix operations
+                            // (`?`, `.field`, indexing) still apply —
+                            // returning here silently dropped them
+                            expr = match name.as_str() {
+                                "Ok" => Expr::ResultOk(Box::new(inner)),
+                                "Err" => Expr::ResultErr(Box::new(inner)),
+                                _ => unreachable!(),
+                            };
+                            continue;
+                        } else {
+                            return Err(ParseError::InvalidSyntax {
+                                message: format!(
+                                    "{} expressions must have exactly one argument",
+                                    name
+                                ),
+                            });
                         }
                     }
 
@@ -798,10 +799,10 @@ impl Parser {
 
     fn build_primary(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         // Check for unary expressions
-        if let Some(first) = pairs.peek() {
-            if first.as_rule() == Rule::unary_op {
-                return self.build_unary_expr(pairs);
-            }
+        if let Some(first) = pairs.peek()
+            && first.as_rule() == Rule::unary_op
+        {
+            return self.build_unary_expr(pairs);
         }
         // Fallback to existing logic
         let pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -845,7 +846,7 @@ impl Parser {
                         _ => {
                             return Err(ParseError::InvalidSyntax {
                                 message: format!("Unknown unary operator: {}", pair.as_str()),
-                            })
+                            });
                         }
                     };
                     operators.push(op);
@@ -981,7 +982,7 @@ impl Parser {
             _ => {
                 return Err(ParseError::InvalidSyntax {
                     message: format!("Unknown promise method: {}", method.as_str()),
-                })
+                });
             }
         };
 
@@ -1140,7 +1141,7 @@ impl Parser {
                     _ => {
                         return Err(ParseError::InvalidSyntax {
                             message: format!("Invalid literal type: {:?}", inner.as_rule()),
-                        })
+                        });
                     }
                 };
                 Ok(TypeAnnotation::Literal {
@@ -1453,7 +1454,7 @@ impl Parser {
                                     pattern_str,
                                     start_pair.as_rule()
                                 ),
-                            })
+                            });
                         }
                     };
 
@@ -1483,7 +1484,7 @@ impl Parser {
                                     pattern_str,
                                     end_pair.as_rule()
                                 ),
-                            })
+                            });
                         }
                     };
 
@@ -1802,7 +1803,7 @@ impl Parser {
                                     pattern_str,
                                     start_pair.as_rule()
                                 ),
-                            })
+                            });
                         }
                     };
 
@@ -1832,7 +1833,7 @@ impl Parser {
                                     pattern_str,
                                     end_pair.as_rule()
                                 ),
-                            })
+                            });
                         }
                     };
 
@@ -2281,7 +2282,7 @@ impl Parser {
                 _ => {
                     return Err(ParseError::InvalidSyntax {
                         message: "Invalid then branch in if expression".to_string(),
-                    })
+                    });
                 }
             }
         } else {
@@ -2799,7 +2800,7 @@ impl Parser {
             _ => {
                 return Err(ParseError::InvalidSyntax {
                     message: "Invalid body in for loop".to_string(),
-                })
+                });
             }
         };
 
@@ -2852,7 +2853,7 @@ impl Parser {
             _ => {
                 return Err(ParseError::InvalidSyntax {
                     message: "Invalid body in while loop".to_string(),
-                })
+                });
             }
         };
 
@@ -2873,7 +2874,7 @@ impl Parser {
             _ => {
                 return Err(ParseError::InvalidSyntax {
                     message: "Invalid body in loop expression".to_string(),
-                })
+                });
             }
         };
 
@@ -3066,7 +3067,7 @@ impl Parser {
                                         message:
                                             "Invalid hex escape sequence: expected 2 hex digits"
                                                 .to_string(),
-                                    })
+                                    });
                                 }
                             }
                         }
@@ -3601,15 +3602,15 @@ impl ErrorSuggestionEngine {
         // Check character at column position for specific suggestions
         if column > 0 && column <= line_content.len() {
             let char_at_pos = line_content.chars().nth(column - 1);
-            if let Some(ch) = char_at_pos {
-                if ch == ';' {
-                    suggestions.push(ErrorSuggestion {
-                        message: "Semicolons are not used in Olang".to_string(),
-                        fix: Some("Remove the semicolon".to_string()),
-                        help: Some("Olang uses newlines and expression-based syntax".to_string()),
-                        severity: SuggestionSeverity::Error,
-                    });
-                }
+            if let Some(ch) = char_at_pos
+                && ch == ';'
+            {
+                suggestions.push(ErrorSuggestion {
+                    message: "Semicolons are not used in Olang".to_string(),
+                    fix: Some("Remove the semicolon".to_string()),
+                    help: Some("Olang uses newlines and expression-based syntax".to_string()),
+                    severity: SuggestionSeverity::Error,
+                });
             }
         }
 

@@ -86,7 +86,8 @@ mod hosted {
     use std::time::Duration;
 
     #[cfg(target_arch = "wasm32")]
-    extern "C" {
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
         fn host_now_ms() -> f64;
         fn host_epoch_ms() -> f64;
     }
@@ -135,4 +136,4 @@ mod hosted {
 }
 
 #[cfg(not(feature = "native"))]
-pub use hosted::{epoch_ms, system_now, Instant};
+pub use hosted::{Instant, epoch_ms, system_now};

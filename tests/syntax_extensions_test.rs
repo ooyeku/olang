@@ -112,9 +112,11 @@ fn let_with_a_forgotten_equals_is_a_parse_error() {
     // `let scores #{...}` used to silently parse as an uninitialized `let`
     // plus a stray expression statement, leaving `scores` bound to Unit.
     // A let must either have an initializer or end the statement.
-    assert!(Parser::new()
-        .parse("let scores #{ \"ada\": 99 }\n")
-        .is_err());
+    assert!(
+        Parser::new()
+            .parse("let scores #{ \"ada\": 99 }\n")
+            .is_err()
+    );
     assert!(Parser::new().parse("let x [1, 2, 3]\n").is_err());
     assert!(Parser::new().parse("let y \"oops\"\n").is_err());
 }
@@ -122,9 +124,11 @@ fn let_with_a_forgotten_equals_is_a_parse_error() {
 #[test]
 fn uninitialized_let_still_parses_and_is_unit() {
     assert!(Parser::new().parse("let pending\n").is_ok());
-    assert!(Parser::new()
-        .parse("let pending // fill in later\n")
-        .is_ok());
+    assert!(
+        Parser::new()
+            .parse("let pending // fill in later\n")
+            .is_ok()
+    );
     assert!(Parser::new().parse("let typed: Int\n").is_ok());
     // Unbound-until-assigned semantics are unchanged.
     let src = "let pending\ntypeof(pending)";

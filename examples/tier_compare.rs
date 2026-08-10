@@ -7,8 +7,16 @@ use std::time::Instant;
 
 fn main() {
     let cases = [
-        ("fib", "fn fib(n) = if n < 2 => n else => fib(n - 1) + fib(n - 2)", vec![Value::Integer(20)]),
-        ("sum_to", "fn sum_to(n) = {\n let total = 0\n let i = 0\n while i <= n {\n total = total + i\n i = i + 1\n }\n total\n}", vec![Value::Integer(100000)]),
+        (
+            "fib",
+            "fn fib(n) = if n < 2 => n else => fib(n - 1) + fib(n - 2)",
+            vec![Value::Integer(20)],
+        ),
+        (
+            "sum_to",
+            "fn sum_to(n) = {\n let total = 0\n let i = 0\n while i <= n {\n total = total + i\n i = i + 1\n }\n total\n}",
+            vec![Value::Integer(100000)],
+        ),
     ];
 
     for (name, src, args) in cases {

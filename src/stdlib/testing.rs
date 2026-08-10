@@ -628,9 +628,11 @@ mod tests {
     fn test_invalid_function() {
         let result = call_testing_function("invalid_function", vec![]);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unknown testing function"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown testing function")
+        );
     }
 }

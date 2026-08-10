@@ -266,17 +266,17 @@ impl Interpreter {
     /// Evaluate a program
     pub fn eval_program(&mut self, program: Program) -> Result<Value, InterpreterError> {
         // Optional type checking with proper error propagation
-        if let Some(ref mut type_checker) = self.type_checker {
-            if let Err(type_errors) = type_checker.check_program(&program) {
-                // Convert type checking errors to proper InterpreterError
-                let error_messages: Vec<String> =
-                    type_errors.iter().map(|e| format!("{:?}", e)).collect();
-                let combined_message = error_messages.join("; ");
+        if let Some(ref mut type_checker) = self.type_checker
+            && let Err(type_errors) = type_checker.check_program(&program)
+        {
+            // Convert type checking errors to proper InterpreterError
+            let error_messages: Vec<String> =
+                type_errors.iter().map(|e| format!("{:?}", e)).collect();
+            let combined_message = error_messages.join("; ");
 
-                return Err(InterpreterError::TypeError {
-                    message: format!("Type checking failed: {}", combined_message),
-                });
-            }
+            return Err(InterpreterError::TypeError {
+                message: format!("Type checking failed: {}", combined_message),
+            });
         }
 
         let mut last_value = Value::Unit;
@@ -651,18 +651,18 @@ impl Interpreter {
                         &receiver,
                         Value::Struct { fields, .. } if fields.contains_key(field)
                     );
-                    if !is_struct_field {
-                        if let Some(method) = self.lookup_method(&receiver.type_name(), field) {
-                            let mut arg_values = vec![receiver];
-                            for arg in arguments {
-                                let expr = match arg {
-                                    Argument::Positional(e) => e,
-                                    Argument::Named { value, .. } => value,
-                                };
-                                arg_values.push(self.eval_expr(expr)?);
-                            }
-                            return self.call_function(Value::Function(method), arg_values);
+                    if !is_struct_field
+                        && let Some(method) = self.lookup_method(&receiver.type_name(), field)
+                    {
+                        let mut arg_values = vec![receiver];
+                        for arg in arguments {
+                            let expr = match arg {
+                                Argument::Positional(e) => e,
+                                Argument::Named { value, .. } => value,
+                            };
+                            arg_values.push(self.eval_expr(expr)?);
                         }
+                        return self.call_function(Value::Function(method), arg_values);
                     }
                 }
 
@@ -1343,7 +1343,7 @@ impl Interpreter {
         if self.call_depth >= self.max_call_depth {
             return Err(InterpreterError::RuntimeError {
                 message: format!(
-                    "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack", 
+                    "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
                     self.max_call_depth
                 ),
             });
@@ -1802,7 +1802,7 @@ impl Interpreter {
                          or use an anonymous object `{{ ... }}` for a free-form record",
                         struct_literal.type_name, struct_literal.type_name
                     ),
-                })
+                });
             }
         };
 
@@ -1882,7 +1882,7 @@ impl Interpreter {
                     return Err(InterpreterError::TypeError {
                         message: "Map keys must be strings, integers, floats, or booleans"
                             .to_string(),
-                    })
+                    });
                 }
             };
 
@@ -2194,7 +2194,7 @@ impl Interpreter {
                         "par for: cannot iterate over {} (lists, ranges, and strings)",
                         other.type_name()
                     ),
-                })
+                });
             }
         };
         if items.is_empty() {
@@ -2261,10 +2261,10 @@ impl Interpreter {
                     });
                 let mut first_err: Option<(usize, InterpreterError)> = None;
                 for r in joined {
-                    if let Err((idx, e)) = r {
-                        if first_err.as_ref().map(|(fi, _)| idx < *fi).unwrap_or(true) {
-                            first_err = Some((idx, e));
-                        }
+                    if let Err((idx, e)) = r
+                        && first_err.as_ref().map(|(fi, _)| idx < *fi).unwrap_or(true)
+                    {
+                        first_err = Some((idx, e));
                     }
                 }
                 if let Some((_, e)) = first_err {
@@ -2359,7 +2359,7 @@ impl Interpreter {
                         last_value
                     } else {
                         v
-                    })
+                    });
                 }
                 Err(InterpreterError::ContinueSignal) => continue,
                 Err(e) => return Err(e),
@@ -2414,15 +2414,15 @@ impl Interpreter {
         if let Some(params) = parameters {
             // Check for conflicts between positional and named arguments
             for (arg_name, _) in &named_args {
-                if let Some(param_index) = params.iter().position(|p| &p.name == arg_name) {
-                    if param_index < positional_count {
-                        return Err(InterpreterError::RuntimeError {
-                            message: format!(
-                                "Argument '{}' specified both positionally and by name",
-                                arg_name
-                            ),
-                        });
-                    }
+                if let Some(param_index) = params.iter().position(|p| &p.name == arg_name)
+                    && param_index < positional_count
+                {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!(
+                            "Argument '{}' specified both positionally and by name",
+                            arg_name
+                        ),
+                    });
                 }
             }
 
@@ -2693,24 +2693,30 @@ mod tests {
 
         // Test dependency queries
         assert_eq!(tracker.dependencies.get("A").unwrap().len(), 2);
-        assert!(tracker
-            .dependencies
-            .get("A")
-            .unwrap()
-            .contains(&"B".to_string()));
-        assert!(tracker
-            .dependencies
-            .get("A")
-            .unwrap()
-            .contains(&"C".to_string()));
+        assert!(
+            tracker
+                .dependencies
+                .get("A")
+                .unwrap()
+                .contains(&"B".to_string())
+        );
+        assert!(
+            tracker
+                .dependencies
+                .get("A")
+                .unwrap()
+                .contains(&"C".to_string())
+        );
 
         // Test dependent queries
         assert_eq!(tracker.dependents.get("B").unwrap().len(), 1);
-        assert!(tracker
-            .dependents
-            .get("B")
-            .unwrap()
-            .contains(&"A".to_string()));
+        assert!(
+            tracker
+                .dependents
+                .get("B")
+                .unwrap()
+                .contains(&"A".to_string())
+        );
 
         // Test circular dependency detection
         assert!(!tracker.check_circular_dependency("A", "D")); // A -> B -> D (no cycle)

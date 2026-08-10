@@ -142,25 +142,23 @@ impl HelpSystem {
             }
 
             // Category filter
-            if let Some(ref category) = filters.category {
-                if !function
+            if let Some(ref category) = filters.category
+                && !function
                     .category
                     .to_lowercase()
                     .contains(&category.to_lowercase())
-                {
-                    continue;
-                }
+            {
+                continue;
             }
 
             // Return type filter
-            if let Some(ref return_type) = filters.return_type {
-                if !function
+            if let Some(ref return_type) = filters.return_type
+                && !function
                     .return_type
                     .to_lowercase()
                     .contains(&return_type.to_lowercase())
-                {
-                    continue;
-                }
+            {
+                continue;
             }
 
             // Calculate relevance score
@@ -800,12 +798,12 @@ impl HelpSystem {
         }
 
         // Working category suggestions
-        if let Some(ref category) = context.current_working_category {
-            if category == "List" {
-                suggestions.push(":help map - Transform lists with functions".to_string());
-                suggestions.push(":help filter - Filter lists by conditions".to_string());
-                suggestions.push(":help reduce - Reduce lists to single values".to_string());
-            }
+        if let Some(ref category) = context.current_working_category
+            && category == "List"
+        {
+            suggestions.push(":help map - Transform lists with functions".to_string());
+            suggestions.push(":help filter - Filter lists by conditions".to_string());
+            suggestions.push(":help reduce - Reduce lists to single values".to_string());
         }
 
         // Always include general suggestions
@@ -1158,7 +1156,7 @@ impl HelpSystem {
             description: "Converts a value to an integer".to_string(),
             syntax: "to_int(value)".to_string(),
             parameters: vec![
-                "value: Int | Float | String - Value to convert to integer".to_string()
+                "value: Int | Float | String - Value to convert to integer".to_string(),
             ],
             return_type: "Int".to_string(),
             examples: vec![
@@ -5247,7 +5245,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Generate cryptographically secure random bytes".to_string(),
             syntax: "crypto.random_bytes(count)".to_string(),
             parameters: vec![
-                "count: Int - Number of random bytes to generate (max 1024)".to_string()
+                "count: Int - Number of random bytes to generate (max 1024)".to_string(),
             ],
             return_type: "Result<[Int], Error>".to_string(),
             examples: vec![

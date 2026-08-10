@@ -28,7 +28,8 @@ use crate::parser::Parser as OlangParser;
 // normally needs wasm-bindgen. Instead, its "custom" feature lets the host
 // hand us entropy through one more import (crypto.getRandomValues under it).
 #[cfg(target_arch = "wasm32")]
-extern "C" {
+#[link(wasm_import_module = "env")]
+unsafe extern "C" {
     fn host_random_bytes(ptr: *mut u8, len: usize);
 }
 
@@ -59,7 +60,7 @@ fn install_panic_hook() {
 
 /// Returns the last panic message as a result buffer (see `olang_run`), or
 /// null if nothing panicked. Frees like any other result buffer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn olang_last_panic() -> *mut u8 {
     match LAST_PANIC.lock().ok().and_then(|mut s| s.take()) {
         Some(msg) => result_buffer(msg),
@@ -99,7 +100,8 @@ fn run_source(source: &str) -> (String, Option<String>, Option<String>) {
 // persistent interpreter re-enters.
 
 #[cfg(target_arch = "wasm32")]
-extern "C" {
+#[link(wasm_import_module = "env")]
+unsafe extern "C" {
     fn host_dom_query(sel: *const u8, len: usize) -> i64;
     fn host_dom_set_text(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_get_text(handle: i64) -> *const u8;
@@ -235,56 +237,58 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
 ///
 /// # Safety
 /// Same contract as olang_run.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn olang_session_start(ptr: *const u8, len: usize) -> *mut u8 {
-    let source = match std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            return result_buffer(
-                r#"{"output":"","value":null,"error":"source was not valid UTF-8","ms":0}"#
-                    .to_string(),
-            )
-        }
-    };
-    SESSION.with(|s| *s.borrow_mut() = None);
-    HANDLERS.with(|h| h.borrow_mut().clear());
-    let started = crate::clock::Instant::now();
-    let parser = OlangParser::new();
-    let (output, value, error) = match parser.parse(&source) {
-        Err(e) => (crate::output::drain_captured(), None, Some(e.to_string())),
-        Ok(program) => {
-            let mut interpreter = Interpreter::new();
-            interpreter.enable_bytecode_tier(1, false);
-            let r = match interpreter.eval_program(program) {
-                Ok(v) => {
-                    let shown = match v {
-                        Value::Unit => None,
-                        other => Some(format!("{}", other)),
-                    };
-                    (crate::output::drain_captured(), shown, None)
-                }
-                Err(e) => (crate::output::drain_captured(), None, Some(e.to_string())),
-            };
-            SESSION.with(|s| *s.borrow_mut() = Some(interpreter));
-            r
-        }
-    };
-    let ms = started.elapsed().as_secs_f64() * 1000.0;
-    let json = format!(
-        r#"{{"output":{},"value":{},"error":{},"ms":{:.1},"version":{}}}"#,
-        json_escape(&output),
-        value
-            .as_deref()
-            .map(json_escape)
-            .unwrap_or_else(|| "null".to_string()),
-        error
-            .as_deref()
-            .map(json_escape)
-            .unwrap_or_else(|| "null".to_string()),
-        ms,
-        json_escape(crate::version::VERSION),
-    );
-    result_buffer(json)
+    unsafe {
+        let source = match std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) {
+            Ok(s) => s.to_string(),
+            Err(_) => {
+                return result_buffer(
+                    r#"{"output":"","value":null,"error":"source was not valid UTF-8","ms":0}"#
+                        .to_string(),
+                );
+            }
+        };
+        SESSION.with(|s| *s.borrow_mut() = None);
+        HANDLERS.with(|h| h.borrow_mut().clear());
+        let started = crate::clock::Instant::now();
+        let parser = OlangParser::new();
+        let (output, value, error) = match parser.parse(&source) {
+            Err(e) => (crate::output::drain_captured(), None, Some(e.to_string())),
+            Ok(program) => {
+                let mut interpreter = Interpreter::new();
+                interpreter.enable_bytecode_tier(1, false);
+                let r = match interpreter.eval_program(program) {
+                    Ok(v) => {
+                        let shown = match v {
+                            Value::Unit => None,
+                            other => Some(format!("{}", other)),
+                        };
+                        (crate::output::drain_captured(), shown, None)
+                    }
+                    Err(e) => (crate::output::drain_captured(), None, Some(e.to_string())),
+                };
+                SESSION.with(|s| *s.borrow_mut() = Some(interpreter));
+                r
+            }
+        };
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
+        let json = format!(
+            r#"{{"output":{},"value":{},"error":{},"ms":{:.1},"version":{}}}"#,
+            json_escape(&output),
+            value
+                .as_deref()
+                .map(json_escape)
+                .unwrap_or_else(|| "null".to_string()),
+            error
+                .as_deref()
+                .map(json_escape)
+                .unwrap_or_else(|| "null".to_string()),
+            ms,
+            json_escape(crate::version::VERSION),
+        );
+        result_buffer(json)
+    }
 }
 
 /// Re-enter the session for one event. Returns a result buffer whose
@@ -292,9 +296,9 @@ pub unsafe extern "C" fn olang_session_start(ptr: *const u8, len: usize) -> *mut
 ///
 /// # Safety
 /// Called by the page with an id previously given to host_dom_on.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn olang_dispatch_event(callback_id: i64) -> *mut u8 {
-    olang_dispatch_event_with(callback_id, std::ptr::null(), 0)
+    unsafe { olang_dispatch_event_with(callback_id, std::ptr::null(), 0) }
 }
 
 /// Re-enter the session for one event carrying a string payload (fetch
@@ -304,7 +308,7 @@ pub unsafe extern "C" fn olang_dispatch_event(callback_id: i64) -> *mut u8 {
 /// # Safety
 /// `ptr`, when non-null, points at `len` bytes of UTF-8 the page wrote
 /// into wasm memory via olang_alloc (we free nothing — caller deallocs).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn olang_dispatch_event_with(
     callback_id: i64,
     ptr: *const u8,
@@ -369,7 +373,7 @@ fn result_buffer(json: String) -> *mut u8 {
     Box::into_raw(boxed) as *mut u8
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn olang_alloc(len: usize) -> *mut u8 {
     let mut buf = Vec::<u8>::with_capacity(len.max(1));
     let ptr = buf.as_mut_ptr();
@@ -379,60 +383,66 @@ pub extern "C" fn olang_alloc(len: usize) -> *mut u8 {
 
 /// # Safety
 /// `ptr` must come from `olang_alloc(len)` with the same `len`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn olang_dealloc(ptr: *mut u8, len: usize) {
-    if !ptr.is_null() {
-        drop(Vec::from_raw_parts(ptr, 0, len.max(1)));
+    unsafe {
+        if !ptr.is_null() {
+            drop(Vec::from_raw_parts(ptr, 0, len.max(1)));
+        }
     }
 }
 
 /// # Safety
 /// `ptr..ptr+len` must be valid UTF-8 written by the caller.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn olang_run(ptr: *const u8, len: usize) -> *mut u8 {
-    install_panic_hook();
-    let source = match std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) {
-        Ok(s) => s,
-        Err(_) => {
-            return result_buffer(
-                r#"{"output":"","value":null,"error":"source was not valid UTF-8","ms":0}"#
-                    .to_string(),
-            )
-        }
-    };
+    unsafe {
+        install_panic_hook();
+        let source = match std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) {
+            Ok(s) => s,
+            Err(_) => {
+                return result_buffer(
+                    r#"{"output":"","value":null,"error":"source was not valid UTF-8","ms":0}"#
+                        .to_string(),
+                );
+            }
+        };
 
-    let started = crate::clock::Instant::now();
-    let (output, value, error) = run_source(source);
-    let ms = started.elapsed().as_secs_f64() * 1000.0;
+        let started = crate::clock::Instant::now();
+        let (output, value, error) = run_source(source);
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
 
-    let json = format!(
-        r#"{{"output":{},"value":{},"error":{},"ms":{:.1},"version":{}}}"#,
-        json_escape(&output),
-        value
-            .as_deref()
-            .map(json_escape)
-            .unwrap_or_else(|| "null".to_string()),
-        error
-            .as_deref()
-            .map(json_escape)
-            .unwrap_or_else(|| "null".to_string()),
-        ms,
-        json_escape(crate::version::VERSION),
-    );
-    result_buffer(json)
+        let json = format!(
+            r#"{{"output":{},"value":{},"error":{},"ms":{:.1},"version":{}}}"#,
+            json_escape(&output),
+            value
+                .as_deref()
+                .map(json_escape)
+                .unwrap_or_else(|| "null".to_string()),
+            error
+                .as_deref()
+                .map(json_escape)
+                .unwrap_or_else(|| "null".to_string()),
+            ms,
+            json_escape(crate::version::VERSION),
+        );
+        result_buffer(json)
+    }
 }
 
 /// # Safety
 /// `ptr` must come from `olang_run` and be freed exactly once.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn olang_result_free(ptr: *mut u8) {
-    if ptr.is_null() {
-        return;
+    unsafe {
+        if ptr.is_null() {
+            return;
+        }
+        let mut len_bytes = [0u8; 4];
+        len_bytes.copy_from_slice(std::slice::from_raw_parts(ptr, 4));
+        let total = 4 + u32::from_le_bytes(len_bytes) as usize;
+        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+            ptr, total,
+        )));
     }
-    let mut len_bytes = [0u8; 4];
-    len_bytes.copy_from_slice(std::slice::from_raw_parts(ptr, 4));
-    let total = 4 + u32::from_le_bytes(len_bytes) as usize;
-    drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-        ptr, total,
-    )));
 }

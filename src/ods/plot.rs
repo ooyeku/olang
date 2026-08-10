@@ -12,7 +12,7 @@
 
 use super::series::series_of;
 use crate::ast::Value;
-use olang_ods::plot::{render_bars, render_hist, render_xy, PlotOptions, XyKind, XySeries};
+use olang_ods::plot::{PlotOptions, XyKind, XySeries, render_bars, render_hist, render_xy};
 use olang_ods::{Scalar, Series};
 
 /// (name, arity) of the plot functions.
@@ -39,7 +39,7 @@ fn parse_options(value: &Value) -> Result<PlotOptions, String> {
             return Err(format!(
                 "plot: options must be a map (pass #{{}} for defaults), got {}",
                 other.type_name()
-            ))
+            ));
         }
     };
     let mut opts = PlotOptions::default();
@@ -54,20 +54,20 @@ fn parse_options(value: &Value) -> Result<PlotOptions, String> {
                 return Err(format!(
                     "plot: {} must be an Int between 100 and 4000, got {}",
                     key, other
-                ))
+                ));
             }
             ("title" | "x_label" | "y_label", other) => {
                 return Err(format!(
                     "plot: {} must be a String, got {}",
                     key,
                     other.type_name()
-                ))
+                ));
             }
             _ => {
                 return Err(format!(
                     "plot: unknown option '{}' (title, x_label, y_label, width, height)",
                     key
-                ))
+                ));
             }
         }
     }
@@ -108,7 +108,7 @@ fn xy_points(func: &str, x: &Series, y: &Series) -> Result<(Vec<f64>, Vec<f64>),
                     "plot.{}: coordinates must be numeric, got a {} series",
                     func,
                     x.dtype()
-                ))
+                ));
             }
         };
         let yf = match yv {
@@ -120,7 +120,7 @@ fn xy_points(func: &str, x: &Series, y: &Series) -> Result<(Vec<f64>, Vec<f64>),
                     "plot.{}: coordinates must be numeric, got a {} series",
                     func,
                     y.dtype()
-                ))
+                ));
             }
         };
         xs.push(xf);
@@ -175,7 +175,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                     return Err(format!(
                         "plot.lines expects a list of [label, series] pairs, got {}",
                         other.type_name()
-                    ))
+                    ));
                 }
             };
             let mut series = Vec::with_capacity(pairs.len());
@@ -185,14 +185,14 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                         (Value::String(s), Some(y)) => (s.as_ref().clone(), y),
                         _ => {
                             return Err("plot.lines: each entry is [label (String), y (Series)]"
-                                .to_string())
+                                .to_string());
                         }
                     },
                     other => {
                         return Err(format!(
                             "plot.lines: each entry is [label, series], got {}",
                             other.type_name()
-                        ))
+                        ));
                     }
                 };
                 let (xs, ys) = xy_points(func, x, y)?;
@@ -231,7 +231,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                     return Err(format!(
                         "plot.bar: labels must be a Series or list, got {}",
                         other.type_name()
-                    ))
+                    ));
                 }
             };
             let values = want_series(func, &args, 1)?;
@@ -262,7 +262,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                     return Err(format!(
                         "plot.hist: bins must be a positive Int, got {}",
                         other
-                    ))
+                    ));
                 }
             };
             let opts = parse_options(&args[2])?;

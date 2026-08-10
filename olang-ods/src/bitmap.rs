@@ -25,10 +25,10 @@ impl Bitmap {
     /// kernels that must materialize before clearing individual bits.
     pub fn new_valid(len: usize) -> Self {
         let mut words = vec![u64::MAX; Self::word_count(len)];
-        if !len.is_multiple_of(64) {
-            if let Some(last) = words.last_mut() {
-                *last = (1u64 << (len % 64)) - 1;
-            }
+        if !len.is_multiple_of(64)
+            && let Some(last) = words.last_mut()
+        {
+            *last = (1u64 << (len % 64)) - 1;
         }
         Self {
             len,

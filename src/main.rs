@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process;
 
 use olang::{
-    log::{init_logger, Logger},
+    log::{Logger, init_logger},
     parallel::{initialize_parallelization, set_parallel_threshold},
     parser::{ErrorSuggestion, Parser as OlangParser, SuggestionSeverity},
     repl::Repl,
@@ -82,29 +82,36 @@ fn run() -> i32 {
     let logger = init_logger();
 
     // Initialize parallelization early for optimal performance
-    if let Err(e) = initialize_parallelization(cli.ovm_parallelism) {
-        if cli.verbose {
-            logger.warn(
-                "main",
-                &format!("Failed to initialize parallel processing: {}", e),
-            );
+    match initialize_parallelization(cli.ovm_parallelism) {
+        Err(e) => {
+            if cli.verbose {
+                logger.warn(
+                    "main",
+                    &format!("Failed to initialize parallel processing: {}", e),
+                );
+            }
         }
-    } else if cli.verbose {
-        logger.info(
+        _ => {
+            if cli.verbose {
+                logger.info(
             "main",
             &format!(
                 "Multi-threading enabled: {} CPU cores detected, using aggressive parallelization",
                 num_cpus::get()
             ),
         );
+            }
+        }
     }
 
     // Allow enabling/disabling parallel at runtime
     if cli.enable_parallel {
-        std::env::set_var("OVM_ENABLE_PARALLEL", "1");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("OVM_ENABLE_PARALLEL", "1") };
     }
     if let Some(n) = cli.ovm_parallelism {
-        std::env::set_var("OVM_PARALLELISM", n.to_string());
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("OVM_PARALLELISM", n.to_string()) };
     }
 
     // Parallelize only where the work plausibly outweighs thread overhead.
@@ -412,13 +419,12 @@ fn apply_basic_highlighting(code: &str) -> String {
 
                 // Look ahead for compound operators
                 let mut op = ch.to_string();
-                if let Some(&next_ch) = chars.peek() {
-                    if (next_ch == '=' && matches!(ch, '=' | '!' | '<' | '>'))
+                if let Some(&next_ch) = chars.peek()
+                    && ((next_ch == '=' && matches!(ch, '=' | '!' | '<' | '>'))
                         || (ch == '&' && next_ch == '&')
-                        || (ch == '|' && next_ch == '|')
-                    {
-                        op.push(chars.next().unwrap());
-                    }
+                        || (ch == '|' && next_ch == '|'))
+                {
+                    op.push(chars.next().unwrap());
                 }
                 result.push_str(&format!("{}", op.bright_yellow()));
             }

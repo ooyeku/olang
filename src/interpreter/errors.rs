@@ -405,15 +405,15 @@ impl IntuitiveErrorFormatter {
 
     /// Sanitize file paths to avoid leaking sensitive directories
     fn sanitize_path(&self, raw: &str) -> String {
-        if let Ok(home) = std::env::var("HOME") {
-            if raw.starts_with(&home) {
-                return raw.replacen(&home, "~", 1);
-            }
+        if let Ok(home) = std::env::var("HOME")
+            && raw.starts_with(&home)
+        {
+            return raw.replacen(&home, "~", 1);
         }
-        if let Ok(userprofile) = std::env::var("USERPROFILE") {
-            if raw.starts_with(&userprofile) {
-                return raw.replacen(&userprofile, "~", 1);
-            }
+        if let Ok(userprofile) = std::env::var("USERPROFILE")
+            && raw.starts_with(&userprofile)
+        {
+            return raw.replacen(&userprofile, "~", 1);
         }
         raw.to_string()
     }

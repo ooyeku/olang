@@ -7,7 +7,7 @@ use clap::Subcommand;
 use olang::pkg::lock::{LockedSource, Lockfile};
 use olang::pkg::manifest::{Dependency, Manifest, PackageMeta};
 use olang::pkg::registry::{Registry, Release};
-use olang::pkg::{install, InstallOptions};
+use olang::pkg::{InstallOptions, install};
 use semver::Version;
 use std::path::{Path, PathBuf};
 

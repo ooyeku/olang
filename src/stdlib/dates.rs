@@ -323,7 +323,7 @@ fn dates_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     let time = match NaiveTime::from_hms_opt(hour, minute, second) {
         Some(t) => t,
         None => {
-            return Err(format!("Invalid time: {:02}:{:02}:{:02}", hour, minute, second).into())
+            return Err(format!("Invalid time: {:02}:{:02}:{:02}", hour, minute, second).into());
         }
     };
 
@@ -455,7 +455,7 @@ fn dates_format_date(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
                 "Cannot parse date: '{}'. Expected format: YYYY-MM-DD",
                 date_str
             )
-            .into())
+            .into());
         }
     };
 
@@ -510,7 +510,7 @@ fn dates_format_time(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
                 "Cannot parse time: '{}'. Expected format: HH:MM:SS",
                 time_str
             )
-            .into())
+            .into());
         }
     };
 
@@ -542,7 +542,7 @@ fn dates_add_days(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
                 "Cannot parse date: '{}'. Expected format: YYYY-MM-DD",
                 date_str
             )
-            .into())
+            .into());
         }
     };
 
@@ -600,7 +600,7 @@ fn dates_add_months(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
                 "Cannot parse date: '{}'. Expected format: YYYY-MM-DD",
                 date_str
             )
-            .into())
+            .into());
         }
     };
 
@@ -675,7 +675,7 @@ fn dates_diff_days(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
                 "Cannot parse first date: '{}'. Expected format: YYYY-MM-DD",
                 date1_str
             )
-            .into())
+            .into());
         }
     };
 
@@ -686,7 +686,7 @@ fn dates_diff_days(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
                 "Cannot parse second date: '{}'. Expected format: YYYY-MM-DD",
                 date2_str
             )
-            .into())
+            .into());
         }
     };
 

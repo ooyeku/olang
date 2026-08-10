@@ -126,7 +126,7 @@ pub(super) fn series_from_list(items: &[Value]) -> Result<Series, String> {
                 return Err(format!(
                     "ods.series: list elements must be Int, Float, Bool, String, or () for null — got {}",
                     other.type_name()
-                ))
+                ));
             }
         }
     }
@@ -285,7 +285,7 @@ fn dispatch_inner(func: &str, args: Vec<Value>, expected: usize) -> Result<Value
                     return Err(format!(
                         "ods.linspace: num must be a non-negative Int, got {}",
                         other
-                    ))
+                    ));
                 }
             };
             Series::linspace(start, stop, num)
@@ -358,7 +358,7 @@ fn dispatch_inner(func: &str, args: Vec<Value>, expected: usize) -> Result<Value
                     return Err(format!(
                         "ods.quantile: q must be numeric, got {}",
                         other.type_name()
-                    ))
+                    ));
                 }
             };
             s.quantile(q)

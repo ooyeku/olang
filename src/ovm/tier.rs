@@ -401,12 +401,11 @@ impl BytecodeTier {
     fn convert_arg(&mut self, arg: &Value) -> Option<OvmValue> {
         if let Value::List(items) = arg {
             let key = Arc::as_ptr(items) as *const u8 as usize;
-            if let Some((weak, cached)) = self.arg_cache.get(&key) {
-                if let Some(live) = weak.upgrade() {
-                    if Arc::ptr_eq(&live, items) {
-                        return Some(cached.clone());
-                    }
-                }
+            if let Some((weak, cached)) = self.arg_cache.get(&key)
+                && let Some(live) = weak.upgrade()
+                && Arc::ptr_eq(&live, items)
+            {
+                return Some(cached.clone());
             }
             if !Self::is_representable(arg) {
                 return None;

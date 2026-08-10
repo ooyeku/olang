@@ -153,13 +153,16 @@ fn scalar_broadcast_including_swapped() {
         .unwrap();
     assert_eq!(inv.scalar_at(2), Scalar::F64(6.0));
     // 8 / s vs s / 0
-    assert!(s
-        .arith_scalar(ArithOp::Div, Scalar::F64(0.0), false, false)
-        .is_err());
+    assert!(
+        s.arith_scalar(ArithOp::Div, Scalar::F64(0.0), false, false)
+            .is_err()
+    );
     let swapped_zero = Series::from_f64(vec![1.0, 0.0]);
-    assert!(swapped_zero
-        .arith_scalar(ArithOp::Div, Scalar::F64(8.0), true, false)
-        .is_err());
+    assert!(
+        swapped_zero
+            .arith_scalar(ArithOp::Div, Scalar::F64(8.0), true, false)
+            .is_err()
+    );
 }
 
 #[test]

@@ -44,15 +44,15 @@
 //!   too, unwinding the native stack to the entry wrapper.
 
 use crate::ast::BinaryOp;
+use crate::ovm::FunctionId;
 use crate::ovm::bytecode::{CompiledBytecode, Instruction};
 use crate::ovm::value::{OvmValue, ValueData};
-use crate::ovm::FunctionId;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlags, Type, Value as ClifValue};
+use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, Type, Value as ClifValue, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
@@ -129,10 +129,10 @@ pub fn note_shapes(v: &OvmValue, shapes: &mut HashMap<u32, ShapeSpec>) {
             }
         }
         ValueData::List(items) => {
-            if let Some(ValueData::Struct(first)) = items.first().map(|x| &x.data) {
-                if let Some((_, spec)) = observe_struct(first) {
-                    shapes.entry(first.shape.id).or_insert(spec);
-                }
+            if let Some(ValueData::Struct(first)) = items.first().map(|x| &x.data)
+                && let Some((_, spec)) = observe_struct(first)
+            {
+                shapes.entry(first.shape.id).or_insert(spec);
             }
         }
         _ => {}
@@ -295,30 +295,32 @@ unsafe extern "C" fn olang_jit_index(
     expect_shape: u64,
     out: *mut i64,
 ) -> i64 {
-    let items = &*list;
-    let len = items.len() as i64;
-    // Bit 8 of `expect`: negative indices wrap (subscripts do, `for`
-    // iteration does not — the VM errors there, so we deopt).
-    let wrap = expect & 0x100 != 0;
-    let expect = expect & 0xFF;
-    let adjusted = if idx < 0 && wrap { len + idx } else { idx };
-    if adjusted < 0 || adjusted >= len {
-        return 1;
-    }
-    match (&items[adjusted as usize].data, expect) {
-        (ValueData::Integer(i), FIELD_INT) => {
-            *out = *i;
-            0
+    unsafe {
+        let items = &*list;
+        let len = items.len() as i64;
+        // Bit 8 of `expect`: negative indices wrap (subscripts do, `for`
+        // iteration does not — the VM errors there, so we deopt).
+        let wrap = expect & 0x100 != 0;
+        let expect = expect & 0xFF;
+        let adjusted = if idx < 0 && wrap { len + idx } else { idx };
+        if adjusted < 0 || adjusted >= len {
+            return 1;
         }
-        (ValueData::Float(f), FIELD_FLOAT) => {
-            *out = f.to_bits() as i64;
-            0
+        match (&items[adjusted as usize].data, expect) {
+            (ValueData::Integer(i), FIELD_INT) => {
+                *out = *i;
+                0
+            }
+            (ValueData::Float(f), FIELD_FLOAT) => {
+                *out = f.to_bits() as i64;
+                0
+            }
+            (ValueData::Struct(s), EXPECT_STRUCT) if s.shape.id as u64 == expect_shape => {
+                *out = Arc::as_ptr(s) as i64;
+                0
+            }
+            _ => 1,
         }
-        (ValueData::Struct(s), EXPECT_STRUCT) if s.shape.id as u64 == expect_shape => {
-            *out = Arc::as_ptr(s) as i64;
-            0
-        }
-        _ => 1,
     }
 }
 
@@ -327,7 +329,7 @@ unsafe extern "C" fn olang_jit_index(
 /// # Safety
 /// Called only from JIT code with pointers extracted from live slots.
 unsafe extern "C" fn olang_jit_len(list: *const Vec<OvmValue>) -> i64 {
-    (*list).len() as i64
+    unsafe { (*list).len() as i64 }
 }
 
 /// Host helper for MakeStruct: build the object from raw field bits
@@ -346,29 +348,31 @@ unsafe extern "C" fn olang_jit_make_struct(
     n: i64,
     kinds: i64,
 ) -> i64 {
-    let mut values = Vec::with_capacity(n as usize);
-    for i in 0..n as usize {
-        let bits = *fields.add(i);
-        values.push(match (kinds >> (i * 4)) & 0xF {
-            0 => OvmValue::new_integer(bits),
-            2 => OvmValue::new_boolean(bits != 0),
-            _ => OvmValue::new_float(f64::from_bits(bits as u64)),
+    unsafe {
+        let mut values = Vec::with_capacity(n as usize);
+        for i in 0..n as usize {
+            let bits = *fields.add(i);
+            values.push(match (kinds >> (i * 4)) & 0xF {
+                0 => OvmValue::new_integer(bits),
+                2 => OvmValue::new_boolean(bits != 0),
+                _ => OvmValue::new_float(f64::from_bits(bits as u64)),
+            });
+        }
+        let ctx = &mut *ctx;
+        // Everything allocated in one native call lives until the call
+        // resolves; cap it so allocation-heavy loops deopt to bytecode
+        // instead of holding unbounded memory. Null tells codegen to deopt.
+        if ctx.allocs.len() >= 1_000_000 {
+            return 0;
+        }
+        let obj = Arc::new(crate::ovm::value::StructObject {
+            shape: (*shape).clone(),
+            values,
         });
+        let ptr = Arc::as_ptr(&obj) as i64;
+        ctx.allocs.push(obj);
+        ptr
     }
-    let ctx = &mut *ctx;
-    // Everything allocated in one native call lives until the call
-    // resolves; cap it so allocation-heavy loops deopt to bytecode
-    // instead of holding unbounded memory. Null tells codegen to deopt.
-    if ctx.allocs.len() >= 1_000_000 {
-        return 0;
-    }
-    let obj = Arc::new(crate::ovm::value::StructObject {
-        shape: (*shape).clone(),
-        values,
-    });
-    let ptr = Arc::as_ptr(&obj) as i64;
-    ctx.allocs.push(obj);
-    ptr
 }
 
 /// Host helper for returning a struct: resolve the borrowed pointer back
@@ -379,24 +383,26 @@ unsafe extern "C" fn olang_jit_make_struct(
 /// # Safety
 /// Called only from JIT code with the call's own ctx.
 unsafe extern "C" fn olang_jit_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
-    let ctx = &mut *ctx;
-    // Called exactly once, at the entry boundary. The returned struct is
-    // almost always the newest allocation; check it first, then scan.
-    if let Some(last) = ctx.allocs.last() {
-        if Arc::as_ptr(last) as i64 == ptr {
+    unsafe {
+        let ctx = &mut *ctx;
+        // Called exactly once, at the entry boundary. The returned struct is
+        // almost always the newest allocation; check it first, then scan.
+        if let Some(last) = ctx.allocs.last()
+            && Arc::as_ptr(last) as i64 == ptr
+        {
             ctx.retained = Some(last.clone());
             return 0;
         }
+        if let Some(a) = ctx.allocs.iter().find(|a| Arc::as_ptr(a) as i64 == ptr) {
+            ctx.retained = Some(a.clone());
+            return 0;
+        }
+        if let Some(a) = ctx.args.iter().find(|a| Arc::as_ptr(a) as i64 == ptr) {
+            ctx.retained = Some(a.clone());
+            return 0;
+        }
+        1
     }
-    if let Some(a) = ctx.allocs.iter().find(|a| Arc::as_ptr(a) as i64 == ptr) {
-        ctx.retained = Some(a.clone());
-        return 0;
-    }
-    if let Some(a) = ctx.args.iter().find(|a| Arc::as_ptr(a) as i64 == ptr) {
-        ctx.retained = Some(a.clone());
-        return 0;
-    }
-    1
 }
 
 /// Host helper for string comparisons: the same Rust operators the VM
@@ -405,15 +411,17 @@ unsafe extern "C" fn olang_jit_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
 /// # Safety
 /// Called only from JIT code with pointers extracted from live slots.
 unsafe extern "C" fn olang_jit_str_cmp(a: *const String, b: *const String, op: i64) -> i64 {
-    let (a, b) = (&*a, &*b);
-    (match op {
-        0 => a == b,
-        1 => a != b,
-        2 => a < b,
-        3 => a <= b,
-        4 => a > b,
-        _ => a >= b,
-    }) as i64
+    unsafe {
+        let (a, b) = (&*a, &*b);
+        (match op {
+            0 => a == b,
+            1 => a != b,
+            2 => a < b,
+            3 => a <= b,
+            4 => a > b,
+            _ => a >= b,
+        }) as i64
+    }
 }
 
 /// Host helper for string concatenation, scratch-owned like MakeStruct.
@@ -426,14 +434,16 @@ unsafe extern "C" fn olang_jit_str_concat(
     a: *const String,
     b: *const String,
 ) -> i64 {
-    let ctx = &mut *ctx;
-    if ctx.str_allocs.len() >= 1_000_000 {
-        return 0;
+    unsafe {
+        let ctx = &mut *ctx;
+        if ctx.str_allocs.len() >= 1_000_000 {
+            return 0;
+        }
+        let s = Arc::new(format!("{}{}", *a, *b));
+        let ptr = Arc::as_ptr(&s) as i64;
+        ctx.str_allocs.push(s);
+        ptr
     }
-    let s = Arc::new(format!("{}{}", &*a, &*b));
-    let ptr = Arc::as_ptr(&s) as i64;
-    ctx.str_allocs.push(s);
-    ptr
 }
 
 /// String twin of olang_jit_retain: resolve a returned borrowed pointer
@@ -442,23 +452,25 @@ unsafe extern "C" fn olang_jit_str_concat(
 /// # Safety
 /// Called only from JIT code with the call's own ctx.
 unsafe extern "C" fn olang_jit_str_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
-    let ctx = &mut *ctx;
-    if let Some(last) = ctx.str_allocs.last() {
-        if Arc::as_ptr(last) as i64 == ptr {
+    unsafe {
+        let ctx = &mut *ctx;
+        if let Some(last) = ctx.str_allocs.last()
+            && Arc::as_ptr(last) as i64 == ptr
+        {
             ctx.retained_str = Some(last.clone());
             return 0;
         }
+        if let Some(s) = ctx
+            .str_allocs
+            .iter()
+            .chain(ctx.str_args.iter())
+            .find(|s| Arc::as_ptr(s) as i64 == ptr)
+        {
+            ctx.retained_str = Some(s.clone());
+            return 0;
+        }
+        1
     }
-    if let Some(s) = ctx
-        .str_allocs
-        .iter()
-        .chain(ctx.str_args.iter())
-        .find(|s| Arc::as_ptr(s) as i64 == ptr)
-    {
-        ctx.retained_str = Some(s.clone());
-        return 0;
-    }
-    1
 }
 
 unsafe extern "C" fn olang_jit_field(
@@ -467,25 +479,27 @@ unsafe extern "C" fn olang_jit_field(
     expect: u64,
     out: *mut i64,
 ) -> i64 {
-    let obj = &*obj;
-    match obj.values.get(idx as usize).map(|v| &v.data) {
-        Some(ValueData::Integer(i)) if expect == FIELD_INT => {
-            *out = *i;
-            0
+    unsafe {
+        let obj = &*obj;
+        match obj.values.get(idx as usize).map(|v| &v.data) {
+            Some(ValueData::Integer(i)) if expect == FIELD_INT => {
+                *out = *i;
+                0
+            }
+            Some(ValueData::Float(f)) if expect == FIELD_FLOAT => {
+                *out = f.to_bits() as i64;
+                0
+            }
+            Some(ValueData::Boolean(b)) if expect == FIELD_BOOL => {
+                *out = *b as i64;
+                0
+            }
+            Some(ValueData::String(s)) if expect == FIELD_STR => {
+                *out = Arc::as_ptr(s) as i64;
+                0
+            }
+            _ => 1,
         }
-        Some(ValueData::Float(f)) if expect == FIELD_FLOAT => {
-            *out = f.to_bits() as i64;
-            0
-        }
-        Some(ValueData::Boolean(b)) if expect == FIELD_BOOL => {
-            *out = *b as i64;
-            0
-        }
-        Some(ValueData::String(s)) if expect == FIELD_STR => {
-            *out = Arc::as_ptr(s) as i64;
-            0
-        }
-        _ => 1,
     }
 }
 
@@ -611,11 +625,11 @@ impl JitCache {
                     let (_, spec) = observe_struct(obj)?;
                     shapes.entry(obj.shape.id).or_insert(spec);
                 }
-                if let ValueData::List(items) = &arg.data {
-                    if let Some(ValueData::Struct(first)) = items.first().map(|v| &v.data) {
-                        let (_, spec) = observe_struct(first)?;
-                        shapes.entry(first.shape.id).or_insert(spec);
-                    }
+                if let ValueData::List(items) = &arg.data
+                    && let Some(ValueData::Struct(first)) = items.first().map(|v| &v.data)
+                {
+                    let (_, spec) = observe_struct(first)?;
+                    shapes.entry(first.shape.id).or_insert(spec);
                 }
             }
         }
@@ -1453,7 +1467,7 @@ impl PlanFn {
         self.return_regs.clear();
 
         macro_rules! grow {
-            ($slot:expr, $bits:expr) => {{
+            ($slot:expr_2021, $bits:expr_2021) => {{
                 let bits = $bits;
                 let slot = &mut $slot;
                 if *slot | bits != *slot {
@@ -1463,7 +1477,7 @@ impl PlanFn {
             }};
         }
         macro_rules! narrow {
-            ($r:expr, $mask:expr) => {{
+            ($r:expr_2021, $mask:expr_2021) => {{
                 let r = $r as usize;
                 let mask = $mask;
                 if self.allowed[r] & mask != self.allowed[r] {
@@ -1707,10 +1721,10 @@ impl PlanFn {
                 }
                 Instruction::PatternTestTuple { dst, value, len } => {
                     narrow!(value.0, K_TUPLE);
-                    if let Some(tk) = self.tuples.get(&value.0) {
-                        if tk.len() != *len {
-                            return None; // statically false: stay on bytecode
-                        }
+                    if let Some(tk) = self.tuples.get(&value.0)
+                        && tk.len() != *len
+                    {
+                        return None; // statically false: stay on bytecode
                     }
                     grow!(self.writes[dst.0 as usize], K_BOOL);
                 }
@@ -2166,7 +2180,7 @@ fn translate_body(
     let entry_block = builder.create_block();
     builder.append_block_params_for_function_params(entry_block);
     let deopt_block = builder.create_block();
-    let gen = Gen {
+    let r#gen = Gen {
         inference,
         deopt_block,
     };
@@ -2181,7 +2195,7 @@ fn translate_body(
     // One typed variable per LIVE register, plus the depth budget.
     let nregs = bytecode.register_count as usize;
     for r in 0..nregs {
-        if let Some(k) = gen.kind(r as u32) {
+        if let Some(k) = r#gen.kind(r as u32) {
             builder.declare_var(Variable::from_u32(r as u32), k.clif_type());
         }
     }
@@ -2204,13 +2218,13 @@ fn translate_body(
     builder.switch_to_block(entry_block);
     let params: Vec<ClifValue> = builder.block_params(entry_block).to_vec();
     for (i, p) in params.iter().take(param_count).enumerate() {
-        gen.write(builder, i as u32, *p);
+        r#gen.write(builder, i as u32, *p);
     }
     // Initialize every other live register so use before first def can't
     // trip the SSA builder (bytecode never actually reads uninitialized
     // registers, but proving that is the verifier's job, not ours).
     for r in param_count..nregs {
-        if let Some(k) = gen.kind(r as u32) {
+        if let Some(k) = r#gen.kind(r as u32) {
             let zero = match k {
                 Kind::Float => builder.ins().f64const(0.0),
                 _ => builder.ins().iconst(types::I64, 0),
@@ -2253,7 +2267,9 @@ fn translate_body(
 
         match inst {
             Instruction::LoadConst { dst, const_idx } => {
-                let Some(dk) = gen.kind(dst.0) else { continue };
+                let Some(dk) = r#gen.kind(dst.0) else {
+                    continue;
+                };
                 let val = match (&bytecode.constants[*const_idx as usize].data, dk) {
                     (ValueData::Integer(x), Kind::Int) => builder.ins().iconst(types::I64, *x),
                     (ValueData::Boolean(b), Kind::Bool) => {
@@ -2285,10 +2301,10 @@ fn translate_body(
                     }
                     continue;
                 }
-                if gen.kind(dst.0).is_none() {
+                if r#gen.kind(dst.0).is_none() {
                     continue; // dead store, no observable effect
                 }
-                let val = gen.read(builder, src.0)?;
+                let val = r#gen.read(builder, src.0)?;
                 builder.def_var(Variable::from_u32(dst.0), val);
             }
             Instruction::Add { dst, lhs, rhs }
@@ -2296,8 +2312,8 @@ fn translate_body(
             | Instruction::Mul { dst, lhs, rhs }
             | Instruction::Div { dst, lhs, rhs }
             | Instruction::Mod { dst, lhs, rhs } => {
-                let lk = gen.kind(lhs.0)?;
-                let rk = gen.kind(rhs.0)?;
+                let lk = r#gen.kind(lhs.0)?;
+                let rk = r#gen.kind(rhs.0)?;
                 if lk == Kind::Str && rk == Kind::Str {
                     if !matches!(inst, Instruction::Add { .. }) {
                         return None;
@@ -2312,17 +2328,17 @@ fn translate_body(
                     let ok_block = builder.create_block();
                     builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
                     builder.switch_to_block(ok_block);
-                    gen.write(builder, dst.0, ptr);
+                    r#gen.write(builder, dst.0, ptr);
                     continue;
                 }
                 let a = builder.use_var(Variable::from_u32(lhs.0));
                 let b = builder.use_var(Variable::from_u32(rhs.0));
                 let op = arith_op(inst);
-                let val = emit_arith(builder, &gen, op, a, lk, b, rk)?;
-                gen.write(builder, dst.0, val);
+                let val = emit_arith(builder, &r#gen, op, a, lk, b, rk)?;
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::Neg { dst, src } => {
-                let sk = gen.kind(src.0)?;
+                let sk = r#gen.kind(src.0)?;
                 let a = builder.use_var(Variable::from_u32(src.0));
                 let val = match sk {
                     Kind::Float => builder.ins().fneg(a),
@@ -2337,7 +2353,7 @@ fn translate_body(
                     }
                     _ => return None,
                 };
-                gen.write(builder, dst.0, val);
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::Eq { dst, lhs, rhs }
             | Instruction::Ne { dst, lhs, rhs }
@@ -2345,8 +2361,8 @@ fn translate_body(
             | Instruction::Le { dst, lhs, rhs }
             | Instruction::Gt { dst, lhs, rhs }
             | Instruction::Ge { dst, lhs, rhs } => {
-                let lk = gen.kind(lhs.0)?;
-                let rk = gen.kind(rhs.0)?;
+                let lk = r#gen.kind(lhs.0)?;
+                let rk = r#gen.kind(rhs.0)?;
                 let a = builder.use_var(Variable::from_u32(lhs.0));
                 let b = builder.use_var(Variable::from_u32(rhs.0));
                 if lk == Kind::Str && rk == Kind::Str {
@@ -2362,42 +2378,42 @@ fn translate_body(
                     let helper_ref = module.declare_func_in_func(str_cmp_helper, builder.func);
                     let call = builder.ins().call(helper_ref, &[a, b, op_v]);
                     let val = builder.inst_results(call)[0];
-                    gen.write(builder, dst.0, val);
+                    r#gen.write(builder, dst.0, val);
                     continue;
                 }
                 if (lk == Kind::Str) != (rk == Kind::Str) {
                     return None; // string-vs-other comparisons stay on bytecode
                 }
                 let flag = if lk == Kind::Float || rk == Kind::Float {
-                    let fa = gen.to_float(builder, a, lk);
-                    let fb = gen.to_float(builder, b, rk);
+                    let fa = r#gen.to_float(builder, a, lk);
+                    let fb = r#gen.to_float(builder, b, rk);
                     builder.ins().fcmp(float_cc(inst), fa, fb)
                 } else {
                     builder.ins().icmp(compare_cc(inst), a, b)
                 };
                 let val = builder.ins().uextend(types::I64, flag);
-                gen.write(builder, dst.0, val);
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::And { dst, lhs, rhs } => {
-                let a = gen.read(builder, lhs.0)?;
-                let b = gen.read(builder, rhs.0)?;
+                let a = r#gen.read(builder, lhs.0)?;
+                let b = r#gen.read(builder, rhs.0)?;
                 let val = builder.ins().band(a, b);
-                gen.write(builder, dst.0, val);
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::Or { dst, lhs, rhs } => {
-                let a = gen.read(builder, lhs.0)?;
-                let b = gen.read(builder, rhs.0)?;
+                let a = r#gen.read(builder, lhs.0)?;
+                let b = r#gen.read(builder, rhs.0)?;
                 let val = builder.ins().bor(a, b);
-                gen.write(builder, dst.0, val);
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::Not { dst, src } => {
-                let a = gen.read(builder, src.0)?;
+                let a = r#gen.read(builder, src.0)?;
                 let one = builder.ins().iconst(types::I64, 1);
                 let val = builder.ins().bxor(a, one);
-                gen.write(builder, dst.0, val);
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::BinImm { op, dst, lhs, imm } => {
-                let lk = gen.kind(lhs.0)?;
+                let lk = r#gen.kind(lhs.0)?;
                 let a = builder.use_var(Variable::from_u32(lhs.0));
                 let (b, bk) = match imm.data {
                     ValueData::Integer(x) => {
@@ -2417,8 +2433,8 @@ fn translate_body(
                     | BinaryOp::Multiply
                     | BinaryOp::Divide
                     | BinaryOp::Modulo => {
-                        let val = emit_arith(builder, &gen, imm_arith(op)?, a, lk, b, bk)?;
-                        gen.write(builder, dst.0, val);
+                        let val = emit_arith(builder, &r#gen, imm_arith(op)?, a, lk, b, bk)?;
+                        r#gen.write(builder, dst.0, val);
                     }
                     BinaryOp::Equal
                     | BinaryOp::NotEqual
@@ -2427,14 +2443,14 @@ fn translate_body(
                     | BinaryOp::GreaterThan
                     | BinaryOp::GreaterThanEqual => {
                         let flag = if lk == Kind::Float || bk == Kind::Float {
-                            let fa = gen.to_float(builder, a, lk);
-                            let fb = gen.to_float(builder, b, bk);
+                            let fa = r#gen.to_float(builder, a, lk);
+                            let fb = r#gen.to_float(builder, b, bk);
                             builder.ins().fcmp(imm_float_cc(op)?, fa, fb)
                         } else {
                             builder.ins().icmp(imm_compare(op)?, a, b)
                         };
                         let val = builder.ins().uextend(types::I64, flag);
-                        gen.write(builder, dst.0, val);
+                        r#gen.write(builder, dst.0, val);
                     }
                     _ => return None,
                 }
@@ -2446,9 +2462,9 @@ fn translate_body(
             } => {
                 let mut fargs = [None, None];
                 for (i, a) in args.iter().enumerate().take(2) {
-                    let k = gen.kind(a.0)?;
+                    let k = r#gen.kind(a.0)?;
                     let v = builder.use_var(Variable::from_u32(a.0));
-                    fargs[i] = Some(gen.to_float(builder, v, k));
+                    fargs[i] = Some(r#gen.to_float(builder, v, k));
                 }
                 let a = fargs[0]?;
                 // The VM leaves the unused slot at 0.0 for unary ops.
@@ -2471,14 +2487,14 @@ fn translate_body(
                         builder.inst_results(call)[0]
                     }
                 };
-                gen.write(builder, dst.0, val);
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::MakeTuple { dst, elements } => {
                 if !inference.tuples.contains_key(&dst.0) {
                     return None;
                 }
                 for (i, e) in elements.iter().enumerate() {
-                    let v = gen.read(builder, e.0)?;
+                    let v = r#gen.read(builder, e.0)?;
                     builder.def_var(tuple_var(dst.0, i), v);
                 }
             }
@@ -2490,7 +2506,7 @@ fn translate_body(
                     return None;
                 }
                 let one = builder.ins().iconst(types::I64, 1);
-                gen.write(builder, dst.0, one);
+                r#gen.write(builder, dst.0, one);
             }
             Instruction::ExtractElement { dst, value, index } => {
                 let tk = inference.tuples.get(&value.0)?;
@@ -2498,7 +2514,7 @@ fn translate_body(
                     return None;
                 }
                 let v = builder.use_var(tuple_var(value.0, *index));
-                gen.write(builder, dst.0, v);
+                r#gen.write(builder, dst.0, v);
             }
             Instruction::TupleGet { dst, tuple, index } => {
                 let tk = inference.tuples.get(&tuple.0)?;
@@ -2506,7 +2522,7 @@ fn translate_body(
                     return None;
                 }
                 let v = builder.use_var(tuple_var(tuple.0, *index as usize));
-                gen.write(builder, dst.0, v);
+                r#gen.write(builder, dst.0, v);
             }
             Instruction::MakeStruct {
                 dst,
@@ -2522,7 +2538,7 @@ fn translate_body(
                     ));
                 let mut kinds_desc: i64 = 0;
                 for (i, r) in field_regs.iter().enumerate() {
-                    let k = gen.kind(r.0)?;
+                    let k = r#gen.kind(r.0)?;
                     let v = builder.use_var(Variable::from_u32(r.0));
                     builder.ins().stack_store(v, slot, (i * 8) as i32);
                     let code: i64 = match k {
@@ -2551,24 +2567,24 @@ fn translate_body(
                 let ok_block = builder.create_block();
                 builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
                 builder.switch_to_block(ok_block);
-                gen.write(builder, dst.0, ptr);
+                r#gen.write(builder, dst.0, ptr);
             }
             Instruction::IterLen { dst, src } => {
                 let list_ptr = builder.use_var(Variable::from_u32(src.0));
                 let helper_ref = module.declare_func_in_func(len_helper, builder.func);
                 let call = builder.ins().call(helper_ref, &[list_ptr]);
                 let val = builder.inst_results(call)[0];
-                gen.write(builder, dst.0, val);
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::IterGet { dst, src, idx } => {
-                let (expect, expect_shape, load_ty) = match gen.kind(src.0)? {
+                let (expect, expect_shape, load_ty) = match r#gen.kind(src.0)? {
                     Kind::ListFloat => (FIELD_FLOAT, 0, types::F64),
                     Kind::ListInt => (FIELD_INT, 0, types::I64),
                     Kind::ListStruct(sid) => (EXPECT_STRUCT, sid as u64, types::I64),
                     _ => return None,
                 };
                 let list_ptr = builder.use_var(Variable::from_u32(src.0));
-                let idx_v = gen.read(builder, idx.0)?;
+                let idx_v = r#gen.read(builder, idx.0)?;
                 let exp_v = builder.ins().iconst(types::I64, expect as i64);
                 let shape_v = builder.ins().iconst(types::I64, expect_shape as i64);
                 let slot =
@@ -2587,17 +2603,17 @@ fn translate_body(
                 builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
                 builder.switch_to_block(ok_block);
                 let val = builder.ins().stack_load(load_ty, slot, 0);
-                gen.write(builder, dst.0, val);
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::IndexGet { dst, object, index } => {
-                let (expect, expect_shape, load_ty) = match gen.kind(object.0)? {
+                let (expect, expect_shape, load_ty) = match r#gen.kind(object.0)? {
                     Kind::ListFloat => (FIELD_FLOAT | 0x100, 0, types::F64),
                     Kind::ListInt => (FIELD_INT | 0x100, 0, types::I64),
                     Kind::ListStruct(sid) => (EXPECT_STRUCT | 0x100, sid as u64, types::I64),
                     _ => return None,
                 };
                 let list_ptr = builder.use_var(Variable::from_u32(object.0));
-                let idx_v = gen.read(builder, index.0)?;
+                let idx_v = r#gen.read(builder, index.0)?;
                 let exp_v = builder.ins().iconst(types::I64, expect as i64);
                 let shape_v = builder.ins().iconst(types::I64, expect_shape as i64);
                 let slot =
@@ -2616,7 +2632,7 @@ fn translate_body(
                 builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
                 builder.switch_to_block(ok_block);
                 let val = builder.ins().stack_load(load_ty, slot, 0);
-                gen.write(builder, dst.0, val);
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::GetField {
                 dst,
@@ -2624,7 +2640,7 @@ fn translate_body(
                 name_const,
                 ..
             } => {
-                let Kind::Struct(sid) = gen.kind(object.0)? else {
+                let Kind::Struct(sid) = r#gen.kind(object.0)? else {
                     return None;
                 };
                 let spec = shapes.get(&sid)?;
@@ -2665,7 +2681,7 @@ fn translate_body(
                 builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
                 builder.switch_to_block(ok_block);
                 let val = builder.ins().stack_load(fk.clif_type(), slot, 0);
-                gen.write(builder, dst.0, val);
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::Jump { target } => {
                 let block = blocks[target.0 as usize]?;
@@ -2673,14 +2689,14 @@ fn translate_body(
                 terminated = true;
             }
             Instruction::JumpIfTrue { condition, target } => {
-                let cond = gen.read(builder, condition.0)?;
+                let cond = r#gen.read(builder, condition.0)?;
                 let then_block = blocks[target.0 as usize]?;
                 let else_block = blocks.get(i + 1).copied().flatten()?;
                 builder.ins().brif(cond, then_block, &[], else_block, &[]);
                 terminated = true;
             }
             Instruction::JumpIfFalse { condition, target } => {
-                let cond = gen.read(builder, condition.0)?;
+                let cond = r#gen.read(builder, condition.0)?;
                 let else_block = blocks[target.0 as usize]?;
                 let then_block = blocks.get(i + 1).copied().flatten()?;
                 builder.ins().brif(cond, then_block, &[], else_block, &[]);
@@ -2704,7 +2720,7 @@ fn translate_body(
 
                 let mut call_args = Vec::with_capacity(args.len() + 1);
                 for a in args {
-                    call_args.push(gen.read(builder, a.0)?);
+                    call_args.push(r#gen.read(builder, a.0)?);
                 }
                 call_args.push(new_depth);
                 call_args.push(builder.use_var(ctx_var));
@@ -2726,19 +2742,19 @@ fn translate_body(
                             }
                         }
                     }
-                    None => gen.write(builder, dst.0, values[0]),
+                    None => r#gen.write(builder, dst.0, values[0]),
                 }
             }
             Instruction::Return { value } => {
                 let reg = (*value)?;
-                if gen.kind(reg.0) == Some(Kind::Str) && inference.ret_kind == Kind::Str {
+                if r#gen.kind(reg.0) == Some(Kind::Str) && inference.ret_kind == Kind::Str {
                     let ptr = builder.use_var(Variable::from_u32(reg.0));
                     let ok = builder.ins().iconst(types::I64, STATUS_OK);
                     builder.ins().return_(&[ptr, ok]);
                     terminated = true;
                     continue;
                 }
-                if matches!(gen.kind(reg.0), Some(Kind::Struct(_)))
+                if matches!(r#gen.kind(reg.0), Some(Kind::Struct(_)))
                     && inference.ret_struct.is_some()
                 {
                     // Raw pointer out; the scratch list keeps it alive.
@@ -2756,7 +2772,7 @@ fn translate_body(
                     vals.push(builder.ins().iconst(types::I64, STATUS_OK));
                     builder.ins().return_(&vals);
                 } else {
-                    let val = gen.read(builder, reg.0)?;
+                    let val = r#gen.read(builder, reg.0)?;
                     let ok = builder.ins().iconst(types::I64, STATUS_OK);
                     builder.ins().return_(&[val, ok]);
                 }
@@ -2880,7 +2896,7 @@ fn imm_float_cc(op: &BinaryOp) -> Option<FloatCC> {
 /// equivalent, and guessing is how divergence starts.
 fn emit_arith(
     builder: &mut FunctionBuilder,
-    gen: &Gen,
+    r#gen: &Gen,
     op: Arith,
     a: ClifValue,
     ak: Kind,
@@ -2895,8 +2911,8 @@ fn emit_arith(
         if op == Arith::Mod {
             return None;
         }
-        let fa = gen.to_float(builder, a, ak);
-        let fb = gen.to_float(builder, b, bk);
+        let fa = r#gen.to_float(builder, a, ak);
+        let fb = r#gen.to_float(builder, b, bk);
         let val = match op {
             Arith::Add => builder.ins().fadd(fa, fb),
             Arith::Sub => builder.ins().fsub(fa, fb),
@@ -2906,7 +2922,9 @@ fn emit_arith(
                 let zero = builder.ins().f64const(0.0);
                 let is_zero = builder.ins().fcmp(FloatCC::Equal, fb, zero);
                 let cont = builder.create_block();
-                builder.ins().brif(is_zero, gen.deopt_block, &[], cont, &[]);
+                builder
+                    .ins()
+                    .brif(is_zero, r#gen.deopt_block, &[], cont, &[]);
                 builder.switch_to_block(cont);
                 builder.ins().fdiv(fa, fb)
             }
@@ -2915,7 +2933,7 @@ fn emit_arith(
         return Some(val);
     }
 
-    let deopt = gen.deopt_block;
+    let deopt = r#gen.deopt_block;
     let val = match op {
         Arith::Add => {
             let r = builder.ins().iadd(a, b);

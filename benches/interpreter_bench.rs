@@ -5,7 +5,7 @@
 //! optimization change should move these numbers, and none may change
 //! program results (see the differential tests in tests/).
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use olang::{Interpreter, Parser};
 use std::time::Duration;
 

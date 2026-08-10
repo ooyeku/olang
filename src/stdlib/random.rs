@@ -1,8 +1,8 @@
 use crate::ast::Value;
+use rand::SeedableRng;
 use rand::distributions::Alphanumeric;
 use rand::prelude::*;
 use rand::rngs::StdRng;
-use rand::SeedableRng;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -19,7 +19,7 @@ fn get_rng() -> &'static Mutex<StdRng> {
 /// sampling (stats.norm.sample, ...) deterministic too.
 pub(crate) fn draw_uniforms(n: usize) -> Vec<f64> {
     let mut rng = get_rng().lock().unwrap();
-    (0..n).map(|_| rng.gen::<f64>()).collect()
+    (0..n).map(|_| rng.r#gen::<f64>()).collect()
 }
 
 /// Error types for random operations
@@ -118,7 +118,7 @@ fn random_random(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 
     let rng = get_rng();
     let mut rng = rng.lock().unwrap();
-    let value: f64 = rng.gen();
+    let value: f64 = rng.r#gen();
 
     Ok(Value::Float(value))
 }
@@ -227,7 +227,7 @@ fn random_randbool(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 
     let rng = get_rng();
     let mut rng = rng.lock().unwrap();
-    let value: bool = rng.gen();
+    let value: bool = rng.r#gen();
 
     Ok(Value::Boolean(value))
 }
@@ -989,10 +989,12 @@ mod tests {
         // Test unknown function
         let result = call_random_function("unknown_function", vec![]);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unknown random function"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown random function")
+        );
     }
 
     #[test]

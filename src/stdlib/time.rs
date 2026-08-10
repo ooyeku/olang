@@ -82,7 +82,7 @@ fn time_sleep(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 "sleep: milliseconds must be an integer, got {}",
                 other.type_name()
             )
-            .into())
+            .into());
         }
     };
     crate::clock::sleep_ms(ms);

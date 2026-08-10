@@ -34,11 +34,7 @@ fn assert_tier_transparent(source: &str) -> Result<Value, String> {
     let interpreted = eval(source, None);
     let promoted = eval(source, Some(2));
     match (&interpreted, &promoted) {
-        (Ok(a), Ok(b)) => assert_eq!(
-            a, b,
-            "promotion changed the result\n  source: {}",
-            source
-        ),
+        (Ok(a), Ok(b)) => assert_eq!(a, b, "promotion changed the result\n  source: {}", source),
         (Err(_), Err(_)) => {}
         _ => panic!(
             "promotion changed success/failure\n  interpreted: {:?}\n  promoted: {:?}\n  source: {}",

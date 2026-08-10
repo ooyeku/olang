@@ -11,9 +11,9 @@
 //! `unsupported_features_fail_compilation`.
 
 use olang::ast::{Statement, Value};
-use olang::ovm::bytecode::BytecodeVm;
 use olang::ovm::FunctionId;
 use olang::ovm::OvmValue;
+use olang::ovm::bytecode::BytecodeVm;
 use olang::{Interpreter, Parser};
 
 /// Run `target(args)` through the interpreter after evaluating `source`.

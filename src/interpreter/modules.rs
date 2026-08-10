@@ -8,7 +8,7 @@ use super::{
 };
 use crate::analyze::AnalysisReport;
 use crate::ast::{Pattern, Program, ShareDecl, UseDecl, Value};
-use crate::clock::{system_now, Instant};
+use crate::clock::{Instant, system_now};
 use sha2::Digest;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -52,15 +52,14 @@ impl Interpreter {
             self.cache_statistics.cache_hits += 1;
 
             // Validate if needed
-            if should_validate {
-                if let Some(hash) = current_hash {
-                    if hash != entry.content_hash {
-                        // Content changed, invalidate cache
-                        self.cache_statistics.invalidations += 1;
-                        self.module_cache.remove(module_path);
-                        return Ok(None);
-                    }
-                }
+            if should_validate
+                && let Some(hash) = current_hash
+                && hash != entry.content_hash
+            {
+                // Content changed, invalidate cache
+                self.cache_statistics.invalidations += 1;
+                self.module_cache.remove(module_path);
+                return Ok(None);
             }
 
             Ok(Some(entry.clone()))
@@ -75,24 +74,25 @@ impl Interpreter {
         module_path: &str,
     ) -> Result<Option<ModuleCacheEntry>, InterpreterError> {
         if let Some(ref cache_manager) = self.persistent_cache_manager {
-            if let Some(mut entry) = cache_manager.load_cache_entry(module_path)? {
-                // Validate persistent cache entry
-                if self.is_persistent_cache_valid(&entry, module_path)? {
-                    // Update access statistics
-                    entry.access_count += 1;
-                    entry.last_accessed = system_now();
-                    self.cache_statistics.persistent_loads += 1;
+            match cache_manager.load_cache_entry(module_path)? {
+                Some(mut entry) => {
+                    // Validate persistent cache entry
+                    if self.is_persistent_cache_valid(&entry, module_path)? {
+                        // Update access statistics
+                        entry.access_count += 1;
+                        entry.last_accessed = system_now();
+                        self.cache_statistics.persistent_loads += 1;
 
-                    // Store in memory cache for faster access
-                    self.module_cache
-                        .insert(module_path.to_string(), entry.clone());
-                    Ok(Some(entry))
-                } else {
-                    // Persistent cache is stale
-                    Ok(None)
+                        // Store in memory cache for faster access
+                        self.module_cache
+                            .insert(module_path.to_string(), entry.clone());
+                        Ok(Some(entry))
+                    } else {
+                        // Persistent cache is stale
+                        Ok(None)
+                    }
                 }
-            } else {
-                Ok(None)
+                _ => Ok(None),
             }
         } else {
             Ok(None)
@@ -317,58 +317,61 @@ impl Interpreter {
                     // Import specific items: use module { func1, func2 }
                     for item in item_list {
                         if let crate::ast::UseItem::Specific(item_name) = item {
-                            if let Some(value) = self.get_module_export(module, item_name) {
-                                // Importing an enum type name also brings its
-                                // variant constructors into scope, so the ADT is
-                                // usable for construction (`Text(..)`) and not
-                                // only as a type reference. Variants are bare
-                                // names with no qualified form to reach otherwise.
-                                if let Value::TypeInfo {
-                                    definition: crate::ast::TypeDefinition::Enum { variants },
-                                    ..
-                                } = &value
-                                {
-                                    for variant in variants {
-                                        if let Some(ctor) =
-                                            self.get_module_export(module, &variant.name)
-                                        {
-                                            self.environment.define(variant.name.clone(), ctor);
+                            match self.get_module_export(module, item_name) {
+                                Some(value) => {
+                                    // Importing an enum type name also brings its
+                                    // variant constructors into scope, so the ADT is
+                                    // usable for construction (`Text(..)`) and not
+                                    // only as a type reference. Variants are bare
+                                    // names with no qualified form to reach otherwise.
+                                    if let Value::TypeInfo {
+                                        definition: crate::ast::TypeDefinition::Enum { variants },
+                                        ..
+                                    } = &value
+                                    {
+                                        for variant in variants {
+                                            if let Some(ctor) =
+                                                self.get_module_export(module, &variant.name)
+                                            {
+                                                self.environment.define(variant.name.clone(), ctor);
+                                            }
                                         }
                                     }
+                                    self.environment.define(item_name.clone(), value);
+                                    crate::log::get_logger().debug(
+                                        "interpreter",
+                                        &format!("Imported {} from module", item_name),
+                                    );
                                 }
-                                self.environment.define(item_name.clone(), value);
-                                crate::log::get_logger().debug(
-                                    "interpreter",
-                                    &format!("Imported {} from module", item_name),
-                                );
-                            } else {
-                                // Feature 9: Enhanced function not found error with suggestions
-                                let mut available_functions = Vec::new();
-                                let current_file = self.current_module_path.clone();
+                                _ => {
+                                    // Feature 9: Enhanced function not found error with suggestions
+                                    let mut available_functions = Vec::new();
+                                    let current_file = self.current_module_path.clone();
 
-                                // Collect available functions from the module
-                                if let Value::Struct { fields, .. } = module {
-                                    available_functions.extend(fields.keys().cloned());
+                                    // Collect available functions from the module
+                                    if let Value::Struct { fields, .. } = module {
+                                        available_functions.extend(fields.keys().cloned());
+                                    }
+
+                                    // Generate suggestions for the missing function
+                                    let suggestions = self
+                                        .error_formatter
+                                        .generate_suggestions(item_name, &available_functions);
+
+                                    // Get the module path from the current context
+                                    let module_path = self
+                                        .current_module_path
+                                        .clone()
+                                        .unwrap_or_else(|| "unknown_module".to_string());
+
+                                    return Err(InterpreterError::FunctionNotFoundInModule {
+                                        function_name: item_name.clone(),
+                                        module_path,
+                                        available_functions,
+                                        suggestions,
+                                        file_path: current_file,
+                                    });
                                 }
-
-                                // Generate suggestions for the missing function
-                                let suggestions = self
-                                    .error_formatter
-                                    .generate_suggestions(item_name, &available_functions);
-
-                                // Get the module path from the current context
-                                let module_path = self
-                                    .current_module_path
-                                    .clone()
-                                    .unwrap_or_else(|| "unknown_module".to_string());
-
-                                return Err(InterpreterError::FunctionNotFoundInModule {
-                                    function_name: item_name.clone(),
-                                    module_path,
-                                    available_functions,
-                                    suggestions,
-                                    file_path: current_file,
-                                });
                             }
                         }
                     }
@@ -392,10 +395,10 @@ impl Interpreter {
         crate::log::get_logger().debug("interpreter", "Smart module cache cleared");
 
         // Optionally clear persistent cache
-        if let Some(ref mut cache_manager) = self.persistent_cache_manager {
-            if cache_manager.cleanup_cache().is_ok() {
-                crate::log::get_logger().debug("interpreter", "Persistent cache cleaned up");
-            }
+        if let Some(ref mut cache_manager) = self.persistent_cache_manager
+            && cache_manager.cleanup_cache().is_ok()
+        {
+            crate::log::get_logger().debug("interpreter", "Persistent cache cleaned up");
         }
     }
 
@@ -1049,27 +1052,30 @@ impl Interpreter {
     ) -> Result<std::path::PathBuf, InterpreterError> {
         let current_file_dir = if let Some(current_module) = self.current_module_path.clone() {
             // If we're loading from within a module, use that module's directory
-            if let Ok(cached) = self.get_cached_module(&current_module) {
-                if let Some(cached_entry) = cached {
-                    if let Some(ref file_path) = cached_entry.file_path {
-                        file_path
-                            .parent()
-                            .unwrap_or_else(|| std::path::Path::new("."))
-                            .to_path_buf()
+            match self.get_cached_module(&current_module) {
+                Ok(cached) => {
+                    if let Some(cached_entry) = cached {
+                        if let Some(ref file_path) = cached_entry.file_path {
+                            file_path
+                                .parent()
+                                .unwrap_or_else(|| std::path::Path::new("."))
+                                .to_path_buf()
+                        } else {
+                            crate::clock::current_dir().map_err(|e| {
+                                InterpreterError::RuntimeError {
+                                    message: format!("Failed to get current directory: {}", e),
+                                }
+                            })?
+                        }
                     } else {
                         crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
                             message: format!("Failed to get current directory: {}", e),
                         })?
                     }
-                } else {
-                    crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
-                        message: format!("Failed to get current directory: {}", e),
-                    })?
                 }
-            } else {
-                crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
+                _ => crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
                     message: format!("Failed to get current directory: {}", e),
-                })?
+                })?,
             }
         } else {
             // No current module context, use current working directory
@@ -1251,14 +1257,15 @@ impl Interpreter {
         available_modules.extend(stdlib.keys().map(|s| s.to_string()));
 
         // Get available modules from current directory (if any .ol files exist)
-        if let Ok(current_dir) = crate::clock::current_dir() {
-            if let Ok(entries) = std::fs::read_dir(&current_dir) {
-                for entry in entries.flatten() {
-                    if let Some(name) = entry.file_name().to_str() {
-                        if name.ends_with(".ol") && name != "main.ol" {
-                            available_modules.push(name.trim_end_matches(".ol").to_string());
-                        }
-                    }
+        if let Ok(current_dir) = crate::clock::current_dir()
+            && let Ok(entries) = std::fs::read_dir(&current_dir)
+        {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str()
+                    && name.ends_with(".ol")
+                    && name != "main.ol"
+                {
+                    available_modules.push(name.trim_end_matches(".ol").to_string());
                 }
             }
         }

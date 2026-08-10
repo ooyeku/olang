@@ -16,8 +16,8 @@
 //! memory. If a tracing GC is ever needed (e.g. for closure cycles), it must
 //! be built on a unified header+payload object model from the start.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// Garbage collection errors

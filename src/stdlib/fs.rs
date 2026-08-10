@@ -166,7 +166,7 @@ fn read_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "read_file: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -194,7 +194,7 @@ fn write_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "write_file: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -203,7 +203,7 @@ fn write_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "write_file: contents must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -231,7 +231,7 @@ fn append_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "append_file: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -240,7 +240,7 @@ fn append_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "append_file: contents must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -278,7 +278,7 @@ fn exists(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "exists: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -302,7 +302,7 @@ fn is_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "is_file: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -326,7 +326,7 @@ fn is_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "is_dir: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -350,7 +350,7 @@ fn list_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "list_dir: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -397,7 +397,7 @@ fn walk(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "walk: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -445,7 +445,7 @@ fn glob(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "glob: pattern must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -532,7 +532,7 @@ fn create_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "create_dir: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -560,7 +560,7 @@ fn create_dir_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "create_dir_all: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -588,7 +588,7 @@ fn remove_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "remove_dir: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -616,7 +616,7 @@ fn remove_dir_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "remove_dir_all: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -644,7 +644,7 @@ fn remove_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "remove_file: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -672,7 +672,7 @@ fn copy_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "copy_file: source path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -681,7 +681,7 @@ fn copy_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "copy_file: destination path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -709,7 +709,7 @@ fn move_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "move_file: source path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -718,7 +718,7 @@ fn move_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "move_file: destination path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -746,7 +746,7 @@ fn file_size(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "file_size: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -774,7 +774,7 @@ fn file_info(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "file_info: path must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -808,7 +808,7 @@ mod tests {
     use std::fs;
 
     use std::sync::Arc;
-    use tempfile::{tempdir, NamedTempFile};
+    use tempfile::{NamedTempFile, tempdir};
 
     // Helper functions to create test values
     fn string_val(s: &str) -> Value {

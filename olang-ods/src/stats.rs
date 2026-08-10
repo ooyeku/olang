@@ -16,7 +16,7 @@
 //! Standard errors come from the diagonal of `(X'X)⁻¹`, p-values from
 //! the t distribution.
 
-use crate::{dist, OdsError, Scalar, Series};
+use crate::{OdsError, Scalar, Series, dist};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

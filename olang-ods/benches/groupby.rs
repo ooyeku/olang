@@ -2,7 +2,7 @@
 //! 10M rows, 1k groups, vs Polars. Run with
 //! `cargo bench -p olang-ods --bench groupby`.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use olang_ods::{AggOp, AggSpec, Frame, Series};
 use std::hint::black_box;
 

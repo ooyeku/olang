@@ -41,16 +41,20 @@ fn sales() -> Frame {
 
 #[test]
 fn construction_validates() {
-    assert!(Frame::new(vec![
-        ("a".to_string(), Series::from_i64(vec![1, 2])),
-        ("a".to_string(), Series::from_i64(vec![3, 4])),
-    ])
-    .is_err());
-    assert!(Frame::new(vec![
-        ("a".to_string(), Series::from_i64(vec![1, 2])),
-        ("b".to_string(), Series::from_i64(vec![3])),
-    ])
-    .is_err());
+    assert!(
+        Frame::new(vec![
+            ("a".to_string(), Series::from_i64(vec![1, 2])),
+            ("a".to_string(), Series::from_i64(vec![3, 4])),
+        ])
+        .is_err()
+    );
+    assert!(
+        Frame::new(vec![
+            ("a".to_string(), Series::from_i64(vec![1, 2])),
+            ("b".to_string(), Series::from_i64(vec![3])),
+        ])
+        .is_err()
+    );
     let f = sales();
     assert_eq!(f.n_rows(), 6);
     assert_eq!(f.n_cols(), 3);

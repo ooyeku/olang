@@ -56,10 +56,10 @@ pub fn run(path: &Path) -> i32 {
         interpreter.set_current_file(&absolute);
 
         // Resolve the file's package dependencies, as `olang <file>` would.
-        if let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute) {
-            if let Ok(map) = crate::pkg::install(&root, &crate::pkg::InstallOptions::default()) {
-                interpreter.set_dependency_map(map.into_iter().collect());
-            }
+        if let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute)
+            && let Ok(map) = crate::pkg::install(&root, &crate::pkg::InstallOptions::default())
+        {
+            interpreter.set_dependency_map(map.into_iter().collect());
         }
 
         // Run from the file's own directory so relative imports and file

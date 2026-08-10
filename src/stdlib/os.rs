@@ -142,7 +142,7 @@ fn os_get_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "get_env: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -175,7 +175,7 @@ fn os_set_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "set_env: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -187,11 +187,12 @@ fn os_set_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "set_env: second argument must be a string, number, or boolean".to_string(),
-            )))))
+            )))));
         }
     };
 
-    env::set_var(var_name, var_value);
+    // FIXME: Audit that the environment access only happens in single-threaded code.
+    unsafe { env::set_var(var_name, var_value) };
     Ok(Value::Ok(Box::new(Value::Unit)))
 }
 
@@ -210,11 +211,12 @@ fn os_remove_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "remove_env: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
-    env::remove_var(var_name);
+    // FIXME: Audit that the environment access only happens in single-threaded code.
+    unsafe { env::remove_var(var_name) };
     Ok(Value::Ok(Box::new(Value::Unit)))
 }
 
@@ -254,7 +256,7 @@ fn os_has_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "has_env: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -451,7 +453,7 @@ fn os_chdir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "chdir: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -483,7 +485,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "exec: first argument (program) must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -492,7 +494,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "exec: second argument (args) must be a list of strings".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -504,7 +506,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
                     "exec: argument list must contain only strings, found {}",
                     other.type_name()
-                ))))))
+                ))))));
             }
         }
     }
@@ -520,7 +522,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             _ => {
                 return Ok(Value::Err(Box::new(Value::String(Arc::new(
                     "exec: options must be a map or object".to_string(),
-                )))))
+                )))));
             }
         };
         for (key, value) in &fields {
@@ -535,7 +537,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                                 return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
                                     "exec: env values must be strings, got {}",
                                     other.type_name()
-                                ))))))
+                                ))))));
                             }
                         }
                     }
@@ -544,7 +546,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                     return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
                         "exec: unknown or mistyped option '{}' (supported: cwd, stdin, env)",
                         other_key
-                    ))))))
+                    ))))));
                 }
             }
         }
@@ -696,7 +698,7 @@ fn os_exit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "exit: argument must be an integer".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -853,7 +855,8 @@ mod tests {
         let test_value = "test_value_123";
 
         // Clean up any existing test variable
-        env::remove_var(test_var);
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { env::remove_var(test_var) };
 
         // Test has_env for non-existent variable
         let result = os_has_env(vec![string_val(test_var)]).unwrap();
@@ -891,7 +894,8 @@ mod tests {
         );
 
         // Clean up
-        env::remove_var(test_var);
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { env::remove_var(test_var) };
     }
 
     #[test]
@@ -919,7 +923,8 @@ mod tests {
         assert_eq!(env::var(test_var).unwrap(), "true");
 
         // Clean up
-        env::remove_var(test_var);
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { env::remove_var(test_var) };
     }
 
     #[test]
@@ -1202,10 +1207,12 @@ mod tests {
         // Test unknown function
         let result = call_os_function("unknown_function", vec![]);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unknown os function"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown os function")
+        );
     }
 
     #[test]
@@ -1213,7 +1220,8 @@ mod tests {
         let test_var = "OLANG_EDGE_TEST_VAR";
 
         // Test with empty string value
-        env::remove_var(test_var);
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { env::remove_var(test_var) };
         let result = os_set_env(vec![string_val(test_var), string_val("")]).unwrap();
         assert_ok(&result);
 
@@ -1231,7 +1239,8 @@ mod tests {
         assert_eq!(extract_string(value), special_value);
 
         // Clean up
-        env::remove_var(test_var);
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { env::remove_var(test_var) };
     }
 
     #[test]

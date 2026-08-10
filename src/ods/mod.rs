@@ -14,7 +14,7 @@ mod series;
 mod stats;
 
 pub use frame::OdsFrame;
-pub use series::{make_series_value, OdsSeries};
+pub use series::{OdsSeries, make_series_value};
 
 use crate::ast::{BinaryOp, BuiltinFunction, Value};
 use crate::native::{NativeHandle, NativeObject, OvmModule};
@@ -100,10 +100,10 @@ impl OvmModule for OdsModule {
         }
         // filter/take are shared names: a Frame first argument routes to
         // the frame verbs, everything else to the series kernels.
-        if matches!(func, "filter" | "take") {
-            if let Some(result) = frame::dispatch_shared(func, &args) {
-                return result;
-            }
+        if matches!(func, "filter" | "take")
+            && let Some(result) = frame::dispatch_shared(func, &args)
+        {
+            return result;
         }
         if series::FUNCTIONS.iter().any(|(n, _)| *n == func) {
             return series::dispatch(func, args).expect("membership checked above");

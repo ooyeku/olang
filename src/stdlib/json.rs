@@ -143,7 +143,7 @@ fn json_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "parse: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -199,7 +199,7 @@ fn json_prettify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "prettify: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -233,7 +233,7 @@ fn json_minify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "minify: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -283,7 +283,7 @@ fn json_get_type(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "get_type: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -323,7 +323,7 @@ fn json_has_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "has_key: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -332,7 +332,7 @@ fn json_has_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "has_key: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -368,7 +368,7 @@ fn json_get_keys(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "get_keys: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -408,7 +408,7 @@ fn json_get_values(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "get_values: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -448,7 +448,7 @@ fn json_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "get: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -457,7 +457,7 @@ fn json_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "get: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -501,7 +501,7 @@ fn json_set(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "set: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -510,7 +510,7 @@ fn json_set(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "set: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -563,7 +563,7 @@ fn json_remove(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "remove: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -572,7 +572,7 @@ fn json_remove(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "remove: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -615,7 +615,7 @@ fn json_array_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "array_get: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -624,7 +624,7 @@ fn json_array_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "array_get: second argument must be an integer".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -669,7 +669,7 @@ fn json_array_length(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "array_length: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -705,7 +705,7 @@ fn json_array_push(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "array_push: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -758,7 +758,7 @@ fn json_merge(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "merge: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -767,7 +767,7 @@ fn json_merge(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "merge: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -776,7 +776,7 @@ fn json_merge(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         serde_json::from_str::<serde_json::Value>(json2_str),
     ) {
         (Ok(mut json1), Ok(json2)) => {
-            if let (serde_json::Value::Object(ref mut obj1), serde_json::Value::Object(obj2)) =
+            if let (serde_json::Value::Object(obj1), serde_json::Value::Object(obj2)) =
                 (&mut json1, json2)
             {
                 for (key, value) in obj2 {
@@ -821,7 +821,7 @@ fn json_deep_clone(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "deep_clone: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 

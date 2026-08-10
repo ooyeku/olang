@@ -125,7 +125,7 @@ fn http_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "get: URL must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -175,7 +175,7 @@ fn http_post(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "post: URL must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -184,7 +184,7 @@ fn http_post(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "post: body must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -235,7 +235,7 @@ fn http_put(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "put: URL must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -244,7 +244,7 @@ fn http_put(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "put: body must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -295,7 +295,7 @@ fn http_delete(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "delete: URL must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -346,7 +346,7 @@ fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "request: method must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -355,7 +355,7 @@ fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "request: URL must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -364,7 +364,7 @@ fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "request: body must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -380,7 +380,7 @@ fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
                 "Unsupported HTTP method: {}",
                 method
-            ))))))
+            ))))));
         }
     };
 
@@ -471,7 +471,7 @@ fn read_request(stream: &mut std::net::TcpStream) -> Result<Option<ParsedRequest
                         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                     ) =>
             {
-                return Ok(None)
+                return Ok(None);
             }
             Err(e) => return Err(e.to_string()),
         }
@@ -780,7 +780,7 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
             return Err(format!(
                 "serve: options must be a map or object, got {}",
                 other.type_name()
-            ))
+            ));
         }
     };
     let known = [
@@ -944,18 +944,20 @@ pub fn serve_blocking(
         let handle = match std::thread::Builder::new()
             .name(format!("olang-http-{}", worker_id + 1))
             .stack_size(32 * 1024 * 1024)
-            .spawn(move || loop {
-                let stream = {
-                    let receiver = match receiver.lock() {
-                        Ok(receiver) => receiver,
-                        Err(_) => return,
+            .spawn(move || {
+                loop {
+                    let stream = {
+                        let receiver = match receiver.lock() {
+                            Ok(receiver) => receiver,
+                            Err(_) => return,
+                        };
+                        match receiver.recv() {
+                            Ok(stream) => stream,
+                            Err(_) => return,
+                        }
                     };
-                    match receiver.recv() {
-                        Ok(stream) => stream,
-                        Err(_) => return,
-                    }
-                };
-                serve_connection(stream, &mut worker_interpreter, &handler, config);
+                    serve_connection(stream, &mut worker_interpreter, &handler, config);
+                }
             }) {
             Ok(handle) => handle,
             Err(error) => {
@@ -1104,7 +1106,7 @@ fn parse_url(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "parse_url: URL must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1200,7 +1202,7 @@ fn decode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "decode_query: query string must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1353,7 +1355,7 @@ mod tests {
                 );
                 assert_eq!(header_fields["X-Custom-Header"], string_val("test-value"));
             } else {
-                panic!("Expected headers struct, got: {:?}", &fields["headers"]);
+                panic!("Expected headers struct, got: {:?}", fields["headers"]);
             }
         } else {
             panic!("Expected HttpResponse struct, got: {:?}", result);
@@ -1627,10 +1629,12 @@ mod tests {
         // Test unknown function
         let result = call_http_function("unknown_function", vec![]);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unknown http function"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown http function")
+        );
     }
 
     #[test]
@@ -1646,11 +1650,11 @@ mod tests {
             .unwrap();
 
             // We expect this to be an error due to network, but not due to unsupported method
-            if let Value::Err(error) = result {
-                if let Value::String(error_msg) = error.as_ref() {
-                    // Should not contain "Unsupported HTTP method"
-                    assert!(!error_msg.contains("Unsupported HTTP method"));
-                }
+            if let Value::Err(error) = result
+                && let Value::String(error_msg) = error.as_ref()
+            {
+                // Should not contain "Unsupported HTTP method"
+                assert!(!error_msg.contains("Unsupported HTTP method"));
             }
         }
     }

@@ -1,5 +1,5 @@
-use once_cell::sync::Lazy;
 use parking_lot::RwLock;
+use std::sync::LazyLock;
 
 /// Global configuration for parallelization
 #[derive(Clone, Debug)]
@@ -25,8 +25,8 @@ impl Default for ParallelConfig {
     }
 }
 
-static PARALLEL_CONFIG: Lazy<RwLock<ParallelConfig>> =
-    Lazy::new(|| RwLock::new(ParallelConfig::default()));
+static PARALLEL_CONFIG: LazyLock<RwLock<ParallelConfig>> =
+    LazyLock::new(|| RwLock::new(ParallelConfig::default()));
 
 /// Get current parallel configuration
 pub fn get_config() -> ParallelConfig {

@@ -31,7 +31,7 @@ pub mod plot;
 #[cfg(feature = "stats")]
 pub mod stats;
 
-pub use bitmap::{merge_validity, Bitmap};
+pub use bitmap::{Bitmap, merge_validity};
 pub use frame::{AggOp, AggSpec, Frame, JoinHow};
 
 #[cfg(feature = "parallel")]
@@ -437,7 +437,7 @@ impl Series {
                 _ => {
                     return Err(OdsError::TypeMismatch(
                         "Bool series support only == and != comparisons".to_string(),
-                    ))
+                    ));
                 }
             },
             // Strings order lexicographically, like the language's own
@@ -452,7 +452,7 @@ impl Series {
                     "cannot compare Series[{}] with Series[{}]",
                     self.dtype(),
                     other.dtype()
-                )))
+                )));
             }
         };
         Ok(Series::Bool {
@@ -488,7 +488,7 @@ impl Series {
                 _ => {
                     return Err(OdsError::TypeMismatch(
                         "Bool series support only == and != comparisons".to_string(),
-                    ))
+                    ));
                 }
             },
             _ => {
@@ -496,7 +496,7 @@ impl Series {
                     "cannot compare Series[{}] with {:?}",
                     self.dtype(),
                     scalar
-                )))
+                )));
             }
         };
         Ok(Series::Bool {
@@ -570,7 +570,7 @@ impl Series {
                 return Err(OdsError::TypeMismatch(format!(
                     "var is not defined for {} series",
                     self.dtype()
-                )))
+                )));
             }
         };
         Ok(Some(ss / (n - 1) as f64))
@@ -741,7 +741,7 @@ impl Series {
             Series::Bool { .. } => {
                 return Err(OdsError::TypeMismatch(
                     "sort is not defined for Bool series".to_string(),
-                ))
+                ));
             }
         }
         let n = self.len();
@@ -842,7 +842,7 @@ impl Series {
             Series::Bool { .. } => {
                 return Err(OdsError::TypeMismatch(
                     "argsort is not defined for Bool series".to_string(),
-                ))
+                ));
             }
         }
         valid_idx.extend(null_idx);
@@ -862,13 +862,13 @@ impl Series {
             Series::I64 { .. } => {
                 return Err(OdsError::InvalidArgument(
                     "take indices must not contain nulls".to_string(),
-                ))
+                ));
             }
             _ => {
                 return Err(OdsError::TypeMismatch(format!(
                     "take indices must be an Int series, got Series[{}]",
                     indices.dtype()
-                )))
+                )));
             }
         };
         let len = self.len();
@@ -903,7 +903,7 @@ impl Series {
                 return Err(OdsError::TypeMismatch(format!(
                     "filter mask must be a Bool series, got Series[{}]",
                     mask.dtype()
-                )))
+                )));
             }
         };
         Ok(self.gather(&keep))
@@ -1069,7 +1069,7 @@ impl Series {
                     "cannot fill Series[{}] nulls with {:?}",
                     self.dtype(),
                     fill
-                )))
+                )));
             }
         }
         Ok(self)

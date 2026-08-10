@@ -739,12 +739,12 @@ impl BuiltinFunctions {
         // OVM extension modules (ods, ...): "<module>.<func>" dispatches
         // through the module registry. After the fixed prefixes above so
         // no existing module name can be shadowed.
-        if let Some((module_name, module_function)) = name.split_once('.') {
-            if let Some(module) = crate::native::module_named(module_name) {
-                return module
-                    .dispatch(module_function, arguments)
-                    .map_err(|message| InterpreterError::RuntimeError { message });
-            }
+        if let Some((module_name, module_function)) = name.split_once('.')
+            && let Some(module) = crate::native::module_named(module_name)
+        {
+            return module
+                .dispatch(module_function, arguments)
+                .map_err(|message| InterpreterError::RuntimeError { message });
         }
 
         match name {
@@ -781,7 +781,7 @@ impl BuiltinFunctions {
                                 "implements: second argument must be a trait name string, got {}",
                                 other.type_name()
                             ),
-                        })
+                        });
                     }
                 };
                 Ok(Value::Boolean(
@@ -918,7 +918,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "map: first argument must be a list or range".to_string(),
-                })
+                });
             }
         };
 
@@ -1016,7 +1016,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "filter: first argument must be a list or range".to_string(),
-                })
+                });
             }
         };
 
@@ -1212,7 +1212,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "reduce: first argument must be a list".to_string(),
-                })
+                });
             }
         };
         let list = list_rc.as_ref();
@@ -1312,7 +1312,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "cons: second argument must be a list".to_string(),
-                })
+                });
             }
         };
         let tail = tail_rc.as_ref();
@@ -1390,7 +1390,7 @@ impl BuiltinFunctions {
                     _ => {
                         return Err(InterpreterError::TypeError {
                             message: "range: argument must be an integer".to_string(),
-                        })
+                        });
                     }
                 };
 
@@ -1427,7 +1427,7 @@ impl BuiltinFunctions {
                     _ => {
                         return Err(InterpreterError::TypeError {
                             message: "range: arguments must be integers".to_string(),
-                        })
+                        });
                     }
                 };
 
@@ -1436,7 +1436,7 @@ impl BuiltinFunctions {
                     _ => {
                         return Err(InterpreterError::TypeError {
                             message: "range: arguments must be integers".to_string(),
-                        })
+                        });
                     }
                 };
 
@@ -1453,7 +1453,7 @@ impl BuiltinFunctions {
                     _ => {
                         return Err(InterpreterError::TypeError {
                             message: "range: arguments must be integers".to_string(),
-                        })
+                        });
                     }
                 };
 
@@ -1462,7 +1462,7 @@ impl BuiltinFunctions {
                     _ => {
                         return Err(InterpreterError::TypeError {
                             message: "range: arguments must be integers".to_string(),
-                        })
+                        });
                     }
                 };
 
@@ -1471,7 +1471,7 @@ impl BuiltinFunctions {
                     _ => {
                         return Err(InterpreterError::TypeError {
                             message: "range: arguments must be integers".to_string(),
-                        })
+                        });
                     }
                 };
 
@@ -1517,7 +1517,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "zip: arguments must be lists".to_string(),
-                })
+                });
             }
         };
         let list1 = list1_rc.as_ref();
@@ -1527,7 +1527,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "zip: arguments must be lists".to_string(),
-                })
+                });
             }
         };
         let list2 = list2_rc.as_ref();
@@ -1568,7 +1568,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "reverse: argument must be a list".to_string(),
-                })
+                });
             }
         };
         let list = list_rc.as_ref();
@@ -1601,7 +1601,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "sort: argument must be a list".to_string(),
-                })
+                });
             }
         };
         let list = list_rc.as_ref();
@@ -1651,7 +1651,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "join: first argument must be a list".to_string(),
-                })
+                });
             }
         };
         let list = list_rc.as_ref();
@@ -1661,7 +1661,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "join: second argument must be a string".to_string(),
-                })
+                });
             }
         };
         let separator = separator_rc.as_ref();
@@ -1691,7 +1691,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "split: first argument must be a string".to_string(),
-                })
+                });
             }
         };
         let string = string_rc.as_ref();
@@ -1701,7 +1701,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "split: second argument must be a string".to_string(),
-                })
+                });
             }
         };
         let separator = separator_rc.as_ref();
@@ -1726,7 +1726,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "contains: first argument must be a list".to_string(),
-                })
+                });
             }
         };
         let list = list_rc.as_ref();
@@ -1772,7 +1772,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "sum: argument must be a list or range".to_string(),
-                })
+                });
             }
         };
 
@@ -1874,7 +1874,7 @@ impl BuiltinFunctions {
                     _ => {
                         return Err(InterpreterError::TypeError {
                             message: "sum: list must contain only numbers".to_string(),
-                        })
+                        });
                     }
                 }
             }
@@ -1898,7 +1898,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "average: argument must be a list".to_string(),
-                })
+                });
             }
         };
         if list_rc.is_empty() {
@@ -1926,7 +1926,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "min: argument must be a list".to_string(),
-                })
+                });
             }
         };
         if list_rc.is_empty() {
@@ -1937,10 +1937,10 @@ impl BuiltinFunctions {
         use std::cmp::Ordering;
         let mut min = list_rc[0].clone();
         for item in list_rc.iter().skip(1) {
-            if let Some(ord) = item.compare_for_sort(&min) {
-                if ord == Ordering::Less {
-                    min = item.clone();
-                }
+            if let Some(ord) = item.compare_for_sort(&min)
+                && ord == Ordering::Less
+            {
+                min = item.clone();
             }
         }
         Ok(min)
@@ -1958,7 +1958,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "max: argument must be a list".to_string(),
-                })
+                });
             }
         };
         if list_rc.is_empty() {
@@ -1969,10 +1969,10 @@ impl BuiltinFunctions {
         use std::cmp::Ordering;
         let mut max = list_rc[0].clone();
         for item in list_rc.iter().skip(1) {
-            if let Some(ord) = item.compare_for_sort(&max) {
-                if ord == Ordering::Greater {
-                    max = item.clone();
-                }
+            if let Some(ord) = item.compare_for_sort(&max)
+                && ord == Ordering::Greater
+            {
+                max = item.clone();
             }
         }
         Ok(max)
@@ -2020,7 +2020,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "flatten: argument must be a list".to_string(),
-                })
+                });
             }
         };
         let outer_list = outer_rc.as_ref();
@@ -2061,7 +2061,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "chunk: first argument must be a list".to_string(),
-                })
+                });
             }
         };
         let size = match &args[1] {
@@ -2069,7 +2069,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "chunk: size must be a positive integer".to_string(),
-                })
+                });
             }
         };
         let mut chunks = Vec::new();
@@ -2095,7 +2095,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "enumerate: argument must be a list".to_string(),
-                })
+                });
             }
         };
         let mut result = Vec::new();
@@ -2123,7 +2123,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "find: first argument must be a list".to_string(),
-                })
+                });
             }
         };
         let predicate = &args[1];
@@ -2150,7 +2150,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "starts_with: first argument must be a string".to_string(),
-                })
+                });
             }
         };
         let prefix = match &args[1] {
@@ -2158,7 +2158,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "starts_with: second argument must be a string".to_string(),
-                })
+                });
             }
         };
         Ok(Value::Boolean(text.starts_with(prefix.as_str())))
@@ -2176,7 +2176,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "ends_with: first argument must be a string".to_string(),
-                })
+                });
             }
         };
         let suffix = match &args[1] {
@@ -2184,7 +2184,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "ends_with: second argument must be a string".to_string(),
-                })
+                });
             }
         };
         Ok(Value::Boolean(text.ends_with(suffix.as_str())))
@@ -2206,7 +2206,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "group_by: first argument must be a list".to_string(),
-                })
+                });
             }
         };
         let key_fn = &args[1];
@@ -2262,7 +2262,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "take: second argument must be a non-negative integer".to_string(),
-                })
+                });
             }
         };
         match &args[0] {
@@ -2292,7 +2292,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "skip: second argument must be a non-negative integer".to_string(),
-                })
+                });
             }
         };
         match &args[0] {
@@ -2362,7 +2362,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "concat: arguments must be lists".to_string(),
-                })
+                });
             }
         };
         let mut combined: Vec<Value> = a.as_ref().to_vec();
@@ -2403,7 +2403,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "map_filtered: first argument must be a list or range".to_string(),
-                })
+                });
             }
         };
 
@@ -2462,7 +2462,7 @@ impl BuiltinFunctions {
             None => {
                 return Err(InterpreterError::TypeError {
                     message: "entries: argument must be a map or object".to_string(),
-                })
+                });
             }
         };
         let mut keys: Vec<&String> = map.keys().collect();
@@ -2492,7 +2492,7 @@ impl BuiltinFunctions {
             None => {
                 return Err(InterpreterError::TypeError {
                     message: "map_get: first argument must be a map or object".to_string(),
-                })
+                });
             }
         };
 
@@ -2504,7 +2504,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "map_get: key must be string, integer, float, or boolean".to_string(),
-                })
+                });
             }
         };
 
@@ -2527,7 +2527,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "map_set: key must be string, integer, float, or boolean".to_string(),
-                })
+                });
             }
         };
 
@@ -2569,7 +2569,7 @@ impl BuiltinFunctions {
             None => {
                 return Err(InterpreterError::TypeError {
                     message: "map_has_key: first argument must be a map or object".to_string(),
-                })
+                });
             }
         };
 
@@ -2582,7 +2582,7 @@ impl BuiltinFunctions {
                 return Err(InterpreterError::TypeError {
                     message: "map_has_key: key must be string, integer, float, or boolean"
                         .to_string(),
-                })
+                });
             }
         };
 
@@ -2602,7 +2602,7 @@ impl BuiltinFunctions {
             None => {
                 return Err(InterpreterError::TypeError {
                     message: "map_keys: argument must be a map or object".to_string(),
-                })
+                });
             }
         };
 
@@ -2627,7 +2627,7 @@ impl BuiltinFunctions {
             None => {
                 return Err(InterpreterError::TypeError {
                     message: "map_values: argument must be a map or object".to_string(),
-                })
+                });
             }
         };
 
@@ -2653,7 +2653,7 @@ impl BuiltinFunctions {
                 return Err(InterpreterError::TypeError {
                     message: "map_remove: key must be string, integer, float, or boolean"
                         .to_string(),
-                })
+                });
             }
         };
 
@@ -2692,7 +2692,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "map_len: argument must be a map".to_string(),
-                })
+                });
             }
         };
 
@@ -2733,7 +2733,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "map_merge: first argument must be a map".to_string(),
-                })
+                });
             }
         };
 
@@ -2742,7 +2742,7 @@ impl BuiltinFunctions {
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "map_merge: second argument must be a map".to_string(),
-                })
+                });
             }
         };
 

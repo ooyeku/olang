@@ -6,7 +6,7 @@
 #![cfg(feature = "stats")]
 
 use olang_ods::stats::{chi2_gof, corr, cov, ols, t_test_one_sample, t_test_welch};
-use olang_ods::{dist, Series};
+use olang_ods::{Series, dist};
 
 fn close(got: f64, want: f64, tol: f64) {
     assert!(

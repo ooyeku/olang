@@ -129,7 +129,7 @@ impl ToSql for Param {
             other => {
                 return Err(rusqlite::Error::ToSqlConversionFailure(
                     format!("db: cannot bind {} as a SQL parameter", other.type_name()).into(),
-                ))
+                ));
             }
         };
         Ok(ToSqlOutput::Owned(v))

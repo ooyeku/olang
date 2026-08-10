@@ -25,18 +25,17 @@ impl Interpreter {
                 // is essential: a binding sub-pattern such as `b` in
                 // `Concat(a, b)` must still bind even when a `b` already in
                 // scope holds a unit variant.
-                if self.unit_variant_names.contains(name) {
-                    if let Some(variant @ Value::Enum { .. }) = self.environment.get(name) {
-                        if matches!(
-                            variant,
-                            Value::Enum {
-                                variant_data: EnumVariantData::Unit,
-                                ..
-                            }
-                        ) {
-                            return Ok(&variant == val);
+                if self.unit_variant_names.contains(name)
+                    && let Some(variant @ Value::Enum { .. }) = self.environment.get(name)
+                    && matches!(
+                        variant,
+                        Value::Enum {
+                            variant_data: EnumVariantData::Unit,
+                            ..
                         }
-                    }
+                    )
+                {
+                    return Ok(&variant == val);
                 }
                 bindings.insert(name.clone(), val.clone());
                 Ok(true)
@@ -232,11 +231,11 @@ impl Interpreter {
                 Value::String(s),
             ) => {
                 let start_char = match start.as_ref() {
-                    Pattern::Literal(Value::String(ref sv)) => sv.chars().next().unwrap_or('\0'),
+                    Pattern::Literal(Value::String(sv)) => sv.chars().next().unwrap_or('\0'),
                     _ => return Ok(false),
                 };
                 let end_char = match end.as_ref() {
-                    Pattern::Literal(Value::String(ref ev)) => ev.chars().next().unwrap_or('\0'),
+                    Pattern::Literal(Value::String(ev)) => ev.chars().next().unwrap_or('\0'),
                     _ => return Ok(false),
                 };
                 let ch = s.chars().next().unwrap_or('\0');

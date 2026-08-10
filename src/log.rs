@@ -139,35 +139,35 @@ pub fn get_logger() -> &'static Logger {
 // Convenience macros
 #[macro_export]
 macro_rules! log_error {
-    ($module:expr, $($arg:tt)*) => {
+    ($module:expr_2021, $($arg:tt)*) => {
         $crate::log::get_logger().error($module, &format!($($arg)*));
     };
 }
 
 #[macro_export]
 macro_rules! log_warn {
-    ($module:expr, $($arg:tt)*) => {
+    ($module:expr_2021, $($arg:tt)*) => {
         $crate::log::get_logger().warn($module, &format!($($arg)*));
     };
 }
 
 #[macro_export]
 macro_rules! log_info {
-    ($module:expr, $($arg:tt)*) => {
+    ($module:expr_2021, $($arg:tt)*) => {
         $crate::log::get_logger().info($module, &format!($($arg)*));
     };
 }
 
 #[macro_export]
 macro_rules! log_debug {
-    ($module:expr, $($arg:tt)*) => {
+    ($module:expr_2021, $($arg:tt)*) => {
         $crate::log::get_logger().debug($module, &format!($($arg)*));
     };
 }
 
 #[macro_export]
 macro_rules! log_trace {
-    ($module:expr, $($arg:tt)*) => {
+    ($module:expr_2021, $($arg:tt)*) => {
         $crate::log::get_logger().trace($module, &format!($($arg)*));
     };
 }

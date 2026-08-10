@@ -2,20 +2,20 @@ use crate::ast::Value;
 use aes_gcm::aead::{Aead, AeadCore};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use argon2::Argon2;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use bcrypt;
 use hex;
 use hmac::{Hmac, Mac};
 use md5::Md5;
-use rand::{thread_rng, RngCore};
+use rand::{RngCore, thread_rng};
+use rsa::Pkcs1v15Encrypt;
 use rsa::pkcs1v15::{
     Signature as RsaSignature, SigningKey as RsaSigningKey, VerifyingKey as RsaVerifyingKey,
 };
 use rsa::signature::{SignatureEncoding, Signer, Verifier};
-use rsa::Pkcs1v15Encrypt;
 use rsa::{
-    pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding},
     RsaPrivateKey, RsaPublicKey,
+    pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding},
 };
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
@@ -203,7 +203,7 @@ fn crypto_md5(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "md5: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -228,7 +228,7 @@ fn crypto_sha1(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "sha1: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -253,7 +253,7 @@ fn crypto_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "sha256: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -278,7 +278,7 @@ fn crypto_sha512(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "sha512: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -303,7 +303,7 @@ fn crypto_hmac_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "hmac_sha256: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -312,7 +312,7 @@ fn crypto_hmac_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "hmac_sha256: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -347,7 +347,7 @@ fn crypto_hmac_sha512(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "hmac_sha512: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -356,7 +356,7 @@ fn crypto_hmac_sha512(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "hmac_sha512: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -391,7 +391,7 @@ fn crypto_hash_password(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "hash_password: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -419,7 +419,7 @@ fn crypto_verify_password(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "verify_password: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -428,7 +428,7 @@ fn crypto_verify_password(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "verify_password: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -463,7 +463,7 @@ fn crypto_random_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Er
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "random_bytes: argument must be an integer".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -506,7 +506,7 @@ fn crypto_random_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "random_hex: argument must be an integer".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -538,7 +538,7 @@ fn crypto_hex_encode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "hex_encode: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -561,7 +561,7 @@ fn crypto_hex_decode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "hex_decode: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -594,7 +594,7 @@ fn crypto_secure_compare(args: Vec<Value>) -> Result<Value, Box<dyn std::error::
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "secure_compare: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -603,7 +603,7 @@ fn crypto_secure_compare(args: Vec<Value>) -> Result<Value, Box<dyn std::error::
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "secure_compare: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -638,7 +638,7 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "encrypt_aes: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -647,7 +647,7 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "encrypt_aes: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -657,7 +657,7 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         Err(_) => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "encrypt_aes: key must be valid hex string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -716,7 +716,7 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "decrypt_aes: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -725,7 +725,7 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "decrypt_aes: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -735,7 +735,7 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         Err(_) => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "decrypt_aes: key must be valid hex string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -744,7 +744,7 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         Err(_) => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "decrypt_aes: encrypted_data must be valid hex string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -756,7 +756,7 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
             _ => {
                 return Ok(Value::Err(Box::new(Value::String(Arc::new(
                     "decrypt_aes: third argument must be a string".to_string(),
-                )))))
+                )))));
             }
         };
         let nonce_bytes = match hex::decode(nonce) {
@@ -764,7 +764,7 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
             Err(_) => {
                 return Ok(Value::Err(Box::new(Value::String(Arc::new(
                     "decrypt_aes: nonce must be valid hex string".to_string(),
-                )))))
+                )))));
             }
         };
         (nonce_bytes, decoded)
@@ -842,7 +842,7 @@ fn crypto_encrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "encrypt_rsa: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -851,7 +851,7 @@ fn crypto_encrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "encrypt_rsa: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -894,7 +894,7 @@ fn crypto_decrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "decrypt_rsa: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -903,7 +903,7 @@ fn crypto_decrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "decrypt_rsa: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -965,7 +965,7 @@ fn crypto_derive_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "derive_key: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -974,7 +974,7 @@ fn crypto_derive_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "derive_key: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -990,7 +990,7 @@ fn crypto_derive_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "derive_key: third argument must be an integer".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1094,7 +1094,7 @@ fn crypto_export_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
                     _ => {
                         return Ok(Value::Err(Box::new(Value::String(Arc::new(
                             "export_public_key: public_key field must be a string".to_string(),
-                        )))))
+                        )))));
                     }
                 }
             } else {
@@ -1106,7 +1106,7 @@ fn crypto_export_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "export_public_key: argument must be a key pair struct".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1130,7 +1130,7 @@ fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "import_public_key: argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1170,7 +1170,7 @@ fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "sign_data: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1179,7 +1179,7 @@ fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "sign_data: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1217,7 +1217,7 @@ fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "verify_signature: first argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1226,7 +1226,7 @@ fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "verify_signature: second argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1235,7 +1235,7 @@ fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error
         _ => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "verify_signature: third argument must be a string".to_string(),
-            )))))
+            )))));
         }
     };
 
@@ -1254,7 +1254,7 @@ fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error
         Err(_) => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(
                 "verify_signature: signature must be a valid hex string".to_string(),
-            )))))
+            )))));
         }
     };
 

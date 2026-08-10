@@ -776,22 +776,22 @@ impl OvmValue {
             ValueData::Integer(i) => {
                 return Self {
                     data: ValueData::Integer(*i),
-                }
+                };
             }
             ValueData::Float(f) => {
                 return Self {
                     data: ValueData::Float(*f),
-                }
+                };
             }
             ValueData::Boolean(b) => {
                 return Self {
                     data: ValueData::Boolean(*b),
-                }
+                };
             }
             ValueData::Unit => {
                 return Self {
                     data: ValueData::Unit,
-                }
+                };
             }
             _ => {}
         }
