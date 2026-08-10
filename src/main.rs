@@ -216,8 +216,8 @@ fn show_file_parse_error(
     file_path: &std::path::Path,
     source: &str,
 ) {
-    println!("\n{}", "═══ Parse Error ═══".bright_red().bold());
-    println!(
+    eprintln!("\n{}", "═══ Parse Error ═══".bright_red().bold());
+    eprintln!(
         "  {}: {}",
         "File".bright_blue().bold(),
         file_path.display().to_string().bright_white()
@@ -230,12 +230,12 @@ fn show_file_parse_error(
             column,
             snippet,
         } => {
-            println!(
+            eprintln!(
                 "  {}: {}",
                 "Error".bright_red().bold(),
                 message.bright_white()
             );
-            println!(
+            eprintln!(
                 "  {}: Line {}, Column {}",
                 "Location".bright_yellow().bold(),
                 line.to_string().bright_cyan(),
@@ -243,7 +243,7 @@ fn show_file_parse_error(
             );
 
             if !snippet.trim().is_empty() {
-                println!("\n  {}", "Code Context:".bright_blue().bold());
+                eprintln!("\n  {}", "Code Context:".bright_blue().bold());
                 show_highlighted_snippet(snippet);
             }
         }
@@ -253,12 +253,12 @@ fn show_file_parse_error(
             column,
             snippet,
         } => {
-            println!(
+            eprintln!(
                 "  {}: Unexpected token '{}'",
                 "Error".bright_red().bold(),
                 token.bright_yellow().bold()
             );
-            println!(
+            eprintln!(
                 "  {}: Line {}, Column {}",
                 "Location".bright_yellow().bold(),
                 line.to_string().bright_cyan(),
@@ -266,12 +266,12 @@ fn show_file_parse_error(
             );
 
             if !snippet.trim().is_empty() {
-                println!("\n  {}", "Code Context:".bright_blue().bold());
+                eprintln!("\n  {}", "Code Context:".bright_blue().bold());
                 show_highlighted_snippet(snippet);
             }
         }
         _ => {
-            println!("  {}: {}", "Error".bright_red().bold(), error);
+            eprintln!("  {}: {}", "Error".bright_red().bold(), error);
         }
     }
 
@@ -280,20 +280,20 @@ fn show_file_parse_error(
     let suggestions = parser.get_suggestions(error, source);
 
     if !suggestions.is_empty() {
-        println!("\n  {}", "Suggestions:".bright_cyan().bold());
+        eprintln!("\n  {}", "Suggestions:".bright_cyan().bold());
         for suggestion in suggestions {
             show_suggestion(&suggestion);
         }
     }
 
     // Show help topics
-    println!("\n  {}", "Help:".bright_cyan().bold());
-    println!("    • Type {} for syntax help", "olang -h".bright_cyan());
-    println!(
+    eprintln!("\n  {}", "Help:".bright_cyan().bold());
+    eprintln!("    • Type {} for syntax help", "olang -h".bright_cyan());
+    eprintln!(
         "    • Use {} for interactive mode with better error messages",
         "olang".bright_cyan()
     );
-    println!();
+    eprintln!();
 }
 
 /// Feature 9: Show classic interpreter errors with enhanced context and suggestions
@@ -302,8 +302,8 @@ fn show_classic_interpreter_error(
     file_path: &std::path::Path,
     interpreter: &olang::interpreter::Interpreter,
 ) {
-    println!("\n{}", "═══ Execution Error ═══".bright_red().bold());
-    println!(
+    eprintln!("\n{}", "═══ Execution Error ═══".bright_red().bold());
+    eprintln!(
         "  {}: {}",
         "File".bright_blue().bold(),
         file_path.display().to_string().bright_white()
@@ -311,9 +311,9 @@ fn show_classic_interpreter_error(
 
     // Use the enhanced error formatter
     let formatted_error = interpreter.format_error(error);
-    println!("\n{}", formatted_error);
+    eprintln!("\n{}", formatted_error);
 
-    println!();
+    eprintln!();
 }
 
 /// Feature 9: Show interpreter errors with enhanced context and suggestions
