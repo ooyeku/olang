@@ -107,6 +107,15 @@ extern "C" {
     fn host_dom_get_value(handle: i64) -> *const u8;
     fn host_dom_set_value(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_on(handle: i64, event: *const u8, len: usize, callback_id: i64);
+    fn host_dom_fetch(
+        method: *const u8,
+        method_len: usize,
+        path: *const u8,
+        path_len: usize,
+        body: *const u8,
+        body_len: usize,
+        callback_id: i64,
+    );
 }
 
 use std::cell::RefCell;
@@ -192,6 +201,26 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
             unsafe { host_dom_on(handle(el)?, ev.as_ptr(), ev.len(), id) };
             Ok(Value::Unit)
         }
+        ("fetch", [method, path, body, callback]) => {
+            let (m, pa, b) = (text(method)?, text(path)?, text(body)?);
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe {
+                host_dom_fetch(
+                    m.as_ptr(),
+                    m.len(),
+                    pa.as_ptr(),
+                    pa.len(),
+                    b.as_ptr(),
+                    b.len(),
+                    id,
+                )
+            };
+            Ok(Value::Unit)
+        }
         _ => Err(format!("dom.{}: unknown function or wrong arity", name).into()),
     }
 }
@@ -260,6 +289,22 @@ pub unsafe extern "C" fn olang_session_start(ptr: *const u8, len: usize) -> *mut
 /// Called by the page with an id previously given to host_dom_on.
 #[no_mangle]
 pub unsafe extern "C" fn olang_dispatch_event(callback_id: i64) -> *mut u8 {
+    olang_dispatch_event_with(callback_id, std::ptr::null(), 0)
+}
+
+/// Re-enter the session for one event carrying a string payload (fetch
+/// responses, input values). The handler's arity decides: 1-parameter
+/// handlers receive the payload, 0-parameter handlers ignore it.
+///
+/// # Safety
+/// `ptr`, when non-null, points at `len` bytes of UTF-8 the page wrote
+/// into wasm memory via olang_alloc (we free nothing — caller deallocs).
+#[no_mangle]
+pub unsafe extern "C" fn olang_dispatch_event_with(
+    callback_id: i64,
+    ptr: *const u8,
+    len: usize,
+) -> *mut u8 {
     let handler = HANDLERS.with(|h| h.borrow().get(callback_id as usize).cloned());
     let outcome = SESSION.with(|s| {
         let mut s = s.borrow_mut();
@@ -269,8 +314,23 @@ pub unsafe extern "C" fn olang_dispatch_event(callback_id: i64) -> *mut u8 {
         let Some(handler) = handler else {
             return Err(format!("unknown handler id {}", callback_id));
         };
+        let arity = match &handler {
+            Value::Function(f) => f.parameters.len(),
+            _ => 0,
+        };
+        let args = if arity >= 1 {
+            let payload = if ptr.is_null() {
+                String::new()
+            } else {
+                String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) })
+                    .into_owned()
+            };
+            vec![Value::String(std::sync::Arc::new(payload))]
+        } else {
+            Vec::new()
+        };
         interpreter
-            .call_function(handler, vec![])
+            .call_function(handler, args)
             .map(|_| ())
             .map_err(|e| e.to_string())
     });

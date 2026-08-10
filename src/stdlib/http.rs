@@ -597,6 +597,33 @@ fn reason_phrase(status: i64) -> &'static str {
 }
 
 /// Serialize a status/body/header set into HTTP/1.1 response bytes.
+fn response_raw_bytes(
+    status: i64,
+    body: &[u8],
+    extra_headers: &[(String, String)],
+    keep_alive: bool,
+) -> Vec<u8> {
+    let mut out = format!("HTTP/1.1 {} {}\r\n", status, reason_phrase(status));
+    let has_content_type = extra_headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
+    if !has_content_type {
+        out.push_str("Content-Type: application/octet-stream\r\n");
+    }
+    for (k, v) in extra_headers {
+        out.push_str(&format!("{}: {}\r\n", k, v));
+    }
+    out.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    out.push_str(if keep_alive {
+        "Connection: keep-alive\r\n\r\n"
+    } else {
+        "Connection: close\r\n\r\n"
+    });
+    let mut bytes = out.into_bytes();
+    bytes.extend_from_slice(body);
+    bytes
+}
+
 fn response_bytes(
     status: i64,
     body: &str,
@@ -653,6 +680,17 @@ fn render_handler_result(value: &Value, keep_alive: bool) -> Vec<u8> {
                     }
                 }
                 _ => {}
+            }
+            // `body_file`: serve a file's raw bytes — the binary-safe path
+            // (olang strings cannot carry arbitrary bytes; wasm artifacts
+            // and images can). Takes precedence over `body` when present.
+            if let Some(Value::String(path)) = fields.get("body_file") {
+                return match std::fs::read(path.as_str()) {
+                    Ok(bytes) => response_raw_bytes(status, &bytes, &headers, keep_alive),
+                    Err(e) => {
+                        response_bytes(404, &format!("body_file {}: {}", path, e), &[], keep_alive)
+                    }
+                };
             }
             response_bytes(status, &body, &headers, keep_alive)
         }

@@ -42,13 +42,24 @@ let boot_ms = time.monotonic_ms()
 
 // ── static files, read once at startup ──
 
-let index_html = unwrap(fs.read_file("static/index.html"))
-let app_js = unwrap(fs.read_file("static/app.js"))
+let olang_html = unwrap(fs.read_file("static/index.html"))
+let olang_shim = unwrap(fs.read_file("static/olang-dom.js"))
+let app_ol = unwrap(fs.read_file("static/app.ol"))
 
-fn page(req, params) =
-    http.response_with_headers(200, index_html, #{ "Content-Type": "text/html; charset=utf-8" })
-fn script(req, params) =
-    http.response_with_headers(200, app_js, #{ "Content-Type": "text/javascript; charset=utf-8" })
+// ── the olang frontend: the same tracker with its logic in app.ol,
+//    running in the browser as wasm (see docs: the dom module) ──
+fn olang_page(req, params) =
+    http.response_with_headers(200, olang_html, #{ "Content-Type": "text/html; charset=utf-8" })
+fn olang_shim_js(req, params) =
+    http.response_with_headers(200, olang_shim, #{ "Content-Type": "text/javascript; charset=utf-8" })
+fn olang_source(req, params) =
+    http.response_with_headers(200, app_ol, #{ "Content-Type": "text/plain; charset=utf-8" })
+// The wasm is binary: body_file serves raw bytes straight from disk.
+fn olang_wasm(req, params) = {
+    status: 200,
+    body_file: "static/olang_playground.wasm",
+    headers: #{ "Content-Type": "application/wasm" }
+}
 
 // ── request-body plumbing ──
 
@@ -198,8 +209,10 @@ fn health(req, params) = {
 // ── wiring ──
 
 let routes = [
-    route("GET", "/", page),
-    route("GET", "/app.js", script),
+    route("GET", "/", olang_page),
+    route("GET", "/olang-dom.js", olang_shim_js),
+    route("GET", "/app.ol", olang_source),
+    route("GET", "/olang.wasm", olang_wasm),
     route("GET", "/health", health),
     route("GET", "/api/issues", issues_list),
     route("POST", "/api/issues", issues_create),

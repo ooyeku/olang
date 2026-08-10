@@ -84,6 +84,23 @@ documented.
   for custom binary locations. The book gains an Editors chapter with
   Neovim wiring included.
 
+- **The tracker runs on olang end to end — page shim, dom.fetch, and
+  the JS frontend deleted.** examples/app now serves ONE frontend:
+  app.ol, running in the browser as WebAssembly through the page shim
+  (static/olang-dom.js — real DOM host imports, session boot, event
+  and fetch-response dispatch). dom.fetch(method, path, body, cb)
+  bridges browser HTTP with responses delivered to 1-argument olang
+  closures via the new olang_dispatch_event_with; http.serve gains
+  body_file responses (raw bytes from disk) so the olang backend can
+  serve its own wasm binary. The frontend is deliberately stateless —
+  olang closures capture by value (spawn semantics), so state flows
+  down through arguments and the DOM itself, which the first draft
+  learned the hard way: a handler's write to module-level mut state
+  vanished into its own environment (parsed 14, rendered 0). Verified
+  in a real browser: render from the API, add, status-advance (PATCH),
+  and delete all round-trip through olang closures; the harness covers
+  the fetch-payload path headlessly.
+
 - **The `dom` module — olang as a frontend language.** A new stdlib
   module (query, get/set_text, set_html, value/set_value, on) whose
   operations cross the wasm boundary as host imports the page

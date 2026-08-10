@@ -19,6 +19,7 @@ pub fn create_dom_module() -> Value {
         ("value", 1),
         ("set_value", 2),
         ("on", 3),
+        ("fetch", 4),
     ] {
         module.insert(
             name.to_string(),

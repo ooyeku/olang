@@ -21,6 +21,15 @@
         "cd examples/app && exec ../../target/debug/olang main.ol 7013 :memory:"
       ],
       "port": 7013
+    },
+    {
+      "name": "tracker-olang",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd examples/app && exec ../../target/release/olang main.ol 7461"
+      ],
+      "port": 7461
     }
   ]
 }
