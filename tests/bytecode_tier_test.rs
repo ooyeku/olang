@@ -2611,3 +2611,17 @@ acc
 "#,
     );
 }
+
+#[test]
+fn group_by_preserves_key_type_and_order() {
+    // Int keys stay Int (not stringified), first-seen order is stable, and
+    // the emitted key compares equal to the classifier's own return value.
+    // Both tiers must agree.
+    assert_tier_transparent(
+        r#"
+let g = group_by([1, 2, 3, 4, 5], (x) => x % 2)
+let by_letter = group_by(["ax", "by", "az"], (s) => str.substring(s, 0, 1))
+to_string(g) + " | " + to_string(by_letter) + " | " + to_string(by_letter[0][0] == "a")
+"#,
+    );
+}

@@ -2211,19 +2211,38 @@ impl BuiltinFunctions {
         };
         let key_fn = &args[1];
         use std::collections::HashMap;
-        let mut groups: HashMap<String, Vec<Value>> = HashMap::new();
+        // Group by the key's VALUE, preserving its type (an Int key stays an
+        // Int, a String key stays a bare string), in first-seen order so the
+        // result is deterministic. The HashMap holds only a type-tagged
+        // canonical string to locate a group in O(1); the emitted key is the
+        // original value. (Tagging keeps `0` and `"0"` in separate groups.)
+        fn canonical_key(v: &Value) -> String {
+            match v {
+                Value::Integer(i) => format!("i:{i}"),
+                Value::Float(f) => format!("f:{}", f.to_bits()),
+                Value::String(s) => format!("s:{s}"),
+                Value::Boolean(b) => format!("b:{b}"),
+                Value::Unit => "u:".to_string(),
+                other => format!("o:{other}"),
+            }
+        }
+        let mut index: HashMap<String, usize> = HashMap::new();
+        let mut order: Vec<(Value, Vec<Value>)> = Vec::new();
         for item in list_rc.iter() {
             let key_val = interpreter.call_function(key_fn.clone(), vec![item.clone()])?;
-            let key_str = key_val.to_string();
-            groups.entry(key_str).or_default().push(item.clone());
+            let canon = canonical_key(&key_val);
+            match index.get(&canon) {
+                Some(&pos) => order[pos].1.push(item.clone()),
+                None => {
+                    index.insert(canon, order.len());
+                    order.push((key_val, vec![item.clone()]));
+                }
+            }
         }
-        // Convert groups to list of tuples (key, list)
-        let mut out = Vec::new();
-        for (k, v) in groups.into_iter() {
-            out.push(Value::Tuple(
-                vec![Value::String(k.into()), Value::List(v.into())].into(),
-            ));
-        }
+        let out: Vec<Value> = order
+            .into_iter()
+            .map(|(k, v)| Value::Tuple(vec![k, Value::List(v.into())].into()))
+            .collect();
         Ok(Value::List(out.into()))
     }
 
