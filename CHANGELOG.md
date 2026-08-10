@@ -35,6 +35,25 @@ documented.
   progress indicator — appears immediately instead of waiting for the
   next newline.
 
+## [Unreleased]
+
+### Added
+
+- **`olang lsp` — the language server, in the same binary.** Speaks LSP
+  over stdio: diagnostics as you type (parse errors with the parser's
+  own line/column; analyzer warnings such as unused variables at their
+  declaration sites), completions (keywords, global builtins, the 19
+  stdlib modules, and fn/type/let names from the open file), and
+  whole-document formatting through the olang fmt engine. Stateless by
+  design — every edit re-parses whole files. Tested at the protocol
+  level: tests/lsp_test.rs drives the real binary over stdio through
+  the complete loop, including clean shutdown.
+- **VS Code extension (editors/vscode/).** TextMate grammar (par for,
+  pipelines, template strings, module names), bracket/indent config,
+  and a thin client launching `olang lsp`; `olang.serverPath` setting
+  for custom binary locations. The book gains an Editors chapter with
+  Neovim wiring included.
+
 ## [0.43.0] - 2026-08-09
 
 ### Added

@@ -1,0 +1,46 @@
+{
+  "name": "olang",
+  "displayName": "olang",
+  "description": "olang language support: syntax highlighting, diagnostics, completions, and formatting via the built-in language server (olang lsp).",
+  "version": "0.1.0",
+  "publisher": "olang-lang",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/ooyeku/olang" },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages", "Formatters", "Linters"],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "olang",
+        "aliases": ["olang"],
+        "extensions": [".ol"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "olang",
+        "scopeName": "source.olang",
+        "path": "./syntaxes/olang.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "olang",
+      "properties": {
+        "olang.serverPath": {
+          "type": "string",
+          "default": "olang",
+          "description": "Path to the olang binary (the server runs as `olang lsp`)."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^2.24.0"
+  }
+}

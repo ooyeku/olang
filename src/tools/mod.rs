@@ -2,6 +2,8 @@
 //! (`olang test`) and the formatter (`olang fmt`).
 
 pub mod fmt;
+#[cfg(feature = "native")]
+pub mod lsp; // `olang lsp` — the language server over stdio
 pub mod test_runner;
 
 use std::path::{Path, PathBuf};

@@ -30,6 +30,8 @@ native = [
     "dep:dirs",
     "dep:rayon",
     "dep:num_cpus",
+    "dep:lsp-server",
+    "dep:lsp-types",
     "dep:cranelift-codegen",
     "dep:cranelift-frontend",
     "dep:cranelift-jit",
@@ -101,6 +103,11 @@ rayon = { version = "1.8", optional = true }  # Data parallelism library
 once_cell = "1.19"     # Thread-safe lazy statics
 parking_lot = "0.12"   # High-performance synchronization primitives
 num_cpus = { version = "1.16", optional = true }  # CPU core detection
+
+# The language server (src/tools/lsp.rs): `olang lsp` speaks LSP over
+# stdio to editors. Native-only.
+lsp-server = { version = "0.7", optional = true }
+lsp-types = { version = "0.95", optional = true }
 
 # The baseline JIT (src/ovm/jit.rs): pure-integer hot functions compile to
 # native code. Native-only — the wasm playground never sees these.

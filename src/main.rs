@@ -147,6 +147,15 @@ fn run() -> i32 {
                     .unwrap_or_else(|| PathBuf::from("."));
                 return olang::tools::test_runner::run(&target);
             }
+            "lsp" => {
+                return match olang::tools::lsp::run() {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("language server error: {e}");
+                        1
+                    }
+                };
+            }
             "fmt" => {
                 let check = cli.script_args.iter().any(|a| a == "--check");
                 let mut paths: Vec<PathBuf> = cli

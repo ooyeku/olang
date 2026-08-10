@@ -33,6 +33,7 @@ with `cd examples && olang run_all.ol`.
 
 | Chapter | What it covers |
 |---|---|
+| **[Editors](editors.md)** | The built-in language server (`olang lsp`): diagnostics, completions, formatting; the VS Code extension |
 | **[Internals](internals.md)** | Architecture: grammar → parser → interpreter → bytecode tier → JIT; the value model; modules; how to add things |
 | **[The OVM](ovm.md)** | The bytecode and JIT tiers in depth: design, measured speedups, limitations |
 | **[Stability](stability.md)** | What is stable, what is experimental, and how the language evolves from here |
