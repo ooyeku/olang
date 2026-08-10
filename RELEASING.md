@@ -6,6 +6,8 @@ has followed; 5–6 are the distribution machinery layered on top.
 
 ## 1. Version bump
 
+- `docs/packages.md` — the REPL transcript shows the version banner
+  (`Olang vX.Y.Z`); update it to match.
 - `Cargo.toml` — bump `version` (this is the version `olang --version`
   and `otc --version` both report).
 - `CHANGELOG.md` — promote `## [Unreleased]` to `## [X.Y.Z] - <date>`.
@@ -33,7 +35,7 @@ step only.
 ## 3. Release commit
 
 ```bash
-git add Cargo.toml CHANGELOG.md
+git add Cargo.toml CHANGELOG.md docs/packages.md
 git commit -m "chore(release): vX.Y.Z"   # body: what the release is,
                                           # closing with the gates that passed
 ```
