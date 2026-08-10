@@ -52,7 +52,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, Type, Value as ClifValue, types};
+use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlagsData, Type, Value as ClifValue, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
@@ -1104,7 +1104,7 @@ impl JitCache {
                     }
                     return None;
                 }
-                builder.finalize();
+                builder.finalize(module.target_config());
             }
             if let Err(e) = module.define_function(*clif_id, &mut ctx) {
                 if jit_debug() {
@@ -1151,7 +1151,7 @@ impl JitCache {
                 for (i, k) in plan.param_kinds.iter().enumerate() {
                     call_args.push(builder.ins().load(
                         k.clif_type(),
-                        MemFlags::trusted(),
+                        MemFlagsData::trusted(),
                         args_ptr,
                         (i * 8) as i32,
                     ));
@@ -1166,7 +1166,7 @@ impl JitCache {
                 for (slot_i, v) in results[..n_vals].iter().enumerate() {
                     builder
                         .ins()
-                        .store(MemFlags::trusted(), *v, out_ptr, (slot_i * 8) as i32);
+                        .store(MemFlagsData::trusted(), *v, out_ptr, (slot_i * 8) as i32);
                 }
                 let status = results[n_vals];
                 if matches!(inf.ret_kind, Kind::Struct(_) | Kind::Str) {
@@ -1199,7 +1199,7 @@ impl JitCache {
                     builder.ins().return_(&[status]);
                 }
                 builder.seal_all_blocks();
-                builder.finalize();
+                builder.finalize(module.target_config());
             }
             module.define_function(entry_fid, &mut ctx).ok()?;
             module.clear_context(&mut ctx);
@@ -2148,6 +2148,7 @@ fn translate_body(
     } = helpers;
     let n = bytecode.instructions.len();
     let param_count = inference.param_kinds.len();
+    let ptr_ty = module.target_config().pointer_type();
 
     // Block leaders: entry, every jump target, every instruction after a
     // conditional jump (the fallthrough edge needs a block).
@@ -2192,27 +2193,39 @@ fn translate_body(
         }
     }
 
-    // One typed variable per LIVE register, plus the depth budget.
-    let nregs = bytecode.register_count as usize;
-    for r in 0..nregs {
-        if let Some(k) = r#gen.kind(r as u32) {
-            builder.declare_var(Variable::from_u32(r as u32), k.clif_type());
-        }
-    }
-    let depth_var = Variable::from_u32(nregs as u32);
-    builder.declare_var(depth_var, types::I64);
-    let ctx_var = Variable::from_u32(nregs as u32 + 1);
-    builder.declare_var(ctx_var, types::I64);
-    // Tuple registers: one variable per element, allocated past the
-    // scalar space. Register r's element i lives at
+    // One typed variable per register, plus the depth budget and ctx.
+    // Tuple registers get one variable per element, allocated past the
+    // scalar space: register r's element i lives at
     // tuple_base + r*MAX_TUPLE + i.
+    //
+    // cranelift 0.134's declare_var allocates Variable indices
+    // sequentially, so the dense index scheme above is preserved by
+    // declaring every slot in index order; dead slots get an I64 filler
+    // that is never read or written.
+    let nregs = bytecode.register_count as usize;
+    let depth_var = Variable::from_u32(nregs as u32);
+    let ctx_var = Variable::from_u32(nregs as u32 + 1);
     let tuple_base = nregs as u32 + 2;
     let tuple_var =
         |r: u32, i: usize| Variable::from_u32(tuple_base + r * MAX_TUPLE as u32 + i as u32);
+    let total_vars = match inference.tuples.keys().copied().max() {
+        Some(r) => tuple_base as usize + (r as usize + 1) * MAX_TUPLE,
+        None => nregs + 2,
+    };
+    let mut var_types = vec![types::I64; total_vars];
+    for (r, slot) in var_types.iter_mut().enumerate().take(nregs) {
+        if let Some(k) = r#gen.kind(r as u32) {
+            *slot = k.clif_type();
+        }
+    }
     for (r, tk) in &inference.tuples {
         for (i, k) in tk.iter().enumerate() {
-            builder.declare_var(tuple_var(*r, i), k.clif_type());
+            var_types[tuple_var(*r, i).as_u32() as usize] = k.clif_type();
         }
+    }
+    for (i, ty) in var_types.iter().enumerate() {
+        let declared = builder.declare_var(*ty);
+        debug_assert_eq!(declared, Variable::from_u32(i as u32));
     }
 
     builder.switch_to_block(entry_block);
@@ -2324,7 +2337,7 @@ fn translate_body(
                     let helper_ref = module.declare_func_in_func(str_concat_helper, builder.func);
                     let call = builder.ins().call(helper_ref, &[ctx, a, b]);
                     let ptr = builder.inst_results(call)[0];
-                    let null = builder.ins().icmp_imm(IntCC::Equal, ptr, 0);
+                    let null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
                     let ok_block = builder.create_block();
                     builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
                     builder.switch_to_block(ok_block);
@@ -2540,7 +2553,7 @@ fn translate_body(
                 for (i, r) in field_regs.iter().enumerate() {
                     let k = r#gen.kind(r.0)?;
                     let v = builder.use_var(Variable::from_u32(r.0));
-                    builder.ins().stack_store(v, slot, (i * 8) as i32);
+                    builder.ins().stack_store(ptr_ty, v, slot, (i * 8) as i32);
                     let code: i64 = match k {
                         Kind::Int => 0,
                         Kind::Float => 1,
@@ -2563,7 +2576,7 @@ fn translate_body(
                     .ins()
                     .call(helper_ref, &[ctx, shape_ptr, fields_ptr, n_v, kinds_v]);
                 let ptr = builder.inst_results(call)[0];
-                let null = builder.ins().icmp_imm(IntCC::Equal, ptr, 0);
+                let null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
                 let ok_block = builder.create_block();
                 builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
                 builder.switch_to_block(ok_block);
@@ -2602,7 +2615,7 @@ fn translate_body(
                 let ok_block = builder.create_block();
                 builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
                 builder.switch_to_block(ok_block);
-                let val = builder.ins().stack_load(load_ty, slot, 0);
+                let val = builder.ins().stack_load(ptr_ty, load_ty, slot, 0);
                 r#gen.write(builder, dst.0, val);
             }
             Instruction::IndexGet { dst, object, index } => {
@@ -2631,7 +2644,7 @@ fn translate_body(
                 let ok_block = builder.create_block();
                 builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
                 builder.switch_to_block(ok_block);
-                let val = builder.ins().stack_load(load_ty, slot, 0);
+                let val = builder.ins().stack_load(ptr_ty, load_ty, slot, 0);
                 r#gen.write(builder, dst.0, val);
             }
             Instruction::GetField {
@@ -2680,7 +2693,7 @@ fn translate_body(
                 let ok_block = builder.create_block();
                 builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
                 builder.switch_to_block(ok_block);
-                let val = builder.ins().stack_load(fk.clif_type(), slot, 0);
+                let val = builder.ins().stack_load(ptr_ty, fk.clif_type(), slot, 0);
                 r#gen.write(builder, dst.0, val);
             }
             Instruction::Jump { target } => {
@@ -2711,9 +2724,10 @@ fn translate_body(
                 let depth = builder.use_var(depth_var);
                 let one = builder.ins().iconst(types::I64, 1);
                 let new_depth = builder.ins().isub(depth, one);
-                let exhausted = builder
-                    .ins()
-                    .icmp_imm(IntCC::SignedLessThanOrEqual, new_depth, 0);
+                let exhausted =
+                    builder
+                        .ins()
+                        .icmp_imm_s(IntCC::SignedLessThanOrEqual, new_depth, 0);
                 let cont = builder.create_block();
                 builder.ins().brif(exhausted, deopt_block, &[], cont, &[]);
                 builder.switch_to_block(cont);
@@ -2942,7 +2956,7 @@ fn emit_arith(
             let ax = builder.ins().bxor(a, r);
             let bx = builder.ins().bxor(b, r);
             let both = builder.ins().band(ax, bx);
-            let overflow = builder.ins().icmp_imm(IntCC::SignedLessThan, both, 0);
+            let overflow = builder.ins().icmp_imm_s(IntCC::SignedLessThan, both, 0);
             let cont = builder.create_block();
             builder.ins().brif(overflow, deopt, &[], cont, &[]);
             builder.switch_to_block(cont);
@@ -2955,7 +2969,7 @@ fn emit_arith(
             let ab = builder.ins().bxor(a, b);
             let ar = builder.ins().bxor(a, r);
             let both = builder.ins().band(ab, ar);
-            let overflow = builder.ins().icmp_imm(IntCC::SignedLessThan, both, 0);
+            let overflow = builder.ins().icmp_imm_s(IntCC::SignedLessThan, both, 0);
             let cont = builder.create_block();
             builder.ins().brif(overflow, deopt, &[], cont, &[]);
             builder.switch_to_block(cont);
@@ -2966,7 +2980,7 @@ fn emit_arith(
             // overflow iff the high 64 bits disagree with the sign
             // extension of the low 64: smulhi(a,b) != r >> 63
             let hi = builder.ins().smulhi(a, b);
-            let sign = builder.ins().sshr_imm(r, 63);
+            let sign = builder.ins().sshr_imm_s(r, 63);
             let overflow = builder.ins().icmp(IntCC::NotEqual, hi, sign);
             let cont = builder.create_block();
             builder.ins().brif(overflow, deopt, &[], cont, &[]);
@@ -2976,14 +2990,14 @@ fn emit_arith(
         Arith::Div | Arith::Mod => {
             // b == 0 and (a == i64::MIN && b == -1) both deopt (the VM's
             // zero-division and checked-overflow errors respectively).
-            let zero_div = builder.ins().icmp_imm(IntCC::Equal, b, 0);
+            let zero_div = builder.ins().icmp_imm_s(IntCC::Equal, b, 0);
             let cont1 = builder.create_block();
             builder.ins().brif(zero_div, deopt, &[], cont1, &[]);
             builder.switch_to_block(cont1);
 
             let min = builder.ins().iconst(types::I64, i64::MIN);
             let a_min = builder.ins().icmp(IntCC::Equal, a, min);
-            let b_neg1 = builder.ins().icmp_imm(IntCC::Equal, b, -1);
+            let b_neg1 = builder.ins().icmp_imm_s(IntCC::Equal, b, -1);
             let both = builder.ins().band(a_min, b_neg1);
             let cont2 = builder.create_block();
             builder.ins().brif(both, deopt, &[], cont2, &[]);

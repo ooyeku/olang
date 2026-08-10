@@ -12,6 +12,13 @@ documented.
 
 ### Changed
 
+- **N-body twice as fast under the JIT.** Cranelift 0.121 → 0.134 puts
+  13 releases of instruction-selection and aarch64 codegen work under
+  every JIT'd function with zero olang-side semantic change: the N-body
+  benchmark drops 48 ms → 26 ms (best of 3, same machine, byte-identical
+  momentum-conservation output); fib(30) holds at 4 ms. The full JIT
+  parity suite and the differential tests pin the tier's bit-identical
+  contract across the upgrade.
 - **A years-newer SQLite under the `db` module.** rusqlite 0.31 → 0.40
   brings its bundled SQLite engine forward several years of upstream
   releases — query-planner, correctness, and performance work land under

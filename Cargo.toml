@@ -110,10 +110,10 @@ lsp-types = { version = "0.95", optional = true }
 
 # The baseline JIT (src/ovm/jit.rs): pure-integer hot functions compile to
 # native code. Native-only — the wasm playground never sees these.
-cranelift-codegen = { version = "0.121.0", optional = true }
-cranelift-frontend = { version = "0.121.0", optional = true }
-cranelift-jit = { version = "0.121.0", optional = true }
-cranelift-module = { version = "0.121.0", optional = true }
+cranelift-codegen = { version = "0.134.3", optional = true }
+cranelift-frontend = { version = "0.134.3", optional = true }
+cranelift-jit = { version = "0.134.3", optional = true }
+cranelift-module = { version = "0.134.3", optional = true }
 
 # Optional: For better debugging and development
 tracing = "0.1"

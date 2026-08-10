@@ -91,7 +91,7 @@
         </tr>
         <tr>
           <td class="label">N-body — 120 bodies × 150 steps</td>
-          <td class="num self">48 ms</td>
+          <td class="num self">26 ms</td>
           <td class="num">6 ms</td>
           <td class="num">8 ms</td>
           <td class="num">396 ms</td>
@@ -115,7 +115,7 @@
     </table>
     </div>
     <p class="bench-note">
-      fib(30) went 89 ms → 4 ms and N-body 400 ms → 48 ms as the Cranelift
+      fib(30) went 89 ms → 4 ms and N-body 400 ms → 26 ms as the Cranelift
       JIT lane landed and closed — level with the JavaScript JITs on numeric
       work, ~11× ahead of CPython on fib. Interpreter-only mode runs the
       same programs; the tiers are an optimization, never a semantic.

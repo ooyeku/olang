@@ -378,7 +378,7 @@ What this buys, measured: fib(30) 89 ms → **4 ms** (level with the
 JavaScript JITs) — and fib split across two mutually recursive
 functions runs at the same speed, where a self-call-only design managed
 94 ms; N-body — structs, floats, lists, tuples, and `math.sqrt` in a
-hot loop — 400 ms → **48 ms**, its force loops compiling whole; integer
+hot loop — 400 ms → **26 ms**, its force loops compiling whole; integer
 loop kernels 20–30×; float kernels (Mandelbrot-style orbit loops)
 ~4.5×; a struct-field kernel 143 ms → 18 ms (8×); and `par_map` (or
 `par for`) over a jitted kernel multiplies further — workers carry
@@ -452,7 +452,7 @@ Four representative workloads against the field:
 
 | Workload | Rust | Node | Bun | CPython | Ruby | **olang** |
 |---|---|---|---|---|---|---|
-| N-body (120 bodies × 150 steps) | 2.5 ms | 6 ms | 8 ms | 396 ms | 470 ms | **48 ms** |
+| N-body (120 bodies × 150 steps) | 2.5 ms | 6 ms | 8 ms | 396 ms | 470 ms | **26 ms** |
 | Word frequency (50k tokens × 20) | 5 ms | 16 ms | 12 ms | 15 ms | 61 ms | **26 ms** |
 | `map(λ) \|> sum` pipeline, 1M elements | ~0 ms | 9 ms | 4 ms | 23 ms | 21 ms | **20 ms** |
 | fib(30) (2.7M recursive calls) | 1.2 ms | 4 ms | 4 ms | 46 ms | 43 ms | **4 ms** |
@@ -466,13 +466,13 @@ The shape of the result: on pure numeric work the JIT puts olang
 and Bun's 4 ms and runs ~11× ahead of CPython and Ruby; the pipeline
 workload (a jitted lambda inside the VM's native map loop) leads CPython
 and Ruby. N-body — structs, floats, lists, tuples, and `math.sqrt` in a
-hot loop — runs 8× ahead of CPython and nearly 10× ahead of Ruby. The
+hot loop — runs 15× ahead of CPython and 18× ahead of Ruby. The
 remaining gap to Rust is the price of guards, boxing at tier
 boundaries, and the deliberate refusal rules around allocation in
 loops.
 
 Against its own interpreter, the tiers are worth roughly 275× (fib,
-bytecode + JIT) to ~490× (N-body): the whole N-body simulation —
+bytecode + JIT) to ~900× (N-body): the whole N-body simulation —
 construction, stepping, capturing lambdas, struct building, field
 access, `math.sqrt` — runs as 6 promoted functions, 0 rejected, with 7
 tier crossings.

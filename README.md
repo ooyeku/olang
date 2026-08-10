@@ -125,7 +125,7 @@ async and global assignment, by design). The JIT covers ints, floats,
 structs, lists, tuples, and strings: each either compiles or refuses by
 a tested rule (allocating loops, for instance, deliberately stay on
 bytecode driving native constructors). Measured: fib(30) at 4 ms, level
-with Node and Bun; N-body at 48 ms, 8× ahead of CPython; integer
+with Node and Bun; N-body at 26 ms, 15× ahead of CPython; integer
 kernels 20–30× over bytecode; float kernels ~4.5×. Details and measured
 tables: [docs/internals.md](docs/internals.md),
 [docs/ovm.md](docs/ovm.md).
