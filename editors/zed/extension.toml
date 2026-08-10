@@ -13,4 +13,4 @@ languages = ["olang"]
 [grammars.olang]
 repository = "https://github.com/ooyeku/olang"
 path = "editors/tree-sitter-olang"
-rev = "main"
+rev = "9cfdbba2a1d3363fbce9726b29f05eb2c4f17ce3"
