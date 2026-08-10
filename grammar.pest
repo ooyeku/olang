@@ -100,7 +100,7 @@ mut_kw      = @{ "mut" ~ !(ASCII_ALPHANUMERIC | "_") }
 let_decl    = { "let" ~ mut_kw? ~ pattern ~ (":" ~ type_annotation)? ~ (("=" ~ NL* ~ expr) | &(";" | NEWLINE | COMMENT | "}" | EOI)) }
 
 // Expression hierarchy (with proper operator precedence)
-expr        = { assignment_expr | for_loop | while_loop | loop_expr | break_expr | continue_expr | return_expr | binary_expr }
+expr        = { assignment_expr | par_for_loop | for_loop | while_loop | loop_expr | break_expr | continue_expr | return_expr | binary_expr }
 
 add_op        = { "+" | "-" }
 mul_op        = { "*" | "/" | "%" }
@@ -218,6 +218,10 @@ map_entry = { expr ~ ":" ~ expr }
 // Loop constructs. The loop binding is a name or a tuple of names —
 // `for (i, x) in enumerate(xs)` destructures each element.
 for_loop    = { "for" ~ (for_binding_tuple | identifier) ~ "in" ~ expr ~ block }
+// `par for` fans iterations across worker threads: spawn-style snapshot
+// semantics, an implicit barrier at the end, Unit result. `par` is not a
+// reserved word — it only means something directly before `for`.
+par_for_loop = { "par" ~ "for" ~ (for_binding_tuple | identifier) ~ "in" ~ expr ~ block }
 for_binding_tuple = { "(" ~ identifier ~ ("," ~ identifier)+ ~ ")" }
 while_loop  = { "while" ~ expr ~ block }
 loop_expr   = { "loop" ~ block }

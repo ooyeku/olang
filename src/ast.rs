@@ -219,6 +219,14 @@ pub enum Expr {
         iterable: Box<Expr>,
         body: Box<Expr>,
     },
+    /// `par for x in xs { ... }` — iterations fan across worker threads
+    /// with spawn-style snapshot semantics and a barrier at the end.
+    /// Interpreter-only: the bytecode compiler refuses it (fail-closed).
+    ParForLoop {
+        variable: String,
+        iterable: Box<Expr>,
+        body: Box<Expr>,
+    },
     WhileLoop {
         condition: Box<Expr>,
         body: Box<Expr>,

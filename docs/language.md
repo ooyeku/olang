@@ -516,6 +516,29 @@ for (k, v) in entries(#{ "b": 2, "a": 1 }) {
 }
 ```
 
+### `par for` — parallel iteration
+
+`par for` fans iterations across OS worker threads (one interpreter,
+with its own bytecode tier and JIT, per worker) and waits for all of
+them — an implicit barrier. It iterates lists, ranges, and strings, with
+the same tuple destructuring as `for`. `par` is not a reserved word; it
+only means something directly before `for`.
+
+Semantics match `spawn` and `par_map`: the body runs against worker
+snapshots, so mutating enclosing state is not visible to the caller —
+use `par for` for real per-element effects and heavy computation, and
+`par_map` when you want values back. If several iterations fail, the
+error reported is the one the sequential loop would have hit first.
+`break` and `return` cannot cross the parallel boundary; `continue`
+works within an iteration. The loop evaluates to Unit.
+
+```olang no-run
+par for (i, chunk) in enumerate(chunks) {
+    let report = analyze(chunk)
+    unwrap(fs.write_file("report-" + show(i) + ".txt", report))
+}
+```
+
 ### `loop`, `break`, `continue`
 
 `loop` repeats forever until `break`; `continue` skips to the next

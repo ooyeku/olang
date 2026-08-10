@@ -565,6 +565,11 @@ impl Analyzer {
                 variable,
                 iterable,
                 body,
+            }
+            | Expr::ParForLoop {
+                variable,
+                iterable,
+                body,
             } => {
                 // Analyze the iterable expression
                 self.analyze_expr(iterable)?;
@@ -1346,7 +1351,7 @@ impl Analyzer {
             Expr::ResultErr(expr) => {
                 self.mark_expression_reachable(expr, reachable);
             }
-            Expr::ForLoop { iterable, body, .. } => {
+            Expr::ForLoop { iterable, body, .. } | Expr::ParForLoop { iterable, body, .. } => {
                 self.mark_expression_reachable(iterable, reachable);
                 self.mark_expression_reachable(body, reachable);
             }

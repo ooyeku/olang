@@ -129,8 +129,12 @@ deferred on its own measurement. The open rungs, in order:
   fields, and constants as borrowed pointers, equality and lexicographic
   ordering through helpers running the VM's own operators, concat
   scratch-owned under the straight-line discipline. **The JIT lane the
-  campaign opened is now closed**; what remains anywhere is parallel
-  `for` (P1) and the recorded deferrals.
+  campaign opened is now closed**; parallel `for` landed as a
+  language construct (`par for x in xs { ... }` — worker snapshots,
+  implicit barrier, first-sequential-error reporting, interpreter-owned
+  with the tier refusing it fail-closed). **P1, P2, and P3 are all
+  resolved; the campaign is complete** apart from its recorded
+  deferrals.
 - **Parallel `for`** — P1's remaining item.
 
 ## The data campaign (0.40)

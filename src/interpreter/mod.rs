@@ -859,6 +859,11 @@ impl Interpreter {
                 iterable,
                 body,
             } => self.eval_for_loop(variable, iterable, body),
+            Expr::ParForLoop {
+                variable,
+                iterable,
+                body,
+            } => self.eval_par_for_loop(variable, iterable, body),
             Expr::WhileLoop { condition, body } => self.eval_while_loop(condition, body),
             Expr::Loop { body } => self.eval_loop(body),
             Expr::Break(value) => {
@@ -2150,6 +2155,132 @@ impl Interpreter {
     }
 
     /// Run a loop body over an iterator of items, honoring break/continue.
+    /// `par for`: fan the iterations across worker threads. Spawn-style
+    /// snapshot semantics — each worker runs against a clone of the
+    /// interpreter, so mutations to enclosing state are not visible to
+    /// the caller; effects (println, fs) are real. Implicit barrier at
+    /// the end; the loop evaluates to Unit. If several iterations fail,
+    /// the error reported is the one the sequential loop would have hit
+    /// first. `break` and `return` cannot cross the parallel boundary
+    /// and are errors; `continue` works within an iteration.
+    fn eval_par_for_loop(
+        &mut self,
+        variable: &str,
+        iterable: &Expr,
+        body: &Expr,
+    ) -> Result<Value, InterpreterError> {
+        let iterable_value = self.eval_expr(iterable)?;
+        let items: Vec<Value> = match iterable_value {
+            Value::List(items) => items.to_vec(),
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let stop = if inclusive {
+                    end.saturating_add(1)
+                } else {
+                    end
+                };
+                (start..stop).map(Value::Integer).collect()
+            }
+            Value::String(s) => s
+                .chars()
+                .map(|c| Value::String(Arc::new(c.to_string())))
+                .collect(),
+            other => {
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "par for: cannot iterate over {} (lists, ranges, and strings)",
+                        other.type_name()
+                    ),
+                })
+            }
+        };
+        if items.is_empty() {
+            return Ok(Value::Unit);
+        }
+
+        let run_one = |worker: &mut Interpreter, item: Value| -> Result<(), InterpreterError> {
+            let parent_env = std::mem::take(&mut worker.environment);
+            worker.environment.parent = Some(Arc::new(parent_env));
+            worker.environment.is_frame = true;
+            worker.environment.define(variable.to_string(), item);
+            let result = match worker.eval_expr(body) {
+                Ok(_) | Err(InterpreterError::ContinueSignal) => Ok(()),
+                Err(InterpreterError::BreakSignal(_)) => Err(InterpreterError::RuntimeError {
+                    message: "break cannot cross a par for boundary".to_string(),
+                }),
+                Err(InterpreterError::ReturnSignal(_)) => Err(InterpreterError::RuntimeError {
+                    message: "return cannot cross a par for boundary".to_string(),
+                }),
+                Err(e) => Err(e),
+            };
+            if let Some(parent) = worker.environment.parent.take() {
+                worker.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
+            }
+            result
+        };
+
+        #[cfg(feature = "native")]
+        {
+            let workers = crate::parallel::get_config()
+                .max_threads
+                .clamp(1, items.len());
+            if workers > 1 {
+                let chunk_size = items.len().div_ceil(workers);
+                let joined: Vec<Result<(), (usize, InterpreterError)>> =
+                    std::thread::scope(|scope| {
+                        let handles: Vec<_> = items
+                            .chunks(chunk_size)
+                            .enumerate()
+                            .map(|(chunk_idx, chunk)| {
+                                let mut worker = self.thread_safe_clone();
+                                scope.spawn(move || {
+                                    for (i, item) in chunk.iter().enumerate() {
+                                        run_one(&mut worker, item.clone())
+                                            .map_err(|e| (chunk_idx * chunk_size + i, e))?;
+                                    }
+                                    Ok(())
+                                })
+                            })
+                            .collect();
+                        handles
+                            .into_iter()
+                            .map(|h| {
+                                h.join().unwrap_or_else(|_| {
+                                    Err((
+                                        usize::MAX,
+                                        InterpreterError::RuntimeError {
+                                            message: "par for worker thread panicked".to_string(),
+                                        },
+                                    ))
+                                })
+                            })
+                            .collect()
+                    });
+                let mut first_err: Option<(usize, InterpreterError)> = None;
+                for r in joined {
+                    if let Err((idx, e)) = r {
+                        if first_err.as_ref().map(|(fi, _)| idx < *fi).unwrap_or(true) {
+                            first_err = Some((idx, e));
+                        }
+                    }
+                }
+                if let Some((_, e)) = first_err {
+                    return Err(e);
+                }
+                return Ok(Value::Unit);
+            }
+        }
+
+        // Single worker (or the playground): sequential, same semantics.
+        for item in items {
+            run_one(self, item)?;
+        }
+        Ok(Value::Unit)
+    }
+
     fn run_loop_body(
         &mut self,
         body: &Expr,

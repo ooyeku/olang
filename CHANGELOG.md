@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **`par for` — parallel iteration as a language construct; P1
+  closes.** `par for x in xs { body }` (tuple bindings included) fans
+  iterations across OS worker threads with an implicit barrier — one
+  interpreter, tier and JIT included, per worker. Spawn-style snapshot
+  semantics; first-sequential-error reporting; break/return cannot
+  cross the parallel boundary; `par` is not a reserved word (it only
+  means something before `for`, pinned by test). Iterates lists,
+  ranges, and strings. The bytecode compiler refuses it (fail-closed,
+  interpreter-owned); `olang fmt` handles it. With this the
+  performance campaign's three levers are all resolved.
+
 ## [0.42.0] - 2026-08-09
 
 ### Added

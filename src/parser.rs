@@ -358,7 +358,8 @@ impl Parser {
                 Rule::pipe_expr => self.build_pipe_expr(pair.into_inner()),
                 Rule::call_expr => self.build_call_expr(pair.into_inner()),
                 Rule::primary => self.build_primary(pair.into_inner()),
-                Rule::for_loop => self.build_for_loop(pair.into_inner()),
+                Rule::for_loop => self.build_for_loop(pair.into_inner(), false),
+                Rule::par_for_loop => self.build_for_loop(pair.into_inner(), true),
                 Rule::while_loop => self.build_while_loop(pair.into_inner()),
                 Rule::loop_expr => self.build_loop_expr(pair.into_inner()),
                 Rule::break_expr => {
@@ -2753,7 +2754,7 @@ impl Parser {
         })
     }
 
-    fn build_for_loop(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+    fn build_for_loop(&self, mut pairs: Pairs<Rule>, parallel: bool) -> Result<Expr, ParseError> {
         // Expected order: binding (identifier or tuple of identifiers),
         // expr (iterable), block (body)
         let binding_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -2816,10 +2817,18 @@ impl Parser {
             ]),
         };
 
-        Ok(Expr::ForLoop {
-            variable,
-            iterable: Box::new(iterable_expr),
-            body: Box::new(body_expr),
+        Ok(if parallel {
+            Expr::ParForLoop {
+                variable,
+                iterable: Box::new(iterable_expr),
+                body: Box::new(body_expr),
+            }
+        } else {
+            Expr::ForLoop {
+                variable,
+                iterable: Box::new(iterable_expr),
+                body: Box::new(body_expr),
+            }
         })
     }
 
