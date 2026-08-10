@@ -10,6 +10,17 @@ documented.
 
 ## [Unreleased]
 
+### Removed
+
+- **Internal cleanup: dead code and unused dependencies (no user-visible
+  behavior change).** Removed 26 bytecode `Instruction` variants the
+  compiler never emitted (list/string/tuple/pipeline/thunk/exception/
+  memory/profiling/debug scaffolding) along with their executor and JIT
+  arms; the inert persistent module-cache layer, which never read or
+  wrote anything (the in-memory cache with content-hash invalidation is
+  unchanged); and unused dependencies (`memmap2` and the
+  `arbitrary`/`fake`/`quickcheck`/`lazy_static` dev-dependencies).
+
 ### Changed
 
 - **Mixing a number and a string under `+` is now a type error, not a
