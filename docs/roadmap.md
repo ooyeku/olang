@@ -190,3 +190,21 @@ Each item lands the way everything since 0.25 has: root-cause
 implementation, regression tests, both execution tiers agreeing (or the OVM
 explicitly refusing), the book updated in the same commit — the doc tests
 hold the two together — and a CHANGELOG entry saying why.
+
+## The distribution campaign
+
+The language works; this campaign is about people being able to *get*
+it. The unit of work is a channel, the honest measure is "what does a
+user type to install olang", and the recurring constraint is which
+channels need an account that doesn't exist yet. Everything below is
+prepped in-repo (workflow, formula template, packaging, runbook — see
+[RELEASING.md](../RELEASING.md)); "prepped" means the next `v*` tag or
+a single documented manual step lights the channel up.
+
+| ID | Rung | What ships / how | Status |
+|---|---|---|---|
+| D1 | **CI release binaries** — `.github/workflows/release.yml` on every `v*` tag: `olang` + `otc` for macos-arm64, macos-x64, linux-x64 (stripped, tarred with LICENSE/README), the playground wasm, and a `SHA256SUMS`, attached to a GitHub Release automatically | prepped — fires on the next tag, no account beyond the existing one |
+| D2 | **Homebrew tap** — `brew install ooyeku/olang/olang` from a `ooyeku/homebrew-olang` repo; formula template + per-release checksum procedure in [dist/homebrew/](../dist/homebrew/) | prepped — needs the tap repo created (a repo, not an account) and D1's first release to point at |
+| D3 | **VS Code .vsix** — publish-ready extension (bundled, iconed, licensed); `npx vsce package` or `make dist` emits a clean installable .vsix, shareable with zero accounts | prepped — packaging verified locally |
+| D4 | **Zed registry submission** — one PR to `zed-industries/extensions` (submodule + `extensions.toml` entry with `path = "editors/zed"`); grammar rev is SHA-pinned and pushed; process in [editors/zed/PUBLISHING.md](../editors/zed/PUBLISHING.md) | prepped — PR not yet opened; no account needed beyond GitHub |
+| D5 | **VS Code Marketplace** — `vsce publish` under publisher `ooyeku`; steps in [editors/vscode/PUBLISHING.md](../editors/vscode/PUBLISHING.md) | blocked-on-account — needs the (free) Azure DevOps publisher created; D3 is the account-free fallback meanwhile |
