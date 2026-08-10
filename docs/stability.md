@@ -25,9 +25,9 @@ Part of [the olang book](README.md) · [Internals](internals.md)
    signatures and return conventions (which functions return `Result`)
    stay. Renames, if ever needed, keep the old name as an alias for at
    least one minor release with a deprecation note.
-4. **The two execution tiers agree.** Any observable difference between
-   `--no-ovm` and the default tiered execution is a bug. Optimization work
-   must be invisible.
+4. **The execution tiers agree.** Any observable difference between
+   `--no-ovm` and the default tiered execution — bytecode or JIT — is a
+   bug. Optimization work must be invisible.
 
 ## Stability tiers
 
@@ -47,12 +47,22 @@ the global builtins.
 ### Stable in behavior, evolving in scope
 
 - **Async and concurrency** — the documented API (`async`/`await`,
-  `Promise.resolve/reject/delay/all/race`, `spawn`) is stable. `spawn` runs
-  on a real OS thread (as of 0.29); the deterministic deadline model for
-  `Promise.delay` is unchanged. The scheduling model may gain further
-  capability without changing what existing programs observe.
-- **The OVM tier** — which functions get promoted, and how fast they run,
-  changes freely; results never do.
+  `Promise.resolve/reject/delay/all/race`, `spawn`, `par_map`,
+  `par_filter`) is stable. `spawn` runs on a real OS thread (as of 0.29);
+  `par_map`/`par_filter` carry spawn's snapshot semantics and are
+  differential-tested against `map`/`filter`; the deterministic deadline
+  model for `Promise.delay` is unchanged. The scheduling model may gain
+  further capability without changing what existing programs observe.
+- **The OVM and JIT tiers** — which functions get promoted or compiled
+  to native code, and how fast they run, changes freely; results never
+  do.
+- **The data stack (`ods`, `stats`, `plot`)** — the documented functions
+  behave as the stdlib chapters state, pinned by doc tests, engine
+  property tests, and scipy/NumPy reference constants; the *scope* grows
+  (new dtypes, verbs, statistics, chart kinds) under the append-mostly
+  rule. All four design phases shipped against measured gates
+  ([the design doc](design/ods.md)); deferrals (lazy evaluation, faer)
+  are recorded there with reopening conditions.
 - **Type annotations** — all documented annotation forms keep parsing. A
   future static checker will be **opt-in** when introduced; annotations
   will not start rejecting today's running programs by default.

@@ -10,18 +10,17 @@ feature list that overstates the system.
 
 ## Execution model
 
-Olang has two execution tiers.
+Olang has three execution tiers.
 
 | Tier | What it is | When it runs |
 |---|---|---|
 | **Interpreter** | Tree-walking evaluator over the AST | Always; the default and the semantics reference |
 | **Bytecode** | Register-based VM (`src/ovm/bytecode.rs`) | Eligible functions, on by default (compiled at first call) |
+| **JIT** | Native machine code via Cranelift (`src/ovm/jit.rs`) | Bytecode functions on the pure numeric whitelist, specialized lazily at first call |
 
-The interpreter is the source of truth. The bytecode tier is an optimization
+The interpreter is the source of truth. The lower tiers are optimizations
 that must be **observationally identical** to it — see
-[Correctness policy](#correctness-policy).
-
-There is no JIT tier in operation. See [Not implemented](#not-implemented).
+[Correctness policy](#correctness-policy) and [The JIT](#the-jit).
 
 ### Promotion
 
@@ -199,9 +198,13 @@ interpreter defines the language.
 
 ## Value model
 
-`OvmValue` (`src/ovm/value.rs`) is the VM's runtime value. Immediate values
-(integer, float, boolean, unit) are stored inline; heap values (string, list,
-tuple, function, struct, range, thunk, stream) hold `Arc` payloads.
+`OvmValue` (`src/ovm/value.rs`) is the VM's runtime value: **exactly 16
+bytes, pinned by a size test**. Immediate values (integer, float, boolean,
+unit) are stored inline; heap values (string, list, tuple, function,
+struct, range, native handles) hold `Arc` payloads. The former per-value
+header (type tag, tier, lazy state) was measured fully dead and removed
+in 0.40 — the 32 → 16 byte slimming alone bought 13% on the most
+value-bound workload, since every register move copies a value.
 
 **Memory is managed by reference counting.** There is no tracing collector.
 Values are reclaimed deterministically when the last reference drops, which
@@ -212,9 +215,15 @@ loops; the former tracing-GC machinery, region allocator, and the `:gc` REPL
 command were deleted in the 0.24 cleanup — with reference counting there is
 nothing to force.
 
-The value header carries only a type tag, execution tier, and lazy state. It
-is deliberately small and `Copy`, because it is cloned on every register read
-in the dispatch loop.
+The next slimming rung — NaN-boxing to 8 bytes — has its primitives
+landed and proven (`src/ovm/nanbox.rs`: canonicalized floats, 48-bit
+small integers and pointers, boundary-tested) but is **deliberately not
+wired**: the 16-byte measurement re-priced the win at roughly another
+10%, against the cost of manual refcounting at every register move — the
+exact raw-pointer failure mode this codebase already measured, found
+leaking, and deleted in 0.23. The verdict is recorded in
+[the roadmap](roadmap.md#the-performance-campaign-039) so the rung is
+not re-attempted without new data.
 
 ## Bytecode VM
 
@@ -290,7 +299,8 @@ compile natively → stay on bytecode".
 
 A function prequalifies at promotion time when every instruction falls
 in a **pure numeric/boolean whitelist**: arithmetic, comparisons, logic,
-branches, calls to other olang functions, and return. Compilation is
+branches, struct field reads, calls to other olang functions, and
+return. Compilation is
 **type-specialized, lazy, and call-graph aware**: on a function's first
 call, the JIT plans every function reachable through its call sites,
 runs kind inference to a global fixpoint across the group (callee
@@ -304,8 +314,13 @@ on bytecode. Register kinds are proven by the same fixpoint inference
 integer side exactly as the VM does; a register may hold mixed kinds
 only if nothing ever reads it — the dead result slot of an `if`
 statement, say — with liveness flowing backwards through copies).
-Everything else stays on bytecode with zero overhead beyond one table
-lookup per call.
+Struct arguments pass into native code as *borrowed* pointers — JIT
+calls are synchronous and the caller's slot outlives the call, so no
+refcount is ever touched — specialized per interned shape with field
+indices resolved at compile time; every read goes through one guarded
+host helper that deopts on any surprise, so no layout assumption leaks
+into the VM. Everything else stays on bytecode with zero overhead beyond
+one table lookup per call.
 
 Purity is the load-bearing property. A qualifying function has no side
 effects, so every guard failure — argument-kind mismatch at entry,
@@ -326,9 +341,11 @@ What this buys, measured: fib(30) 89 ms → **5 ms** (18×, now level with
 the JavaScript JITs) — and fib split across two mutually recursive
 functions runs at the same 5 ms where the self-call-only JIT managed
 94 ms; integer loop kernels 20–30×; float kernels (Mandelbrot-style
-orbit loops) ~4.5×; and `par_map` over a jitted kernel compounds both
-campaigns. Strings and heap values are future expansions — N-body needs
-struct field access, which is sequenced with the NaN-boxing rung.
+orbit loops) ~4.5×; a struct-field kernel 143 ms → 18 ms (8×); and
+`par_map` over a jitted kernel compounds both campaigns — workers carry
+their own tier and JIT. Strings and other heap values are future
+expansions, as is whitelisting the pure `math` builtins: N-body's inner
+kernel awaits `math.sqrt`.
 
 `tests/jit_test.rs` holds the parity suite: every guard edge runs tiered
 and interpreted and must agree byte-for-byte.
@@ -395,7 +412,7 @@ baseline JIT):
 
 | Workload | Rust | Node | Bun | CPython | Ruby | **olang** |
 |---|---|---|---|---|---|---|
-| N-body (120 bodies × 150 steps) | 2.5 ms | 6 ms | 8 ms | 404 ms | 474 ms | **400 ms** |
+| N-body (120 bodies × 150 steps) | 2.5 ms | 6 ms | 8 ms | 404 ms | 474 ms | **~322 ms** |
 | Word frequency (50k tokens × 20) | 5 ms | 17 ms | 12 ms | 16 ms | 62 ms | **26 ms** |
 | `map(λ) \|> sum` pipeline, 1M elements | ~0 ms | 9 ms | 4 ms | 24 ms | 21 ms | **13 ms** |
 | fib(30) (2.7M recursive calls) | 1.4 ms | 4 ms | 4 ms | 46 ms | 44 ms | **5 ms** |
@@ -404,22 +421,23 @@ baseline JIT):
 1.1 s; the word-frequency workload exceeds the interpreter's allocation
 guard entirely, so the tier is what makes it runnable at this size.)
 
-The shape of the result: on pure integer work the baseline JIT puts
-olang **level with the JavaScript JITs** — fib(30) at 5 ms sits beside
-Node and Bun's 4 ms and runs 9× ahead of CPython and Ruby; the pipeline
-workload (a jitted lambda inside the VM's native map loop) now leads
-CPython and Ruby outright. olang stays ahead of both on
-struct-and-float work and map-heavy text (where the JIT doesn't apply
-yet — the value model is the bound, not dispatch). The remaining gap to
-Rust is the price of guards, boxing at tier boundaries, and the
-unspecialized float/heap paths — exactly the NaN-boxing and
-float-specialization rungs the roadmap sequences next.
+The shape of the result: on pure numeric work the JIT puts olang
+**level with the JavaScript JITs** — fib(30) at 5 ms sits beside Node
+and Bun's 4 ms and runs 9× ahead of CPython and Ruby; the pipeline
+workload (a jitted lambda inside the VM's native map loop) leads CPython
+and Ruby outright. N-body — structs, floats, and `math.sqrt` in a hot
+loop — went 400 → ~322 ms across 0.40 (the 16-byte value model plus JIT
+struct field access) and stays ahead of both; its inner kernel is one
+whitelist entry away from native (`math.sqrt` is not yet a JIT builtin).
+The remaining gap to Rust is the price of guards, boxing at tier
+boundaries, and the not-yet-whitelisted heap paths — the rungs the
+roadmap sequences next.
 
-Against its own interpreter, the tiers are worth 57× (N-body, bytecode)
-to 220× (fib, bytecode + JIT): the whole N-body simulation — construction, stepping,
-capturing lambdas, struct building, field access, `math.sqrt` — runs as
-6 promoted functions, 0 rejected, with 7 tier crossings and 127M
-bytecode instructions for the run.
+Against its own interpreter, the tiers are worth roughly 73× (N-body)
+to 220× (fib, bytecode + JIT): the whole N-body simulation —
+construction, stepping, capturing lambdas, struct building, field
+access, `math.sqrt` — runs as 6 promoted functions, 0 rejected, with 7
+tier crossings.
 
 `--ovm-stats` prints promotions, rejections, tier crossings, and
 instructions retired; `--verbose` names each promoted or refused
@@ -453,12 +471,11 @@ These are real gaps, not oversights:
 
 ## Not implemented
 
-- **JIT compilation.** There is no native-code tier. The earlier Cranelift
-  scaffolding emitted placeholder functions whose execution would have been
-  undefined behavior; it was disabled in 0.23 and deleted in 0.24. A real
-  JIT would be a fresh implementation compiling from bytecode.
 - **Tracing garbage collection.** Memory is reference-counted; `gc.rs` holds
   only the safepoint flags the interpreter polls.
+- **Full NaN-boxing.** The 8-byte value scheme's primitives are landed
+  and proven (`src/ovm/nanbox.rs`) but deliberately not wired — the
+  measured verdict is in [the roadmap](roadmap.md#the-performance-campaign-039).
 - **Automatic SIMD vectorization** and pipeline fusion: the speculative
   engines were deleted rather than finished — explicit bulk stdlib
   operations are the honest route if vectorization matters later.
@@ -471,8 +488,12 @@ These are real gaps, not oversights:
 | `src/resolve.rs` | Slot resolution for function bodies |
 | `src/ovm/tier.rs` | Promotion decisions and eligibility |
 | `src/ovm/bytecode.rs` | Compiler, instruction set, and dispatch loop |
-| `src/ovm/value.rs` | `OvmValue`, the reference-counted value model |
+| `src/ovm/value.rs` | `OvmValue`, the 16-byte reference-counted value model |
+| `src/ovm/jit.rs` | The Cranelift JIT: whitelist, kind inference, guards, deopt |
+| `src/ovm/nanbox.rs` | 8-byte NaN-boxed value primitives (proven, not wired) |
 | `src/ovm/gc.rs` | Safepoint flags the interpreter polls in loops |
+| `src/native.rs` | Module registry for native values, spanning both tiers |
+| `src/ods/`, `olang-ods/` | The data stack: language surface and pure-Rust engine |
 
 Deleted in the 0.24 cleanup (~12,000 lines): the `OlangVirtualMachine`
 routing layer and `ovm_integration` (measured ~70% slower than the plain

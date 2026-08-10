@@ -1,8 +1,12 @@
 # The olang Book
 
 The complete documentation for olang: a minimal, expressive language with
-first-class functions, pipelines, and pattern matching, implemented in Rust
-with a tree-walking interpreter and a bytecode acceleration tier.
+first-class functions, pipelines, pattern matching, and a built-in data
+stack, implemented in Rust with a three-tier runtime — a tree-walking
+interpreter (the semantic authority), a bytecode VM, and a Cranelift JIT
+that compiles hot numeric functions to native machine code. The same
+language, data stack included, runs in the browser as WebAssembly on the
+website's /playground.
 
 Every olang code block in this book is executed by the test suite on every
 change (`tests/doc_examples_test.rs`) — the documentation cannot drift from
@@ -21,14 +25,16 @@ Complete worked programs live in [`examples/`](../examples/) — a task CLI,
 a log analyzer, a template engine, a regex engine, a parser combinator
 library, a state-machine engine, a JSON Schema validator, a small Lisp
 interpreter written in olang (`minilisp/`), a full-stack issue tracker
-(`app/`), and more. Run them all with `cd examples && olang run_all.ol`.
+(`app/`), a Frame-based data pipeline (`dataproc/`), a parallel
+statistical study on the data stack (`statlab/`), and more. Run them all
+with `cd examples && olang run_all.ol`.
 
 ## For developers — working on olang
 
 | Chapter | What it covers |
 |---|---|
-| **[Internals](internals.md)** | Architecture: grammar → parser → interpreter → bytecode tier; the value model; modules; how to add things |
-| **[The OVM](ovm.md)** | The bytecode tier in depth: design, measured speedups, limitations |
+| **[Internals](internals.md)** | Architecture: grammar → parser → interpreter → bytecode tier → JIT; the value model; modules; how to add things |
+| **[The OVM](ovm.md)** | The bytecode and JIT tiers in depth: design, measured speedups, limitations |
 | **[Stability](stability.md)** | What is stable, what is experimental, and how the language evolves from here |
 | **[Tooling](tooling.md)** | `olang test` (the test runner) and `olang fmt` (the formatter) |
 | **[Roadmap](roadmap.md)** | What comes next, each item grounded in real friction from the example programs |

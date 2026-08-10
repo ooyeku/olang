@@ -24,6 +24,15 @@ olang program.ol          # run a file (args after the file reach os.args())
 olang                     # start the REPL (:help lists commands)
 ```
 
+Or run nothing at all: the website's **/playground** runs the whole
+language — including everything on this tour — as WebAssembly, sandboxed
+in your browser.
+
+You never think about performance tiers, but they are there: the
+interpreter defines the semantics, hot functions are promoted to a
+bytecode VM, and hot numeric functions compile to native machine code —
+each tier either agrees with the interpreter exactly or declines.
+
 ## Hello
 
 ```olang
@@ -143,6 +152,28 @@ println(to_string(parse_pair("20", "22")))
 println(to_string(unwrap_or(parse_pair("20", "oops"), -1)))
 ```
 
+## The data stack
+
+`ods` (Series and Frames), `stats` (inference), and `plot` (SVG charts)
+are built in — no import, no flag, in the playground too. A Series is a
+typed, null-aware column; operators on it are vectorized, and
+comparisons yield masks for filtering:
+
+```olang
+let temps = ods.series([21.5, 19.0, 23.5, 22.0, 18.5, 24.0])
+let fahrenheit = temps * 1.8 + 32.0        // one native kernel, no loop
+println(`mean ${ods.mean(fahrenheit)}F, max ${ods.max(fahrenheit)}F`)
+
+let warm = ods.filter(temps, temps > 20.0)
+println(to_string(ods.to_list(warm)))
+```
+
+From there: `ods.read_csv` turns text into a Frame, `group_by` and
+`join` shape it, `stats.t_test` and `stats.lm` do the inference, and
+`plot.line` renders the chart as SVG text. The
+[stdlib chapters](stdlib.md#ods--series-and-frames) cover all of it;
+[`examples/statlab/`](../examples/statlab/) is a complete study.
+
 ## A real little program
 
 Word frequency over a string — the shape of many real olang programs:
@@ -169,5 +200,6 @@ for word in sort(map_keys(counts)) {
 - [Packages](packages.md) — multi-file programs and dependencies.
 - [`examples/`](../examples/) — complete programs: a task CLI, a template
   engine, a regex engine, a parser combinator library, a Lisp interpreter
-  written in olang (`minilisp/`), a full-stack issue tracker (`app/`), and
-  more. Run them all with `cd examples && olang run_all.ol`.
+  written in olang (`minilisp/`), a full-stack issue tracker (`app/`), a
+  parallel statistical study on the data stack (`statlab/`), and more.
+  Run them all with `cd examples && olang run_all.ol`.

@@ -22,6 +22,9 @@ tree-walking evaluation         src/interpreter/
    │  hot functions promoted
    ▼
 register bytecode (OVM)         src/ovm/ — on by default
+   │  hot numeric functions compiled
+   ▼
+native machine code (JIT)       src/ovm/jit.rs — Cranelift, on by default
 ```
 
 **`grammar.pest`** is the single source of truth for syntax. pest generates
@@ -44,23 +47,32 @@ snapshots, copy-on-write scoping). It is split into semantic components —
 core eval (`mod.rs`), environments, modules, patterns, operators, errors,
 and the spawn registry.
 
-**`src/ovm/`** is the acceleration tier: functions that get called often are
-compiled to register bytecode and re-executed there. It is on by default.
+**`src/ovm/`** is the acceleration machinery: functions that get called
+often are compiled to register bytecode and re-executed there, and
+bytecode that qualifies for the pure numeric whitelist compiles further
+to native machine code via Cranelift (`src/ovm/jit.rs`). Both are on by
+default.
 
-## The two-tier execution model
+## The three-tier execution model
 
-The single most important invariant: **the interpreter and the OVM must
-agree**. A function may run on either tier depending on call counts, so any
-semantic divergence becomes a bug that appears and disappears with warmup.
-Several real bugs of this class have been found and fixed (string ordering,
-list concatenation); when you touch either tier's operators or value
-semantics, touch both — or make the OVM refuse to compile the construct.
+The single most important invariant: **every tier must agree with the
+interpreter**. A function may run on any tier depending on call counts
+and specialization, so any semantic divergence becomes a bug that
+appears and disappears with warmup. Several real bugs of this class have
+been found and fixed (string ordering, list concatenation, a doubled
+error prefix the JIT parity suite caught in 0.40); when you touch a
+tier's operators or value semantics, touch every tier — or make the
+lower tier refuse the construct.
 
-Refusal is the designed escape hatch: the OVM compiler returns
-`CompilationFailed` for anything it does not support (global assignment,
-`return`/`break value`, async, and more — see
-[ovm.md](ovm.md#known-limitations)), and
-the function transparently stays on the interpreter. **Falling back is always
+Refusal is the designed escape hatch, and it has a rung per tier. The
+OVM compiler returns `CompilationFailed` for anything it does not
+support (global assignment, `return`/`break value`, async, and more —
+see [ovm.md](ovm.md#known-limitations)), and the function transparently
+stays on the interpreter. The JIT only compiles functions whose every
+instruction is in a pure numeric/boolean whitelist, and every guard
+failure at runtime (argument kinds, overflow, division by zero, depth)
+**deopts**: the native run is abandoned and the call re-executes on
+bytecode, which owns every error message. **Falling back is always
 correct; diverging is never acceptable.**
 
 `--no-ovm` runs pure interpreter; `--ovm-stats` shows what was promoted.
@@ -113,6 +125,15 @@ compiled into the binary — `colx` and `mathx` mirror `col` and `math` and
 are differential-tested against them, so the language is exercised by its
 own standard library.
 
+A third registration path exists for native *values*: `src/native.rs` is
+the module registry through which a Rust component registers stdlib-style
+namespaces, native value types, and operator behavior into *both*
+execution tiers at once. Its first and proving instance is the ods data
+stack (`src/ods/` — Series, Frames, stats, plot — over the pure-Rust
+`olang-ods/` workspace crate). Native values cross the tier boundary as
+one shared Arc — a refcount bump, never a conversion — so the lossy
+round-trip failure mode is unrepresentable for them.
+
 ## Errors
 
 `InterpreterError` (thiserror) covers user-visible failures; the REPL and
@@ -123,7 +144,7 @@ genuine violations (type errors, undefined names, arity, overflow).
 
 ## Testing strategy
 
-42 integration test binaries under `tests/` plus unit tests. The layers:
+49 integration test binaries under `tests/` plus unit tests. The layers:
 
 | Layer | Where | What it protects |
 |---|---|---|
@@ -132,6 +153,8 @@ genuine violations (type errors, undefined names, arity, overflow).
 | Self-hosted harness | `examples/run_all.ol` | every example (incl. packages) runs in a real subprocess |
 | Differential | `embedded_stdlib_test.rs` | `colx`/`mathx` agree with `col`/`math` |
 | Tier consistency | `bytecode_tier_test.rs` and friends | OVM results match the interpreter |
+| JIT parity | `jit_test.rs` | every guard edge agrees byte-for-byte, tiered vs interpreted |
+| Engine properties | `ods_*_test.rs` (+ `olang-ods` unit tests) | Series/Frame/stats kernels against naive references and scipy constants |
 | Feature regression | one file per fixed bug area | fixed bugs stay fixed |
 
 The dogfooding methodology that produced much of the current hardening:
@@ -177,10 +200,20 @@ src/
   type_checker.rs         optional annotation checking
   builtin.rs              global builtins
   stdlib/                 native modules + embedded/ (olang-source)
-  ovm/                    bytecode tier: compiler, VM, tier manager
+  native.rs               module registry for native values (both tiers)
+  ods/                    the data stack modules: series, frame, stats, plot
+  ovm/                    bytecode tier: compiler (bytecode.rs), value
+                          model (value.rs), tier manager (tier.rs),
+                          Cranelift JIT (jit.rs), NaN-boxing primitives
+                          (nanbox.rs)
+  parallel.rs             par_map / par_filter worker fan-out
   pkg/                    package manager (see packages.md)
   tools/                  olang test (test_runner.rs), olang fmt (fmt.rs)
   repl.rs, help.rs        interactive mode
+  clock.rs, output.rs     native/wasm seams (time, print routing)
+olang-ods/                pure-Rust engine crate behind src/ods/
+playground/               cdylib crate: the language as wasm for the website
+website/                  static site incl. /playground
 docs/                     this book
 examples/                 runnable programs + run_all.ol harness
 tests/                    integration suites
