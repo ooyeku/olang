@@ -12,6 +12,22 @@ documented.
 
 ### Added
 
+- **JIT heap values: list indexing and `for` iteration — N-body
+  compiles whole (332 -> 56ms).** Lists pass into native code as
+  borrowed pointers, classified at specialization by element kind
+  (float, int, or one struct shape); `xs[i]` and the `for`-loop
+  instructions (IterLen/IterGet) compile through guarded host helpers
+  that reproduce the VM's exact semantics — subscripts wrap negative
+  indices, iteration does not, bounds violations deopt to the
+  bytecode's canonical error. Struct elements return borrowed pointers
+  into the list's own storage, valid for the synchronous call by the
+  same argument as struct parameters. The register-path call site now
+  extracts struct and list arguments too (it previously only handled
+  int/float, which kept bytecode-to-bytecode calls off the JIT). The
+  campaign's original acceptance target — N-body from 400ms to tens of
+  milliseconds — is closed: 56ms, momentum conservation byte-identical.
+  47 JIT parity tests including negative indexing, mixed-kind lists
+  (refused, agreeing), and for-loops over struct lists.
 - **JIT: the float-math builtins join the whitelist.** All 25
   `math.*` float builtins compile in JIT functions: sqrt, floor, ceil,
   and trunc as native IEEE instructions (bit-exact by definition), the

@@ -114,9 +114,15 @@ deferred on its own measurement. The open rungs, in order:
   construction). Measuring it exposed the real remaining blocker in
   N-body's hot loops: list indexing and tuple extraction — the heap
   rung below.
-- **JIT heap values (list indexing, tuple extraction, then strings)** —
-  the instruction listings from N-body's refusals name these precisely;
-  this rung is what lets its force loops compile whole.
+- ~~**JIT heap values (list indexing and `for` iteration)**~~ — landed
+  post-0.40: lists pass as borrowed pointers classified by element kind
+  (float, int, one struct shape); `xs[i]`, `IterLen`, and `IterGet`
+  compile through guarded helpers that reproduce the VM's indexing
+  semantics (subscripts wrap negatives, iteration does not) and deopt
+  on any surprise. **N-body: 332 -> 56ms** — the force loops compile
+  whole, closing the campaign's original acceptance target (400ms ->
+  tens of ms). Still open here: tuple extraction (the force function's
+  multi-value return) and strings.
 - **Parallel `for`** — P1's remaining item.
 
 ## The data campaign (0.40)

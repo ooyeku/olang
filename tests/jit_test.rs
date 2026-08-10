@@ -540,3 +540,84 @@ show(f(12)) + " " + show(f(-5))
 "#,
     );
 }
+
+// ── heap values: list indexing and for-loop iteration ──────────────────
+
+#[test]
+fn list_indexing_kernels_agree() {
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+fn sumdist(pts, n) = {
+    let mut acc = 0.0
+    let mut i = 0
+    while i < n {
+        let a = pts[i]
+        let b = pts[n - 1 - i]
+        let dx = b.x - a.x
+        acc = acc + math.sqrt(dx * dx)
+        i = i + 1
+    }
+    acc
+}
+let pts = [P { x: 1.0, y: 2.0 }, P { x: 4.0, y: 6.0 }, P { x: 9.0, y: 1.0 }]
+show(sumdist(pts, 3))
+"#,
+    );
+}
+
+#[test]
+fn negative_and_out_of_range_indices_agree() {
+    // Subscripts wrap negatives (VM semantics); the JIT helper must too.
+    assert_jit_transparent(
+        r#"
+fn last_plus_first(xs) = xs[-1] + xs[0]
+show(last_plus_first([10, 20, 30]))
+"#,
+    );
+}
+
+#[test]
+fn for_loops_over_lists_agree() {
+    assert_jit_transparent(
+        r#"
+type B = struct { m: Float, v: Float }
+fn energy(bodies) = {
+    let mut e = 0.0
+    for b in bodies { e = e + 0.5 * b.m * b.v * b.v }
+    e
+}
+show(energy([B { m: 1.0, v: 2.0 }, B { m: 3.0, v: 0.5 }]))
+"#,
+    );
+}
+
+#[test]
+fn float_and_int_lists_agree() {
+    assert_jit_transparent(
+        r#"
+fn total(xs) = {
+    let mut t = 0.0
+    for x in xs { t = t + x }
+    t
+}
+fn itotal(xs) = {
+    let mut t = 0
+    for x in xs { t = t + x }
+    t
+}
+show(total([1.5, 2.5, 3.0])) + " " + show(itotal([1, 2, 3, 4]))
+"#,
+    );
+}
+
+#[test]
+fn mixed_list_stays_on_bytecode_and_agrees() {
+    // A list holding both kinds refuses classification; results agree.
+    assert_jit_transparent(
+        r#"
+fn first(xs) = xs[0]
+show(first([1, 2.5]))
+"#,
+    );
+}

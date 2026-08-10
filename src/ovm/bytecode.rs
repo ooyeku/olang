@@ -1479,6 +1479,22 @@ impl BytecodeVm {
                         bits[i] = f.to_bits() as i64;
                         kinds[i] = JitKind::Float;
                     }
+                    Ok(crate::ovm::value::ValueData::Struct(obj)) => {
+                        bits[i] = std::sync::Arc::as_ptr(obj) as i64;
+                        kinds[i] = JitKind::Struct(obj.shape.id);
+                    }
+                    Ok(crate::ovm::value::ValueData::List(items)) => {
+                        match crate::ovm::jit::classify_list(items) {
+                            Some(k) => {
+                                bits[i] = std::sync::Arc::as_ptr(items) as i64;
+                                kinds[i] = k;
+                            }
+                            None => {
+                                extractable = false;
+                                break;
+                            }
+                        }
+                    }
                     _ => {
                         extractable = false;
                         break;
@@ -1487,6 +1503,16 @@ impl BytecodeVm {
             }
             if extractable {
                 let remaining = self.max_call_depth.saturating_sub(self.call_depth);
+                // Shape specs are only needed to specialize (first call).
+                let mut shapes = std::collections::HashMap::new();
+                if self.jit.is_pending(func_id) {
+                    for reg in arg_regs {
+                        let Ok(v) = self.execution_state.register_ref(*reg) else {
+                            continue;
+                        };
+                        crate::ovm::jit::note_shapes(v, &mut shapes);
+                    }
+                }
                 let hot = &self.bytecode_hot;
                 let cache = &self.bytecode_cache;
                 let lookup = |id: FunctionId| -> Option<Arc<CompiledBytecode>> {
@@ -1494,13 +1520,14 @@ impl BytecodeVm {
                         .and_then(|s| s.clone())
                         .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
                 };
-                if let Some(result) = self.jit.try_call_raw(
+                if let Some(result) = self.jit.try_call_raw_with_shapes(
                     func_id,
                     &bytecode,
                     &bits[..arg_regs.len()],
                     &kinds[..arg_regs.len()],
                     remaining,
                     &lookup,
+                    &shapes,
                 ) {
                     return Ok(result);
                 }
