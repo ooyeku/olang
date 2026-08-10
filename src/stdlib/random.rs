@@ -1,6 +1,6 @@
 use crate::ast::Value;
 use rand::SeedableRng;
-use rand::distributions::Alphanumeric;
+use rand::distr::Alphanumeric;
 use rand::prelude::*;
 use rand::rngs::StdRng;
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ static RNG: OnceLock<Mutex<StdRng>> = OnceLock::new();
 
 /// Initialize the global random number generator
 fn get_rng() -> &'static Mutex<StdRng> {
-    RNG.get_or_init(|| Mutex::new(StdRng::from_entropy()))
+    RNG.get_or_init(|| Mutex::new(rand::make_rng()))
 }
 
 /// Draw `n` uniforms in [0, 1) from the module's RNG — the same stream
@@ -19,7 +19,7 @@ fn get_rng() -> &'static Mutex<StdRng> {
 /// sampling (stats.norm.sample, ...) deterministic too.
 pub(crate) fn draw_uniforms(n: usize) -> Vec<f64> {
     let mut rng = get_rng().lock().unwrap();
-    (0..n).map(|_| rng.r#gen::<f64>()).collect()
+    (0..n).map(|_| rng.random::<f64>()).collect()
 }
 
 /// Error types for random operations
@@ -118,7 +118,7 @@ fn random_random(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 
     let rng = get_rng();
     let mut rng = rng.lock().unwrap();
-    let value: f64 = rng.r#gen();
+    let value: f64 = rng.random();
 
     Ok(Value::Float(value))
 }
@@ -146,7 +146,7 @@ fn random_randint(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 
     let rng = get_rng();
     let mut rng = rng.lock().unwrap();
-    let value = rng.gen_range(min..=max);
+    let value = rng.random_range(min..=max);
 
     Ok(Value::Integer(value))
 }
@@ -180,7 +180,7 @@ fn random_uniform(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 
     let rng = get_rng();
     let mut rng = rng.lock().unwrap();
-    let value = rng.gen_range(min..max);
+    let value = rng.random_range(min..max);
 
     Ok(Value::Float(value))
 }
@@ -227,7 +227,7 @@ fn random_randbool(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 
     let rng = get_rng();
     let mut rng = rng.lock().unwrap();
-    let value: bool = rng.r#gen();
+    let value: bool = rng.random();
 
     Ok(Value::Boolean(value))
 }
@@ -247,7 +247,7 @@ fn random_choice(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 
             let rng = get_rng();
             let mut rng = rng.lock().unwrap();
-            let index = rng.gen_range(0..items.len());
+            let index = rng.random_range(0..items.len());
 
             Ok(items[index].clone())
         }
@@ -269,9 +269,9 @@ fn random_choice(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
             let mut rng = rng.lock().unwrap();
 
             let random_value = if *inclusive {
-                rng.gen_range(*start..=*end)
+                rng.random_range(*start..=*end)
             } else {
-                rng.gen_range(*start..*end)
+                rng.random_range(*start..*end)
             };
 
             Ok(Value::Integer(random_value))
@@ -304,7 +304,7 @@ fn random_choices(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
             }
 
             for _ in 0..k {
-                let index = rng.gen_range(0..items.len());
+                let index = rng.random_range(0..items.len());
                 result.push(items[index].clone());
             }
         }
@@ -324,9 +324,9 @@ fn random_choices(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 
             for _ in 0..k {
                 let random_value = if *inclusive {
-                    rng.gen_range(*start..=*end)
+                    rng.random_range(*start..=*end)
                 } else {
-                    rng.gen_range(*start..*end)
+                    rng.random_range(*start..*end)
                 };
                 result.push(Value::Integer(random_value));
             }
@@ -409,9 +409,9 @@ fn random_sample(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
                 let mut result = Vec::with_capacity(k);
                 while result.len() < k {
                     let value = if *inclusive {
-                        rng.gen_range(*start..=*end)
+                        rng.random_range(*start..=*end)
                     } else {
-                        rng.gen_range(*start..*end)
+                        rng.random_range(*start..*end)
                     };
                     if seen.insert(value) {
                         result.push(Value::Integer(value));
@@ -472,7 +472,7 @@ fn random_randstr_alpha(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
     let alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let chars: String = (0..length)
         .map(|_| {
-            let idx = rng.gen_range(0..alphabet.len());
+            let idx = rng.random_range(0..alphabet.len());
             alphabet.chars().nth(idx).unwrap()
         })
         .collect();
@@ -502,7 +502,7 @@ fn random_randstr_numeric(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
     let digits = "0123456789";
     let chars: String = (0..length)
         .map(|_| {
-            let idx = rng.gen_range(0..digits.len());
+            let idx = rng.random_range(0..digits.len());
             digits.chars().nth(idx).unwrap()
         })
         .collect();

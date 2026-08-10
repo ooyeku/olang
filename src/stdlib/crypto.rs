@@ -7,11 +7,19 @@ use bcrypt;
 use hex;
 use hmac::{Hmac, Mac};
 use md5::Md5;
-use rand::{RngCore, thread_rng};
+// rand 0.10 renamed the core trait RngCore -> Rng (and the ergonomic
+// extension trait Rng -> RngExt); rand::rng() replaces thread_rng().
+use rand::Rng as _;
+// The RustCrypto crates (rsa, aes-gcm) still take rand_core 0.6 RNGs, which
+// rand 0.10's generators no longer implement — their own re-exported OsRng
+// bridges that era (on wasm it routes through getrandom 0.2's registered
+// custom backend, see src/playground.rs).
+use aes_gcm::aead::OsRng as AeadOsRng;
 use rsa::Pkcs1v15Encrypt;
 use rsa::pkcs1v15::{
     Signature as RsaSignature, SigningKey as RsaSigningKey, VerifyingKey as RsaVerifyingKey,
 };
+use rsa::rand_core::OsRng as RsaOsRng;
 use rsa::signature::{SignatureEncoding, Signer, Verifier};
 use rsa::{
     RsaPrivateKey, RsaPublicKey,
@@ -474,7 +482,7 @@ fn crypto_random_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Er
     }
 
     let mut bytes = vec![0u8; count];
-    thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
 
     let byte_values: Vec<Value> = bytes
         .into_iter()
@@ -517,7 +525,7 @@ fn crypto_random_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
     }
 
     let mut bytes = vec![0u8; count];
-    thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     let hex_string = hex::encode(bytes);
 
     Ok(Value::String(Arc::new(hex_string)))
@@ -678,7 +686,7 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     };
 
     // Generate random nonce
-    let nonce = Aes256Gcm::generate_nonce(&mut thread_rng());
+    let nonce = Aes256Gcm::generate_nonce(&mut AeadOsRng);
 
     let ciphertext = match cipher.encrypt(&nonce, data) {
         Ok(ct) => ct,
@@ -865,7 +873,7 @@ fn crypto_encrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         }
     };
 
-    let encrypted = match public_key.encrypt(&mut thread_rng(), Pkcs1v15Encrypt, data.as_bytes()) {
+    let encrypted = match public_key.encrypt(&mut RsaOsRng, Pkcs1v15Encrypt, data.as_bytes()) {
         Ok(enc) => enc,
         Err(e) => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -1028,7 +1036,7 @@ fn crypto_generate_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         ))))));
     }
 
-    let private_key = match RsaPrivateKey::new(&mut thread_rng(), 2048) {
+    let private_key = match RsaPrivateKey::new(&mut RsaOsRng, 2048) {
         Ok(key) => key,
         Err(e) => {
             return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

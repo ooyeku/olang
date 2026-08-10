@@ -1,0 +1,8 @@
+# Wasm playground builds select getrandom 0.4's opt-in "custom" backend:
+# src/playground.rs defines the __getrandom_v03_custom hook, fed by the
+# page's crypto.getRandomValues through the host_random_bytes import.
+# (getrandom 0.2, still in the graph via the rand_core 0.6 era crypto
+# crates, uses its cargo-feature-based custom registration instead —
+# see the wasm32 dependency block in Cargo.toml.)
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="custom"']

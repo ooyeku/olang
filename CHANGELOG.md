@@ -12,7 +12,39 @@ documented.
 
 ### Changed
 
-- **N-body twice as fast under the JIT.** Cranelift 0.121 → 0.134 puts
+- **`random.seed(n)` reproduces within a version, not across this
+  upgrade.** rand 0.8 → 0.10 (with rand_distr 0.6): seeded streams are
+  not part of rand's cross-major stability contract, so a program that
+  recorded exact outputs under `random.seed(n)` on 0.44 may see
+  different draws now. Measured specifics of this particular upgrade:
+  the raw draw stream is unchanged in practice (`random.random`,
+  `uniform`, `gauss`, `randint`, and the `randstr` family produced
+  byte-identical seeded sequences before and after), but
+  `random.shuffle`, `random.choice`, `random.choices`, and
+  `random.sample` order differently — rand 0.9 changed uniform integer
+  index sampling. Treat any exact seeded sequence as reproducible only
+  within a single olang version; assert properties, not pinned streams
+  (the repo's own tests and examples/statlab already do). Seeding,
+  determinism within a run, and `stats.norm.sample` riding the same
+  stream are all unchanged.
+- **A maintained HTTP stack under the `http` client.** reqwest
+  0.11 → 0.13 moves `http.get`/`post`/`put`/`delete`/`request` onto
+  hyper 1 and a current TLS stack; no olang-visible API change
+  (verified end to end against a live server and over https).
+  `http.serve` is hand-rolled TCP and is untouched. The direct `hyper`
+  and `tokio` dependencies existed only for this stack and were unused
+  in the source — both deleted; reqwest brings its own runtime.
+- **Entropy plumbing current, and bcrypt catches up.** getrandom
+  0.2 → 0.4 for the RNG stack: the wasm playground's custom entropy
+  backend migrates from the deleted `register_custom_getrandom!` macro
+  to 0.4's `getrandom_backend="custom"` cfg (set for wasm32 builds in
+  `.cargo/config.toml`) with the hook in src/playground.rs; the
+  `host_random_bytes` page import is unchanged. That unblocks bcrypt
+  0.15 → 0.19 (skipped in the M2 batch precisely because it dragged
+  getrandom 0.4 into wasm), so `crypto.hash_password` gets four majors
+  of maintenance; existing hashes still verify. The rand_core 0.6 era
+  crypto crates (rsa, aes-gcm, argon2) keep getrandom 0.2's registered
+  backend alongside — both paths verified in the playground harness. Cranelift 0.121 → 0.134 puts
   13 releases of instruction-selection and aarch64 codegen work under
   every JIT'd function with zero olang-side semantic change: the N-body
   benchmark drops 48 ms → 26 ms (best of 3, same machine, byte-identical

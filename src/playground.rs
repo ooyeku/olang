@@ -24,23 +24,47 @@ use crate::ast::Value;
 use crate::interpreter::Interpreter;
 use crate::parser::Parser as OlangParser;
 
-// The `random` module rides on the getrandom crate, whose browser backend
-// normally needs wasm-bindgen. Instead, its "custom" feature lets the host
-// hand us entropy through one more import (crypto.getRandomValues under it).
+// The `random` module (and the crypto crates) ride on the getrandom crate,
+// whose browser backend normally needs wasm-bindgen. Instead, the host
+// hands us entropy through one import (crypto.getRandomValues under it).
+// Two getrandom majors coexist in the wasm graph, each with its own
+// custom-backend mechanism, both fed by the same import:
+//
+// - getrandom 0.4 (rand 0.10, bcrypt): selected by the
+//   `--cfg getrandom_backend="custom"` rustflag (.cargo/config.toml sets it
+//   for wasm32 builds); the backend is the `__getrandom_v03_custom` symbol
+//   defined below (0.4 kept the v03 hook name for compatibility).
+// - getrandom 0.2 (rand_core 0.6 era: rsa, aes-gcm, argon2): the "custom"
+//   cargo feature plus `register_custom_getrandom!`.
 #[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_random_bytes(ptr: *mut u8, len: usize);
 }
 
+/// getrandom 0.4's custom backend: the entire wasm entropy path.
+///
+/// # Safety
+/// getrandom calls this with a valid, writable `dest..dest+len`; the host
+/// import fills exactly that range.
 #[cfg(target_arch = "wasm32")]
-fn hosted_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
+#[unsafe(no_mangle)]
+unsafe extern "Rust" fn __getrandom_v03_custom(
+    dest: *mut u8,
+    len: usize,
+) -> Result<(), getrandom::Error> {
+    unsafe { host_random_bytes(dest, len) };
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn hosted_getrandom(buf: &mut [u8]) -> Result<(), getrandom02::Error> {
     unsafe { host_random_bytes(buf.as_mut_ptr(), buf.len()) };
     Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
-getrandom::register_custom_getrandom!(hosted_getrandom);
+getrandom02::register_custom_getrandom!(hosted_getrandom);
 
 // panic=abort still runs the panic hook before the trap reaches the host,
 // so the hook stashes the message here and the page reads it back through

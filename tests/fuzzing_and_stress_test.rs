@@ -15,7 +15,8 @@ use olang::{
 };
 
 use proptest::prelude::*;
-use rand::{RngCore, SeedableRng};
+// rand_core 0.10 renamed the core trait RngCore -> Rng (next_u32 lives there).
+use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

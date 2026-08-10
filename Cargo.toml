@@ -22,8 +22,6 @@ native = [
     "dep:rusqlite",
     "dep:rustyline",
     "dep:reqwest",
-    "dep:tokio",
-    "dep:hyper",
     "dep:memmap2",
     "dep:hostname",
     "dep:whoami",
@@ -65,7 +63,7 @@ sha2 = { version = "0.10", features = ["oid"] }
 md-5 = "0.10"
 sha1 = "0.10"
 hmac = "0.12"
-bcrypt = "0.15"
+bcrypt = "0.19"
 hex = "0.4"
 aes-gcm = "0.10"
 rsa = "0.9"
@@ -84,16 +82,19 @@ miette = { version = "7.6", features = ["fancy"] }
 # High-performance filesystem libraries for stdlib
 memmap2 = { version = "0.9", optional = true }  # Memory-mapped file I/O for maximum speed
 
-# HTTP libraries for stdlib
-reqwest = { version = "0.11", features = ["blocking", "json"], optional = true }  # HTTP client
-tokio = { version = "1", features = ["full"], optional = true }  # Async runtime
-hyper = { version = "0.14", features = ["full"], optional = true }  # HTTP server
+# HTTP libraries for stdlib. reqwest (hyper 1 under the hood) is the whole
+# client stack — it brings its own async runtime for the blocking API, so
+# no direct tokio/hyper dependency is needed. `http.serve` is hand-rolled
+# TCP in src/stdlib/http.rs and uses none of this.
+reqwest = { version = "0.13", features = ["blocking", "json"], optional = true }  # HTTP client
 url = "2.5"  # URL parsing
 urlencoding = "2.1"  # URL encoding/decoding
 
-# Math and Random libraries for stdlib
-rand = { version = "0.8", features = ["std_rng"] }  # Random number generation
-rand_distr = "0.4"  # Random distributions (normal, etc.)
+# Math and Random libraries for stdlib. NOTE: StdRng's seeded stream is
+# not stable across rand majors — a rand upgrade changes what
+# random.seed(n) reproduces (documented in the CHANGELOG when it happens).
+rand = "0.10"  # Random number generation (std/std_rng/thread_rng defaults)
+rand_distr = "0.6"  # Random distributions (normal, etc.)
 
 # Collections and data structures
 im = { version = "15.1", features = ["serde"] }  # Persistent/immutable collections for O(1) environment cloning
@@ -126,12 +127,20 @@ chrono = { version = "0.4.41", default-features = false, features = ["clock", "s
 # Playground (wasm) build: the same crate compiled to wasm32-unknown-unknown
 # with --no-default-features. The "native" feature carries every dependency
 # that cannot exist in a browser (sockets, SQLite's C library, terminals,
-# mmap, JIT). getrandom needs its "js" backend on wasm so `random` works.
+# mmap, JIT). Entropy comes from the host's crypto.getRandomValues through
+# the host_random_bytes import (no wasm-bindgen; the manual C-ABI boundary
+# stays import-free apart from clocks and entropy). Two getrandom majors
+# coexist in the wasm graph and each needs its own custom-backend hookup,
+# both defined in src/playground.rs:
+#
+# - getrandom 0.4 (rand 0.10, bcrypt): selected by building with
+#   --cfg getrandom_backend="custom" (.cargo/config.toml sets this for the
+#   wasm32 target); src/playground.rs defines __getrandom_v03_custom.
+# - getrandom 0.2 (rand_core 0.6 era: rsa, aes-gcm, argon2): the "custom"
+#   feature plus register_custom_getrandom!.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# "custom" (not "js"): the js backend needs wasm-bindgen, which the manual
-# C-ABI boundary avoids. src/playground.rs registers a generator fed by the
-# host's crypto.getRandomValues through the host_random_bytes import.
-getrandom = { version = "0.2", features = ["custom"] }
+getrandom = "0.4"
+getrandom02 = { package = "getrandom", version = "0.2", features = ["custom"] }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -143,7 +152,7 @@ arbitrary = "1.3"         # Generate arbitrary data for fuzzing
 fake = "2.9"              # Generate fake data for testing
 quickcheck = "1.0"        # Property-based testing
 lazy_static = "1.4"       # Static variables for test infrastructure
-rand_chacha = "0.3"       # Deterministic random number generation
+rand_chacha = "0.10"      # Deterministic random number generation
 
 [profile.release]
 opt-level = 3

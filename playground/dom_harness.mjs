@@ -50,6 +50,7 @@ const imports = {
     host_dom_on: (h, ptr, len, id) => {
       (listeners[Number(h)] ??= {})[readStr(ptr, len)] = Number(id);
     },
+    host_dom_focus: (_h) => {},
     host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) => {
       fetchLog.push({ method: readStr(mp, ml), path: readStr(pp, pl), body: readStr(bp, bl), cb: Number(id) });
     },
@@ -122,5 +123,23 @@ println("fetch session up")
   if (fakeDom["#log"].text !== "fetched 3 things")
     throw new Error("fetch mutation missing: " + fakeDom["#log"].text);
 }
+// ── entropy: the random module must work through host_random_bytes ──
+// (getrandom's wasm backend is the custom hook fed by that import.)
+const prog3 = `
+let rolls = map(range(0, 20), (i) => random.randint(1, 6))
+let ok = len(filter(rolls, (r) => r >= 1 && r <= 6)) == 20
+dom.set_text(dom.query("#log"), "random ok: " + show(ok) + " sample: " + show(random.random()))
+`;
+{
+  const enc3 = new TextEncoder().encode(prog3);
+  const p3 = ex.olang_alloc(enc3.length);
+  mem().set(enc3, p3);
+  const r = result(ex.olang_session_start(p3, enc3.length));
+  ex.olang_dealloc(p3, enc3.length);
+  if (r.error) throw new Error("random session: " + r.error);
+  if (!fakeDom["#log"].text.startsWith("random ok: true"))
+    throw new Error("random check failed: " + fakeDom["#log"].text);
+  console.log("random:", fakeDom["#log"].text);
+}
 console.log("final dom:", JSON.stringify(fakeDom));
-console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads)");
+console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");
