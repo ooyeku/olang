@@ -121,11 +121,12 @@ fn crud_validation_filters_and_stats() {
         assert!(body.contains(&format!("\"{field}\"")), "missing {field}: {body}");
     }
 
-    // Filtering + pagination envelope.
+    // Filtering + pagination envelope; rows carry their comment count.
     let (status, body) = call(port, "GET", "/api/issues?assignee=test&limit=2", "", "");
     assert_eq!(status, 200);
     assert!(body.contains("\"total\":1"), "got: {body}");
     assert!(body.contains("\"limit\":2"), "got: {body}");
+    assert!(body.contains("\"comments\":0"), "got: {body}");
 
     // Search narrows; unknown sort column falls back safely.
     let (status, body) = call(port, "GET", "/api/issues?q=keyboard&sort=evil", "", "");

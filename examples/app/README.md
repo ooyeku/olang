@@ -54,7 +54,21 @@ Failures wear one envelope everywhere:
 | `lib/router.ol` | routing, middleware (auth, logging), the error envelope, query-param helpers |
 | `lib/store.ol` | migrations, queries, transactions, the audit trail |
 | `lib/validate.ol` | request validation → clean fields or field-by-field problems |
-| `static/` | the spreadsheet frontend (plain HTML + JS) |
+| `static/` | the spreadsheet frontend (plain HTML + JS, no dependencies) |
+
+## The frontend
+
+Everything the API can do is on the surface: server-driven search,
+status/assignee filters (named as clearable chips), header sorting and
+paging — all mirrored into the URL hash so a refresh or a shared link
+keeps the view. A comments drawer with avatars and ⌘-Enter submit, a
+stats dashboard (status and per-assignee bars, point quantiles from the
+ods data stack), a live activity feed with relative times, CSV export
+and one-click backups, dark mode with a toggle, keyboard shortcuts
+(`/` search, `n` new issue, `Esc` closes), two-step delete, an inline
+create row with all fields, and validation errors surfaced field by
+field as toasts. A 401 prompts once for the bearer token and remembers
+it.
 
 The API contract — validation shapes, filter semantics, 404/405/401
 behavior, CSV output, the audit trail — is locked by

@@ -12,6 +12,20 @@ documented.
 
 ### Added
 
+- **The tracker's frontend catches up with its backend.** Still plain
+  HTML + JS with zero dependencies, now surfacing the whole API:
+  server-driven search/filter/sort/paging with the view state mirrored
+  into the URL hash (refresh and share keep the filters, shown as
+  clearable chips), a comments drawer with avatars, relative times, and
+  ⌘-Enter submit, a stats dashboard whose CSS bars use the same status
+  colors as the grid pills (color follows the entity) plus the ods
+  point quantiles, a live activity feed, CSV export and one-click
+  backups, dark mode (auto-detected, toggleable, remembered), keyboard
+  shortcuts (`/`, `n`, `Esc`), a full inline create row, two-step
+  delete, field-by-field 422 toasts, and a 401 that prompts once for
+  the bearer token. The list endpoint now carries each issue's comment
+  count (one subquery — no n+1), locked into the contract test.
+
 - **`examples/app` — the tracker grows a real backend.** The
   full-stack issue tracker now runs on a persistent, schema-migrated
   SQLite store (a `schema_version` table; migrations append, run once,
@@ -46,16 +60,6 @@ documented.
   proof: 1,000 mixed commands — 250 child processes among them — soak
   through one session in ~1.4 s with state consistent throughout.
 
-### Fixed
-
-- `print` now flushes stdout, so a partial line — a shell prompt, a
-  progress indicator — appears immediately instead of waiting for the
-  next newline.
-
-## [Unreleased]
-
-### Added
-
 - **`olang lsp` — the language server, in the same binary.** Speaks LSP
   over stdio: diagnostics as you type (parse errors with the parser's
   own line/column; analyzer warnings such as unused variables at their
@@ -80,10 +84,6 @@ documented.
   for custom binary locations. The book gains an Editors chapter with
   Neovim wiring included.
 
-## [Unreleased]
-
-### Added
-
 - **The `dom` module — olang as a frontend language.** A new stdlib
   module (query, get/set_text, set_html, value/set_value, on) whose
   operations cross the wasm boundary as host imports the page
@@ -97,6 +97,12 @@ documented.
   host imports, an olang counter program, two dispatched clicks, and
   asserted mutations (run: bun playground/dom_harness.mjs
   target/wasm32-unknown-unknown/release/olang_playground.wasm).
+
+### Fixed
+
+- `print` now flushes stdout, so a partial line — a shell prompt, a
+  progress indicator — appears immediately instead of waiting for the
+  next newline.
 
 ## [0.43.0] - 2026-08-09
 

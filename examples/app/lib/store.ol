@@ -109,8 +109,12 @@ share fn list_issues(conn, f) = {
     let where_sql = if len(where_parts) == 0 => "" else => " WHERE " + join(where_parts, " AND ")
     let total = map_get(unwrap(db.query_one(conn,
         "SELECT COUNT(*) AS n FROM issues" + where_sql, vals)), "n")
+    // The list also carries each issue's comment count, so the grid can
+    // show a discussion badge without n+1 requests.
     let items = unwrap(db.query(conn,
-        "SELECT " + select_cols + " FROM issues" + where_sql +
+        "SELECT " + select_cols + ",
+            (SELECT COUNT(*) FROM comments c WHERE c.issue_id = issues.id) AS comments
+         FROM issues" + where_sql +
         " ORDER BY " + f.sort + " " + f.order + " LIMIT ? OFFSET ?",
         concat(vals, [f.limit, f.offset])))
     { items: items, total: total }

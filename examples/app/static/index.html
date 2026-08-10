@@ -4,80 +4,294 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tracker — olang</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b1220'/><text x='6' y='22' font-family='monospace' font-size='15' font-weight='700' fill='%230fa394'>o<tspan fill='%23f59e0b'>&gt;</tspan></text></svg>">
 <style>
   :root {
     --ink: #0b1220; --paper: #f6f8fa; --line: #d8dee6; --cell: #ffffff;
     --teal: #0fa394; --amber: #f59e0b; --slate: #63748a; --soft: #eef1f5;
+    --red: #c0392b; --blue: #2a78d6;
+    --ink-inv: #e6edf3; --bar-bg: #101a2b; --field: #1c2736; --field-line: #31405a;
+    --hover: #f4f9f8; --shadow: rgba(11, 18, 32, .08);
+  }
+  html[data-theme="dark"] {
+    --ink: #dbe4ee; --paper: #0d141f; --line: #223047; --cell: #131c2b;
+    --slate: #8296ac; --soft: #182335; --hover: #16233a;
+    --shadow: rgba(0, 0, 0, .4); --bar-bg: #0a111c; --field: #17202f;
+    --field-line: #2b3a52;
   }
   * { box-sizing: border-box; }
+  html { color-scheme: light; }
+  html[data-theme="dark"] { color-scheme: dark; }
   body {
     margin: 0; background: var(--paper); color: var(--ink);
     font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    transition: background .15s ease;
   }
+  #loading {
+    position: fixed; top: 0; left: 0; height: 2px; width: 0%;
+    background: var(--teal); z-index: 60; transition: width .2s ease, opacity .3s;
+    opacity: 0;
+  }
+  #loading.on { opacity: 1; width: 80%; }
   header {
     display: flex; align-items: center; gap: 12px;
-    padding: 14px 20px; background: var(--ink); color: #e6edf3;
+    padding: 13px 20px; background: var(--bar-bg); color: var(--ink-inv);
   }
   header .mark { color: var(--teal); font-weight: 700; font-size: 17px; }
   header .mark b { color: var(--amber); }
-  header h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; }
   header .spacer { flex: 1; }
-  #filter {
-    background: #1c2736; border: 1px solid #31405a; color: #e6edf3;
-    border-radius: 6px; padding: 6px 10px; width: 220px; font-size: 13px;
+  header kbd {
+    background: var(--field); border: 1px solid var(--field-line); border-radius: 4px;
+    padding: 1px 6px; font-size: 11px; color: #7c93a8; font-family: inherit;
   }
-  #filter::placeholder { color: #7c93a8; }
-  main { padding: 18px 20px 60px; }
+  #search {
+    background: var(--field); border: 1px solid var(--field-line); color: var(--ink-inv);
+    border-radius: 6px; padding: 6px 10px; width: 240px; font-size: 13px;
+    transition: border-color .12s;
+  }
+  #search:focus { outline: none; border-color: var(--teal); }
+  #search::placeholder { color: #7c93a8; }
+  #theme {
+    background: none; border: 0; color: #7c93a8; font-size: 16px; cursor: pointer;
+    padding: 4px 6px; border-radius: 6px;
+  }
+  #theme:hover { color: var(--ink-inv); }
+  #toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 20px; background: var(--bar-bg);
+    border-bottom: 1px solid var(--field-line); color: #b9c6d4;
+  }
+  #toolbar select, #toolbar input, #toolbar button, #toolbar a.btn {
+    background: var(--field); border: 1px solid var(--field-line); color: var(--ink-inv);
+    border-radius: 6px; padding: 6px 10px; font-size: 13px; font-family: inherit;
+    text-decoration: none; cursor: pointer; transition: border-color .12s, color .12s;
+  }
+  #toolbar select:hover, #toolbar button:hover, #toolbar a.btn:hover { border-color: var(--teal); }
+  #toolbar input { cursor: text; }
+  #toolbar input::placeholder { color: #7c93a8; }
+  #toolbar #f-assignee { width: 120px; }
+  #toolbar .gap { flex: 1; }
+  #toolbar button.on { border-color: var(--teal); color: var(--teal); }
+  #applied { display: flex; gap: 6px; align-items: center; }
+  #applied .fchip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(15, 163, 148, .12); border: 1px solid var(--teal);
+    color: var(--teal); border-radius: 999px; padding: 2px 10px; font-size: 12px;
+  }
+  #applied .fchip button { background: none; border: 0; color: inherit;
+    cursor: pointer; font-size: 13px; padding: 0; }
+  main { padding: 18px 20px 96px; max-width: 1280px; margin: 0 auto; }
+  .panel {
+    background: var(--cell); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 1px 3px var(--shadow); margin-bottom: 14px;
+    padding: 14px 18px; display: none;
+  }
+  .panel.open { display: block; }
+  .panel h2 { margin: 0 0 10px; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--slate); }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; }
+  .stat-block h3 { margin: 0 0 6px; font-size: 12px; color: var(--slate); font-weight: 600; }
+  .bignum { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .bignum small { font-size: 13px; font-weight: 400; color: var(--slate); margin-left: 6px; }
+  .bar-row { display: grid; grid-template-columns: 92px 1fr 52px; gap: 8px;
+    align-items: center; font-size: 12.5px; padding: 3px 0; }
+  .bar-row .label { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-row .val { text-align: right; color: var(--slate); font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; border-radius: 4px 4px 4px 4px; background: var(--soft); overflow: hidden; }
+  .bar i { display: block; height: 100%; border-radius: 4px; }
+  .bar i.s-open { background: var(--blue); }
+  .bar i.s-in-progress { background: var(--teal); }
+  .bar i.s-done { background: var(--slate); }
+  .bar i.s-points { background: var(--amber); }
+  .quantiles { margin-top: 8px; font-size: 12.5px; color: var(--slate); }
+  .quantiles b { color: var(--amber); font-variant-numeric: tabular-nums; }
+  #activity-list { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+  #activity-list li { padding: 5px 0; border-bottom: 1px dashed var(--soft);
+    display: flex; gap: 10px; align-items: baseline; }
+  #activity-list li:last-child { border-bottom: 0; }
+  #activity-list .act { width: 78px; font-weight: 600; color: var(--teal);
+    font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  #activity-list .act.delete { color: var(--red); }
+  #activity-list .act.create { color: var(--blue); }
+  #activity-list .when { margin-left: auto; color: var(--slate); font-size: 12px;
+    font-variant-numeric: tabular-nums; }
   table {
-    border-collapse: collapse; width: 100%; background: var(--cell);
-    box-shadow: 0 1px 3px rgba(11, 18, 32, .08); border-radius: 8px; overflow: hidden;
+    border-collapse: separate; border-spacing: 0; width: 100%; background: var(--cell);
+    box-shadow: 0 1px 3px var(--shadow); border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--line);
   }
-  th, td { border: 1px solid var(--line); padding: 0; }
+  th, td { border-bottom: 1px solid var(--line); padding: 0; }
+  td + td, th + th { border-left: 1px solid var(--line); }
   th {
-    background: var(--soft); color: var(--slate); font-size: 12px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: .04em; padding: 8px 10px;
+    background: var(--soft); color: var(--slate); font-size: 11.5px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .05em; padding: 9px 10px;
     text-align: left; cursor: pointer; user-select: none; position: sticky; top: 0;
+    transition: color .12s;
   }
+  th:hover { color: var(--teal); }
   th .dir { color: var(--teal); margin-left: 4px; }
+  tbody tr { transition: background .1s; }
+  tbody#rows tr:hover { background: var(--hover); }
   td input, td select, td textarea {
     width: 100%; border: 0; background: transparent; font: inherit; color: inherit;
-    padding: 7px 10px; outline: none; display: block;
+    padding: 8px 10px; outline: none; display: block;
   }
-  td input:focus, td select:focus { background: #f0faf8; box-shadow: inset 0 0 0 2px var(--teal); }
+  td input:focus, td select:focus { background: var(--hover); box-shadow: inset 0 0 0 2px var(--teal); }
   td.num input { text-align: right; font-variant-numeric: tabular-nums; }
-  td.id { color: var(--slate); padding: 7px 10px; text-align: right; width: 44px;
-          font-variant-numeric: tabular-nums; background: var(--soft); }
-  td.del { width: 34px; text-align: center; }
-  td.del button {
-    border: 0; background: none; color: var(--slate); cursor: pointer; font-size: 15px;
-    width: 100%; padding: 6px 0;
+  td.id { color: var(--slate); padding: 8px 10px; text-align: right; width: 46px;
+          font-variant-numeric: tabular-nums; background: var(--soft); font-size: 12.5px; }
+  td.del, td.talk { width: 44px; text-align: center; }
+  td.del button, td.talk button {
+    border: 0; background: none; color: var(--slate); cursor: pointer; font-size: 13.5px;
+    width: 100%; padding: 7px 0; transition: color .12s;
   }
-  td.del button:hover { color: #c0392b; }
-  tr.status-done td input, tr.status-done td select { color: var(--slate); }
-  tr.status-done td .title-input { text-decoration: line-through; }
-  select.pill-high { color: #c0392b; font-weight: 600; }
+  td.del button:hover { color: var(--red); }
+  td.del button.arm { color: #fff; background: var(--red); font-size: 11px; font-weight: 700; }
+  td.talk button:hover { color: var(--teal); }
+  td.talk button.has { color: var(--teal); font-weight: 600; }
+  select.cell-pill { appearance: none; -webkit-appearance: none; cursor: pointer; }
+  select.pill-high { color: var(--red); font-weight: 600; }
   select.pill-medium { color: var(--amber); font-weight: 600; }
   select.pill-low { color: var(--slate); }
+  select.status-open { color: var(--blue); font-weight: 600; }
   select.status-in-progress { color: var(--teal); font-weight: 600; }
   select.status-done { color: var(--slate); }
-  #newrow td { background: #fbfcfe; }
-  #newrow input { color: var(--slate); }
+  tr.status-done td input { color: var(--slate); }
+  tr.status-done td .title-input { text-decoration: line-through; }
+  #newrow td { background: color-mix(in srgb, var(--cell) 70%, var(--soft)); }
+  #newrow input, #newrow select { color: var(--slate); }
+  #empty {
+    display: none; padding: 42px 20px; text-align: center; color: var(--slate);
+  }
+  #empty.on { display: block; }
+  #empty b { color: var(--ink); }
+  #pager { display: flex; align-items: center; gap: 10px; margin-top: 12px;
+    color: var(--slate); font-size: 13px; }
+  #pager button {
+    background: var(--cell); border: 1px solid var(--line); border-radius: 6px;
+    padding: 4px 12px; cursor: pointer; font: inherit; color: var(--ink);
+    transition: border-color .12s;
+  }
+  #pager button:hover:not(:disabled) { border-color: var(--teal); }
+  #pager button:disabled { opacity: .4; cursor: default; }
+  #drawer {
+    position: fixed; top: 0; right: -440px; width: 420px; height: 100%;
+    background: var(--cell); border-left: 1px solid var(--line);
+    box-shadow: -6px 0 22px var(--shadow); transition: right .18s ease;
+    display: flex; flex-direction: column; z-index: 30;
+  }
+  #drawer.open { right: 0; }
+  #drawer header { background: var(--bar-bg); }
+  #drawer header h2 { font-size: 14px; margin: 0; color: var(--ink-inv); flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #drawer header button { background: none; border: 0; color: #7c93a8;
+    font-size: 18px; cursor: pointer; }
+  #drawer-meta { padding: 10px 16px; border-bottom: 1px solid var(--line);
+    display: flex; gap: 6px; flex-wrap: wrap; }
+  .pill { display: inline-block; border-radius: 999px; padding: 2px 10px;
+    font-size: 11.5px; font-weight: 600; }
+  .pill.s-open { background: rgba(42, 120, 214, .14); color: var(--blue); }
+  .pill.s-in-progress { background: rgba(15, 163, 148, .14); color: var(--teal); }
+  .pill.s-done { background: rgba(99, 116, 138, .16); color: var(--slate); }
+  .pill.p-high { background: rgba(192, 57, 43, .12); color: var(--red); }
+  .pill.p-medium { background: rgba(245, 158, 11, .14); color: var(--amber); }
+  .pill.p-low { background: rgba(99, 116, 138, .16); color: var(--slate); }
+  .pill.pts { background: var(--soft); color: var(--ink); }
+  #comments { flex: 1; overflow-y: auto; padding: 8px 16px; }
+  .comment { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--soft); }
+  .comment:last-child { border-bottom: 0; }
+  .avatar {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--teal); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0; text-transform: uppercase;
+  }
+  .comment .body { flex: 1; min-width: 0; }
+  .comment .who { font-weight: 600; font-size: 12.5px; }
+  .comment .when { color: var(--slate); font-size: 11.5px; margin-left: 6px; }
+  .comment .text { margin-top: 2px; white-space: pre-wrap; overflow-wrap: break-word; }
+  #comments .none { color: var(--slate); padding: 16px 0; }
+  #comment-form { border-top: 1px solid var(--line); padding: 12px 16px;
+    display: grid; gap: 8px; }
+  #comment-form input, #comment-form textarea {
+    border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px;
+    font: inherit; width: 100%; background: var(--paper); color: var(--ink);
+  }
+  #comment-form input:focus, #comment-form textarea:focus {
+    outline: none; border-color: var(--teal);
+  }
+  #comment-form textarea { resize: vertical; min-height: 64px; }
+  #comment-form .hint { font-size: 11.5px; color: var(--slate); }
+  #comment-form button {
+    background: var(--teal); color: #fff; border: 0; border-radius: 6px;
+    padding: 8px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  #comment-form button:hover { filter: brightness(1.08); }
+  #toasts { position: fixed; bottom: 56px; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; gap: 8px; z-index: 40; align-items: center; }
+  .toast {
+    background: var(--bar-bg); color: var(--ink-inv); border-radius: 8px; padding: 10px 16px;
+    font-size: 13px; box-shadow: 0 6px 18px var(--shadow); max-width: 620px;
+    animation: rise .18s ease;
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+  .toast.err { border-left: 4px solid var(--red); }
+  .toast.ok { border-left: 4px solid var(--teal); }
   footer {
     position: fixed; bottom: 0; left: 0; right: 0;
-    padding: 8px 20px; background: var(--ink); color: #7c93a8; font-size: 12px;
-    display: flex; gap: 18px;
+    padding: 8px 20px; background: var(--bar-bg); color: #7c93a8; font-size: 12px;
+    display: flex; gap: 18px; border-top: 1px solid var(--field-line);
   }
   footer .ok { color: var(--teal); }
+  footer .spacer { flex: 1; }
 </style>
 </head>
 <body>
+  <div id="loading"></div>
   <header>
     <span class="mark">o<b>&gt;</b></span>
     <h1>tracker</h1>
     <span class="spacer"></span>
-    <input id="filter" type="search" placeholder="filter issues…">
+    <input id="search" type="search" placeholder="search title + notes…  ( / )">
+    <button id="theme" title="toggle dark mode">◐</button>
   </header>
+  <div id="toolbar">
+    <select id="f-status">
+      <option value="">all statuses</option>
+      <option value="open">open</option>
+      <option value="in-progress">in-progress</option>
+      <option value="done">done</option>
+    </select>
+    <input id="f-assignee" placeholder="assignee…">
+    <span id="applied"></span>
+    <span class="gap"></span>
+    <button id="toggle-stats">stats</button>
+    <button id="toggle-activity">activity</button>
+    <a class="btn" href="/api/export.csv" download>export csv</a>
+    <button id="backup">backup</button>
+  </div>
   <main>
+    <section id="stats-panel" class="panel">
+      <div class="stat-grid">
+        <div class="stat-block">
+          <h3>Backlog</h3>
+          <div class="bignum" id="stat-totals"></div>
+          <div class="quantiles" id="stat-quantiles"></div>
+        </div>
+        <div class="stat-block">
+          <h3>By status</h3>
+          <div id="stat-status"></div>
+        </div>
+        <div class="stat-block">
+          <h3>Points by assignee</h3>
+          <div id="stat-assignee"></div>
+        </div>
+      </div>
+    </section>
+    <section id="activity-panel" class="panel">
+      <h2>Activity</h2>
+      <ul id="activity-list"></ul>
+    </section>
     <table id="grid">
       <thead>
         <tr>
@@ -88,6 +302,7 @@
           <th data-col="assignee">Assignee<span class="dir"></span></th>
           <th data-col="points">Pts<span class="dir"></span></th>
           <th data-col="notes">Notes<span class="dir"></span></th>
+          <th>💬</th>
           <th></th>
         </tr>
       </thead>
@@ -95,17 +310,50 @@
       <tbody>
         <tr id="newrow">
           <td class="id">+</td>
-          <td><input id="new-title" placeholder="New issue — type a title and press Enter"></td>
-          <td colspan="6"></td>
+          <td><input id="new-title" placeholder="New issue — title, then Enter  ( n )"></td>
+          <td><select id="new-status">
+            <option value="open" selected>open</option>
+            <option value="in-progress">in-progress</option>
+            <option value="done">done</option>
+          </select></td>
+          <td><select id="new-priority">
+            <option value="low">low</option>
+            <option value="medium" selected>medium</option>
+            <option value="high">high</option>
+          </select></td>
+          <td><input id="new-assignee" placeholder="assignee"></td>
+          <td class="num"><input id="new-points" placeholder="0" inputmode="numeric"></td>
+          <td colspan="3"></td>
         </tr>
       </tbody>
     </table>
+    <div id="empty">No issues match — <b>clear the filters</b> or create one below.</div>
+    <div id="pager">
+      <button id="prev">‹ prev</button>
+      <span id="page-info"></span>
+      <button id="next">next ›</button>
+    </div>
   </main>
+  <aside id="drawer">
+    <header>
+      <h2 id="drawer-title">comments</h2>
+      <button id="drawer-close" title="close (Esc)">×</button>
+    </header>
+    <div id="drawer-meta"></div>
+    <div id="comments"></div>
+    <form id="comment-form">
+      <input id="c-author" placeholder="your name (optional)" maxlength="40">
+      <textarea id="c-text" placeholder="write a comment…" maxlength="2000" required></textarea>
+      <span class="hint">⌘/Ctrl + Enter to send</span>
+      <button type="submit">comment</button>
+    </form>
+  </aside>
+  <div id="toasts"></div>
   <footer>
     <span id="count"></span>
     <span id="summary"></span>
     <span class="spacer"></span>
-    <span>backend: <span class="ok">olang · in-memory sqlite</span></span>
+    <span id="health">backend: <span class="ok">olang</span></span>
   </footer>
   <script src="/app.js"></script>
 </body>
