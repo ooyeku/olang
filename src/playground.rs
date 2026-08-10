@@ -107,6 +107,7 @@ extern "C" {
     fn host_dom_get_value(handle: i64) -> *const u8;
     fn host_dom_set_value(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_on(handle: i64, event: *const u8, len: usize, callback_id: i64);
+    fn host_dom_focus(handle: i64);
     fn host_dom_fetch(
         method: *const u8,
         method_len: usize,
@@ -199,6 +200,10 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
                 (h.len() - 1) as i64
             });
             unsafe { host_dom_on(handle(el)?, ev.as_ptr(), ev.len(), id) };
+            Ok(Value::Unit)
+        }
+        ("focus", [el]) => {
+            unsafe { host_dom_focus(handle(el)?) };
             Ok(Value::Unit)
         }
         ("fetch", [method, path, body, callback]) => {

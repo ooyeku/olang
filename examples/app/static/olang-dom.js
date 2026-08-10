@@ -61,8 +61,19 @@
       host_dom_set_value: (h, ptr, len) => { elements[Number(h)].value = readStr(ptr, len); },
       host_dom_on: (h, ptr, len, id) => {
         const cb = Number(id);
-        elements[Number(h)].addEventListener(readStr(ptr, len), () => dispatch(cb, null));
+        const ev = readStr(ptr, len);
+        const el = elements[Number(h)];
+        if (ev === "enter") {
+          // Convention: "enter" = keydown filtered to the Enter key,
+          // dispatched with the element's current value as payload.
+          el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") dispatch(cb, el.value ?? "");
+          });
+        } else {
+          el.addEventListener(ev, () => dispatch(cb, null));
+        }
       },
+      host_dom_focus: (h) => { elements[Number(h)].focus(); },
       host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) => {
         const method = readStr(mp, ml);
         const path = readStr(pp, pl);

@@ -58,11 +58,14 @@ if is_err(wasm_check) => {
 // ── the olang frontend: the same tracker with its logic in app.ol,
 //    running in the browser as wasm (see docs: the dom module) ──
 fn olang_page(req, params) =
-    http.response_with_headers(200, olang_html, #{ "Content-Type": "text/html; charset=utf-8" })
+    http.response_with_headers(200, olang_html,
+        #{ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" })
 fn olang_shim_js(req, params) =
-    http.response_with_headers(200, olang_shim, #{ "Content-Type": "text/javascript; charset=utf-8" })
+    http.response_with_headers(200, olang_shim,
+        #{ "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" })
 fn olang_source(req, params) =
-    http.response_with_headers(200, app_ol, #{ "Content-Type": "text/plain; charset=utf-8" })
+    http.response_with_headers(200, app_ol,
+        #{ "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
 // The wasm is binary: body_file serves raw bytes straight from disk.
 fn olang_wasm(req, params) = {
     status: 200,

@@ -9,6 +9,7 @@ pub mod csv;
 pub mod dates;
 #[cfg(feature = "native")]
 pub mod db;
+pub mod dom;
 pub mod embedded;
 #[cfg(feature = "native")]
 pub mod fs;
@@ -22,7 +23,6 @@ pub mod random;
 pub mod regex_mod;
 pub mod string;
 pub mod testing;
-pub mod dom;
 pub mod time;
 
 pub fn get_stdlib() -> HashMap<String, Value> {

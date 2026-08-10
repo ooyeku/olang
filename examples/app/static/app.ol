@@ -18,6 +18,10 @@ fn next_status(s) = if s == "open" => "in-progress" else => {
     if s == "in-progress" => "done" else => "open"
 }
 
+fn next_priority(p) = if p == "low" => "medium" else => {
+    if p == "medium" => "high" else => "low"
+}
+
 fn row_html(issue) = {
     let id = show(map_get(issue, "id"))
     let status = map_get(issue, "status")
@@ -25,7 +29,8 @@ fn row_html(issue) = {
         + "<td class=\"id\">" + id + "</td>"
         + "<td>" + esc(map_get(issue, "title")) + "</td>"
         + "<td><button class=\"status\" id=\"adv-" + id + "\">" + status + "</button></td>"
-        + "<td>" + esc(map_get(issue, "priority")) + "</td>"
+        + "<td><button class=\"status pri\" id=\"pri-" + id + "\">"
+        + esc(map_get(issue, "priority")) + "</button></td>"
         + "<td>" + esc(map_get(issue, "assignee")) + "</td>"
         + "<td class=\"num\">" + show(map_get(issue, "points")) + "</td>"
         + "<td class=\"del\"><button id=\"del-" + id + "\">×</button></td>"
@@ -47,6 +52,11 @@ fn bind_row(id) = {
         let body = "{\"status\": \"" + next_status(dom.get_text(adv)) + "\"}"
         dom.fetch("PATCH", "/api/issues/" + id, body, (resp) => { reload() })
     })
+    let pri = dom.query("#pri-" + id)
+    dom.on(pri, "click", () => {
+        let body = "{\"priority\": \"" + next_priority(dom.get_text(pri)) + "\"}"
+        dom.fetch("PATCH", "/api/issues/" + id, body, (resp) => { reload() })
+    })
     dom.on(dom.query("#del-" + id), "click", () => {
         dom.fetch("DELETE", "/api/issues/" + id, "", (resp) => { reload() })
     })
@@ -60,24 +70,36 @@ fn render(items) = {
     }
 }
 
+fn flash(msg) = dom.set_text(dom.query("#backend-note"), msg)
+
 fn reload() = {
     dom.fetch("GET", "/api/issues", "", (resp) => {
-        render(map_get(unwrap(json.parse(resp)), "items"))
+        let parsed = unwrap(json.parse(resp))
+        if map_has_key(parsed, "error") => {
+            flash("error: " + map_get(parsed, "error"))
+        } else => {
+            render(map_get(parsed, "items"))
+            flash("frontend: olang (wasm) · backend: olang · in-memory sqlite")
+        }
     })
 }
 
-fn add_issue() = {
-    let title_input = dom.query("#new-title")
-    let title = str.trim(dom.value(title_input))
+fn add_issue(raw) = {
+    let title = str.trim(raw)
     if title != "" => {
         dom.fetch("POST", "/api/issues", "{\"title\": \"" + esc(title) + "\"}", (resp) => {
-            dom.set_value(dom.query("#new-title"), "")
+            let input = dom.query("#new-title")
+            dom.set_value(input, "")
+            dom.focus(input)
             reload()
         })
     }
 }
 
-dom.on(dom.query("#add-btn"), "click", () => { add_issue() })
+// Enter in the input delivers its value as the payload; the button
+// reads the field itself.
+dom.on(dom.query("#new-title"), "enter", (val) => { add_issue(val) })
+dom.on(dom.query("#add-btn"), "click", () => { add_issue(dom.value(dom.query("#new-title"))) })
 dom.set_text(dom.query("#backend-note"),
     "frontend: olang (wasm) · backend: olang · in-memory sqlite")
 reload()
