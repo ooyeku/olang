@@ -1084,7 +1084,7 @@ impl BytecodeVm {
             poisoned_structs: std::collections::HashSet::new(),
             // Must match the interpreter's own limit: a program that recurses
             // 900 deep has to behave the same whether or not it was promoted
-            max_call_depth: 1000,
+            max_call_depth: crate::interpreter::DEFAULT_MAX_CALL_DEPTH as u32,
             #[cfg(feature = "native")]
             jit: crate::ovm::jit::JitCache::new(),
         }

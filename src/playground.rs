@@ -263,6 +263,7 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
 /// Same contract as olang_run.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn olang_session_start(ptr: *const u8, len: usize) -> *mut u8 {
+    install_panic_hook();
     unsafe {
         let source = match std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) {
             Ok(s) => s.to_string(),

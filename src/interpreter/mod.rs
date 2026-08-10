@@ -45,6 +45,19 @@ impl Iterator for RangeIter {
 mod errors;
 mod modules;
 mod ops;
+
+/// The recursion limit that turns runaway recursion into a clean
+/// "maximum call depth exceeded" error. The playground (wasm) build uses a
+/// far lower value: wasm's call stack is much smaller than a native
+/// thread's, and ~1000 deep interpreter frames overflow it *physically* —
+/// a hard trap that poisons the whole wasm instance so every later program
+/// also traps — well before a 1000 limit would fire. A low limit makes the
+/// depth guard win the race, so the playground reports the error and stays
+/// alive.
+#[cfg(feature = "native")]
+pub const DEFAULT_MAX_CALL_DEPTH: usize = 1000;
+#[cfg(not(feature = "native"))]
+pub const DEFAULT_MAX_CALL_DEPTH: usize = 400;
 mod patterns;
 pub use errors::{InterpreterError, IntuitiveErrorFormatter};
 
@@ -171,7 +184,7 @@ impl Interpreter {
 
             // MEMORY PROTECTION: Initialize recursion depth tracking
             call_depth: 0,
-            max_call_depth: 1000, // Reasonable limit to prevent stack overflow
+            max_call_depth: DEFAULT_MAX_CALL_DEPTH,
 
             // MEMORY MONITORING: Initialize memory tracking
             memory_allocations: 0,
