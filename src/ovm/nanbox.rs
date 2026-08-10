@@ -242,6 +242,7 @@ mod tests {
     fn nan_canonicalizes_and_stays_float() {
         // Real arithmetic NaNs — whatever their payload — must decode as
         // Float(NaN), never alias a tag.
+        #[allow(clippy::zero_divided_by_zero)] // producing arithmetic NaNs is the point
         let candidates = [
             f64::NAN,
             -f64::NAN,
