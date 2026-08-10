@@ -81,3 +81,9 @@ editors/zed/extension.wasm
 examples/**/*.db
 examples/app/backups/
 examples/statlab/*.svg
+
+# Local distribution staging (make dist). dist/homebrew (the formula
+# template) stays tracked.
+/dist/*
+!/dist/homebrew/
+editors/vscode/dist/

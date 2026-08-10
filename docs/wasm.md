@@ -368,8 +368,10 @@ olang main.ol            # http://127.0.0.1:7000
 ```
 
 (The target arrives via `rustup target add wasm32-unknown-unknown` if
-it is not installed.) The tracker checks for the artifact at boot and
-prints these exact commands if it is missing.
+it is not installed. `make wasm` from the repository root runs both
+steps — and also stages the website playground's copy.) The tracker
+checks for the artifact at boot and prints these exact commands if it
+is missing.
 
 On the server side, the frontend is four routes in
 [`examples/app/main.ol`](../examples/app/main.ol). Three serve text
