@@ -2,7 +2,6 @@
 //! SVG text out, options handling, null behavior, and composition with
 //! the Frame pipeline.
 
-
 use olang::ast::Value;
 use olang::{Interpreter, Parser};
 

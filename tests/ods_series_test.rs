@@ -5,7 +5,6 @@
 //! JIT's pure-integer whitelist declines them, so these tests exercise the
 //! bytecode tier's module hook regardless of JIT progress.
 
-
 use olang::ast::Value;
 use olang::{Interpreter, Parser};
 
