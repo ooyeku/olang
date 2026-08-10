@@ -1610,17 +1610,17 @@ impl BuiltinFunctions {
 
         fn sort_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
             match (a, b) {
+                // total_cmp (not partial_cmp) gives floats a *total* order:
+                // partial_cmp returns None for NaN, and the old
+                // unwrap_or(Equal) made NaN compare equal to everything,
+                // which is inconsistent and leaves even the finite elements
+                // unsorted. total_cmp keeps finite values correctly ordered
+                // and sinks NaN to one end.
                 (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
-                (Value::Float(x), Value::Float(y)) => {
-                    x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
-                }
+                (Value::Float(x), Value::Float(y)) => x.total_cmp(y),
                 (Value::String(x), Value::String(y)) => x.cmp(y),
-                (Value::Integer(x), Value::Float(y)) => (*x as f64)
-                    .partial_cmp(y)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-                (Value::Float(x), Value::Integer(y)) => x
-                    .partial_cmp(&(*y as f64))
-                    .unwrap_or(std::cmp::Ordering::Equal),
+                (Value::Integer(x), Value::Float(y)) => (*x as f64).total_cmp(y),
+                (Value::Float(x), Value::Integer(y)) => x.total_cmp(&(*y as f64)),
                 _ => std::cmp::Ordering::Equal,
             }
         }
