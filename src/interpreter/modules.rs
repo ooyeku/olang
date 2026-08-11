@@ -578,7 +578,7 @@ impl Interpreter {
         let program = parser
             .parse(&content)
             .map_err(|e| InterpreterError::RuntimeError {
-                message: format!("Failed to parse module {}: {:?}", file_path.display(), e),
+                message: format!("Failed to parse module {}:\n{}", file_path.display(), e),
             })?;
 
         // Create a new environment for the module with builtins

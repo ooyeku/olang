@@ -116,6 +116,94 @@ pub enum ParseError {
     UnexpectedToken { token: String },
 }
 
+/// Map a grammar rule to the phrase a person would use for it. The pest
+/// error's "expected" list is written in grammar-internal vocabulary
+/// (`mul_op`, `base_pattern`, `EOI`) that means nothing to someone whose
+/// program just failed to parse; every rule a user can plausibly hit is
+/// translated here, and the fallback prettifies rather than leaks.
+fn humanize_rule(rule: Rule) -> &'static str {
+    match rule {
+        Rule::EOI => "the end of the file",
+        Rule::statement => "a statement",
+        Rule::expr | Rule::primary => "an expression",
+        Rule::identifier => "a name",
+        Rule::add_op
+        | Rule::mul_op
+        | Rule::bitwise_op
+        | Rule::bool_op
+        | Rule::comp_op
+        | Rule::range_op
+        | Rule::pipe_op
+        | Rule::postfix_op => "an operator",
+        Rule::function_call => "a function call",
+        Rule::block => "a block",
+        Rule::string => "a string",
+        Rule::number => "a number",
+        _ => "",
+    }
+}
+
+/// Turn a raw pest error into the same rich, located ParseError the
+/// hand-written sub-parsers produce: plain-English message, line/column,
+/// and a caret snippet — instead of leaking the parser crate's name and
+/// grammar-rule identifiers to the user.
+fn humanize_pest_error(e: pest::error::Error<Rule>, input: &str) -> ParseError {
+    use pest::error::{ErrorVariant, LineColLocation};
+
+    let (line, column) = match e.line_col {
+        LineColLocation::Pos((l, c)) => (l, c),
+        LineColLocation::Span((l, c), _) => (l, c),
+    };
+
+    let error_line = sanitize_snippet(input.lines().nth(line.saturating_sub(1)).unwrap_or(""));
+    let mut snippet = String::new();
+    snippet.push_str(&format!("{:4} | {}\n", line, error_line));
+    snippet.push_str(&format!(
+        "{:4} | {}^",
+        "",
+        " ".repeat(column.saturating_sub(1))
+    ));
+
+    let message = match &e.variant {
+        ErrorVariant::ParsingError { positives, .. } => {
+            // Collapse the rule list into deduplicated human phrases,
+            // preserving first-seen order; unknown rules are prettified
+            // (underscores to spaces) rather than shown raw.
+            let mut phrases: Vec<String> = Vec::new();
+            let mut prettied: Vec<String> = Vec::new();
+            for r in positives {
+                let h = humanize_rule(*r);
+                if h.is_empty() {
+                    let p = format!("{:?}", r).replace('_', " ");
+                    if !prettied.contains(&p) {
+                        prettied.push(p);
+                    }
+                } else if !phrases.iter().any(|x| x == h) {
+                    phrases.push(h.to_string());
+                }
+            }
+            phrases.extend(prettied);
+            phrases.truncate(4);
+            match phrases.len() {
+                0 => "unexpected input here".to_string(),
+                1 => format!("expected {}", phrases[0]),
+                _ => {
+                    let last = phrases.pop().unwrap();
+                    format!("expected {} or {}", phrases.join(", "), last)
+                }
+            }
+        }
+        ErrorVariant::CustomError { message } => message.clone(),
+    };
+
+    ParseError::InvalidSyntaxWithPosition {
+        message,
+        line,
+        column,
+        snippet: snippet.into(),
+    }
+}
+
 impl ParseError {
     pub fn invalid_syntax_at(message: String, position: PositionInfo) -> Self {
         Self::InvalidSyntaxWithPosition {
@@ -184,7 +272,12 @@ impl Parser {
     }
 
     pub fn parse(&self, input: &str) -> Result<Program, ParseError> {
-        let parsed = <OlangParser as PestParser<Rule>>::parse(Rule::program, input)?;
+        // A UTF-8 BOM (files from Windows editors) is invisible in every
+        // editor but fails the grammar at 1:1 with a baffling caret at
+        // nothing. Strip it before parsing.
+        let input = input.strip_prefix('\u{feff}').unwrap_or(input);
+        let parsed = <OlangParser as PestParser<Rule>>::parse(Rule::program, input)
+            .map_err(|e| humanize_pest_error(e, input))?;
 
         let mut statements = Vec::new();
         for pair in parsed {

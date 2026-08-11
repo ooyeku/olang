@@ -289,10 +289,7 @@ fn show_file_parse_error(
     // Show help topics
     eprintln!("\n  {}", "Help:".bright_cyan().bold());
     eprintln!("    • Type {} for syntax help", "olang -h".bright_cyan());
-    eprintln!(
-        "    • Use {} for interactive mode with better error messages",
-        "olang".bright_cyan()
-    );
+
     eprintln!();
 }
 
