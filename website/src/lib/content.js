@@ -53,16 +53,17 @@ export async function highlight(code, lang = 'olang') {
 export const BOOK = [
   { slug: 'tour', file: 'tour.md', title: 'The Tour' },
   { slug: 'language', file: 'language.md', title: 'The Language' },
+  { slug: 'types', file: 'types.md', title: 'Types' },
   { slug: 'stdlib', file: 'stdlib.md', title: 'The Standard Library' },
   { slug: 'ods', file: 'ods.md', title: 'The Data Stack' },
   { slug: 'wasm', file: 'wasm.md', title: 'olang in the Browser' },
   { slug: 'packages', file: 'packages.md', title: 'Packages' },
+  { slug: 'editors', file: 'editors.md', title: 'Editors' },
   { slug: 'internals', file: 'internals.md', title: 'Internals' },
   { slug: 'ovm', file: 'ovm.md', title: 'The OVM' },
   { slug: 'stability', file: 'stability.md', title: 'Stability' },
-  { slug: 'roadmap', file: 'roadmap.md', title: 'Roadmap' },
-  { slug: 'design-ods', file: 'design/ods.md', title: 'Design: the ods data stack' },
-  { slug: 'design-ods-lazy', file: 'design/ods-lazy.md', title: 'Design: lazy evaluation' }
+  { slug: 'tooling', file: 'tooling.md', title: 'Tooling' },
+  { slug: 'roadmap', file: 'roadmap.md', title: 'Roadmap' }
 ];
 
 const CHAPTER_LINKS = Object.fromEntries([
@@ -96,9 +97,9 @@ function resolvePath(baseDir, path) {
 function rewriteHref(href, baseDir = '') {
   if (!href || /^(https?:|#|mailto:)/.test(href)) return href;
   const [path, anchor] = href.split('#');
-  // Chapters live under docs/ at any depth; resolve the link relative to
-  // the chapter it appears in, so "ods-lazy.md" from design/ods.md and
-  // "design/ods.md" from stdlib.md both land on their chapter pages.
+  // Resolve the link relative to the chapter it appears in, so a
+  // cross-chapter href like "types.md" from tooling.md lands on its
+  // chapter page.
   const docRel = resolvePath(baseDir, path);
   if (CHAPTER_LINKS[docRel] !== undefined) {
     return CHAPTER_LINKS[docRel] + (anchor ? `#${anchor}` : '');

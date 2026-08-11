@@ -1,9 +1,13 @@
 // The playground's execution sandbox: olang compiled to WebAssembly,
-// running inside this worker. The wasm instance imports nothing but three
-// host functions (two clocks and an entropy source) — no filesystem,
-// network, process, or DOM access exists on the other side of the
-// boundary. The page terminates this worker on timeout, which is what
-// bounds runaway programs.
+// running inside this worker. The live host functions are two clocks and
+// an entropy source — no filesystem, network, process, or DOM access
+// exists on the other side of the boundary. The `dom` module's imports
+// must still be present for the instance to link (the wasm build carries
+// them for pages that ARE a browser frontend, like examples/app), but in
+// this sandbox they are inert: dom.query finds nothing (handle 0, a clean
+// olang-level error), reads yield empty strings, writes are no-ops. The
+// page terminates this worker on timeout, which is what bounds runaway
+// programs.
 
 let exportsRef = null;
 
@@ -17,6 +21,16 @@ async function instantiate() {
         host_random_bytes: (ptr, len) => {
           crypto.getRandomValues(new Uint8Array(exportsRef.memory.buffer, ptr, len));
         },
+        // dom stubs: there is no document in the sandbox.
+        host_dom_query: () => 0n,
+        host_dom_set_text: () => {},
+        host_dom_get_text: () => 0,
+        host_dom_set_html: () => {},
+        host_dom_get_value: () => 0,
+        host_dom_set_value: () => {},
+        host_dom_on: () => {},
+        host_dom_focus: () => {},
+        host_dom_fetch: () => {},
       },
     }
   );

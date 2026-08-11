@@ -10,6 +10,22 @@ documented.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The website playground linked again — and its book nav caught up.**
+  The playground worker's import object predated the `dom` module, so
+  any freshly built wasm failed to instantiate
+  (`LinkError: ... "host_dom_fetch": function import requires a
+  callable`), taking the whole playground — most visibly the data
+  stack — down with it. The worker now supplies the nine `dom` host
+  imports as inert sandbox stubs (`dom.query` finds nothing, reads
+  yield empty strings, writes are no-ops — there is no document in the
+  worker), and ods/stats/Frame programs verified running in the
+  browser at 0.48.0. The site's hand-maintained chapter registry also
+  still listed the deleted design docs and lacked the new chapters; it
+  now mirrors the book index (Types, Editors, and Tooling pages added,
+  design entries gone).
+
 ### Documentation
 
 - **The book gained a Types chapter** (`docs/types.md`) — gradual
