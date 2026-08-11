@@ -552,11 +552,24 @@ impl Interpreter {
     /// are promises: an unannotated (or generic) parameter has no check and
     /// stays fully dynamic; an annotated one rejects a mismatched argument
     /// here, with the same message on every tier.
+    /// The value view `FieldTypeCheck::check_value` wants: the outer type
+    /// name, plus which Result side is present and its payload's name.
+    fn value_view(v: &Value) -> (String, Option<(bool, String)>) {
+        let payload = match v {
+            Value::Ok(p) => Some((true, p.type_name())),
+            Value::Err(p) => Some((false, p.type_name())),
+            _ => None,
+        };
+        (v.type_name(), payload)
+    }
+
     fn check_param_types(func: &Function, arguments: &[Value]) -> Result<(), InterpreterError> {
         for (index, check) in func.param_checks.iter().enumerate() {
             if let (Some(check), Some(arg)) = (check, arguments.get(index)) {
-                let actual = arg.type_name();
-                if !check.accepts(&actual) {
+                let (actual, payload) = Self::value_view(arg);
+                if let Some((expected, got)) =
+                    check.check_value(&actual, payload.as_ref().map(|(o, p)| (*o, p.as_str())))
+                {
                     let fn_name = func.name.as_deref().unwrap_or("<lambda>");
                     let param = func
                         .parameters
@@ -566,10 +579,7 @@ impl Interpreter {
                     return Err(InterpreterError::TypeError {
                         message: format!(
                             "parameter '{}' of {} expects {}, got {}",
-                            param,
-                            fn_name,
-                            check.expected_name(),
-                            actual
+                            param, fn_name, expected, got
                         ),
                     });
                 }
@@ -581,15 +591,15 @@ impl Interpreter {
     /// Enforce a declared return type on the value a call produced.
     fn check_return_type(func: &Function, value: &Value) -> Result<(), InterpreterError> {
         if let Some(check) = &func.return_check {
-            let actual = value.type_name();
-            if !check.accepts(&actual) {
+            let (actual, payload) = Self::value_view(value);
+            if let Some((expected, got)) =
+                check.check_value(&actual, payload.as_ref().map(|(o, p)| (*o, p.as_str())))
+            {
                 let fn_name = func.name.as_deref().unwrap_or("<lambda>");
                 return Err(InterpreterError::TypeError {
                     message: format!(
                         "return value of {} expects {}, got {}",
-                        fn_name,
-                        check.expected_name(),
-                        actual
+                        fn_name, expected, got
                     ),
                 });
             }
@@ -666,8 +676,10 @@ impl Interpreter {
             .as_ref()
             .and_then(|ann| crate::ast::FieldTypeCheck::from_annotation(ann, &[]))
         {
-            let actual = value.type_name();
-            if !check.accepts(&actual) {
+            let (actual, payload) = Self::value_view(&value);
+            if let Some((expected, got)) =
+                check.check_value(&actual, payload.as_ref().map(|(o, p)| (*o, p.as_str())))
+            {
                 let binding = match &let_decl.pattern {
                     crate::ast::Pattern::Identifier(name) => name.as_str(),
                     _ => "value",
@@ -675,9 +687,7 @@ impl Interpreter {
                 return Err(InterpreterError::TypeError {
                     message: format!(
                         "let binding '{}' expects {}, got {}",
-                        binding,
-                        check.expected_name(),
-                        actual
+                        binding, expected, got
                     ),
                 });
             }
@@ -2140,15 +2150,14 @@ impl Interpreter {
                 .get(&struct_literal.type_name)
                 .and_then(|c| c.get(&field_value.name))
             {
-                let actual = value.type_name();
-                if !check.accepts(&actual) {
+                let (actual, payload) = Self::value_view(&value);
+                if let Some((expected, got)) =
+                    check.check_value(&actual, payload.as_ref().map(|(o, p)| (*o, p.as_str())))
+                {
                     return Err(InterpreterError::TypeError {
                         message: format!(
                             "field '{}' of {} expects {}, got {}",
-                            field_value.name,
-                            struct_literal.type_name,
-                            check.expected_name(),
-                            actual
+                            field_value.name, struct_literal.type_name, expected, got
                         ),
                     });
                 }

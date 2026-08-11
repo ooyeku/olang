@@ -737,6 +737,14 @@ pub enum FieldTypeCheck {
     List,
     Map,
     Tuple,
+    /// `Result<T, E>`: the value must be an Ok/Err, and the payload of
+    /// whichever side is present checks *shallowly* against its declared
+    /// type. Unlike containers, a Result holds one payload, so this stays
+    /// a fixed number of O(1) name comparisons — never a walk.
+    Result {
+        ok: Option<Box<FieldTypeCheck>>,
+        err: Option<Box<FieldTypeCheck>>,
+    },
     /// A declared struct or enum type, matched by name against the value's
     /// runtime type name.
     Named(String),
@@ -762,15 +770,29 @@ impl FieldTypeCheck {
             TypeAnnotation::List(_) => Some(Self::List),
             TypeAnnotation::Map { .. } => Some(Self::Map),
             TypeAnnotation::Tuple(_) => Some(Self::Tuple),
-            TypeAnnotation::Generic { base_type, .. }
-                if !type_params.iter().any(|p| p == base_type) =>
-            {
-                match base_type.as_str() {
-                    "List" => Some(Self::List),
-                    "Map" => Some(Self::Map),
-                    other => Some(Self::Named(other.to_string())),
-                }
-            }
+            // Result<T, E> checks the present side's payload shallowly.
+            TypeAnnotation::Result { ok_type, err_type } => Some(Self::Result {
+                ok: Self::from_annotation(ok_type, type_params).map(Box::new),
+                err: Self::from_annotation(err_type, type_params).map(Box::new),
+            }),
+            TypeAnnotation::Generic {
+                base_type,
+                type_args,
+            } if !type_params.iter().any(|p| p == base_type) => match base_type.as_str() {
+                "List" => Some(Self::List),
+                "Map" => Some(Self::Map),
+                "Result" => Some(Self::Result {
+                    ok: type_args
+                        .first()
+                        .and_then(|t| Self::from_annotation(t, type_params))
+                        .map(Box::new),
+                    err: type_args
+                        .get(1)
+                        .and_then(|t| Self::from_annotation(t, type_params))
+                        .map(Box::new),
+                }),
+                other => Some(Self::Named(other.to_string())),
+            },
             _ => None,
         }
     }
@@ -786,6 +808,7 @@ impl FieldTypeCheck {
             Self::List => "List",
             Self::Map => "Map",
             Self::Tuple => "Tuple",
+            Self::Result { .. } => "Result",
             Self::Named(name) => name,
         }
     }
@@ -793,6 +816,50 @@ impl FieldTypeCheck {
     /// Does a value whose runtime type name is `actual` satisfy this field?
     pub fn accepts(&self, actual: &str) -> bool {
         self.expected_name() == actual
+    }
+
+    /// The declared type as error text: `Result<Int, _>` where payload
+    /// checks exist, the bare name otherwise.
+    pub fn display_name(&self) -> String {
+        match self {
+            Self::Result { ok, err } => {
+                let side = |s: &Option<Box<FieldTypeCheck>>| match s {
+                    Some(c) => c.display_name(),
+                    None => "_".to_string(),
+                };
+                format!("Result<{}, {}>", side(ok), side(err))
+            }
+            other => other.expected_name().to_string(),
+        }
+    }
+
+    /// Value-aware check shared by every tier. `type_name` is the value's
+    /// outer runtime type name; `result_payload` is `Some((is_ok,
+    /// payload_type_name))` when the value is an Ok/Err. Returns the
+    /// `(expected, actual)` pair for an "expects X, got Y" message on
+    /// violation, `None` when the promise holds. Payload checks are one
+    /// O(1) name comparison — a Result holds a single payload, so this
+    /// never walks anything.
+    pub fn check_value(
+        &self,
+        type_name: &str,
+        result_payload: Option<(bool, &str)>,
+    ) -> Option<(String, String)> {
+        if !self.accepts(type_name) {
+            return Some((self.expected_name().to_string(), type_name.to_string()));
+        }
+        if let (Self::Result { ok, err }, Some((is_ok, payload))) = (self, result_payload) {
+            let side = if is_ok { ok } else { err };
+            if let Some(check) = side
+                && !check.accepts(payload)
+            {
+                return Some((
+                    self.display_name(),
+                    format!("{}({})", if is_ok { "Ok" } else { "Err" }, payload),
+                ));
+            }
+        }
+        None
     }
 }
 

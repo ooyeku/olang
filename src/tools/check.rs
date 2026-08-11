@@ -143,6 +143,7 @@ enum SType {
     List(Box<SType>),
     Map(Box<SType>, Box<SType>),
     Tuple(Vec<SType>),
+    Result(Box<SType>, Box<SType>),
     Named(std::string::String),
 }
 
@@ -172,6 +173,10 @@ impl SType {
                     .map(|t| SType::from_annotation(t, type_params))
                     .collect(),
             ),
+            TypeAnnotation::Result { ok_type, err_type } => SType::Result(
+                Box::new(SType::from_annotation(ok_type, type_params)),
+                Box::new(SType::from_annotation(err_type, type_params)),
+            ),
             TypeAnnotation::Custom(name) if !type_params.iter().any(|p| p == name) => {
                 SType::Named(name.clone())
             }
@@ -186,6 +191,20 @@ impl SType {
                         .unwrap_or(SType::Unknown),
                 )),
                 "Map" => SType::Map(
+                    Box::new(
+                        type_args
+                            .first()
+                            .map(|t| SType::from_annotation(t, type_params))
+                            .unwrap_or(SType::Unknown),
+                    ),
+                    Box::new(
+                        type_args
+                            .get(1)
+                            .map(|t| SType::from_annotation(t, type_params))
+                            .unwrap_or(SType::Unknown),
+                    ),
+                ),
+                "Result" => SType::Result(
                     Box::new(
                         type_args
                             .first()
@@ -219,6 +238,7 @@ impl SType {
             SType::List(_) => Some("List"),
             SType::Map(_, _) => Some("Map"),
             SType::Tuple(_) => Some("Tuple"),
+            SType::Result(_, _) => Some("Result"),
             SType::Named(n) => Some(n),
         }
     }
@@ -233,6 +253,10 @@ impl SType {
             SType::List(t) => format!("List<{}>", t.display()),
             SType::Map(k, v) if **k == SType::Unknown && **v == SType::Unknown => "Map".to_string(),
             SType::Map(k, v) => format!("Map<{}, {}>", k.display(), v.display()),
+            SType::Result(o, e) if **o == SType::Unknown && **e == SType::Unknown => {
+                "Result".to_string()
+            }
+            SType::Result(o, e) => format!("Result<{}, {}>", o.display(), e.display()),
             SType::Tuple(ts) => format!(
                 "({})",
                 ts.iter()
@@ -259,6 +283,9 @@ fn unify(a: &SType, b: &SType) -> SType {
         (SType::Tuple(xs), SType::Tuple(ys)) if xs.len() == ys.len() => {
             SType::Tuple(xs.iter().zip(ys).map(|(x, y)| unify(x, y)).collect())
         }
+        (SType::Result(o1, e1), SType::Result(o2, e2)) => {
+            SType::Result(Box::new(unify(o1, o2)), Box::new(unify(e1, e2)))
+        }
         _ => SType::Unknown,
     }
 }
@@ -281,6 +308,9 @@ fn violation(expected: &SType, actual: &SType) -> Option<(String, String, bool)>
         }
         (SType::Tuple(xs), SType::Tuple(ys)) => {
             xs.len() != ys.len() || xs.iter().zip(ys).any(|(x, y)| violation(x, y).is_some())
+        }
+        (SType::Result(o1, e1), SType::Result(o2, e2)) => {
+            violation(o1, o2).is_some() || violation(e1, e2).is_some()
         }
         _ => false,
     };
@@ -473,6 +503,13 @@ impl Checker {
             }
             Expr::Tuple(elems) => SType::Tuple(elems.iter().map(|e| self.infer(e)).collect()),
             Expr::StructLiteral(lit) => SType::Named(lit.type_name.clone()),
+            Expr::ResultOk(e) => SType::Result(Box::new(self.infer(e)), Box::new(SType::Unknown)),
+            Expr::ResultErr(e) => SType::Result(Box::new(SType::Unknown), Box::new(self.infer(e))),
+            // `expr?` unwraps the Ok payload (or propagates the Err out).
+            Expr::Try(e) => match self.infer(e) {
+                SType::Result(ok, _) => *ok,
+                _ => SType::Unknown,
+            },
             Expr::Identifier(name) | Expr::LocalRef { name, .. } => self.lookup(name),
             Expr::Call { callee, .. } => {
                 if let Expr::Identifier(name) = callee.as_ref()
@@ -550,9 +587,14 @@ impl Checker {
     /// element-by-element with precise paths (`element 1 of let binding
     /// 'xs'`); everything else falls back to comparing the inferred type.
     fn check_against(&mut self, expr: &Expr, expected: &SType, span: (u32, u32), site: &str) {
-        self.check_against_at(expr, expected, span, site, false)
+        self.check_against_at(expr, expected, span, site, false, false)
     }
 
+    /// `elem`: this position is inside a container decomposition, which the
+    /// runtime's shallow checks never see. `irp`: this position is inside a
+    /// Result payload — the runtime checks a payload's *base* one level
+    /// deep, so the first payload level keeps runtime visibility and
+    /// anything nested beyond it does not.
     fn check_against_at(
         &mut self,
         expr: &Expr,
@@ -560,14 +602,42 @@ impl Checker {
         span: (u32, u32),
         site: &str,
         elem: bool,
+        irp: bool,
     ) {
         if *expected == SType::Unknown {
             return;
         }
         match (expr, expected) {
+            (Expr::ResultOk(inner), SType::Result(t, _)) => {
+                self.check_against_at(
+                    inner,
+                    t,
+                    span,
+                    &format!("Ok payload of {}", site),
+                    elem || irp,
+                    true,
+                );
+            }
+            (Expr::ResultErr(inner), SType::Result(_, t)) => {
+                self.check_against_at(
+                    inner,
+                    t,
+                    span,
+                    &format!("Err payload of {}", site),
+                    elem || irp,
+                    true,
+                );
+            }
             (Expr::List(elems), SType::List(t)) => {
                 for (i, e) in elems.iter().enumerate() {
-                    self.check_against_at(e, t, span, &format!("element {} of {}", i, site), true);
+                    self.check_against_at(
+                        e,
+                        t,
+                        span,
+                        &format!("element {} of {}", i, site),
+                        true,
+                        false,
+                    );
                 }
             }
             (Expr::Tuple(elems), SType::Tuple(ts)) => {
@@ -590,6 +660,7 @@ impl Checker {
                             span,
                             &format!("element {} of {}", i, site),
                             true,
+                            false,
                         );
                     }
                 }
@@ -602,12 +673,13 @@ impl Checker {
                         span,
                         &format!("map key {} of {}", i, site),
                         true,
+                        false,
                     );
                     let value_site = match &entry.key {
                         Expr::String(s) => format!("value for key \"{}\" of {}", s, site),
                         _ => format!("map value {} of {}", i, site),
                     };
-                    self.check_against_at(&entry.value, v, span, &value_site, true);
+                    self.check_against_at(&entry.value, v, span, &value_site, true, false);
                 }
             }
             _ => {
@@ -861,9 +933,30 @@ impl Checker {
             }
             Expr::Match { value, arms } => {
                 self.check_expr(value, span);
+                let scrutinee = self.infer(value);
                 for arm in arms {
                     self.scopes.push(HashMap::new());
                     self.bind_pattern_unknown(&arm.pattern.clone());
+                    // Narrowing: `Ok(x)` / `Err(e)` against a known Result
+                    // scrutinee bind their payload types.
+                    if let SType::Result(ok, err) = &scrutinee {
+                        use crate::ast::Pattern as P;
+                        match &arm.pattern {
+                            P::Ok(inner) => {
+                                if let P::Identifier(n) = inner.as_ref() {
+                                    let (n, t) = (n.clone(), (**ok).clone());
+                                    self.bind(&n, t);
+                                }
+                            }
+                            P::Err(inner) => {
+                                if let P::Identifier(n) = inner.as_ref() {
+                                    let (n, t) = (n.clone(), (**err).clone());
+                                    self.bind(&n, t);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                     self.check_expr(&arm.expression, span);
                     self.scopes.pop();
                 }
@@ -1086,5 +1179,80 @@ mod tests {
         assert!(d[0].message.contains("expects Int, got String"));
         // Disagreeing branches stay unknown.
         assert!(check("fn f(x: Int) = x\nlet v = if true => \"a\" else => 1\nf(v)\n").is_empty());
+    }
+
+    // ── stage 4: Result payloads ───────────────────────────────────────
+
+    #[test]
+    fn result_literal_payloads_decompose() {
+        let d = check("fn f(r: Result<Int, String>) = r\nf(Ok(\"s\"))\n");
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].message,
+            "Ok payload of parameter 'r' of f expects Int, got String"
+        );
+        assert!(d[0].runtime, "the runtime checks one payload level");
+        let d = check("fn f(r: Result<Int, String>) = r\nf(Err(42))\n");
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].message,
+            "Err payload of parameter 'r' of f expects String, got Int"
+        );
+        assert!(d[0].runtime);
+        // Honest payloads are silent.
+        assert!(check("fn f(r: Result<Int, String>) = r\nf(Ok(1))\nf(Err(\"e\"))\n").is_empty());
+    }
+
+    #[test]
+    fn nested_result_payloads_are_beyond_the_runtime() {
+        let d = check("let r: Result<Result<Int, String>, String> = Ok(Ok(\"s\"))\n");
+        assert_eq!(d.len(), 1);
+        assert!(
+            d[0].message
+                .contains("Ok payload of Ok payload of let binding 'r' expects Int, got String")
+        );
+        assert!(
+            !d[0].runtime,
+            "the runtime checks payload bases one level deep"
+        );
+    }
+
+    #[test]
+    fn try_operator_unwraps_the_ok_payload() {
+        let d = check(
+            "fn get() -> Result<Int, String> = Ok(1)\nfn g(x: String) = x\nfn h() -> Result<Int, String> = {\n    let v = get()?\n    g(v)\n    Ok(v)\n}\n",
+        );
+        assert_eq!(d.len(), 1);
+        assert!(
+            d[0].message
+                .contains("parameter 'x' of g expects String, got Int")
+        );
+    }
+
+    #[test]
+    fn match_arms_narrow_result_payloads() {
+        let d = check(
+            "fn get() -> Result<Int, String> = Ok(1)\nfn g(x: String) = x\nlet r = match get() { Ok(v) => g(v), Err(e) => g(e) }\n",
+        );
+        assert_eq!(d.len(), 1, "Ok arm flagged, Err arm honest: {:?}", d);
+        assert!(d[0].message.contains("expects String, got Int"));
+    }
+
+    #[test]
+    fn deep_result_types_flow_through_bindings() {
+        let d = check(
+            "fn f(r: Result<Int, String>) = r\nfn mk() -> Result<String, String> = Ok(\"s\")\nlet r = mk()\nf(r)\n",
+        );
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].message,
+            "parameter 'r' of f expects Result<Int, String>, got Result<String, String>"
+        );
+        assert!(
+            !d[0].runtime,
+            "the value may be Err at runtime — not provable"
+        );
+        // Unknown-producing calls stay silent.
+        assert!(check("fn f(r: Result<Int, String>) = r\nfn mk(x) = Ok(x)\nf(mk(1))\n").is_empty());
     }
 }

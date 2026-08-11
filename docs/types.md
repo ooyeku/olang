@@ -123,6 +123,19 @@ Details worth knowing:
   JIT compiles a function only when it can *prove* the return annotation
   is satisfied, and otherwise leaves it on the checking bytecode path.
   Tier promotion never weakens a promise.
+- **`Result<T, E>` checks the payload that is present.** Unlike a
+  container, a Result holds exactly one payload, so the O(1) discipline
+  allows one step more: an `Ok` value checks its payload against `T`,
+  an `Err` against `E` — shallowly, one name comparison
+  (`Result<List<Int>, E>` checks that an Ok payload is "a List").
+  A dishonest side names itself:
+
+  ```olang no-run
+  fn parse(s) -> Result<Int, String> = Ok(s)
+  parse("x")
+  // Type error: return value of parse expects Result<Int, String>, got Ok(String)
+  ```
+
 - **Async functions check the resolved value.** An `async fn` annotated
   `-> Promise<Int, String>` describes the promise the caller receives;
   the runtime enforces `Int` on the value the body resolves to.
@@ -206,12 +219,19 @@ Config { tags: ["a", 2] }
 ```
 
 Paths compose through nesting — `[[1], [2, "a"]]` against
-`List<List<Int>>` reports `element 1 of element 1 of ...`. And deep
-types flow through the program: annotated bindings and known return
-types carry their element structure, so passing a `List<String>` binding
-to a parameter declared `List<Int>` is flagged with the full types
-(`expects List<Int>, got List<String>`) even though no literal is in
-sight.
+`List<List<Int>>` reports `element 1 of element 1 of ...`. `Ok`/`Err`
+literals decompose the same way (`Ok payload of let binding 'r' expects
+Int, got String`), and beyond them the checker follows Results where
+the runtime stops: `expr?` is known to carry the Ok payload's type, and
+`match` arms narrow — in `match get() { Ok(v) => ..., Err(e) => ... }`
+against a known `Result<Int, String>`, `v` is an `Int` and `e` a
+`String` inside their arms.
+
+Deep types also flow through the program: annotated bindings and known
+return types carry their element structure, so passing a `List<String>`
+binding to a parameter declared `List<Int>` is flagged with the full
+types (`expects List<Int>, got List<String>`) even though no literal is
+in sight.
 
 The conservatism is deliberate and symmetric. An empty list satisfies
 any element type; a list whose elements the checker cannot type stays
@@ -250,9 +270,13 @@ Knowing the boundaries tells you what an annotation cannot promise:
   labor.
 - **Generic type parameters** — erased at runtime, `Unknown` to the
   checker. Their trait bounds are enforced separately.
-- **Function-type annotations** (`(Int) -> Int`), **`Result<T, E>`
-  payloads**, and **`Promise` payloads at non-async sites** parse and
-  document intent, but are not yet enforced beyond their base.
+- **Function-type annotations** (`(Int) -> Int`) and **`Promise`
+  payloads at non-async sites** parse and document intent, but are not
+  yet enforced.
+- **Result payloads check one level.** The runtime verifies the present
+  side's *base* type; structure inside the payload (list elements, a
+  nested Result's own payload) is the checker's territory, like every
+  other deep promise.
 - **Reserved forms** — union (`A | B`), intersection, and literal-type
   annotations parse today and gain semantics later
   ([Stability](stability.md#reserved--parses-today-semantics-later)).

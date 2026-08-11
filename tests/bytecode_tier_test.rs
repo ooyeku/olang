@@ -3018,3 +3018,24 @@ fn annotation_enforcement_is_tier_transparent() {
     // Unannotated stays fully dynamic.
     assert_tier_transparent("fn d(x) = x\nto_string(d(1)) + to_string(d(\"s\"))");
 }
+
+#[test]
+fn result_payload_enforcement_is_tier_transparent() {
+    // Gradual typing stage 4: Result<T, E> checks the present side's
+    // payload shallowly, with identical text on every tier.
+    // Honest payloads pass.
+    assert_tier_transparent(
+        "fn p(s: String) -> Result<Int, String> = if s == \"y\" => Ok(1) else => Err(\"no\")\nshow(p(\"y\")) + show(p(\"n\"))",
+    );
+    // Dishonest Ok payload on return.
+    assert_tier_transparent("fn g(x) -> Result<Int, String> = Ok(x)\ng(\"s\")");
+    // Dishonest Err payload on return.
+    assert_tier_transparent("fn g(x) -> Result<Int, String> = Err(x)\ng(42)");
+    // Param boundary, both sides.
+    assert_tier_transparent("fn f(r: Result<Int, String>) = r\nshow(f(Ok(\"s\")))");
+    assert_tier_transparent("fn f(r: Result<Int, String>) = r\nshow(f(Err(1)))");
+    // Payload checks are shallow: a Result payload satisfies by base name.
+    assert_tier_transparent("fn f(r: Result<List, String>) = r\nshow(f(Ok([1, 2])))");
+    // A non-Result against a Result annotation is the base mismatch.
+    assert_tier_transparent("fn f(r: Result<Int, String>) = r\nf(42)");
+}

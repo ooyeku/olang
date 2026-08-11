@@ -1306,8 +1306,8 @@ impl BytecodeVm {
         if !bytecode.param_checks.is_empty() {
             for (i, check) in bytecode.param_checks.iter().enumerate() {
                 if let (Some(check), Some(arg)) = (check, args.get(i)) {
-                    let actual = arg.type_name();
-                    if !check.accepts(actual) {
+                    let (actual, payload) = ovm_value_view(arg);
+                    if let Some((expected, got)) = check.check_value(actual, payload) {
                         let fn_name = bytecode
                             .debug_info
                             .function_name
@@ -1315,10 +1315,7 @@ impl BytecodeVm {
                             .unwrap_or("<fn>");
                         return Err(BytecodeError::TypeError(format!(
                             "parameter '{}' of {} expects {}, got {}",
-                            bytecode.param_names[i],
-                            fn_name,
-                            check.expected_name(),
-                            actual
+                            bytecode.param_names[i], fn_name, expected, got
                         )));
                     }
                 }
@@ -1425,8 +1422,9 @@ impl BytecodeVm {
         if !bytecode.param_checks.is_empty() {
             for (i, check) in bytecode.param_checks.iter().enumerate() {
                 if let (Some(check), Some(arg)) = (check, arg_regs.get(i)) {
-                    let actual = self.execution_state.register_ref(*arg)?.type_name();
-                    if !check.accepts(actual) {
+                    let value = self.execution_state.register_ref(*arg)?;
+                    let (actual, payload) = ovm_value_view(value);
+                    if let Some((expected, got)) = check.check_value(actual, payload) {
                         let fn_name = bytecode
                             .debug_info
                             .function_name
@@ -1434,10 +1432,7 @@ impl BytecodeVm {
                             .unwrap_or("<fn>");
                         return Err(BytecodeError::TypeError(format!(
                             "parameter '{}' of {} expects {}, got {}",
-                            bytecode.param_names[i],
-                            fn_name,
-                            check.expected_name(),
-                            actual
+                            bytecode.param_names[i], fn_name, expected, got
                         )));
                     }
                 }
@@ -1804,8 +1799,8 @@ impl BytecodeVm {
                     // Enforce the declared return type, same message as the
                     // interpreter's boundary.
                     if let Some(check) = &bytecode.return_check {
-                        let actual = result.type_name();
-                        if !check.accepts(actual) {
+                        let (actual, payload) = ovm_value_view(&result);
+                        if let Some((expected, got)) = check.check_value(actual, payload) {
                             let fn_name = bytecode
                                 .debug_info
                                 .function_name
@@ -1813,9 +1808,7 @@ impl BytecodeVm {
                                 .unwrap_or("<fn>");
                             return Err(BytecodeError::TypeError(format!(
                                 "return value of {} expects {}, got {}",
-                                fn_name,
-                                check.expected_name(),
-                                actual
+                                fn_name, expected, got
                             )));
                         }
                     }
@@ -1895,14 +1888,11 @@ impl BytecodeVm {
                     // it aligns with `values` and `shape.field_names`.
                     for (i, check) in field_types.iter().enumerate() {
                         if let Some(check) = check {
-                            let actual = values[i].type_name();
-                            if !check.accepts(actual) {
+                            let (actual, payload) = ovm_value_view(&values[i]);
+                            if let Some((expected, got)) = check.check_value(actual, payload) {
                                 return Err(BytecodeError::TypeError(format!(
                                     "field '{}' of {} expects {}, got {}",
-                                    shape.field_names[i],
-                                    shape.type_name,
-                                    check.expected_name(),
-                                    actual
+                                    shape.field_names[i], shape.type_name, expected, got
                                 )));
                             }
                         }
@@ -6199,6 +6189,20 @@ impl Default for BytecodeVm {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The value view `FieldTypeCheck::check_value` wants: the outer type
+/// name, plus which Result side is present and its payload's name.
+fn ovm_value_view(v: &OvmValue) -> (&str, Option<(bool, &str)>) {
+    let payload = match &v.data {
+        crate::ovm::value::ValueData::Result(r) => match (&r.ok, &r.err) {
+            (Some(p), _) => Some((true, p.type_name())),
+            (_, Some(p)) => Some((false, p.type_name())),
+            _ => None,
+        },
+        _ => None,
+    };
+    (v.type_name(), payload)
 }
 
 #[cfg(test)]

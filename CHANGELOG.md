@@ -10,6 +10,26 @@ documented.
 
 ## [Unreleased]
 
+### Added
+
+- **`Result<T, E>` annotations enforce their payloads.** Gradual
+  typing stage 4: a Result holds exactly one payload, so — unlike
+  containers — the O(1) boundary discipline allows a step more. An
+  `Ok` value now checks its payload against `T` and an `Err` against
+  `E`, shallowly (one name comparison; `Result<List<Int>, E>` checks
+  an Ok payload is "a List"), at every annotated boundary on every
+  tier with identical text: `return value of parse expects
+  Result<Int, String>, got Ok(String)`. Functions returning annotated
+  Results stay on the enforcing bytecode path (the JIT refuses,
+  conservatively). The static checker goes deeper: `Ok`/`Err`
+  literals decompose with paths (`Ok payload of parameter 'r' of f
+  expects Int, got String`), `expr?` carries the Ok payload's type,
+  `match` arms narrow `Ok(v)`/`Err(e)` bindings to their payload
+  types, and deep Result types flow through annotated bindings
+  (`expects Result<Int, String>, got Result<String, String>`). Every
+  Result annotation in the repo's 171 files was already honest:
+  nothing changed behavior, and dishonest ones now cannot land.
+
 ### Fixed
 
 - **The website playground linked again — and its book nav caught up.**
