@@ -711,12 +711,90 @@ pub enum TypeAnnotation {
     },
 }
 
+impl TypeAnnotation {
+    /// Render the annotation as it would appear in source — used for
+    /// error text where the runtime's bare type-name vocabulary would
+    /// lose the information that matters (`(Int) -> Int`, not "Function").
+    pub fn display_source(&self) -> String {
+        match self {
+            TypeAnnotation::Int => "Int".to_string(),
+            TypeAnnotation::Float => "Float".to_string(),
+            TypeAnnotation::Bool => "Bool".to_string(),
+            TypeAnnotation::String => "String".to_string(),
+            TypeAnnotation::Unit => "()".to_string(),
+            TypeAnnotation::List(t) => format!("[{}]", t.display_source()),
+            TypeAnnotation::Map {
+                key_type,
+                value_type,
+            } => format!(
+                "Map<{}, {}>",
+                key_type.display_source(),
+                value_type.display_source()
+            ),
+            TypeAnnotation::Tuple(ts) => format!(
+                "({})",
+                ts.iter()
+                    .map(|t| t.display_source())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            TypeAnnotation::Function {
+                params,
+                return_type,
+            } => format!(
+                "({}) -> {}",
+                params
+                    .iter()
+                    .map(|t| t.display_source())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                return_type.display_source()
+            ),
+            TypeAnnotation::Result { ok_type, err_type } => format!(
+                "Result<{}, {}>",
+                ok_type.display_source(),
+                err_type.display_source()
+            ),
+            TypeAnnotation::Promise {
+                value_type,
+                error_type,
+            } => match error_type {
+                Some(e) => format!(
+                    "Promise<{}, {}>",
+                    value_type.display_source(),
+                    e.display_source()
+                ),
+                None => format!("Promise<{}>", value_type.display_source()),
+            },
+            TypeAnnotation::Custom(n) | TypeAnnotation::TypeVariable(n) => n.clone(),
+            TypeAnnotation::Generic {
+                base_type,
+                type_args,
+            } => format!(
+                "{}<{}>",
+                base_type,
+                type_args
+                    .iter()
+                    .map(|t| t.display_source())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            TypeAnnotation::Union { types } => types
+                .iter()
+                .map(|t| t.display_source())
+                .collect::<Vec<_>>()
+                .join(" | "),
+            _ => "_".to_string(),
+        }
+    }
+}
+
 /// A struct field's declared type reduced to the subset the runtime can
 /// reliably enforce when a struct is constructed. Only these annotations are
-/// checked; every other annotation (a generic type parameter, a list/map,
-/// a function type, a union, an absent/unknown type) reduces to `None` and
-/// leaves the field unchecked — construction never rejects what it cannot
-/// reliably verify.
+/// checked; every other annotation (a generic type parameter, an
+/// absent/unknown type, a reserved form) reduces to `None` and leaves the
+/// field unchecked — construction never rejects what it cannot reliably
+/// verify.
 ///
 /// The check itself is a single string comparison: the declared type's name
 /// against the value's runtime type name. `Value::type_name` and
@@ -745,13 +823,22 @@ pub enum FieldTypeCheck {
         ok: Option<Box<FieldTypeCheck>>,
         err: Option<Box<FieldTypeCheck>>,
     },
+    /// `(A, B) -> R`: the value must be callable with exactly the
+    /// annotation's parameter count — required-parameter floor and total
+    /// ceiling both respected when the value exposes them. Parameter and
+    /// return *types* inside the signature are the checker's concern (and
+    /// the callee's own boundaries enforce its annotations when called).
+    /// `display` is the annotation's source rendering for error text.
+    Function {
+        arity: usize,
+        display: String,
+    },
     /// `A | B`: the value satisfies the union if it satisfies any branch.
     /// Branch count is annotation-sized, each branch check O(1), so the
     /// whole check stays O(1) in the value. Only constructed when every
     /// branch is itself checkable — a union with an unenforceable branch
-    /// (generic parameter, function type) stays unchecked, because
-    /// rejecting a value the unenforceable branch might accept would be
-    /// wrong.
+    /// (e.g. a generic parameter) stays unchecked, because rejecting a
+    /// value the unenforceable branch might accept would be wrong.
     Union(Vec<FieldTypeCheck>),
     /// A declared struct or enum type, matched by name against the value's
     /// runtime type name.
@@ -783,9 +870,14 @@ impl FieldTypeCheck {
                 ok: Self::from_annotation(ok_type, type_params).map(Box::new),
                 err: Self::from_annotation(err_type, type_params).map(Box::new),
             }),
+            // A function annotation enforces callability + arity.
+            TypeAnnotation::Function { params, .. } => Some(Self::Function {
+                arity: params.len(),
+                display: ann.display_source(),
+            }),
             // A union enforces only when every branch does: one
-            // unenforceable branch (generic parameter, function type)
-            // makes the whole union unchecked rather than wrongly strict.
+            // unenforceable branch (e.g. a generic parameter) makes the
+            // whole union unchecked rather than wrongly strict.
             TypeAnnotation::Union { types } => {
                 let branches: Option<Vec<_>> = types
                     .iter()
@@ -827,6 +919,7 @@ impl FieldTypeCheck {
             Self::Map => "Map",
             Self::Tuple => "Tuple",
             Self::Result { .. } => "Result",
+            Self::Function { .. } => "Function",
             // A union has no single name; callers that can see values use
             // `check_value`/`accepts`, and error text uses `display_name`.
             Self::Union(_) => "Union",
@@ -839,6 +932,8 @@ impl FieldTypeCheck {
     pub fn accepts(&self, actual: &str) -> bool {
         match self {
             Self::Union(branches) => branches.iter().any(|b| b.accepts(actual)),
+            // Builtins are callable too.
+            Self::Function { .. } => actual == "Function" || actual == "Builtin",
             other => other.expected_name() == actual,
         }
     }
@@ -854,6 +949,7 @@ impl FieldTypeCheck {
                 };
                 format!("Result<{}, {}>", side(ok), side(err))
             }
+            Self::Function { display, .. } => display.clone(),
             Self::Union(branches) => branches
                 .iter()
                 .map(|b| b.display_name())
@@ -874,13 +970,14 @@ impl FieldTypeCheck {
         &self,
         type_name: &str,
         result_payload: Option<(bool, &str)>,
+        fn_arity: Option<(usize, usize)>,
     ) -> Option<(String, String)> {
         // Unions first: satisfied by any branch (checked in full, so a
         // Result branch's payload rule applies inside a union too).
         if let Self::Union(branches) = self {
             if branches
                 .iter()
-                .any(|b| b.check_value(type_name, result_payload).is_none())
+                .any(|b| b.check_value(type_name, result_payload, fn_arity).is_none())
             {
                 return None;
             }
@@ -892,7 +989,27 @@ impl FieldTypeCheck {
             return Some((self.display_name(), actual));
         }
         if !self.accepts(type_name) {
-            return Some((self.expected_name().to_string(), type_name.to_string()));
+            // Function expectations name the signature, not "Function" —
+            // the signature is the information that matters.
+            let expected = match self {
+                Self::Function { .. } => self.display_name(),
+                other => other.expected_name().to_string(),
+            };
+            return Some((expected, type_name.to_string()));
+        }
+        if let (Self::Function { arity, .. }, Some((required, total))) = (self, fn_arity)
+            && !(required <= *arity && *arity <= total)
+        {
+            let desc = if required == total {
+                format!(
+                    "a function taking {} parameter{}",
+                    total,
+                    if total == 1 { "" } else { "s" }
+                )
+            } else {
+                format!("a function taking {} to {} parameters", required, total)
+            };
+            return Some((self.display_name(), desc));
         }
         if let (Self::Result { ok, err }, Some((is_ok, payload))) = (self, result_payload) {
             let side = if is_ok { ok } else { err };

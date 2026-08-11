@@ -3056,3 +3056,17 @@ fn union_annotation_enforcement_is_tier_transparent() {
     // Shallow container branches stay shallow.
     assert_tier_transparent("fn f(x: List<Int> | Int) = show(x)\nshow(f([\"any\", 1]))");
 }
+
+#[test]
+fn function_annotation_enforcement_is_tier_transparent() {
+    // 0.50 arc: `(A) -> R` checks callability + arity on every tier.
+    assert_tier_transparent(
+        "fn apply(f: (Int) -> Int, x: Int) -> Int = f(x)\nto_string(apply((n) => n + 1, 41))",
+    );
+    assert_tier_transparent("fn apply(f: (Int) -> Int, x: Int) = f(x)\napply(7, 1)");
+    assert_tier_transparent("fn apply(f: (Int) -> Int, x: Int) = f(x)\napply((a, b) => a, 1)");
+    // A default-parameter lambda satisfies any arity in its range.
+    assert_tier_transparent(
+        "fn apply(f: (Int) -> Int, x: Int) = f(x)\nto_string(apply((a, b = 1) => a + b, 5))",
+    );
+}

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Function-type annotations enforce callability and arity.**
+  `f: (Int) -> Int` now verifies at the boundary that the value is
+  callable (function or builtin) and can be called with exactly the
+  annotation's parameter count — respecting default-parameter ranges
+  (`expects (Int) -> Int, got a function taking 2 parameters`), on
+  every tier, with the signature (not the bare word "Function") in
+  the error text. Values that don't expose parameter counts (builtins)
+  check callability only. Signature *types* are the checker's
+  territory: a lambda whose own annotations contradict the declared
+  signature is flagged as a promise-break (`expects (Int) -> Int, got
+  (String) -> ?`), and lambdas now carry their signature through the
+  checker's inference.
+
 - **Union annotations gained semantics — `A | B` is enforced.** The
   reserved form graduated, additively as promised: a value satisfies a
   union if it satisfies any branch, checked at every annotated boundary

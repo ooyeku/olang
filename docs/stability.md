@@ -68,7 +68,8 @@ the global builtins.
   [the Types chapter](types.md): annotations are enforced at runtime
   (parameters, returns, `let` bindings, struct fields — shallow
   container checks, `Result<T, E>` payload checks one level deep,
-  strict Int/Float, identical on every tier), and
+  `A | B` unions by any-branch, function types by callability and
+  arity, strict Int/Float, identical on every tier), and
   `olang check` plus the language server report provable violations
   statically. All documented annotation forms keep parsing; the
   enforcement semantics are locked by the chapter's doc tests; the

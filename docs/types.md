@@ -123,6 +123,16 @@ Details worth knowing:
   JIT compiles a function only when it can *prove* the return annotation
   is satisfied, and otherwise leaves it on the checking bytecode path.
   Tier promotion never weakens a promise.
+- **Function annotations check callability and arity.** `f: (Int) ->
+  Int` verifies the value is callable (a function or a builtin) and can
+  be called with exactly the annotation's parameter count — a
+  two-parameter lambda passed where `(Int) -> Int` is declared fails at
+  the boundary (`expects (Int) -> Int, got a function taking 2
+  parameters`), and a lambda with defaults satisfies any arity in its
+  range. The parameter and return *types* inside the signature are the
+  checker's territory; the callee's own annotations enforce themselves
+  when it is called.
+
 - **`Result<T, E>` checks the payload that is present.** Unlike a
   container, a Result holds exactly one payload, so the O(1) discipline
   allows one step more: an `Ok` value checks its payload against `T`,
@@ -140,10 +150,10 @@ Details worth knowing:
   String and rejects everything else, at the same O(1) cost (branch
   count is annotation-sized). Branches keep their own rules — a
   `Result<Int, String> | Int` union applies the payload check when the
-  value is a Result. A union containing an unenforceable branch (a
-  generic parameter, a function type) is entirely unchecked rather than
-  wrongly strict — rejecting a value the unenforceable branch might
-  have accepted would break the gradual contract.
+  value is a Result. A union containing an unenforceable branch (e.g. a
+  generic parameter) is entirely unchecked rather than wrongly strict —
+  rejecting a value the unenforceable branch might have accepted would
+  break the gradual contract.
 
   ```olang no-run
   fn tag(x: Int | String) = show(x)
@@ -285,9 +295,12 @@ Knowing the boundaries tells you what an annotation cannot promise:
   labor.
 - **Generic type parameters** — erased at runtime, `Unknown` to the
   checker. Their trait bounds are enforced separately.
-- **Function-type annotations** (`(Int) -> Int`) and **`Promise`
-  payloads at non-async sites** parse and document intent, but are not
-  yet enforced.
+- **Signature types inside function annotations.** The runtime checks
+  callability and arity; a provable mismatch between `(Int) -> Int` and
+  a lambda's own annotations (`(s: String) => ...`) is the checker's
+  finding, labeled a promise-break.
+- **`Promise` payloads at non-async sites** parse and document intent,
+  but are not yet enforced.
 - **Result payloads check one level.** The runtime verifies the present
   side's *base* type; structure inside the payload (list elements, a
   nested Result's own payload) is the checker's territory, like every

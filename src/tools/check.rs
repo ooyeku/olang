@@ -144,6 +144,13 @@ enum SType {
     Map(Box<SType>, Box<SType>),
     Tuple(Vec<SType>),
     Result(Box<SType>, Box<SType>),
+    /// `(A, B) -> R`. `required` is the callable's no-default parameter
+    /// floor (annotations have no defaults, so theirs equals the count).
+    Function {
+        params: Vec<SType>,
+        required: usize,
+        ret: Box<SType>,
+    },
     /// `A | B`. Only constructed when the runtime enforces the union too
     /// (every branch checkable), so verdict parity holds; otherwise the
     /// annotation reduces to Unknown, silent like the runtime.
@@ -181,6 +188,17 @@ impl SType {
                 Box::new(SType::from_annotation(ok_type, type_params)),
                 Box::new(SType::from_annotation(err_type, type_params)),
             ),
+            TypeAnnotation::Function {
+                params,
+                return_type,
+            } => SType::Function {
+                params: params
+                    .iter()
+                    .map(|t| SType::from_annotation(t, type_params))
+                    .collect(),
+                required: params.len(),
+                ret: Box::new(SType::from_annotation(return_type, type_params)),
+            },
             TypeAnnotation::Union { types } => {
                 // Mirror the runtime: a union with an unenforceable branch
                 // is entirely unchecked there, so it must be silent here.
@@ -260,6 +278,7 @@ impl SType {
             SType::Map(_, _) => Some("Map"),
             SType::Tuple(_) => Some("Tuple"),
             SType::Result(_, _) => Some("Result"),
+            SType::Function { .. } => Some("Function"),
             // A union has no single base; violation() handles it directly.
             SType::Union(_) => None,
             SType::Named(n) => Some(n),
@@ -280,6 +299,15 @@ impl SType {
                 "Result".to_string()
             }
             SType::Result(o, e) => format!("Result<{}, {}>", o.display(), e.display()),
+            SType::Function { params, ret, .. } => format!(
+                "({}) -> {}",
+                params
+                    .iter()
+                    .map(|p| p.display())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                ret.display()
+            ),
             SType::Union(bs) => bs
                 .iter()
                 .map(|b| b.display())
@@ -340,8 +368,45 @@ fn violation(expected: &SType, actual: &SType) -> Option<(String, String, bool)>
     let be = expected.base_name()?;
     let ba = actual.base_name()?;
     if be != ba {
-        // The runtime's shallow check fails too; use its vocabulary.
-        return Some((be.to_string(), ba.to_string(), true));
+        // The runtime's shallow check fails too; use its vocabulary —
+        // except function expectations, which name the signature.
+        let expected_text = match expected {
+            SType::Function { .. } => expected.display(),
+            _ => be.to_string(),
+        };
+        return Some((expected_text, ba.to_string(), true));
+    }
+    // Function vs function: arity is runtime-checked (the value exposes
+    // its parameter counts); signature types inside are checker-only.
+    if let (
+        SType::Function {
+            params: ep,
+            ret: er,
+            ..
+        },
+        SType::Function {
+            params: ap,
+            required: areq,
+            ret: ar,
+        },
+    ) = (expected, actual)
+    {
+        let n = ep.len();
+        if n < *areq || n > ap.len() {
+            let desc = if *areq == ap.len() {
+                format!(
+                    "a function taking {} parameter{}",
+                    ap.len(),
+                    if ap.len() == 1 { "" } else { "s" }
+                )
+            } else {
+                format!("a function taking {} to {} parameters", areq, ap.len())
+            };
+            return Some((expected.display(), desc, true));
+        }
+        let deep = ep.iter().zip(ap).any(|(e, a)| violation(e, a).is_some())
+            || violation(er, ar).is_some();
+        return deep.then(|| (expected.display(), actual.display(), false));
     }
     // Same base: refine only within matching structural constructors.
     let deep = match (expected, actual) {
@@ -617,7 +682,32 @@ impl Checker {
                     _ => SType::Unknown,
                 }
             }
-            // Everything else — blocks, pipelines, lambdas, field access,
+            Expr::Lambda {
+                parameters,
+                return_type,
+                ..
+            } => SType::Function {
+                params: parameters
+                    .iter()
+                    .map(|p| {
+                        p.type_annotation
+                            .as_ref()
+                            .map(|a| SType::from_annotation(a, &[]))
+                            .unwrap_or(SType::Unknown)
+                    })
+                    .collect(),
+                required: parameters
+                    .iter()
+                    .filter(|p| p.default_value.is_none())
+                    .count(),
+                ret: Box::new(
+                    return_type
+                        .as_ref()
+                        .map(|a| SType::from_annotation(a, &[]))
+                        .unwrap_or(SType::Unknown),
+                ),
+            },
+            // Everything else — blocks, pipelines, field access,
             // indexing, try, ranges — stays Unknown. The runtime enforces;
             // this pass only proves what is cheap to prove.
             _ => SType::Unknown,
@@ -1316,6 +1406,43 @@ mod tests {
         // A generic-parameter branch erases the whole union, exactly as
         // the runtime skips it.
         assert!(check("fn f<T>(x: T | Int) = x\nf(true)\n").is_empty());
+    }
+
+    // ── 0.50 arc: function types ───────────────────────────────────────
+
+    #[test]
+    fn function_annotations_check_callability_and_arity() {
+        let src = "fn apply(f: (Int) -> Int, x: Int) = f(x)\n";
+        assert!(check(&format!("{}apply((n) => n + 1, 1)\n", src)).is_empty());
+        let d = check(&format!("{}apply(7, 1)\n", src));
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].message,
+            "parameter 'f' of apply expects (Int) -> Int, got Int"
+        );
+        assert!(d[0].runtime);
+        let d = check(&format!("{}apply((a, b) => a, 1)\n", src));
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].message,
+            "parameter 'f' of apply expects (Int) -> Int, got a function taking 2 parameters"
+        );
+        assert!(d[0].runtime, "arity is value-exposed; the runtime rejects");
+    }
+
+    #[test]
+    fn function_signature_types_are_checker_territory() {
+        // An annotated lambda parameter contradicting the declared
+        // signature is provable but runs shallow at runtime.
+        let d = check("fn apply(f: (Int) -> Int, x: Int) = f(x)\napply((s: String) => 1, 1)\n");
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].message,
+            "parameter 'f' of apply expects (Int) -> Int, got (String) -> ?"
+        );
+        assert!(!d[0].runtime);
+        // Unannotated lambda params stay unknown — silent.
+        assert!(check("fn apply(f: (Int) -> Int, x: Int) = f(x)\napply((s) => 1, 1)\n").is_empty());
     }
 
     #[test]

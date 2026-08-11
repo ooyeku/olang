@@ -1306,8 +1306,8 @@ impl BytecodeVm {
         if !bytecode.param_checks.is_empty() {
             for (i, check) in bytecode.param_checks.iter().enumerate() {
                 if let (Some(check), Some(arg)) = (check, args.get(i)) {
-                    let (actual, payload) = ovm_value_view(arg);
-                    if let Some((expected, got)) = check.check_value(actual, payload) {
+                    let (actual, payload, fn_arity) = ovm_value_view(arg);
+                    if let Some((expected, got)) = check.check_value(actual, payload, fn_arity) {
                         let fn_name = bytecode
                             .debug_info
                             .function_name
@@ -1423,8 +1423,8 @@ impl BytecodeVm {
             for (i, check) in bytecode.param_checks.iter().enumerate() {
                 if let (Some(check), Some(arg)) = (check, arg_regs.get(i)) {
                     let value = self.execution_state.register_ref(*arg)?;
-                    let (actual, payload) = ovm_value_view(value);
-                    if let Some((expected, got)) = check.check_value(actual, payload) {
+                    let (actual, payload, fn_arity) = ovm_value_view(value);
+                    if let Some((expected, got)) = check.check_value(actual, payload, fn_arity) {
                         let fn_name = bytecode
                             .debug_info
                             .function_name
@@ -1799,8 +1799,9 @@ impl BytecodeVm {
                     // Enforce the declared return type, same message as the
                     // interpreter's boundary.
                     if let Some(check) = &bytecode.return_check {
-                        let (actual, payload) = ovm_value_view(&result);
-                        if let Some((expected, got)) = check.check_value(actual, payload) {
+                        let (actual, payload, fn_arity) = ovm_value_view(&result);
+                        if let Some((expected, got)) = check.check_value(actual, payload, fn_arity)
+                        {
                             let fn_name = bytecode
                                 .debug_info
                                 .function_name
@@ -1888,8 +1889,10 @@ impl BytecodeVm {
                     // it aligns with `values` and `shape.field_names`.
                     for (i, check) in field_types.iter().enumerate() {
                         if let Some(check) = check {
-                            let (actual, payload) = ovm_value_view(&values[i]);
-                            if let Some((expected, got)) = check.check_value(actual, payload) {
+                            let (actual, payload, fn_arity) = ovm_value_view(&values[i]);
+                            if let Some((expected, got)) =
+                                check.check_value(actual, payload, fn_arity)
+                            {
                                 return Err(BytecodeError::TypeError(format!(
                                     "field '{}' of {} expects {}, got {}",
                                     shape.field_names[i], shape.type_name, expected, got
@@ -6192,17 +6195,34 @@ impl Default for BytecodeVm {
 }
 
 /// The value view `FieldTypeCheck::check_value` wants: the outer type
-/// name, plus which Result side is present and its payload's name.
-fn ovm_value_view(v: &OvmValue) -> (&str, Option<(bool, &str)>) {
+/// name, which Result side is present (and its payload's name), and a
+/// callable's (required, total) parameter counts where the value exposes
+/// them — AstFunction and Closure carry full parameter info; FunctionObject
+/// and CompiledFunction don't record defaults, so their arity stays
+/// unchecked rather than wrongly strict.
+#[allow(clippy::type_complexity)]
+fn ovm_value_view(v: &OvmValue) -> (&str, Option<(bool, &str)>, Option<(usize, usize)>) {
+    use crate::ovm::value::ValueData;
     let payload = match &v.data {
-        crate::ovm::value::ValueData::Result(r) => match (&r.ok, &r.err) {
+        ValueData::Result(r) => match (&r.ok, &r.err) {
             (Some(p), _) => Some((true, p.type_name())),
             (_, Some(p)) => Some((false, p.type_name())),
             _ => None,
         },
         _ => None,
     };
-    (v.type_name(), payload)
+    let counts = |params: &[crate::ast::Parameter]| {
+        (
+            params.iter().filter(|p| p.default_value.is_none()).count(),
+            params.len(),
+        )
+    };
+    let arity = match &v.data {
+        ValueData::AstFunction(f) => Some(counts(&f.parameters)),
+        ValueData::Closure(c) => Some(counts(&c.template.parameters)),
+        _ => None,
+    };
+    (v.type_name(), payload, arity)
 }
 
 #[cfg(test)]
