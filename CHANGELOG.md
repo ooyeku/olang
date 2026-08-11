@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING: type annotations are enforced at runtime — olang is
+  gradually typed.** An annotation, wherever it appears, is now a kept
+  promise: function parameters check at the call boundary
+  (`parameter 'x' of f expects Int, got String`), declared return
+  types check on the produced value, and `let x: Int = ...` checks at
+  the binding. Unannotated code stays fully dynamic with zero cost and
+  zero judgment. Containers check shallowly (`List<Int>` promises "a
+  List"; element types are the future static checker's concern),
+  Int/Float is strict (no widening, matching struct-field
+  enforcement), and generic parameters are erased, never checked.
+  Enforcement is identical on every tier: checks are precomputed at
+  declaration, the interpreter enforces at its boundary, the bytecode
+  VM enforces at function entry and return, and the JIT statically
+  discharges return annotations (compiling only when the inferred
+  return kind provably satisfies the declaration — otherwise the
+  function stays on the enforcing bytecode path). Every annotated
+  example in the repo already passed; code with dishonest annotations
+  now fails with a clear, located error.
+
 ## [0.47.0] - 2026-08-11
 
 ### Added

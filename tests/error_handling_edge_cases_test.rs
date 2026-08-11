@@ -194,13 +194,13 @@ fn test_type_annotation_mismatches() {
     let parser = Parser::new();
     let mut interpreter = Interpreter::new();
 
-    // Test variable with wrong type annotation
+    // A mismatched binding annotation is a type error: annotations are
+    // promises, not hints.
     let source = "let x: String = 42";
     let program = parser.parse(source).expect("Failed to parse");
     let result = interpreter.eval_program(program);
-
-    // Should succeed (type annotations are currently hints)
-    assert!(result.is_ok());
+    let err = result.expect_err("annotated let must enforce").to_string();
+    assert!(err.contains("expects String, got Int"), "got: {err}");
 
     // Test function with wrong return type
     let source = r#"
@@ -210,8 +210,11 @@ fn test_type_annotation_mismatches() {
     let program = parser.parse(source).expect("Failed to parse");
     let result = interpreter.eval_program(program);
 
-    // Should succeed (return type annotations are hints)
-    assert!(result.is_ok());
+    // A mismatched return annotation enforces at the call boundary.
+    let err = result
+        .expect_err("return annotation must enforce")
+        .to_string();
+    assert!(err.contains("expects String, got Int"), "got: {err}");
 }
 
 #[test]

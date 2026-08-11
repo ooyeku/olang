@@ -314,10 +314,13 @@ impl BytecodeTier {
                 }
             };
 
-            match self
-                .vm
-                .compile_function_with_closure(func_id, &decl, func.closure.clone())
-            {
+            match self.vm.compile_function_with_closure(
+                func_id,
+                &decl,
+                func.closure.clone(),
+                func.param_checks.clone().into(),
+                func.return_check.clone(),
+            ) {
                 Ok(()) => {
                     self.compiled
                         .insert(name.to_string(), (func_id, func.body.clone()));
@@ -510,6 +513,8 @@ mod tests {
             }),
             closure: Arc::new(im::HashMap::new()),
             param_bounds: Vec::new(),
+            param_checks: Vec::new(),
+            return_check: None,
         }
     }
 
@@ -626,6 +631,8 @@ mod tests {
             }),
             closure: Arc::new(closure),
             param_bounds: Vec::new(),
+            param_checks: Vec::new(),
+            return_check: None,
         };
 
         match tier.try_call(&func, &[Value::Integer(5)]) {
@@ -660,6 +667,8 @@ mod tests {
             body: Arc::new(Expr::Identifier("nonexistent_global".to_string())),
             closure: Arc::new(im::HashMap::new()),
             param_bounds: Vec::new(),
+            param_checks: Vec::new(),
+            return_check: None,
         };
 
         for _ in 0..5 {
@@ -720,6 +729,8 @@ mod tests {
             }),
             closure: Arc::new(im::HashMap::new()),
             param_bounds: Vec::new(),
+            param_checks: Vec::new(),
+            return_check: None,
         };
 
         match tier.try_call(&func, &[Value::Integer(1), Value::Integer(0)]) {

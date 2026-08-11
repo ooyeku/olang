@@ -623,6 +623,14 @@ pub struct Function {
     /// message. Empty for lambdas and unbounded functions.
     #[serde(default)]
     pub param_bounds: Vec<(usize, Vec<String>)>,
+    /// Per-parameter runtime type checks, computed once at declaration
+    /// from the annotations (generic parameters erase to None). Position-
+    /// aligned with `parameters`; empty means fully dynamic.
+    #[serde(default)]
+    pub param_checks: Vec<Option<FieldTypeCheck>>,
+    /// Runtime check for the declared return type, if checkable.
+    #[serde(default)]
+    pub return_check: Option<FieldTypeCheck>,
 }
 
 /// Built-in function
@@ -723,6 +731,12 @@ pub enum FieldTypeCheck {
     Float,
     Bool,
     String,
+    /// Shallow container checks: the value must be a List/Map/Tuple, but
+    /// element types are the static checker's concern — an O(1) promise,
+    /// never an O(n) walk on a hot call.
+    List,
+    Map,
+    Tuple,
     /// A declared struct or enum type, matched by name against the value's
     /// runtime type name.
     Named(String),
@@ -744,6 +758,19 @@ impl FieldTypeCheck {
             TypeAnnotation::Custom(name) if !type_params.iter().any(|p| p == name) => {
                 Some(Self::Named(name.clone()))
             }
+            // Containers check shallowly: List<Int> promises "a List".
+            TypeAnnotation::List(_) => Some(Self::List),
+            TypeAnnotation::Map { .. } => Some(Self::Map),
+            TypeAnnotation::Tuple(_) => Some(Self::Tuple),
+            TypeAnnotation::Generic { base_type, .. }
+                if !type_params.iter().any(|p| p == base_type) =>
+            {
+                match base_type.as_str() {
+                    "List" => Some(Self::List),
+                    "Map" => Some(Self::Map),
+                    other => Some(Self::Named(other.to_string())),
+                }
+            }
             _ => None,
         }
     }
@@ -756,6 +783,9 @@ impl FieldTypeCheck {
             Self::Float => "Float",
             Self::Bool => "Bool",
             Self::String => "String",
+            Self::List => "List",
+            Self::Map => "Map",
+            Self::Tuple => "Tuple",
             Self::Named(name) => name,
         }
     }
@@ -764,6 +794,31 @@ impl FieldTypeCheck {
     pub fn accepts(&self, actual: &str) -> bool {
         self.expected_name() == actual
     }
+}
+
+/// Reduce a parameter list to its runtime checks, position-aligned.
+/// `type_params` are the declaration's generic parameters (erased, never
+/// checked). Entirely-unannotated lists produce all-None cheaply.
+pub fn param_checks_of(
+    parameters: &[Parameter],
+    type_params: &[String],
+) -> Vec<Option<FieldTypeCheck>> {
+    parameters
+        .iter()
+        .map(|p| {
+            p.type_annotation
+                .as_ref()
+                .and_then(|ann| FieldTypeCheck::from_annotation(ann, type_params))
+        })
+        .collect()
+}
+
+/// Reduce a declared return annotation to its runtime check.
+pub fn return_check_of(
+    ret: Option<&TypeAnnotation>,
+    type_params: &[String],
+) -> Option<FieldTypeCheck> {
+    ret.and_then(|ann| FieldTypeCheck::from_annotation(ann, type_params))
 }
 
 /// Generic type definition

@@ -3001,3 +3001,20 @@ f(2)"#,
     assert_tier_transparent("fn f() = len(42)\nf()");
     assert_tier_transparent("fn f() = -\"abc\"\nf()");
 }
+
+#[test]
+fn annotation_enforcement_is_tier_transparent() {
+    // Gradual typing stage 1: annotations are promises on every tier.
+    // Param mismatch (checked before the tier), return mismatch (VM
+    // Return check; JIT statically discharges or refuses), and the
+    // happy paths all behave identically.
+    assert_tier_transparent("fn f(x: Int) -> Int = x + 1\nto_string(f(41))");
+    assert_tier_transparent("fn f(x: Int) = x\nf(\"nope\")");
+    assert_tier_transparent("fn g(x: Int) -> String = x * 2\ng(5)");
+    assert_tier_transparent("fn h(xs: List) = len(xs)\nto_string(h([1, 2, 3]))");
+    assert_tier_transparent("fn h(xs: List) = len(xs)\nh(42)");
+    // Strict Int/Float: no widening.
+    assert_tier_transparent("fn f(x: Float) = x\nf(1)");
+    // Unannotated stays fully dynamic.
+    assert_tier_transparent("fn d(x) = x\nto_string(d(1)) + to_string(d(\"s\"))");
+}

@@ -1283,6 +1283,8 @@ impl OvmValue {
                 }
                 Ok(Value::Function(crate::ast::Function {
                     name: None,
+                    param_checks: crate::ast::param_checks_of(&c.template.parameters, &[]),
+                    return_check: None,
                     parameters: c.template.parameters.clone(),
                     body: c.template.body.clone(),
                     closure: Arc::new(closure_map),

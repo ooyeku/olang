@@ -85,8 +85,9 @@ println(typeof(42) + " " + typeof(3.14) + " " + typeof("hi") + " " + typeof(true
 println(typeof([1]) + " " + typeof((1, 2)) + " " + typeof(#{ "k": 1 }))
 ```
 
-Static [type annotations](#type-annotations) are optional and currently
-serve as documentation and tooling hints; the runtime does not enforce them.
+olang is gradually typed: [type annotations](#type-annotations) are
+optional, and every annotation you write is enforced at runtime.
+Unannotated code is fully dynamic.
 
 ## Literals
 
@@ -1412,9 +1413,25 @@ for the distinction.
 
 ## Type Annotations
 
-Annotations may appear on `let` bindings, parameters, and return types. The
-runtime is dynamic; annotations are structured documentation and the input
-to future static checking:
+Annotations may appear on `let` bindings, parameters, and return types,
+and each one is a promise the runtime keeps. A parameter annotation
+checks the argument at the call boundary, a return annotation checks the
+value the function produces, and a `let` annotation checks the bound
+value — with the same clear error on every execution tier:
+
+```olang no-run
+fn label(n: Int) -> String = "#" + to_string(n)
+label("seven")
+// Type error: parameter 'n' of label expects Int, got String
+```
+
+Three rules keep enforcement predictable. Unannotated code is fully
+dynamic — no checks, no cost, no judgment. Container annotations check
+shallowly: `List<Int>` promises "a List" in O(1); element types are the
+static checker's concern. And `Int`/`Float` are strict — an `Int` does
+not satisfy a `Float` annotation, matching struct-field enforcement.
+Generic type parameters are erased at runtime and never checked (their
+trait *bounds* are). Annotations remain the input to static checking:
 
 ```olang
 let count: Int = 3

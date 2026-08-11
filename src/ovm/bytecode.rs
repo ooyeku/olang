@@ -107,6 +107,10 @@ pub struct BytecodeVm {
 
 /// Bytecode compiler that transforms AST to bytecode
 pub struct BytecodeCompiler {
+    /// Checks for the function currently being compiled, handed in by the
+    /// tier (precomputed at declaration; generic params already erased).
+    pub pending_param_checks: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]>,
+    pub pending_return_check: Option<crate::ast::FieldTypeCheck>,
     // Register allocator
     register_allocator: RegisterAllocator,
 
@@ -206,6 +210,13 @@ pub struct CompiledBytecode {
     /// Parameter names in declaration order — only for arity-error
     /// messages, which must match the interpreter's word-for-word.
     pub param_names: std::sync::Arc<[String]>,
+    /// Runtime type checks for annotated parameters (position-aligned;
+    /// all-None when the function is fully dynamic). Precomputed at
+    /// declaration — generic parameters are already erased to None, so
+    /// the VM never re-derives them from annotations.
+    pub param_checks: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]>,
+    /// Runtime check for the declared return type.
+    pub return_check: Option<crate::ast::FieldTypeCheck>,
     pub constants: Vec<OvmValue>,
     pub debug_info: BytecodeDebugInfo,
     pub optimization_level: u8,
@@ -1149,7 +1160,15 @@ impl BytecodeVm {
         func_id: FunctionId,
         func: &FunctionDecl,
     ) -> Result<(), BytecodeError> {
-        self.compile_function_with_closure(func_id, func, std::sync::Arc::new(im::HashMap::new()))
+        let checks = crate::ast::param_checks_of(&func.parameters, &func.type_params);
+        let ret = crate::ast::return_check_of(func.return_type.as_ref(), &func.type_params);
+        self.compile_function_with_closure(
+            func_id,
+            func,
+            std::sync::Arc::new(im::HashMap::new()),
+            checks.into(),
+            ret,
+        )
     }
 
     /// Compile function to bytecode, with the function's declaration-time
@@ -1159,6 +1178,8 @@ impl BytecodeVm {
         func_id: FunctionId,
         func: &FunctionDecl,
         closure: std::sync::Arc<im::HashMap<String, Value>>,
+        param_checks: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]>,
+        return_check: Option<crate::ast::FieldTypeCheck>,
     ) -> Result<(), BytecodeError> {
         let start_time = crate::clock::Instant::now();
 
@@ -1167,6 +1188,8 @@ impl BytecodeVm {
         self.compiler.builtin_names = self.builtin_names.clone();
         self.compiler.struct_defs = self.struct_defs.clone();
         self.compiler.struct_field_checks = self.struct_field_checks.clone();
+        self.compiler.pending_param_checks = param_checks;
+        self.compiler.pending_return_check = return_check;
         self.compiler.known_function_values = self.known_function_values.clone();
         self.compiler.unit_variant_names = self.unit_variant_names.clone();
         self.compiler.enclosing_closure = closure;
@@ -1277,6 +1300,31 @@ impl BytecodeVm {
             ));
         }
 
+        // Enforce declared parameter types — the same boundary, same
+        // message, as the interpreter (annotations are promises on every
+        // tier). All-None check lists skip in O(params).
+        if !bytecode.param_checks.is_empty() {
+            for (i, check) in bytecode.param_checks.iter().enumerate() {
+                if let (Some(check), Some(arg)) = (check, args.get(i)) {
+                    let actual = arg.type_name();
+                    if !check.accepts(actual) {
+                        let fn_name = bytecode
+                            .debug_info
+                            .function_name
+                            .as_deref()
+                            .unwrap_or("<fn>");
+                        return Err(BytecodeError::TypeError(format!(
+                            "parameter '{}' of {} expects {}, got {}",
+                            bytecode.param_names[i],
+                            fn_name,
+                            check.expected_name(),
+                            actual
+                        )));
+                    }
+                }
+            }
+        }
+
         // Native tier: if a JIT body exists (or can be specialized on this
         // call's argument kinds), run it. None means it declined (or
         // deopted) — the bytecode path below is the unchanged fallback.
@@ -1369,6 +1417,31 @@ impl BytecodeVm {
                     )
                 },
             ));
+        }
+
+        // Enforce declared parameter types — the same boundary, same
+        // message, as the interpreter (annotations are promises on every
+        // tier). All-None check lists skip in O(params).
+        if !bytecode.param_checks.is_empty() {
+            for (i, check) in bytecode.param_checks.iter().enumerate() {
+                if let (Some(check), Some(arg)) = (check, arg_regs.get(i)) {
+                    let actual = self.execution_state.register_ref(*arg)?.type_name();
+                    if !check.accepts(actual) {
+                        let fn_name = bytecode
+                            .debug_info
+                            .function_name
+                            .as_deref()
+                            .unwrap_or("<fn>");
+                        return Err(BytecodeError::TypeError(format!(
+                            "parameter '{}' of {} expects {}, got {}",
+                            bytecode.param_names[i],
+                            fn_name,
+                            check.expected_name(),
+                            actual
+                        )));
+                    }
+                }
+            }
         }
 
         // Native tier: extract raw bits and kinds straight from the
@@ -1723,11 +1796,30 @@ impl BytecodeVm {
                 }
 
                 Instruction::Return { value } => {
-                    if let Some(reg) = value {
-                        return self.execution_state.get_register(*reg);
+                    let result = if let Some(reg) = value {
+                        self.execution_state.get_register(*reg)?
                     } else {
-                        return Ok(OvmValue::new_unit());
+                        OvmValue::new_unit()
+                    };
+                    // Enforce the declared return type, same message as the
+                    // interpreter's boundary.
+                    if let Some(check) = &bytecode.return_check {
+                        let actual = result.type_name();
+                        if !check.accepts(actual) {
+                            let fn_name = bytecode
+                                .debug_info
+                                .function_name
+                                .as_deref()
+                                .unwrap_or("<fn>");
+                            return Err(BytecodeError::TypeError(format!(
+                                "return value of {} expects {}, got {}",
+                                fn_name,
+                                check.expected_name(),
+                                actual
+                            )));
+                        }
                     }
+                    return Ok(result);
                 }
 
                 // Function operations. The compiler only emits CallNamed;
@@ -2758,7 +2850,13 @@ impl BytecodeVm {
             body: (*func.body).clone(),
         };
         let func_id = FunctionId::new();
-        let compiled = self.compile_function_with_closure(func_id, &decl, func.closure.clone());
+        let compiled = self.compile_function_with_closure(
+            func_id,
+            &decl,
+            func.closure.clone(),
+            func.param_checks.clone().into(),
+            func.return_check.clone(),
+        );
 
         let result = compiled.ok().map(|_| func_id);
         if self.hof_cache.len() >= 512 {
@@ -3750,6 +3848,8 @@ impl Default for BytecodeCompiler {
 impl BytecodeCompiler {
     pub fn new() -> Self {
         Self {
+            pending_param_checks: std::sync::Arc::from(Vec::new()),
+            pending_return_check: None,
             register_allocator: RegisterAllocator::new(),
             emitter: InstructionEmitter::new(),
             optimizer: BytecodeOptimizer::new(),
@@ -3821,6 +3921,8 @@ impl BytecodeCompiler {
                 .map(|p| p.name.clone())
                 .collect::<Vec<_>>()
                 .into(),
+            param_checks: self.pending_param_checks.clone(),
+            return_check: self.pending_return_check.clone(),
             constants,
             debug_info: BytecodeDebugInfo {
                 function_name: Some(func.name.clone()),
@@ -4916,6 +5018,8 @@ impl BytecodeCompiler {
 
         let function = crate::ast::Function {
             name: self_name.map(|n| n.to_string()),
+            param_checks: crate::ast::param_checks_of(parameters, &[]),
+            return_check: None,
             parameters: parameters.to_vec(),
             body: std::sync::Arc::new(body.clone()),
             // Values cloned from the enclosing snapshot — free
@@ -5738,6 +5842,19 @@ impl BytecodeCompiler {
             crate::ast::Statement::Located { stmt, .. } => self.compile_statement(stmt),
             crate::ast::Statement::Expression(expr) => self.compile_expression(expr),
             crate::ast::Statement::LetDecl(let_decl) => {
+                // An annotated let is a checked boundary the VM does not
+                // yet enforce inline — refuse, fail-closed: the interpreter
+                // runs the function and enforces it (v1; liftable later).
+                if let_decl
+                    .type_annotation
+                    .as_ref()
+                    .and_then(|ann| crate::ast::FieldTypeCheck::from_annotation(ann, &[]))
+                    .is_some()
+                {
+                    return Err(BytecodeError::CompilationFailed(
+                        "let bindings with type annotations run interpreted".to_string(),
+                    ));
+                }
                 let value_reg = match &let_decl.value {
                     Some(expr) => self.compile_expression(expr)?,
                     None => {

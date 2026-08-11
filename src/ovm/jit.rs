@@ -913,7 +913,36 @@ impl JitCache {
         let mut inferences: Vec<Inference> = Vec::with_capacity(plans.len());
         for plan in &plans {
             match plan.finalize() {
-                Some(inf) => inferences.push(inf),
+                Some(inf) => {
+                    // A declared return type must be *statically discharged*:
+                    // native code never runs the VM's per-call return check,
+                    // so the JIT only compiles a function whose inferred
+                    // return kind provably satisfies the annotation. Anything
+                    // else stays on bytecode, which enforces per call.
+                    if let Some(check) = &plan.bytecode.return_check {
+                        let ok = match (&inf.ret_tuple, inf.ret_kind) {
+                            (Some(_), _) => check.accepts("Tuple"),
+                            (None, Kind::Int) => check.accepts("Int"),
+                            (None, Kind::Float) => check.accepts("Float"),
+                            (None, Kind::Bool) => check.accepts("Bool"),
+                            (None, Kind::Str) => check.accepts("String"),
+                            (None, Kind::Struct(sid)) => group_shapes
+                                .get(&sid)
+                                .is_some_and(|s| check.accepts(&s.shape.type_name)),
+                            (None, _) => false,
+                        };
+                        if !ok {
+                            if jit_debug() {
+                                eprintln!(
+                                    "[jit] fn#{} refused: return annotation not statically satisfied",
+                                    plan.func_id.index()
+                                );
+                            }
+                            return None;
+                        }
+                    }
+                    inferences.push(inf)
+                }
                 None => {
                     if jit_debug() {
                         eprintln!(

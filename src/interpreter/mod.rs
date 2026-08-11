@@ -431,6 +431,8 @@ impl Interpreter {
             if let Some(body) = &method.default_body {
                 let function = Function {
                     name: Some(method.name.clone()),
+                    param_checks: crate::ast::param_checks_of(&method.parameters, &[]),
+                    return_check: None,
                     parameters: method.parameters.clone(),
                     body: Arc::new(body.clone()),
                     closure: Arc::new(closure.clone()),
@@ -460,6 +462,11 @@ impl Interpreter {
         for method in &impl_decl.methods {
             let function = Function {
                 name: Some(method.name.clone()),
+                param_checks: crate::ast::param_checks_of(&method.parameters, &method.type_params),
+                return_check: crate::ast::return_check_of(
+                    method.return_type.as_ref(),
+                    &method.type_params,
+                ),
                 parameters: method.parameters.clone(),
                 body: Arc::new(method.body.clone()),
                 closure: Arc::new(closure.clone()),
@@ -574,6 +581,55 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Enforce declared parameter types at the call boundary. Annotations
+    /// are promises: an unannotated (or generic) parameter has no check and
+    /// stays fully dynamic; an annotated one rejects a mismatched argument
+    /// here, with the same message on every tier.
+    fn check_param_types(func: &Function, arguments: &[Value]) -> Result<(), InterpreterError> {
+        for (index, check) in func.param_checks.iter().enumerate() {
+            if let (Some(check), Some(arg)) = (check, arguments.get(index)) {
+                let actual = arg.type_name();
+                if !check.accepts(&actual) {
+                    let fn_name = func.name.as_deref().unwrap_or("<lambda>");
+                    let param = func
+                        .parameters
+                        .get(index)
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("?");
+                    return Err(InterpreterError::TypeError {
+                        message: format!(
+                            "parameter '{}' of {} expects {}, got {}",
+                            param,
+                            fn_name,
+                            check.expected_name(),
+                            actual
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Enforce a declared return type on the value a call produced.
+    fn check_return_type(func: &Function, value: &Value) -> Result<(), InterpreterError> {
+        if let Some(check) = &func.return_check {
+            let actual = value.type_name();
+            if !check.accepts(&actual) {
+                let fn_name = func.name.as_deref().unwrap_or("<lambda>");
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "return value of {} expects {}, got {}",
+                        fn_name,
+                        check.expected_name(),
+                        actual
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Resolve a method for `type_name`: a concrete impl first, then any
     /// default from a trait that type implements.
     fn lookup_method(&self, type_name: &str, method: &str) -> Option<Function> {
@@ -635,6 +691,31 @@ impl Interpreter {
             Value::Unit
         };
 
+        // Enforce a declared binding type: `let x: Int = ...` promises the
+        // bound value is an Int. Unannotated (or generic/unreducible)
+        // bindings stay fully dynamic.
+        if let Some(check) = let_decl
+            .type_annotation
+            .as_ref()
+            .and_then(|ann| crate::ast::FieldTypeCheck::from_annotation(ann, &[]))
+        {
+            let actual = value.type_name();
+            if !check.accepts(&actual) {
+                let binding = match &let_decl.pattern {
+                    crate::ast::Pattern::Identifier(name) => name.as_str(),
+                    _ => "value",
+                };
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "let binding '{}' expects {}, got {}",
+                        binding,
+                        check.expected_name(),
+                        actual
+                    ),
+                });
+            }
+        }
+
         // Use pattern matching to bind variables from the pattern
         let mut bindings = HashMap::new();
         if !self.pattern_matches_bind(&let_decl.pattern, &value, &mut bindings)? {
@@ -674,12 +755,18 @@ impl Interpreter {
         let param_bounds =
             Self::resolve_param_bounds(&func_decl.type_param_bounds, &func_decl.parameters);
 
+        let param_checks =
+            crate::ast::param_checks_of(&func_decl.parameters, &func_decl.type_params);
+        let return_check =
+            crate::ast::return_check_of(func_decl.return_type.as_ref(), &func_decl.type_params);
         let function = Function {
             name: Some(func_decl.name.clone()),
             parameters: func_decl.parameters,
             body: Arc::new(resolved_body),
             closure: Arc::new(closure),
             param_bounds,
+            param_checks,
+            return_check,
         };
 
         // Let the bytecode tier know this function exists, so a promoted
@@ -801,6 +888,8 @@ impl Interpreter {
                     crate::resolve::Resolver::resolve_function_body(body, None, &param_names);
                 Ok(Value::Function(Function {
                     name: None,
+                    param_checks: crate::ast::param_checks_of(parameters, &[]),
+                    return_check: None,
                     parameters: parameters.clone(),
                     body: Arc::new(resolved_body),
                     closure: Arc::new(closure),
@@ -1164,6 +1253,8 @@ impl Interpreter {
                 let closure = self.environment.flat_snapshot();
                 let function = Function {
                     name: None,
+                    param_checks: crate::ast::param_checks_of(parameters, &[]),
+                    return_check: None,
                     parameters: parameters.clone(),
                     body: Arc::new((**body).clone()),
                     closure: Arc::new(closure),
@@ -1423,6 +1514,14 @@ impl Interpreter {
         let closure = self.environment.flat_snapshot();
         let function = Function {
             name: Some(async_func_decl.name.clone()),
+            param_checks: crate::ast::param_checks_of(
+                &async_func_decl.parameters,
+                &async_func_decl.type_params,
+            ),
+            return_check: crate::ast::return_check_of(
+                async_func_decl.return_type.as_ref(),
+                &async_func_decl.type_params,
+            ),
             parameters: async_func_decl.parameters,
             body: Arc::new(async_func_decl.body),
             closure: Arc::new(closure),
@@ -1532,6 +1631,13 @@ impl Interpreter {
                     self.check_param_bounds(&func, &arguments)?;
                 }
 
+                // Enforce declared parameter types (annotations are
+                // promises); runs before the tier so every execution path
+                // sees the same boundary.
+                if !func.param_checks.is_empty() {
+                    Self::check_param_types(&func, &arguments)?;
+                }
+
                 // Hot-function promotion: run on the bytecode tier when the
                 // function is eligible, otherwise fall through to the AST walk
                 if self.bytecode_tier.is_some() && arguments.len() == func.parameters.len() {
@@ -1624,6 +1730,16 @@ impl Interpreter {
                     Err(InterpreterError::ErrPropagation(err)) => Ok(err),
                     // `return v` inside this body: the function's value is v.
                     Err(InterpreterError::ReturnSignal(v)) => Ok(v),
+                    other => other,
+                };
+
+                // Enforce the declared return type on whatever the body
+                // produced (explicit return or final expression alike).
+                let result = match result {
+                    Ok(v) => {
+                        Self::check_return_type(&func, &v)?;
+                        Ok(v)
+                    }
                     other => other,
                 };
 
