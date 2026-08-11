@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **`olang check` sees element types.** The static checker now goes
+  where the runtime's shallow checks deliberately don't: literals
+  decompose against their annotations element by element, so
+  `let xs: List<Int> = [1, "a", 3]` reports `element 1 of let binding
+  'xs' expects Int, got String`, with the path spelled out through
+  nesting (`element 1 of element 1 of ...`), `Map<K, V>` keys and
+  values, tuple arity and elements, and struct-literal fields against
+  their declared field types. Deep types flow through annotated
+  bindings and known return types, so passing a `List<String>` binding
+  where `List<Int>` is declared is flagged too. Findings are labeled
+  by kind: base-level violations say "this would fail at runtime" and
+  keep the runtime's exact error text; element-level breaks — which
+  the O(1) runtime checks let pass — say "the annotation's promise is
+  broken here". The no-false-positive discipline is unchanged
+  (anything unprovable is silent; the repo's 171 files still check
+  clean), and pattern bindings (loops, lambdas, match arms, catch)
+  now correctly shadow outer annotated names during analysis.
+
 ## [0.48.0] - 2026-08-10
 
 ### Added

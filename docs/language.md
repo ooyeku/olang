@@ -1427,14 +1427,14 @@ label("seven")
 
 Three rules keep enforcement predictable. Unannotated code is fully
 dynamic — no checks, no cost, no judgment. Container annotations check
-shallowly: `List<Int>` promises "a List" in O(1); element types are the
-static checker's concern. And `Int`/`Float` are strict — an `Int` does
-not satisfy a `Float` annotation, matching struct-field enforcement.
-Generic type parameters are erased at runtime and never checked (their
-trait *bounds* are). Annotations are also the input to static checking:
-[`olang check`](tooling.md#olang-check) — and the language server in your
-editor — reports the violations it can *prove* before the program runs,
-with the runtime's exact error messages and no false positives.
+shallowly at runtime: `List<Int>` promises "a List" in O(1); element
+types are the static checker's concern — and it takes them:
+[`olang check`](tooling.md#olang-check) (and the language server in your
+editor) decomposes literals element by element, so `[1, "a"]` against
+`List<Int>` is flagged before the program runs, with no false positives.
+And `Int`/`Float` are strict — an `Int` does not satisfy a `Float`
+annotation, matching struct-field enforcement. Generic type parameters
+are erased at runtime and never checked (their trait *bounds* are).
 
 ```olang
 let count: Int = 3
