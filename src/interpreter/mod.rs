@@ -1518,7 +1518,7 @@ impl Interpreter {
                 &async_func_decl.parameters,
                 &async_func_decl.type_params,
             ),
-            return_check: crate::ast::return_check_of(
+            return_check: crate::ast::async_return_check_of(
                 async_func_decl.return_type.as_ref(),
                 &async_func_decl.type_params,
             ),

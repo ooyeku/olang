@@ -684,6 +684,26 @@ await Promise.all([double(1), double(2), double(3)])
 }
 
 #[test]
+fn async_return_annotation_checks_the_resolved_value() {
+    // `-> Promise<Int, String>` describes the promise the caller receives;
+    // the runtime check unwraps it and enforces Int on what the body
+    // resolves to. A dishonest body still fails, with the inner type named.
+    let parser = Parser::new();
+    let program = parser
+        .parse("async fn nope(x: Int) -> Promise<Int, String> = { \"not an int\" }\nawait nope(1)")
+        .expect("should parse");
+    let mut interpreter = Interpreter::new();
+    let err = interpreter
+        .eval_program(program)
+        .expect_err("should reject");
+    assert!(
+        err.to_string().contains("expects Int, got String"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
 fn promise_resolve_returns_its_argument() {
     // The same pair-skipping bug read the argument as the method name.
     let parser = Parser::new();

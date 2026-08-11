@@ -821,6 +821,26 @@ pub fn return_check_of(
     ret.and_then(|ann| FieldTypeCheck::from_annotation(ann, type_params))
 }
 
+/// Return check for an *async* function. Its annotation describes the
+/// promise the caller receives, but the runtime check runs on the value
+/// the body resolves to — so `Promise<T, ...>` unwraps to check `T`, and
+/// a bare `Promise` promises nothing checkable about the resolved value.
+pub fn async_return_check_of(
+    ret: Option<&TypeAnnotation>,
+    type_params: &[String],
+) -> Option<FieldTypeCheck> {
+    match ret {
+        Some(TypeAnnotation::Generic {
+            base_type,
+            type_args,
+        }) if base_type == "Promise" => type_args
+            .first()
+            .and_then(|t| FieldTypeCheck::from_annotation(t, type_params)),
+        Some(TypeAnnotation::Custom(name)) if name == "Promise" => None,
+        other => return_check_of(other, type_params),
+    }
+}
+
 /// Generic type definition
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenericTypeDefinition {
