@@ -87,7 +87,9 @@ println(typeof([1]) + " " + typeof((1, 2)) + " " + typeof(#{ "k": 1 }))
 
 olang is gradually typed: [type annotations](#type-annotations) are
 optional, and every annotation you write is enforced at runtime.
-Unannotated code is fully dynamic.
+Unannotated code is fully dynamic. The full story — enforcement,
+the static checker, adoption strategy — has
+[its own chapter](types.md).
 
 ## Literals
 
@@ -1412,6 +1414,11 @@ harnesses — see the [stdlib reference](stdlib.md#testing--assertions)
 for the distinction.
 
 ## Type Annotations
+
+This section is the annotation *grammar* reference;
+[the Types chapter](types.md) tells the whole gradual-typing story —
+enforcement semantics, the static checker, and how to adopt types
+incrementally.
 
 Annotations may appear on `let` bindings, parameters, and return types,
 and each one is a promise the runtime keeps. A parameter annotation

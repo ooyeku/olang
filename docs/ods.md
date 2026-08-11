@@ -13,8 +13,7 @@ change; blocks marked `no-run` are parse-checked only (they touch the
 file system).
 
 Part of [the olang book](README.md) ·
-[Tour](tour.md) · [Language](language.md) · [Stdlib](stdlib.md) ·
-[Design: how ods was built and measured](design/ods.md)
+[Tour](tour.md) · [Language](language.md) · [Stdlib](stdlib.md)
 
 ---
 
@@ -27,6 +26,8 @@ Part of [the olang book](README.md) ·
 - [`plot` — charts as SVG text](#plot--charts-as-svg-text)
 - [The stack and the language](#the-stack-and-the-language)
 - [Performance characteristics](#performance-characteristics)
+- [The design record](#the-design-record)
+- [Why eager evaluation](#why-eager-evaluation)
 - [What ods is not](#what-ods-is-not)
 
 ## Why columns
@@ -63,7 +64,7 @@ The difference is not subtle. When
 records-and-fold pipeline above to the Frame pipeline this chapter
 teaches, the same 200,000-row CSV job went from 3.0 seconds to 0.06
 seconds — a 50× change from representation alone, in the same binary
-(measured in [the design document](design/ods.md)). That measurement is
+(measured in [the design record](#the-design-record)). That measurement is
 the design rationale for the entire stack: data work is dominated by
 representation, so the representation belongs in the runtime, beneath
 the language, where every olang program gets it for free — the same
@@ -580,8 +581,8 @@ Two complete worked programs extend these patterns to full scale:
 
 The stack's performance claims are measured, not asserted — the full
 methodology, benchmark code, and every recorded revision live in
-[the design document](design/ods.md). The shape of the results, on
-10M-element columns against NumPy and 10M-row tables against Polars:
+[the design record below](#the-design-record). The shape of the results,
+on 10M-element columns against NumPy and 10M-row tables against Polars:
 
 | Operation | ods | Reference | Standing |
 |---|---|---|---|
@@ -600,6 +601,191 @@ guidance is simpler than the table: keep computations in Series and
 Frame operations, cross to lists at the edges, and column size stops
 being something to think about.
 
+## The design record
+
+This section is the stack's design register — the problem it was built
+to solve, the decisions that shaped it, and the measurements that gated
+each phase. It is kept in the book because the discipline it records is
+part of the product: **benchmarks are the spec**, and a claim that was
+never measured is a claim this chapter does not make.
+
+### The problem
+
+Before ods, olang was suitable for light data work and structurally
+unsuitable for real statistics. The gaps, in order of severity:
+
+1. **No numeric arrays.** A "list of floats" was `Arc<[Value]>` — every
+   element a 16-byte tagged enum. Ten million floats meant ten million
+   boxed values with no cache locality and no SIMD; no interpreter,
+   bytecode, or JIT work can fix a representation problem.
+2. **No linear algebra** — no solve/least-squares, so no regression or
+   PCA without O(n³) loops over lists.
+3. **No statistical machinery** — samples without distribution functions
+   (pdf/cdf/ppf) mean no tests, intervals, or p-values.
+4. **No missing-data story.** Real datasets have holes; a stats stack
+   that discovers nulls late retrofits them into every kernel.
+
+ods closes these gaps in Rust, under the language, so every olang-level
+statistics library is fast *by construction* — the relationship NumPy
+has to Python, built in rather than bolted on.
+
+### The core decision: one array, both tiers
+
+Everything hangs on the representation. The engine defines one value
+kind — a contiguous, typed, 64-byte-aligned buffer with an Arrow-style
+validity bitmap for nulls (absent when there are none) and a
+vector-or-matrix shape:
+
+```rust
+pub struct OdsArray {
+    dtype: DType,                 // F64 | I64 | Bool | Str
+    buf: Buffer,                  // contiguous, 64-byte aligned, Arc-shared
+    validity: Option<Bitmap>,     // Arrow-style null bitmap; None = no nulls
+    shape: Shape,                 // Vector(len) | Matrix(rows, cols)
+}
+```
+
+Three rules follow from it:
+
+- **Nulls are first-class from day one.** The bitmap costs nothing when
+  absent and cannot be retrofitted later without touching every kernel;
+  every kernel is null-aware from its first version.
+- **Copy-on-write mutation.** olang values are immutable and Arc-shared;
+  kernels use `Arc::make_mut` — when the refcount is 1, mutate in place.
+  Functional semantics, in-place performance: `xs |> fill_null(0.0) |>
+  cumsum()` allocates once, not three times.
+- **The tier boundary is an `Arc` clone.** The interpreter and the OVM
+  hold the *same* array. There is no conversion, so there is nothing to
+  convert lossily — the failure mode that once kept maps and enums off
+  the bytecode tier is unrepresentable here.
+
+The engine lives in its own workspace crate (`olang-ods`) with no
+dependency on olang — pure buffers and kernels — and everything is pure
+Rust, which is why the full stack runs in the
+[browser playground](wasm.md).
+
+### Where the speed comes from
+
+Assembled levers, in order of payoff — no clever code where a crate or
+the compiler already wins:
+
+| Lever | Buys | How |
+|---|---|---|
+| Contiguous typed buffers | 10–100× over boxed lists | The representation above; this is most of the win |
+| LLVM autovectorization | SIMD for free | Kernels are tight branch-free loops over `&[f64]` |
+| Explicit SIMD (`pulp`) | AVX/NEON where autovec fails | Only for kernels that measurably need it |
+| Rayon | Near-linear scaling on large arrays | Kernels split above the language's standard parallel threshold |
+| In-crate solvers + `statrs` | Regression, distributions | Normal equations with a small Cholesky for OLS; pdf/cdf/ppf machinery never hand-rolled |
+| Copy-on-write | Fused-allocation pipelines | `Arc::make_mut` in every kernel's output path |
+
+One invariant keeps the layers coherent: **the engine contains no
+statistics, and the stats layer contains no loops.** `stats.t_test` is a
+few lines composing kernels; finding an element-wise `for` in the stats
+layer means a primitive is missing from the engine — it moves down.
+
+### Benchmarks are the spec
+
+Each phase of the stack shipped only when its numbers met a target
+recorded *in advance* — and a miss meant the target was met later or
+revised here with the reason, never shipped with an asterisk. Apple
+Silicon macOS, criterion benches, versus pinned NumPy 2.5 / Polars 1.43,
+single-threaded best-of-15 unless noted. 10M elements/rows:
+
+| # | Benchmark | ods seq | ods par | Reference | Verdict |
+|---|---|---|---|---|---|
+| B1 | `sum` | 1.01 ms | 0.41 ms | NumPy 1.12 ms | **met** — seq parity, par 2.7× ahead |
+| B1 | `std` | 2.06 ms | — | NumPy 5.11 ms | **met** — 2.5× ahead |
+| B2 | `a * b + 1.0` | 6.19 ms | 2.42 ms | NumPy 3.24 ms | **met as executed** (par is the 10M default) |
+| B3 | `sort` | 121.5 ms | 24.1 ms | NumPy 324.3 ms | **met** — 2.7× / 13× ahead |
+| B4 | OLS, 1M × 20 | 90 ms | 36.4 ms | NumPy `lstsq` 137.8 ms | **met** — up to 3.8× ahead |
+| B5 | null-aware `mean`, 10% nulls | 4.71 ms | — | NumPy `nanmean` 7.84 ms | **met** — 1.7× ahead (target revised, note below) |
+| B6 | group-by, 1k groups | 27.2 ms (1 thread) | — | Polars 24.0 ms (18 threads) | **met** — within 1.13× |
+
+Revisions and notes, recorded per the rule:
+
+- **B5's original target** ("within 1.5× of dense `mean`") implicitly
+  assumed null *clusters*; the benchmark's scattered pattern leaves no
+  dense 64-element blocks, and closing further would need
+  multiply-by-mask kernels that are unsound when masked slots hold
+  inf/NaN. Revised to the user-facing bar — beat `nanmean` — and met.
+- **B2's sequential gap** is allocation plus memory bandwidth from
+  materializing the intermediate — the identical two-pass cost NumPy
+  pays. Fusion is the structural fix and is deliberately deferred
+  ([below](#why-eager-evaluation)).
+- **Sequential `sum` needed care:** strict FP ordering forbids LLVM from
+  vectorizing a naive fold, so the dense kernels use eight accumulators
+  (summation order differs from left-to-right by design, like NumPy's
+  pairwise sum).
+- **Why single-threaded group-by hangs with 18-thread Polars:** the hot
+  loop is one Fx-hashed id per row plus vec-indexed accumulators; at 1k
+  groups the accumulators live in L1 and the pass is memory-bound on the
+  key column. Partitioned parallel grouping remains available headroom.
+- **Inference is pinned, not eyeballed.** Every distribution value, test
+  statistic, p-value, and regression coefficient is asserted against
+  scipy/NumPy reference constants recorded in the test suites, with the
+  generating snippets noted inline. `stats.*.sample` draws from the
+  `random` module's stream, so `random.seed(k)` makes sampling
+  reproducible — pinned by test.
+- **The 50× headline** at the top of this chapter is B-series
+  discipline applied end-to-end: `examples/dataproc` rewritten from
+  records-and-fold to the Frame pipeline, same binary, 3.0 s → 0.06 s.
+
+Deferrals recorded with reopening conditions: **faer-backed linear
+algebra** (the in-crate Cholesky is textbook-correct for
+regression-sized systems; the big decompositions — SVD, PCA, QR —
+arrive with `faer` when a real demand creates them) and **lazy
+evaluation**, next.
+
+## Why eager evaluation
+
+Every ods operation evaluates eagerly: what a pipeline does is what it
+says, in order. This was not a default taken by inertia — lazy
+evaluation and expression fusion were evaluated on the numbers when the
+stack's last phase landed, and declined. The reasoning is recorded here
+so the next visit starts from evidence instead of enthusiasm.
+
+**The problem fusion solves.** Eager elementwise kernels materialize
+every intermediate: in `xs * 2.0 + noise`, the multiply writes a
+10M-element buffer the add immediately reads back and discards — three
+memory streams where a fused kernel needs two. Measured on B2, a fused
+single pass would land around 3–4 ms sequential against the eager
+engine's 6.19 ms.
+
+**Why that didn't buy lazy.** Two facts frame it: the eager engine
+already beats the competition (parallel ods runs this exact benchmark
+1.3× ahead of NumPy — which pays the identical two-pass cost, because
+NumPy doesn't fuse either), and the win is bounded — one memory stream
+saved per intermediate, roughly a third of the traffic for a two-op
+chain. Nobody's workload is 10×'d.
+
+The three places fusion could live, and the verdicts:
+
+- **Lazy frames at the surface** (Polars' answer — `lazy() |> ... |>
+  collect()` builds an optimized query plan): the highest ceiling, since
+  predicate pushdown and column pruning beat kernel fusion by orders of
+  magnitude on real pipelines. Rejected regardless: it is a second
+  evaluation model for users to learn ("when is my frame *real*?"), an
+  optimizer to build and test, and a debugging story that fights
+  olang's errors-happen-here simplicity.
+- **Peephole fusion in the bytecode tier** — recognizing
+  `Mul t, a, b; Add dst, t, c` with `t` dead and calling a fused kernel;
+  zero surface change. The *right* eventual home, deliberately waiting
+  for the JIT's instruction-level machinery to be still; the liveness
+  and pattern analysis should be built once.
+- **Named fused kernels** (`ods.fma(a, b, c)`) — the boring option:
+  an afternoon each, testable against the composed form by construction.
+  Pre-approved whenever the gate below trips.
+
+**The gate.** This decision reopens when a real workload — an example
+program, a user report, or a benchmark modeling one — spends more than
+~20% of its runtime in sequential elementwise Series chains of length
+≥ 2. First response: ship the specific fused kernel and measure. Only
+sustained demand across many patterns justifies the peephole, and only
+optimizer-class wins would ever justify lazy frames.
+
+Until then: the eager engine is simple, measured, and ahead. Boring is
+a feature.
+
 ## What ods is not
 
 The stack's boundaries are chosen, not pending. Knowing them tells
@@ -615,7 +801,7 @@ you when to reach for a different tool:
   does is what it says, in order. A lazy query optimizer is a second
   evaluation model the language declines to carry on today's evidence;
   the reasoning and the measured gate for revisiting are recorded in
-  [the lazy-evaluation design note](design/ods-lazy.md).
+  [Why eager evaluation](#why-eager-evaluation) above.
 - **Not a plotting toolkit.** `plot` draws the statistical staples
   well, with strong defaults, as text. Interactive charts, animation,
   and grammar-of-graphics layering belong to dedicated tools that can
@@ -628,7 +814,6 @@ like the language it lives in.
 
 ---
 
-Next: [the stdlib reference](stdlib.md) for the surrounding modules,
+Next: [the stdlib reference](stdlib.md) for the surrounding modules, or
 [olang in the Browser](wasm.md) for the same stack running as
-WebAssembly, or [the design document](design/ods.md) for how all of
-this was built and measured.
+WebAssembly.

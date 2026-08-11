@@ -140,7 +140,7 @@ in order — all landed by 0.43:
 ## The data campaign (0.40)
 
 Run alongside the performance campaign and shipped whole: all four
-phases of [the ods design doc](design/ods.md) landed against measured
+phases of [the ods design record](ods.md#the-design-record) landed against measured
 gates — Series (reductions at NumPy parity, 2.7× ahead in parallel),
 stats (1M×20 OLS 3.8× ahead of `numpy.linalg.lstsq`, every statistic
 pinned to scipy constants), Frame (10M-row group-by within 1.13× of
@@ -148,8 +148,8 @@ pinned to scipy constants), Frame (10M-row group-by within 1.13× of
 text). 0.40 made the stack unconditional: no cargo feature, no import,
 in every build including the wasm playground. Deferred with recorded
 reopening gates: lazy evaluation
-([design/ods-lazy.md](design/ods-lazy.md)) and faer-backed linear
-algebra (both in the design doc).
+([Why eager evaluation](ods.md#why-eager-evaluation)) and faer-backed
+linear algebra (both recorded in the ods chapter's design record).
 
 ## The migration campaign — toolchain and dependencies
 

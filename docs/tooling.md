@@ -1,8 +1,9 @@
 # Tooling
 
-The developer tools shipped inside the `olang` binary: the test runner and
-the formatter. (Package commands live in `otc` — see
-[Packages](packages.md).)
+The developer tools shipped inside the `olang` binary: the test runner,
+the formatter, and the static checker. (Package commands live in `otc` —
+see [Packages](packages.md); the language server has
+[its own chapter](editors.md).)
 
 Part of [the olang book](README.md) ·
 [Language](language.md) · [Standard Library](stdlib.md) ·
@@ -78,8 +79,9 @@ tree passes `--check`.
 
 ## `olang check`
 
-The static side of gradual typing — reports provable type-annotation
-violations before the program runs:
+The static side of gradual typing ([the Types chapter](types.md) tells
+the full story) — reports provable type-annotation violations before
+the program runs:
 
 ```bash
 olang check               # every .ol file under the current directory

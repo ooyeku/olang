@@ -839,7 +839,7 @@ columnar model wins (with the measured 50× rewrite behind it), every
 Series and Frame verb with its semantics, null handling, joins and
 grouped aggregation, and the performance characteristics — all taught
 rather than merely listed. Engineering history and benchmark method
-live in [the design document](design/ods.md).
+live in [that chapter's design record](ods.md#the-design-record).
 
 ## `stats` — statistical inference
 

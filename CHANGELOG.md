@@ -10,6 +10,30 @@ documented.
 
 ## [Unreleased]
 
+### Documentation
+
+- **The book gained a Types chapter** (`docs/types.md`) — gradual
+  typing end to end: annotations as enforced promises, the three
+  rules, exactly where the runtime enforces (every tier, async
+  resolution, precomputed checks), what the static checker proves and
+  its two diagnostic labels, element types, and an adoption playbook.
+  Its examples are doc-tested like every other chapter.
+- **The design documents folded into the book.** `docs/design/ods.md`
+  and `docs/design/ods-lazy.md` are gone as separate files; their
+  durable content — the problem statement, the one-array-both-tiers
+  decision, the benchmarks-are-the-spec tables with every recorded
+  revision, and the lazy-evaluation verdict with its reopening gate —
+  now lives in the Data Stack chapter as "The design record" and "Why
+  eager evaluation". The book index lists chapters, not design docs.
+- **Stale claims corrected**: Stability no longer promises a "future
+  opt-in static checker" (enforcement and the checker shipped in
+  0.48.0 and are now documented as the contract); Internals no longer
+  advertises the dead `type_checker.rs` module and now maps
+  `tools/check.rs`; the root README's struct bullet ("values are
+  dynamic") predated field enforcement and now states it, with gradual
+  typing added to the feature list; the Tooling chapter and book index
+  now name all three `olang` tools.
+
 ### Added
 
 - **`olang check` sees element types.** The static checker now goes

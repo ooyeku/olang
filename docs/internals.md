@@ -20,7 +20,7 @@ source (.ol)
    │  pest PEG grammar          grammar.pest
    ▼
 parse pairs ──► AST             src/parser.rs → src/ast.rs
-   │  static passes             src/analyze.rs, src/type_checker.rs
+   │  static passes             src/analyze.rs, src/tools/check.rs
    ▼
 tree-walking evaluation         src/interpreter/
    │  hot functions promoted
@@ -44,8 +44,11 @@ is uninterpreted structure: `Statement`, `Expr`, `Pattern`, `TypeDefinition`,
 plus `Value` — the runtime value enum that the interpreter produces.
 
 **`src/analyze.rs`** runs cheap static checks (unused/undefined hints);
-**`src/type_checker.rs`** holds the optional annotation checker. Neither
-gates execution — the runtime is dynamic (see [Stability](stability.md)).
+**`src/tools/check.rs`** is the static half of gradual typing — the
+provable-violation checker behind `olang check` and the LSP's type
+diagnostics ([Types](types.md)). Neither gates execution: the runtime
+enforces annotations itself at its own boundaries, and dynamic code
+runs unjudged (see [Stability](stability.md)).
 
 **`src/interpreter/`** is the reference semantics: a tree-walking
 evaluator over `Value` with a persistent-map `Environment` (cheap closure
@@ -334,8 +337,7 @@ src/
   parser.rs, ast.rs       parsing → AST + Value
   interpreter/            reference semantics (core eval, environment,
                           modules, patterns, ops, errors, spawn registry)
-  analyze.rs              static hints
-  type_checker.rs         optional annotation checking
+  analyze.rs              static hints (unused/undefined)
   builtin.rs              global builtins
   stdlib/                 native modules + embedded/ (olang-source)
   native.rs               module registry for native values (both tiers)
@@ -347,7 +349,8 @@ src/
   parallel.rs             par_map / par_filter / par for worker config
   playground.rs           the wasm session engine (playground + dom)
   pkg/                    package manager (see packages.md)
-  tools/                  olang test (test_runner.rs), olang fmt (fmt.rs)
+  tools/                  olang test (test_runner.rs), olang fmt (fmt.rs),
+                          olang check (check.rs), olang lsp (lsp.rs)
   repl.rs, help.rs        interactive mode
   clock.rs, output.rs     native/wasm seams (time, print routing)
 olang-ods/                pure-Rust engine crate behind src/ods/

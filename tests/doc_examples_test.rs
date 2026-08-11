@@ -1,8 +1,8 @@
 //! Every olang code block in the documentation must work.
 //!
 //! Extracts fenced code blocks from README.md and the book chapters
-//! (docs/tour.md, docs/language.md, docs/stdlib.md, docs/ods.md,
-//! docs/wasm.md) and runs them through
+//! (docs/tour.md, docs/language.md, docs/types.md, docs/stdlib.md,
+//! docs/ods.md, docs/wasm.md) and runs them through
 //! the real parser and interpreter (with the bytecode tier, the default
 //! execution model). Fence conventions:
 //!
@@ -122,6 +122,11 @@ fn stdlib_reference_examples_work() {
 #[test]
 fn tour_examples_work() {
     run_doc_file("docs/tour.md", include_str!("../docs/tour.md"));
+}
+
+#[test]
+fn types_chapter_examples_work() {
+    run_doc_file("docs/types.md", include_str!("../docs/types.md"));
 }
 
 #[test]

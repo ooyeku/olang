@@ -54,8 +54,13 @@ olang check                # static checker: provable annotation violations
 - **Pattern matching** — literals, tuples, lists with `...rest`, structs,
   enum variants, ranges, or-patterns, guards.
 - **Algebraic data types** — enums with payload constructors, validated
-  struct declarations (shape is checked; values are dynamic), traits with
-  runtime dispatch, `error` declarations.
+  struct declarations (shape and annotated field types are checked at
+  construction), traits with runtime dispatch, `error` declarations.
+- **Gradually typed** — unannotated code is fully dynamic at zero cost;
+  every annotation is enforced at runtime on every tier, and
+  `olang check` (plus the language server) reports provable violations —
+  down to element types — before the program runs
+  ([docs/types.md](docs/types.md)).
 - **Immutability and capture-by-value closures** — values never mutate in
   place; closures snapshot their environment.
 - **Errors as values** — `Result`, `?` propagation, `try`/`catch`.
@@ -104,9 +109,9 @@ println(to_string(map_get(fit, "r2") > 0.99))
 Measured, not asserted: reductions at NumPy parity sequentially and
 2.7× ahead in parallel; a 10M-row, 1k-group aggregation in 27.2 ms
 single-threaded against 24.0 ms for Polars on 18 threads; a 1M×20 OLS
-3.8× ahead of `numpy.linalg.lstsq`. The stack's chapter:
-[docs/ods.md](docs/ods.md). The full benchmark tables and every
-recorded deferral: [docs/design/ods.md](docs/design/ods.md).
+3.8× ahead of `numpy.linalg.lstsq`. The stack's chapter —
+teaching, full benchmark tables, and every recorded deferral:
+[docs/ods.md](docs/ods.md).
 
 ## Execution model
 

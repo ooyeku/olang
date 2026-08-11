@@ -61,11 +61,21 @@ the global builtins.
   property tests, and scipy/NumPy reference constants; the *scope* grows
   (new dtypes, verbs, statistics, chart kinds) under the append-mostly
   rule. Design decisions and their measured justifications live in
-  [the design doc](design/ods.md), including recorded deferrals (lazy
-  evaluation, faer) with the conditions that would reopen them.
-- **Type annotations** — all documented annotation forms keep parsing. A
-  future static checker will be **opt-in** when introduced; annotations
-  will not start rejecting today's running programs by default.
+  [the ods chapter's design record](ods.md#the-design-record), including
+  recorded deferrals (lazy evaluation, faer) with the conditions that
+  would reopen them.
+- **Gradual typing** — olang is gradually typed, as documented in
+  [the Types chapter](types.md): annotations are enforced at runtime
+  (parameters, returns, `let` bindings, struct fields — shallow
+  container checks, strict Int/Float, identical on every tier), and
+  `olang check` plus the language server report provable violations
+  statically. All documented annotation forms keep parsing; the
+  enforcement semantics are locked by the chapter's doc tests; the
+  checker's no-false-positive discipline is a fixed rule — it may learn
+  to prove *more*, but a clean program stays clean. Enforcement landed
+  as the one deliberate breaking change of 0.48.0 (recorded in the
+  CHANGELOG); reserved annotation forms below remain unenforced until
+  their semantics land.
 
 ### Experimental — may change or be completed
 
