@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
-## [Unreleased]
+## [0.47.0] - 2026-08-11
 
 ### Added
 
@@ -21,6 +21,20 @@ documented.
   behavior and error-matching programs are unaffected. Statement
   equality is span-insensitive (position is metadata, not identity),
   which keeps `olang fmt`'s AST-verification gate sound.
+
+- **Did-you-mean in file mode.** An undefined name ranks every visible
+  binding by edit distance and offers the closest matches as a help
+  line under the located error — previously REPL-only, now where it
+  matters most.
+
+### Fixed
+
+- **Tier error text matches the interpreter word-for-word.** The
+  bytecode tier's private wordings are gone: pattern-match, arity
+  (naming the first missing parameter), binary/unary type errors —
+  which now also carry context on both tiers ("cannot apply '+' to Int
+  and Bool"), with immediate-flipped operands reported in source
+  order.
 
 ### Changed
 
