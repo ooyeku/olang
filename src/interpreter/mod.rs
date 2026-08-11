@@ -97,6 +97,10 @@ pub struct Interpreter {
     /// Function names currently on the interpreter call stack
     /// (outermost first), for error reports.
     call_stack_names: Vec<String>,
+    /// A one-line hint computed at error-raise time (e.g. did-you-mean
+    /// candidates for an undefined name), folded into the captured
+    /// ErrorLocation for top-level reporters.
+    pending_error_hint: Option<String>,
     /// The location captured when the current error first surfaced.
     /// Taken (and cleared) by the top-level reporter; cleared whenever
     /// an error is consumed (caught) so a later error can't inherit a
@@ -201,6 +205,7 @@ impl Interpreter {
             stmt_span_stack: Vec::new(),
             call_stack_names: Vec::new(),
             pending_error_location: None,
+            pending_error_hint: None,
 
             // MEMORY MONITORING: Initialize memory tracking
             memory_allocations: 0,
@@ -315,6 +320,7 @@ impl Interpreter {
             // captured for an earlier (recovered) failure must not be
             // inherited by a later error.
             self.pending_error_location = None;
+            self.pending_error_hint = None;
             last_value = self.eval_statement(statement)?;
         }
         Ok(last_value)
@@ -330,6 +336,35 @@ impl Interpreter {
                 | InterpreterError::ReturnSignal(_)
                 | InterpreterError::ErrPropagation(_)
         )
+    }
+
+    /// Rank every visible binding by edit distance to `name` and offer
+    /// the closest few — the REPL has had this for typos; file mode now
+    /// gets it too. Distance is capped relative to the name's length so
+    /// short names don't suggest everything.
+    fn did_you_mean(&self, name: &str) -> Option<String> {
+        let max_distance = (name.chars().count() / 3).clamp(1, 3);
+        let mut candidates: Vec<(usize, String)> = self
+            .environment
+            .get_all_variables()
+            .keys()
+            .filter(|k| k.as_str() != name)
+            .map(|k| {
+                (
+                    crate::interpreter::errors::IntuitiveErrorFormatter::levenshtein_distance(
+                        name, k,
+                    ),
+                    k.clone(),
+                )
+            })
+            .filter(|(d, _)| *d <= max_distance)
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        candidates.sort();
+        let names: Vec<String> = candidates.into_iter().take(3).map(|(_, n)| n).collect();
+        Some(format!("did you mean: {}?", names.join(", ")))
     }
 
     /// Take (and clear) the location captured for the error currently
@@ -361,6 +396,7 @@ impl Interpreter {
                         line: *line,
                         column: *column,
                         call_stack: self.call_stack_names.clone(),
+                        hint: self.pending_error_hint.take(),
                     });
                 }
                 self.stmt_span_stack.pop();
@@ -690,14 +726,22 @@ impl Interpreter {
                 }
                 Ok(Value::Tuple(std::sync::Arc::new(values)))
             }
-            Expr::Identifier(name) => self
-                .environment
-                .get(name)
-                .ok_or_else(|| InterpreterError::UndefinedVariable { name: name.clone() }),
-            Expr::LocalRef { name, depth, slot } => self
-                .environment
-                .get_slot(name, *depth, *slot)
-                .ok_or_else(|| InterpreterError::UndefinedVariable { name: name.clone() }),
+            Expr::Identifier(name) => match self.environment.get(name) {
+                Some(v) => Ok(v),
+                None => {
+                    self.pending_error_hint = self.did_you_mean(name);
+                    Err(InterpreterError::UndefinedVariable { name: name.clone() })
+                }
+            },
+            Expr::LocalRef { name, depth, slot } => {
+                match self.environment.get_slot(name, *depth, *slot) {
+                    Some(v) => Ok(v),
+                    None => {
+                        self.pending_error_hint = self.did_you_mean(name);
+                        Err(InterpreterError::UndefinedVariable { name: name.clone() })
+                    }
+                }
+            }
             Expr::LocalAssign {
                 name,
                 depth,
@@ -1641,6 +1685,7 @@ impl Interpreter {
             stmt_span_stack: Vec::new(),
             call_stack_names: Vec::new(),
             pending_error_location: None,
+            pending_error_hint: None,
             environment: self.environment.clone(),
             builtin_functions: self.builtin_functions.clone(),
             type_checker: self.type_checker.clone(),

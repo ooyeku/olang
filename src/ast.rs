@@ -19,6 +19,9 @@ pub struct ErrorLocation {
     pub line: u32,
     pub column: u32,
     pub call_stack: Vec<String>,
+    /// A one-line remediation hint (e.g. did-you-mean candidates),
+    /// computed where the error was raised.
+    pub hint: Option<String>,
 }
 
 /// Statement types in Olang

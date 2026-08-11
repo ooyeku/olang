@@ -55,3 +55,18 @@ fn control_flow_signals_never_capture_locations() {
     interp.eval_program(program).expect("runs clean");
     assert!(interp.take_error_location().is_none());
 }
+
+#[test]
+fn undefined_variable_offers_did_you_mean() {
+    let (msg, loc) =
+        run_expect_error("fn compute_total(xs) = sum(xs)\nprintln(to_string(compute_totl([1])))\n");
+    assert!(msg.contains("compute_totl"));
+    let hint = loc.expect("location").hint.expect("hint");
+    assert!(hint.contains("compute_total"), "hint was: {hint}");
+}
+
+#[test]
+fn no_hint_when_nothing_is_close() {
+    let (_, loc) = run_expect_error("println(zzqxwv_nothing_like_this)\n");
+    assert!(loc.expect("location").hint.is_none());
+}

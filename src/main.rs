@@ -309,9 +309,12 @@ fn show_classic_interpreter_error(
         // Located: render the source line with a caret through miette so
         // the error points at where it happened, then the call stack.
         let offset = byte_offset_of(source, loc.line as usize, loc.column as usize);
-        let diagnostic = miette::MietteDiagnostic::new(formatted_error.clone()).with_label(
+        let mut diagnostic = miette::MietteDiagnostic::new(formatted_error.clone()).with_label(
             miette::LabeledSpan::at_offset(offset, "error occurred here"),
         );
+        if let Some(hint) = &loc.hint {
+            diagnostic = diagnostic.with_help(hint.clone());
+        }
         let report = miette::Report::new(diagnostic).with_source_code(miette::NamedSource::new(
             file_path.display().to_string(),
             source.to_string(),
