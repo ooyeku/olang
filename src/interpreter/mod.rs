@@ -6,7 +6,6 @@ use crate::ast::{
 use crate::async_runtime::AsyncRuntime;
 use crate::builtin::BuiltinFunctions;
 use crate::ovm::gc::SafepointManager;
-use crate::type_checker::TypeChecker;
 use im::HashMap as ImHashMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -68,7 +67,6 @@ pub use environment::{Environment, ModuleDebugConfig};
 pub struct Interpreter {
     environment: Environment,
     builtin_functions: BuiltinFunctions,
-    type_checker: Option<TypeChecker>,
     async_runtime: AsyncRuntime,
     safepoint_manager: Arc<SafepointManager>,
     pub module_debug_config: ModuleDebugConfig,
@@ -183,7 +181,6 @@ impl Interpreter {
         let mut interpreter = Self {
             environment: Environment::new(),
             builtin_functions: BuiltinFunctions::new(),
-            type_checker: None,
             async_runtime: AsyncRuntime::new(),
             safepoint_manager: Arc::new(SafepointManager::new()),
             module_debug_config: ModuleDebugConfig::default(),
@@ -229,22 +226,6 @@ impl Interpreter {
         // Register built-in functions
         interpreter.register_builtins();
         interpreter
-    }
-
-    /// Create a new interpreter with type checking enabled
-    pub fn with_type_checking() -> Self {
-        let mut interpreter = Self::new();
-        interpreter.type_checker = Some(TypeChecker::new());
-        interpreter
-    }
-
-    /// Enable or disable type checking
-    pub fn set_type_checking(&mut self, enabled: bool) {
-        if enabled {
-            self.type_checker = Some(TypeChecker::new());
-        } else {
-            self.type_checker = None;
-        }
     }
 
     /// Set the current file path for module resolution context
@@ -300,20 +281,6 @@ impl Interpreter {
 
     /// Evaluate a program
     pub fn eval_program(&mut self, program: Program) -> Result<Value, InterpreterError> {
-        // Optional type checking with proper error propagation
-        if let Some(ref mut type_checker) = self.type_checker
-            && let Err(type_errors) = type_checker.check_program(&program)
-        {
-            // Convert type checking errors to proper InterpreterError
-            let error_messages: Vec<String> =
-                type_errors.iter().map(|e| format!("{:?}", e)).collect();
-            let combined_message = error_messages.join("; ");
-
-            return Err(InterpreterError::TypeError {
-                message: format!("Type checking failed: {}", combined_message),
-            });
-        }
-
         let mut last_value = Value::Unit;
         for statement in &program.statements {
             // A fresh top-level statement gets a clean slate: any location
@@ -1804,7 +1771,6 @@ impl Interpreter {
             pending_error_hint: None,
             environment: self.environment.clone(),
             builtin_functions: self.builtin_functions.clone(),
-            type_checker: self.type_checker.clone(),
             async_runtime: AsyncRuntime::new(),
             safepoint_manager: self.safepoint_manager.clone(),
             module_debug_config: self.module_debug_config.clone(),

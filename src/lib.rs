@@ -32,7 +32,6 @@ pub mod resolve;
 pub mod stdlib;
 pub mod test_framework;
 pub mod tools;
-pub mod type_checker;
 pub mod version;
 
 // Re-export commonly used types
@@ -42,7 +41,6 @@ pub use ovm::OvmValue;
 pub use parser::Parser;
 #[cfg(feature = "native")]
 pub use repl::Repl;
-pub use type_checker::{TypeChecker, TypeClass};
 
 // Make the version constant easily accessible (e.g., crate::VERSION)
 pub use version::VERSION;

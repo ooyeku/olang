@@ -11,7 +11,7 @@ use olang::{
     ast::{Expr, Statement, Value},
     interpreter::{Interpreter, InterpreterError},
     parser::{ParseError, Parser},
-    type_checker::TypeChecker,
+    tools::check::check_program,
 };
 
 use proptest::prelude::*;
@@ -30,7 +30,6 @@ use std::time::{Duration, Instant};
 pub struct PropertyTester {
     parser: Parser,
     _interpreter: Interpreter,
-    type_checker: TypeChecker,
     _rng: Arc<Mutex<ChaCha8Rng>>,
 }
 
@@ -45,7 +44,6 @@ impl PropertyTester {
         Self {
             parser: Parser::new(),
             _interpreter: Interpreter::new(),
-            type_checker: TypeChecker::new(),
             _rng: Arc::new(Mutex::new(ChaCha8Rng::from_seed([42; 32]))),
         }
     }
@@ -70,17 +68,11 @@ impl PropertyTester {
         }
     }
 
-    /// Test property: type checking should be consistent
+    /// Test property: static checking is deterministic — the same program
+    /// produces the same diagnostics.
     pub fn test_type_consistency(&mut self, source: &str) -> bool {
         match self.parser.parse(source) {
-            Ok(program) => {
-                // Check types twice with same input
-                let result1 = self.type_checker.check_program(&program);
-                let result2 = self.type_checker.check_program(&program);
-
-                // Results should be identical
-                matches!((result1, result2), (Ok(_), Ok(_)) | (Err(_), Err(_)))
-            }
+            Ok(program) => check_program(&program) == check_program(&program),
             Err(_) => true,
         }
     }
