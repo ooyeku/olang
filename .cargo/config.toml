@@ -1,3 +1,12 @@
+# The interpreter recurses on the host stack by design (main.rs runs eval
+# on a 256 MB thread for its documented 1000-frame call-depth limit).
+# Debug-build eval frames are large and grow with unrelated enum/derive
+# changes, so test threads need more than the 2 MB Rust default — 16 MB
+# keeps recursion-heavy tests (and every future FieldTypeCheck variant)
+# off the cliff. Release builds are unaffected either way.
+[env]
+RUST_MIN_STACK = "16777216"
+
 # Wasm playground builds select getrandom 0.4's opt-in "custom" backend:
 # src/playground.rs defines the __getrandom_v03_custom hook, fed by the
 # page's crypto.getRandomValues through the host_random_bytes import.
