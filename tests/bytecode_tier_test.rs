@@ -3039,3 +3039,20 @@ fn result_payload_enforcement_is_tier_transparent() {
     // A non-Result against a Result annotation is the base mismatch.
     assert_tier_transparent("fn f(r: Result<Int, String>) = r\nf(42)");
 }
+
+#[test]
+fn union_annotation_enforcement_is_tier_transparent() {
+    // 0.50 arc: `A | B` accepts any branch, rejects all-branch misses,
+    // identically on every tier.
+    assert_tier_transparent("fn f(x: Int | String) = show(x)\nf(1) + f(\"s\")");
+    assert_tier_transparent("fn f(x: Int | String) = x\nf(true)");
+    assert_tier_transparent("fn g(x) -> Int | String = x\nshow(g(1)) + show(g(\"s\"))");
+    assert_tier_transparent("fn g(x) -> Int | String = x\ng(1.5)");
+    // A Result branch keeps its payload rule inside the union.
+    assert_tier_transparent(
+        "fn f(x: Result<Int, String> | Int) = show(x)\nshow(f(1)) + show(f(Ok(2)))",
+    );
+    assert_tier_transparent("fn f(x: Result<Int, String> | Int) = x\nf(Ok(\"bad\"))");
+    // Shallow container branches stay shallow.
+    assert_tier_transparent("fn f(x: List<Int> | Int) = show(x)\nshow(f([\"any\", 1]))");
+}

@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Union annotations gained semantics — `A | B` is enforced.** The
+  reserved form graduated, additively as promised: a value satisfies a
+  union if it satisfies any branch, checked at every annotated boundary
+  on every tier at the same O(1) cost (`parameter 'x' of tag expects
+  Int | String, got Bool`). Branches keep their own rules — a
+  `Result<Int, String> | Int` union applies the Result payload check
+  when the value is a Result — and a union containing an unenforceable
+  branch (generic parameter, function type) stays entirely unchecked
+  rather than wrongly strict. The union grammar also learned the
+  parameterized branch forms (`Result<...>`, `Promise<...>`, `Name<T>`,
+  `Map<K, V>` now parse as branches). The checker mirrors the runtime
+  with its usual honesty: a violation is reported only when every
+  branch is provably violated, labeled a runtime failure only when
+  every branch's own check would fire (`expects List<Int> | Int, got
+  List<String>` is a promise-break — the shallow runtime admits the
+  List). Intersection and literal-type annotations remain reserved;
+  union type *declarations* remain not planned.
+
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 

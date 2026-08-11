@@ -196,7 +196,11 @@ builtin_type = _{ "Int" | "Float" | "String" | "Bool" | "List" | "Tuple" }
 
 // Type annotations
 type_annotation = { union_type | intersection_type | literal_type | anonymous_struct_type | generic_type | result_type | promise_type | function_type | tuple_type | list_type | map_type | basic_type | custom_type | unit_type }
-base_type_annotation = { basic_type | custom_type | generic_type | list_type | map_type | tuple_type | unit_type | literal_type }
+// Union branches: everything except function types (whose `->` would be
+// ambiguous with `|` precedence) and nested unions. Parameterized forms
+// must come before custom_type, or a bare identifier match would strand
+// their `<...>`.
+base_type_annotation = { result_type | promise_type | map_type | generic_type | list_type | tuple_type | unit_type | literal_type | basic_type | custom_type }
 anonymous_struct_type = { "{" ~ struct_field_list? ~ "}" }
 basic_type = { "Int" | "Float" | "String" | "Bool" | "Map" }
 unit_type = { "()" }

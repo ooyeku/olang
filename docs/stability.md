@@ -99,9 +99,11 @@ the global builtins.
 
 ### Reserved — parses today, semantics later
 
-- Union (`A | B`) and intersection type *annotations*; union type
-  *declarations* are not yet accepted
+- Intersection (`A & B`) type annotations
 - Literal types in annotations
+- Union type *declarations* (`type X = A | B`) are not yet accepted —
+  union *annotations* gained semantics in 0.50 and are covered by the
+  gradual-typing bullet above
 
 Reserved constructs are safe to avoid entirely; when they gain semantics it
 will be additive.

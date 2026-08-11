@@ -1453,8 +1453,8 @@ println(to_string(apply((n) => n + count, 39)))
 
 Annotation forms: `Int`, `Float`, `String`, `Bool`, `Map`, custom type
 names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions,
-`Result<T, E>`, `Promise<T>`, generic applications `Name<T>`, `()` unit, and
-(reserved) union/intersection/literal forms.
+`Result<T, E>`, `Promise<T>`, `A | B` unions, generic applications
+`Name<T>`, `()` unit, and (reserved) intersection/literal forms.
 
 ## Appendix: Keywords and Grammar
 

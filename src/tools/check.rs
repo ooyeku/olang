@@ -144,6 +144,10 @@ enum SType {
     Map(Box<SType>, Box<SType>),
     Tuple(Vec<SType>),
     Result(Box<SType>, Box<SType>),
+    /// `A | B`. Only constructed when the runtime enforces the union too
+    /// (every branch checkable), so verdict parity holds; otherwise the
+    /// annotation reduces to Unknown, silent like the runtime.
+    Union(Vec<SType>),
     Named(std::string::String),
 }
 
@@ -177,6 +181,23 @@ impl SType {
                 Box::new(SType::from_annotation(ok_type, type_params)),
                 Box::new(SType::from_annotation(err_type, type_params)),
             ),
+            TypeAnnotation::Union { types } => {
+                // Mirror the runtime: a union with an unenforceable branch
+                // is entirely unchecked there, so it must be silent here.
+                if types
+                    .iter()
+                    .any(|t| crate::ast::FieldTypeCheck::from_annotation(t, type_params).is_none())
+                {
+                    SType::Unknown
+                } else {
+                    SType::Union(
+                        types
+                            .iter()
+                            .map(|t| SType::from_annotation(t, type_params))
+                            .collect(),
+                    )
+                }
+            }
             TypeAnnotation::Custom(name) if !type_params.iter().any(|p| p == name) => {
                 SType::Named(name.clone())
             }
@@ -239,6 +260,8 @@ impl SType {
             SType::Map(_, _) => Some("Map"),
             SType::Tuple(_) => Some("Tuple"),
             SType::Result(_, _) => Some("Result"),
+            // A union has no single base; violation() handles it directly.
+            SType::Union(_) => None,
             SType::Named(n) => Some(n),
         }
     }
@@ -257,6 +280,11 @@ impl SType {
                 "Result".to_string()
             }
             SType::Result(o, e) => format!("Result<{}, {}>", o.display(), e.display()),
+            SType::Union(bs) => bs
+                .iter()
+                .map(|b| b.display())
+                .collect::<Vec<_>>()
+                .join(" | "),
             SType::Tuple(ts) => format!(
                 "({})",
                 ts.iter()
@@ -294,6 +322,21 @@ fn unify(a: &SType, b: &SType) -> SType {
 /// type: `(expected_text, actual_text, runtime_would_reject)`. None
 /// wherever anything is Unknown or the types agree.
 fn violation(expected: &SType, actual: &SType) -> Option<(String, String, bool)> {
+    // A union is violated only when every branch is provably violated;
+    // the runtime would reject only if every branch's own check would.
+    if let SType::Union(branches) = expected {
+        if *actual == SType::Unknown {
+            return None;
+        }
+        let mut all_runtime = true;
+        for b in branches {
+            match violation(b, actual) {
+                Some((_, _, rt)) => all_runtime = all_runtime && rt,
+                None => return None,
+            }
+        }
+        return Some((expected.display(), actual.display(), all_runtime));
+    }
     let be = expected.base_name()?;
     let ba = actual.base_name()?;
     if be != ba {
@@ -1236,6 +1279,43 @@ mod tests {
         );
         assert_eq!(d.len(), 1, "Ok arm flagged, Err arm honest: {:?}", d);
         assert!(d[0].message.contains("expects String, got Int"));
+    }
+
+    // ── 0.50 arc: unions ───────────────────────────────────────────────
+
+    #[test]
+    fn union_annotations_accept_any_branch_and_reject_all_branch_misses() {
+        let src = "fn f(x: Int | String) = x\n";
+        assert!(check(&format!("{}f(1)\nf(\"s\")\n", src)).is_empty());
+        let d = check(&format!("{}f(true)\n", src));
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].message,
+            "parameter 'x' of f expects Int | String, got Bool"
+        );
+        assert!(d[0].runtime, "every branch fails at base level");
+    }
+
+    #[test]
+    fn union_deep_branch_failures_are_promise_breaks() {
+        // The runtime's shallow check admits any List; only the checker
+        // can prove the union is still violated.
+        let d = check("fn f(x: List<Int> | Int) = x\nlet ys: List<String> = [\"a\"]\nf(ys)\n");
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].message,
+            "parameter 'x' of f expects List<Int> | Int, got List<String>"
+        );
+        assert!(!d[0].runtime);
+        // A list of Ints satisfies the List<Int> branch.
+        assert!(check("fn f(x: List<Int> | Int) = x\nlet ys: List<Int> = [1]\nf(ys)\n").is_empty());
+    }
+
+    #[test]
+    fn union_with_unenforceable_branch_is_silent() {
+        // A generic-parameter branch erases the whole union, exactly as
+        // the runtime skips it.
+        assert!(check("fn f<T>(x: T | Int) = x\nf(true)\n").is_empty());
     }
 
     #[test]

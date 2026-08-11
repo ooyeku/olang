@@ -136,6 +136,21 @@ Details worth knowing:
   // Type error: return value of parse expects Result<Int, String>, got Ok(String)
   ```
 
+- **Unions accept any branch.** `x: Int | String` admits an Int or a
+  String and rejects everything else, at the same O(1) cost (branch
+  count is annotation-sized). Branches keep their own rules — a
+  `Result<Int, String> | Int` union applies the payload check when the
+  value is a Result. A union containing an unenforceable branch (a
+  generic parameter, a function type) is entirely unchecked rather than
+  wrongly strict — rejecting a value the unenforceable branch might
+  have accepted would break the gradual contract.
+
+  ```olang no-run
+  fn tag(x: Int | String) = show(x)
+  tag(true)
+  // Type error: parameter 'x' of tag expects Int | String, got Bool
+  ```
+
 - **Async functions check the resolved value.** An `async fn` annotated
   `-> Promise<Int, String>` describes the promise the caller receives;
   the runtime enforces `Int` on the value the body resolves to.
@@ -277,9 +292,10 @@ Knowing the boundaries tells you what an annotation cannot promise:
   side's *base* type; structure inside the payload (list elements, a
   nested Result's own payload) is the checker's territory, like every
   other deep promise.
-- **Reserved forms** — union (`A | B`), intersection, and literal-type
+- **Reserved forms** — intersection (`A & B`) and literal-type
   annotations parse today and gain semantics later
   ([Stability](stability.md#reserved--parses-today-semantics-later)).
+  Unions left this list in 0.50: `A | B` is enforced.
 - **The checker never speculates.** No inference across module
   boundaries, no narrowing from `if typeof(x) == ...`, no guesses about
   dynamic code. Anything short of proof is silence.

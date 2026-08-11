@@ -745,6 +745,14 @@ pub enum FieldTypeCheck {
         ok: Option<Box<FieldTypeCheck>>,
         err: Option<Box<FieldTypeCheck>>,
     },
+    /// `A | B`: the value satisfies the union if it satisfies any branch.
+    /// Branch count is annotation-sized, each branch check O(1), so the
+    /// whole check stays O(1) in the value. Only constructed when every
+    /// branch is itself checkable — a union with an unenforceable branch
+    /// (generic parameter, function type) stays unchecked, because
+    /// rejecting a value the unenforceable branch might accept would be
+    /// wrong.
+    Union(Vec<FieldTypeCheck>),
     /// A declared struct or enum type, matched by name against the value's
     /// runtime type name.
     Named(String),
@@ -775,6 +783,16 @@ impl FieldTypeCheck {
                 ok: Self::from_annotation(ok_type, type_params).map(Box::new),
                 err: Self::from_annotation(err_type, type_params).map(Box::new),
             }),
+            // A union enforces only when every branch does: one
+            // unenforceable branch (generic parameter, function type)
+            // makes the whole union unchecked rather than wrongly strict.
+            TypeAnnotation::Union { types } => {
+                let branches: Option<Vec<_>> = types
+                    .iter()
+                    .map(|t| Self::from_annotation(t, type_params))
+                    .collect();
+                branches.map(Self::Union)
+            }
             TypeAnnotation::Generic {
                 base_type,
                 type_args,
@@ -809,17 +827,24 @@ impl FieldTypeCheck {
             Self::Map => "Map",
             Self::Tuple => "Tuple",
             Self::Result { .. } => "Result",
+            // A union has no single name; callers that can see values use
+            // `check_value`/`accepts`, and error text uses `display_name`.
+            Self::Union(_) => "Union",
             Self::Named(name) => name,
         }
     }
 
     /// Does a value whose runtime type name is `actual` satisfy this field?
+    /// For a union: does any branch?
     pub fn accepts(&self, actual: &str) -> bool {
-        self.expected_name() == actual
+        match self {
+            Self::Union(branches) => branches.iter().any(|b| b.accepts(actual)),
+            other => other.expected_name() == actual,
+        }
     }
 
     /// The declared type as error text: `Result<Int, _>` where payload
-    /// checks exist, the bare name otherwise.
+    /// checks exist, `Int | String` for unions, the bare name otherwise.
     pub fn display_name(&self) -> String {
         match self {
             Self::Result { ok, err } => {
@@ -829,6 +854,11 @@ impl FieldTypeCheck {
                 };
                 format!("Result<{}, {}>", side(ok), side(err))
             }
+            Self::Union(branches) => branches
+                .iter()
+                .map(|b| b.display_name())
+                .collect::<Vec<_>>()
+                .join(" | "),
             other => other.expected_name().to_string(),
         }
     }
@@ -845,6 +875,22 @@ impl FieldTypeCheck {
         type_name: &str,
         result_payload: Option<(bool, &str)>,
     ) -> Option<(String, String)> {
+        // Unions first: satisfied by any branch (checked in full, so a
+        // Result branch's payload rule applies inside a union too).
+        if let Self::Union(branches) = self {
+            if branches
+                .iter()
+                .any(|b| b.check_value(type_name, result_payload).is_none())
+            {
+                return None;
+            }
+            let actual = match result_payload {
+                Some((true, p)) => format!("Ok({})", p),
+                Some((false, p)) => format!("Err({})", p),
+                None => type_name.to_string(),
+            };
+            return Some((self.display_name(), actual));
+        }
         if !self.accepts(type_name) {
             return Some((self.expected_name().to_string(), type_name.to_string()));
         }
