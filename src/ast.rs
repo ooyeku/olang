@@ -9,9 +9,36 @@ pub struct Program {
     pub statements: Vec<Statement>,
 }
 
+/// Where a runtime error surfaced: the innermost located statement being
+/// evaluated when the error first appeared, plus the interpreter call
+/// stack at that moment (function names, outermost first). Attached as a
+/// side channel — error Display strings never change — and rendered only
+/// by top-level reporters (file runner, REPL).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ErrorLocation {
+    pub line: u32,
+    pub column: u32,
+    pub call_stack: Vec<String>,
+}
+
 /// Statement types in Olang
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+///
+/// Equality is span-insensitive: `Located` wrappers are stripped from both
+/// sides before comparing, so two parses of the same program compare equal
+/// even when formatting has moved statements to different lines/columns.
+/// Position is metadata, not identity — `olang fmt`'s AST-verification gate
+/// depends on this.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Statement {
+    /// A statement wrapped with its source position (1-based line/column
+    /// of its first token). The parser wraps every statement it builds;
+    /// desugared or synthetic statements may appear bare. Walkers that
+    /// don't care about position delegate straight through to `stmt`.
+    Located {
+        line: u32,
+        column: u32,
+        stmt: Box<Statement>,
+    },
     Expression(Expr),
     LetDecl(LetDecl),
     FunctionDecl(FunctionDecl),
@@ -23,6 +50,38 @@ pub enum Statement {
     TestDecl(TestDecl),
     TraitDecl(TraitDecl),
     ImplDecl(ImplDecl),
+}
+
+impl PartialEq for Statement {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.unwrapped(), other.unwrapped()) {
+            (Statement::Expression(a), Statement::Expression(b)) => a == b,
+            (Statement::LetDecl(a), Statement::LetDecl(b)) => a == b,
+            (Statement::FunctionDecl(a), Statement::FunctionDecl(b)) => a == b,
+            (Statement::AsyncFunctionDecl(a), Statement::AsyncFunctionDecl(b)) => a == b,
+            (Statement::TypeDecl(a), Statement::TypeDecl(b)) => a == b,
+            (Statement::ErrorTypeDecl(a), Statement::ErrorTypeDecl(b)) => a == b,
+            (Statement::ShareDecl(a), Statement::ShareDecl(b)) => a == b,
+            (Statement::UseDecl(a), Statement::UseDecl(b)) => a == b,
+            (Statement::TestDecl(a), Statement::TestDecl(b)) => a == b,
+            (Statement::TraitDecl(a), Statement::TraitDecl(b)) => a == b,
+            (Statement::ImplDecl(a), Statement::ImplDecl(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Statement {
+    /// The statement itself, stripped of any Located wrapper — for
+    /// consumers that match on statement kinds and don't care where the
+    /// statement came from.
+    pub fn unwrapped(&self) -> &Statement {
+        let mut s = self;
+        while let Statement::Located { stmt, .. } = s {
+            s = stmt;
+        }
+        s
+    }
 }
 
 /// A trait declaration: a named set of methods, each optionally with a

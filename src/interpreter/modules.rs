@@ -635,7 +635,7 @@ impl Interpreter {
 
             // Process all statements in the module
             for statement in &program.statements {
-                match statement {
+                match statement.unwrapped() {
                     crate::ast::Statement::ShareDecl(share_decl) => {
                         match share_decl {
                             ShareDecl::Function(func_decl) => {

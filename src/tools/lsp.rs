@@ -468,6 +468,7 @@ fn declarations(text: &str) -> Vec<(String, String, (u32, u32))> {
     let mut out = Vec::new();
     for stmt in &program.statements {
         use crate::ast::{Pattern, Statement};
+        let stmt = stmt.unwrapped();
         match stmt {
             Statement::FunctionDecl(f) => {
                 if let Some(span) = f.name_span {

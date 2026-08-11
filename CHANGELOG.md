@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
+## [Unreleased]
+
+### Added
+
+- **Runtime errors point at source.** Every statement now carries its
+  source position, and when a runtime error surfaces the file runner
+  renders the offending line with a caret (via miette) plus the
+  interpreter call stack — `Undefined variable: x` now comes with
+  `[file.ol:3:5]`, the source line, and `mid → deep`. Positions are a
+  side channel: error messages themselves are unchanged, so tier
+  behavior and error-matching programs are unaffected. Statement
+  equality is span-insensitive (position is metadata, not identity),
+  which keeps `olang fmt`'s AST-verification gate sound.
+
+### Changed
+
+- **Parse errors speak plain English.** The raw pest rendering
+  ("Pest parsing error:", `mul_op`, `base_pattern`) is gone: expected
+  lists collapse to human phrases, every syntax error carries
+  line/column and a caret snippet, parse errors inside imported modules
+  render the same way (previously a raw Rust Debug dump), and UTF-8
+  BOMs are stripped instead of failing at 1:1 on an invisible
+  character.
+
 ## [0.46.0] - 2026-08-10
 
 ### Removed

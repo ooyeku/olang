@@ -50,7 +50,7 @@ fn bytecode_result(source: &str, target: &str, args: &[Value]) -> Result<Value, 
     // resolve during execution.
     let mut ids = Vec::new();
     for statement in &program.statements {
-        if let Statement::FunctionDecl(func) = statement {
+        if let Statement::FunctionDecl(func) = statement.unwrapped() {
             let id = FunctionId::new();
             vm.register_function(func.name.clone(), id);
             ids.push((id, func.clone()));

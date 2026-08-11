@@ -51,7 +51,7 @@ pub fn run(path: &Path) -> i32 {
         let has_tests = program
             .statements
             .iter()
-            .any(|s| matches!(s, Statement::TestDecl(_)));
+            .any(|s| matches!(s.unwrapped(), Statement::TestDecl(_)));
         if !has_tests {
             continue;
         }

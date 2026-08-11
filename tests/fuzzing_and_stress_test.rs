@@ -879,7 +879,7 @@ mod additional_property_tests {
             match parser.parse(&source) {
                 Ok(program) => {
                     if let Some(Statement::Expression(Expr::Integer(parsed_n))) =
-                        program.statements.first()
+                        program.statements.first().map(|s| s.unwrapped())
                     {
                         assert_eq!(*parsed_n, n);
                     } else {
@@ -910,7 +910,7 @@ mod additional_property_tests {
             match parser.parse(&source) {
                 Ok(program) => {
                     if let Some(Statement::Expression(Expr::Boolean(parsed_b))) =
-                        program.statements.first()
+                        program.statements.first().map(|s| s.unwrapped())
                     {
                         assert_eq!(*parsed_b, b);
                     } else {
@@ -939,7 +939,7 @@ mod proptest_tests {
 
             match parser.parse(&source) {
                 Ok(program) => {
-                    if let Some(Statement::Expression(Expr::Integer(parsed_n))) = program.statements.first() {
+                    if let Some(Statement::Expression(Expr::Integer(parsed_n))) = program.statements.first().map(|s| s.unwrapped()) {
                         prop_assert_eq!(*parsed_n, n);
                     } else {
                         // Parser might treat it as different expression type, which is ok
@@ -965,7 +965,7 @@ mod proptest_tests {
 
             match parser.parse(&source) {
                 Ok(program) => {
-                    if let Some(Statement::Expression(Expr::Float(parsed_n))) = program.statements.first() {
+                    if let Some(Statement::Expression(Expr::Float(parsed_n))) = program.statements.first().map(|s| s.unwrapped()) {
                         prop_assert!((parsed_n - n).abs() < 1e-10);
                     } else {
                         // Parser might treat it as different expression type, which is ok

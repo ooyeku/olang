@@ -298,19 +298,60 @@ fn show_classic_interpreter_error(
     error: &olang::interpreter::InterpreterError,
     file_path: &std::path::Path,
     interpreter: &olang::interpreter::Interpreter,
+    location: Option<olang::ast::ErrorLocation>,
+    source: &str,
 ) {
     eprintln!("\n{}", "═══ Execution Error ═══".bright_red().bold());
-    eprintln!(
-        "  {}: {}",
-        "File".bright_blue().bold(),
-        file_path.display().to_string().bright_white()
-    );
 
-    // Use the enhanced error formatter
     let formatted_error = interpreter.format_error(error);
-    eprintln!("\n{}", formatted_error);
 
-    eprintln!();
+    if let Some(loc) = location {
+        // Located: render the source line with a caret through miette so
+        // the error points at where it happened, then the call stack.
+        let offset = byte_offset_of(source, loc.line as usize, loc.column as usize);
+        let diagnostic = miette::MietteDiagnostic::new(formatted_error.clone()).with_label(
+            miette::LabeledSpan::at_offset(offset, "error occurred here"),
+        );
+        let report = miette::Report::new(diagnostic).with_source_code(miette::NamedSource::new(
+            file_path.display().to_string(),
+            source.to_string(),
+        ));
+        eprintln!("{:?}", report);
+        if !loc.call_stack.is_empty() {
+            eprintln!("  {}", "Call stack (outermost first):".bright_blue().bold());
+            for name in &loc.call_stack {
+                eprintln!("    → {}", name.bright_white());
+            }
+            eprintln!();
+        }
+    } else {
+        eprintln!(
+            "  {}: {}",
+            "File".bright_blue().bold(),
+            file_path.display().to_string().bright_white()
+        );
+        eprintln!("\n{}", formatted_error);
+        eprintln!();
+    }
+}
+
+/// Byte offset of a 1-based (line, column) position in `source` — what
+/// miette's span labels want. Clamped to the source length.
+fn byte_offset_of(source: &str, line: usize, column: usize) -> usize {
+    let mut offset = 0usize;
+    for (i, l) in source.split('\n').enumerate() {
+        if i + 1 == line {
+            // Column is 1-based and counted in characters; walk the line.
+            let col_bytes: usize = l
+                .chars()
+                .take(column.saturating_sub(1))
+                .map(|c| c.len_utf8())
+                .sum();
+            return (offset + col_bytes).min(source.len());
+        }
+        offset += l.len() + 1;
+    }
+    offset.min(source.len())
 }
 
 /// Feature 9: Show interpreter errors with enhanced context and suggestions
@@ -586,7 +627,8 @@ fn execute_file(
                 Ok(())
             }
             Err(e) => {
-                show_classic_interpreter_error(&e, file_path, &interpreter);
+                let location = interpreter.take_error_location();
+                show_classic_interpreter_error(&e, file_path, &interpreter, location, &source);
                 Err(anyhow::anyhow!("Execution failed"))
             }
         },

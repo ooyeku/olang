@@ -90,6 +90,19 @@ pub struct Interpreter {
     call_depth: usize,
     max_call_depth: usize,
 
+    /// Stack of source positions of the statements currently being
+    /// evaluated (innermost last). Maintained by eval_statement's
+    /// Located arm; used to attribute runtime errors to source lines.
+    stmt_span_stack: Vec<(u32, u32)>,
+    /// Function names currently on the interpreter call stack
+    /// (outermost first), for error reports.
+    call_stack_names: Vec<String>,
+    /// The location captured when the current error first surfaced.
+    /// Taken (and cleared) by the top-level reporter; cleared whenever
+    /// an error is consumed (caught) so a later error can't inherit a
+    /// stale position.
+    pending_error_location: Option<crate::ast::ErrorLocation>,
+
     // MEMORY MONITORING: Track memory usage to prevent corruption
     memory_allocations: usize,
     max_memory_allocations: usize,
@@ -185,6 +198,9 @@ impl Interpreter {
             // MEMORY PROTECTION: Initialize recursion depth tracking
             call_depth: 0,
             max_call_depth: DEFAULT_MAX_CALL_DEPTH,
+            stmt_span_stack: Vec::new(),
+            call_stack_names: Vec::new(),
+            pending_error_location: None,
 
             // MEMORY MONITORING: Initialize memory tracking
             memory_allocations: 0,
@@ -295,9 +311,32 @@ impl Interpreter {
 
         let mut last_value = Value::Unit;
         for statement in &program.statements {
+            // A fresh top-level statement gets a clean slate: any location
+            // captured for an earlier (recovered) failure must not be
+            // inherited by a later error.
+            self.pending_error_location = None;
             last_value = self.eval_statement(statement)?;
         }
         Ok(last_value)
+    }
+
+    /// Loop/return/`?` signals travel as Err but aren't errors — they must
+    /// never capture an error location (their consumption is normal flow).
+    fn is_control_signal(e: &InterpreterError) -> bool {
+        matches!(
+            e,
+            InterpreterError::BreakSignal(_)
+                | InterpreterError::ContinueSignal
+                | InterpreterError::ReturnSignal(_)
+                | InterpreterError::ErrPropagation(_)
+        )
+    }
+
+    /// Take (and clear) the location captured for the error currently
+    /// propagating, if any. Top-level reporters call this after a failed
+    /// run to render "where" alongside the error's own "what".
+    pub fn take_error_location(&mut self) -> Option<crate::ast::ErrorLocation> {
+        self.pending_error_location.take()
     }
 
     pub fn eval_statement(&mut self, statement: &Statement) -> Result<Value, InterpreterError> {
@@ -305,6 +344,28 @@ impl Interpreter {
         self.safepoint_poll()?;
 
         match statement {
+            Statement::Located { line, column, stmt } => {
+                // Position discipline: push this statement's span for the
+                // duration of its evaluation (nested blocks push deeper
+                // spans; calls into interpreted functions do too). When an
+                // error first surfaces, the innermost span on the stack is
+                // where it happened — capture it once, together with the
+                // call stack, for the top-level reporter.
+                self.stmt_span_stack.push((*line, *column));
+                let result = self.eval_statement(stmt);
+                if let Err(e) = &result
+                    && self.pending_error_location.is_none()
+                    && !Self::is_control_signal(e)
+                {
+                    self.pending_error_location = Some(crate::ast::ErrorLocation {
+                        line: *line,
+                        column: *column,
+                        call_stack: self.call_stack_names.clone(),
+                    });
+                }
+                self.stmt_span_stack.pop();
+                result
+            }
             Statement::Expression(expr) => self.eval_expr(expr),
             Statement::LetDecl(let_decl) => self.eval_let_decl(let_decl),
             Statement::FunctionDecl(func_decl) => self.eval_function_decl(func_decl.clone()),
@@ -1392,6 +1453,8 @@ impl Interpreter {
             Value::Function(func) => {
                 // Increment call depth for user functions
                 self.call_depth += 1;
+                self.call_stack_names
+                    .push(func.name.clone().unwrap_or_else(|| "<lambda>".to_string()));
 
                 // MEMORY CLEANUP: Reset memory tracking for each new function call
                 self.reset_memory_tracking();
@@ -1437,6 +1500,7 @@ impl Interpreter {
 
                     if let crate::ovm::tier::TierOutcome::Ran(result) = outcome {
                         self.call_depth -= 1;
+                        self.call_stack_names.pop();
                         return result
                             .map_err(|message| InterpreterError::RuntimeError { message });
                     }
@@ -1486,6 +1550,7 @@ impl Interpreter {
 
                 // Decrement call depth when function completes
                 self.call_depth -= 1;
+                self.call_stack_names.pop();
 
                 // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after function calls
                 if self.memory_allocations > 5000 {
@@ -1538,6 +1603,9 @@ impl Interpreter {
     /// Create a thread-safe clone for parallel operations
     pub fn thread_safe_clone(&self) -> Self {
         Self {
+            stmt_span_stack: Vec::new(),
+            call_stack_names: Vec::new(),
+            pending_error_location: None,
             environment: self.environment.clone(),
             builtin_functions: self.builtin_functions.clone(),
             type_checker: self.type_checker.clone(),

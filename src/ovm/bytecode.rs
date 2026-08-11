@@ -5227,6 +5227,7 @@ impl BytecodeCompiler {
             }
             Expr::Block(statements) => {
                 for statement in statements {
+                    let statement = statement.unwrapped();
                     match statement {
                         Statement::Expression(e) => Self::collect_bound_names(e, names),
                         Statement::LetDecl(decl) => {
@@ -5530,6 +5531,7 @@ impl BytecodeCompiler {
             Expr::Block(statements) => {
                 let mut scope = bound.clone();
                 for statement in statements {
+                    let statement = statement.unwrapped();
                     match statement {
                         Statement::Expression(e) => {
                             if !Self::collect_free_vars(e, &scope, free) {
@@ -5664,6 +5666,7 @@ impl BytecodeCompiler {
         statement: &crate::ast::Statement,
     ) -> Result<Register, BytecodeError> {
         match statement {
+            crate::ast::Statement::Located { stmt, .. } => self.compile_statement(stmt),
             crate::ast::Statement::Expression(expr) => self.compile_expression(expr),
             crate::ast::Statement::LetDecl(let_decl) => {
                 let value_reg = match &let_decl.value {

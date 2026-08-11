@@ -291,13 +291,28 @@ impl Parser {
                                 position_info.clone(),
                             )
                         })?;
-                        statements.push(self.build_statement(stmt_inner)?);
+                        statements.push(Self::locate(
+                            self.build_statement(stmt_inner)?,
+                            position_info.line,
+                            position_info.column,
+                        ));
                     }
                 }
             }
         }
 
         Ok(Program { statements })
+    }
+
+    /// Wrap a statement with the source position of the pair it was built
+    /// from, so runtime errors can be attributed to lines. Every statement
+    /// the parser produces goes through this.
+    fn locate(stmt: Statement, line: usize, column: usize) -> Statement {
+        Statement::Located {
+            line: line as u32,
+            column: column as u32,
+            stmt: Box::new(stmt),
+        }
     }
 
     fn build_statement(&self, pair: Pair<Rule>) -> Result<Statement, ParseError> {
@@ -2361,13 +2376,14 @@ impl Parser {
 
         for pair in pairs {
             if pair.as_rule() == Rule::statement {
+                let (line, column) = pair.as_span().start_pos().line_col();
                 let inner = pair
                     .into_inner()
                     .next()
                     .ok_or_else(|| ParseError::InvalidSyntax {
                         message: "Empty statement in block".to_string(),
                     })?;
-                statements.push(self.build_statement(inner)?);
+                statements.push(Self::locate(self.build_statement(inner)?, line, column));
             }
         }
 
@@ -3915,7 +3931,9 @@ mod tests {
 
         if let Ok(program) = result {
             assert_eq!(program.statements.len(), 1);
-            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+            if let Statement::Expression(Expr::Call { arguments, .. }) =
+                program.statements[0].unwrapped()
+            {
                 assert_eq!(arguments.len(), 2);
 
                 // Check first argument is named
@@ -3952,7 +3970,9 @@ mod tests {
 
         if let Ok(program) = result {
             assert_eq!(program.statements.len(), 1);
-            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+            if let Statement::Expression(Expr::Call { arguments, .. }) =
+                program.statements[0].unwrapped()
+            {
                 assert_eq!(arguments.len(), 3);
 
                 // Check first argument is positional
@@ -3992,7 +4012,9 @@ mod tests {
 
         if let Ok(program) = result {
             assert_eq!(program.statements.len(), 1);
-            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+            if let Statement::Expression(Expr::Call { arguments, .. }) =
+                program.statements[0].unwrapped()
+            {
                 assert_eq!(arguments.len(), 3);
 
                 // All arguments should be positional
@@ -4020,7 +4042,9 @@ mod tests {
 
         if let Ok(program) = result {
             assert_eq!(program.statements.len(), 1);
-            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+            if let Statement::Expression(Expr::Call { arguments, .. }) =
+                program.statements[0].unwrapped()
+            {
                 assert_eq!(arguments.len(), 3);
 
                 // Check all arguments are named with proper names
@@ -4054,7 +4078,9 @@ mod tests {
 
         if let Ok(program) = result {
             assert_eq!(program.statements.len(), 1);
-            if let Statement::Expression(Expr::Call { arguments, .. }) = &program.statements[0] {
+            if let Statement::Expression(Expr::Call { arguments, .. }) =
+                program.statements[0].unwrapped()
+            {
                 assert_eq!(arguments.len(), 2);
 
                 // First argument should be positional (the inner call)
@@ -4125,7 +4151,7 @@ mod tests {
         let grouping = parser.parse("(2 + 3) * 4").expect("grouping should parse");
         assert!(
             matches!(
-                &grouping.statements[0],
+                grouping.statements[0].unwrapped(),
                 Statement::Expression(Expr::BinaryOp { .. })
             ),
             "grouping should unwrap to its inner expression, got: {:?}",
@@ -4133,7 +4159,7 @@ mod tests {
         );
 
         let tuple = parser.parse("(1, 2, 3)").expect("tuple should parse");
-        if let Statement::Expression(Expr::Tuple(items)) = &tuple.statements[0] {
+        if let Statement::Expression(Expr::Tuple(items)) = tuple.statements[0].unwrapped() {
             assert_eq!(items.len(), 3, "expected a 3-element tuple");
         } else {
             panic!("expected a tuple, got: {:?}", tuple.statements[0]);
@@ -4142,7 +4168,7 @@ mod tests {
         let nested = parser
             .parse("((1, 2), (3, 4))")
             .expect("nested tuple should parse");
-        if let Statement::Expression(Expr::Tuple(items)) = &nested.statements[0] {
+        if let Statement::Expression(Expr::Tuple(items)) = nested.statements[0].unwrapped() {
             assert_eq!(items.len(), 2, "outer tuple should have 2 elements");
             assert!(
                 matches!(&items[0], Expr::Tuple(inner) if inner.len() == 2),
