@@ -8,7 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Releases before 0.23.0 predate this changelog and are not retroactively
 documented.
 
-## [Unreleased]
+## [0.48.0] - 2026-08-10
+
+### Added
+
+- **`olang check` — the static side of gradual typing.** A new
+  subcommand (and LSP integration) that reports type-annotation
+  violations the runtime would provably reject, before the program
+  runs: a literal argument against an annotated parameter, an
+  annotated `let` initialized with a known-type value, a declared
+  return contradicted by what the body provably produces, and
+  wrong-arity calls to known functions. Its discipline is no false
+  positives — anything the checker cannot prove stays silent, and
+  unannotated dynamic code is never judged (the whole repo's 171 `.ol`
+  files check clean). Diagnostics carry the runtime's exact error
+  text and render miette-located with the source line and caret;
+  non-zero exit on any finding makes it CI-ready. The same checker
+  feeds the language server, so editors surface these as error
+  squiggles while you type.
 
 ### Changed
 
@@ -21,7 +38,9 @@ documented.
   zero judgment. Containers check shallowly (`List<Int>` promises "a
   List"; element types are the future static checker's concern),
   Int/Float is strict (no widening, matching struct-field
-  enforcement), and generic parameters are erased, never checked.
+  enforcement), and generic parameters are erased, never checked. An
+  async function's `-> Promise<T, E>` unwraps: the check enforces `T`
+  on the value the body resolves to.
   Enforcement is identical on every tier: checks are precomputed at
   declaration, the interpreter enforces at its boundary, the bytecode
   VM enforces at function entry and return, and the JIT statically
