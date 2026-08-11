@@ -1501,8 +1501,43 @@ impl Interpreter {
                     if let crate::ovm::tier::TierOutcome::Ran(result) = outcome {
                         self.call_depth -= 1;
                         self.call_stack_names.pop();
-                        return result
-                            .map_err(|message| InterpreterError::RuntimeError { message });
+                        return result.map_err(|message| {
+                            // The tier hands back a bare message string; map
+                            // it onto the interpreter's own error variants so
+                            // the Display a user sees is identical no matter
+                            // which tier executed the function.
+                            if message == "Pattern match failed" {
+                                InterpreterError::PatternMatchFailed
+                            } else if let Some(rest) = message.strip_prefix("Type error: ") {
+                                InterpreterError::TypeError {
+                                    message: rest.to_string(),
+                                }
+                            } else if let Some(name) = message.strip_prefix("Undefined variable: ")
+                            {
+                                InterpreterError::UndefinedVariable {
+                                    name: name.to_string(),
+                                }
+                            } else if let Some(rest) =
+                                message.strip_prefix("Arity mismatch: expected ")
+                            {
+                                // "N, got M" — both ends are ours, parse back
+                                // into the structured variant so Display is
+                                // bare (no "Runtime error:" prefix), exactly
+                                // like the interpreter's own arity errors.
+                                let mut parts = rest.splitn(2, ", got ");
+                                match (
+                                    parts.next().and_then(|s| s.parse().ok()),
+                                    parts.next().and_then(|s| s.parse().ok()),
+                                ) {
+                                    (Some(expected), Some(got)) => {
+                                        InterpreterError::ArityMismatch { expected, got }
+                                    }
+                                    _ => InterpreterError::RuntimeError { message },
+                                }
+                            } else {
+                                InterpreterError::RuntimeError { message }
+                            }
+                        });
                     }
                 }
 

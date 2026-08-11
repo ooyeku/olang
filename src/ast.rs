@@ -414,11 +414,43 @@ pub enum BinaryOp {
     Or,
 }
 
+impl BinaryOp {
+    /// The operator as written in source — for error messages shared
+    /// verbatim by the interpreter and the bytecode tier.
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            BinaryOp::Add => "+",
+            BinaryOp::Subtract => "-",
+            BinaryOp::Multiply => "*",
+            BinaryOp::Divide => "/",
+            BinaryOp::Modulo => "%",
+            BinaryOp::Equal => "==",
+            BinaryOp::NotEqual => "!=",
+            BinaryOp::LessThan => "<",
+            BinaryOp::LessThanEqual => "<=",
+            BinaryOp::GreaterThan => ">",
+            BinaryOp::GreaterThanEqual => ">=",
+            BinaryOp::And => "&&",
+            BinaryOp::Or => "||",
+        }
+    }
+}
+
 /// Unary operators
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum UnaryOp {
     Negate,
     Not,
+}
+
+impl UnaryOp {
+    /// The operator as written in source — shared by both tiers' errors.
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            UnaryOp::Negate => "-",
+            UnaryOp::Not => "!",
+        }
+    }
 }
 
 /// Pattern matching arm

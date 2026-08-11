@@ -203,6 +203,9 @@ pub struct CompiledBytecode {
     pub local_count: u32,
     /// Declared parameter count, enforced at call time
     pub param_count: usize,
+    /// Parameter names in declaration order — only for arity-error
+    /// messages, which must match the interpreter's word-for-word.
+    pub param_names: std::sync::Arc<[String]>,
     pub constants: Vec<OvmValue>,
     pub debug_info: BytecodeDebugInfo,
     pub optimization_level: u8,
@@ -433,6 +436,12 @@ pub enum Instruction {
         dst: Register,
         lhs: Register,
         imm: OvmValue,
+        /// True when the compiler flipped `imm <op> x` into this form:
+        /// the immediate was the SOURCE-LEFT operand. Execution semantics
+        /// already account for the flip via `op`; this flag only lets the
+        /// type-error path report operands in source order, so the message
+        /// matches the interpreter word-for-word.
+        swapped: bool,
     },
     /// Build a tuple-variant enum value from argument registers (the only
     /// runtime construction form: unit variants are constants, and struct
@@ -1250,11 +1259,22 @@ impl BytecodeVm {
         };
 
         if args.len() != bytecode.param_count {
-            return Err(BytecodeError::RuntimeError(format!(
-                "Function expects {} argument(s), got {}",
-                bytecode.param_count,
-                args.len()
-            )));
+            // Word-for-word the interpreter's messages: a missing argument
+            // names the first absent parameter; a surplus reports arity.
+            return Err(BytecodeError::RuntimeError(
+                if args.len() < bytecode.param_count {
+                    format!(
+                        "Missing required argument: {}",
+                        bytecode.param_names[args.len()]
+                    )
+                } else {
+                    format!(
+                        "Arity mismatch: expected {}, got {}",
+                        bytecode.param_count,
+                        args.len()
+                    )
+                },
+            ));
         }
 
         // Native tier: if a JIT body exists (or can be specialized on this
@@ -1333,11 +1353,22 @@ impl BytecodeVm {
         };
 
         if arg_regs.len() != bytecode.param_count {
-            return Err(BytecodeError::RuntimeError(format!(
-                "Function expects {} argument(s), got {}",
-                bytecode.param_count,
-                arg_regs.len()
-            )));
+            // Word-for-word the interpreter's messages: a missing argument
+            // names the first absent parameter; a surplus reports arity.
+            return Err(BytecodeError::RuntimeError(
+                if arg_regs.len() < bytecode.param_count {
+                    format!(
+                        "Missing required argument: {}",
+                        bytecode.param_names[arg_regs.len()]
+                    )
+                } else {
+                    format!(
+                        "Arity mismatch: expected {}, got {}",
+                        bytecode.param_count,
+                        arg_regs.len()
+                    )
+                },
+            ));
         }
 
         // Native tier: extract raw bits and kinds straight from the
@@ -1918,10 +1949,22 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, result?)?;
                 }
 
-                Instruction::BinImm { op, dst, lhs, imm } => {
+                Instruction::BinImm {
+                    op,
+                    dst,
+                    lhs,
+                    imm,
+                    swapped,
+                } => {
                     let left = self.execution_state.register_ref(*lhs)?;
                     let result = match Self::binary_fast(left, imm, op.clone()) {
                         Some(v) => v,
+                        None if *swapped => {
+                            // The immediate was the source-left operand; run
+                            // it in source order (un-flipping the op) so a
+                            // type error reports operands as written.
+                            self.execute_binary_op(imm, left, Self::flip_op(op))?
+                        }
                         None => self.execute_binary_op(left, imm, op.clone())?,
                     };
                     self.execution_state.set_register(*dst, result)?;
@@ -2393,6 +2436,19 @@ impl BytecodeVm {
         })
     }
 
+    /// Invert a comparison's direction (its own inverse); commutative ops
+    /// map to themselves. Only ever called for ops the compiler's
+    /// immediate-flip emits, all of which are in this set.
+    fn flip_op(op: &BinaryOp) -> BinaryOp {
+        match op {
+            BinaryOp::LessThan => BinaryOp::GreaterThan,
+            BinaryOp::LessThanEqual => BinaryOp::GreaterThanEqual,
+            BinaryOp::GreaterThan => BinaryOp::LessThan,
+            BinaryOp::GreaterThanEqual => BinaryOp::LessThanEqual,
+            other => other.clone(),
+        }
+    }
+
     fn execute_binary_op(
         &self,
         left: &OvmValue,
@@ -2553,9 +2609,12 @@ impl BytecodeVm {
                 }
             },
             _ => {
-                return Err(BytecodeError::TypeError(
-                    "Type mismatch in binary operation".to_string(),
-                ));
+                return Err(BytecodeError::TypeError(format!(
+                    "Invalid binary operation: cannot apply '{}' to {} and {}",
+                    op.symbol(),
+                    left.type_name(),
+                    right.type_name()
+                )));
             }
         };
 
@@ -2613,9 +2672,10 @@ impl BytecodeVm {
             }
             (ValueData::Float(a), UnaryOp::Negate) => Ok(OvmValue::new_float(-a)),
             (ValueData::Boolean(a), UnaryOp::Not) => Ok(OvmValue::new_boolean(!a)),
-            _ => Err(BytecodeError::TypeError(format!(
-                "Unsupported unary operation: {:?}",
-                op
+            (_, op) => Err(BytecodeError::TypeError(format!(
+                "Invalid unary operation: cannot apply '{}' to {}",
+                op.symbol(),
+                value.type_name()
             ))),
         }
     }
@@ -3755,6 +3815,12 @@ impl BytecodeCompiler {
             register_count: self.register_allocator.max_register_used(),
             local_count: 0,
             param_count: func.parameters.len(),
+            param_names: func
+                .parameters
+                .iter()
+                .map(|p| p.name.clone())
+                .collect::<Vec<_>>()
+                .into(),
             constants,
             debug_info: BytecodeDebugInfo {
                 function_name: Some(func.name.clone()),
@@ -3974,6 +4040,7 @@ impl BytecodeCompiler {
                             dst: dst_reg,
                             lhs: left_reg,
                             imm,
+                            swapped: false,
                         });
                         return Ok(dst_reg);
                     }
@@ -3986,6 +4053,7 @@ impl BytecodeCompiler {
                             dst: dst_reg,
                             lhs: right_reg,
                             imm,
+                            swapped: true,
                         });
                         return Ok(dst_reg);
                     }
@@ -4644,6 +4712,7 @@ impl BytecodeCompiler {
                     dst: idx_reg,
                     lhs: idx_reg,
                     imm: OvmValue::new_integer(1),
+                    swapped: false,
                 });
                 self.emitter.emit_jump(loop_start);
 

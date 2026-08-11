@@ -2982,3 +2982,22 @@ fn min_max_average_raise_on_empty_list_like_head() {
     assert_tier_transparent(r#"try to_string(max([])) catch e => "empty""#);
     assert_tier_transparent(r#"try to_string(average([])) catch e => "empty""#);
 }
+
+#[test]
+fn error_messages_are_identical_across_tiers() {
+    // The tier's contract covers error TEXT, not just values: a failing
+    // program must print the same thing whichever tier executed it.
+    // These pin the classes that used to diverge (prefix doubling,
+    // VM-private wordings, operand order under immediate flipping).
+    assert_tier_transparent(
+        r#"try { 0 } catch (e) { 0 }
+fn f(x) = match x { 1 => "one" }
+f(2)"#,
+    );
+    assert_tier_transparent("fn f() = 1 + true\nf()");
+    assert_tier_transparent("fn f() = true + 1\nf()");
+    assert_tier_transparent("fn g(a, b) = a + b\nfn f() = g(1)\nf()");
+    assert_tier_transparent("fn g(a) = a\nfn f() = g(1, 2)\nf()");
+    assert_tier_transparent("fn f() = len(42)\nf()");
+    assert_tier_transparent("fn f() = -\"abc\"\nf()");
+}

@@ -294,8 +294,13 @@ impl Interpreter {
                 items.extend(b.iter().cloned());
                 Ok(Value::List(std::sync::Arc::from(items)))
             }
-            _ => Err(InterpreterError::TypeError {
-                message: "Invalid binary operation".to_string(),
+            (l, op, r) => Err(InterpreterError::TypeError {
+                message: format!(
+                    "Invalid binary operation: cannot apply '{}' to {} and {}",
+                    op.symbol(),
+                    l.type_name(),
+                    r.type_name()
+                ),
             }),
         }
     }
@@ -315,8 +320,12 @@ impl Interpreter {
             }
             (UnaryOp::Negate, Value::Float(x)) => Ok(Value::Float(-x)),
             (UnaryOp::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
-            _ => Err(InterpreterError::TypeError {
-                message: "Invalid unary operation".to_string(),
+            (op, operand) => Err(InterpreterError::TypeError {
+                message: format!(
+                    "Invalid unary operation: cannot apply '{}' to {}",
+                    op.symbol(),
+                    operand.type_name()
+                ),
             }),
         }
     }

@@ -1601,7 +1601,9 @@ impl PlanFn {
                     narrow!(src.0, K_BOOL);
                     grow!(self.writes[dst.0 as usize], K_BOOL);
                 }
-                Instruction::BinImm { op, dst, lhs, imm } => {
+                Instruction::BinImm {
+                    op, dst, lhs, imm, ..
+                } => {
                     let imm_mask = match imm.data {
                         ValueData::Integer(_) => K_INT,
                         ValueData::Float(_) => K_FLOAT,
@@ -2445,7 +2447,9 @@ fn translate_body(
                 let val = builder.ins().bxor(a, one);
                 r#gen.write(builder, dst.0, val);
             }
-            Instruction::BinImm { op, dst, lhs, imm } => {
+            Instruction::BinImm {
+                op, dst, lhs, imm, ..
+            } => {
                 let lk = r#gen.kind(lhs.0)?;
                 let a = builder.use_var(Variable::from_u32(lhs.0));
                 let (b, bk) = match imm.data {
