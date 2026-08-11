@@ -138,9 +138,10 @@ fn run() -> i32 {
     // Initialize error reporting
     miette::set_panic_hook();
 
-    // Tool commands: `olang test [path]` and `olang fmt [paths] [--check]`.
-    // The first positional dispatches; a file literally named `test` or
-    // `fmt` is still runnable as `./test` or `test.ol`.
+    // Tool commands: `olang test [path]`, `olang fmt [paths] [--check]`,
+    // and `olang check [paths]`. The first positional dispatches; a file
+    // literally named `test` or `fmt` is still runnable as `./test` or
+    // `test.ol`.
     if let Some(ref file_path) = cli.file {
         match file_path.to_string_lossy().as_ref() {
             "test" => {
@@ -162,6 +163,13 @@ fn run() -> i32 {
                         1
                     }
                 };
+            }
+            "check" => {
+                let mut paths: Vec<PathBuf> = cli.script_args.iter().map(PathBuf::from).collect();
+                if paths.is_empty() {
+                    paths.push(PathBuf::from("."));
+                }
+                return olang::tools::check::run(&paths);
             }
             "fmt" => {
                 let check = cli.script_args.iter().any(|a| a == "--check");

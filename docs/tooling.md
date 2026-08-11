@@ -76,6 +76,39 @@ whose formatting would change its meaning — or that doesn't parse — is
 skipped and reported, never modified. Formatting is idempotent: a formatted
 tree passes `--check`.
 
+## `olang check`
+
+The static side of gradual typing — reports type-annotation violations
+the runtime would provably reject, before the program runs:
+
+```bash
+olang check               # every .ol file under the current directory
+olang check src/ app/     # specific paths or a single file
+```
+
+```text
+  × parameter 'a' of add expects Int, got String
+   ╭─[src/main.ol:2:1]
+ 1 │ fn add(a: Int, b: Int) -> Int = a + b
+ 2 │ let total: Int = add("one", 2)
+   · ▲
+   · ╰── this would fail at runtime
+   ╰────
+```
+
+Its discipline is **no false positives**: a diagnostic appears only when
+the checker can prove the runtime would reject the program — a literal
+argument against an annotated parameter, an annotated binding initialized
+with a known-type value, a declared return contradicted by what the body
+provably produces, a call to a known function with the wrong number of
+arguments. Anything it cannot prove stays silent; unannotated, dynamic
+code is never judged. The messages are the runtime's own, word for word —
+the diagnostic you see is the error you would have hit.
+
+The same checker runs in the language server, so editors surface these
+as error squiggles while you type. Exit is non-zero when a violation or
+parse error is found, so `olang check` slots directly into CI.
+
 ## The examples harness
 
 `examples/run_all.ol` — a test harness written *in olang* — runs every

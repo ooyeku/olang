@@ -44,6 +44,7 @@ olang script.ol            # run a program (args reach os.args())
 olang                      # REPL
 olang test                 # run `test` blocks under the current directory
 olang fmt --check .        # formatter (whitespace hygiene, AST-safe)
+olang check                # static checker: provable annotation violations
 ```
 
 ## What's in the language

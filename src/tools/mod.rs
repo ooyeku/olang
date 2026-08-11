@@ -1,6 +1,8 @@
 //! Developer tooling shipped inside the `olang` binary: the test runner
-//! (`olang test`) and the formatter (`olang fmt`).
+//! (`olang test`), the formatter (`olang fmt`), and the static checker
+//! (`olang check`).
 
+pub mod check; // `olang check` — provable annotation violations, pre-run
 pub mod fmt;
 #[cfg(feature = "native")]
 pub mod lsp; // `olang lsp` — the language server over stdio

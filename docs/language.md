@@ -1431,7 +1431,10 @@ shallowly: `List<Int>` promises "a List" in O(1); element types are the
 static checker's concern. And `Int`/`Float` are strict — an `Int` does
 not satisfy a `Float` annotation, matching struct-field enforcement.
 Generic type parameters are erased at runtime and never checked (their
-trait *bounds* are). Annotations remain the input to static checking:
+trait *bounds* are). Annotations are also the input to static checking:
+[`olang check`](tooling.md#olang-check) — and the language server in your
+editor — reports the violations it can *prove* before the program runs,
+with the runtime's exact error messages and no false positives.
 
 ```olang
 let count: Int = 3

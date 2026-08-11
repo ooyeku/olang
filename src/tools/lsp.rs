@@ -291,7 +291,7 @@ fn diagnostics(text: &str) -> Vec<Diagnostic> {
                 }
                 Ok(report) => {
                     let decls = declarations(text);
-                    report
+                    let mut out: Vec<Diagnostic> = report
                         .unused_variables
                         .iter()
                         .filter_map(|name| {
@@ -308,7 +308,28 @@ fn diagnostics(text: &str) -> Vec<Diagnostic> {
                                 ..Default::default()
                             })
                         })
-                        .collect()
+                        .collect();
+                    // Provable annotation violations: the runtime would
+                    // reject these, so surface them as errors pre-run.
+                    out.extend(
+                        crate::tools::check::check_program(&program)
+                            .into_iter()
+                            .map(|d| {
+                                let line = d.line.saturating_sub(1);
+                                let col = d.column.saturating_sub(1);
+                                Diagnostic {
+                                    range: Range::new(
+                                        Position::new(line, col),
+                                        Position::new(line, col + 1),
+                                    ),
+                                    severity: Some(DiagnosticSeverity::ERROR),
+                                    source: Some("olang".to_string()),
+                                    message: d.message,
+                                    ..Default::default()
+                                }
+                            }),
+                    );
+                    out
                 }
             }
         }
