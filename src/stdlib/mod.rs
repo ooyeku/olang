@@ -24,6 +24,7 @@ pub mod regex_mod;
 pub mod string;
 pub mod testing;
 pub mod time;
+pub mod toml_mod;
 
 pub fn get_stdlib() -> HashMap<String, Value> {
     let mut stdlib = HashMap::new();
@@ -39,6 +40,7 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     #[cfg(feature = "native")]
     stdlib.insert("http".to_string(), http::create_http_module());
     stdlib.insert("json".to_string(), json::create_json_module());
+    stdlib.insert("toml".to_string(), toml_mod::create_toml_module());
     stdlib.insert("math".to_string(), math::create_math_module());
     #[cfg(feature = "native")]
     stdlib.insert("os".to_string(), os::create_os_module());

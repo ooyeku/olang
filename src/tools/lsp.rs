@@ -95,8 +95,8 @@ const GLOBAL_BUILTINS: &[&str] = &[
 ];
 
 const MODULES: &[&str] = &[
-    "str", "col", "math", "json", "csv", "re", "dates", "time", "random", "crypto", "base64", "fs",
-    "os", "http", "db", "testing", "ods", "stats", "plot",
+    "str", "col", "math", "json", "toml", "csv", "re", "dates", "time", "random", "crypto",
+    "base64", "fs", "os", "http", "db", "testing", "ods", "stats", "plot",
 ];
 
 pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {

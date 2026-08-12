@@ -642,6 +642,15 @@ impl BuiltinFunctions {
             );
         }
 
+        // Handle toml functions
+        if let Some(toml_function) = name.strip_prefix("toml.") {
+            return crate::stdlib::toml_mod::call_toml_function(toml_function, arguments).map_err(
+                |e| InterpreterError::RuntimeError {
+                    message: e.to_string(),
+                },
+            );
+        }
+
         // Handle base64 functions
         if let Some(base64_function) = name.strip_prefix("base64.") {
             // Remove "base64." prefix

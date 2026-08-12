@@ -1,7 +1,7 @@
 # The olang Standard Library Reference
 
 Everything the runtime ships: the global builtins (always in scope) and the
-twenty native modules plus two olang-source modules compiled into the
+twenty-one native modules plus two olang-source modules compiled into the
 binary. As in the [language reference](language.md), every `olang` code
 block here is executed by the test suite — the examples cannot drift from
 the implementation. (Blocks marked `no-run` are parse-checked only: they
@@ -22,6 +22,7 @@ Part of [the olang book](README.md) ·
 - [`col` / `colx` — collections](#col--colx--collections)
 - [`math` / `mathx` — mathematics](#math--mathx--mathematics)
 - [`json` — JSON](#json--json)
+- [`toml` — TOML](#toml--toml)
 - [`csv` — CSV](#csv--csv)
 - [`re` — regular expressions](#re--regular-expressions)
 - [`dates` — dates and times](#dates--dates-and-times)
@@ -404,6 +405,26 @@ println(doc.name + " has " + to_string(len(doc.tags)) + " tags")
 println(to_string(map_get(doc, "age")))          // dynamic key access
 let out = unwrap(json.stringify({ ok: true, n: 1 }))
 println(out)
+```
+
+## `toml` — TOML
+
+The config format olang's own `olang.toml` manifests use, with `json`'s
+core surface: `parse`, `stringify`, `validate`. Both modules bridge
+values through the same conversions, so a table parses to the same Map
+shapes JSON objects do — tables become Maps, arrays become Lists,
+datetimes become their string rendering. A TOML document is a table at
+the top level, so `stringify` accepts a Map (or struct-like value) and
+returns `Err` for anything else.
+
+```olang
+let text = "name = \"cfg\"\n[server]\nport = 7317"
+let doc = unwrap(toml.parse(text))
+println(show(map_get(doc, "name")) + " on " + show(map_get(map_get(doc, "server"), "port")))
+
+let out = unwrap(toml.stringify(#{ "retries": 3 }))
+println(str.trim(out))
+println(to_string(toml.validate("not [ valid")))
 ```
 
 ## `csv` — CSV

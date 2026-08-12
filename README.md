@@ -76,7 +76,7 @@ olang check                # static checker: provable annotation violations
 
 ## The standard library
 
-Twenty native modules — `str`, `col`, `math`, `json`, `csv`, `re`,
+Twenty-one native modules — `str`, `col`, `math`, `json`, `toml`, `csv`, `re`,
 `dates`, `time`, `random`, `crypto`, `base64`, `fs`, `os`, `http` (client
 and a keep-alive server), `db` (SQLite), `testing`, `dom` (the browser,
 in the wasm build), and the data stack (`ods`, `stats`, `plot`) — plus

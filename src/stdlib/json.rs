@@ -841,7 +841,7 @@ fn json_deep_clone(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 }
 
 /// Convert serde_json::Value to Olang Value
-fn json_to_olang_value(json_value: serde_json::Value) -> Value {
+pub(crate) fn json_to_olang_value(json_value: serde_json::Value) -> Value {
     match json_value {
         serde_json::Value::Null => Value::Unit,
         serde_json::Value::Bool(b) => Value::Boolean(b),
@@ -873,7 +873,7 @@ fn json_to_olang_value(json_value: serde_json::Value) -> Value {
 }
 
 /// Convert Olang Value to serde_json::Value
-fn olang_value_to_json(value: &Value) -> Result<serde_json::Value, JsonError> {
+pub(crate) fn olang_value_to_json(value: &Value) -> Result<serde_json::Value, JsonError> {
     match value {
         Value::Unit => Ok(serde_json::Value::Null),
         Value::Boolean(b) => Ok(serde_json::Value::Bool(*b)),

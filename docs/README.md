@@ -20,7 +20,7 @@ the implementation.
 | **[A Tour of olang](tour.md)** | The language, taught by building one small program end-to-end — from a list of strings to a parallel statistical report |
 | **[The Language Reference](language.md)** | Every construct, precisely: values and mutability, evaluation order, operators, control flow, pattern matching, functions and closure semantics, types, traits, errors, concurrency, modules, testing |
 | **[Types](types.md)** | Gradual typing end to end: annotations as enforced promises, the three rules, runtime enforcement on every tier, the `olang check` static checker and its element-type analysis, and how to adopt types incrementally |
-| **[The Standard Library](stdlib.md)** | Every global builtin and all twenty-two modules, each with its design rationale and examples |
+| **[The Standard Library](stdlib.md)** | Every global builtin and all twenty-three modules, each with its design rationale and examples |
 | **[The Data Stack](ods.md)** | `ods`, `stats`, and `plot` in depth: why columns beat rows (measured), every Series and Frame verb, a complete inference workflow, charts as SVG text, the stack's performance characteristics, and the design record — how it was built, benchmarked against NumPy/scipy/Polars, and why it evaluates eagerly |
 | **[olang in the Browser](wasm.md)** | The same language end to end: the WebAssembly build, the `dom` module, stateless frontends and event delegation, and a guided reading of a complete olang frontend |
 | **[Packages](packages.md)** | Scaffolding projects and libraries, manifests, dependencies, the lockfile model, versioning, the registry |

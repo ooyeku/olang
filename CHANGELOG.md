@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`toml` module — parse and emit the config format olang itself
+  uses.** `toml.parse(text)` yields the same value shapes JSON objects
+  do (tables → Maps, arrays → Lists, datetimes → strings; both modules
+  bridge through the same serde conversions, so they cannot drift),
+  `toml.stringify(map)` emits pretty TOML (a document is a table, so
+  non-table values are a clean `Err`), and `toml.validate(text)`
+  answers without erroring. The `toml` crate was already in the tree
+  via the package manager — this is surface, not a new dependency. The
+  stdlib is now twenty-one native modules.
+
 - **Scripts are first-class: shebang, stdin, and path helpers.** A
   leading `#!/usr/bin/env olang` line now parses (masked, not
   stripped — every error line number and span still matches the file
