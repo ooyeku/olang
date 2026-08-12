@@ -1524,6 +1524,8 @@ impl BytecodeVm {
                 let mut str_args: Vec<std::sync::Arc<String>> = Vec::new();
                 let mut result_args: Vec<std::sync::Arc<crate::ovm::value::ResultObject>> =
                     Vec::new();
+                let mut list_args: Vec<std::sync::Arc<Vec<crate::ovm::value::OvmValue>>> =
+                    Vec::new();
                 for reg in arg_regs {
                     if let Ok(v) = self.execution_state.register_ref(*reg) {
                         if let crate::ovm::value::ValueData::Struct(obj) = &v.data {
@@ -1534,6 +1536,9 @@ impl BytecodeVm {
                         }
                         if let crate::ovm::value::ValueData::Result(r) = &v.data {
                             result_args.push(r.clone());
+                        }
+                        if let crate::ovm::value::ValueData::List(l) = &v.data {
+                            list_args.push(l.clone());
                         }
                     }
                 }
@@ -1548,6 +1553,7 @@ impl BytecodeVm {
                     &struct_args,
                     &str_args,
                     &result_args,
+                    &list_args,
                 ) {
                     return Ok(result);
                 }

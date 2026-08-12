@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **The JIT builds lists.** List literals (`[a, b]`) and list
+  concatenation (`xs + [v]`) compile to native code in straight-line
+  functions, and list-returning constructors hand ownership back across
+  the entry boundary — previously any list construction or list return
+  refused the JIT outright. Construction is scratch-owned like structs
+  (a deopt can never leak), uniform `Int`/`Float` elements specialize,
+  and everything else — mixed elements, string lists, empty literals,
+  list-building loops — stays on bytecode with identical results. `->
+  List` return annotations discharge statically. Eleven differential
+  tests pin the seam.
+
 ## [0.50.0] - 2026-08-12
 
 ### Added

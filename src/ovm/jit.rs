@@ -78,6 +78,9 @@ pub struct ScratchCtx {
     result_allocs: Vec<Arc<crate::ovm::value::ResultObject>>,
     result_args: Vec<Arc<crate::ovm::value::ResultObject>>,
     retained_result: Option<Arc<crate::ovm::value::ResultObject>>,
+    list_allocs: Vec<Arc<Vec<OvmValue>>>,
+    list_args: Vec<Arc<Vec<OvmValue>>>,
+    retained_list: Option<Arc<Vec<OvmValue>>>,
 }
 
 /// How the VM hands the JIT other functions' bytecode when planning a
@@ -86,9 +89,19 @@ pub type BytecodeLookup<'a> = dyn Fn(FunctionId) -> Option<Arc<CompiledBytecode>
 
 /// One callable's signature in the group-inference snapshot: parameter
 /// kinds, current return mask, element kinds when it returns a tuple,
-/// its shape when it returns a struct, and its full Result kind when it
-/// returns a Result.
-type SigSnapshot = HashMap<usize, (Vec<Kind>, u16, Option<Vec<Kind>>, Option<u32>, Option<Kind>)>;
+/// its shape when it returns a struct, its full Result kind when it
+/// returns a Result, and its list kind when it returns a list.
+type SigSnapshot = HashMap<
+    usize,
+    (
+        Vec<Kind>,
+        u16,
+        Option<Vec<Kind>>,
+        Option<u32>,
+        Option<Kind>,
+        Option<Kind>,
+    ),
+>;
 
 /// A struct shape observed at the entry: the interned shape plus the
 /// field kinds of the argument instance the specialization keys on.
@@ -641,6 +654,96 @@ unsafe extern "C" fn olang_jit_result_retain(ctx: *mut ScratchCtx, ptr: i64) -> 
     }
 }
 
+/// Host helper for MakeList: build a uniform scalar list from raw bits
+/// (kind codes 0 int, 1 float — inference proved uniformity), push the
+/// Arc into the scratch context, hand back a borrowed pointer. Null
+/// return = cap reached, deopt.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx; `elems` points at
+/// a stack buffer of `n` slots.
+unsafe extern "C" fn olang_jit_make_list(
+    ctx: *mut ScratchCtx,
+    elems: *const i64,
+    n: i64,
+    kind: i64,
+) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if ctx.list_allocs.len() >= 1_000_000 {
+            return 0;
+        }
+        let mut values = Vec::with_capacity(n as usize);
+        for i in 0..n as usize {
+            let bits = *elems.add(i);
+            values.push(if kind == 0 {
+                OvmValue::new_integer(bits)
+            } else {
+                OvmValue::new_float(f64::from_bits(bits as u64))
+            });
+        }
+        let list = Arc::new(values);
+        let ptr = Arc::as_ptr(&list) as i64;
+        ctx.list_allocs.push(list);
+        ptr
+    }
+}
+
+/// Host helper for list + list: clone both sides into a fresh
+/// scratch-owned list, exactly the VM's concat. Element kinds were
+/// proven equal by inference, so no per-element guard is needed. Null
+/// return = cap reached, deopt.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx and live pointers.
+unsafe extern "C" fn olang_jit_list_concat(
+    ctx: *mut ScratchCtx,
+    a: *const Vec<OvmValue>,
+    b: *const Vec<OvmValue>,
+) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if ctx.list_allocs.len() >= 1_000_000 {
+            return 0;
+        }
+        let (a, b) = (&*a, &*b);
+        let mut items = Vec::with_capacity(a.len() + b.len());
+        items.extend(a.iter().cloned());
+        items.extend(b.iter().cloned());
+        let list = Arc::new(items);
+        let ptr = Arc::as_ptr(&list) as i64;
+        ctx.list_allocs.push(list);
+        ptr
+    }
+}
+
+/// List twin of olang_jit_retain: resolve a returned borrowed pointer
+/// to an owned Arc at the entry boundary.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_list_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if let Some(last) = ctx.list_allocs.last()
+            && Arc::as_ptr(last) as i64 == ptr
+        {
+            ctx.retained_list = Some(last.clone());
+            return 0;
+        }
+        if let Some(l) = ctx
+            .list_allocs
+            .iter()
+            .chain(ctx.list_args.iter())
+            .find(|l| Arc::as_ptr(l) as i64 == ptr)
+        {
+            ctx.retained_list = Some(l.clone());
+            return 0;
+        }
+        1
+    }
+}
+
 unsafe extern "C" fn olang_jit_field(
     obj: *const crate::ovm::value::StructObject,
     idx: u64,
@@ -708,6 +811,9 @@ impl JitCache {
                 "olang_jit_result_retain",
                 olang_jit_result_retain as *const u8,
             );
+            builder.symbol("olang_jit_make_list", olang_jit_make_list as *const u8);
+            builder.symbol("olang_jit_list_concat", olang_jit_list_concat as *const u8);
+            builder.symbol("olang_jit_list_retain", olang_jit_list_retain as *const u8);
             self.module = Some(JITModule::new(builder));
         }
         self.module.as_mut()
@@ -818,6 +924,7 @@ impl JitCache {
         let mut struct_args: Vec<Arc<crate::ovm::value::StructObject>> = Vec::new();
         let mut str_args: Vec<Arc<String>> = Vec::new();
         let mut result_args: Vec<Arc<crate::ovm::value::ResultObject>> = Vec::new();
+        let mut list_args: Vec<Arc<Vec<OvmValue>>> = Vec::new();
         for arg in args {
             if let ValueData::Struct(obj) = &arg.data {
                 struct_args.push(obj.clone());
@@ -827,6 +934,9 @@ impl JitCache {
             }
             if let ValueData::Result(r) = &arg.data {
                 result_args.push(r.clone());
+            }
+            if let ValueData::List(l) = &arg.data {
+                list_args.push(l.clone());
             }
         }
         self.try_call_raw_with_shapes(
@@ -840,6 +950,7 @@ impl JitCache {
             &struct_args,
             &str_args,
             &result_args,
+            &list_args,
         )
     }
 
@@ -873,6 +984,7 @@ impl JitCache {
             &[],
             &[],
             &[],
+            &[],
         )
     }
 
@@ -889,6 +1001,7 @@ impl JitCache {
         args_for_ctx: &[Arc<crate::ovm::value::StructObject>],
         str_args_for_ctx: &[Arc<String>],
         result_args_for_ctx: &[Arc<crate::ovm::value::ResultObject>],
+        list_args_for_ctx: &[Arc<Vec<OvmValue>>],
     ) -> Option<OvmValue> {
         let idx = func_id.index();
         match self.table.get(idx)? {
@@ -926,6 +1039,9 @@ impl JitCache {
         }
         for r in result_args_for_ctx {
             ctx.result_args.push(r.clone());
+        }
+        for l in list_args_for_ctx {
+            ctx.list_args.push(l.clone());
         }
         let status = unsafe {
             (jitted.entry)(
@@ -967,6 +1083,12 @@ impl JitCache {
                 data: ValueData::Result(arc),
             });
         }
+        if let Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) = jitted.ret_kind {
+            let arc = ctx.retained_list.take()?;
+            return Some(OvmValue {
+                data: ValueData::List(arc),
+            });
+        }
         let out = out[0];
         Some(match jitted.ret_kind {
             Kind::Int => OvmValue::new_integer(out),
@@ -974,7 +1096,7 @@ impl JitCache {
             Kind::Float => OvmValue::new_float(f64::from_bits(out as u64)),
             Kind::Struct(_) | Kind::Str | Kind::Result(..) => unreachable!("handled above"),
             Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) => {
-                unreachable!("list returns are refused by inference")
+                unreachable!("handled above")
             }
         })
     }
@@ -1024,6 +1146,7 @@ impl JitCache {
                         p.ret_tuple.clone(),
                         p.ret_struct,
                         p.ret_result,
+                        p.ret_list,
                     ),
                 );
             }
@@ -1044,6 +1167,12 @@ impl JitCache {
                             },
                             match j.ret_kind {
                                 k @ Kind::Result(..) => Some(k),
+                                _ => None,
+                            },
+                            match j.ret_kind {
+                                k @ (Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_)) => {
+                                    Some(k)
+                                }
                                 _ => None,
                             },
                         ),
@@ -1132,10 +1261,12 @@ impl JitCache {
                             (None, Kind::Result(okp, errp)) => {
                                 result_return_discharged(check, okp, errp)
                             }
+                            (None, Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_)) => {
+                                check.accepts("List")
+                            }
                             (None, Kind::Struct(sid)) => group_shapes
                                 .get(&sid)
                                 .is_some_and(|s| check.accepts(&s.shape.type_name)),
-                            (None, _) => false,
                         };
                         if !ok {
                             if jit_debug() {
@@ -1299,6 +1430,35 @@ impl JitCache {
                 .declare_function("olang_jit_result_retain", Linkage::Import, &sig)
                 .ok()?
         };
+        let make_list_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..4 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_make_list", Linkage::Import, &sig)
+                .ok()?
+        };
+        let list_concat_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..3 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_list_concat", Linkage::Import, &sig)
+                .ok()?
+        };
+        let list_retain_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_list_retain", Linkage::Import, &sig)
+                .ok()?
+        };
         let mut clif_ids = Vec::with_capacity(plans.len());
         for (plan, inf) in plans.iter().zip(&inferences) {
             let mut sig = module.make_signature();
@@ -1371,6 +1531,8 @@ impl JitCache {
                         result_test: result_test_helper,
                         result_extract: result_extract_helper,
                         make_result: make_result_helper,
+                        make_list: make_list_helper,
+                        list_concat: list_concat_helper,
                     },
                 )
                 .is_none()
@@ -1445,7 +1607,15 @@ impl JitCache {
                         .store(MemFlagsData::trusted(), *v, out_ptr, (slot_i * 8) as i32);
                 }
                 let status = results[n_vals];
-                if matches!(inf.ret_kind, Kind::Struct(_) | Kind::Str | Kind::Result(..)) {
+                if matches!(
+                    inf.ret_kind,
+                    Kind::Struct(_)
+                        | Kind::Str
+                        | Kind::Result(..)
+                        | Kind::ListInt
+                        | Kind::ListFloat
+                        | Kind::ListStruct(_)
+                ) {
                     // Ownership boundary: resolve the pointer to an owned
                     // Arc in ctx.retained; unknown pointers deopt.
                     let ok_block = builder.create_block();
@@ -1458,6 +1628,7 @@ impl JitCache {
                     let which = match inf.ret_kind {
                         Kind::Str => str_retain_helper,
                         Kind::Result(..) => result_retain_helper,
+                        Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) => list_retain_helper,
                         _ => retain_helper,
                     };
                     let retain_ref = module.declare_func_in_func(which, builder.func);
@@ -1580,6 +1751,9 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         }
         // Same allocation discipline as MakeStruct.
         Instruction::MakeResult { .. } => !has_backward_jump(bytecode),
+        Instruction::MakeList { elements, .. } => {
+            elements.len() <= 64 && !has_backward_jump(bytecode)
+        }
         Instruction::BinImm { imm, .. } => {
             matches!(imm.data, ValueData::Integer(_) | ValueData::Float(_))
         }
@@ -1742,6 +1916,8 @@ struct PlanFn {
     /// Set when Return hands back a Result register — the join of every
     /// return site's kind, so `Ok(n)` and `Err(msg)` paths merge.
     ret_result: Option<Kind>,
+    /// Set when Return hands back a list register (the element kind).
+    ret_list: Option<Kind>,
     ret_mask: u16,
     eq_pairs: Vec<(u32, u32)>,
     return_regs: Vec<u32>,
@@ -1781,6 +1957,7 @@ impl PlanFn {
             made_shapes: HashMap::new(),
             ret_struct: None,
             ret_result: None,
+            ret_list: None,
             ret_mask: 0,
             eq_pairs: Vec::new(),
             return_regs: Vec::new(),
@@ -1905,6 +2082,37 @@ impl PlanFn {
                         // Operand kinds not yet resolved (e.g. a call dst
                         // mid-fixpoint): defer — narrowing now on a guess
                         // would be irreversible.
+                        continue;
+                    }
+                    if matches!(inst, Instruction::Add { .. })
+                        && self.writes[lhs.0 as usize] == K_LIST
+                        && self.writes[rhs.0 as usize] == K_LIST
+                    {
+                        // List + list is concat: an allocation, under the
+                        // same straight-line rule as MakeStruct. Element
+                        // kinds must already agree exactly.
+                        if has_backward_jump(&self.bytecode) {
+                            return None;
+                        }
+                        // Element kinds may lag the fixpoint (a callee's
+                        // list return resolves late): defer, don't refuse.
+                        let (Some(lk), Some(rk)) =
+                            (self.exotic[lhs.0 as usize], self.exotic[rhs.0 as usize])
+                        else {
+                            continue;
+                        };
+                        if lk != rk {
+                            return None;
+                        }
+                        narrow!(lhs.0, K_LIST);
+                        narrow!(rhs.0, K_LIST);
+                        grow!(self.writes[dst.0 as usize], K_LIST);
+                        if self.exotic[dst.0 as usize].is_none() {
+                            self.exotic[dst.0 as usize] = Some(lk);
+                            changed = true;
+                        } else if self.exotic[dst.0 as usize] != Some(lk) {
+                            return None;
+                        }
                         continue;
                     }
                     if matches!(inst, Instruction::Add { .. })
@@ -2137,6 +2345,44 @@ impl PlanFn {
                     narrow!(value.0, K_RESULT);
                     grow!(self.writes[dst.0 as usize], K_BOOL);
                 }
+                Instruction::MakeList { dst, elements } => {
+                    // Uniform scalar lists only (the kinds classify_list
+                    // recognizes); empty literals have no element kind.
+                    if elements.is_empty() {
+                        return None;
+                    }
+                    let mut elem: Option<Kind> = None;
+                    let mut resolved = true;
+                    for e in elements {
+                        narrow!(e.0, K_NUM);
+                        match mask_singleton(self.writes[e.0 as usize]) {
+                            Some(k @ (Kind::Int | Kind::Float)) => match elem {
+                                None => elem = Some(k),
+                                Some(prev) if prev != k => return None,
+                                _ => {}
+                            },
+                            Some(_) => return None,
+                            None => {
+                                resolved = false;
+                                break;
+                            }
+                        }
+                    }
+                    grow!(self.writes[dst.0 as usize], K_LIST);
+                    if resolved {
+                        let lk = match elem {
+                            Some(Kind::Int) => Kind::ListInt,
+                            Some(Kind::Float) => Kind::ListFloat,
+                            _ => return None,
+                        };
+                        if self.exotic[dst.0 as usize].is_none() {
+                            self.exotic[dst.0 as usize] = Some(lk);
+                            changed = true;
+                        } else if self.exotic[dst.0 as usize] != Some(lk) {
+                            return None;
+                        }
+                    }
+                }
                 Instruction::ExtractResult {
                     dst,
                     value,
@@ -2257,8 +2503,14 @@ impl PlanFn {
                     narrow!(condition.0, K_BOOL);
                 }
                 Instruction::CallFn { dst, func_id, args } => {
-                    if let Some((param_kinds, ret_mask, ret_tuple, ret_struct, ret_result)) =
-                        sigs.get(&func_id.index())
+                    if let Some((
+                        param_kinds,
+                        ret_mask,
+                        ret_tuple,
+                        ret_struct,
+                        ret_result,
+                        ret_list,
+                    )) = sigs.get(&func_id.index())
                     {
                         if args.len() != param_kinds.len() {
                             return None;
@@ -2302,6 +2554,20 @@ impl PlanFn {
                                 self.exotic[dst.0 as usize] = Some(k);
                                 changed = true;
                             } else if self.exotic[dst.0 as usize] != Some(k) {
+                                return None;
+                            }
+                        }
+                        if let Some(lk) = ret_list {
+                            // List-returning callees allocate into the entry
+                            // call's scratch context — same loop discipline
+                            // as struct returns.
+                            if has_backward_jump(&self.bytecode) {
+                                return None;
+                            }
+                            if self.exotic[dst.0 as usize].is_none() {
+                                self.exotic[dst.0 as usize] = Some(*lk);
+                                changed = true;
+                            } else if self.exotic[dst.0 as usize] != Some(*lk) {
                                 return None;
                             }
                         }
@@ -2387,6 +2653,21 @@ impl PlanFn {
                         }
                         self.return_regs.push(reg.0);
                         grow!(self.ret_mask, K_RESULT);
+                    } else if let Some(
+                        lk @ (Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_)),
+                    ) = self.exotic[reg.0 as usize]
+                    {
+                        narrow!(reg.0, K_LIST);
+                        match self.ret_list {
+                            None => {
+                                self.ret_list = Some(lk);
+                                changed = true;
+                            }
+                            Some(prev) if prev != lk => return None,
+                            _ => {}
+                        }
+                        self.return_regs.push(reg.0);
+                        grow!(self.ret_mask, K_LIST);
                     } else if let Some(tk) = self.tuples.get(&reg.0).cloned() {
                         narrow!(reg.0, K_TUPLE);
                         match &self.ret_tuple {
@@ -2496,6 +2777,14 @@ impl PlanFn {
             // The scalar slot is unused for tuple returns; Int is a
             // placeholder for signatures that never carry it.
             (Kind::Int, Some(tk))
+        } else if self.ret_mask == K_LIST {
+            let lk = self.ret_list?;
+            for r in &self.return_regs {
+                if self.exotic[*r as usize] != Some(lk) {
+                    return None;
+                }
+            }
+            (lk, None)
         } else if self.ret_mask == K_RESULT {
             let rk = self.ret_result?;
             for r in &self.return_regs {
@@ -2569,6 +2858,7 @@ fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::MakeResult { .. } => "MakeResult",
         Instruction::PatternTestResult { .. } => "PatternTestResult",
         Instruction::ExtractResult { .. } => "ExtractResult",
+        Instruction::MakeList { .. } => "MakeList",
         _ => "other",
     }
 }
@@ -2588,6 +2878,8 @@ struct Helpers {
     result_test: cranelift_module::FuncId,
     result_extract: cranelift_module::FuncId,
     make_result: cranelift_module::FuncId,
+    make_list: cranelift_module::FuncId,
+    list_concat: cranelift_module::FuncId,
 }
 
 struct Gen<'a> {
@@ -2644,6 +2936,8 @@ fn translate_body(
         result_test: result_test_helper,
         result_extract: result_extract_helper,
         make_result: make_result_helper,
+        make_list: make_list_helper,
+        list_concat: list_concat_helper,
     } = helpers;
     let n = bytecode.instructions.len();
     let param_count = inference.param_kinds.len();
@@ -2826,6 +3120,23 @@ fn translate_body(
             | Instruction::Mod { dst, lhs, rhs } => {
                 let lk = r#gen.kind(lhs.0)?;
                 let rk = r#gen.kind(rhs.0)?;
+                if matches!(lk, Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_)) {
+                    if !matches!(inst, Instruction::Add { .. }) || rk != lk {
+                        return None;
+                    }
+                    let a = builder.use_var(Variable::from_u32(lhs.0));
+                    let b = builder.use_var(Variable::from_u32(rhs.0));
+                    let ctx = builder.use_var(ctx_var);
+                    let helper_ref = module.declare_func_in_func(list_concat_helper, builder.func);
+                    let call = builder.ins().call(helper_ref, &[ctx, a, b]);
+                    let ptr = builder.inst_results(call)[0];
+                    let null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
+                    let ok_block = builder.create_block();
+                    builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
+                    builder.switch_to_block(ok_block);
+                    r#gen.write(builder, dst.0, ptr);
+                    continue;
+                }
                 if lk == Kind::Str && rk == Kind::Str {
                     if !matches!(inst, Instruction::Add { .. }) {
                         return None;
@@ -3072,6 +3383,43 @@ fn translate_body(
                 let call = builder
                     .ins()
                     .call(helper_ref, &[ctx, shape_ptr, fields_ptr, n_v, kinds_v]);
+                let ptr = builder.inst_results(call)[0];
+                let null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
+                let ok_block = builder.create_block();
+                builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
+                builder.switch_to_block(ok_block);
+                r#gen.write(builder, dst.0, ptr);
+            }
+            Instruction::MakeList { dst, elements } => {
+                let elem = match r#gen.kind(dst.0) {
+                    Some(Kind::ListInt) => Kind::Int,
+                    Some(Kind::ListFloat) => Kind::Float,
+                    _ => return None,
+                };
+                let n = elements.len();
+                let slot =
+                    builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                        cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                        (n.max(1) * 8) as u32,
+                        3,
+                    ));
+                for (i, e) in elements.iter().enumerate() {
+                    if r#gen.kind(e.0)? != elem {
+                        return None;
+                    }
+                    let v = builder.use_var(Variable::from_u32(e.0));
+                    builder.ins().stack_store(ptr_ty, v, slot, (i * 8) as i32);
+                }
+                let ctx = builder.use_var(ctx_var);
+                let elems_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                let n_v = builder.ins().iconst(types::I64, n as i64);
+                let kind_v = builder
+                    .ins()
+                    .iconst(types::I64, if elem == Kind::Int { 0 } else { 1 });
+                let helper_ref = module.declare_func_in_func(make_list_helper, builder.func);
+                let call = builder
+                    .ins()
+                    .call(helper_ref, &[ctx, elems_ptr, n_v, kind_v]);
                 let ptr = builder.inst_results(call)[0];
                 let null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
                 let ok_block = builder.create_block();
@@ -3364,6 +3712,19 @@ fn translate_body(
                 if matches!(r#gen.kind(reg.0), Some(Kind::Result(..)))
                     && matches!(inference.ret_kind, Kind::Result(..))
                 {
+                    let ptr = builder.use_var(Variable::from_u32(reg.0));
+                    let ok = builder.ins().iconst(types::I64, STATUS_OK);
+                    builder.ins().return_(&[ptr, ok]);
+                    terminated = true;
+                    continue;
+                }
+                if matches!(
+                    r#gen.kind(reg.0),
+                    Some(Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_))
+                ) && matches!(
+                    inference.ret_kind,
+                    Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_)
+                ) {
                     let ptr = builder.use_var(Variable::from_u32(reg.0));
                     let ok = builder.ins().iconst(types::I64, STATUS_OK);
                     builder.ins().return_(&[ptr, ok]);

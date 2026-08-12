@@ -987,3 +987,144 @@ read(quarter(8)) + read(quarter(6)) + read(quarter(5))
 "#,
     );
 }
+
+// ── Lists: construction, concat, returns ───────────────────────────────
+//
+// MakeList and list + list compile in straight-line code (scratch-owned,
+// same allocation discipline as structs); list-returning constructors
+// compile and hand ownership back through the retain boundary. Loops
+// that build lists stay on bytecode and drive native constructors.
+
+#[test]
+fn list_literals_construct_and_index_natively() {
+    assert_jit_transparent(
+        r#"
+fn pair(a, b) = [a, b]
+fn first_of(a, b) = pair(a, b)[0]
+first_of(3, 4) + first_of(10, 20)
+"#,
+    );
+}
+
+#[test]
+fn list_returns_cross_the_entry_boundary() {
+    assert_jit_transparent(
+        r#"
+fn triple(n) = [n, n * 2, n * 3]
+let xs = triple(5)
+xs[0] + xs[1] + xs[2]
+"#,
+    );
+}
+
+#[test]
+fn float_list_construction_agrees() {
+    assert_jit_transparent(
+        r#"
+fn origin() = [0.0, 0.0]
+fn scaled(x) = [x * 2.0, x * 4.0]
+let a = origin()
+let b = scaled(1.5)
+a[0] + b[0] + b[1]
+"#,
+    );
+}
+
+#[test]
+fn list_concat_agrees_in_straight_line_code() {
+    assert_jit_transparent(
+        r#"
+fn glue(a, b, c) = [a, b] + [c]
+let xs = glue(1, 2, 3)
+xs[0] + xs[1] + xs[2]
+"#,
+    );
+}
+
+#[test]
+fn list_param_concat_agrees() {
+    assert_jit_transparent(
+        r#"
+fn extend(xs, v) = xs + [v]
+let ys = extend([1, 2], 3)
+ys[0] + ys[1] + ys[2]
+"#,
+    );
+}
+
+#[test]
+fn returning_a_list_parameter_agrees() {
+    assert_jit_transparent(
+        r#"
+fn choose(xs, ys, flag) = if flag => xs else => ys
+let picked = choose([1, 2], [3, 4], false)
+picked[0] + picked[1]
+"#,
+    );
+}
+
+#[test]
+fn mixed_element_lists_stay_on_bytecode_and_agree() {
+    assert_jit_transparent(
+        r#"
+fn mixed(n) = [n, 1.5]
+fn tagged(s) = [s, s]
+let a = mixed(2)
+let b = tagged("x")
+show(a[1]) + b[0]
+"#,
+    );
+}
+
+#[test]
+fn list_building_loops_stay_on_bytecode_and_agree() {
+    assert_jit_transparent(
+        r#"
+fn upto(n) = {
+    let mut acc = [0]
+    let mut i = 1
+    while i < n { acc = acc + [i]; i = i + 1 }
+    acc
+}
+let xs = upto(10)
+xs[3] + xs[9]
+"#,
+    );
+}
+
+#[test]
+fn empty_list_literals_stay_on_bytecode_and_agree() {
+    assert_jit_transparent(
+        r#"
+fn base() = []
+fn grown(v) = base() + [v]
+grown(7)[0]
+"#,
+    );
+}
+
+#[test]
+fn annotated_list_returns_discharge_statically() {
+    assert_jit_transparent(
+        r#"
+fn doubles(n) -> List = [n * 2, n * 4]
+let xs = doubles(3)
+xs[0] + xs[1]
+"#,
+    );
+}
+
+#[test]
+fn constructed_lists_iterate_in_loops_via_deopt() {
+    assert_jit_transparent(
+        r#"
+fn nums() = [2, 4, 6]
+fn total() = {
+    let mut acc = 0
+    for x in nums() { acc = acc + x }
+    acc
+}
+total()
+"#,
+    );
+}
