@@ -545,6 +545,14 @@ fn hover(text: &str, pos: Position) -> Option<lsp_types::Hover> {
     let (name, detail, _span) = declarations(text)
         .into_iter()
         .find(|(n, _, _)| *n == word)?;
+    // Upgrade the declaration text with the checker's type knowledge —
+    // annotated signatures rendered in full, unannotated lets with their
+    // inferred types when the checker knows one.
+    let detail = OlangParser::new()
+        .parse(text)
+        .ok()
+        .and_then(|program| crate::tools::check::hover_types(&program).remove(&name))
+        .unwrap_or(detail);
     Some(lsp_types::Hover {
         contents: lsp_types::HoverContents::Scalar(lsp_types::MarkedString::LanguageString(
             lsp_types::LanguageString {

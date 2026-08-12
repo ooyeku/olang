@@ -482,6 +482,50 @@ pub fn check_program(program: &Program) -> Vec<CheckDiagnostic> {
     checker.out
 }
 
+/// Top-level binding types as display text, for editor hover: function
+/// signatures (annotations as written, Unknown parameters left bare) and
+/// let bindings (the annotation, or the checker's inferred type when it
+/// knows one). Names map to complete hover lines.
+pub fn hover_types(program: &Program) -> HashMap<String, String> {
+    let mut checker = Checker::default();
+    checker.collect(program);
+    checker.scopes.push(HashMap::new());
+    for stmt in &program.statements {
+        checker.check_statement(stmt, (0, 0));
+    }
+    let mut out = HashMap::new();
+    for (name, sig) in &checker.sigs {
+        let params = sig
+            .param_names
+            .iter()
+            .zip(&sig.params)
+            .map(|(n, t)| match t {
+                SType::Unknown => n.clone(),
+                t => format!("{}: {}", n, t.display()),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let ret = match &sig.ret {
+            SType::Unknown => String::new(),
+            t => format!(" -> {}", t.display()),
+        };
+        out.insert(name.clone(), format!("fn {}({}){}", name, params, ret));
+    }
+    if let Some(root) = checker.scopes.first() {
+        for (name, ty) in root {
+            if out.contains_key(name) {
+                continue;
+            }
+            let line = match ty {
+                SType::Unknown => format!("let {}", name),
+                t => format!("let {}: {}", name, t.display()),
+            };
+            out.insert(name.clone(), line);
+        }
+    }
+    out
+}
+
 #[derive(Default)]
 struct Checker {
     sigs: HashMap<String, FnSig>,
@@ -1390,6 +1434,23 @@ mod tests {
         assert!(d[0].message.contains("expects Int, got String"));
         // Disagreeing branches stay unknown.
         assert!(check("fn f(x: Int) = x\nlet v = if true => \"a\" else => 1\nf(v)\n").is_empty());
+    }
+
+    // ── 0.50 arc: hover types ──────────────────────────────────────────
+
+    #[test]
+    fn hover_types_render_signatures_and_inferred_lets() {
+        let program = Parser::new()
+            .parse(
+                "fn dist(a: Float, b: Float) -> Float = a + b\nfn dyn_fn(x) = x\nlet total = 1 + 2\nlet xs: List<Int> = [1]\nlet mystery = dyn_fn(1)\n",
+            )
+            .expect("parses");
+        let h = hover_types(&program);
+        assert_eq!(h["dist"], "fn dist(a: Float, b: Float) -> Float");
+        assert_eq!(h["dyn_fn"], "fn dyn_fn(x)");
+        assert_eq!(h["total"], "let total: Int");
+        assert_eq!(h["xs"], "let xs: List<Int>");
+        assert_eq!(h["mystery"], "let mystery");
     }
 
     // ── 0.50 arc: Promise at non-async sites ───────────────────────────

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Editor hover shows types.** The language server's hover now
+  carries the static checker's knowledge: annotated function
+  signatures render in full (`fn dist(a: Float, b: Float) -> Float`),
+  and unannotated `let` bindings show their inferred type when the
+  checker can prove one (`let total: Int` for `let total = 1 + 2`).
+  Unknown stays honest — a binding the checker can't type hovers as
+  plain `let mystery`. Also recorded: the JIT note from 0.49's Result
+  entry is now precise — Result values have no JIT representation at
+  all, so `-> Result<...>` annotations cost nothing on the native
+  tier that Result-returning code didn't already forgo; a future
+  Result kind in the JIT would need its own discharge rule.
+
 - **`Promise` annotations check at non-async sites, and the checker
   follows `await`.** A parameter or binding declared `Promise<Int>`
   now rejects a non-promise value at the boundary on every tier

@@ -19,7 +19,7 @@ Part of [the olang book](README.md) ·
 |---|---|
 | Diagnostics as you type | the real parser (with its line/column info), the semantic analyzer, and the [`olang check`](tooling.md#olang-check) static checker — provable type-annotation violations appear as errors, down to element types (`[1, "a"]` against `List<Int>` flags element 1); warnings sit on the exact declaration span |
 | Completions | keywords, the global builtins, the stdlib modules, and `fn`/`type`/`let` names from the open file |
-| Hover | the declaration's rendered signature (`fn dist(a, b)`, `type Body`, `let total`) |
+| Hover | the declaration with the checker's type knowledge: annotated signatures in full (`fn dist(a: Float, b: Float) -> Float`), and unannotated `let`s with their inferred types when the checker knows one (`let total: Int`) |
 | Go to definition | jumps to the name's declaration span in the file |
 | Formatting | the `olang fmt` engine — AST-verified, whitespace-only |
 
