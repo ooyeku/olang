@@ -364,7 +364,7 @@ cargo build -p olang-playground --target wasm32-unknown-unknown --release
 cp target/wasm32-unknown-unknown/release/olang_playground.wasm examples/app/static/
 
 cd examples/app
-olang main.ol            # http://127.0.0.1:7000
+olang main.ol            # http://127.0.0.1:7317
 ```
 
 (The target arrives via `rustup target add wasm32-unknown-unknown` if

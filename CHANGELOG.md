@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The tracker example no longer defaults to a port macOS owns.**
+  `examples/app` listened on 7000 by default — a port macOS AirPlay
+  Receiver (Control Center) binds on every modern Mac and answers
+  with `403 Forbidden`, so a browser hitting the app when it wasn't
+  running got AirPlay's baffling "access denied" instead of
+  connection-refused. The default is now 7317 (docs updated;
+  an explicit port argument still works as before). Also fixed in
+  passing: the boot-time wasm-artifact check used `fs.read_file` on a
+  binary file, which fails on non-UTF-8 bytes and warned "missing"
+  even when the artifact was present — it now uses `fs.exists`.
+
 ### Added
 
 - **Editor hover shows types.** The language server's hover now

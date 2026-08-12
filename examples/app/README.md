@@ -6,7 +6,7 @@ the same port.
 
 ```bash
 cd examples/app
-olang main.ol                 # http://127.0.0.1:7000, tracker.db
+olang main.ol                 # http://127.0.0.1:7317, tracker.db
 olang main.ol 8080 my.db      # pick a port and database
 TRACKER_TOKEN=s3cret olang main.ol   # writes now need Authorization: Bearer s3cret
 ```

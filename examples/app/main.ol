@@ -1,6 +1,6 @@
 // tracker — a full web app served entirely by olang.
 //
-//   olang main.ol [port] [db_path]     (defaults: 7000, tracker.db)
+//   olang main.ol [port] [db_path]     (defaults: 7317, tracker.db)
 //
 // The backend is a persistent SQLite issue store (schema-migrated,
 // transactional, audit-logged) behind a JSON API with validation,
@@ -33,7 +33,12 @@ use lib.store {
 use lib.validate { validate_issue, validate_comment, validate_id }
 
 let args = unwrap(os.args())
-let port = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 7000
+// Default 7317, not 7000: macOS AirPlay Receiver (Control Center) listens
+// on ports 5000 and 7000 on every modern Mac and answers with 403
+// Forbidden — a browser hitting an olang app that isn't running (or that
+// lost the port) gets AirPlay's 403 instead of connection-refused, which
+// reads as a mysterious "access denied".
+let port = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 7317
 let db_path = if len(args) > 2 => args[2] else => "tracker.db"
 
 let conn = open_store(db_path)
@@ -46,9 +51,10 @@ let olang_html = unwrap(fs.read_file("static/index.html"))
 let olang_shim = unwrap(fs.read_file("static/olang-dom.js"))
 let app_ol = unwrap(fs.read_file("static/app.ol"))
 
-// The wasm artifact is gitignored; fail loudly at boot when missing.
-let wasm_check = fs.read_file("static/olang_playground.wasm")
-if is_err(wasm_check) => {
+// The wasm artifact is gitignored; warn loudly at boot when missing.
+// (fs.exists, not read_file: the artifact is binary, and reading it as
+// a string fails on non-UTF-8 bytes even when the file is fine.)
+if !unwrap_or(fs.exists("static/olang_playground.wasm"), false) => {
     println("WARNING: static/olang_playground.wasm is missing — the frontend cannot boot.")
     println("Build and copy it:")
     println("  cargo build -p olang-playground --target wasm32-unknown-unknown --release")
