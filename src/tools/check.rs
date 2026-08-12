@@ -174,6 +174,10 @@ enum SType {
     /// `Promise<T, E>`. Base-checked like a named type at rest; `await`
     /// unwraps `T`.
     Promise(Box<SType>, Box<SType>),
+    /// A literal type: satisfied only by exactly that value. The checker
+    /// proves violations when the expression is itself a scalar literal
+    /// (or a binding annotated with a different literal).
+    Lit(crate::ast::LitCheck),
     /// `A | B`. Only constructed when the runtime enforces the union too
     /// (every branch checkable), so verdict parity holds; otherwise the
     /// annotation reduces to Unknown, silent like the runtime.
@@ -234,6 +238,14 @@ impl SType {
                         .unwrap_or(SType::Unknown),
                 ),
             ),
+            TypeAnnotation::Literal { value } => match value.as_ref() {
+                crate::ast::Value::Integer(i) => SType::Lit(crate::ast::LitCheck::Int(*i)),
+                crate::ast::Value::String(st) => {
+                    SType::Lit(crate::ast::LitCheck::Str(st.as_ref().clone()))
+                }
+                crate::ast::Value::Boolean(b) => SType::Lit(crate::ast::LitCheck::Bool(*b)),
+                _ => SType::Unknown,
+            },
             TypeAnnotation::Union { types } => {
                 // Mirror the runtime: a union with an unenforceable branch
                 // is entirely unchecked there, so it must be silent here.
@@ -329,6 +341,9 @@ impl SType {
             SType::Result(_, _) => Some("Result"),
             SType::Function { .. } => Some("Function"),
             SType::Promise(_, _) => Some("Promise"),
+            SType::Lit(crate::ast::LitCheck::Int(_)) => Some("Int"),
+            SType::Lit(crate::ast::LitCheck::Str(_)) => Some("String"),
+            SType::Lit(crate::ast::LitCheck::Bool(_)) => Some("Bool"),
             // A union has no single base; violation() handles it directly.
             SType::Union(_) => None,
             SType::Named(n) => Some(n),
@@ -362,6 +377,7 @@ impl SType {
                 "Promise".to_string()
             }
             SType::Promise(v, e) => format!("Promise<{}, {}>", v.display(), e.display()),
+            SType::Lit(lit) => lit.display(),
             SType::Union(bs) => bs
                 .iter()
                 .map(|b| b.display())
@@ -418,6 +434,22 @@ fn violation(expected: &SType, actual: &SType) -> Option<(String, String, bool)>
             }
         }
         return Some((expected.display(), actual.display(), all_runtime));
+    }
+    // Literal expectations: provable only against a known literal value
+    // (equal → satisfied, different → runtime-rejected) or a different
+    // base. A plain same-base value stays silent — its value is unknown.
+    if let SType::Lit(exp_lit) = expected {
+        return match actual {
+            SType::Lit(act_lit) => {
+                (exp_lit != act_lit).then(|| (exp_lit.display(), act_lit.display(), true))
+            }
+            other => match other.base_name() {
+                Some(name) if name != expected.base_name().unwrap_or("") => {
+                    Some((exp_lit.display(), name.to_string(), true))
+                }
+                _ => None,
+            },
+        };
     }
     let be = expected.base_name()?;
     let ba = actual.base_name()?;
@@ -974,7 +1006,12 @@ impl Checker {
                 }
             }
             _ => {
-                let actual = self.infer(expr);
+                let actual = match expr {
+                    Expr::Integer(i) => SType::Lit(crate::ast::LitCheck::Int(*i)),
+                    Expr::String(st) => SType::Lit(crate::ast::LitCheck::Str(st.as_ref().clone())),
+                    Expr::Boolean(b) => SType::Lit(crate::ast::LitCheck::Bool(*b)),
+                    other => self.infer(other),
+                };
                 if let Some((exp, act, runtime)) = violation(expected, &actual) {
                     self.diag(
                         span,
@@ -1529,6 +1566,42 @@ mod tests {
         );
     }
 
+    // ── 0.50 arc: literal types ────────────────────────────────────────
+
+    #[test]
+    fn literal_unions_are_lightweight_enums() {
+        let src = "fn set(s: \"open\" | \"done\") = s\n";
+        assert!(check(&format!("{}set(\"open\")\nset(\"done\")\n", src)).is_empty());
+        let d = check(&format!("{}set(\"nope\")\n", src));
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].message,
+            "parameter 's' of set expects \"open\" | \"done\", got \"nope\""
+        );
+        assert!(d[0].runtime);
+        // A non-literal same-base value stays silent — not provable.
+        assert!(check(&format!("{}fn dyn_s(x) = x\nset(dyn_s(1))\n", src)).is_empty());
+        // A different base is provable even without a known value.
+        let d = check(&format!("{}set(42)\n", src));
+        assert_eq!(d.len(), 1);
+    }
+
+    #[test]
+    fn scalar_literal_annotations_check_by_value() {
+        assert!(check("let five: 5 = 5\n").is_empty());
+        let d = check("let five: 5 = 6\n");
+        assert_eq!(d.len(), 1);
+        assert!(d[0].message.contains("expects 5, got 6"));
+        let d = check("let flag: true = false\n");
+        assert_eq!(d.len(), 1);
+        assert!(d[0].message.contains("expects true, got false"));
+        // Literal-annotated bindings carry their literal type onward.
+        let d = check(
+            "fn set(s: \"open\" | \"done\") = s\nlet st: \"open\" = \"open\"\nset(st)\nlet bad: \"x\" = \"x\"\nset(bad)\n",
+        );
+        assert_eq!(d.len(), 1, "st satisfies, bad provably violates: {:?}", d);
+    }
+
     // ── 0.50 arc: hover types ──────────────────────────────────────────
 
     #[test]
@@ -1641,8 +1714,8 @@ mod tests {
         let d = check(&format!("{}f(true)\n", src));
         assert_eq!(d.len(), 1);
         assert_eq!(
-            d[0].message,
-            "parameter 'x' of f expects Int | String, got Bool"
+            d[0].message, "parameter 'x' of f expects Int | String, got true",
+            "scalar actuals name their value, matching the runtime"
         );
         assert!(d[0].runtime, "every branch fails at base level");
     }

@@ -3072,3 +3072,13 @@ fn function_annotation_enforcement_is_tier_transparent() {
     // Promise annotations base-check at non-async sites.
     assert_tier_transparent("fn f(p: Promise<Int>) = p\nf(42)");
 }
+
+#[test]
+fn literal_type_enforcement_is_tier_transparent() {
+    // 0.50: literal annotations compare by value on every tier.
+    assert_tier_transparent("fn set(s: \"open\" | \"done\") = s\nset(\"open\") + set(\"done\")");
+    assert_tier_transparent("fn set(s: \"open\" | \"done\") = s\nset(\"nope\")");
+    assert_tier_transparent("fn pick(n: 1 | 2 | 3) -> Int = n\nto_string(pick(2))");
+    assert_tier_transparent("fn pick(n: 1 | 2 | 3) = n\npick(9)");
+    assert_tier_transparent("fn strict(b: true) = b\nstrict(false)");
+}

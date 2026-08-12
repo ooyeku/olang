@@ -789,6 +789,34 @@ impl TypeAnnotation {
     }
 }
 
+/// A literal annotation's value, small enough to compare by ==.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum LitCheck {
+    Int(i64),
+    Str(String),
+    Bool(bool),
+}
+
+impl LitCheck {
+    /// The literal as it appears in source: `"open"`, `5`, `true`.
+    pub fn display(&self) -> String {
+        match self {
+            LitCheck::Int(i) => i.to_string(),
+            LitCheck::Str(s) => format!("\"{}\"", s),
+            LitCheck::Bool(b) => b.to_string(),
+        }
+    }
+}
+
+/// A scalar value viewed for literal-type comparison — the third leg of
+/// the value view alongside the type name and the Result payload.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScalarView<'a> {
+    Int(i64),
+    Str(&'a str),
+    Bool(bool),
+}
+
 /// A struct field's declared type reduced to the subset the runtime can
 /// reliably enforce when a struct is constructed. Only these annotations are
 /// checked; every other annotation (a generic type parameter, an
@@ -823,6 +851,11 @@ pub enum FieldTypeCheck {
         ok: Option<Box<FieldTypeCheck>>,
         err: Option<Box<FieldTypeCheck>>,
     },
+    /// A literal type: the value must EQUAL the literal. Scalars only
+    /// (string/int/bool, what the grammar's literal_type produces), so
+    /// the check is one comparison. Unions of literals are lightweight
+    /// enums: `status: "open" | "in-progress" | "done"`.
+    Literal(LitCheck),
     /// `(A, B) -> R`: the value must be callable with exactly the
     /// annotation's parameter count — required-parameter floor and total
     /// ceiling both respected when the value exposes them. Parameter and
@@ -874,6 +907,13 @@ impl FieldTypeCheck {
             // the payload exists only at resolution, where the async
             // return check enforces it.
             TypeAnnotation::Promise { .. } => Some(Self::Named("Promise".to_string())),
+            // A literal annotation checks by value equality.
+            TypeAnnotation::Literal { value } => match value.as_ref() {
+                Value::Integer(i) => Some(Self::Literal(LitCheck::Int(*i))),
+                Value::String(st) => Some(Self::Literal(LitCheck::Str(st.as_ref().clone()))),
+                Value::Boolean(b) => Some(Self::Literal(LitCheck::Bool(*b))),
+                _ => None,
+            },
             // A function annotation enforces callability + arity.
             TypeAnnotation::Function { params, .. } => Some(Self::Function {
                 arity: params.len(),
@@ -924,6 +964,9 @@ impl FieldTypeCheck {
             Self::Tuple => "Tuple",
             Self::Result { .. } => "Result",
             Self::Function { .. } => "Function",
+            Self::Literal(LitCheck::Int(_)) => "Int",
+            Self::Literal(LitCheck::Str(_)) => "String",
+            Self::Literal(LitCheck::Bool(_)) => "Bool",
             // A union has no single name; callers that can see values use
             // `check_value`/`accepts`, and error text uses `display_name`.
             Self::Union(_) => "Union",
@@ -938,6 +981,9 @@ impl FieldTypeCheck {
             Self::Union(branches) => branches.iter().any(|b| b.accepts(actual)),
             // Builtins are callable too.
             Self::Function { .. } => actual == "Function" || actual == "Builtin",
+            // A name alone can never prove a VALUE; value-aware checking
+            // happens in check_value, and static discharge must refuse.
+            Self::Literal(_) => false,
             other => other.expected_name() == actual,
         }
     }
@@ -954,6 +1000,7 @@ impl FieldTypeCheck {
                 format!("Result<{}, {}>", side(ok), side(err))
             }
             Self::Function { display, .. } => display.clone(),
+            Self::Literal(lit) => lit.display(),
             Self::Union(branches) => branches
                 .iter()
                 .map(|b| b.display_name())
@@ -975,20 +1022,49 @@ impl FieldTypeCheck {
         type_name: &str,
         result_payload: Option<(bool, &str)>,
         fn_arity: Option<(usize, usize)>,
+        scalar: Option<ScalarView>,
     ) -> Option<(String, String)> {
-        // Unions first: satisfied by any branch (checked in full, so a
-        // Result branch's payload rule applies inside a union too).
-        if let Self::Union(branches) = self {
-            if branches
-                .iter()
-                .any(|b| b.check_value(type_name, result_payload, fn_arity).is_none())
-            {
+        // Literals compare by value — before the name-based paths, which
+        // can never satisfy them.
+        if let Self::Literal(lit) = self {
+            let satisfied = matches!(
+                (lit, scalar),
+                (LitCheck::Int(a), Some(ScalarView::Int(b))) if *a == b
+            ) || matches!(
+                (lit, scalar),
+                (LitCheck::Str(a), Some(ScalarView::Str(b))) if a == b
+            ) || matches!(
+                (lit, scalar),
+                (LitCheck::Bool(a), Some(ScalarView::Bool(b))) if *a == b
+            );
+            if satisfied {
                 return None;
             }
-            let actual = match result_payload {
-                Some((true, p)) => format!("Ok({})", p),
-                Some((false, p)) => format!("Err({})", p),
+            let actual = match scalar {
+                Some(ScalarView::Str(v)) => format!("\"{}\"", v),
+                Some(ScalarView::Int(v)) => v.to_string(),
+                Some(ScalarView::Bool(v)) => v.to_string(),
                 None => type_name.to_string(),
+            };
+            return Some((lit.display(), actual));
+        }
+        // Unions next: satisfied by any branch (checked in full, so a
+        // Result branch's payload or a literal branch's value applies
+        // inside a union too).
+        if let Self::Union(branches) = self {
+            if branches.iter().any(|b| {
+                b.check_value(type_name, result_payload, fn_arity, scalar)
+                    .is_none()
+            }) {
+                return None;
+            }
+            let actual = match (scalar, result_payload) {
+                (Some(ScalarView::Str(v)), _) => format!("\"{}\"", v),
+                (Some(ScalarView::Int(v)), _) => v.to_string(),
+                (Some(ScalarView::Bool(v)), _) => v.to_string(),
+                (None, Some((true, p))) => format!("Ok({})", p),
+                (None, Some((false, p))) => format!("Err({})", p),
+                (None, None) => type_name.to_string(),
             };
             return Some((self.display_name(), actual));
         }

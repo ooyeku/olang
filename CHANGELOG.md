@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Literal types check by value — unions of them are lightweight
+  enums.** The last useful reserved annotation form graduated:
+  `s: "open" | "in-progress" | "done"` admits exactly those strings
+  (`parameter 's' of set_status expects "open" | "in-progress" |
+  "done", got "cancelled"`), with int and bool literals equally valid
+  branches. Enforced by one value comparison at every boundary on
+  every tier; the checker proves violations when the argument is
+  itself a literal (or a literal-annotated binding) and stays silent
+  on dynamic values; scalar actuals now name their value in error
+  text on both tiers ("got true", not "got Bool"). Intersection
+  annotations remain the only reserved form.
+
 - **The tracker example is a real product now.** `examples/app` grew
   from a bare grid into a full app — live search, status filter pills,
   sortable columns (assignee joined the sortable set), an issue drawer

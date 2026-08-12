@@ -146,6 +146,17 @@ Details worth knowing:
   // Type error: return value of parse expects Result<Int, String>, got Ok(String)
   ```
 
+- **Literal types check by value.** An annotation can be a scalar
+  literal — the value must equal it. Alone that is a constant
+  assertion; in a union it is a lightweight enum, and the error names
+  the value that arrived:
+
+  ```olang no-run
+  fn set_status(s: "open" | "in-progress" | "done") = s
+  set_status("cancelled")
+  // Type error: parameter 's' of set_status expects "open" | "in-progress" | "done", got "cancelled"
+  ```
+
 - **Unions accept any branch.** `x: Int | String` admits an Int or a
   String and rejects everything else, at the same O(1) cost (branch
   count is annotation-sized). Branches keep their own rules — a
@@ -310,10 +321,10 @@ Knowing the boundaries tells you what an annotation cannot promise:
   side's *base* type; structure inside the payload (list elements, a
   nested Result's own payload) is the checker's territory, like every
   other deep promise.
-- **Reserved forms** — intersection (`A & B`) and literal-type
-  annotations parse today and gain semantics later
+- **Reserved forms** — intersection (`A & B`) annotations parse today
+  and gain semantics later
   ([Stability](stability.md#reserved--parses-today-semantics-later)).
-  Unions left this list in 0.50: `A | B` is enforced.
+  Unions and literal types both left this list in 0.50.
 - **The checker never speculates.** No inference across module
   boundaries, no narrowing from `if typeof(x) == ...`, no guesses about
   dynamic code. Anything short of proof is silence.

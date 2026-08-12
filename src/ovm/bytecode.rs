@@ -1306,8 +1306,10 @@ impl BytecodeVm {
         if !bytecode.param_checks.is_empty() {
             for (i, check) in bytecode.param_checks.iter().enumerate() {
                 if let (Some(check), Some(arg)) = (check, args.get(i)) {
-                    let (actual, payload, fn_arity) = ovm_value_view(arg);
-                    if let Some((expected, got)) = check.check_value(actual, payload, fn_arity) {
+                    let (actual, payload, fn_arity, scalar) = ovm_value_view(arg);
+                    if let Some((expected, got)) =
+                        check.check_value(actual, payload, fn_arity, scalar)
+                    {
                         let fn_name = bytecode
                             .debug_info
                             .function_name
@@ -1423,8 +1425,10 @@ impl BytecodeVm {
             for (i, check) in bytecode.param_checks.iter().enumerate() {
                 if let (Some(check), Some(arg)) = (check, arg_regs.get(i)) {
                     let value = self.execution_state.register_ref(*arg)?;
-                    let (actual, payload, fn_arity) = ovm_value_view(value);
-                    if let Some((expected, got)) = check.check_value(actual, payload, fn_arity) {
+                    let (actual, payload, fn_arity, scalar) = ovm_value_view(value);
+                    if let Some((expected, got)) =
+                        check.check_value(actual, payload, fn_arity, scalar)
+                    {
                         let fn_name = bytecode
                             .debug_info
                             .function_name
@@ -1799,8 +1803,9 @@ impl BytecodeVm {
                     // Enforce the declared return type, same message as the
                     // interpreter's boundary.
                     if let Some(check) = &bytecode.return_check {
-                        let (actual, payload, fn_arity) = ovm_value_view(&result);
-                        if let Some((expected, got)) = check.check_value(actual, payload, fn_arity)
+                        let (actual, payload, fn_arity, scalar) = ovm_value_view(&result);
+                        if let Some((expected, got)) =
+                            check.check_value(actual, payload, fn_arity, scalar)
                         {
                             let fn_name = bytecode
                                 .debug_info
@@ -1889,9 +1894,9 @@ impl BytecodeVm {
                     // it aligns with `values` and `shape.field_names`.
                     for (i, check) in field_types.iter().enumerate() {
                         if let Some(check) = check {
-                            let (actual, payload, fn_arity) = ovm_value_view(&values[i]);
+                            let (actual, payload, fn_arity, scalar) = ovm_value_view(&values[i]);
                             if let Some((expected, got)) =
-                                check.check_value(actual, payload, fn_arity)
+                                check.check_value(actual, payload, fn_arity, scalar)
                             {
                                 return Err(BytecodeError::TypeError(format!(
                                     "field '{}' of {} expects {}, got {}",
@@ -6201,7 +6206,14 @@ impl Default for BytecodeVm {
 /// and CompiledFunction don't record defaults, so their arity stays
 /// unchecked rather than wrongly strict.
 #[allow(clippy::type_complexity)]
-fn ovm_value_view(v: &OvmValue) -> (&str, Option<(bool, &str)>, Option<(usize, usize)>) {
+fn ovm_value_view(
+    v: &OvmValue,
+) -> (
+    &str,
+    Option<(bool, &str)>,
+    Option<(usize, usize)>,
+    Option<crate::ast::ScalarView<'_>>,
+) {
     use crate::ovm::value::ValueData;
     let payload = match &v.data {
         ValueData::Result(r) => match (&r.ok, &r.err) {
@@ -6222,7 +6234,13 @@ fn ovm_value_view(v: &OvmValue) -> (&str, Option<(bool, &str)>, Option<(usize, u
         ValueData::Closure(c) => Some(counts(&c.template.parameters)),
         _ => None,
     };
-    (v.type_name(), payload, arity)
+    let scalar = match &v.data {
+        ValueData::Integer(i) => Some(crate::ast::ScalarView::Int(*i)),
+        ValueData::String(s) => Some(crate::ast::ScalarView::Str(s.as_str())),
+        ValueData::Boolean(b) => Some(crate::ast::ScalarView::Bool(*b)),
+        _ => None,
+    };
+    (v.type_name(), payload, arity, scalar)
 }
 
 #[cfg(test)]

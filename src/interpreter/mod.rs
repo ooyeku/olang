@@ -577,6 +577,16 @@ impl Interpreter {
         (v.type_name(), payload, arity)
     }
 
+    /// The scalar leg of the view, for literal-type checks.
+    fn scalar_view(v: &Value) -> Option<crate::ast::ScalarView<'_>> {
+        match v {
+            Value::Integer(i) => Some(crate::ast::ScalarView::Int(*i)),
+            Value::String(s) => Some(crate::ast::ScalarView::Str(s.as_ref())),
+            Value::Boolean(b) => Some(crate::ast::ScalarView::Bool(*b)),
+            _ => None,
+        }
+    }
+
     fn check_param_types(func: &Function, arguments: &[Value]) -> Result<(), InterpreterError> {
         for (index, check) in func.param_checks.iter().enumerate() {
             if let (Some(check), Some(arg)) = (check, arguments.get(index)) {
@@ -585,6 +595,7 @@ impl Interpreter {
                     &actual,
                     payload.as_ref().map(|(o, p)| (*o, p.as_str())),
                     fn_arity,
+                    Self::scalar_view(arg),
                 ) {
                     let fn_name = func.name.as_deref().unwrap_or("<lambda>");
                     let param = func
@@ -612,6 +623,7 @@ impl Interpreter {
                 &actual,
                 payload.as_ref().map(|(o, p)| (*o, p.as_str())),
                 fn_arity,
+                Self::scalar_view(value),
             ) {
                 let fn_name = func.name.as_deref().unwrap_or("<lambda>");
                 return Err(InterpreterError::TypeError {
@@ -699,6 +711,7 @@ impl Interpreter {
                 &actual,
                 payload.as_ref().map(|(o, p)| (*o, p.as_str())),
                 fn_arity,
+                Self::scalar_view(&value),
             ) {
                 let binding = match &let_decl.pattern {
                     crate::ast::Pattern::Identifier(name) => name.as_str(),
@@ -2175,6 +2188,7 @@ impl Interpreter {
                     &actual,
                     payload.as_ref().map(|(o, p)| (*o, p.as_str())),
                     fn_arity,
+                    Self::scalar_view(&value),
                 ) {
                     return Err(InterpreterError::TypeError {
                         message: format!(
