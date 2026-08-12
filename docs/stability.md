@@ -101,7 +101,9 @@ the global builtins.
   it (advisory — nothing breaks, exit codes unchanged). Prefer `let`.
 - A bare block's `let` bindings currently remain visible after the
   block ([language reference](language.md#scope)); write code as if
-  blocks scoped — a future release may tighten this.
+  blocks scoped, and as of 0.50 `olang check` and the editor **warn**
+  when code relies on the leak (advisory — nothing breaks). A future
+  release may tighten the semantics.
 
 ### Reserved — parses today, semantics later
 

@@ -527,7 +527,7 @@ struct FnSig {
 pub fn check_program(program: &Program) -> Vec<CheckDiagnostic> {
     let mut checker = Checker::default();
     checker.collect(program);
-    checker.scopes.push(HashMap::new());
+    checker.push_scope();
     for stmt in &program.statements {
         checker.check_statement(stmt, (0, 0));
     }
@@ -541,7 +541,7 @@ pub fn check_program(program: &Program) -> Vec<CheckDiagnostic> {
 pub fn hover_types(program: &Program) -> HashMap<String, String> {
     let mut checker = Checker::default();
     checker.collect(program);
-    checker.scopes.push(HashMap::new());
+    checker.push_scope();
     for stmt in &program.statements {
         checker.check_statement(stmt, (0, 0));
     }
@@ -583,7 +583,43 @@ struct Checker {
     sigs: HashMap<String, FnSig>,
     structs: HashMap<String, Vec<(String, SType)>>,
     scopes: Vec<HashMap<String, SType>>,
+    /// Names that leaked out of a popped block, per remaining scope frame
+    /// (parallel to `scopes`). The runtime lets a bare block's `let`s
+    /// remain visible afterwards; the book says to write as if blocks
+    /// scoped, and using a leaked name draws an advisory warning.
+    leaked: Vec<std::collections::HashSet<String>>,
+    warned_leaks: std::collections::HashSet<String>,
     out: Vec<CheckDiagnostic>,
+}
+
+impl Checker {
+    fn push_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+        self.leaked.push(std::collections::HashSet::new());
+    }
+
+    /// Pop a scope. `merge` says what survives into the parent frame:
+    /// blocks leak their own names AND anything already leaked into
+    /// them; other constructs (loops, match arms, catch) propagate only
+    /// accumulated leaks; function boundaries discard everything (the
+    /// runtime leak is frame-local).
+    fn pop_scope(&mut self, merge: Merge) {
+        let scope = self.scopes.pop().unwrap_or_default();
+        let leaks = self.leaked.pop().unwrap_or_default();
+        if let (Some(parent), Merge::Block) = (self.leaked.last_mut(), merge) {
+            parent.extend(scope.into_keys());
+            parent.extend(leaks);
+        } else if let (Some(parent), Merge::Construct) = (self.leaked.last_mut(), merge) {
+            parent.extend(leaks);
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Merge {
+    Block,
+    Construct,
+    Function,
 }
 
 impl Checker {
@@ -1072,7 +1108,7 @@ impl Checker {
             Statement::FunctionDecl(f) => {
                 // Body scope: parameter annotations are trusted (runtime
                 // enforces them at every call).
-                self.scopes.push(HashMap::new());
+                self.push_scope();
                 for p in &f.parameters {
                     let ty = p
                         .type_annotation
@@ -1091,7 +1127,7 @@ impl Checker {
                 {
                     self.check_against(&f.body, &ret, span, &format!("return value of {}", f.name));
                 }
-                self.scopes.pop();
+                self.pop_scope(Merge::Function);
             }
             // Declarations without checkable bodies.
             _ => {}
@@ -1216,13 +1252,25 @@ impl Checker {
                 // warn in a future release"; this is the release. Advisory
                 // only — the runtime still creates the binding.
                 if !self.bound(target) {
-                    self.warn(
-                        span,
-                        format!(
-                            "assignment to undeclared name '{}' creates a binding — declare it with `let {} = ...`",
-                            target, target
-                        ),
-                    );
+                    if self.leaked.iter().any(|l| l.contains(target)) {
+                        if self.warned_leaks.insert(target.clone()) {
+                            self.warn(
+                                span,
+                                format!(
+                                    "'{}' is declared inside a block and is only visible here because blocks don't scope yet — declare it before the block",
+                                    target
+                                ),
+                            );
+                        }
+                    } else {
+                        self.warn(
+                            span,
+                            format!(
+                                "assignment to undeclared name '{}' creates a binding — declare it with `let {} = ...`",
+                                target, target
+                            ),
+                        );
+                    }
                 }
                 let ty = self.infer(value);
                 let target = target.clone();
@@ -1235,11 +1283,11 @@ impl Checker {
                 self.bind(&name, ty);
             }
             Expr::Block(stmts) => {
-                self.scopes.push(HashMap::new());
+                self.push_scope();
                 for s in stmts {
                     self.check_statement(s, span);
                 }
-                self.scopes.pop();
+                self.pop_scope(Merge::Block);
             }
             Expr::If {
                 condition,
@@ -1263,10 +1311,10 @@ impl Checker {
                 body,
             } => {
                 self.check_expr(iterable, span);
-                self.scopes.push(HashMap::new());
+                self.push_scope();
                 self.bind(&variable.clone(), SType::Unknown);
                 self.check_expr(body, span);
-                self.scopes.pop();
+                self.pop_scope(Merge::Construct);
             }
             Expr::WhileLoop { condition, body } => {
                 self.check_expr(condition, span);
@@ -1276,7 +1324,7 @@ impl Checker {
             Expr::Lambda {
                 parameters, body, ..
             } => {
-                self.scopes.push(HashMap::new());
+                self.push_scope();
                 for p in parameters {
                     let ty = p
                         .type_annotation
@@ -1286,13 +1334,13 @@ impl Checker {
                     self.bind(&p.name.clone(), ty);
                 }
                 self.check_expr(body, span);
-                self.scopes.pop();
+                self.pop_scope(Merge::Function);
             }
             Expr::Match { value, arms } => {
                 self.check_expr(value, span);
                 let scrutinee = self.infer(value);
                 for arm in arms {
-                    self.scopes.push(HashMap::new());
+                    self.push_scope();
                     self.bind_pattern_unknown(&arm.pattern.clone());
                     // Narrowing: `Ok(x)` / `Err(e)` against a known Result
                     // scrutinee bind their payload types.
@@ -1315,7 +1363,7 @@ impl Checker {
                         }
                     }
                     self.check_expr(&arm.expression, span);
-                    self.scopes.pop();
+                    self.pop_scope(Merge::Construct);
                 }
             }
             Expr::TryCatch {
@@ -1324,10 +1372,27 @@ impl Checker {
                 catch_block,
             } => {
                 self.check_expr(try_block, span);
-                self.scopes.push(HashMap::new());
+                self.push_scope();
                 self.bind(&catch_var.clone(), SType::Unknown);
                 self.check_expr(catch_block, span);
-                self.scopes.pop();
+                self.pop_scope(Merge::Construct);
+            }
+            Expr::Identifier(name) | Expr::LocalRef { name, .. } => {
+                // Using a name that only exists because a block leaked it:
+                // the book says to write as if blocks scoped, and a future
+                // release may tighten this. Advisory, once per name.
+                if !self.bound(name)
+                    && self.leaked.iter().any(|l| l.contains(name))
+                    && self.warned_leaks.insert(name.clone())
+                {
+                    self.warn(
+                        span,
+                        format!(
+                            "'{}' is declared inside a block and is only visible here because blocks don't scope yet — declare it before the block",
+                            name
+                        ),
+                    );
+                }
             }
             Expr::FieldAccess { object, .. } => self.check_expr(object, span),
             Expr::ResultOk(e) | Expr::ResultErr(e) | Expr::Try(e) => self.check_expr(e, span),
@@ -1564,6 +1629,36 @@ mod tests {
             d.iter()
                 .any(|x| !x.warning && x.message.contains("expects Int, got String"))
         );
+    }
+
+    // ── 0.50 arc: block-scoping warning ────────────────────────────────
+
+    #[test]
+    fn using_a_block_leaked_binding_warns_once() {
+        let d = check(
+            "{\n    let inner = 1\n}\nprintln(to_string(inner))\nprintln(to_string(inner))\n",
+        );
+        assert_eq!(d.len(), 1, "once per name: {:?}", d);
+        assert!(d[0].warning);
+        assert!(d[0].message.contains("'inner' is declared inside a block"));
+        // Assignment to a leaked name draws the block warning, not the
+        // undeclared-assignment one.
+        let d = check("{\n    let n = 1\n}\nn = 2\n");
+        assert_eq!(d.len(), 1);
+        assert!(d[0].message.contains("declared inside a block"));
+    }
+
+    #[test]
+    fn block_leaks_stop_at_function_boundaries() {
+        // A leak inside one function must not taint another.
+        assert!(check("fn a() = {\n    { let x = 1 }\n    0\n}\nfn b(x) = x\nb(1)\n").is_empty());
+        // Declaring before the block is the fix and stays silent.
+        assert!(
+            check("let outer = 0\n{\n    outer = 1\n}\nprintln(to_string(outer))\n").is_empty()
+        );
+        // Nested blocks leak transitively.
+        let d = check("{\n    { let deep = 1 }\n}\nprintln(to_string(deep))\n");
+        assert_eq!(d.len(), 1);
     }
 
     // ── 0.50 arc: literal types ────────────────────────────────────────

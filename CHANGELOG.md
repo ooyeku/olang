@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`olang check` warns when code relies on block leakage.** A bare
+  block's `let`s remain visible afterwards — the other long-documented
+  scoping pitfall. Using (or assigning) such a name after its block now
+  draws an advisory warning, once per name, in `olang check` and the
+  editor. Leak tracking is per function frame, so a block inside one
+  function never taints another; declaring the name before the block
+  is the fix and stays silent. The repo's 171 files produce zero.
+
 - **Literal types check by value — unions of them are lightweight
   enums.** The last useful reserved annotation form graduated:
   `s: "open" | "in-progress" | "done"` admits exactly those strings
