@@ -44,6 +44,7 @@ pub fn run(paths: &[PathBuf]) -> i32 {
     }
 
     let mut problems = 0usize;
+    let mut warnings = 0usize;
     let parser = crate::parser::Parser::new();
     for file in &files {
         let source = match std::fs::read_to_string(file) {
@@ -64,15 +65,24 @@ pub fn run(paths: &[PathBuf]) -> i32 {
             }
         };
         for d in check_program(&program) {
-            problems += 1;
+            if d.warning {
+                warnings += 1;
+            } else {
+                problems += 1;
+            }
             let offset = byte_offset_of(&source, d.line as usize, d.column as usize);
-            let label = if d.runtime {
+            let label = if d.warning {
+                "advisory — the program still runs"
+            } else if d.runtime {
                 "this would fail at runtime"
             } else {
                 "the annotation's promise is broken here"
             };
-            let diagnostic = miette::MietteDiagnostic::new(d.message.clone())
+            let mut diagnostic = miette::MietteDiagnostic::new(d.message.clone())
                 .with_label(miette::LabeledSpan::at_offset(offset, label));
+            if d.warning {
+                diagnostic = diagnostic.with_severity(miette::Severity::Warning);
+            }
             let report = miette::Report::new(diagnostic).with_source_code(
                 miette::NamedSource::new(file.display().to_string(), source.clone()),
             );
@@ -80,18 +90,25 @@ pub fn run(paths: &[PathBuf]) -> i32 {
         }
     }
 
+    let warn_note = match warnings {
+        0 => String::new(),
+        1 => ", 1 warning".to_string(),
+        n => format!(", {} warnings", n),
+    };
     if problems == 0 {
         println!(
-            "olang check: {} file{} clean",
+            "olang check: {} file{} clean{}",
             files.len(),
-            if files.len() == 1 { "" } else { "s" }
+            if files.len() == 1 { "" } else { "s" },
+            warn_note
         );
         0
     } else {
         eprintln!(
-            "olang check: {} problem{} found",
+            "olang check: {} problem{} found{}",
             problems,
-            if problems == 1 { "" } else { "s" }
+            if problems == 1 { "" } else { "s" },
+            warn_note
         );
         1
     }
@@ -125,6 +142,9 @@ pub struct CheckDiagnostic {
     /// this — the message then matches the runtime's error text exactly.
     /// False for element-level breaks the runtime deliberately lets pass.
     pub runtime: bool,
+    /// True for advisory findings (style/pitfall warnings): reported and
+    /// surfaced as warnings, never a non-zero exit on their own.
+    pub warning: bool,
 }
 
 /// The checker's knowledge of a type, structurally deep where the source
@@ -685,7 +705,23 @@ impl Checker {
             column: span.1,
             message,
             runtime,
+            warning: false,
         });
+    }
+
+    fn warn(&mut self, span: (u32, u32), message: String) {
+        self.out.push(CheckDiagnostic {
+            line: span.0,
+            column: span.1,
+            message,
+            runtime: false,
+            warning: true,
+        });
+    }
+
+    /// Is `name` bound anywhere in scope (any type, including Unknown)?
+    fn bound(&self, name: &str) -> bool {
+        self.scopes.iter().any(|s| s.contains_key(name)) || self.sigs.contains_key(name)
     }
 
     // ── inference: conservative, Unknown-biased ────────────────────────
@@ -959,6 +995,11 @@ impl Checker {
             }
             Statement::Expression(e) => self.check_expr(e, span),
             Statement::LetDecl(decl) => {
+                if decl.value.is_none() {
+                    // `let pending` binds to Unit until assigned; track the
+                    // name so later assignment isn't flagged as undeclared.
+                    self.bind_pattern_unknown(&decl.pattern.clone());
+                }
                 if let Some(value) = &decl.value {
                     self.check_expr(value, span);
                     let annotated = decl
@@ -1132,6 +1173,30 @@ impl Checker {
                 self.walk_children(right, span);
             }
             Expr::UnaryOp { operand, .. } => self.check_expr(operand, span),
+            Expr::Assignment { target, value } => {
+                self.check_expr(value, span);
+                // Stability has long said assignment-to-undeclared "may
+                // warn in a future release"; this is the release. Advisory
+                // only — the runtime still creates the binding.
+                if !self.bound(target) {
+                    self.warn(
+                        span,
+                        format!(
+                            "assignment to undeclared name '{}' creates a binding — declare it with `let {} = ...`",
+                            target, target
+                        ),
+                    );
+                }
+                let ty = self.infer(value);
+                let target = target.clone();
+                self.bind(&target, ty);
+            }
+            Expr::LocalAssign { name, value, .. } => {
+                self.check_expr(value, span);
+                let ty = self.infer(value);
+                let name = name.clone();
+                self.bind(&name, ty);
+            }
             Expr::Block(stmts) => {
                 self.scopes.push(HashMap::new());
                 for s in stmts {
@@ -1434,6 +1499,34 @@ mod tests {
         assert!(d[0].message.contains("expects Int, got String"));
         // Disagreeing branches stay unknown.
         assert!(check("fn f(x: Int) = x\nlet v = if true => \"a\" else => 1\nf(v)\n").is_empty());
+    }
+
+    // ── 0.50 arc: undeclared-assignment warning ────────────────────────
+
+    #[test]
+    fn undeclared_assignment_warns_declared_does_not() {
+        let d = check("count = 1\n");
+        assert_eq!(d.len(), 1);
+        assert!(d[0].warning, "advisory, not an error");
+        assert!(
+            d[0].message
+                .contains("assignment to undeclared name 'count'")
+        );
+        // Declared names, loop vars, params, and valueless lets are quiet.
+        assert!(check("let ok = 1\nok = 2\n").is_empty());
+        assert!(check("let pending\npending = 1\n").is_empty());
+        assert!(check("fn f(x) = { x = x + 1\n x }\n").is_empty());
+        assert!(check("for x in [1] { x = x + 1 }\n").is_empty());
+        // One warning per name: the first assignment binds it.
+        assert_eq!(check("n = 1\nn = 2\n").len(), 1);
+        // The assigned value's type flows onward.
+        let d = check("fn f(x: Int) = x\ns = \"str\"\nf(s)\n");
+        assert_eq!(d.len(), 2, "warning plus the type violation: {:?}", d);
+        assert!(d.iter().any(|x| x.warning));
+        assert!(
+            d.iter()
+                .any(|x| !x.warning && x.message.contains("expects Int, got String"))
+        );
     }
 
     // ── 0.50 arc: hover types ──────────────────────────────────────────

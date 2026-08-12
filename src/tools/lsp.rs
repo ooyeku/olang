@@ -317,12 +317,17 @@ fn diagnostics(text: &str) -> Vec<Diagnostic> {
                             .map(|d| {
                                 let line = d.line.saturating_sub(1);
                                 let col = d.column.saturating_sub(1);
+                                let severity = if d.warning {
+                                    DiagnosticSeverity::WARNING
+                                } else {
+                                    DiagnosticSeverity::ERROR
+                                };
                                 Diagnostic {
                                     range: Range::new(
                                         Position::new(line, col),
                                         Position::new(line, col + 1),
                                     ),
-                                    severity: Some(DiagnosticSeverity::ERROR),
+                                    severity: Some(severity),
                                     source: Some("olang".to_string()),
                                     message: d.message,
                                     ..Default::default()

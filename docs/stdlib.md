@@ -824,7 +824,8 @@ custom harness. A returned `Err` does nothing on its own; `unwrap` it
 | `testing.assert_true(x)` / `assert_false(x)` | boolean checks (non-boolean input is an `Err`) |
 | `testing.assert_ok(r)` / `assert_err(r)` | Result checks |
 | `testing.fail(msg)` | unconditional `Err` |
-| `testing.reset_tests()` / `testing.test_summary()` / `testing.run_test(name, f)` | reserved harness hooks — placeholders today (see [Stability](stability.md)) |
+| `testing.test_summary()` / `testing.reset_tests()` | the session's assertion tally: `#{ "passed", "failed", "total" }` over every `assert_*` outcome on this thread; `reset_tests()` zeroes it |
+| `testing.run_test(name, f)` | deliberately a redirect: a builtin cannot re-enter the interpreter to run `f`, and the error says to use a `test` block instead |
 
 ```olang
 println(to_string(is_ok(testing.assert_eq(2 + 2, 4))))

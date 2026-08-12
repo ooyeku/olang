@@ -89,11 +89,16 @@ the global builtins.
   may grow (and payload conventions may gain fields) as frontend
   programs demand more; the element-handle model and the stateless
   pattern it supports are the stable core.
-- `testing.run_test`, `testing.test_summary`, `testing.reset_tests` —
-  reserved harness hooks, placeholders today.
+- `testing.test_summary` / `testing.reset_tests` are real as of 0.50:
+  every `testing.assert_*` outcome is tallied per thread, `test_summary()`
+  returns `#{ "passed", "failed", "total" }`, and `reset_tests()` zeroes
+  it. `testing.run_test` deliberately remains a redirect to `test`
+  blocks (a builtin cannot re-enter the interpreter to run your
+  function; the error says so).
 - The `--enable-parallel` / `set_parallel` evaluation modes
-- Assignment to an undeclared name (`x = 1` without `let`) currently
-  creates a binding; prefer `let` — a future release may warn here.
+- Assignment to an undeclared name (`x = 1` without `let`) creates a
+  binding, and as of 0.50 `olang check` and the editor **warn** about
+  it (advisory — nothing breaks, exit codes unchanged). Prefer `let`.
 - A bare block's `let` bindings currently remain visible after the
   block ([language reference](language.md#scope)); write code as if
   blocks scoped — a future release may tighten this.

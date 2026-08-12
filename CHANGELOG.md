@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`olang check` warns on assignment to undeclared names.** `x = 1`
+  without `let` creates a binding — long documented as a pitfall with
+  "a future release may warn here"; this is the release. Advisory
+  only: rendered as a warning in `olang check` (exit code unchanged)
+  and as a warning squiggle in editors; declared names, loop
+  variables, parameters, and valueless `let`s stay quiet, and the
+  first assignment binds the name so it warns once. The repo's own
+  171 files produce zero warnings.
+- **`testing.test_summary()` and `reset_tests()` are real.** Every
+  `testing.assert_*` outcome is tallied (per thread — `par_map`
+  workers keep their own counts): `test_summary()` returns
+  `#{ "passed", "failed", "total" }` and `reset_tests()` zeroes it.
+  `run_test` deliberately remains an honest redirect to `test` blocks.
+
 - **`olang --watch script.ol` — the edit-run loop as a flag.** Reruns
   the script whenever any `.ol` file at or below its directory changes
   (module edits count), each run in a child process so a crash or

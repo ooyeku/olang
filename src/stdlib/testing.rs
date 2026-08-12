@@ -83,7 +83,7 @@ pub fn call_testing_function(
     name: &str,
     args: Vec<Value>,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    match name {
+    let result = match name {
         "assert_eq" => assert_eq(args),
         "assert_ne" => assert_ne(args),
         "assert_true" => assert_true(args),
@@ -95,7 +95,28 @@ pub fn call_testing_function(
         "test_summary" => test_summary(args),
         "reset_tests" => reset_tests(args),
         _ => Err(format!("Unknown testing function: {}", name).into()),
+    };
+    // The session tally: every assert_* outcome is recorded here, which
+    // is what test_summary()/reset_tests() report and clear. Thread-local
+    // by design — par_map workers keep their own counts.
+    if name.starts_with("assert")
+        && let Ok(v) = &result
+    {
+        TALLY.with(|t| {
+            let mut t = t.borrow_mut();
+            match v {
+                Value::Ok(_) => t.0 += 1,
+                Value::Err(_) => t.1 += 1,
+                _ => {}
+            }
+        });
     }
+    result
+}
+
+thread_local! {
+    /// (passed, failed) assertion outcomes on this thread.
+    static TALLY: std::cell::RefCell<(i64, i64)> = const { std::cell::RefCell::new((0, 0)) };
 }
 
 /// Assert that two values are equal
@@ -303,20 +324,22 @@ fn run_test(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     ))))))
 }
 
-/// Get a summary of test results
-/// Usage: testing.test_summary() -> String
+/// The session's assertion tally as a Map:
+/// `#{ "passed": n, "failed": n, "total": n }`. Counts every
+/// `testing.assert_*` outcome on this thread since start (or the last
+/// `reset_tests()`).
 fn test_summary(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    // For now, return a simple summary
-    // In a full implementation, this would track actual test statistics
-    let summary = "Test Summary: 0 tests run, 0 passed, 0 failed";
-    Ok(Value::String(Arc::new(summary.to_string())))
+    let (passed, failed) = TALLY.with(|t| *t.borrow());
+    let mut map = std::collections::HashMap::new();
+    map.insert("passed".to_string(), Value::Integer(passed));
+    map.insert("failed".to_string(), Value::Integer(failed));
+    map.insert("total".to_string(), Value::Integer(passed + failed));
+    Ok(Value::Map(Arc::new(map)))
 }
 
-/// Reset test statistics
-/// Usage: testing.reset_tests() -> Unit
+/// Zero the assertion tally.
 fn reset_tests(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    // For now, just return unit
-    // In a full implementation, this would reset test counters
+    TALLY.with(|t| *t.borrow_mut() = (0, 0));
     Ok(Value::Unit)
 }
 
