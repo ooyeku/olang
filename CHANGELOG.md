@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   instead, so constructor-then-consume pipelines (`let pts =
   segment(a, b); pts[1].x`) compile end to end.
 
+- **String-element lists join the JIT.** `ListStr` is the fourth list
+  kind: `["alpha", "beta", tag]` literals construct natively, elements
+  read back as borrowed strings (comparison and concat work on them
+  directly), and string lists concat, return, and iterate like every
+  other list kind. Constant elements are content-cloned — strings are
+  immutable values with content equality, so identity is unobservable
+  and there is no deopt case beyond the allocation cap.
+
 ## [0.50.0] - 2026-08-12
 
 ### Added

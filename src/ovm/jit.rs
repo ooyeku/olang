@@ -140,6 +140,7 @@ pub fn classify_list(items: &[OvmValue]) -> Option<Kind> {
         ValueData::Float(_) => Kind::ListFloat,
         ValueData::Integer(_) => Kind::ListInt,
         ValueData::Struct(s) => Kind::ListStruct(s.shape.id),
+        ValueData::String(_) => Kind::ListStr,
         _ => return None,
     };
     for v in items.iter().skip(1) {
@@ -147,6 +148,7 @@ pub fn classify_list(items: &[OvmValue]) -> Option<Kind> {
             (ValueData::Float(_), Kind::ListFloat) => true,
             (ValueData::Integer(_), Kind::ListInt) => true,
             (ValueData::Struct(s), Kind::ListStruct(sid)) => s.shape.id == sid,
+            (ValueData::String(_), Kind::ListStr) => true,
             _ => false,
         };
         if !ok {
@@ -228,6 +230,10 @@ pub enum Kind {
     ListFloat,
     ListInt,
     ListStruct(u32),
+    /// A list argument whose elements are uniformly strings. Element
+    /// reads hand out borrowed pointers into the list, valid for the
+    /// synchronous call like struct elements.
+    ListStr,
     /// A string argument or field, passed as a borrowed pointer to the
     /// String behind its Arc. Concat allocates through the scratch
     /// context under the same straight-line discipline as structs.
@@ -376,6 +382,10 @@ unsafe extern "C" fn olang_jit_index(
             }
             (ValueData::Struct(s), EXPECT_STRUCT) if s.shape.id as u64 == expect_shape => {
                 *out = Arc::as_ptr(s) as i64;
+                0
+            }
+            (ValueData::String(v), FIELD_STR) => {
+                *out = Arc::as_ptr(v) as i64;
                 0
             }
             _ => 1,
@@ -783,6 +793,47 @@ unsafe extern "C" fn olang_jit_make_list_structs(
     }
 }
 
+/// String twin of olang_jit_make_list: each element arrives as a
+/// borrowed string pointer. A scratch allocation or entry argument
+/// resolves to its owned Arc; anything else (a baked constant, a list
+/// element) is content-cloned — strings are immutable values with
+/// content equality, so identity is unobservable. Null = cap, deopt.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx; `elems` points at
+/// a stack buffer of `n` slots holding live `*const String` values.
+unsafe extern "C" fn olang_jit_make_list_strs(
+    ctx: *mut ScratchCtx,
+    elems: *const i64,
+    n: i64,
+) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if ctx.list_allocs.len() >= 1_000_000 {
+            return 0;
+        }
+        let mut values = Vec::with_capacity(n as usize);
+        for i in 0..n as usize {
+            let ptr = *elems.add(i);
+            let arc = ctx
+                .str_allocs
+                .iter()
+                .rev()
+                .find(|a| Arc::as_ptr(a) as i64 == ptr)
+                .or_else(|| ctx.str_args.iter().find(|a| Arc::as_ptr(a) as i64 == ptr))
+                .cloned()
+                .unwrap_or_else(|| Arc::new((*(ptr as *const String)).clone()));
+            values.push(OvmValue {
+                data: ValueData::String(arc),
+            });
+        }
+        let list = Arc::new(values);
+        let ptr = Arc::as_ptr(&list) as i64;
+        ctx.list_allocs.push(list);
+        ptr
+    }
+}
+
 unsafe extern "C" fn olang_jit_field(
     obj: *const crate::ovm::value::StructObject,
     idx: u64,
@@ -854,6 +905,10 @@ impl JitCache {
             builder.symbol(
                 "olang_jit_make_list_structs",
                 olang_jit_make_list_structs as *const u8,
+            );
+            builder.symbol(
+                "olang_jit_make_list_strs",
+                olang_jit_make_list_strs as *const u8,
             );
             builder.symbol("olang_jit_list_concat", olang_jit_list_concat as *const u8);
             builder.symbol("olang_jit_list_retain", olang_jit_list_retain as *const u8);
@@ -1126,7 +1181,9 @@ impl JitCache {
                 data: ValueData::Result(arc),
             });
         }
-        if let Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) = jitted.ret_kind {
+        if let Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr =
+            jitted.ret_kind
+        {
             let arc = ctx.retained_list.take()?;
             return Some(OvmValue {
                 data: ValueData::List(arc),
@@ -1138,7 +1195,7 @@ impl JitCache {
             Kind::Bool => OvmValue::new_boolean(out != 0),
             Kind::Float => OvmValue::new_float(f64::from_bits(out as u64)),
             Kind::Struct(_) | Kind::Str | Kind::Result(..) => unreachable!("handled above"),
-            Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) => {
+            Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) | Kind::ListStr => {
                 unreachable!("handled above")
             }
         })
@@ -1213,9 +1270,10 @@ impl JitCache {
                                 _ => None,
                             },
                             match j.ret_kind {
-                                k @ (Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_)) => {
-                                    Some(k)
-                                }
+                                k @ (Kind::ListInt
+                                | Kind::ListFloat
+                                | Kind::ListStruct(_)
+                                | Kind::ListStr) => Some(k),
                                 _ => None,
                             },
                         ),
@@ -1304,9 +1362,13 @@ impl JitCache {
                             (None, Kind::Result(okp, errp)) => {
                                 result_return_discharged(check, okp, errp)
                             }
-                            (None, Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_)) => {
-                                check.accepts("List")
-                            }
+                            (
+                                None,
+                                Kind::ListInt
+                                | Kind::ListFloat
+                                | Kind::ListStruct(_)
+                                | Kind::ListStr,
+                            ) => check.accepts("List"),
                             (None, Kind::Struct(sid)) => group_shapes
                                 .get(&sid)
                                 .is_some_and(|s| check.accepts(&s.shape.type_name)),
@@ -1503,6 +1565,16 @@ impl JitCache {
                 .declare_function("olang_jit_make_list_structs", Linkage::Import, &sig)
                 .ok()?
         };
+        let make_list_strs_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..3 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_make_list_strs", Linkage::Import, &sig)
+                .ok()?
+        };
         let list_retain_helper = {
             let mut sig = module.make_signature();
             sig.params.push(AbiParam::new(types::I64));
@@ -1586,6 +1658,7 @@ impl JitCache {
                         make_result: make_result_helper,
                         make_list: make_list_helper,
                         make_list_structs: make_list_structs_helper,
+                        make_list_strs: make_list_strs_helper,
                         list_concat: list_concat_helper,
                     },
                 )
@@ -1669,6 +1742,7 @@ impl JitCache {
                         | Kind::ListInt
                         | Kind::ListFloat
                         | Kind::ListStruct(_)
+                        | Kind::ListStr
                 ) {
                     // Ownership boundary: resolve the pointer to an owned
                     // Arc in ctx.retained; unknown pointers deopt.
@@ -1682,7 +1756,9 @@ impl JitCache {
                     let which = match inf.ret_kind {
                         Kind::Str => str_retain_helper,
                         Kind::Result(..) => result_retain_helper,
-                        Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) => list_retain_helper,
+                        Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr => {
+                            list_retain_helper
+                        }
                         _ => retain_helper,
                     };
                     let retain_ref = module.declare_func_in_func(which, builder.func);
@@ -1874,7 +1950,7 @@ fn kind_mask(k: Kind) -> u16 {
         Kind::Bool => K_BOOL,
         Kind::Float => K_FLOAT,
         Kind::Struct(_) => K_STRUCT,
-        Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) => K_LIST,
+        Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) | Kind::ListStr => K_LIST,
         Kind::Str => K_STR,
         Kind::Result(..) => K_RESULT,
     }
@@ -2304,6 +2380,7 @@ impl PlanFn {
                         Some(Kind::ListFloat) => Kind::Float,
                         Some(Kind::ListInt) => Kind::Int,
                         Some(Kind::ListStruct(sid)) => Kind::Struct(sid),
+                        Some(Kind::ListStr) => Kind::Str,
                         // A callee's list return resolves a fixpoint
                         // iteration late: defer, don't refuse.
                         None => continue,
@@ -2425,6 +2502,18 @@ impl PlanFn {
                     if elements.iter().any(|e| self.writes[e.0 as usize] == 0) {
                         continue;
                     }
+                    if elements.iter().all(|e| self.writes[e.0 as usize] == K_STR) {
+                        for e in elements {
+                            narrow!(e.0, K_STR);
+                        }
+                        if self.exotic[dst.0 as usize].is_none() {
+                            self.exotic[dst.0 as usize] = Some(Kind::ListStr);
+                            changed = true;
+                        } else if self.exotic[dst.0 as usize] != Some(Kind::ListStr) {
+                            return None;
+                        }
+                        continue;
+                    }
                     let all_structs = elements
                         .iter()
                         .all(|e| self.writes[e.0 as usize] == K_STRUCT);
@@ -2453,9 +2542,9 @@ impl PlanFn {
                     } else {
                         if elements
                             .iter()
-                            .any(|e| self.writes[e.0 as usize] == K_STRUCT)
+                            .any(|e| matches!(self.writes[e.0 as usize], K_STRUCT | K_STR))
                         {
-                            return None; // struct/scalar mix can never type
+                            return None; // struct/string/scalar mix can never type
                         }
                         let mut elem: Option<Kind> = None;
                         for e in elements {
@@ -2565,7 +2654,7 @@ impl PlanFn {
                     narrow!(src.0, K_LIST);
                     if !matches!(
                         self.exotic[src.0 as usize],
-                        Some(Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_))
+                        Some(Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) | Kind::ListStr)
                     ) {
                         return None; // ranges etc. stay on bytecode
                     }
@@ -2578,6 +2667,7 @@ impl PlanFn {
                         Some(Kind::ListFloat) => Kind::Float,
                         Some(Kind::ListInt) => Kind::Int,
                         Some(Kind::ListStruct(sid)) => Kind::Struct(sid),
+                        Some(Kind::ListStr) => Kind::Str,
                         _ => return None,
                     };
                     grow!(self.writes[dst.0 as usize], kind_mask(elem));
@@ -2753,7 +2843,8 @@ impl PlanFn {
                         self.return_regs.push(reg.0);
                         grow!(self.ret_mask, K_RESULT);
                     } else if let Some(
-                        lk @ (Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_)),
+                        lk
+                        @ (Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr),
                     ) = self.exotic[reg.0 as usize]
                     {
                         narrow!(reg.0, K_LIST);
@@ -2979,6 +3070,7 @@ struct Helpers {
     make_result: cranelift_module::FuncId,
     make_list: cranelift_module::FuncId,
     make_list_structs: cranelift_module::FuncId,
+    make_list_strs: cranelift_module::FuncId,
     list_concat: cranelift_module::FuncId,
 }
 
@@ -3038,6 +3130,7 @@ fn translate_body(
         make_result: make_result_helper,
         make_list: make_list_helper,
         make_list_structs: make_list_structs_helper,
+        make_list_strs: make_list_strs_helper,
         list_concat: list_concat_helper,
     } = helpers;
     let n = bytecode.instructions.len();
@@ -3221,7 +3314,10 @@ fn translate_body(
             | Instruction::Mod { dst, lhs, rhs } => {
                 let lk = r#gen.kind(lhs.0)?;
                 let rk = r#gen.kind(rhs.0)?;
-                if matches!(lk, Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_)) {
+                if matches!(
+                    lk,
+                    Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr
+                ) {
                     if !matches!(inst, Instruction::Add { .. }) || rk != lk {
                         return None;
                     }
@@ -3495,6 +3591,36 @@ fn translate_body(
                 let elem = match r#gen.kind(dst.0) {
                     Some(Kind::ListInt) => Kind::Int,
                     Some(Kind::ListFloat) => Kind::Float,
+                    Some(Kind::ListStr) => {
+                        let n = elements.len();
+                        let slot = builder.create_sized_stack_slot(
+                            cranelift_codegen::ir::StackSlotData::new(
+                                cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                                (n.max(1) * 8) as u32,
+                                3,
+                            ),
+                        );
+                        for (i, e) in elements.iter().enumerate() {
+                            if r#gen.kind(e.0)? != Kind::Str {
+                                return None;
+                            }
+                            let v = builder.use_var(Variable::from_u32(e.0));
+                            builder.ins().stack_store(ptr_ty, v, slot, (i * 8) as i32);
+                        }
+                        let ctx = builder.use_var(ctx_var);
+                        let elems_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                        let n_v = builder.ins().iconst(types::I64, n as i64);
+                        let helper_ref =
+                            module.declare_func_in_func(make_list_strs_helper, builder.func);
+                        let call = builder.ins().call(helper_ref, &[ctx, elems_ptr, n_v]);
+                        let ptr = builder.inst_results(call)[0];
+                        let null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
+                        let ok_block = builder.create_block();
+                        builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
+                        builder.switch_to_block(ok_block);
+                        r#gen.write(builder, dst.0, ptr);
+                        continue;
+                    }
                     Some(Kind::ListStruct(sid)) => {
                         // Element pointers are resolved to owned Arcs by
                         // the helper; an unknown pointer deopts.
@@ -3657,6 +3783,7 @@ fn translate_body(
                     Kind::ListFloat => (FIELD_FLOAT, 0, types::F64),
                     Kind::ListInt => (FIELD_INT, 0, types::I64),
                     Kind::ListStruct(sid) => (EXPECT_STRUCT, sid as u64, types::I64),
+                    Kind::ListStr => (FIELD_STR, 0, types::I64),
                     _ => return None,
                 };
                 let list_ptr = builder.use_var(Variable::from_u32(src.0));
@@ -3686,6 +3813,7 @@ fn translate_body(
                     Kind::ListFloat => (FIELD_FLOAT | 0x100, 0, types::F64),
                     Kind::ListInt => (FIELD_INT | 0x100, 0, types::I64),
                     Kind::ListStruct(sid) => (EXPECT_STRUCT | 0x100, sid as u64, types::I64),
+                    Kind::ListStr => (FIELD_STR | 0x100, 0, types::I64),
                     _ => return None,
                 };
                 let list_ptr = builder.use_var(Variable::from_u32(object.0));
@@ -3853,10 +3981,10 @@ fn translate_body(
                 }
                 if matches!(
                     r#gen.kind(reg.0),
-                    Some(Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_))
+                    Some(Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr)
                 ) && matches!(
                     inference.ret_kind,
-                    Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_)
+                    Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr
                 ) {
                     let ptr = builder.use_var(Variable::from_u32(reg.0));
                     let ok = builder.ins().iconst(types::I64, STATUS_OK);

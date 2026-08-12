@@ -1251,3 +1251,70 @@ show(use_it(3.0))
 "#,
     );
 }
+
+// ── string-element lists ───────────────────────────────────────────────
+//
+// ListStr, the fourth list kind. Element reads hand out borrowed
+// pointers like struct elements; construction resolves scratch/arg
+// pointers to owned Arcs and content-clones anything else (baked
+// constants, list elements) — strings are immutable values with content
+// equality, so identity is unobservable.
+
+#[test]
+fn string_lists_construct_and_index() {
+    assert_jit_transparent(
+        r#"
+fn tags(extra) = ["alpha", "beta", extra]
+fn pick(extra, i) = tags(extra)[i]
+pick("gamma", 0) + pick("gamma", 2)
+"#,
+    );
+}
+
+#[test]
+fn string_list_params_read_and_compare() {
+    assert_jit_transparent(
+        r#"
+fn nth_is(xs, i, want) = xs[i] == want
+fn label(xs, i) = if nth_is(xs, i, "hot") => 1 else => 0
+label(["cold", "hot"], 1) + label(["cold", "hot"], 0)
+"#,
+    );
+}
+
+#[test]
+fn string_lists_concat_and_return() {
+    assert_jit_transparent(
+        r#"
+fn greetings(name) = ["hi " + name] + ["bye " + name]
+let gs = greetings("ada")
+gs[0] + " / " + gs[1]
+"#,
+    );
+}
+
+#[test]
+fn string_lists_iterate_across_function_boundaries() {
+    assert_jit_transparent(
+        r#"
+fn words() = ["a", "bb", "ccc"]
+fn joined() = {
+    let mut acc = ""
+    for w in words() { acc = acc + w }
+    acc
+}
+joined()
+"#,
+    );
+}
+
+#[test]
+fn string_and_scalar_mixes_stay_on_bytecode_and_agree() {
+    assert_jit_transparent(
+        r#"
+fn odd(n) = ["x", n]
+fn read(n) = show(odd(n)[1])
+read(5)
+"#,
+    );
+}
