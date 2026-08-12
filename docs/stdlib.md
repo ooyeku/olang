@@ -585,8 +585,13 @@ rather than bugs. (Examples are `no-run`: they touch the disk.)
 | Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` |
 | Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
 | Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
+| Paths | `join(parts)` `dirname` `basename` `ext` `abs_path` — pure string surgery (except `abs_path`, which resolves against the current directory and normalizes `.`/`..` without requiring the file to exist) |
 
-`fs.walk(dir)` lists every file below a directory (recursive, sorted);
+`fs.join(["logs", name + ".txt"])` joins segments with the platform
+separator (an absolute segment restarts the path, standard join
+semantics); `fs.dirname`/`fs.basename`/`fs.ext` decompose without
+touching the disk. `fs.walk(dir)` lists every file below a directory
+(recursive, sorted);
 `fs.glob(pattern)` filters by a pattern where `*` matches within a path
 segment, `?` one character, and `**` any number of segments.
 
@@ -610,7 +615,7 @@ else.
 | Group | Functions |
 |---|---|
 | Process | `args` `exit(code)` `pid` `exe_path` `exec(program, args)` |
-| Input | `read_line()` — one line from stdin as `Ok(line)`, `Err("eof")` at end; the primitive behind prompts, REPLs, and shells (see `examples/oshell/`) |
+| Input | `read_line()` — one line from stdin as `Ok(line)`, `Err("eof")` at end; `stdin()` — everything to end-of-file as one string; `stdin_lines()` — everything as a list of lines, endings stripped. The stdin pair is what makes olang pipe-friendly: `cat access.log \| olang analyze.ol` |
 | Environment | `get_env` `set_env` `remove_env` `has_env` `list_env` |
 | Directories | `cwd` `chdir` `home_dir` `temp_dir` |
 | System | `hostname` `username` `os_type` `arch` `family` `path_separator` |

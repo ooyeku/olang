@@ -70,6 +70,17 @@ pub fn create_fs_module() -> Value {
         create_builtin_function("list_dir", 1),
     );
     module.insert("walk".to_string(), create_builtin_function("walk", 1));
+    module.insert("join".to_string(), create_builtin_function("join", 1));
+    module.insert("dirname".to_string(), create_builtin_function("dirname", 1));
+    module.insert(
+        "basename".to_string(),
+        create_builtin_function("basename", 1),
+    );
+    module.insert("ext".to_string(), create_builtin_function("ext", 1));
+    module.insert(
+        "abs_path".to_string(),
+        create_builtin_function("abs_path", 1),
+    );
     module.insert("glob".to_string(), create_builtin_function("glob", 1));
     module.insert(
         "create_dir".to_string(),
@@ -133,6 +144,11 @@ pub fn call_fs_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "write_file" => write_file(args),
         "append_file" => append_file(args),
         "exists" => exists(args),
+        "join" => path_join(args),
+        "dirname" => path_dirname(args),
+        "basename" => path_basename(args),
+        "ext" => path_ext(args),
+        "abs_path" => path_abs(args),
         "is_file" => is_file(args),
         "is_dir" => is_dir(args),
         "list_dir" => list_dir(args),
@@ -265,6 +281,127 @@ fn append_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 /// Check if a file or directory exists
 /// Usage: fs.exists("/path/to/file") -> Result<Bool, Error>
+/// Extract the single string argument shared by the path helpers.
+fn one_path_arg<'a>(name: &str, args: &'a [Value]) -> Result<&'a str, Value> {
+    if args.len() != 1 {
+        return Err(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "{} expects 1 argument, got {}",
+            name,
+            args.len()
+        ))))));
+    }
+    match &args[0] {
+        Value::String(s) => Ok(s.as_ref()),
+        _ => Err(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "{}: path must be a string",
+            name
+        )))))),
+    }
+}
+
+/// `fs.join(parts)` — join a list of path segments with the platform
+/// separator, normalizing nothing else. Absolute segments restart the
+/// path, matching every standard library's join semantics.
+fn path_join(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "join expects 1 argument (a list of parts), got {}",
+            args.len()
+        ))))));
+    }
+    let parts = match &args[0] {
+        Value::List(items) => items,
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "join: argument must be a list of strings".to_string(),
+            )))));
+        }
+    };
+    let mut path = std::path::PathBuf::new();
+    for part in parts.iter() {
+        match part {
+            Value::String(s) => path.push(s.as_ref()),
+            _ => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    "join: every part must be a string".to_string(),
+                )))));
+            }
+        }
+    }
+    Ok(Value::String(Arc::new(path.to_string_lossy().into_owned())))
+}
+
+/// `fs.dirname(path)` — the parent directory ("" when there is none).
+fn path_dirname(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let path = match one_path_arg("dirname", &args) {
+        Ok(p) => p,
+        Err(e) => return Ok(e),
+    };
+    let parent = std::path::Path::new(path)
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(Value::String(Arc::new(parent)))
+}
+
+/// `fs.basename(path)` — the final component ("" for paths like "/").
+fn path_basename(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let path = match one_path_arg("basename", &args) {
+        Ok(p) => p,
+        Err(e) => return Ok(e),
+    };
+    let name = std::path::Path::new(path)
+        .file_name()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(Value::String(Arc::new(name)))
+}
+
+/// `fs.ext(path)` — the extension without its dot ("" when none).
+fn path_ext(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let path = match one_path_arg("ext", &args) {
+        Ok(p) => p,
+        Err(e) => return Ok(e),
+    };
+    let ext = std::path::Path::new(path)
+        .extension()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(Value::String(Arc::new(ext)))
+}
+
+/// `fs.abs_path(path)` — the path made absolute against the current
+/// directory, `.` and `..` resolved lexically (the file need not exist).
+fn path_abs(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let path = match one_path_arg("abs_path", &args) {
+        Ok(p) => p,
+        Err(e) => return Ok(e),
+    };
+    match std::path::absolute(path) {
+        Ok(p) => {
+            // std::path::absolute leaves `..` components in place; resolve
+            // them lexically (abspath semantics — the file need not exist).
+            let mut out = std::path::PathBuf::new();
+            for comp in p.components() {
+                match comp {
+                    std::path::Component::ParentDir => {
+                        out.pop();
+                    }
+                    std::path::Component::CurDir => {}
+                    other => out.push(other.as_os_str()),
+                }
+            }
+            Ok(Value::Ok(Box::new(Value::String(Arc::new(
+                out.to_string_lossy().into_owned(),
+            )))))
+        }
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "abs_path {}: {}",
+            path, e
+        )))))),
+    }
+}
+
 fn exists(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

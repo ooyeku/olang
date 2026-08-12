@@ -26,6 +26,11 @@ pub fn create_os_module() -> Value {
     // Environment variables
     module.insert("get_env".to_string(), create_builtin_function("get_env", 1));
     module.insert("set_env".to_string(), create_builtin_function("set_env", 2));
+    module.insert("stdin".to_string(), create_builtin_function("stdin", 0));
+    module.insert(
+        "stdin_lines".to_string(),
+        create_builtin_function("stdin_lines", 0),
+    );
     module.insert(
         "remove_env".to_string(),
         create_builtin_function("remove_env", 1),
@@ -104,6 +109,8 @@ pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
     match name {
         "get_env" => os_get_env(args),
         "set_env" => os_set_env(args),
+        "stdin" => os_stdin(args),
+        "stdin_lines" => os_stdin_lines(args),
         "remove_env" => os_remove_env(args),
         "list_env" => os_list_env(args),
         "has_env" => os_has_env(args),
@@ -605,6 +612,50 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// programs — REPLs, shells, prompts — and for reading piped input line
 /// by line.
 /// Usage: os.read_line() -> Result<String, Error>
+/// `os.stdin()` — read all of standard input to end-of-file as one
+/// string. The pipe-friendly primitive: `cat log | olang analyze.ol`.
+fn os_stdin(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "stdin expects 0 arguments, got {}",
+            args.len()
+        ))))));
+    }
+    let mut buf = String::new();
+    match std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut buf) {
+        Ok(_) => Ok(Value::Ok(Box::new(Value::String(Arc::new(buf))))),
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "stdin: {}",
+            e
+        )))))),
+    }
+}
+
+/// `os.stdin_lines()` — all of standard input as a list of lines, line
+/// endings stripped (both \n and \r\n).
+fn os_stdin_lines(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "stdin_lines expects 0 arguments, got {}",
+            args.len()
+        ))))));
+    }
+    let mut buf = String::new();
+    match std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut buf) {
+        Ok(_) => {
+            let lines: Vec<Value> = buf
+                .lines()
+                .map(|l| Value::String(Arc::new(l.to_string())))
+                .collect();
+            Ok(Value::Ok(Box::new(Value::List(lines.into()))))
+        }
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "stdin_lines: {}",
+            e
+        )))))),
+    }
+}
+
 fn os_read_line(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

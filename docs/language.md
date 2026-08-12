@@ -1469,7 +1469,11 @@ struct enum test trait impl
 `mut` is a *contextual* keyword: special only right after `let`. `Ok`,
 `Err`, `Promise`, and `spawn` are ordinary names with built-in meaning.
 
-Statement separators are newlines or `;`. Comments are `//` to end of line.
+Statement separators are newlines or `;`. Comments are `//` to end of
+line. A leading `#!` line (`#!/usr/bin/env olang`) is host metadata,
+not syntax: mask-skipped by the parser with line numbers preserved, so
+`chmod +x script.ol` just works and errors still point at the right
+line.
 
 The full grammar is [`grammar.pest`](../grammar.pest) at the repository
 root — pest PEG syntax, and the single source of truth the parser is

@@ -276,6 +276,19 @@ impl Parser {
         // editor but fails the grammar at 1:1 with a baffling caret at
         // nothing. Strip it before parsing.
         let input = input.strip_prefix('\u{feff}').unwrap_or(input);
+        // A shebang line (#!/usr/bin/env olang) makes a script directly
+        // executable; it is host metadata, not syntax. Mask it with the
+        // same number of space BYTES rather than removing it, so every
+        // span, line number, and byte offset downstream still matches
+        // the file on disk exactly.
+        let masked;
+        let input = if input.starts_with("#!") {
+            let line_end = input.find('\n').unwrap_or(input.len());
+            masked = format!("{}{}", " ".repeat(line_end), &input[line_end..]);
+            masked.as_str()
+        } else {
+            input
+        };
         let parsed = <OlangParser as PestParser<Rule>>::parse(Rule::program, input)
             .map_err(|e| humanize_pest_error(e, input))?;
 

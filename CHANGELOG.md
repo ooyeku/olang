@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Scripts are first-class: shebang, stdin, and path helpers.** A
+  leading `#!/usr/bin/env olang` line now parses (masked, not
+  stripped — every error line number and span still matches the file
+  on disk), so `chmod +x script.ol` works. `os.stdin()` reads all of
+  standard input and `os.stdin_lines()` yields it as lines with
+  endings stripped — the pipe primitives (`cat log | olang
+  analyze.ol`). And `fs` gained path surgery: `join(parts)`,
+  `dirname`, `basename`, `ext`, and `abs_path` (absolute against the
+  current directory with `.`/`..` normalized lexically — the file
+  need not exist). Environment access needed nothing: `os.get_env` /
+  `set_env` / `has_env` / `list_env` and `os.home_dir` already
+  existed and are now regression-covered alongside the new surface.
+
 ### Fixed
 
 - **The tracker example no longer defaults to a port macOS owns.**
