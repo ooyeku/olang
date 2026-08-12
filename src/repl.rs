@@ -1049,7 +1049,7 @@ impl Repl {
                                 // For now, just evaluate and show the type of the result
                                 match self.eval_line(&expr) {
                                     Ok(value) => {
-                                        println!("{} : {}", expr, Self::get_type_name(&value));
+                                        println!("{} : {}", expr, Self::deep_type_of(&value));
                                     }
                                     Err(e) => {
                                         println!("Type check failed: {}", e);
@@ -1807,6 +1807,55 @@ impl Repl {
         }
 
         println!();
+    }
+
+    /// A deep, value-derived type description for `:type`: element types
+    /// where the elements agree (`List<Int>`), honest fallbacks where
+    /// they don't (`List`), Result sides, tuple shapes, and function
+    /// signatures from their annotations.
+    fn deep_type_of(v: &Value) -> String {
+        fn unify<I: Iterator<Item = String>>(mut it: I) -> Option<String> {
+            let first = it.next()?;
+            for t in it {
+                if t != first {
+                    return None;
+                }
+            }
+            Some(first)
+        }
+        match v {
+            Value::List(items) => match unify(items.iter().map(Self::deep_type_of)) {
+                Some(e) => format!("List<{}>", e),
+                None => "List".to_string(),
+            },
+            Value::Map(m) => match unify(m.values().map(Self::deep_type_of)) {
+                Some(val) => format!("Map<String, {}>", val),
+                None => "Map".to_string(),
+            },
+            Value::Tuple(items) => format!(
+                "({})",
+                items
+                    .iter()
+                    .map(Self::deep_type_of)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Value::Ok(p) => format!("Result<{}, _>", Self::deep_type_of(p)),
+            Value::Err(p) => format!("Result<_, {}>", Self::deep_type_of(p)),
+            Value::Function(f) => format!(
+                "({}) -> ?",
+                f.parameters
+                    .iter()
+                    .map(|p| p
+                        .type_annotation
+                        .as_ref()
+                        .map(|a| a.display_source())
+                        .unwrap_or_else(|| "?".to_string()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            other => other.type_name(),
+        }
     }
 
     fn get_type_name(value: &Value) -> &'static str {

@@ -45,6 +45,7 @@ olang                      # REPL
 olang test                 # run `test` blocks under the current directory
 olang fmt --check .        # formatter (whitespace hygiene, AST-safe)
 olang check                # static checker: provable annotation violations
+olang --watch script.ol    # rerun on every save (the edit-run loop)
 ```
 
 ## What's in the language

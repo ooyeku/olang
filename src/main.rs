@@ -39,6 +39,11 @@ struct Cli {
     #[arg(long)]
     ovm_stats: bool,
 
+    /// Rerun the file whenever any .ol file in its directory changes
+    /// (place before the file: `olang --watch script.ol`)
+    #[arg(long)]
+    watch: bool,
+
     /// Enable parallel evaluation of independent expressions
     #[arg(long)]
     enable_parallel: bool,
@@ -189,6 +194,12 @@ fn run() -> i32 {
     }
 
     if let Some(file_path) = cli.file {
+        // Watch mode: run the script in a child process (so os.exit and
+        // crashes end the run, not the watcher) and rerun when any .ol
+        // file in the script's directory changes.
+        if cli.watch {
+            return watch_loop(&file_path, &cli.script_args);
+        }
         // Program's argv: the script path, then everything after it. Read via
         // os.args() inside the program.
         let mut argv = vec![file_path.to_string_lossy().to_string()];
@@ -216,6 +227,63 @@ fn run() -> i32 {
     }
 
     0
+}
+
+/// `olang --watch script.ol` -- the edit-run loop. Each run is a child
+/// process of this same binary (without --watch): a crash, a panic, or
+/// os.exit ends the run, never the watcher. Changes are detected by
+/// polling the newest mtime of every .ol file at or below the script's
+/// directory -- no dependency, and a save mid-run queues an immediate
+/// rerun. Ctrl+C stops watcher and child together (same process group).
+fn watch_loop(script: &std::path::Path, script_args: &[String]) -> i32 {
+    use std::time::{Duration, SystemTime};
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("--watch: cannot find own executable: {}", e);
+            return 1;
+        }
+    };
+    let dir = script
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .to_path_buf();
+    let latest_mtime = || -> SystemTime {
+        let mut newest = SystemTime::UNIX_EPOCH;
+        for f in olang::tools::discover_ol_files(&dir) {
+            if let Ok(meta) = std::fs::metadata(&f)
+                && let Ok(m) = meta.modified()
+                && m > newest
+            {
+                newest = m;
+            }
+        }
+        newest
+    };
+    loop {
+        let baseline = latest_mtime();
+        eprintln!("-- watch: running {} --", script.display());
+        let status = std::process::Command::new(&exe)
+            .arg(script)
+            .args(script_args)
+            .status();
+        match status {
+            Ok(s) => eprintln!(
+                "-- watch: exited {} -- waiting for changes (Ctrl+C quits) --",
+                s.code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "by signal".to_string())
+            ),
+            Err(e) => {
+                eprintln!("--watch: failed to run {}: {}", script.display(), e);
+                return 1;
+            }
+        }
+        while latest_mtime() <= baseline {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
 }
 
 /// Enhanced error display for file execution

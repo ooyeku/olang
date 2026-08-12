@@ -126,6 +126,19 @@ The same checker runs in the language server, so editors surface these
 as error squiggles while you type. Exit is non-zero when a violation or
 parse error is found, so `olang check` slots directly into CI.
 
+## `olang --watch`
+
+The edit-run loop as a flag:
+
+```bash
+olang --watch script.ol       # rerun whenever any .ol file nearby changes
+```
+
+Each run is a child process, so a crash or an `os.exit` ends the run,
+never the watcher. Changes are detected by polling every `.ol` file at
+or below the script's directory (module edits trigger reruns too); a
+save landing mid-run queues an immediate rerun. Ctrl+C stops both.
+
 ## The examples harness
 
 `examples/run_all.ol` — a test harness written *in olang* — runs every

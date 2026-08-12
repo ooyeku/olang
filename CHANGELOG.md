@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`olang --watch script.ol` — the edit-run loop as a flag.** Reruns
+  the script whenever any `.ol` file at or below its directory changes
+  (module edits count), each run in a child process so a crash or
+  `os.exit` ends the run and never the watcher; a save landing mid-run
+  queues an immediate rerun. Polling, no new dependency.
+- **REPL `:type` reports deep types.** Previously the shallow name;
+  now the value's structure: `:type [1, 2, 3]` answers `List<Int>`,
+  `Ok([1.5])` answers `Result<List<Float>, _>`, and a lambda shows its
+  annotated signature (`(Int) -> ?`). Mixed elements fall back to the
+  honest base (`List`), never a guess.
+
 - **`toml` module — parse and emit the config format olang itself
   uses.** `toml.parse(text)` yields the same value shapes JSON objects
   do (tables → Maps, arrays → Lists, datetimes → strings; both modules

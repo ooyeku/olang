@@ -11,8 +11,9 @@ pub mod test_runner;
 use std::path::{Path, PathBuf};
 
 /// Every `.ol` file at or below `path`, sorted, skipping VCS/build dirs and
-/// hidden directories. A file path returns just itself.
-pub(crate) fn discover_ol_files(path: &Path) -> Vec<PathBuf> {
+/// hidden directories. A file path returns just itself. Public: the CLI's
+/// watch mode polls it from the binary crate.
+pub fn discover_ol_files(path: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     if path.is_file() {
         found.push(path.to_path_buf());
