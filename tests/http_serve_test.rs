@@ -46,6 +46,15 @@ fn spawn_server(source: &str) -> (KillOnDrop, u16) {
             break rest.parse::<u16>().expect("port number");
         }
     };
+    // Keep draining stdout for the server's lifetime. Dropping the pipe
+    // here is what a careless parent does — and it used to kill servers
+    // whose second boot line raced the drop (EPIPE panicked println!).
+    // The server is hardened now, but a drained pipe also can't stall a
+    // chatty child on a full buffer.
+    std::thread::spawn(move || {
+        let mut sink = std::io::sink();
+        let _ = std::io::copy(&mut reader, &mut sink);
+    });
     (KillOnDrop(child), port)
 }
 

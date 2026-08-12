@@ -13,15 +13,37 @@ thread_local! {
     static CAPTURE: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
+/// Native-path write that never panics on a vanished reader. `print!`
+/// and `println!` abort the whole process with "failed printing to
+/// stdout" when the pipe closes — which is exactly what happens in
+/// `olang gen.ol | head -1` the moment head exits. Emulate the Unix
+/// SIGPIPE default instead: terminate quietly with the conventional
+/// 141 (128+SIGPIPE), like every well-behaved filter. Other write
+/// errors report once to stderr and exit 1.
+#[cfg(feature = "native")]
+fn write_stdout(bytes: &[u8], flush: bool) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    let result = out
+        .write_all(bytes)
+        .and_then(|_| if flush { out.flush() } else { Ok(()) });
+    if let Err(e) = result {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(141);
+        }
+        eprintln!("olang: cannot write to stdout: {}", e);
+        std::process::exit(1);
+    }
+}
+
 /// Write `text` with no trailing newline.
 pub fn emit(text: &str) {
     #[cfg(feature = "native")]
     {
-        print!("{}", text);
         // Flush so partial lines appear immediately — a shell prompt or
         // progress indicator printed with `print` must not sit in the
         // buffer waiting for a newline.
-        let _ = std::io::Write::flush(&mut std::io::stdout());
+        write_stdout(text.as_bytes(), true);
     }
     #[cfg(not(feature = "native"))]
     CAPTURE.with(|c| c.borrow_mut().push_str(text));
@@ -30,7 +52,12 @@ pub fn emit(text: &str) {
 /// Write `text` followed by a newline.
 pub fn emit_line(text: &str) {
     #[cfg(feature = "native")]
-    println!("{}", text);
+    {
+        let mut line = String::with_capacity(text.len() + 1);
+        line.push_str(text);
+        line.push('\n');
+        write_stdout(line.as_bytes(), false);
+    }
     #[cfg(not(feature = "native"))]
     CAPTURE.with(|c| {
         let mut buf = c.borrow_mut();

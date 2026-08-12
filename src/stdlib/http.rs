@@ -927,12 +927,22 @@ pub fn serve_blocking(
     };
     // The OS assigns the port when 0 was requested; report the real one.
     let local = listener.local_addr().map(|a| a.port()).unwrap_or(port);
-    println!("listening on http://127.0.0.1:{}", local);
-    println!(
-        "http workers={} queue_capacity={}",
-        config.workers, config.queue_capacity
-    );
-    let _ = std::io::stdout().flush();
+    // These lines are informational; the socket is the server's real
+    // interface. A closed stdout (a harness that read the port line and
+    // moved on, a dead pipe consumer) must never kill the server — and
+    // println! would panic the main thread on exactly that. This race is
+    // real: under load a parent reading only the first line closed the
+    // pipe before the second write, and the whole server died at boot.
+    {
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "listening on http://127.0.0.1:{}", local);
+        let _ = writeln!(
+            out,
+            "http workers={} queue_capacity={}",
+            config.workers, config.queue_capacity
+        );
+        let _ = out.flush();
+    }
 
     let (sender, receiver) = std::sync::mpsc::sync_channel(config.queue_capacity);
     let receiver = Arc::new(std::sync::Mutex::new(receiver));

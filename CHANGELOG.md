@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A vanished stdout reader no longer kills olang programs — or the
+  HTTP server.** `print`/`println` used Rust's `println!`, which
+  aborts the whole process with "failed printing to stdout" the moment
+  a pipe consumer exits — so `olang gen.ol | head -1` panicked instead
+  of ending, and (the root cause of the long-standing http_serve_test
+  flake) a server whose parent read the port line and closed the pipe
+  before the second boot line died at startup under load, resetting
+  every in-flight connection. Program output now emulates the Unix
+  SIGPIPE default — terminate quietly with the conventional 141 — so
+  olang composes in pipes like any well-behaved filter, and the
+  server's informational boot lines ignore a closed stdout entirely
+  (the socket is its real interface). Verified with 24 consecutive
+  suite executions under the load pattern that previously failed
+  within two.
+
 ### Added
 
 - **`olang check` warns on assignment to undeclared names.** `x = 1`

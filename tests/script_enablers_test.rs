@@ -113,6 +113,46 @@ fn stdin_reads_all_and_lines_strips_endings() {
     assert_eq!(out.trim(), "3 alpha gamma", "lines split, endings stripped");
 }
 
+// ── the pipe convention ────────────────────────────────────────────────
+
+#[test]
+fn closed_stdout_ends_the_program_quietly() {
+    // `olang gen.ol | head -1`: when the reader exits, olang must behave
+    // like every Unix filter — terminate quietly with 141 (128+SIGPIPE),
+    // not panic with "failed printing to stdout".
+    let dir = std::env::temp_dir().join(format!("olang-pipe-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("gen.ol");
+    std::fs::write(
+        &file,
+        "let mut i = 0\nwhile i < 1000000 { println(to_string(i))\n i = i + 1 }\n",
+    )
+    .unwrap();
+    let mut child = Command::new(olang_bin())
+        .arg(&file)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn olang");
+    // Read one line, then drop the pipe — the head -1 shape.
+    {
+        use std::io::BufRead as _;
+        let stdout = child.stdout.take().unwrap();
+        let mut reader = std::io::BufReader::new(stdout);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "0");
+    } // reader drops here; the pipe closes
+    let out = child.wait_with_output().expect("wait");
+    assert_eq!(out.status.code(), Some(141), "SIGPIPE convention");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !err.contains("panicked") && !err.contains("failed printing"),
+        "quiet exit, no panic: {}",
+        err
+    );
+}
+
 // ── path helpers ───────────────────────────────────────────────────────
 
 #[test]
