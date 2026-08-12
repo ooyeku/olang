@@ -1128,3 +1128,126 @@ total()
 "#,
     );
 }
+
+// ── struct-element lists ───────────────────────────────────────────────
+//
+// MakeList with uniform struct elements compiles as ListStruct: each
+// borrowed element pointer is resolved back to an owned Arc (a scratch
+// allocation or an entry argument) inside the helper, so the list owns
+// its elements exactly like the VM's. Mixed shapes refuse to bytecode.
+
+#[test]
+fn struct_element_lists_construct_and_read_back() {
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+fn segment(a, b) = [P { x: a, y: 0.0 }, P { x: b, y: 1.0 }]
+fn spread(a, b) = {
+    let pts = segment(a, b)
+    pts[1].x - pts[0].x + pts[1].y
+}
+show(spread(2.0, 7.0))
+"#,
+    );
+}
+
+#[test]
+fn struct_params_collect_into_lists() {
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+fn wrap(a, b) = [a, b]
+fn head_x(a, b) = wrap(a, b)[0].x
+show(head_x(P { x: 3.5, y: 0.0 }, P { x: 9.0, y: 1.0 }))
+"#,
+    );
+}
+
+#[test]
+fn struct_list_concat_agrees() {
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+fn join(a, b, c) = [P { x: a, y: 0.0 }] + [P { x: b, y: 0.0 }, P { x: c, y: 0.0 }]
+fn total(a, b, c) = {
+    let pts = join(a, b, c)
+    pts[0].x + pts[1].x + pts[2].x
+}
+show(total(1.0, 2.0, 3.0))
+"#,
+    );
+}
+
+#[test]
+fn struct_lists_iterate_across_function_boundaries() {
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+fn corners(w, h) = [P { x: 0.0, y: 0.0 }, P { x: w, y: 0.0 }, P { x: w, y: h }]
+fn perimeter_x(w, h) = {
+    let mut acc = 0.0
+    for p in corners(w, h) { acc = acc + p.x }
+    acc
+}
+show(perimeter_x(4.0, 3.0))
+"#,
+    );
+}
+
+#[test]
+fn mixed_shape_lists_stay_on_bytecode_and_agree() {
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+type Q = struct { v: Int }
+fn odd(a) = [P { x: a, y: 0.0 }, Q { v: 1 }]
+fn read(a) = odd(a)[1].v
+read(2.0)
+"#,
+    );
+}
+
+#[test]
+fn struct_and_scalar_mix_stays_on_bytecode_and_agrees() {
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+fn odd(a) = [P { x: a, y: 0.0 }, 5]
+fn read(a) = odd(a)[1]
+read(2.0)
+"#,
+    );
+}
+
+#[test]
+fn callee_built_lists_index_inside_native_callers() {
+    // The caller indexes and field-reads a list built by its callee —
+    // the element kind resolves a fixpoint iteration late, which must
+    // defer, not refuse.
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+fn segment(a, b) = [P { x: a, y: 0.0 }, P { x: b, y: 1.0 }]
+fn spread(a, b) = {
+    let pts = segment(a, b)
+    pts[1].x - pts[0].x + pts[1].y
+}
+show(spread(2.0, 7.0))
+"#,
+    );
+}
+
+#[test]
+fn callee_built_structs_field_read_inside_native_callers() {
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+fn make(a) = P { x: a, y: a * 2.0 }
+fn use_it(a) = {
+    let p = make(a)
+    p.x + p.y
+}
+show(use_it(3.0))
+"#,
+    );
+}

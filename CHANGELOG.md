@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   List` return annotations discharge statically. Eleven differential
   tests pin the seam.
 
+- **Struct-element lists compile, and native callers see through their
+  callees.** `[Point{..}, Point{..}]` literals specialize as struct
+  lists: the helper resolves each borrowed element pointer back to an
+  owned Arc, so the list owns its elements exactly like the VM's (mixed
+  shapes and struct/scalar mixes refuse to bytecode). Alongside it, a
+  latent inference gap is fixed: indexing or field-reading a value built
+  by a *callee* used to refuse the whole function because the callee's
+  return kind resolves one fixpoint iteration late — it now defers
+  instead, so constructor-then-consume pipelines (`let pts =
+  segment(a, b); pts[1].x`) compile end to end.
+
 ## [0.50.0] - 2026-08-12
 
 ### Added

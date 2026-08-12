@@ -744,6 +744,45 @@ unsafe extern "C" fn olang_jit_list_retain(ctx: *mut ScratchCtx, ptr: i64) -> i6
     }
 }
 
+/// Struct twin of olang_jit_make_list: each element arrives as a
+/// borrowed struct pointer, resolved back to an owned Arc — a scratch
+/// allocation (newest first, elements are usually just built) or an
+/// entry argument. An unknown pointer deopts, like the cap.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx; `elems` points at
+/// a stack buffer of `n` slots.
+unsafe extern "C" fn olang_jit_make_list_structs(
+    ctx: *mut ScratchCtx,
+    elems: *const i64,
+    n: i64,
+) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if ctx.list_allocs.len() >= 1_000_000 {
+            return 0;
+        }
+        let mut values = Vec::with_capacity(n as usize);
+        for i in 0..n as usize {
+            let ptr = *elems.add(i);
+            let arc = ctx
+                .allocs
+                .iter()
+                .rev()
+                .find(|a| Arc::as_ptr(a) as i64 == ptr)
+                .or_else(|| ctx.args.iter().find(|a| Arc::as_ptr(a) as i64 == ptr));
+            match arc {
+                Some(a) => values.push(OvmValue::new_struct(a.clone())),
+                None => return 0,
+            }
+        }
+        let list = Arc::new(values);
+        let ptr = Arc::as_ptr(&list) as i64;
+        ctx.list_allocs.push(list);
+        ptr
+    }
+}
+
 unsafe extern "C" fn olang_jit_field(
     obj: *const crate::ovm::value::StructObject,
     idx: u64,
@@ -812,6 +851,10 @@ impl JitCache {
                 olang_jit_result_retain as *const u8,
             );
             builder.symbol("olang_jit_make_list", olang_jit_make_list as *const u8);
+            builder.symbol(
+                "olang_jit_make_list_structs",
+                olang_jit_make_list_structs as *const u8,
+            );
             builder.symbol("olang_jit_list_concat", olang_jit_list_concat as *const u8);
             builder.symbol("olang_jit_list_retain", olang_jit_list_retain as *const u8);
             self.module = Some(JITModule::new(builder));
@@ -1450,6 +1493,16 @@ impl JitCache {
                 .declare_function("olang_jit_list_concat", Linkage::Import, &sig)
                 .ok()?
         };
+        let make_list_structs_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..3 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_make_list_structs", Linkage::Import, &sig)
+                .ok()?
+        };
         let list_retain_helper = {
             let mut sig = module.make_signature();
             sig.params.push(AbiParam::new(types::I64));
@@ -1532,6 +1585,7 @@ impl JitCache {
                         result_extract: result_extract_helper,
                         make_result: make_result_helper,
                         make_list: make_list_helper,
+                        make_list_structs: make_list_structs_helper,
                         list_concat: list_concat_helper,
                     },
                 )
@@ -2208,13 +2262,22 @@ impl PlanFn {
                     ..
                 } => {
                     narrow!(object.0, K_STRUCT);
-                    let Some(Kind::Struct(sid)) = self.exotic[object.0 as usize] else {
-                        if jit_debug() {
-                            eprintln!("[jit] GetField on non-struct r{}", object.0);
+                    // The object's kind (a callee's return, resolving a
+                    // fixpoint iteration late) or its shape spec (merged
+                    // between iterations) may lag: defer, don't refuse.
+                    let sid = match self.exotic[object.0 as usize] {
+                        Some(Kind::Struct(sid)) => sid,
+                        None => continue,
+                        Some(_) => {
+                            if jit_debug() {
+                                eprintln!("[jit] GetField on non-struct r{}", object.0);
+                            }
+                            return None;
                         }
-                        return None;
                     };
-                    let spec = shapes.get(&sid)?;
+                    let Some(spec) = shapes.get(&sid) else {
+                        continue;
+                    };
                     let name = match self
                         .bytecode
                         .constants
@@ -2241,6 +2304,9 @@ impl PlanFn {
                         Some(Kind::ListFloat) => Kind::Float,
                         Some(Kind::ListInt) => Kind::Int,
                         Some(Kind::ListStruct(sid)) => Kind::Struct(sid),
+                        // A callee's list return resolves a fixpoint
+                        // iteration late: defer, don't refuse.
+                        None => continue,
                         other => {
                             if jit_debug() {
                                 eprintln!(
@@ -2346,41 +2412,74 @@ impl PlanFn {
                     grow!(self.writes[dst.0 as usize], K_BOOL);
                 }
                 Instruction::MakeList { dst, elements } => {
-                    // Uniform scalar lists only (the kinds classify_list
+                    // Uniform element kinds only (the kinds classify_list
                     // recognizes); empty literals have no element kind.
                     if elements.is_empty() {
                         return None;
                     }
-                    let mut elem: Option<Kind> = None;
-                    let mut resolved = true;
-                    for e in elements {
-                        narrow!(e.0, K_NUM);
-                        match mask_singleton(self.writes[e.0 as usize]) {
-                            Some(k @ (Kind::Int | Kind::Float)) => match elem {
-                                None => elem = Some(k),
-                                Some(prev) if prev != k => return None,
-                                _ => {}
-                            },
-                            Some(_) => return None,
-                            None => {
-                                resolved = false;
-                                break;
+                    grow!(self.writes[dst.0 as usize], K_LIST);
+                    // Choose the scalar or struct path by the element
+                    // masks, and only once they've all resolved —
+                    // narrowing is irreversible, so a premature guess
+                    // would poison the fixpoint.
+                    if elements.iter().any(|e| self.writes[e.0 as usize] == 0) {
+                        continue;
+                    }
+                    let all_structs = elements
+                        .iter()
+                        .all(|e| self.writes[e.0 as usize] == K_STRUCT);
+                    let lk = if all_structs {
+                        let mut sid: Option<u32> = None;
+                        let mut resolved = true;
+                        for e in elements {
+                            narrow!(e.0, K_STRUCT);
+                            match self.exotic[e.0 as usize] {
+                                Some(Kind::Struct(this)) => match sid {
+                                    None => sid = Some(this),
+                                    Some(prev) if prev != this => return None,
+                                    _ => {}
+                                },
+                                Some(_) => return None,
+                                None => {
+                                    resolved = false;
+                                    break;
+                                }
                             }
                         }
-                    }
-                    grow!(self.writes[dst.0 as usize], K_LIST);
-                    if resolved {
-                        let lk = match elem {
+                        if !resolved {
+                            continue;
+                        }
+                        Kind::ListStruct(sid?)
+                    } else {
+                        if elements
+                            .iter()
+                            .any(|e| self.writes[e.0 as usize] == K_STRUCT)
+                        {
+                            return None; // struct/scalar mix can never type
+                        }
+                        let mut elem: Option<Kind> = None;
+                        for e in elements {
+                            narrow!(e.0, K_NUM);
+                            match mask_singleton(self.writes[e.0 as usize]) {
+                                Some(k @ (Kind::Int | Kind::Float)) => match elem {
+                                    None => elem = Some(k),
+                                    Some(prev) if prev != k => return None,
+                                    _ => {}
+                                },
+                                _ => return None,
+                            }
+                        }
+                        match elem {
                             Some(Kind::Int) => Kind::ListInt,
                             Some(Kind::Float) => Kind::ListFloat,
                             _ => return None,
-                        };
-                        if self.exotic[dst.0 as usize].is_none() {
-                            self.exotic[dst.0 as usize] = Some(lk);
-                            changed = true;
-                        } else if self.exotic[dst.0 as usize] != Some(lk) {
-                            return None;
                         }
+                    };
+                    if self.exotic[dst.0 as usize].is_none() {
+                        self.exotic[dst.0 as usize] = Some(lk);
+                        changed = true;
+                    } else if self.exotic[dst.0 as usize] != Some(lk) {
+                        return None;
                     }
                 }
                 Instruction::ExtractResult {
@@ -2879,6 +2978,7 @@ struct Helpers {
     result_extract: cranelift_module::FuncId,
     make_result: cranelift_module::FuncId,
     make_list: cranelift_module::FuncId,
+    make_list_structs: cranelift_module::FuncId,
     list_concat: cranelift_module::FuncId,
 }
 
@@ -2937,6 +3037,7 @@ fn translate_body(
         result_extract: result_extract_helper,
         make_result: make_result_helper,
         make_list: make_list_helper,
+        make_list_structs: make_list_structs_helper,
         list_concat: list_concat_helper,
     } = helpers;
     let n = bytecode.instructions.len();
@@ -3394,6 +3495,38 @@ fn translate_body(
                 let elem = match r#gen.kind(dst.0) {
                     Some(Kind::ListInt) => Kind::Int,
                     Some(Kind::ListFloat) => Kind::Float,
+                    Some(Kind::ListStruct(sid)) => {
+                        // Element pointers are resolved to owned Arcs by
+                        // the helper; an unknown pointer deopts.
+                        let n = elements.len();
+                        let slot = builder.create_sized_stack_slot(
+                            cranelift_codegen::ir::StackSlotData::new(
+                                cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                                (n.max(1) * 8) as u32,
+                                3,
+                            ),
+                        );
+                        for (i, e) in elements.iter().enumerate() {
+                            if r#gen.kind(e.0)? != Kind::Struct(sid) {
+                                return None;
+                            }
+                            let v = builder.use_var(Variable::from_u32(e.0));
+                            builder.ins().stack_store(ptr_ty, v, slot, (i * 8) as i32);
+                        }
+                        let ctx = builder.use_var(ctx_var);
+                        let elems_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                        let n_v = builder.ins().iconst(types::I64, n as i64);
+                        let helper_ref =
+                            module.declare_func_in_func(make_list_structs_helper, builder.func);
+                        let call = builder.ins().call(helper_ref, &[ctx, elems_ptr, n_v]);
+                        let ptr = builder.inst_results(call)[0];
+                        let null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
+                        let ok_block = builder.create_block();
+                        builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
+                        builder.switch_to_block(ok_block);
+                        r#gen.write(builder, dst.0, ptr);
+                        continue;
+                    }
                     _ => return None,
                 };
                 let n = elements.len();
