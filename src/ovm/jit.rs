@@ -75,6 +75,9 @@ pub struct ScratchCtx {
     str_allocs: Vec<Arc<String>>,
     str_args: Vec<Arc<String>>,
     retained_str: Option<Arc<String>>,
+    result_allocs: Vec<Arc<crate::ovm::value::ResultObject>>,
+    result_args: Vec<Arc<crate::ovm::value::ResultObject>>,
+    retained_result: Option<Arc<crate::ovm::value::ResultObject>>,
 }
 
 /// How the VM hands the JIT other functions' bytecode when planning a
@@ -82,8 +85,10 @@ pub struct ScratchCtx {
 pub type BytecodeLookup<'a> = dyn Fn(FunctionId) -> Option<Arc<CompiledBytecode>> + 'a;
 
 /// One callable's signature in the group-inference snapshot: parameter
-/// kinds, current return mask, and element kinds when it returns a tuple.
-type SigSnapshot = HashMap<usize, (Vec<Kind>, u8, Option<Vec<Kind>>, Option<u32>)>;
+/// kinds, current return mask, element kinds when it returns a tuple,
+/// its shape when it returns a struct, and its full Result kind when it
+/// returns a Result.
+type SigSnapshot = HashMap<usize, (Vec<Kind>, u16, Option<Vec<Kind>>, Option<u32>, Option<Kind>)>;
 
 /// A struct shape observed at the entry: the interned shape plus the
 /// field kinds of the argument instance the specialization keys on.
@@ -92,6 +97,25 @@ type SigSnapshot = HashMap<usize, (Vec<Kind>, u8, Option<Vec<Kind>>, Option<u32>
 pub struct ShapeSpec {
     pub shape: Arc<crate::ovm::value::StructShape>,
     pub field_kinds: Vec<Kind>,
+}
+
+/// Classify a Result argument by its present side's payload: scalars and
+/// strings specialize, anything else refuses. The absent side is Absent.
+pub fn classify_result(r: &crate::ovm::value::ResultObject) -> Option<Kind> {
+    fn payload_of(v: Option<&OvmValue>) -> Option<Payload> {
+        Some(match v.map(|v| &v.data) {
+            None => Payload::Absent,
+            Some(ValueData::Integer(_)) => Payload::Int,
+            Some(ValueData::Float(_)) => Payload::Float,
+            Some(ValueData::Boolean(_)) => Payload::Bool,
+            Some(ValueData::String(_)) => Payload::Str,
+            _ => return None,
+        })
+    }
+    Some(Kind::Result(
+        payload_of(r.ok.as_ref())?,
+        payload_of(r.err.as_ref())?,
+    ))
 }
 
 /// Classify a list argument by its elements: uniformly Float, Int, or
@@ -164,6 +188,18 @@ const MAX_PARAMS: usize = 16;
 /// Sanity bound on how many functions one group may pull in.
 const MAX_GROUP: usize = 32;
 
+/// What one side of an observed Result holds. `Absent` means the side
+/// was never seen at specialization time — reads of it are guarded and
+/// the guard can only deopt, so any downstream claim is vacuous.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Payload {
+    Absent,
+    Int,
+    Bool,
+    Float,
+    Str,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     Int,
@@ -183,6 +219,12 @@ pub enum Kind {
     /// String behind its Arc. Concat allocates through the scratch
     /// context under the same straight-line discipline as structs.
     Str,
+    /// A Result passed as a borrowed pointer to its ResultObject, with
+    /// the payload kind of each side as observed (ok, err). Sides merge
+    /// monotonically: Absent joins with anything, so `Ok(Int)` and
+    /// `Err(Str)` flowing into one register give Result(Int, Str).
+    /// Every payload read is guarded per side, so a mismatch deopts.
+    Result(Payload, Payload),
 }
 
 impl Kind {
@@ -259,6 +301,10 @@ const FIELD_INT: u64 = 0;
 const FIELD_FLOAT: u64 = 1;
 const FIELD_BOOL: u64 = 2;
 const FIELD_STR: u64 = 4;
+/// An expect code no value matches: extraction of a side never observed
+/// lowers to a guard that always deopts (and is dynamically unreachable,
+/// because the pattern test on that side is always false).
+const FIELD_NEVER: u64 = 0xFF;
 
 /// Host helper the native code calls for `obj.field`. `obj` is a borrowed
 /// StructObject pointer (valid for the duration of the synchronous native
@@ -473,6 +519,128 @@ unsafe extern "C" fn olang_jit_str_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64
     }
 }
 
+/// Host helper for PatternTestResult: does the borrowed Result have the
+/// asked-for side? Total (any Result answers), so no guard status.
+///
+/// # Safety
+/// Called only from JIT code with pointers extracted from live slots.
+unsafe extern "C" fn olang_jit_result_test(
+    res: *const crate::ovm::value::ResultObject,
+    want_ok: i64,
+) -> i64 {
+    unsafe {
+        let r = &*res;
+        (if want_ok != 0 {
+            r.ok.is_some()
+        } else {
+            r.err.is_some()
+        }) as i64
+    }
+}
+
+/// Host helper for ExtractResult: guarded payload read (FIELD_* expect
+/// codes, same as olang_jit_field). String payloads hand out a borrowed
+/// pointer — valid because the ResultObject is an entry argument or a
+/// scratch allocation, both alive for the whole synchronous call.
+///
+/// # Safety
+/// Called only from JIT code with pointers extracted from live slots.
+unsafe extern "C" fn olang_jit_result_extract(
+    res: *const crate::ovm::value::ResultObject,
+    want_ok: i64,
+    expect: u64,
+    out: *mut i64,
+) -> i64 {
+    unsafe {
+        let r = &*res;
+        let side = if want_ok != 0 { &r.ok } else { &r.err };
+        match side.as_ref().map(|v| &v.data) {
+            Some(ValueData::Integer(i)) if expect == FIELD_INT => {
+                *out = *i;
+                0
+            }
+            Some(ValueData::Float(f)) if expect == FIELD_FLOAT => {
+                *out = f.to_bits() as i64;
+                0
+            }
+            Some(ValueData::Boolean(b)) if expect == FIELD_BOOL => {
+                *out = *b as i64;
+                0
+            }
+            Some(ValueData::String(s)) if expect == FIELD_STR => {
+                *out = Arc::as_ptr(s) as i64;
+                0
+            }
+            _ => 1,
+        }
+    }
+}
+
+/// Host helper for MakeResult: build Ok/Err around a scalar payload
+/// (kind codes 0 int, 1 float, 2 bool — same as MakeStruct), push the
+/// Arc into the scratch context, hand back a borrowed pointer. Null
+/// return = cap reached, deopt.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_make_result(
+    ctx: *mut ScratchCtx,
+    ok: i64,
+    kind: i64,
+    bits: i64,
+) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if ctx.result_allocs.len() >= 1_000_000 {
+            return 0;
+        }
+        let inner = match kind {
+            0 => OvmValue::new_integer(bits),
+            2 => OvmValue::new_boolean(bits != 0),
+            _ => OvmValue::new_float(f64::from_bits(bits as u64)),
+        };
+        let (ok_side, err_side) = if ok != 0 {
+            (Some(inner), None)
+        } else {
+            (None, Some(inner))
+        };
+        let obj = Arc::new(crate::ovm::value::ResultObject {
+            ok: ok_side,
+            err: err_side,
+        });
+        let ptr = Arc::as_ptr(&obj) as i64;
+        ctx.result_allocs.push(obj);
+        ptr
+    }
+}
+
+/// Result twin of olang_jit_retain: resolve a returned borrowed pointer
+/// to an owned Arc at the entry boundary.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_result_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if let Some(last) = ctx.result_allocs.last()
+            && Arc::as_ptr(last) as i64 == ptr
+        {
+            ctx.retained_result = Some(last.clone());
+            return 0;
+        }
+        if let Some(r) = ctx
+            .result_allocs
+            .iter()
+            .chain(ctx.result_args.iter())
+            .find(|r| Arc::as_ptr(r) as i64 == ptr)
+        {
+            ctx.retained_result = Some(r.clone());
+            return 0;
+        }
+        1
+    }
+}
+
 unsafe extern "C" fn olang_jit_field(
     obj: *const crate::ovm::value::StructObject,
     idx: u64,
@@ -530,6 +698,16 @@ impl JitCache {
             builder.symbol("olang_jit_str_cmp", olang_jit_str_cmp as *const u8);
             builder.symbol("olang_jit_str_concat", olang_jit_str_concat as *const u8);
             builder.symbol("olang_jit_str_retain", olang_jit_str_retain as *const u8);
+            builder.symbol("olang_jit_result_test", olang_jit_result_test as *const u8);
+            builder.symbol(
+                "olang_jit_result_extract",
+                olang_jit_result_extract as *const u8,
+            );
+            builder.symbol("olang_jit_make_result", olang_jit_make_result as *const u8);
+            builder.symbol(
+                "olang_jit_result_retain",
+                olang_jit_result_retain as *const u8,
+            );
             self.module = Some(JITModule::new(builder));
         }
         self.module.as_mut()
@@ -612,6 +790,10 @@ impl JitCache {
                     bits[i] = Arc::as_ptr(s) as i64;
                     kinds[i] = Kind::Str;
                 }
+                ValueData::Result(r) => {
+                    kinds[i] = classify_result(r)?;
+                    bits[i] = Arc::as_ptr(r) as i64;
+                }
                 _ => return None,
             }
         }
@@ -635,12 +817,16 @@ impl JitCache {
         }
         let mut struct_args: Vec<Arc<crate::ovm::value::StructObject>> = Vec::new();
         let mut str_args: Vec<Arc<String>> = Vec::new();
+        let mut result_args: Vec<Arc<crate::ovm::value::ResultObject>> = Vec::new();
         for arg in args {
             if let ValueData::Struct(obj) = &arg.data {
                 struct_args.push(obj.clone());
             }
             if let ValueData::String(s) = &arg.data {
                 str_args.push(s.clone());
+            }
+            if let ValueData::Result(r) = &arg.data {
+                result_args.push(r.clone());
             }
         }
         self.try_call_raw_with_shapes(
@@ -653,6 +839,7 @@ impl JitCache {
             &shapes,
             &struct_args,
             &str_args,
+            &result_args,
         )
     }
 
@@ -685,6 +872,7 @@ impl JitCache {
             &shapes,
             &[],
             &[],
+            &[],
         )
     }
 
@@ -700,6 +888,7 @@ impl JitCache {
         shapes: &HashMap<u32, ShapeSpec>,
         args_for_ctx: &[Arc<crate::ovm::value::StructObject>],
         str_args_for_ctx: &[Arc<String>],
+        result_args_for_ctx: &[Arc<crate::ovm::value::ResultObject>],
     ) -> Option<OvmValue> {
         let idx = func_id.index();
         match self.table.get(idx)? {
@@ -735,6 +924,9 @@ impl JitCache {
         for s in str_args_for_ctx {
             ctx.str_args.push(s.clone());
         }
+        for r in result_args_for_ctx {
+            ctx.result_args.push(r.clone());
+        }
         let status = unsafe {
             (jitted.entry)(
                 bits.as_ptr(),
@@ -769,12 +961,18 @@ impl JitCache {
                 data: ValueData::String(arc),
             });
         }
+        if let Kind::Result(..) = jitted.ret_kind {
+            let arc = ctx.retained_result.take()?;
+            return Some(OvmValue {
+                data: ValueData::Result(arc),
+            });
+        }
         let out = out[0];
         Some(match jitted.ret_kind {
             Kind::Int => OvmValue::new_integer(out),
             Kind::Bool => OvmValue::new_boolean(out != 0),
             Kind::Float => OvmValue::new_float(f64::from_bits(out as u64)),
-            Kind::Struct(_) | Kind::Str => unreachable!("handled above"),
+            Kind::Struct(_) | Kind::Str | Kind::Result(..) => unreachable!("handled above"),
             Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) => {
                 unreachable!("list returns are refused by inference")
             }
@@ -825,6 +1023,7 @@ impl JitCache {
                         p.ret_mask,
                         p.ret_tuple.clone(),
                         p.ret_struct,
+                        p.ret_result,
                     ),
                 );
             }
@@ -841,6 +1040,10 @@ impl JitCache {
                             j.ret_tuple.clone(),
                             match j.ret_kind {
                                 Kind::Struct(sid) => Some(sid),
+                                _ => None,
+                            },
+                            match j.ret_kind {
+                                k @ Kind::Result(..) => Some(k),
                                 _ => None,
                             },
                         ),
@@ -926,6 +1129,9 @@ impl JitCache {
                             (None, Kind::Float) => check.accepts("Float"),
                             (None, Kind::Bool) => check.accepts("Bool"),
                             (None, Kind::Str) => check.accepts("String"),
+                            (None, Kind::Result(okp, errp)) => {
+                                result_return_discharged(check, okp, errp)
+                            }
                             (None, Kind::Struct(sid)) => group_shapes
                                 .get(&sid)
                                 .is_some_and(|s| check.accepts(&s.shape.type_name)),
@@ -1055,6 +1261,44 @@ impl JitCache {
                 .declare_function("olang_jit_index", Linkage::Import, &sig)
                 .ok()?
         };
+        let result_test_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_result_test", Linkage::Import, &sig)
+                .ok()?
+        };
+        let result_extract_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..4 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_result_extract", Linkage::Import, &sig)
+                .ok()?
+        };
+        let make_result_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..4 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_make_result", Linkage::Import, &sig)
+                .ok()?
+        };
+        let result_retain_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_result_retain", Linkage::Import, &sig)
+                .ok()?
+        };
         let mut clif_ids = Vec::with_capacity(plans.len());
         for (plan, inf) in plans.iter().zip(&inferences) {
             let mut sig = module.make_signature();
@@ -1124,6 +1368,9 @@ impl JitCache {
                         make_struct: make_struct_helper,
                         str_cmp: str_cmp_helper,
                         str_concat: str_concat_helper,
+                        result_test: result_test_helper,
+                        result_extract: result_extract_helper,
+                        make_result: make_result_helper,
                     },
                 )
                 .is_none()
@@ -1198,7 +1445,7 @@ impl JitCache {
                         .store(MemFlagsData::trusted(), *v, out_ptr, (slot_i * 8) as i32);
                 }
                 let status = results[n_vals];
-                if matches!(inf.ret_kind, Kind::Struct(_) | Kind::Str) {
+                if matches!(inf.ret_kind, Kind::Struct(_) | Kind::Str | Kind::Result(..)) {
                     // Ownership boundary: resolve the pointer to an owned
                     // Arc in ctx.retained; unknown pointers deopt.
                     let ok_block = builder.create_block();
@@ -1208,10 +1455,10 @@ impl JitCache {
                     builder.ins().brif(status, fail_block, &[], ok_block, &[]);
 
                     builder.switch_to_block(ok_block);
-                    let which = if matches!(inf.ret_kind, Kind::Str) {
-                        str_retain_helper
-                    } else {
-                        retain_helper
+                    let which = match inf.ret_kind {
+                        Kind::Str => str_retain_helper,
+                        Kind::Result(..) => result_retain_helper,
+                        _ => retain_helper,
                     };
                     let retain_ref = module.declare_func_in_func(which, builder.func);
                     let rcall = builder.ins().call(retain_ref, &[ctx_ptr, results[0]]);
@@ -1320,6 +1567,8 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::MakeTuple { .. }
         | Instruction::PatternTestTuple { .. }
         | Instruction::ExtractElement { .. }
+        | Instruction::PatternTestResult { .. }
+        | Instruction::ExtractResult { .. }
         | Instruction::CallFn { .. } => true,
         // Allocation is allowed only in straight-line code (constructors).
         // In a native loop every allocation would live until the call
@@ -1329,6 +1578,8 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         Instruction::MakeStruct { field_regs, .. } => {
             field_regs.len() <= 16 && !has_backward_jump(bytecode)
         }
+        // Same allocation discipline as MakeStruct.
+        Instruction::MakeResult { .. } => !has_backward_jump(bytecode),
         Instruction::BinImm { imm, .. } => {
             matches!(imm.data, ValueData::Integer(_) | ValueData::Float(_))
         }
@@ -1372,20 +1623,24 @@ fn has_backward_jump(bytecode: &CompiledBytecode) -> bool {
 // constraints, writes accumulate possibilities, and qualification
 // demands each read register's write-set be a singleton inside its
 // allowed set.
-const K_INT: u8 = 1;
-const K_BOOL: u8 = 2;
-const K_UNIT: u8 = 4;
-const K_FLOAT: u8 = 8;
-const K_STRUCT: u8 = 16;
-const K_LIST: u8 = 32;
-const K_TUPLE: u8 = 64;
-const K_STR: u8 = 128;
+const K_INT: u16 = 1;
+const K_BOOL: u16 = 2;
+const K_UNIT: u16 = 4;
+const K_FLOAT: u16 = 8;
+const K_STRUCT: u16 = 16;
+const K_LIST: u16 = 32;
+const K_TUPLE: u16 = 64;
+const K_STR: u16 = 128;
+/// Result values ride borrowed `Arc<ResultObject>` pointers, like
+/// structs — the ninth kind, and the reason the masks are u16.
+const K_RESULT: u16 = 256;
 /// Largest tuple the JIT returns natively (multi-value return slots).
 const MAX_TUPLE: usize = 4;
-const K_NUM: u8 = K_INT | K_FLOAT;
-const K_ANY: u8 = K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT | K_LIST | K_TUPLE | K_STR;
+const K_NUM: u16 = K_INT | K_FLOAT;
+const K_ANY: u16 =
+    K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT | K_LIST | K_TUPLE | K_STR | K_RESULT;
 
-fn kind_mask(k: Kind) -> u8 {
+fn kind_mask(k: Kind) -> u16 {
     match k {
         Kind::Int => K_INT,
         Kind::Bool => K_BOOL,
@@ -1393,10 +1648,65 @@ fn kind_mask(k: Kind) -> u8 {
         Kind::Struct(_) => K_STRUCT,
         Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) => K_LIST,
         Kind::Str => K_STR,
+        Kind::Result(..) => K_RESULT,
     }
 }
 
-fn mask_singleton(mask: u8) -> Option<Kind> {
+/// Static discharge for a Result-returning annotated function: the
+/// inferred kind proves the annotation only when each observed side's
+/// payload satisfies that side's check. Absent sides never occur inside
+/// a compiled specialization (a call carrying the other side classifies
+/// to different param kinds and stays on bytecode), so they impose
+/// nothing. Anything but a plain Result annotation stays on bytecode.
+fn result_return_discharged(
+    check: &crate::ast::FieldTypeCheck,
+    okp: Payload,
+    errp: Payload,
+) -> bool {
+    use crate::ast::FieldTypeCheck;
+    fn payload_name(p: Payload) -> Option<&'static str> {
+        match p {
+            Payload::Int => Some("Int"),
+            Payload::Bool => Some("Bool"),
+            Payload::Float => Some("Float"),
+            Payload::Str => Some("String"),
+            Payload::Absent => None,
+        }
+    }
+    fn side_ok(c: &Option<Box<FieldTypeCheck>>, p: Payload) -> bool {
+        match (c, payload_name(p)) {
+            (_, None) => true, // side never occurs
+            (None, _) => true, // side unchecked
+            (Some(c), Some(n)) => c.accepts(n),
+        }
+    }
+    match check {
+        FieldTypeCheck::Result { ok, err } => side_ok(ok, okp) && side_ok(err, errp),
+        FieldTypeCheck::Named(n) => n == "Result",
+        _ => false,
+    }
+}
+
+/// Join two Result kinds side by side: Absent is bottom, equal payloads
+/// join to themselves, conflicting payloads refuse. Non-Result inputs
+/// refuse — every other exotic kind must match exactly.
+fn join_result_kind(a: Kind, b: Kind) -> Option<Kind> {
+    fn join_payload(a: Payload, b: Payload) -> Option<Payload> {
+        match (a, b) {
+            (Payload::Absent, p) | (p, Payload::Absent) => Some(p),
+            (a, b) if a == b => Some(a),
+            _ => None,
+        }
+    }
+    match (a, b) {
+        (Kind::Result(ao, ae), Kind::Result(bo, be)) => {
+            Some(Kind::Result(join_payload(ao, bo)?, join_payload(ae, be)?))
+        }
+        _ => None,
+    }
+}
+
+fn mask_singleton(mask: u16) -> Option<Kind> {
     match mask {
         K_INT => Some(Kind::Int),
         K_BOOL => Some(Kind::Bool),
@@ -1412,8 +1722,8 @@ struct PlanFn {
     func_id: FunctionId,
     bytecode: Arc<CompiledBytecode>,
     param_kinds: Vec<Kind>,
-    writes: Vec<u8>,
-    allowed: Vec<u8>,
+    writes: Vec<u16>,
+    allowed: Vec<u16>,
     was_read: Vec<bool>,
     /// The full kind of a struct- or list-holding register (masks only
     /// say "some struct"/"some list"; this carries which).
@@ -1429,7 +1739,10 @@ struct PlanFn {
     made_shapes: HashMap<u32, ShapeSpec>,
     /// Set when Return hands back a struct register (the shape id).
     ret_struct: Option<u32>,
-    ret_mask: u8,
+    /// Set when Return hands back a Result register — the join of every
+    /// return site's kind, so `Ok(n)` and `Err(msg)` paths merge.
+    ret_result: Option<Kind>,
+    ret_mask: u16,
     eq_pairs: Vec<(u32, u32)>,
     return_regs: Vec<u32>,
 }
@@ -1447,11 +1760,11 @@ struct Inference {
 impl PlanFn {
     fn new(func_id: FunctionId, bytecode: Arc<CompiledBytecode>, param_kinds: Vec<Kind>) -> Self {
         let nregs = bytecode.register_count as usize;
-        let mut writes = vec![0u8; nregs];
+        let mut writes = vec![0u16; nregs];
         let mut exotic = vec![None; nregs];
         for (i, k) in param_kinds.iter().enumerate() {
             writes[i] = kind_mask(*k);
-            if matches!(kind_mask(*k), K_STRUCT | K_LIST) {
+            if matches!(kind_mask(*k), K_STRUCT | K_LIST | K_RESULT) {
                 exotic[i] = Some(*k);
             }
         }
@@ -1467,6 +1780,7 @@ impl PlanFn {
             ret_tuple: None,
             made_shapes: HashMap::new(),
             ret_struct: None,
+            ret_result: None,
             ret_mask: 0,
             eq_pairs: Vec::new(),
             return_regs: Vec::new(),
@@ -1487,7 +1801,7 @@ impl PlanFn {
         let bytecode = self.bytecode.clone();
         let mut changed = false;
 
-        let const_mask = |idx: u32| -> u8 {
+        let const_mask = |idx: u32| -> u16 {
             match bytecode.constants.get(idx as usize).map(|c| &c.data) {
                 Some(ValueData::Integer(_)) => K_INT,
                 Some(ValueData::Boolean(_)) => K_BOOL,
@@ -1545,14 +1859,28 @@ impl PlanFn {
                         }
                     }
                     if let Some(k) = self.exotic[src.0 as usize] {
-                        if self.exotic[dst.0 as usize].is_none() {
-                            self.exotic[dst.0 as usize] = Some(k);
-                            changed = true;
-                        } else if self.exotic[dst.0 as usize] != Some(k) {
-                            if jit_debug() {
-                                eprintln!("[jit] exotic conflict on Move dst r{}", dst.0);
+                        match self.exotic[dst.0 as usize] {
+                            None => {
+                                self.exotic[dst.0 as usize] = Some(k);
+                                changed = true;
                             }
-                            return None; // one exotic kind per register
+                            Some(prev) if prev == k => {}
+                            // Result kinds merge side by side; everything
+                            // else is one exotic kind per register.
+                            Some(prev) => match join_result_kind(prev, k) {
+                                Some(j) => {
+                                    if j != prev {
+                                        self.exotic[dst.0 as usize] = Some(j);
+                                        changed = true;
+                                    }
+                                }
+                                None => {
+                                    if jit_debug() {
+                                        eprintln!("[jit] exotic conflict on Move dst r{}", dst.0);
+                                    }
+                                    return None;
+                                }
+                            },
                         }
                     }
                     // Liveness flows backwards through copies: the move
@@ -1772,6 +2100,65 @@ impl PlanFn {
                         grow!(self.writes[dst.0 as usize], kind_mask(k));
                     }
                 }
+                Instruction::MakeResult { dst, value, ok } => {
+                    // v1 payloads are scalars; a string payload narrows the
+                    // value register to nothing and refuses at finalize.
+                    narrow!(value.0, K_NUM | K_BOOL);
+                    grow!(self.writes[dst.0 as usize], K_RESULT);
+                    if let Some(pk) = mask_singleton(self.writes[value.0 as usize]) {
+                        let payload = match pk {
+                            Kind::Int => Payload::Int,
+                            Kind::Bool => Payload::Bool,
+                            Kind::Float => Payload::Float,
+                            _ => return None,
+                        };
+                        let rk = if *ok {
+                            Kind::Result(payload, Payload::Absent)
+                        } else {
+                            Kind::Result(Payload::Absent, payload)
+                        };
+                        match self.exotic[dst.0 as usize] {
+                            None => {
+                                self.exotic[dst.0 as usize] = Some(rk);
+                                changed = true;
+                            }
+                            Some(prev) if prev == rk => {}
+                            Some(prev) => {
+                                let j = join_result_kind(prev, rk)?;
+                                if j != prev {
+                                    self.exotic[dst.0 as usize] = Some(j);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                Instruction::PatternTestResult { dst, value, .. } => {
+                    narrow!(value.0, K_RESULT);
+                    grow!(self.writes[dst.0 as usize], K_BOOL);
+                }
+                Instruction::ExtractResult {
+                    dst,
+                    value,
+                    want_ok,
+                } => {
+                    narrow!(value.0, K_RESULT);
+                    if let Some(Kind::Result(okp, errp)) = self.exotic[value.0 as usize] {
+                        let k = match if *want_ok { okp } else { errp } {
+                            Payload::Int => Kind::Int,
+                            Payload::Bool => Kind::Bool,
+                            Payload::Float => Kind::Float,
+                            Payload::Str => Kind::Str,
+                            // A side never observed: its extraction is
+                            // unreachable (the guarding test is always
+                            // false) and its guard can only deopt, so any
+                            // claim is vacuous — Int keeps the dead
+                            // branch's registers typeable.
+                            Payload::Absent => Kind::Int,
+                        };
+                        grow!(self.writes[dst.0 as usize], kind_mask(k));
+                    }
+                }
                 Instruction::MakeStruct {
                     dst,
                     shape,
@@ -1870,7 +2257,7 @@ impl PlanFn {
                     narrow!(condition.0, K_BOOL);
                 }
                 Instruction::CallFn { dst, func_id, args } => {
-                    if let Some((param_kinds, ret_mask, ret_tuple, ret_struct)) =
+                    if let Some((param_kinds, ret_mask, ret_tuple, ret_struct, ret_result)) =
                         sigs.get(&func_id.index())
                     {
                         if args.len() != param_kinds.len() {
@@ -1878,7 +2265,7 @@ impl PlanFn {
                         }
                         for (i, a) in args.iter().enumerate() {
                             narrow!(a.0, kind_mask(param_kinds[i]));
-                            if matches!(kind_mask(param_kinds[i]), K_STRUCT | K_LIST)
+                            if matches!(kind_mask(param_kinds[i]), K_STRUCT | K_LIST | K_RESULT)
                                 && self.exotic[a.0 as usize] != Some(param_kinds[i])
                             {
                                 return None; // exotic kinds must match exactly
@@ -1916,6 +2303,28 @@ impl PlanFn {
                                 changed = true;
                             } else if self.exotic[dst.0 as usize] != Some(k) {
                                 return None;
+                            }
+                        }
+                        if let Some(rk) = ret_result {
+                            // Result-returning callees allocate into the
+                            // entry call's scratch context — same loop
+                            // discipline as struct returns.
+                            if has_backward_jump(&self.bytecode) {
+                                return None;
+                            }
+                            match self.exotic[dst.0 as usize] {
+                                None => {
+                                    self.exotic[dst.0 as usize] = Some(*rk);
+                                    changed = true;
+                                }
+                                Some(prev) if prev == *rk => {}
+                                Some(prev) => {
+                                    let j = join_result_kind(prev, *rk)?;
+                                    if j != prev {
+                                        self.exotic[dst.0 as usize] = Some(j);
+                                        changed = true;
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -1960,6 +2369,24 @@ impl PlanFn {
                         }
                         self.return_regs.push(reg.0);
                         grow!(self.ret_mask, K_STRUCT);
+                    } else if let Some(rk @ Kind::Result(..)) = self.exotic[reg.0 as usize] {
+                        narrow!(reg.0, K_RESULT);
+                        match self.ret_result {
+                            None => {
+                                self.ret_result = Some(rk);
+                                changed = true;
+                            }
+                            Some(prev) if prev == rk => {}
+                            Some(prev) => {
+                                let j = join_result_kind(prev, rk)?;
+                                if j != prev {
+                                    self.ret_result = Some(j);
+                                    changed = true;
+                                }
+                            }
+                        }
+                        self.return_regs.push(reg.0);
+                        grow!(self.ret_mask, K_RESULT);
                     } else if let Some(tk) = self.tuples.get(&reg.0).cloned() {
                         narrow!(reg.0, K_TUPLE);
                         match &self.ret_tuple {
@@ -2008,7 +2435,7 @@ impl PlanFn {
         let mut reg_kind: Vec<Option<Kind>> = vec![None; nregs];
         for (r, slot) in reg_kind.iter_mut().enumerate() {
             if self.was_read[r] {
-                if matches!(self.writes[r], K_STRUCT | K_LIST) {
+                if matches!(self.writes[r], K_STRUCT | K_LIST | K_RESULT) {
                     let k = self.exotic[r]?;
                     if kind_mask(k) & self.allowed[r] == 0 {
                         return None;
@@ -2069,6 +2496,18 @@ impl PlanFn {
             // The scalar slot is unused for tuple returns; Int is a
             // placeholder for signatures that never carry it.
             (Kind::Int, Some(tk))
+        } else if self.ret_mask == K_RESULT {
+            let rk = self.ret_result?;
+            for r in &self.return_regs {
+                let k = self.exotic[*r as usize]?;
+                // Every return site's kind must fold into the joined
+                // return kind (rk was built from them, so join is a
+                // consistency re-check, not new information).
+                if join_result_kind(k, rk) != Some(rk) {
+                    return None;
+                }
+            }
+            (rk, None)
         } else {
             let k = mask_singleton(self.ret_mask)?;
             for r in &self.return_regs {
@@ -2127,6 +2566,9 @@ fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::BinImm { .. } => "BinImm",
         Instruction::Return { .. } => "Return",
         Instruction::MatchFail => "MatchFail",
+        Instruction::MakeResult { .. } => "MakeResult",
+        Instruction::PatternTestResult { .. } => "PatternTestResult",
+        Instruction::ExtractResult { .. } => "ExtractResult",
         _ => "other",
     }
 }
@@ -2143,6 +2585,9 @@ struct Helpers {
     make_struct: cranelift_module::FuncId,
     str_cmp: cranelift_module::FuncId,
     str_concat: cranelift_module::FuncId,
+    result_test: cranelift_module::FuncId,
+    result_extract: cranelift_module::FuncId,
+    make_result: cranelift_module::FuncId,
 }
 
 struct Gen<'a> {
@@ -2196,6 +2641,9 @@ fn translate_body(
         make_struct: make_struct_helper,
         str_cmp: str_cmp_helper,
         str_concat: str_concat_helper,
+        result_test: result_test_helper,
+        result_extract: result_extract_helper,
+        make_result: make_result_helper,
     } = helpers;
     let n = bytecode.instructions.len();
     let param_count = inference.param_kinds.len();
@@ -2631,6 +3079,91 @@ fn translate_body(
                 builder.switch_to_block(ok_block);
                 r#gen.write(builder, dst.0, ptr);
             }
+            Instruction::MakeResult { dst, value, ok } => {
+                let k = r#gen.kind(value.0)?;
+                let code: i64 = match k {
+                    Kind::Int => 0,
+                    Kind::Float => 1,
+                    Kind::Bool => 2,
+                    _ => return None,
+                };
+                // Round-trip through a stack slot so the payload's raw
+                // bits travel the same way regardless of clif type.
+                let v = builder.use_var(Variable::from_u32(value.0));
+                let slot =
+                    builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                        cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                        8,
+                        3,
+                    ));
+                builder.ins().stack_store(ptr_ty, v, slot, 0);
+                let bits = builder.ins().stack_load(ptr_ty, types::I64, slot, 0);
+                let ctx = builder.use_var(ctx_var);
+                let ok_v = builder.ins().iconst(types::I64, *ok as i64);
+                let kind_v = builder.ins().iconst(types::I64, code);
+                let helper_ref = module.declare_func_in_func(make_result_helper, builder.func);
+                let call = builder.ins().call(helper_ref, &[ctx, ok_v, kind_v, bits]);
+                let ptr = builder.inst_results(call)[0];
+                let null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
+                let ok_block = builder.create_block();
+                builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
+                builder.switch_to_block(ok_block);
+                r#gen.write(builder, dst.0, ptr);
+            }
+            Instruction::PatternTestResult {
+                dst,
+                value,
+                want_ok,
+            } => {
+                let Kind::Result(..) = r#gen.kind(value.0)? else {
+                    return None;
+                };
+                let ptr = builder.use_var(Variable::from_u32(value.0));
+                let want_v = builder.ins().iconst(types::I64, *want_ok as i64);
+                let helper_ref = module.declare_func_in_func(result_test_helper, builder.func);
+                let call = builder.ins().call(helper_ref, &[ptr, want_v]);
+                let val = builder.inst_results(call)[0];
+                r#gen.write(builder, dst.0, val);
+            }
+            Instruction::ExtractResult {
+                dst,
+                value,
+                want_ok,
+            } => {
+                let Kind::Result(okp, errp) = r#gen.kind(value.0)? else {
+                    return None;
+                };
+                let (expect, load_ty) = match if *want_ok { okp } else { errp } {
+                    Payload::Int => (FIELD_INT, types::I64),
+                    Payload::Float => (FIELD_FLOAT, types::F64),
+                    Payload::Bool => (FIELD_BOOL, types::I64),
+                    Payload::Str => (FIELD_STR, types::I64),
+                    // Unreachable side (its test is always false): the
+                    // guard below can only deopt, so the loaded value —
+                    // typed by the vacuous Int claim — never escapes.
+                    Payload::Absent => (FIELD_NEVER, types::I64),
+                };
+                let ptr = builder.use_var(Variable::from_u32(value.0));
+                let want_v = builder.ins().iconst(types::I64, *want_ok as i64);
+                let exp_v = builder.ins().iconst(types::I64, expect as i64);
+                let slot =
+                    builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                        cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                        8,
+                        3,
+                    ));
+                let out_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                let helper_ref = module.declare_func_in_func(result_extract_helper, builder.func);
+                let call = builder
+                    .ins()
+                    .call(helper_ref, &[ptr, want_v, exp_v, out_ptr]);
+                let status = builder.inst_results(call)[0];
+                let ok_block = builder.create_block();
+                builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
+                builder.switch_to_block(ok_block);
+                let val = builder.ins().stack_load(ptr_ty, load_ty, slot, 0);
+                r#gen.write(builder, dst.0, val);
+            }
             Instruction::IterLen { dst, src } => {
                 let list_ptr = builder.use_var(Variable::from_u32(src.0));
                 let helper_ref = module.declare_func_in_func(len_helper, builder.func);
@@ -2822,6 +3355,15 @@ fn translate_body(
                 {
                     // Raw pointer out; the scratch list keeps it alive.
                     // Ownership transfers once, in the entry wrapper.
+                    let ptr = builder.use_var(Variable::from_u32(reg.0));
+                    let ok = builder.ins().iconst(types::I64, STATUS_OK);
+                    builder.ins().return_(&[ptr, ok]);
+                    terminated = true;
+                    continue;
+                }
+                if matches!(r#gen.kind(reg.0), Some(Kind::Result(..)))
+                    && matches!(inference.ret_kind, Kind::Result(..))
+                {
                     let ptr = builder.use_var(Variable::from_u32(reg.0));
                     let ok = builder.ins().iconst(types::I64, STATUS_OK);
                     builder.ins().return_(&[ptr, ok]);

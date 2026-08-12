@@ -801,3 +801,189 @@ join_n("ab", 50)
 "#,
     );
 }
+
+// ── Results: construction, tests, extraction, returns ──────────────────
+//
+// The JIT's ninth kind. Results ride borrowed Arc<ResultObject> pointers
+// like structs; payload reads are guarded per side, construction is
+// scratch-owned, and mixed Ok/Err return paths join side-by-side into
+// one Result kind. Everything unprovable deopts to bytecode — these
+// tests demand the seam is invisible.
+
+#[test]
+fn result_construction_and_match_agree() {
+    assert_jit_transparent(
+        r#"
+fn sign(n) = if n >= 0 => Ok(n) else => Err(0 - n)
+fn amount(r) = match r {
+    Ok(v) => v,
+    Err(e) => e * 100
+}
+amount(sign(5)) + amount(sign(0 - 3)) + amount(sign(42))
+"#,
+    );
+}
+
+#[test]
+fn result_params_extract_on_both_sides() {
+    assert_jit_transparent(
+        r#"
+fn take(r) = match r {
+    Ok(v) => v * 2,
+    Err(e) => e - 1
+}
+take(Ok(10)) + take(Err(4)) + take(Ok(7))
+"#,
+    );
+}
+
+#[test]
+fn result_float_payloads_agree() {
+    assert_jit_transparent(
+        r#"
+fn halve(x) = if x > 0.0 => Ok(x / 2.0) else => Err(x * x)
+fn get(r) = match r {
+    Ok(v) => v,
+    Err(e) => e + 0.5
+}
+get(halve(3.0)) + get(halve(0.0 - 2.0))
+"#,
+    );
+}
+
+#[test]
+fn result_string_payloads_extract_and_compare() {
+    // String payload extraction is a borrowed read; returning the
+    // extracted string deopts (unknown pointer at the retain boundary)
+    // and bytecode must produce the same answer.
+    assert_jit_transparent(
+        r#"
+fn msg(r) = match r {
+    Ok(v) => v,
+    Err(e) => e
+}
+fn is_boom(r) = match r {
+    Ok(v) => false,
+    Err(e) => e == "boom"
+}
+msg(Err("boom")) + show(is_boom(Err("boom"))) + show(is_boom(Err("quiet")))
+"#,
+    );
+}
+
+#[test]
+fn result_string_construction_stays_on_bytecode_and_agrees() {
+    // v1 constructs scalar payloads only; Err("...") refuses the JIT and
+    // must fall back cleanly.
+    assert_jit_transparent(
+        r#"
+fn safe_div(a, b) = if b == 0 => Err("div by zero") else => Ok(a / b)
+fn run(a, b) = match safe_div(a, b) {
+    Ok(v) => v,
+    Err(e) => 0 - 1
+}
+run(10, 2) + run(7, 0) + run(9, 3)
+"#,
+    );
+}
+
+#[test]
+fn result_returns_cross_function_boundaries() {
+    assert_jit_transparent(
+        r#"
+fn classify(n) = if n % 2 == 0 => Ok(n / 2) else => Err(n * 3 + 1)
+fn step(n) = match classify(n) {
+    Ok(v) => v,
+    Err(e) => e
+}
+step(6) + step(7) + step(20)
+"#,
+    );
+}
+
+#[test]
+fn result_annotated_returns_discharge_statically() {
+    assert_jit_transparent(
+        r#"
+fn double(n) -> Result<Int, String> = Ok(n * 2)
+fn get(r) = match r {
+    Ok(v) => v,
+    Err(e) => 0
+}
+get(double(4)) + get(double(9))
+"#,
+    );
+}
+
+#[test]
+fn result_specialization_deopts_on_the_other_side() {
+    // First calls specialize on Ok(Int); later Err(Str) arguments must
+    // classify differently and take the bytecode path with the same
+    // answers.
+    assert_jit_transparent(
+        r#"
+fn unwrap_or_neg(r) = match r {
+    Ok(v) => v,
+    Err(e) => 0 - 1
+}
+let mut acc = 0
+let mut i = 0
+while i < 20 { acc = acc + unwrap_or_neg(Ok(i)); i = i + 1 }
+acc + unwrap_or_neg(Err("late")) + unwrap_or_neg(Ok(100))
+"#,
+    );
+}
+
+#[test]
+fn result_bool_payloads_agree() {
+    assert_jit_transparent(
+        r#"
+fn flag(n) = if n > 0 => Ok(n % 2 == 0) else => Err(n == 0 - 1)
+fn read(r) = match r {
+    Ok(v) => if v => 1 else => 2,
+    Err(e) => if e => 3 else => 4
+}
+read(flag(4)) + read(flag(3)) + read(flag(0 - 1)) + read(flag(0 - 5))
+"#,
+    );
+}
+
+#[test]
+fn result_construction_in_loops_stays_on_bytecode_and_agrees() {
+    assert_jit_transparent(
+        r#"
+fn tally(n) = {
+    let mut acc = 0
+    let mut i = 0
+    while i < n {
+        acc = acc + match (if i % 3 == 0 => Ok(i) else => Err(1)) {
+            Ok(v) => v,
+            Err(e) => e
+        }
+        i = i + 1
+    }
+    acc
+}
+tally(30)
+"#,
+    );
+}
+
+#[test]
+fn result_try_operator_agrees_under_the_jit() {
+    assert_jit_transparent(
+        r#"
+fn half(n) = if n % 2 == 0 => Ok(n / 2) else => Err(n)
+fn quarter(n) = {
+    let a = half(n)?
+    let b = half(a)?
+    Ok(b)
+}
+fn read(r) = match r {
+    Ok(v) => v,
+    Err(e) => 0 - e
+}
+read(quarter(8)) + read(quarter(6)) + read(quarter(5))
+"#,
+    );
+}

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The JIT compiles Results.** `Ok`/`Err` construction, pattern tests,
+  and payload extraction now run natively: Results ride borrowed
+  pointers like structs, payload reads are guarded per side (a surprise
+  deopts to bytecode, never misreads), and construction is scratch-owned
+  so a deopt can never leak. Mixed return paths join — a function
+  returning `Ok(n)` on one branch and `Err(code)` on another compiles as
+  one specialization — and calls carrying the side a specialization
+  never saw fall back to bytecode with identical results. `-> Result<T,
+  E>` return annotations are discharged statically: the JIT only
+  compiles a function whose inferred payloads provably satisfy the
+  annotation. String payloads extract natively; string construction and
+  Results built inside loops stay on bytecode by the same allocation
+  discipline as structs. Eleven differential tests pin the seam shut.
+
 - **The checker and language server see across module boundaries.** A
   file's `use`d modules are resolved with the runtime's local
   conventions and parsed alongside it: imported `share fn` signatures
