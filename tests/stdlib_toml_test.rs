@@ -43,6 +43,14 @@ fn validate_answers_without_erroring() {
 }
 
 #[test]
+fn datetimes_are_plain_strings() {
+    // The toml crate wraps datetimes in a private one-key object over
+    // serde; the module unwraps them to the string the docs promise.
+    let v = eval("show(map_get(unwrap(toml.parse(\"when = 2026-08-12T10:00:00Z\")), \"when\"))");
+    assert_eq!(v, Value::String("2026-08-12T10:00:00Z".to_string().into()));
+}
+
+#[test]
 fn parses_a_real_package_manifest() {
     // The repo's own manifest format is the first customer.
     let v = eval(

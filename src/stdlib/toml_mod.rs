@@ -71,7 +71,9 @@ fn toml_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
     match text.parse::<toml::Value>() {
         Ok(tv) => match serde_json::to_value(tv) {
-            Ok(jv) => Ok(Value::Ok(Box::new(super::json::json_to_olang_value(jv)))),
+            Ok(jv) => Ok(Value::Ok(Box::new(super::json::json_to_olang_value(
+                unwrap_datetimes(jv),
+            )))),
             Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
                 "TOML convert error: {}",
                 e
@@ -119,6 +121,30 @@ fn toml_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
             "TOML serialize error: {}",
             e
         )))))),
+    }
+}
+
+/// The toml crate serializes datetimes as a private one-key wrapper
+/// object (`{"$__toml_private_datetime": "..."}`); unwrap those to the
+/// plain string the documentation promises, recursively.
+fn unwrap_datetimes(v: serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::Object(map) => {
+            if map.len() == 1
+                && let Some(serde_json::Value::String(s)) = map.get("$__toml_private_datetime")
+            {
+                return serde_json::Value::String(s.clone());
+            }
+            serde_json::Value::Object(
+                map.into_iter()
+                    .map(|(k, v)| (k, unwrap_datetimes(v)))
+                    .collect(),
+            )
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(unwrap_datetimes).collect())
+        }
+        other => other,
     }
 }
 

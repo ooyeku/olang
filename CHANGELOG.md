@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **TOML datetimes parse as plain strings.** The toml crate represents
+  datetimes as a private one-key wrapper object over serde, which
+  leaked through `toml.parse` as
+  `{$__toml_private_datetime: "..."}` instead of the string the
+  documentation promises. Unwrapped recursively; found by the pre-0.50
+  edge-case sweep and regression-pinned.
+
 - **A vanished stdout reader no longer kills olang programs — or the
   HTTP server.** `print`/`println` used Rust's `println!`, which
   aborts the whole process with "failed printing to stdout" the moment
