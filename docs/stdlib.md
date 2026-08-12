@@ -772,7 +772,7 @@ unwrap(db.close(conn))
 
 When olang runs in a browser (as the WebAssembly build behind the
 playground), the page itself becomes a device the program can drive:
-`dom` is that device's API. It is deliberately small — nine functions —
+`dom` is that device's API. It is deliberately small — ten functions —
 because olang does not wrap the DOM object model: it treats the page as
 a *rendering target*. You query elements, wire events, fetch data, and
 render by writing HTML; everything else is ordinary olang.

@@ -51,6 +51,7 @@ const imports = {
       (listeners[Number(h)] ??= {})[readStr(ptr, len)] = Number(id);
     },
     host_dom_focus: (_h) => {},
+    host_dom_set_class: (h, ptr, len) => { fakeDom[handles[Number(h)]].className = readStr(ptr, len); },
     host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) => {
       fetchLog.push({ method: readStr(mp, ml), path: readStr(pp, pl), body: readStr(bp, bl), cb: Number(id) });
     },

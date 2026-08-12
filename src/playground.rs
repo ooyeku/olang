@@ -134,6 +134,7 @@ unsafe extern "C" {
     fn host_dom_set_value(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_on(handle: i64, event: *const u8, len: usize, callback_id: i64);
     fn host_dom_focus(handle: i64);
+    fn host_dom_set_class(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_fetch(
         method: *const u8,
         method_len: usize,
@@ -230,6 +231,11 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         }
         ("focus", [el]) => {
             unsafe { host_dom_focus(handle(el)?) };
+            Ok(Value::Unit)
+        }
+        ("set_class", [el, v]) => {
+            let s = text(v)?;
+            unsafe { host_dom_set_class(handle(el)?, s.as_ptr(), s.len()) };
             Ok(Value::Unit)
         }
         ("fetch", [method, path, body, callback]) => {

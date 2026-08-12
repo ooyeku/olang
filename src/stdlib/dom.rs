@@ -21,6 +21,7 @@ pub fn create_dom_module() -> Value {
         ("on", 3),
         ("fetch", 4),
         ("focus", 1),
+        ("set_class", 2),
     ] {
         module.insert(
             name.to_string(),

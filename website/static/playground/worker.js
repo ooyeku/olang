@@ -30,6 +30,7 @@ async function instantiate() {
         host_dom_set_value: () => {},
         host_dom_on: () => {},
         host_dom_focus: () => {},
+        host_dom_set_class: () => {},
         host_dom_fetch: () => {},
       },
     }

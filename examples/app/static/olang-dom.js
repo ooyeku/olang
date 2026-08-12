@@ -81,6 +81,7 @@
         }
       },
       host_dom_focus: (h) => { elements[Number(h)].focus(); },
+      host_dom_set_class: (h, ptr, len) => { elements[Number(h)].className = readStr(ptr, len); },
       host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) => {
         const method = readStr(mp, ml);
         const path = readStr(pp, pl);

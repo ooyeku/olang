@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The tracker example is a real product now.** `examples/app` grew
+  from a bare grid into a full app — live search, status filter pills,
+  sortable columns (assignee joined the sortable set), an issue drawer
+  with editable title, cycling pills, and comments, a stats strip
+  rendered from `/api/stats` (quantiles computed server-side on ods),
+  and a live activity ticker — all in ~330 lines of olang running as
+  WebAssembly, same stateless/delegated architecture as before (client
+  state is four hidden inputs; twelve listeners bound once at boot).
+  The `dom` module grew one function to make it possible:
+  `dom.set_class(el, classes)` sets an element's class list wholesale —
+  the stateless way to toggle visual state (a drawer's `open`, a
+  pill's `active`). The wasm.md guided reading walks the new frontend.
+
 ### Fixed
 
 - **A vanished stdout reader no longer kills olang programs — or the

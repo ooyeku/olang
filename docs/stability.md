@@ -85,7 +85,7 @@ the global builtins.
   and response-struct returns) is settled and integration-tested; the
   *execution model* (bounded worker pool, blocking caller, localhost-only)
   may grow further without changing existing handlers.
-- The `dom` module — browser-only, and young: the nine-function surface
+- The `dom` module — browser-only, and young: the ten-function surface
   may grow (and payload conventions may gain fields) as frontend
   programs demand more; the element-handle model and the stateless
   pattern it supports are the stable core.

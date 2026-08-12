@@ -150,6 +150,7 @@ HTML. Everything else is ordinary olang.
 | `dom.set_html(el, html)` | replace an element's inner HTML — the render primitive |
 | `dom.value(el)` / `dom.set_value(el, s)` | read / write a form control's value |
 | `dom.focus(el)` | focus an element |
+| `dom.set_class(el, classes)` | set an element's class list wholesale — the stateless way to toggle visual state (a drawer's `open`, a pill's `active`) |
 | `dom.on(el, event, handler)` | attach an event handler |
 | `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page |
 
@@ -260,17 +261,19 @@ elements inside it ids that encode their action (`del-17`, `adv-17`),
 and dispatch on the prefix.
 
 The tracker's whole grid — status cycling, priority cycling, assignee
-edits, points edits, deletion, for every row — runs on exactly three
-listeners, bound once at boot:
+edits, points edits, deletion, opening the detail drawer, for every
+row — runs on two listeners bound once at boot; filters, sort headers,
+and the drawer's own controls each add one more on their containers:
 
 ```olang no-run
-dom.on(dom.query("#rows"), "click", (tid) => on_click(tid))
-dom.on(dom.query("#rows"), "change", (payload) => on_change(payload))
-dom.on(dom.query("#new-title"), "enter", (title) => add_issue(title))
+dom.on(dom.query("#rows"), "click", (tid) => on_rows_click(tid))
+dom.on(dom.query("#rows"), "change", (payload) => on_rows_change(payload))
+dom.on(dom.query("#filters"), "click", (tid) => on_filter_click(tid))
+dom.on(dom.query("#sort-row"), "click", (tid) => on_sort_click(tid))
 ```
 
 Rows can be re-rendered any number of times — the listeners sit on
-the container, not on the short-lived rows, so nothing needs
+the containers, not on the short-lived rows, so nothing needs
 rebinding and the registry never grows.
 
 ### Escape what you render
@@ -298,56 +301,45 @@ stakes are the same and the mechanism is yours.
 ## Reading a real frontend
 
 [`examples/app/static/app.ol`](../examples/app/static/app.ol) is the
-tracker's complete frontend: under 120 lines of olang where its
-JavaScript predecessor needed 574. It is worth reading top to bottom —
-here is the guided version.
+tracker's complete frontend: ~330 lines of olang for a full product —
+live search, status filters, sortable columns, an issue drawer with
+comments, a stats strip, and an activity ticker. Its JavaScript
+predecessor needed 574 lines for a bare grid. Worth reading top to
+bottom — here is the guided version.
 
-**The pure helpers.** `esc` is the escaper above. `next_status` and
-`next_priority` encode the click-to-cycle state machines
-(`open → in-progress → done → open`) as pure string functions —
-trivially testable, no DOM in sight.
+**State lives in the DOM.** The client state that must exist — sort
+column and order, the active status filter, the selected issue — is
+four hidden inputs, read with `dom.value` and written with
+`dom.set_value`. No olang variable outlives a handler; every render
+derives everything fresh. `issues_url()` assembles the query string
+from that state, and the *server* does the filtering, searching, and
+sorting.
 
 **Rendering is string building.** `row_html(issue)` renders one issue
-as a `<tr>` — buttons and inputs carry their prefixed ids (`adv-`,
-`pri-`, `asg-`, `pts-`, `del-` plus the issue id), which is the
-delegation contract in action. `render(items)` maps it over the list
-and lands the result with a single `set_html`:
+as a `<tr>` — controls carry their prefixed ids (`open-`, `adv-`,
+`pri-`, `asg-`, `pts-`, `del-` plus the issue id), the delegation
+contract in action. `render_rows` lands the list with one `set_html`;
+`render_stats` renders the `/api/stats` payload (whose quantiles the
+server computes on the ods data stack); `render_activity` draws the
+audit trail as a ticker; `render_drawer` fills the detail panel and
+flips it visible with `dom.set_class` — the stateless way to toggle
+visual state.
 
-```olang no-run
-fn render(items) = {
-    dom.set_html(dom.query("#rows"), items |> map(row_html) |> join(""))
-    update_footer(items)
-}
-```
+**The reload loop.** `reload_rows()` GETs `issues_url()` and
+re-renders; `patch(id, body)` PATCHes one issue and, in its callback,
+reloads — and re-opens the drawer when the patched issue is the
+selected one. Every mutation funnels through this pair.
 
-**The reload loop.** `reload()` GETs `/api/issues` and re-renders;
-`patch(id, body)` PATCHes one issue and, in its callback, calls
-`reload()`. Every mutation funnels through this pair — the stateless
-loop in its entirety:
-
-```olang no-run
-fn reload() = {
-    dom.fetch("GET", "/api/issues", "", (resp) => {
-        let parsed = unwrap(json.parse(resp))
-        if map_has_key(parsed, "error") => flash("error: " + map_get(parsed, "error"))
-        else => render(map_get(parsed, "items"))
-    })
-}
-
-fn patch(id, body) =
-    dom.fetch("PATCH", "/api/issues/" + id, body, (resp) => { reload() })
-```
-
-**The delegated dispatchers.** `on_click(tid)` peels the row id off
-the target id and branches on the prefix: `adv-` cycles status
+**The delegated dispatchers.** `on_rows_click(tid)` branches on the
+target-id prefix: `open-` opens the drawer, `adv-` cycles status
 (reading the *current* status from the button's own label — the DOM
-as state store), `pri-` cycles priority, `del-` deletes. `on_change`
-splits its `id\nvalue` payload and routes assignee and points edits.
-`add_issue` trims, POSTs, then clears and refocuses the input in the
-callback.
+as state store), `pri-` cycles priority, `del-` deletes.
+`on_rows_change` splits its `id\nvalue` payload for assignee and
+points edits; `on_filter_click` and `on_sort_click` drive the hidden
+state inputs and reload. Comments POST and re-open the drawer.
 
-**Boot.** Three `dom.on` registrations, one for the add button, and a
-first `reload()`. There is no step five.
+**Boot.** Twelve `dom.on` registrations — every one on an element that
+exists at boot — and a first `reload()`. There is no step five.
 
 The exercise worth doing: skim the file and count what is *absent* —
 no component classes, no virtual DOM, no state container, no
