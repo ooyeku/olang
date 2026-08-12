@@ -93,7 +93,7 @@ fn issues_list(req, params) = {
         status: q_enum(req, "status", ["open", "in-progress", "done"], ""),
         assignee: q_str(req, "assignee", ""),
         q: q_str(req, "q", ""),
-        sort: q_enum(req, "sort", ["id", "title", "status", "priority", "points", "updated"], "id"),
+        sort: q_enum(req, "sort", ["id", "title", "status", "priority", "points", "updated", "assignee"], "id"),
         order: q_enum(req, "order", ["asc", "desc"], "asc"),
         limit: q_int(req, "limit", 100, 1, 500),
         offset: q_int(req, "offset", 0, 0, 1000000)
