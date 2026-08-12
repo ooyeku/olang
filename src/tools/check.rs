@@ -64,7 +64,9 @@ pub fn run(paths: &[PathBuf]) -> i32 {
                 continue;
             }
         };
-        for d in check_program(&program) {
+        let modules = module_programs(&source, file.parent());
+        let context: Vec<&Program> = modules.iter().map(|(_, _, p)| p).collect();
+        for d in check_program_with_context(&context, &program) {
             if d.warning {
                 warnings += 1;
             } else {
@@ -112,6 +114,56 @@ pub fn run(paths: &[PathBuf]) -> i32 {
         );
         1
     }
+}
+
+/// The modules a source file `use`s, resolved with the runtime's local
+/// conventions (`use a.b` → a/b.ol, a/b/index.ol, a/b/mod.ol, or b.ol in
+/// the same directory), read and parsed. Failures are silently skipped —
+/// checking degrades to single-file. Capped to bound cost.
+pub fn module_programs(
+    text: &str,
+    doc_dir: Option<&std::path::Path>,
+) -> Vec<(PathBuf, String, Program)> {
+    let Some(dir) = doc_dir else {
+        return Vec::new();
+    };
+    let Ok(program) = crate::parser::Parser::new().parse(text) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for stmt in &program.statements {
+        if out.len() >= 16 {
+            break;
+        }
+        let (Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u))) =
+            stmt.unwrapped()
+        else {
+            continue;
+        };
+        if u.path.is_empty() {
+            continue;
+        }
+        let joined = u.path.join("/");
+        let last = u.path.last().cloned().unwrap_or_default();
+        let candidates = [
+            dir.join(format!("{}.ol", joined)),
+            dir.join(&joined).join("index.ol"),
+            dir.join(&joined).join("mod.ol"),
+            dir.join(format!("{}.ol", last)),
+        ];
+        for c in candidates {
+            if out.iter().any(|(p, _, _)| *p == c) {
+                break;
+            }
+            if let Ok(src) = std::fs::read_to_string(&c) {
+                if let Ok(prog) = crate::parser::Parser::new().parse(&src) {
+                    out.push((c, src, prog));
+                }
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// Byte offset of a 1-based (line, column) position — what miette's span
@@ -525,7 +577,18 @@ struct FnSig {
 }
 
 pub fn check_program(program: &Program) -> Vec<CheckDiagnostic> {
+    check_program_with_context(&[], program)
+}
+
+/// Check `program` with signatures collected from `context` first — the
+/// modules a file `use`s, resolved and parsed by the caller (the LSP).
+/// Only `program`'s statements are walked; context contributes function
+/// signatures and struct shapes.
+pub fn check_program_with_context(context: &[&Program], program: &Program) -> Vec<CheckDiagnostic> {
     let mut checker = Checker::default();
+    for p in context {
+        checker.collect(p);
+    }
     checker.collect(program);
     checker.push_scope();
     for stmt in &program.statements {
@@ -627,7 +690,26 @@ impl Checker {
 
     fn collect(&mut self, program: &Program) {
         for stmt in &program.statements {
-            match stmt.unwrapped() {
+            self.collect_statement(stmt.unwrapped());
+        }
+    }
+
+    fn collect_statement(&mut self, stmt: &Statement) {
+        {
+            match stmt {
+                // `share` wraps a declaration without changing its shape;
+                // shared functions and types are signatures like any other
+                // (and the cross-file context the LSP feeds is built from
+                // exactly these).
+                Statement::ShareDecl(sd) => match sd {
+                    crate::ast::ShareDecl::Function(f) => {
+                        self.collect_statement(&Statement::FunctionDecl(f.clone()))
+                    }
+                    crate::ast::ShareDecl::Type(t) => {
+                        self.collect_statement(&Statement::TypeDecl(t.clone()))
+                    }
+                    _ => {}
+                },
                 Statement::FunctionDecl(f) => {
                     let required = f
                         .parameters
@@ -1129,6 +1211,16 @@ impl Checker {
                 }
                 self.pop_scope(Merge::Function);
             }
+            // `share` wraps a declaration; check what it wraps.
+            Statement::ShareDecl(sd) => match sd {
+                crate::ast::ShareDecl::Function(f) => {
+                    self.check_statement(&Statement::FunctionDecl(f.clone()), span)
+                }
+                crate::ast::ShareDecl::Let(l) => {
+                    self.check_statement(&Statement::LetDecl(l.clone()), span)
+                }
+                _ => {}
+            },
             // Declarations without checkable bodies.
             _ => {}
         }
@@ -1628,6 +1720,33 @@ mod tests {
         assert!(
             d.iter()
                 .any(|x| !x.warning && x.message.contains("expects Int, got String"))
+        );
+    }
+
+    // ── 0.50 arc: cross-file context ───────────────────────────────────
+
+    #[test]
+    fn shared_declarations_are_checked_and_seed_context() {
+        // `share fn` signatures are signatures (previously invisible).
+        let d = check("share fn helper(x: Int) -> Int = x + 1\nhelper(\"wrong\")\n");
+        assert_eq!(d.len(), 1);
+        assert!(
+            d[0].message
+                .contains("parameter 'x' of helper expects Int, got String")
+        );
+        // Shared bodies are walked too.
+        let d = check("share fn bad(x: Int) -> String = x * 2\n");
+        assert_eq!(d.len(), 1);
+        // Context programs contribute signatures without being walked.
+        let module = Parser::new()
+            .parse("share fn area(w: Int, h: Int) -> Int = w * h\n")
+            .expect("parses");
+        let main = Parser::new().parse("area(\"bad\", 4)\n").expect("parses");
+        let d = check_program_with_context(&[&module], &main);
+        assert_eq!(d.len(), 1);
+        assert!(
+            d[0].message
+                .contains("parameter 'w' of area expects Int, got String")
         );
     }
 

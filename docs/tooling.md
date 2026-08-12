@@ -105,6 +105,11 @@ value, a declared return contradicted by what the body provably produces,
 a call to a known function with the wrong number of arguments. Anything
 it cannot prove stays silent; unannotated, dynamic code is never judged.
 
+Checking is module-aware: a file's `use`d modules are resolved (the
+runtime's local conventions: `a/b.ol`, `index.ol`, `mod.ol`, same-dir)
+and their `share`d signatures feed the analysis, so a wrong argument to
+an imported function is flagged in the importing file.
+
 The checker also goes where the runtime deliberately doesn't: **element
 types**. The runtime checks `List<Int>` shallowly ("a List", O(1)), but
 the checker decomposes literals element by element — `[1, "a", 3]`

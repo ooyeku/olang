@@ -190,20 +190,29 @@ fn handle_request(
             let (id, params): (RequestId, lsp_types::HoverParams) =
                 req.extract(lsp_types::request::HoverRequest::METHOD)?;
             let pos = params.text_document_position_params;
+            let dir = doc_dir(&pos.text_document.uri);
             let text = docs
                 .get(&pos.text_document.uri)
                 .map(String::as_str)
                 .unwrap_or("");
-            respond(connection, id, &hover(text, pos.position))?;
+            respond(connection, id, &hover(text, pos.position, dir.as_deref()))?;
         }
         lsp_types::request::GotoDefinition::METHOD => {
             let (id, params): (RequestId, lsp_types::GotoDefinitionParams) =
                 req.extract(lsp_types::request::GotoDefinition::METHOD)?;
             let pos = params.text_document_position_params;
             let uri = pos.text_document.uri.clone();
+            let dir = doc_dir(&uri);
             let text = docs.get(&uri).map(String::as_str).unwrap_or("");
-            let loc = definition(text, pos.position).map(|range| {
-                lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location { uri, range })
+            let loc = definition(text, pos.position, dir.as_deref()).and_then(|(file, range)| {
+                let target = match file {
+                    // Cross-file: the module file's own URI.
+                    Some(path) => Uri::from_file_path(path).ok()?,
+                    None => uri,
+                };
+                Some(lsp_types::GotoDefinitionResponse::Scalar(
+                    lsp_types::Location { uri: target, range },
+                ))
             });
             respond(connection, id, &loc)?;
         }
@@ -244,7 +253,8 @@ fn publish(
     uri: &Uri,
     text: &str,
 ) -> Result<(), Box<dyn Error + Sync + Send>> {
-    send_diagnostics(connection, uri.clone(), diagnostics(text))
+    let dir = doc_dir(uri);
+    send_diagnostics(connection, uri.clone(), diagnostics(text, dir.as_deref()))
 }
 
 fn send_diagnostics(
@@ -265,9 +275,18 @@ fn send_diagnostics(
     Ok(())
 }
 
+// ── cross-file modules ─────────────────────────────────────────────────
+
+/// The directory of a document URI, when it is a real file.
+fn doc_dir(uri: &Uri) -> Option<std::path::PathBuf> {
+    uri.to_file_path()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+}
+
 // ── diagnostics ────────────────────────────────────────────────────────
 
-fn diagnostics(text: &str) -> Vec<Diagnostic> {
+fn diagnostics(text: &str, doc_dir: Option<&std::path::Path>) -> Vec<Diagnostic> {
     let parser = OlangParser::new();
     match parser.parse(text) {
         Err(e) => vec![parse_error_diagnostic(text, &e)],
@@ -312,27 +331,32 @@ fn diagnostics(text: &str) -> Vec<Diagnostic> {
                     // Provable annotation violations: the runtime would
                     // reject these, so surface them as errors pre-run.
                     out.extend(
-                        crate::tools::check::check_program(&program)
-                            .into_iter()
-                            .map(|d| {
-                                let line = d.line.saturating_sub(1);
-                                let col = d.column.saturating_sub(1);
-                                let severity = if d.warning {
-                                    DiagnosticSeverity::WARNING
-                                } else {
-                                    DiagnosticSeverity::ERROR
-                                };
-                                Diagnostic {
-                                    range: Range::new(
-                                        Position::new(line, col),
-                                        Position::new(line, col + 1),
-                                    ),
-                                    severity: Some(severity),
-                                    source: Some("olang".to_string()),
-                                    message: d.message,
-                                    ..Default::default()
-                                }
-                            }),
+                        {
+                            let modules = crate::tools::check::module_programs(text, doc_dir);
+                            let context: Vec<&crate::ast::Program> =
+                                modules.iter().map(|(_, _, p)| p).collect();
+                            crate::tools::check::check_program_with_context(&context, &program)
+                        }
+                        .into_iter()
+                        .map(|d| {
+                            let line = d.line.saturating_sub(1);
+                            let col = d.column.saturating_sub(1);
+                            let severity = if d.warning {
+                                DiagnosticSeverity::WARNING
+                            } else {
+                                DiagnosticSeverity::ERROR
+                            };
+                            Diagnostic {
+                                range: Range::new(
+                                    Position::new(line, col),
+                                    Position::new(line, col + 1),
+                                ),
+                                severity: Some(severity),
+                                source: Some("olang".to_string()),
+                                message: d.message,
+                                ..Default::default()
+                            }
+                        }),
                     );
                     out
                 }
@@ -545,11 +569,31 @@ fn span_range(span: (u32, u32), name_len: usize) -> Range {
     )
 }
 
-fn hover(text: &str, pos: Position) -> Option<lsp_types::Hover> {
+fn hover(text: &str, pos: Position, doc_dir: Option<&std::path::Path>) -> Option<lsp_types::Hover> {
     let word = word_at(text, pos)?;
-    let (name, detail, _span) = declarations(text)
-        .into_iter()
-        .find(|(n, _, _)| *n == word)?;
+    let local = declarations(text).into_iter().find(|(n, _, _)| *n == word);
+    // Imported names hover with their module's signature.
+    let (name, detail) = match local {
+        Some((n, d, _)) => (n, d),
+        None => {
+            let (path, src, prog) = crate::tools::check::module_programs(text, doc_dir)
+                .into_iter()
+                .find(|(_, src, _)| declarations(src).iter().any(|(n, _, _)| *n == word))?;
+            let detail = crate::tools::check::hover_types(&prog)
+                .remove(&word)
+                .or_else(|| {
+                    declarations(&src)
+                        .into_iter()
+                        .find(|(n, _, _)| *n == word)
+                        .map(|(_, d, _)| d)
+                })?;
+            let from = path
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (word.clone(), format!("{}    // from {}", detail, from))
+        }
+    };
     // Upgrade the declaration text with the checker's type knowledge —
     // annotated signatures rendered in full, unannotated lets with their
     // inferred types when the checker knows one.
@@ -584,12 +628,22 @@ fn span_range_at_cursor(text: &str, pos: Position, name: &str) -> Range {
     )
 }
 
-fn definition(text: &str, pos: Position) -> Option<Range> {
+fn definition(
+    text: &str,
+    pos: Position,
+    doc_dir: Option<&std::path::Path>,
+) -> Option<(Option<std::path::PathBuf>, Range)> {
     let word = word_at(text, pos)?;
-    declarations(text)
-        .into_iter()
-        .find(|(n, _, _)| *n == word)
-        .map(|(n, _, span)| span_range(span, n.len()))
+    if let Some((n, _, span)) = declarations(text).into_iter().find(|(n, _, _)| *n == word) {
+        return Some((None, span_range(span, n.len())));
+    }
+    // Not declared here: jump into the module that declares it.
+    for (path, src, _) in crate::tools::check::module_programs(text, doc_dir) {
+        if let Some((n, _, span)) = declarations(&src).into_iter().find(|(n, _, _)| *n == word) {
+            return Some((Some(path), span_range(span, n.len())));
+        }
+    }
+    None
 }
 
 // ── formatting ─────────────────────────────────────────────────────────

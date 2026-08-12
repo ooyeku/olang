@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The checker and language server see across module boundaries.** A
+  file's `use`d modules are resolved with the runtime's local
+  conventions and parsed alongside it: imported `share fn` signatures
+  feed diagnostics in both `olang check` and the editor (a wrong
+  argument to an imported function is flagged in the importing file),
+  hover shows an imported function's typed signature marked with its
+  source file, and go-to-definition jumps into the module. Also
+  closed in passing: `share`d declarations were entirely invisible to
+  the checker even within one file — their signatures now register and
+  their bodies are checked (the corpus's 171 files, heavy with
+  `share fn`, stay clean).
+
 - **`olang check` warns when code relies on block leakage.** A bare
   block's `let`s remain visible afterwards — the other long-documented
   scoping pitfall. Using (or assigning) such a name after its block now
