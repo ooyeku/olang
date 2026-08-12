@@ -163,7 +163,10 @@ Details worth knowing:
 
 - **Async functions check the resolved value.** An `async fn` annotated
   `-> Promise<Int, String>` describes the promise the caller receives;
-  the runtime enforces `Int` on the value the body resolves to.
+  the runtime enforces `Int` on the value the body resolves to. At
+  non-async sites a `Promise<...>` annotation checks its base — a
+  parameter declared `Promise<Int>` rejects a plain `Int` — and the
+  checker knows that `await` carries the resolved type onward.
 - **Generic type parameters are erased.** In `fn first<T>(xs: List<T>)
   -> T`, the `T` has no runtime identity and is never checked — but the
   `List` base still is, and trait *bounds* on generics are enforced as
@@ -299,8 +302,10 @@ Knowing the boundaries tells you what an annotation cannot promise:
   callability and arity; a provable mismatch between `(Int) -> Int` and
   a lambda's own annotations (`(s: String) => ...`) is the checker's
   finding, labeled a promise-break.
-- **`Promise` payloads at non-async sites** parse and document intent,
-  but are not yet enforced.
+- **`Promise` payloads at rest.** A pending promise's payload doesn't
+  exist yet; the runtime checks the base at non-async sites and the
+  resolved value at async returns, and the checker flows the payload
+  type through `await`. There is nothing left at rest to check.
 - **Result payloads check one level.** The runtime verifies the present
   side's *base* type; structure inside the payload (list elements, a
   nested Result's own payload) is the checker's territory, like every

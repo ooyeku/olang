@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`Promise` annotations check at non-async sites, and the checker
+  follows `await`.** A parameter or binding declared `Promise<Int>`
+  now rejects a non-promise value at the boundary on every tier
+  (previously the dedicated annotation form reduced to no check). The
+  payload at rest stays unchecked — it doesn't exist until resolution,
+  where the async return check already enforces it — but the checker
+  flows it: async function signatures join the checker's world
+  (calling one yields `Promise<T, E>`; a bare `-> T` wraps), `await`
+  carries the resolved type onward, and passing an unawaited call
+  where the payload type is expected is flagged (`expects Int, got
+  Promise`).
+
 - **Function-type annotations enforce callability and arity.**
   `f: (Int) -> Int` now verifies at the boundary that the value is
   callable (function or builtin) and can be called with exactly the

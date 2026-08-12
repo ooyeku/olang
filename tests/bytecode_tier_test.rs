@@ -3069,4 +3069,6 @@ fn function_annotation_enforcement_is_tier_transparent() {
     assert_tier_transparent(
         "fn apply(f: (Int) -> Int, x: Int) = f(x)\nto_string(apply((a, b = 1) => a + b, 5))",
     );
+    // Promise annotations base-check at non-async sites.
+    assert_tier_transparent("fn f(p: Promise<Int>) = p\nf(42)");
 }

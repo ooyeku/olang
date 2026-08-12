@@ -870,6 +870,10 @@ impl FieldTypeCheck {
                 ok: Self::from_annotation(ok_type, type_params).map(Box::new),
                 err: Self::from_annotation(err_type, type_params).map(Box::new),
             }),
+            // A Promise annotation checks the base at non-async sites;
+            // the payload exists only at resolution, where the async
+            // return check enforces it.
+            TypeAnnotation::Promise { .. } => Some(Self::Named("Promise".to_string())),
             // A function annotation enforces callability + arity.
             TypeAnnotation::Function { params, .. } => Some(Self::Function {
                 arity: params.len(),

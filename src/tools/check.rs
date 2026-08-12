@@ -151,6 +151,9 @@ enum SType {
         required: usize,
         ret: Box<SType>,
     },
+    /// `Promise<T, E>`. Base-checked like a named type at rest; `await`
+    /// unwraps `T`.
+    Promise(Box<SType>, Box<SType>),
     /// `A | B`. Only constructed when the runtime enforces the union too
     /// (every branch checkable), so verdict parity holds; otherwise the
     /// annotation reduces to Unknown, silent like the runtime.
@@ -199,6 +202,18 @@ impl SType {
                 required: params.len(),
                 ret: Box::new(SType::from_annotation(return_type, type_params)),
             },
+            TypeAnnotation::Promise {
+                value_type,
+                error_type,
+            } => SType::Promise(
+                Box::new(SType::from_annotation(value_type, type_params)),
+                Box::new(
+                    error_type
+                        .as_ref()
+                        .map(|t| SType::from_annotation(t, type_params))
+                        .unwrap_or(SType::Unknown),
+                ),
+            ),
             TypeAnnotation::Union { types } => {
                 // Mirror the runtime: a union with an unenforceable branch
                 // is entirely unchecked there, so it must be silent here.
@@ -230,6 +245,20 @@ impl SType {
                         .unwrap_or(SType::Unknown),
                 )),
                 "Map" => SType::Map(
+                    Box::new(
+                        type_args
+                            .first()
+                            .map(|t| SType::from_annotation(t, type_params))
+                            .unwrap_or(SType::Unknown),
+                    ),
+                    Box::new(
+                        type_args
+                            .get(1)
+                            .map(|t| SType::from_annotation(t, type_params))
+                            .unwrap_or(SType::Unknown),
+                    ),
+                ),
+                "Promise" => SType::Promise(
                     Box::new(
                         type_args
                             .first()
@@ -279,6 +308,7 @@ impl SType {
             SType::Tuple(_) => Some("Tuple"),
             SType::Result(_, _) => Some("Result"),
             SType::Function { .. } => Some("Function"),
+            SType::Promise(_, _) => Some("Promise"),
             // A union has no single base; violation() handles it directly.
             SType::Union(_) => None,
             SType::Named(n) => Some(n),
@@ -308,6 +338,10 @@ impl SType {
                     .join(", "),
                 ret.display()
             ),
+            SType::Promise(v, e) if **v == SType::Unknown && **e == SType::Unknown => {
+                "Promise".to_string()
+            }
+            SType::Promise(v, e) => format!("Promise<{}, {}>", v.display(), e.display()),
             SType::Union(bs) => bs
                 .iter()
                 .map(|b| b.display())
@@ -420,6 +454,9 @@ fn violation(expected: &SType, actual: &SType) -> Option<(String, String, bool)>
         (SType::Result(o1, e1), SType::Result(o2, e2)) => {
             violation(o1, o2).is_some() || violation(e1, e2).is_some()
         }
+        (SType::Promise(v1, e1), SType::Promise(v2, e2)) => {
+            violation(v1, v2).is_some() || violation(e1, e2).is_some()
+        }
         _ => false,
     };
     deep.then(|| (expected.display(), actual.display(), false))
@@ -486,6 +523,42 @@ impl Checker {
                                 .as_ref()
                                 .map(|a| SType::from_annotation(a, &f.type_params))
                                 .unwrap_or(SType::Unknown),
+                        },
+                    );
+                }
+                Statement::AsyncFunctionDecl(f) => {
+                    // Calling an async fn yields a Promise; its annotation
+                    // describes the resolved value (a bare `-> T` wraps).
+                    let resolved = f
+                        .return_type
+                        .as_ref()
+                        .map(|a| SType::from_annotation(a, &f.type_params))
+                        .unwrap_or(SType::Unknown);
+                    let ret = match resolved {
+                        p @ SType::Promise(_, _) => p,
+                        other => SType::Promise(Box::new(other), Box::new(SType::Unknown)),
+                    };
+                    self.sigs.insert(
+                        f.name.clone(),
+                        FnSig {
+                            param_names: f.parameters.iter().map(|p| p.name.clone()).collect(),
+                            params: f
+                                .parameters
+                                .iter()
+                                .map(|p| {
+                                    p.type_annotation
+                                        .as_ref()
+                                        .map(|a| SType::from_annotation(a, &f.type_params))
+                                        .unwrap_or(SType::Unknown)
+                                })
+                                .collect(),
+                            required: f
+                                .parameters
+                                .iter()
+                                .filter(|p| p.default_value.is_none())
+                                .count(),
+                            total: f.parameters.len(),
+                            ret,
                         },
                     );
                 }
@@ -616,6 +689,11 @@ impl Checker {
             // `expr?` unwraps the Ok payload (or propagates the Err out).
             Expr::Try(e) => match self.infer(e) {
                 SType::Result(ok, _) => *ok,
+                _ => SType::Unknown,
+            },
+            // `await` unwraps the resolved payload.
+            Expr::Await { expression } => match self.infer(expression) {
+                SType::Promise(v, _) => *v,
                 _ => SType::Unknown,
             },
             Expr::Identifier(name) | Expr::LocalRef { name, .. } => self.lookup(name),
@@ -1312,6 +1390,35 @@ mod tests {
         assert!(d[0].message.contains("expects Int, got String"));
         // Disagreeing branches stay unknown.
         assert!(check("fn f(x: Int) = x\nlet v = if true => \"a\" else => 1\nf(v)\n").is_empty());
+    }
+
+    // ── 0.50 arc: Promise at non-async sites ───────────────────────────
+
+    #[test]
+    fn promise_annotations_base_check_and_await_unwraps() {
+        // Base check at rest.
+        let d = check("fn f(p: Promise<Int>) = p\nf(42)\n");
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].message, "parameter 'p' of f expects Promise, got Int");
+        assert!(d[0].runtime);
+        // await carries the resolved type into the flow; a bare -> T on an
+        // async fn wraps into Promise<T, _>.
+        let d = check(
+            "async fn get() -> Promise<Int, String> = { 1 }\nfn g(x: String) = x\nlet v = await get()\ng(v)\n",
+        );
+        assert_eq!(d.len(), 1);
+        assert!(
+            d[0].message
+                .contains("parameter 'x' of g expects String, got Int")
+        );
+        // The unawaited call is a Promise, not the payload.
+        let d =
+            check("async fn get() -> Promise<Int, String> = { 1 }\nfn h(x: Int) = x\nh(get())\n");
+        assert_eq!(d.len(), 1);
+        assert!(
+            d[0].message
+                .contains("parameter 'x' of h expects Int, got Promise")
+        );
     }
 
     // ── stage 4: Result payloads ───────────────────────────────────────
