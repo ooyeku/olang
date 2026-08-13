@@ -174,6 +174,37 @@
         requestAnimationFrame((now) =>
           dispatchJson(Number(id), { type: "frame", delta: now - start }));
       },
+      host_dom_insert_before: (p, c, b) => {
+        const parent = elements[Number(p)];
+        const child = elements[Number(c)];
+        const before = Number(b) ? elements[Number(b)] : null;
+        parent.insertBefore(child, before);
+      },
+      host_dom_push_state: (ptr, len) => {
+        history.pushState({}, "", readStr(ptr, len));
+      },
+      host_dom_location: () =>
+        giveStr(JSON.stringify({
+          path: location.pathname,
+          query: Object.fromEntries(new URLSearchParams(location.search)),
+        })),
+      host_dom_on_route: (id) => {
+        const cb = Number(id);
+        window.addEventListener("popstate", () =>
+          dispatchJson(cb, {
+            type: "route",
+            path: location.pathname,
+            query: Object.fromEntries(new URLSearchParams(location.search)),
+          }));
+      },
+      host_dom_storage_get: (ptr, len) =>
+        giveStr(localStorage.getItem(readStr(ptr, len)) ?? ""),
+      host_dom_storage_set: (kp, kl, vp, vl) => {
+        localStorage.setItem(readStr(kp, kl), readStr(vp, vl));
+      },
+      host_dom_storage_remove: (ptr, len) => {
+        localStorage.removeItem(readStr(ptr, len));
+      },
       host_dom_on_frame: (id) => {
         const cb = Number(id);
         let last = performance.now();

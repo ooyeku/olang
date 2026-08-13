@@ -846,6 +846,10 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.request_frame(fn)` | one animation frame; re-arm inside the handler for a loop |
 | `dom.on_frame(fn)` | the persistent animation loop: register once, called every frame with a millisecond `delta` |
 | `dom.draw(canvas, ops)` | replay a draw-list onto a canvas — the whole scene crosses the boundary once |
+| `dom.insert_before(parent, child, before)` | position a child (`0` appends) |
+| `dom.push_state(path)` / `dom.location()` | SPA navigation; location is a Map of `path` and `query` |
+| `dom.on_route(fn)` | the back/forward listener — a `route` event Map with `path` and `query` |
+| `dom.storage_get(k)` / `storage_set(k, v)` / `storage_remove(k)` | localStorage (missing keys read as `""`) |
 
 **Every event handler receives a structured event Map** — the same
 shape for every event type, so handlers pick the fields they need:
@@ -868,6 +872,18 @@ stroke take any CSS color; `line_width` sets stroke width. Paired with
 `examples/app/static/orbit.ol`, an animated orbital system served by
 the tracker at `/orbit.html`, where a click adds a body at the clicked
 radius (structured event coordinates + `dom.measure`).
+
+**Declarative views: the `ui` module.** `use ui` (an embedded olang
+package) builds pages as values: `h(tag, attrs, children)` makes a node,
+strings are text (escaped on render), `hk` adds a reconciliation key,
+and `html(tree)` renders to a string — pure and testable anywhere.
+`ui.render(el, children)` mounts a keyed list and reconciles against
+the previous render: unchanged children are untouched (input state and
+focus survive), changed ones re-render in place, added and removed keys
+insert and remove surgically, and reorders reposition without
+rebuilding. See `examples/app/static/notes.ol` — a small SPA at
+`/notes.html` combining `ui.render`, `push_state`/`on_route`
+navigation, and localStorage persistence.
 
 `dom` is the one browser-only module: in a native build every call
 reports that it needs the wasm build (mirroring how `fs`, `os`, `http`,

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>notes — olang ui</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      background: #0b0e14; color: #cdd6e4;
+      font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    main { width: min(560px, 92vw); }
+    h1 { color: #7fd1b9; font-size: 1.1rem; }
+    .bar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    input {
+      flex: 1; background: #11151f; color: inherit; border: 1px solid #1e2430;
+      border-radius: 8px; padding: 0.5rem 0.75rem; font: inherit;
+    }
+    button {
+      background: #1a2230; color: #7fd1b9; border: 1px solid #263042;
+      border-radius: 8px; padding: 0.5rem 0.9rem; font: inherit; cursor: pointer;
+    }
+    #list > div { margin-bottom: 0.5rem; }
+    .note {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #11151f; border: 1px solid #1e2430; border-radius: 10px;
+      padding: 0.6rem 0.9rem; cursor: pointer;
+    }
+    .note.sel { border-color: #7fd1b9; background: #12241f; }
+    .note button { padding: 0.1rem 0.5rem; color: #e06c75; border-color: #3a2430; }
+    .hint { color: #5b6577; font-size: 0.85rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>notes — an olang SPA (ui + routing + storage)</h1>
+    <div class="bar">
+      <input id="new-note" placeholder="a note… (Enter to add)" />
+      <button id="add">Add</button>
+    </div>
+    <div id="list"></div>
+    <p class="hint">notes persist in localStorage · click to select (updates the URL) · the back button unselects</p>
+  </main>
+  <script src="/olang-dom.js" data-src="/notes.ol" defer></script>
+</body>
+</html>

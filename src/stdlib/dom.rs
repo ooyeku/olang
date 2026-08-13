@@ -43,6 +43,15 @@ pub fn create_dom_module() -> Value {
         ("on_frame", 1),
         // Graphics
         ("draw", 2),
+        // Structure ordering
+        ("insert_before", 3),
+        // Routing and storage
+        ("push_state", 1),
+        ("location", 0),
+        ("on_route", 1),
+        ("storage_get", 1),
+        ("storage_set", 2),
+        ("storage_remove", 1),
     ] {
         module.insert(
             name.to_string(),

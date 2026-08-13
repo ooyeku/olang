@@ -48,6 +48,13 @@ async function instantiate() {
         host_dom_request_frame: () => {},
         host_dom_draw: () => {},
         host_dom_on_frame: () => {},
+        host_dom_insert_before: () => {},
+        host_dom_push_state: () => {},
+        host_dom_location: () => 0,
+        host_dom_on_route: () => {},
+        host_dom_storage_get: () => 0,
+        host_dom_storage_set: () => {},
+        host_dom_storage_remove: () => {},
       },
     }
   );

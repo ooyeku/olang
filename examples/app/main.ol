@@ -52,6 +52,8 @@ let olang_shim = unwrap(fs.read_file("static/olang-dom.js"))
 let app_ol = unwrap(fs.read_file("static/app.ol"))
 let orbit_html = unwrap(fs.read_file("static/orbit.html"))
 let orbit_ol = unwrap(fs.read_file("static/orbit.ol"))
+let notes_html = unwrap(fs.read_file("static/notes.html"))
+let notes_ol = unwrap(fs.read_file("static/notes.ol"))
 
 // The wasm artifact is gitignored; warn loudly at boot when missing.
 // (fs.exists, not read_file: the artifact is binary, and reading it as
@@ -80,6 +82,12 @@ fn orbit_page(req, params) =
         #{ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" })
 fn orbit_source(req, params) =
     http.response_with_headers(200, orbit_ol,
+        #{ "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
+fn notes_page(req, params) =
+    http.response_with_headers(200, notes_html,
+        #{ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" })
+fn notes_source(req, params) =
+    http.response_with_headers(200, notes_ol,
         #{ "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
 // The wasm is binary: body_file serves raw bytes straight from disk.
 fn olang_wasm(req, params) = {
@@ -241,6 +249,8 @@ let routes = [
     route("GET", "/app.ol", olang_source),
     route("GET", "/orbit.html", orbit_page),
     route("GET", "/orbit.ol", orbit_source),
+    route("GET", "/notes.html", notes_page),
+    route("GET", "/notes.ol", notes_source),
     route("GET", "/olang.wasm", olang_wasm),
     route("GET", "/health", health),
     route("GET", "/api/issues", issues_list),

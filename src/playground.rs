@@ -161,6 +161,14 @@ unsafe extern "C" {
     fn host_dom_request_frame(callback_id: i64);
     fn host_dom_draw(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_on_frame(callback_id: i64);
+    /// before == 0 appends at the end.
+    fn host_dom_insert_before(parent: i64, child: i64, before: i64);
+    fn host_dom_push_state(ptr: *const u8, len: usize);
+    fn host_dom_location() -> *const u8;
+    fn host_dom_on_route(callback_id: i64);
+    fn host_dom_storage_get(ptr: *const u8, len: usize) -> *const u8;
+    fn host_dom_storage_set(kp: *const u8, kl: usize, vp: *const u8, vl: usize);
+    fn host_dom_storage_remove(ptr: *const u8, len: usize);
 }
 
 use std::cell::RefCell;
@@ -394,6 +402,54 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
                 (h.len() - 1) as i64
             });
             unsafe { host_dom_on_frame(id) };
+            Ok(Value::Unit)
+        }
+        ("insert_before", [parent, child, before]) => {
+            let b = match before {
+                Value::Integer(h) => *h,
+                _ => 0,
+            };
+            unsafe { host_dom_insert_before(handle(parent)?, handle(child)?, b) };
+            Ok(Value::Unit)
+        }
+        ("push_state", [path]) => {
+            let p = text(path)?;
+            unsafe { host_dom_push_state(p.as_ptr(), p.len()) };
+            Ok(Value::Unit)
+        }
+        ("location", []) => {
+            let raw = read_host_string(unsafe { host_dom_location() });
+            match crate::stdlib::json::call_json_function(
+                "parse",
+                vec![Value::String(std::sync::Arc::new(raw))],
+            ) {
+                Ok(Value::Ok(inner)) => Ok(*inner),
+                _ => Err("dom.location: host returned an unreadable location".into()),
+            }
+        }
+        ("on_route", [callback]) => {
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe { host_dom_on_route(id) };
+            Ok(Value::Unit)
+        }
+        ("storage_get", [key]) => {
+            let k = text(key)?;
+            Ok(Value::String(std::sync::Arc::new(read_host_string(
+                unsafe { host_dom_storage_get(k.as_ptr(), k.len()) },
+            ))))
+        }
+        ("storage_set", [key, val]) => {
+            let (k, v) = (text(key)?, text(val)?);
+            unsafe { host_dom_storage_set(k.as_ptr(), k.len(), v.as_ptr(), v.len()) };
+            Ok(Value::Unit)
+        }
+        ("storage_remove", [key]) => {
+            let k = text(key)?;
+            unsafe { host_dom_storage_remove(k.as_ptr(), k.len()) };
             Ok(Value::Unit)
         }
         ("request_frame", [callback]) => {

@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Sophisticated web apps: the `ui` view layer, routing, and
+  storage.** `use ui` — an embedded olang package — builds pages as
+  values: `h(tag, attrs, children)` trees, `hk` reconciliation keys,
+  pure `html()` rendering (escaped, testable natively), and
+  `ui.render(el, children)` with keyed reconciliation: unchanged
+  children untouched (input state and focus survive), changed ones
+  re-rendered in place, additions/removals surgical, reorders
+  repositioned via the new `dom.insert_before`. Alongside it the dom
+  module gains SPA navigation — `push_state`, `location` (a Map of
+  path and query), `on_route` for back/forward — and localStorage
+  (`storage_get`/`set`/`remove`). The proof is
+  `examples/app/static/notes.ol` at `/notes.html`: a notes SPA
+  verified live in a browser — selection updates the URL, the back
+  button unselects through `on_route`, additions reconcile in, and
+  notes persist across the session. The dom harness pins routing,
+  storage, and the reconciliation algebra (update-in-place, removal,
+  reorder) against the real wasm build; three native tests pin the
+  pure renderer.
+
 - **Rich graphics out of the box: canvas draw-lists.** A scene is plain
   olang data — a list of op maps (`clear`, `rect`, `circle`, `line`,
   `path`, `text`, plus `save`/`restore`/`translate`/`rotate`/`scale`) —

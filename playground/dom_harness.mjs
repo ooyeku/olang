@@ -21,6 +21,9 @@ const listeners = {}; // handle -> {event -> callbackId}
 const fetchLog = [];
 const timers = []; // {ms, cb, kind}
 const frames = []; // callback ids
+const fakeStorage = {};
+const fakeHistory = ["/"];
+const routeHandlers = [];
 let created = 0;
 function dispatchWith(cb, payload) {
   const bytes = new TextEncoder().encode(payload);
@@ -58,7 +61,13 @@ const imports = {
       crypto.getRandomValues(new Uint8Array(ex.memory.buffer, ptr, len)),
     host_dom_query: (ptr, len) => {
       const sel = readStr(ptr, len);
-      const h = handles.indexOf(sel);
+      let h = handles.indexOf(sel);
+      // Created elements are findable by their id attribute, like a
+      // real querySelector.
+      if (h <= 0 && sel.startsWith("#")) {
+        const id = sel.slice(1);
+        h = handles.findIndex((k, i) => i > 0 && fakeDom[k]?.attrs?.id === id);
+      }
       return BigInt(h > 0 ? h : 0);
     },
     host_dom_set_text: (h, ptr, len) => { fakeDom[handles[Number(h)]].text = readStr(ptr, len); },
@@ -74,7 +83,17 @@ const imports = {
     host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) => {
       fetchLog.push({ method: readStr(mp, ml), path: readStr(pp, pl), body: readStr(bp, bl), cb: Number(id) });
     },
-    host_dom_get_attr: (h, ptr, len) => giveStr(node(h).attrs[readStr(ptr, len)] ?? ""),
+    host_dom_get_attr: (h, ptr, len) => {
+      const name = readStr(ptr, len);
+      const n = node(h);
+      // Seed elements carry their id implicitly in the handle key,
+      // like a real DOM element's id attribute.
+      if (name === "id" && n.attrs[name] == null) {
+        const key = handles[Number(h)];
+        return giveStr(key.startsWith("#") ? key.slice(1) : "");
+      }
+      return giveStr(n.attrs[name] ?? "");
+    },
     host_dom_set_attr: (h, np, nl, vp, vl) => { node(h).attrs[readStr(np, nl)] = readStr(vp, vl); },
     host_dom_remove_attr: (h, ptr, len) => { delete node(h).attrs[readStr(ptr, len)]; },
     host_dom_class_op: (h, op, ptr, len) => {
@@ -93,7 +112,15 @@ const imports = {
       return BigInt(handles.push(key) - 1);
     },
     host_dom_append: (p, c) => { node(p).children.push(handles[Number(c)]); },
-    host_dom_remove: (h) => { node(h).removed = true; },
+    host_dom_remove: (h) => {
+      node(h).removed = true;
+      const key = handles[Number(h)];
+      for (const k of handles) {
+        const kids = fakeDom[k]?.children;
+        const i = kids ? kids.indexOf(key) : -1;
+        if (i >= 0) kids.splice(i, 1);
+      }
+    },
     host_dom_scroll_into_view: (_h) => {},
     host_dom_set_timeout: (ms, id) => { timers.push({ ms, cb: Number(id), kind: "timeout" }); },
     host_dom_set_interval: (ms, id) => {
@@ -103,6 +130,26 @@ const imports = {
     host_dom_clear_interval: (_t) => {},
     host_dom_request_frame: (id) => { frames.push(Number(id)); },
     host_dom_on_frame: (id) => { frames.push(Number(id)); },
+    host_dom_insert_before: (p, c, b) => {
+      const kids = node(p).children;
+      const child = handles[Number(c)];
+      const i = kids.indexOf(child);
+      if (i >= 0) kids.splice(i, 1);
+      const before = Number(b) ? handles[Number(b)] : null;
+      const j = before ? kids.indexOf(before) : -1;
+      if (j >= 0) kids.splice(j, 0, child);
+      else kids.push(child);
+    },
+    host_dom_push_state: (ptr, len) => { fakeHistory.push(readStr(ptr, len)); },
+    host_dom_location: () => {
+      // Split pathname from search, like a real Location.
+      const raw = fakeHistory[fakeHistory.length - 1] ?? "/";
+      return giveStr(JSON.stringify({ path: raw.split("?")[0], query: { tab: "x" } }));
+    },
+    host_dom_on_route: (id) => { routeHandlers.push(Number(id)); },
+    host_dom_storage_get: (ptr, len) => giveStr(fakeStorage[readStr(ptr, len)] ?? ""),
+    host_dom_storage_set: (kp, kl, vp, vl) => { fakeStorage[readStr(kp, kl)] = readStr(vp, vl); },
+    host_dom_storage_remove: (ptr, len) => { delete fakeStorage[readStr(ptr, len)]; },
     host_dom_draw: (h, ptr, len) => {
       (node(h).drawn ??= []).push(JSON.parse(readStr(ptr, len)));
     },
@@ -299,6 +346,54 @@ println("scene wired")
   if (JSON.stringify(ops[8].points) !== "[[0,0],[10,5],[20,0]]")
     throw new Error("path points wrong: " + JSON.stringify(ops[8].points));
   console.log("stage 2: draw-list round-trip ok (" + ops.length + " ops)");
+}
+// ── stage 3: routing, storage, and the ui layer's reconciliation ──
+const prog6 = `
+use ui { h, hk, render }
+dom.storage_set("notes", "persisted!")
+dom.push_state("/notes?tab=all")
+let loc = dom.location()
+println("path=" + map_get(loc, "path") + " tab=" + map_get(map_get(loc, "query"), "tab"))
+dom.on_route((r) => { dom.set_text(dom.query("#count"), "routed " + map_get(r, "path")) })
+
+let mount = dom.query("#log")
+fn item(id, label) = hk(id, "p", #{ "data-id": id }, [label])
+render(mount, [item("a", "alpha"), item("b", "beta"), item("c", "gamma")])
+render(mount, [item("c", "gamma"), item("a", "alpha CHANGED")])
+println("stored=" + dom.storage_get("notes"))
+`;
+{
+  const enc6 = new TextEncoder().encode(prog6);
+  const p6 = ex.olang_alloc(enc6.length);
+  mem().set(enc6, p6);
+  const r = result(ex.olang_session_start(p6, enc6.length));
+  ex.olang_dealloc(p6, enc6.length);
+  if (r.error) throw new Error("stage3 session: " + r.error);
+  if (!r.output.includes("path=/notes tab=x")) throw new Error("location wrong: " + r.output);
+  if (!r.output.includes("stored=persisted!")) throw new Error("storage wrong: " + r.output);
+  if (fakeStorage["notes"] !== "persisted!") throw new Error("storage_set missing");
+  if (fakeHistory[fakeHistory.length - 1] !== "/notes?tab=all") throw new Error("push_state missing");
+
+  // Reconciliation: after two renders, "b" is gone, order is [c, a],
+  // "a" was re-rendered in place, "c" untouched.
+  const log = node(3);
+  const aKey = handles.find((k) => fakeDom[k]?.attrs?.id === "ui-log-a");
+  const cKey = handles.find((k) => fakeDom[k]?.attrs?.id === "ui-log-c");
+  const bKey = handles.find((k) => fakeDom[k]?.attrs?.id === "ui-log-b");
+  if (!aKey || !cKey) throw new Error("ui wrappers missing");
+  // Only the ui-owned wrappers count — stage 1 parked its own card here.
+  const order = log.children.filter((k) => (fakeDom[k]?.attrs?.id ?? "").startsWith("ui-log-"));
+  if (order.join(",") !== [cKey, aKey].join(","))
+    throw new Error("reconciled order wrong: " + order.join(","));
+  if (!fakeDom[aKey].html.includes("alpha CHANGED")) throw new Error("update-in-place missing");
+  if (!fakeDom[cKey].html.includes("gamma")) throw new Error("survivor content wrong");
+  if (bKey && !fakeDom[bKey].removed) throw new Error("removed key not removed");
+
+  // The route event round-trips.
+  const rr = dispatchJson(routeHandlers[0], { type: "route", path: "/back", query: {} });
+  if (rr.error) throw new Error("route dispatch: " + rr.error);
+  if (fakeDom["#count"].text !== "routed /back") throw new Error("route handler missing");
+  console.log("stage 3: routing + storage + ui reconciliation ok");
 }
 console.log("final dom:", JSON.stringify(fakeDom));
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");
