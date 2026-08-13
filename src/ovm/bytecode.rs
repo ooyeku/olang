@@ -1124,6 +1124,8 @@ impl BytecodeVm {
     }
 
     pub fn register_function(&mut self, name: String, func_id: FunctionId) {
+        #[cfg(feature = "native")]
+        self.jit.note_shadow(&name);
         self.function_registry.insert(name, func_id);
     }
 
@@ -1132,6 +1134,8 @@ impl BytecodeVm {
     /// lookup finds the user's definition first.
     pub fn shadow_builtin(&mut self, name: &str) {
         self.builtin_names.remove(name);
+        #[cfg(feature = "native")]
+        self.jit.note_shadow(name);
     }
 
     /// Withdraw a registration.
@@ -1494,6 +1498,18 @@ impl BytecodeVm {
                             }
                         }
                     }
+                    Ok(crate::ovm::value::ValueData::Map(m)) => {
+                        match crate::ovm::jit::classify_map(m) {
+                            Some(k) => {
+                                bits[i] = std::sync::Arc::as_ptr(m) as i64;
+                                kinds[i] = k;
+                            }
+                            None => {
+                                extractable = false;
+                                break;
+                            }
+                        }
+                    }
                     _ => {
                         extractable = false;
                         break;
@@ -1526,6 +1542,9 @@ impl BytecodeVm {
                     Vec::new();
                 let mut list_args: Vec<std::sync::Arc<Vec<crate::ovm::value::OvmValue>>> =
                     Vec::new();
+                let mut map_args: Vec<
+                    std::sync::Arc<std::collections::HashMap<String, crate::ovm::value::OvmValue>>,
+                > = Vec::new();
                 for reg in arg_regs {
                     if let Ok(v) = self.execution_state.register_ref(*reg) {
                         if let crate::ovm::value::ValueData::Struct(obj) = &v.data {
@@ -1539,6 +1558,9 @@ impl BytecodeVm {
                         }
                         if let crate::ovm::value::ValueData::List(l) = &v.data {
                             list_args.push(l.clone());
+                        }
+                        if let crate::ovm::value::ValueData::Map(m) = &v.data {
+                            map_args.push(m.clone());
                         }
                     }
                 }
@@ -1554,6 +1576,7 @@ impl BytecodeVm {
                     &str_args,
                     &result_args,
                     &list_args,
+                    &map_args,
                 ) {
                     return Ok(result);
                 }

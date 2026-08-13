@@ -39,6 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   immutable values with content equality, so identity is unobservable
   and there is no deopt case beyond the allocation cap.
 
+- **Maps enter the JIT — the collections lane is complete.** String-keyed
+  maps with a uniform value payload specialize: `#{...}` literals
+  construct natively, `map_get` compiles as a key-guarded read (a miss —
+  where the language returns Unit — deopts to bytecode, never misreads),
+  `map_has_key` is a total native test that compiles inside loops, and
+  `map_set` clone-and-inserts into scratch exactly like the VM's
+  immutable-map native. Because these are *named builtins* and a user
+  definition can shadow a builtin name, compiled code records which
+  natives it baked — transitively through call-graph edges — and the
+  moment a user function takes one of those names, every affected entry
+  is demoted back to bytecode. Mixed-value maps, stringified non-string
+  keys, and object receivers all stay on bytecode with identical
+  results; `-> Map` return annotations discharge statically.
+
 ## [0.50.0] - 2026-08-12
 
 ### Added

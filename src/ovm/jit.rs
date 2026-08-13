@@ -81,6 +81,9 @@ pub struct ScratchCtx {
     list_allocs: Vec<Arc<Vec<OvmValue>>>,
     list_args: Vec<Arc<Vec<OvmValue>>>,
     retained_list: Option<Arc<Vec<OvmValue>>>,
+    map_allocs: Vec<Arc<HashMap<String, OvmValue>>>,
+    map_args: Vec<Arc<HashMap<String, OvmValue>>>,
+    retained_map: Option<Arc<HashMap<String, OvmValue>>>,
 }
 
 /// How the VM hands the JIT other functions' bytecode when planning a
@@ -129,6 +132,24 @@ pub fn classify_result(r: &crate::ovm::value::ResultObject) -> Option<Kind> {
         payload_of(r.ok.as_ref())?,
         payload_of(r.err.as_ref())?,
     ))
+}
+
+/// Classify a map argument by its values: a uniform scalar or string
+/// payload specializes; an empty map is Map(Absent) — its guarded reads
+/// all deopt, but construction and presence tests still compile.
+pub fn classify_map(m: &HashMap<String, OvmValue>) -> Option<Kind> {
+    let mut payload = Payload::Absent;
+    for v in m.values() {
+        let pv = match &v.data {
+            ValueData::Integer(_) => Payload::Int,
+            ValueData::Float(_) => Payload::Float,
+            ValueData::Boolean(_) => Payload::Bool,
+            ValueData::String(_) => Payload::Str,
+            _ => return None,
+        };
+        payload = join_payload(payload, pv)?;
+    }
+    Some(Kind::Map(payload))
 }
 
 /// Classify a list argument by its elements: uniformly Float, Int, or
@@ -244,6 +265,11 @@ pub enum Kind {
     /// `Err(Str)` flowing into one register give Result(Int, Str).
     /// Every payload read is guarded per side, so a mismatch deopts.
     Result(Payload, Payload),
+    /// A string-keyed map with a uniform value payload, passed as a
+    /// borrowed pointer to its HashMap. Absent = observed empty (every
+    /// guarded read then deopts on execution). Reads are key-guarded, so
+    /// a missing key or a value surprise deopts, never misreads.
+    Map(Payload),
 }
 
 impl Kind {
@@ -264,6 +290,11 @@ struct JittedFn {
     /// Element kinds when this function returns a tuple (the entry
     /// wrapper then writes one out slot per element).
     ret_tuple: Option<Vec<Kind>>,
+    /// Builtin natives this body (or any group member / native callee)
+    /// baked direct calls to. A later user definition of one of these
+    /// names demotes the whole entry — the bytecode rerun then resolves
+    /// the name the ordinary way.
+    baked_builtins: Arc<[String]>,
     /// Owns the bytecode this body was compiled from: MakeStruct sites
     /// bake pointers to shape Arcs living inside its instructions, so
     /// the native code must never outlive it (note-channel invalidation
@@ -287,6 +318,10 @@ enum Slot {
 pub struct JitCache {
     module: Option<JITModule>,
     table: Vec<Option<Slot>>,
+    /// Builtin names shadowed by a user definition. Compiled code that
+    /// baked one of these natives is demoted the moment the shadow
+    /// appears (see note_shadow); specialization refuses them up front.
+    shadowed: std::collections::HashSet<String>,
     pub compiled: u64,
     pub native_calls: u64,
 }
@@ -834,6 +869,158 @@ unsafe extern "C" fn olang_jit_make_list_strs(
     }
 }
 
+/// Host helper for map_get on a map receiver: key-guarded read with the
+/// FIELD_* expect codes. A missing key (the VM returns Unit) or a value
+/// surprise deopts — bytecode then produces the canonical answer.
+///
+/// # Safety
+/// Called only from JIT code with pointers extracted from live slots.
+unsafe extern "C" fn olang_jit_map_get(
+    map: *const HashMap<String, OvmValue>,
+    key: *const String,
+    expect: u64,
+    out: *mut i64,
+) -> i64 {
+    unsafe {
+        let m = &*map;
+        let k = &*key;
+        match m.get(k.as_str()).map(|v| &v.data) {
+            Some(ValueData::Integer(i)) if expect == FIELD_INT => {
+                *out = *i;
+                0
+            }
+            Some(ValueData::Float(f)) if expect == FIELD_FLOAT => {
+                *out = f.to_bits() as i64;
+                0
+            }
+            Some(ValueData::Boolean(b)) if expect == FIELD_BOOL => {
+                *out = *b as i64;
+                0
+            }
+            Some(ValueData::String(s)) if expect == FIELD_STR => {
+                *out = Arc::as_ptr(s) as i64;
+                0
+            }
+            _ => 1,
+        }
+    }
+}
+
+/// Host helper for map_has_key on a map receiver: total, no guard.
+///
+/// # Safety
+/// Called only from JIT code with pointers extracted from live slots.
+unsafe extern "C" fn olang_jit_map_has(
+    map: *const HashMap<String, OvmValue>,
+    key: *const String,
+) -> i64 {
+    unsafe { (*map).contains_key((*key).as_str()) as i64 }
+}
+
+/// Host helper for map_set: clone-and-insert, exactly the VM's native
+/// (maps are immutable values). The new map is scratch-owned. Value kind
+/// codes: 0 int, 2 bool, 4 string (content-cloned), else float. Null =
+/// cap reached, deopt.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx and live pointers.
+unsafe extern "C" fn olang_jit_map_set(
+    ctx: *mut ScratchCtx,
+    map: *const HashMap<String, OvmValue>,
+    key: *const String,
+    kind: i64,
+    bits: i64,
+) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if ctx.map_allocs.len() >= 1_000_000 {
+            return 0;
+        }
+        let mut new_map = (*map).clone();
+        new_map.insert((*key).clone(), scalar_from_bits(kind, bits));
+        let arc = Arc::new(new_map);
+        let ptr = Arc::as_ptr(&arc) as i64;
+        ctx.map_allocs.push(arc);
+        ptr
+    }
+}
+
+/// Host helper for MakeMap: string keys (content-cloned — strings are
+/// immutable values), a uniform scalar or string value payload. The map
+/// is scratch-owned; a duplicate key overwrites, exactly like the VM.
+/// Null = cap reached, deopt.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx; `keys` and `vals`
+/// point at stack buffers of `n` slots each.
+unsafe extern "C" fn olang_jit_make_map(
+    ctx: *mut ScratchCtx,
+    keys: *const i64,
+    vals: *const i64,
+    n: i64,
+    kind: i64,
+) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if ctx.map_allocs.len() >= 1_000_000 {
+            return 0;
+        }
+        let mut map = HashMap::with_capacity(n as usize);
+        for i in 0..n as usize {
+            let key = (*(*keys.add(i) as *const String)).clone();
+            map.insert(key, scalar_from_bits(kind, *vals.add(i)));
+        }
+        let arc = Arc::new(map);
+        let ptr = Arc::as_ptr(&arc) as i64;
+        ctx.map_allocs.push(arc);
+        ptr
+    }
+}
+
+/// Decode a scalar-or-string value from its raw bits (codes above).
+///
+/// # Safety
+/// For code 4, `bits` must be a live `*const String`.
+unsafe fn scalar_from_bits(kind: i64, bits: i64) -> OvmValue {
+    unsafe {
+        match kind {
+            0 => OvmValue::new_integer(bits),
+            2 => OvmValue::new_boolean(bits != 0),
+            4 => OvmValue {
+                data: ValueData::String(Arc::new((*(bits as *const String)).clone())),
+            },
+            _ => OvmValue::new_float(f64::from_bits(bits as u64)),
+        }
+    }
+}
+
+/// Map twin of olang_jit_retain: resolve a returned borrowed pointer to
+/// an owned Arc at the entry boundary.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_map_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if let Some(last) = ctx.map_allocs.last()
+            && Arc::as_ptr(last) as i64 == ptr
+        {
+            ctx.retained_map = Some(last.clone());
+            return 0;
+        }
+        if let Some(m) = ctx
+            .map_allocs
+            .iter()
+            .chain(ctx.map_args.iter())
+            .find(|m| Arc::as_ptr(m) as i64 == ptr)
+        {
+            ctx.retained_map = Some(m.clone());
+            return 0;
+        }
+        1
+    }
+}
+
 unsafe extern "C" fn olang_jit_field(
     obj: *const crate::ovm::value::StructObject,
     idx: u64,
@@ -869,6 +1056,7 @@ impl JitCache {
         Self {
             module: None,
             table: Vec::new(),
+            shadowed: std::collections::HashSet::new(),
             compiled: 0,
             native_calls: 0,
         }
@@ -910,6 +1098,11 @@ impl JitCache {
                 "olang_jit_make_list_strs",
                 olang_jit_make_list_strs as *const u8,
             );
+            builder.symbol("olang_jit_map_get", olang_jit_map_get as *const u8);
+            builder.symbol("olang_jit_map_has", olang_jit_map_has as *const u8);
+            builder.symbol("olang_jit_map_set", olang_jit_map_set as *const u8);
+            builder.symbol("olang_jit_make_map", olang_jit_make_map as *const u8);
+            builder.symbol("olang_jit_map_retain", olang_jit_map_retain as *const u8);
             builder.symbol("olang_jit_list_concat", olang_jit_list_concat as *const u8);
             builder.symbol("olang_jit_list_retain", olang_jit_list_retain as *const u8);
             self.module = Some(JITModule::new(builder));
@@ -942,6 +1135,23 @@ impl JitCache {
                 );
             }
             self.table[idx] = Some(Slot::Refused);
+        }
+    }
+
+    /// A user definition now shadows the builtin `name` (the VM calls
+    /// this from its own shadow bookkeeping). Any compiled entry that
+    /// baked a direct call to that native is stale: demote it so calls
+    /// fall back to bytecode, which resolves the name the ordinary way.
+    pub fn note_shadow(&mut self, name: &str) {
+        if !self.shadowed.insert(name.to_string()) {
+            return;
+        }
+        for slot in self.table.iter_mut() {
+            if let Some(Slot::Ready(j)) = slot
+                && j.baked_builtins.iter().any(|b| b == name)
+            {
+                *slot = Some(Slot::Refused);
+            }
         }
     }
 
@@ -998,6 +1208,10 @@ impl JitCache {
                     kinds[i] = classify_result(r)?;
                     bits[i] = Arc::as_ptr(r) as i64;
                 }
+                ValueData::Map(m) => {
+                    kinds[i] = classify_map(m)?;
+                    bits[i] = Arc::as_ptr(m) as i64;
+                }
                 _ => return None,
             }
         }
@@ -1023,6 +1237,7 @@ impl JitCache {
         let mut str_args: Vec<Arc<String>> = Vec::new();
         let mut result_args: Vec<Arc<crate::ovm::value::ResultObject>> = Vec::new();
         let mut list_args: Vec<Arc<Vec<OvmValue>>> = Vec::new();
+        let mut map_args: Vec<Arc<HashMap<String, OvmValue>>> = Vec::new();
         for arg in args {
             if let ValueData::Struct(obj) = &arg.data {
                 struct_args.push(obj.clone());
@@ -1035,6 +1250,9 @@ impl JitCache {
             }
             if let ValueData::List(l) = &arg.data {
                 list_args.push(l.clone());
+            }
+            if let ValueData::Map(m) = &arg.data {
+                map_args.push(m.clone());
             }
         }
         self.try_call_raw_with_shapes(
@@ -1049,6 +1267,7 @@ impl JitCache {
             &str_args,
             &result_args,
             &list_args,
+            &map_args,
         )
     }
 
@@ -1083,6 +1302,7 @@ impl JitCache {
             &[],
             &[],
             &[],
+            &[],
         )
     }
 
@@ -1100,6 +1320,7 @@ impl JitCache {
         str_args_for_ctx: &[Arc<String>],
         result_args_for_ctx: &[Arc<crate::ovm::value::ResultObject>],
         list_args_for_ctx: &[Arc<Vec<OvmValue>>],
+        map_args_for_ctx: &[Arc<HashMap<String, OvmValue>>],
     ) -> Option<OvmValue> {
         let idx = func_id.index();
         match self.table.get(idx)? {
@@ -1140,6 +1361,9 @@ impl JitCache {
         }
         for l in list_args_for_ctx {
             ctx.list_args.push(l.clone());
+        }
+        for m in map_args_for_ctx {
+            ctx.map_args.push(m.clone());
         }
         let status = unsafe {
             (jitted.entry)(
@@ -1189,12 +1413,20 @@ impl JitCache {
                 data: ValueData::List(arc),
             });
         }
+        if let Kind::Map(_) = jitted.ret_kind {
+            let arc = ctx.retained_map.take()?;
+            return Some(OvmValue {
+                data: ValueData::Map(arc),
+            });
+        }
         let out = out[0];
         Some(match jitted.ret_kind {
             Kind::Int => OvmValue::new_integer(out),
             Kind::Bool => OvmValue::new_boolean(out != 0),
             Kind::Float => OvmValue::new_float(f64::from_bits(out as u64)),
-            Kind::Struct(_) | Kind::Str | Kind::Result(..) => unreachable!("handled above"),
+            Kind::Struct(_) | Kind::Str | Kind::Result(..) | Kind::Map(_) => {
+                unreachable!("handled above")
+            }
             Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) | Kind::ListStr => {
                 unreachable!("handled above")
             }
@@ -1266,7 +1498,7 @@ impl JitCache {
                                 _ => None,
                             },
                             match j.ret_kind {
-                                k @ Kind::Result(..) => Some(k),
+                                k @ (Kind::Result(..) | Kind::Map(_)) => Some(k),
                                 _ => None,
                             },
                             match j.ret_kind {
@@ -1284,7 +1516,13 @@ impl JitCache {
             let mut requests: Vec<(FunctionId, Vec<Kind>)> = Vec::new();
             for plan in plans.iter_mut() {
                 if plan
-                    .infer_pass(&sigs, &group_shapes, &mut requests, &mut changed)
+                    .infer_pass(
+                        &sigs,
+                        &group_shapes,
+                        &self.shadowed,
+                        &mut requests,
+                        &mut changed,
+                    )
                     .is_none()
                 {
                     if jit_debug() {
@@ -1369,6 +1607,7 @@ impl JitCache {
                                 | Kind::ListStruct(_)
                                 | Kind::ListStr,
                             ) => check.accepts("List"),
+                            (None, Kind::Map(_)) => check.accepts("Map"),
                             (None, Kind::Struct(sid)) => group_shapes
                                 .get(&sid)
                                 .is_some_and(|s| check.accepts(&s.shape.type_name)),
@@ -1402,6 +1641,33 @@ impl JitCache {
         // ── codegen: declare everything, then define everything ──
         // Snapshot previously compiled call targets before borrowing the
         // module (both live in self).
+        // Which builtin natives this group bakes: its own whitelisted
+        // CallNamed sites, plus (transitively) whatever already-compiled
+        // callees baked — their machine code is called directly, so a
+        // shadow of THEIR builtins must demote this group too.
+        let mut baked: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for plan in &plans {
+            for inst in plan.bytecode.instructions.iter() {
+                match inst {
+                    Instruction::CallNamed { function_name, .. }
+                        if matches!(
+                            function_name.as_str(),
+                            "map_get" | "map_has_key" | "map_set"
+                        ) =>
+                    {
+                        baked.insert(function_name.clone());
+                    }
+                    Instruction::CallFn { func_id, .. } => {
+                        if let Some(Some(Slot::Ready(j))) = self.table.get(func_id.index()) {
+                            baked.extend(j.baked_builtins.iter().cloned());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let baked: Arc<[String]> = baked.into_iter().collect::<Vec<_>>().into();
+
         let mut targets: HashMap<usize, (cranelift_module::FuncId, Kind, Option<Vec<Kind>>)> =
             HashMap::new();
         for (i, slot) in self.table.iter().enumerate() {
@@ -1575,6 +1841,54 @@ impl JitCache {
                 .declare_function("olang_jit_make_list_strs", Linkage::Import, &sig)
                 .ok()?
         };
+        let map_get_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..4 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_map_get", Linkage::Import, &sig)
+                .ok()?
+        };
+        let map_has_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_map_has", Linkage::Import, &sig)
+                .ok()?
+        };
+        let map_set_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..5 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_map_set", Linkage::Import, &sig)
+                .ok()?
+        };
+        let make_map_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..5 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_make_map", Linkage::Import, &sig)
+                .ok()?
+        };
+        let map_retain_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_map_retain", Linkage::Import, &sig)
+                .ok()?
+        };
         let list_retain_helper = {
             let mut sig = module.make_signature();
             sig.params.push(AbiParam::new(types::I64));
@@ -1660,6 +1974,10 @@ impl JitCache {
                         make_list_structs: make_list_structs_helper,
                         make_list_strs: make_list_strs_helper,
                         list_concat: list_concat_helper,
+                        map_get: map_get_helper,
+                        map_has: map_has_helper,
+                        map_set: map_set_helper,
+                        make_map: make_map_helper,
                     },
                 )
                 .is_none()
@@ -1743,6 +2061,7 @@ impl JitCache {
                         | Kind::ListFloat
                         | Kind::ListStruct(_)
                         | Kind::ListStr
+                        | Kind::Map(_)
                 ) {
                     // Ownership boundary: resolve the pointer to an owned
                     // Arc in ctx.retained; unknown pointers deopt.
@@ -1759,6 +2078,7 @@ impl JitCache {
                         Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr => {
                             list_retain_helper
                         }
+                        Kind::Map(_) => map_retain_helper,
                         _ => retain_helper,
                     };
                     let retain_ref = module.declare_func_in_func(which, builder.func);
@@ -1809,6 +2129,7 @@ impl JitCache {
                 param_kinds: plan.param_kinds.clone(),
                 ret_kind: inf.ret_kind,
                 ret_tuple: inf.ret_tuple.clone(),
+                baked_builtins: baked.clone(),
                 _bytecode: Arc::clone(&plan.bytecode),
             }));
             self.compiled += 1;
@@ -1884,6 +2205,20 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         Instruction::MakeList { elements, .. } => {
             elements.len() <= 64 && !has_backward_jump(bytecode)
         }
+        Instruction::MakeMap { entries, .. } => entries.len() <= 64 && !has_backward_jump(bytecode),
+        // Named map natives. Reads don't allocate, so they compile in
+        // loops; map_set allocates and follows the MakeStruct rule. A
+        // user definition shadowing one of these refuses at inference
+        // (and demotes already-compiled entries via note_shadow).
+        Instruction::CallNamed {
+            function_name,
+            args,
+            ..
+        } => match function_name.as_str() {
+            "map_get" | "map_has_key" => args.len() == 2,
+            "map_set" => args.len() == 3 && !has_backward_jump(bytecode),
+            _ => false,
+        },
         Instruction::BinImm { imm, .. } => {
             matches!(imm.data, ValueData::Integer(_) | ValueData::Float(_))
         }
@@ -1938,11 +2273,13 @@ const K_STR: u16 = 128;
 /// Result values ride borrowed `Arc<ResultObject>` pointers, like
 /// structs — the ninth kind, and the reason the masks are u16.
 const K_RESULT: u16 = 256;
+/// Maps ride borrowed `Arc<HashMap<String, OvmValue>>` pointers.
+const K_MAP: u16 = 512;
 /// Largest tuple the JIT returns natively (multi-value return slots).
 const MAX_TUPLE: usize = 4;
 const K_NUM: u16 = K_INT | K_FLOAT;
 const K_ANY: u16 =
-    K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT | K_LIST | K_TUPLE | K_STR | K_RESULT;
+    K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT | K_LIST | K_TUPLE | K_STR | K_RESULT | K_MAP;
 
 fn kind_mask(k: Kind) -> u16 {
     match k {
@@ -1953,6 +2290,7 @@ fn kind_mask(k: Kind) -> u16 {
         Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) | Kind::ListStr => K_LIST,
         Kind::Str => K_STR,
         Kind::Result(..) => K_RESULT,
+        Kind::Map(_) => K_MAP,
     }
 }
 
@@ -1991,21 +2329,25 @@ fn result_return_discharged(
     }
 }
 
-/// Join two Result kinds side by side: Absent is bottom, equal payloads
-/// join to themselves, conflicting payloads refuse. Non-Result inputs
-/// refuse — every other exotic kind must match exactly.
-fn join_result_kind(a: Kind, b: Kind) -> Option<Kind> {
-    fn join_payload(a: Payload, b: Payload) -> Option<Payload> {
-        match (a, b) {
-            (Payload::Absent, p) | (p, Payload::Absent) => Some(p),
-            (a, b) if a == b => Some(a),
-            _ => None,
-        }
+/// Absent is bottom, equal payloads join to themselves, conflicting
+/// payloads refuse.
+fn join_payload(a: Payload, b: Payload) -> Option<Payload> {
+    match (a, b) {
+        (Payload::Absent, p) | (p, Payload::Absent) => Some(p),
+        (a, b) if a == b => Some(a),
+        _ => None,
     }
+}
+
+/// Join two payload-carrying kinds side by side (Results by side, maps
+/// by value payload). Anything else refuses — every other exotic kind
+/// must match exactly.
+fn join_exotic(a: Kind, b: Kind) -> Option<Kind> {
     match (a, b) {
         (Kind::Result(ao, ae), Kind::Result(bo, be)) => {
             Some(Kind::Result(join_payload(ao, bo)?, join_payload(ae, be)?))
         }
+        (Kind::Map(ap), Kind::Map(bp)) => Some(Kind::Map(join_payload(ap, bp)?)),
         _ => None,
     }
 }
@@ -2043,8 +2385,9 @@ struct PlanFn {
     made_shapes: HashMap<u32, ShapeSpec>,
     /// Set when Return hands back a struct register (the shape id).
     ret_struct: Option<u32>,
-    /// Set when Return hands back a Result register — the join of every
-    /// return site's kind, so `Ok(n)` and `Err(msg)` paths merge.
+    /// Set when Return hands back a Result or Map register — the join
+    /// of every return site's kind, so `Ok(n)`/`Err(msg)` paths (and
+    /// maps of different observed payloads) merge.
     ret_result: Option<Kind>,
     /// Set when Return hands back a list register (the element kind).
     ret_list: Option<Kind>,
@@ -2070,7 +2413,7 @@ impl PlanFn {
         let mut exotic = vec![None; nregs];
         for (i, k) in param_kinds.iter().enumerate() {
             writes[i] = kind_mask(*k);
-            if matches!(kind_mask(*k), K_STRUCT | K_LIST | K_RESULT) {
+            if matches!(kind_mask(*k), K_STRUCT | K_LIST | K_RESULT | K_MAP) {
                 exotic[i] = Some(*k);
             }
         }
@@ -2102,6 +2445,7 @@ impl PlanFn {
         &mut self,
         sigs: &SigSnapshot,
         shapes: &HashMap<u32, ShapeSpec>,
+        shadowed: &std::collections::HashSet<String>,
         requests: &mut Vec<(FunctionId, Vec<Kind>)>,
         global_changed: &mut bool,
     ) -> Option<()> {
@@ -2174,7 +2518,7 @@ impl PlanFn {
                             Some(prev) if prev == k => {}
                             // Result kinds merge side by side; everything
                             // else is one exotic kind per register.
-                            Some(prev) => match join_result_kind(prev, k) {
+                            Some(prev) => match join_exotic(prev, k) {
                                 Some(j) => {
                                     if j != prev {
                                         self.exotic[dst.0 as usize] = Some(j);
@@ -2475,7 +2819,7 @@ impl PlanFn {
                             }
                             Some(prev) if prev == rk => {}
                             Some(prev) => {
-                                let j = join_result_kind(prev, rk)?;
+                                let j = join_exotic(prev, rk)?;
                                 if j != prev {
                                     self.exotic[dst.0 as usize] = Some(j);
                                     changed = true;
@@ -2569,6 +2913,118 @@ impl PlanFn {
                         changed = true;
                     } else if self.exotic[dst.0 as usize] != Some(lk) {
                         return None;
+                    }
+                }
+                Instruction::MakeMap { dst, entries } => {
+                    grow!(self.writes[dst.0 as usize], K_MAP);
+                    // Defer until every key and value mask resolves.
+                    if entries.iter().any(|(k, v)| {
+                        self.writes[k.0 as usize] == 0 || self.writes[v.0 as usize] == 0
+                    }) {
+                        continue;
+                    }
+                    let mut payload = Payload::Absent;
+                    for (k, v) in entries {
+                        narrow!(k.0, K_STR);
+                        if self.writes[k.0 as usize] != K_STR {
+                            return None; // stringified non-string keys stay on bytecode
+                        }
+                        narrow!(v.0, K_NUM | K_BOOL | K_STR);
+                        let pv = match mask_singleton(self.writes[v.0 as usize]) {
+                            Some(Kind::Int) => Payload::Int,
+                            Some(Kind::Bool) => Payload::Bool,
+                            Some(Kind::Float) => Payload::Float,
+                            Some(Kind::Str) => Payload::Str,
+                            _ => return None,
+                        };
+                        payload = join_payload(payload, pv)?;
+                    }
+                    let mk = Kind::Map(payload);
+                    match self.exotic[dst.0 as usize] {
+                        None => {
+                            self.exotic[dst.0 as usize] = Some(mk);
+                            changed = true;
+                        }
+                        Some(prev) if prev == mk => {}
+                        Some(prev) => {
+                            let j = join_exotic(prev, mk)?;
+                            if j != prev {
+                                self.exotic[dst.0 as usize] = Some(j);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                Instruction::CallNamed {
+                    dst,
+                    function_name,
+                    args,
+                } => {
+                    // Whitelisted map natives only — and only while no
+                    // user definition shadows the name (a later shadow
+                    // demotes compiled entries via note_shadow).
+                    if shadowed.contains(function_name.as_str()) {
+                        return None;
+                    }
+                    match function_name.as_str() {
+                        "map_get" if args.len() == 2 => {
+                            narrow!(args[0].0, K_MAP);
+                            narrow!(args[1].0, K_STR);
+                            if let Some(Kind::Map(p)) = self.exotic[args[0].0 as usize] {
+                                let k = match p {
+                                    Payload::Int => Kind::Int,
+                                    Payload::Bool => Kind::Bool,
+                                    Payload::Float => Kind::Float,
+                                    Payload::Str => Kind::Str,
+                                    // Observed empty: every read misses and
+                                    // the guard deopts; Int keeps the dst
+                                    // register typeable.
+                                    Payload::Absent => Kind::Int,
+                                };
+                                grow!(self.writes[dst.0 as usize], kind_mask(k));
+                            }
+                            // exotic None: a callee's map resolves late — defer.
+                        }
+                        "map_has_key" if args.len() == 2 => {
+                            narrow!(args[0].0, K_MAP);
+                            narrow!(args[1].0, K_STR);
+                            grow!(self.writes[dst.0 as usize], K_BOOL);
+                        }
+                        "map_set" if args.len() == 3 => {
+                            narrow!(args[0].0, K_MAP);
+                            narrow!(args[1].0, K_STR);
+                            narrow!(args[2].0, K_NUM | K_BOOL | K_STR);
+                            grow!(self.writes[dst.0 as usize], K_MAP);
+                            let (Some(Kind::Map(p)), Some(vk)) = (
+                                self.exotic[args[0].0 as usize],
+                                mask_singleton(self.writes[args[2].0 as usize]),
+                            ) else {
+                                continue; // defer until both resolve
+                            };
+                            let pv = match vk {
+                                Kind::Int => Payload::Int,
+                                Kind::Bool => Payload::Bool,
+                                Kind::Float => Payload::Float,
+                                Kind::Str => Payload::Str,
+                                _ => return None,
+                            };
+                            let mk = Kind::Map(join_payload(p, pv)?);
+                            match self.exotic[dst.0 as usize] {
+                                None => {
+                                    self.exotic[dst.0 as usize] = Some(mk);
+                                    changed = true;
+                                }
+                                Some(prev) if prev == mk => {}
+                                Some(prev) => {
+                                    let j = join_exotic(prev, mk)?;
+                                    if j != prev {
+                                        self.exotic[dst.0 as usize] = Some(j);
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        _ => return None,
                     }
                 }
                 Instruction::ExtractResult {
@@ -2774,7 +3230,7 @@ impl PlanFn {
                                 }
                                 Some(prev) if prev == *rk => {}
                                 Some(prev) => {
-                                    let j = join_result_kind(prev, *rk)?;
+                                    let j = join_exotic(prev, *rk)?;
                                     if j != prev {
                                         self.exotic[dst.0 as usize] = Some(j);
                                         changed = true;
@@ -2824,8 +3280,10 @@ impl PlanFn {
                         }
                         self.return_regs.push(reg.0);
                         grow!(self.ret_mask, K_STRUCT);
-                    } else if let Some(rk @ Kind::Result(..)) = self.exotic[reg.0 as usize] {
-                        narrow!(reg.0, K_RESULT);
+                    } else if let Some(rk @ (Kind::Result(..) | Kind::Map(_))) =
+                        self.exotic[reg.0 as usize]
+                    {
+                        narrow!(reg.0, kind_mask(rk));
                         match self.ret_result {
                             None => {
                                 self.ret_result = Some(rk);
@@ -2833,7 +3291,7 @@ impl PlanFn {
                             }
                             Some(prev) if prev == rk => {}
                             Some(prev) => {
-                                let j = join_result_kind(prev, rk)?;
+                                let j = join_exotic(prev, rk)?;
                                 if j != prev {
                                     self.ret_result = Some(j);
                                     changed = true;
@@ -2841,7 +3299,7 @@ impl PlanFn {
                             }
                         }
                         self.return_regs.push(reg.0);
-                        grow!(self.ret_mask, K_RESULT);
+                        grow!(self.ret_mask, kind_mask(rk));
                     } else if let Some(
                         lk
                         @ (Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr),
@@ -2906,7 +3364,7 @@ impl PlanFn {
         let mut reg_kind: Vec<Option<Kind>> = vec![None; nregs];
         for (r, slot) in reg_kind.iter_mut().enumerate() {
             if self.was_read[r] {
-                if matches!(self.writes[r], K_STRUCT | K_LIST | K_RESULT) {
+                if matches!(self.writes[r], K_STRUCT | K_LIST | K_RESULT | K_MAP) {
                     let k = self.exotic[r]?;
                     if kind_mask(k) & self.allowed[r] == 0 {
                         return None;
@@ -2975,14 +3433,14 @@ impl PlanFn {
                 }
             }
             (lk, None)
-        } else if self.ret_mask == K_RESULT {
+        } else if self.ret_mask == K_RESULT || self.ret_mask == K_MAP {
             let rk = self.ret_result?;
             for r in &self.return_regs {
                 let k = self.exotic[*r as usize]?;
                 // Every return site's kind must fold into the joined
                 // return kind (rk was built from them, so join is a
                 // consistency re-check, not new information).
-                if join_result_kind(k, rk) != Some(rk) {
+                if join_exotic(k, rk) != Some(rk) {
                     return None;
                 }
             }
@@ -3049,6 +3507,7 @@ fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::PatternTestResult { .. } => "PatternTestResult",
         Instruction::ExtractResult { .. } => "ExtractResult",
         Instruction::MakeList { .. } => "MakeList",
+        Instruction::MakeMap { .. } => "MakeMap",
         _ => "other",
     }
 }
@@ -3072,6 +3531,10 @@ struct Helpers {
     make_list_structs: cranelift_module::FuncId,
     make_list_strs: cranelift_module::FuncId,
     list_concat: cranelift_module::FuncId,
+    map_get: cranelift_module::FuncId,
+    map_has: cranelift_module::FuncId,
+    map_set: cranelift_module::FuncId,
+    make_map: cranelift_module::FuncId,
 }
 
 struct Gen<'a> {
@@ -3132,6 +3595,10 @@ fn translate_body(
         make_list_structs: make_list_structs_helper,
         make_list_strs: make_list_strs_helper,
         list_concat: list_concat_helper,
+        map_get: map_get_helper,
+        map_has: map_has_helper,
+        map_set: map_set_helper,
+        make_map: make_map_helper,
     } = helpers;
     let n = bytecode.instructions.len();
     let param_count = inference.param_kinds.len();
@@ -3686,6 +4153,147 @@ fn translate_body(
                 builder.switch_to_block(ok_block);
                 r#gen.write(builder, dst.0, ptr);
             }
+            Instruction::MakeMap { dst, entries } => {
+                let Some(Kind::Map(payload)) = r#gen.kind(dst.0) else {
+                    return None;
+                };
+                let n = entries.len();
+                // Two stack buffers in one slot: keys first, values after.
+                let slot =
+                    builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                        cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                        ((n * 2).max(1) * 8) as u32,
+                        3,
+                    ));
+                let mut code: i64 = 0;
+                for (i, (k, v)) in entries.iter().enumerate() {
+                    if r#gen.kind(k.0)? != Kind::Str {
+                        return None;
+                    }
+                    let kv = builder.use_var(Variable::from_u32(k.0));
+                    builder.ins().stack_store(ptr_ty, kv, slot, (i * 8) as i32);
+                    code = match r#gen.kind(v.0)? {
+                        Kind::Int => 0,
+                        Kind::Bool => 2,
+                        Kind::Str => 4,
+                        Kind::Float => 1,
+                        _ => return None,
+                    };
+                    let vv = builder.use_var(Variable::from_u32(v.0));
+                    builder
+                        .ins()
+                        .stack_store(ptr_ty, vv, slot, ((n + i) * 8) as i32);
+                }
+                let _ = payload;
+                let ctx = builder.use_var(ctx_var);
+                let keys_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                let vals_ptr = builder.ins().stack_addr(types::I64, slot, (n * 8) as i32);
+                let n_v = builder.ins().iconst(types::I64, n as i64);
+                let kind_v = builder.ins().iconst(types::I64, code);
+                let helper_ref = module.declare_func_in_func(make_map_helper, builder.func);
+                let call = builder
+                    .ins()
+                    .call(helper_ref, &[ctx, keys_ptr, vals_ptr, n_v, kind_v]);
+                let ptr = builder.inst_results(call)[0];
+                let null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
+                let ok_block = builder.create_block();
+                builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
+                builder.switch_to_block(ok_block);
+                r#gen.write(builder, dst.0, ptr);
+            }
+            Instruction::CallNamed {
+                dst,
+                function_name,
+                args,
+            } => match function_name.as_str() {
+                "map_get" => {
+                    let Kind::Map(p) = r#gen.kind(args[0].0)? else {
+                        return None;
+                    };
+                    if r#gen.kind(args[1].0)? != Kind::Str {
+                        return None;
+                    }
+                    let (expect, load_ty) = match p {
+                        Payload::Int => (FIELD_INT, types::I64),
+                        Payload::Float => (FIELD_FLOAT, types::F64),
+                        Payload::Bool => (FIELD_BOOL, types::I64),
+                        Payload::Str => (FIELD_STR, types::I64),
+                        // Observed empty: the guard always deopts, and the
+                        // bytecode rerun returns the canonical Unit.
+                        Payload::Absent => (FIELD_NEVER, types::I64),
+                    };
+                    let m = builder.use_var(Variable::from_u32(args[0].0));
+                    let k = builder.use_var(Variable::from_u32(args[1].0));
+                    let exp_v = builder.ins().iconst(types::I64, expect as i64);
+                    let slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                    let out_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                    let helper_ref = module.declare_func_in_func(map_get_helper, builder.func);
+                    let call = builder.ins().call(helper_ref, &[m, k, exp_v, out_ptr]);
+                    let status = builder.inst_results(call)[0];
+                    let ok_block = builder.create_block();
+                    builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
+                    builder.switch_to_block(ok_block);
+                    let val = builder.ins().stack_load(ptr_ty, load_ty, slot, 0);
+                    r#gen.write(builder, dst.0, val);
+                }
+                "map_has_key" => {
+                    let Kind::Map(_) = r#gen.kind(args[0].0)? else {
+                        return None;
+                    };
+                    if r#gen.kind(args[1].0)? != Kind::Str {
+                        return None;
+                    }
+                    let m = builder.use_var(Variable::from_u32(args[0].0));
+                    let k = builder.use_var(Variable::from_u32(args[1].0));
+                    let helper_ref = module.declare_func_in_func(map_has_helper, builder.func);
+                    let call = builder.ins().call(helper_ref, &[m, k]);
+                    let val = builder.inst_results(call)[0];
+                    r#gen.write(builder, dst.0, val);
+                }
+                "map_set" => {
+                    let Kind::Map(_) = r#gen.kind(args[0].0)? else {
+                        return None;
+                    };
+                    if r#gen.kind(args[1].0)? != Kind::Str {
+                        return None;
+                    }
+                    let code: i64 = match r#gen.kind(args[2].0)? {
+                        Kind::Int => 0,
+                        Kind::Bool => 2,
+                        Kind::Str => 4,
+                        Kind::Float => 1,
+                        _ => return None,
+                    };
+                    // Raw bits regardless of clif type (F64 or I64).
+                    let v = builder.use_var(Variable::from_u32(args[2].0));
+                    let slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                    builder.ins().stack_store(ptr_ty, v, slot, 0);
+                    let bits = builder.ins().stack_load(ptr_ty, types::I64, slot, 0);
+                    let ctx = builder.use_var(ctx_var);
+                    let m = builder.use_var(Variable::from_u32(args[0].0));
+                    let k = builder.use_var(Variable::from_u32(args[1].0));
+                    let kind_v = builder.ins().iconst(types::I64, code);
+                    let helper_ref = module.declare_func_in_func(map_set_helper, builder.func);
+                    let call = builder.ins().call(helper_ref, &[ctx, m, k, kind_v, bits]);
+                    let ptr = builder.inst_results(call)[0];
+                    let null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
+                    let ok_block = builder.create_block();
+                    builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
+                    builder.switch_to_block(ok_block);
+                    r#gen.write(builder, dst.0, ptr);
+                }
+                _ => return None,
+            },
             Instruction::MakeResult { dst, value, ok } => {
                 let k = r#gen.kind(value.0)?;
                 let code: i64 = match k {

@@ -1318,3 +1318,150 @@ read(5)
 "#,
     );
 }
+
+// ── maps ───────────────────────────────────────────────────────────────
+//
+// Kind::Map(payload): string-keyed maps with a uniform value payload.
+// map_get is a key-guarded read (a miss — the VM returns Unit — deopts),
+// map_has_key is total, map_set is clone-and-insert into scratch, and
+// #{...} literals construct natively. A user function shadowing one of
+// these builtin names refuses at specialization and demotes any entry
+// that already baked the native.
+
+#[test]
+fn map_literals_construct_and_read() {
+    assert_jit_transparent(
+        r#"
+fn scores(a, b) = #{ "ada": a, "bob": b }
+fn of(m, k) = map_get(m, k)
+let m = scores(99, 87)
+of(m, "ada") + of(m, "bob")
+"#,
+    );
+}
+
+#[test]
+fn map_reads_compile_in_loops() {
+    assert_jit_transparent(
+        r#"
+fn total(m, n) = {
+    let mut acc = 0
+    let mut i = 0
+    while i < n {
+        acc = acc + (if map_has_key(m, "step") => map_get(m, "step") else => 0)
+        i = i + 1
+    }
+    acc
+}
+total(#{ "step": 3 }, 10) + total(#{ "other": 1 }, 10)
+"#,
+    );
+}
+
+#[test]
+fn map_set_chains_build_natively() {
+    assert_jit_transparent(
+        r#"
+fn configured(port) = map_set(map_set(#{ "tls": 0 }, "port", port), "workers", 4)
+let c = configured(8080)
+map_get(c, "port") + map_get(c, "workers") + map_get(c, "tls")
+"#,
+    );
+}
+
+#[test]
+fn string_valued_maps_agree() {
+    assert_jit_transparent(
+        r#"
+fn headers(host) = #{ "host": host, "accept": "text/html" }
+fn header(m, k) = map_get(m, k)
+let h = headers("example.test")
+header(h, "host") + " " + header(h, "accept")
+"#,
+    );
+}
+
+#[test]
+fn map_misses_deopt_and_agree() {
+    assert_jit_transparent(
+        r#"
+fn lookup(m, k) = map_get(m, k)
+let m = #{ "a": 1 }
+show(lookup(m, "a")) + " " + show(lookup(m, "missing"))
+"#,
+    );
+}
+
+#[test]
+fn mixed_value_maps_stay_on_bytecode_and_agree() {
+    assert_jit_transparent(
+        r#"
+fn odd(n) = #{ "count": n, "label": "x" }
+fn read(n) = map_get(odd(n), "count")
+read(4)
+"#,
+    );
+}
+
+#[test]
+fn stringified_keys_stay_on_bytecode_and_agree() {
+    assert_jit_transparent(
+        r#"
+fn by_num(m, k) = map_get(m, k)
+by_num(#{ "1": 10 }, 1)
+"#,
+    );
+}
+
+#[test]
+fn map_get_on_objects_stays_on_bytecode_and_agrees() {
+    assert_jit_transparent(
+        r#"
+type Cfg = struct { port: Int }
+fn read(c) = map_get(c, "port")
+read(Cfg { port: 8080 })
+"#,
+    );
+}
+
+#[test]
+fn annotated_map_returns_discharge_statically() {
+    assert_jit_transparent(
+        r#"
+fn build(n) -> Map = #{ "n": n, "twice": n * 2 }
+map_get(build(21), "twice")
+"#,
+    );
+}
+
+#[test]
+fn user_shadow_of_map_get_refuses_the_native() {
+    // A user definition of map_get exists before `read` ever runs: the
+    // JIT's shadowed-name set must refuse to bake the native, so `read`
+    // resolves the user's function exactly as the interpreter does.
+    // (Shadowing AFTER a caller is already hot is a pre-existing tier
+    // divergence tracked separately; the JIT's note_shadow demotion
+    // keeps native code consistent with bytecode either way.)
+    assert_jit_transparent(
+        r#"
+fn map_get(m, k) = 999
+fn read(m, k) = map_get(m, k)
+let m = #{ "a": 1 }
+let mut acc = 0
+let mut i = 0
+while i < 10 { acc = acc + read(m, "a"); i = i + 1 }
+acc + read(m, "a")
+"#,
+    );
+}
+
+#[test]
+fn empty_map_literals_construct_and_grow() {
+    assert_jit_transparent(
+        r#"
+fn base() = #{}
+fn grown(v) = map_set(base(), "v", v)
+map_get(grown(7), "v")
+"#,
+    );
+}
