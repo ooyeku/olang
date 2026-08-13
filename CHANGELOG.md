@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`olang bench` — reproducible timings and a regression guard.** Each
+  `.ol` file runs as its own subprocess (fresh VM and JIT per run, the
+  wall-clock a user experiences): one discarded warmup, then timed runs
+  with median, min, max, and coefficient of variation per row, plus a
+  warning when runs disagree on their output. `--save base.json` stores
+  a baseline; `--against base.json` compares to one, calling a row
+  changed only when it moves more than max(5%, 2×CV) — below that it's
+  noise, not news; `--fail-on-regress` turns red rows into exit code 1,
+  making a saved baseline a standing guard for performance work.
+  Documented in the tooling chapter.
+
 ## [0.51.0] - 2026-08-13
 
 ### Fixed

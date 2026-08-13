@@ -1,7 +1,8 @@
 # Tooling
 
 The developer tools shipped inside the `olang` binary: the test runner,
-the formatter, and the static checker. (Package commands live in `otc` —
+the formatter, the static checker, and the benchmark harness. (Package
+commands live in `otc` —
 see [Packages](packages.md); the language server has
 [its own chapter](editors.md).)
 
@@ -130,6 +131,31 @@ flagged chain is provably false.
 The same checker runs in the language server, so editors surface these
 as error squiggles while you type. Exit is non-zero when a violation or
 parse error is found, so `olang check` slots directly into CI.
+
+## `olang bench`
+
+Reproducible timings for `.ol` programs, and a regression guard:
+
+```bash
+olang bench kernels/                     # every .ol file in the directory
+olang bench fib.ol --runs 10             # more timed runs (default 7)
+olang bench kernels/ --save base.json    # store medians as a baseline
+olang bench kernels/ --against base.json # compare to a stored baseline
+```
+
+Each file runs as its own subprocess — a fresh VM and JIT every run,
+measuring the wall-clock a user actually experiences: one discarded
+warmup, then the timed runs (7 by default; 3 when a run exceeds two
+seconds, where long runs are stable). Every row reports the median,
+min, max, and coefficient of variation, and warns when runs disagree
+on their output — a benchmark that prints unstable output is measuring
+something else.
+
+Comparisons only call a row changed when it moves more than
+max(5%, 2×CV) against the baseline: below that threshold it's noise,
+not news, and prints as `~`. Add `--fail-on-regress` to turn any red
+row into exit code 1 — that flag is what makes a saved baseline a
+standing guard for performance work.
 
 ## `olang --watch`
 

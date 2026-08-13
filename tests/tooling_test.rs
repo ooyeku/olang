@@ -177,3 +177,116 @@ fn test_fails_on_a_file_that_does_not_parse() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── olang bench ────────────────────────────────────────────────────────
+
+#[test]
+fn bench_measures_saves_and_compares_a_baseline() {
+    let dir = fixture_dir("bench");
+    std::fs::write(
+        dir.join("tiny.ol"),
+        "fn f(n) = if n < 2 => n else => f(n - 1) + f(n - 2)\nprintln(f(15))\n",
+    )
+    .unwrap();
+    let baseline = dir.join("base.json");
+
+    // Measure and save.
+    let out = olang()
+        .args([
+            "bench",
+            dir.to_str().unwrap(),
+            "--runs",
+            "2",
+            "--save",
+            baseline.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("tiny"), "no row for the benchmark: {text}");
+    assert!(baseline.exists(), "baseline not written");
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&baseline).unwrap()).unwrap();
+    assert!(doc["benchmarks"]["tiny"]["median_s"].as_f64().unwrap() > 0.0);
+
+    // Compare against it: same program, so the row must read as noise-level.
+    let out = olang()
+        .args([
+            "bench",
+            dir.to_str().unwrap(),
+            "--runs",
+            "2",
+            "--against",
+            baseline.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Any comparison verdict counts — tiny debug-build runs jitter enough
+    // that the row may legitimately read faster/slower rather than "~".
+    assert!(
+        text.contains("vs") || text.contains("than"),
+        "comparison column missing: {text}"
+    );
+}
+
+#[test]
+fn bench_fail_on_regress_returns_nonzero_against_a_faster_baseline() {
+    let dir = fixture_dir("bench_regress");
+    std::fs::write(
+        dir.join("steady.ol"),
+        "fn f(n) = if n < 2 => n else => f(n - 1) + f(n - 2)\nprintln(f(18))\n",
+    )
+    .unwrap();
+    let baseline = dir.join("base.json");
+    // A baseline claiming the benchmark once ran absurdly fast: the real
+    // run must register as a regression and fail under the flag.
+    std::fs::write(
+        &baseline,
+        r#"{"benchmarks": {"steady": {"median_s": 0.00001}}}"#,
+    )
+    .unwrap();
+    let out = olang()
+        .args([
+            "bench",
+            dir.join("steady.ol").to_str().unwrap(),
+            "--runs",
+            "2",
+            "--against",
+            baseline.to_str().unwrap(),
+            "--fail-on-regress",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "expected regression exit");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("slower"));
+}
+
+#[test]
+fn bench_fails_cleanly_on_broken_programs_and_bad_paths() {
+    let dir = fixture_dir("bench_broken");
+    std::fs::write(dir.join("boom.ol"), "println(1 / 0)\n").unwrap();
+    let out = olang()
+        .args([
+            "bench",
+            dir.join("boom.ol").to_str().unwrap(),
+            "--runs",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("boom"));
+
+    let out = olang()
+        .args(["bench", "/no/such/path.ol"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}

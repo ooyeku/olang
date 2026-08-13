@@ -2,6 +2,7 @@
 //! (`olang test`), the formatter (`olang fmt`), and the static checker
 //! (`olang check`).
 
+pub mod bench; // `olang bench` — reproducible timings with baseline compare
 pub mod check; // `olang check` — provable annotation violations, pre-run
 pub mod fmt;
 #[cfg(feature = "native")]

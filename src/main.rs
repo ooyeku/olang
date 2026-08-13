@@ -169,6 +169,9 @@ fn run() -> i32 {
                     }
                 };
             }
+            "bench" => {
+                return olang::tools::bench::run(&cli.script_args);
+            }
             "check" => {
                 let mut paths: Vec<PathBuf> = cli.script_args.iter().map(PathBuf::from).collect();
                 if paths.is_empty() {
