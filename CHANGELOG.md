@@ -53,6 +53,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   keys, and object receivers all stay on bytecode with identical
   results; `-> Map` return annotations discharge statically.
 
+- **Channels: `spawn`ed tasks can talk.** The new `chan` module is
+  message passing between tasks — multi-producer multi-consumer queues
+  of olang values. `chan.new()` is unbounded; `chan.bounded(n)` holds
+  at most `n` in-flight messages and blocks senders when full
+  (`bounded(0)` is a rendezvous). `send`/`recv`/`try_recv`/
+  `recv_timeout` all speak Result, and closing is cooperative: after
+  `chan.close(c)` sends fail but queued messages still drain, so a
+  consumer loop just matches on `recv` and stops on `Err`. Handles are
+  plain values that cross the `spawn` boundary like anything else;
+  heap values (lists, maps, structs) travel intact. Documented in the
+  stdlib chapter with a tested producer/consumer example.
+
 - **The checker proves match exhaustiveness over literal enums.** A
   union of literals declares exactly which values are admissible, so
   `olang check` (and the editor) now knows what covering every case

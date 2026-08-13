@@ -642,6 +642,15 @@ impl BuiltinFunctions {
             );
         }
 
+        // Handle chan functions
+        if let Some(chan_function) = name.strip_prefix("chan.") {
+            return crate::stdlib::chan::call_chan_function(chan_function, arguments).map_err(
+                |e| InterpreterError::RuntimeError {
+                    message: e.to_string(),
+                },
+            );
+        }
+
         // Handle toml functions
         if let Some(toml_function) = name.strip_prefix("toml.") {
             return crate::stdlib::toml_mod::call_toml_function(toml_function, arguments).map_err(

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub mod base64;
+pub mod chan;
 pub mod collections;
 pub mod crypto;
 pub mod csv;
@@ -41,6 +42,7 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("http".to_string(), http::create_http_module());
     stdlib.insert("json".to_string(), json::create_json_module());
     stdlib.insert("toml".to_string(), toml_mod::create_toml_module());
+    stdlib.insert("chan".to_string(), chan::create_chan_module());
     stdlib.insert("math".to_string(), math::create_math_module());
     #[cfg(feature = "native")]
     stdlib.insert("os".to_string(), os::create_os_module());

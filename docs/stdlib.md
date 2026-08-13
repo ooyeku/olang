@@ -27,6 +27,7 @@ Part of [the olang book](README.md) ·
 - [`re` — regular expressions](#re--regular-expressions)
 - [`dates` — dates and times](#dates--dates-and-times)
 - [`time` — clocks and sleeping](#time--clocks-and-sleeping)
+- [`chan` — channels](#chan--channels)
 - [`random` — randomness](#random--randomness)
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
 - [`base64` — base64](#base64--base64)
@@ -518,6 +519,54 @@ the epoch, now" (`timestamp` parses its argument, so it returns a
 let t0 = time.monotonic_ms()
 time.sleep(25)
 println(show(time.monotonic_ms() - t0 >= 20))   // true
+```
+
+## `chan` — channels
+
+Message passing between `spawn`ed tasks: multi-producer multi-consumer
+queues of olang values. `chan.new()` makes an unbounded channel;
+`chan.bounded(n)` holds at most `n` in-flight messages, and senders
+block when it is full (`chan.bounded(0)` is a rendezvous — a send waits
+for its receiver). Handles are plain values, so they cross the `spawn`
+boundary like anything else.
+
+| Function | Returns |
+|---|---|
+| `chan.new()` | a channel |
+| `chan.bounded(n)` | a channel holding at most `n` messages |
+| `chan.send(c, v)` | `Ok(())`, or `Err` when the channel is closed |
+| `chan.recv(c)` | blocks; `Ok(value)`, or `Err` when closed and drained |
+| `chan.try_recv(c)` | `Ok(value)`, `Err("channel is empty")`, or `Err("channel is closed")` |
+| `chan.recv_timeout(c, ms)` | like `recv`, plus `Err("timed out")` |
+| `chan.close(c)` | closes the sending side (idempotent) |
+
+Closing is cooperative and drains: after `chan.close(c)` new sends
+fail, but messages already queued are still received before `recv`
+starts reporting the close — so a consumer loop can simply `match` on
+`recv` and stop on `Err`.
+
+```olang
+fn producer(ch, n) = {
+    let mut i = 1
+    while i <= n {
+        chan.send(ch, i * i)
+        i = i + 1
+    }
+    chan.close(ch)
+    n
+}
+
+let pipe = chan.new()
+let task = spawn producer(pipe, 4)
+let mut total = 0
+let mut going = true
+while going {
+    match chan.recv(pipe) {
+        Ok(v) => { total = total + v }
+        Err(e) => { going = false }
+    }
+}
+println(to_string(total) + " from " + to_string(await task) + " squares")
 ```
 
 ## `random` — randomness
