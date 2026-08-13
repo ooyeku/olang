@@ -4259,6 +4259,9 @@ impl BytecodeCompiler {
                 // makes it safe to branch on.
                 if matches!(op, BinaryOp::And | BinaryOp::Or) {
                     let left_reg = self.compile_expression(left)?;
+                    // The combine instruction reads the left register after
+                    // the right operand has run — shield it from rhs writes.
+                    let left_reg = self.shield_operand(left_reg, !Self::assignment_free(right));
 
                     let settle_value = matches!(op, BinaryOp::Or); // false for &&, true for ||
                     let settle_const = self
@@ -4365,6 +4368,7 @@ impl BytecodeCompiler {
                 }
 
                 let left_reg = self.compile_expression(left)?;
+                let left_reg = self.shield_operand(left_reg, !Self::assignment_free(right));
                 let right_reg = self.compile_expression(right)?;
                 let dst_reg = self.register_allocator.allocate_register();
 
@@ -4394,10 +4398,8 @@ impl BytecodeCompiler {
             }
 
             Expr::List(elements) => {
-                let mut element_regs = Vec::new();
-                for element in elements.iter() {
-                    element_regs.push(self.compile_expression(element)?);
-                }
+                let exprs: Vec<&Expr> = elements.iter().collect();
+                let element_regs = self.compile_operands(&exprs)?;
 
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter.emit_make_list(dst_reg, element_regs);
@@ -4448,6 +4450,7 @@ impl BytecodeCompiler {
             } => {
                 // Compile start and end expressions
                 let start_reg = self.compile_expression(start)?;
+                let start_reg = self.shield_operand(start_reg, !Self::assignment_free(end));
                 let end_reg = self.compile_expression(end)?;
 
                 // Create range value - for now, we'll create a constant range
@@ -4468,6 +4471,16 @@ impl BytecodeCompiler {
                 // baked value. Non-name callees — `f(x)(y)`, an immediately
                 // invoked lambda, `obj.handler(x)` — compile as expressions
                 // and call through CallValue.
+                // The interpreter evaluates the callee (and a method-call
+                // receiver) BEFORE the arguments — shield their registers
+                // from argument code that assigns.
+                let args_may_assign = arguments.iter().any(|a| {
+                    let expr = match a {
+                        crate::ast::Argument::Positional(e) => e,
+                        crate::ast::Argument::Named { value, .. } => value,
+                    };
+                    !Self::assignment_free(expr)
+                });
                 let callee_reg: Option<Register> = match callee.as_ref() {
                     Expr::Identifier(name) | Expr::LocalRef { name, .. } => {
                         self.local_variables.get(name).copied()
@@ -4518,20 +4531,7 @@ impl BytecodeCompiler {
                                 },
                                 _ => unreachable!("guard checked the module"),
                             };
-                            let mut arg_regs = Vec::new();
-                            for argument in arguments {
-                                match argument {
-                                    crate::ast::Argument::Positional(expr) => {
-                                        arg_regs.push(self.compile_expression(expr)?);
-                                    }
-                                    crate::ast::Argument::Named { .. } => {
-                                        return Err(BytecodeError::CompilationFailed(
-                                            "Named arguments are not supported in the bytecode tier"
-                                                .to_string(),
-                                        ))
-                                    }
-                                }
-                            }
+                            let arg_regs = self.compile_call_args(arguments)?;
                             let dst_reg = self.register_allocator.allocate_register();
                             self.emitter.instructions.push(Instruction::CallNamed {
                                 dst: dst_reg,
@@ -4542,20 +4542,8 @@ impl BytecodeCompiler {
                         }
                         receiver if Self::receiver_is_pure(receiver) => {
                             let object_reg = self.compile_expression(object)?;
-                            let mut arg_regs = Vec::new();
-                            for argument in arguments {
-                                match argument {
-                                    crate::ast::Argument::Positional(expr) => {
-                                        arg_regs.push(self.compile_expression(expr)?);
-                                    }
-                                    crate::ast::Argument::Named { .. } => {
-                                        return Err(BytecodeError::CompilationFailed(
-                                            "Named arguments are not supported in the bytecode tier"
-                                                .to_string(),
-                                        ))
-                                    }
-                                }
-                            }
+                            let object_reg = self.shield_operand(object_reg, args_may_assign);
+                            let arg_regs = self.compile_call_args(arguments)?;
                             let dst_reg = self.register_allocator.allocate_register();
                             self.emitter.instructions.push(Instruction::CallMethod {
                                 dst: dst_reg,
@@ -4574,21 +4562,9 @@ impl BytecodeCompiler {
                     },
                     _ => Some(self.compile_expression(callee)?),
                 };
+                let callee_reg = callee_reg.map(|reg| self.shield_operand(reg, args_may_assign));
 
-                let mut arg_regs = Vec::new();
-                for argument in arguments {
-                    match argument {
-                        crate::ast::Argument::Positional(expr) => {
-                            arg_regs.push(self.compile_expression(expr)?);
-                        }
-                        crate::ast::Argument::Named { .. } => {
-                            return Err(BytecodeError::CompilationFailed(
-                                "Named arguments are not supported in the bytecode tier"
-                                    .to_string(),
-                            ));
-                        }
-                    }
-                }
+                let arg_regs = self.compile_call_args(arguments)?;
 
                 if let Some(callee_reg) = callee_reg {
                     let dst_reg = self.register_allocator.allocate_register();
@@ -4758,11 +4734,14 @@ impl BytecodeCompiler {
 
                 // Field exprs compile in literal order (side-effect order);
                 // the instruction stores their registers in SHAPE order.
-                let mut pairs = Vec::with_capacity(literal.fields.len());
-                for field in &literal.fields {
-                    let reg = self.compile_expression(&field.value)?;
-                    pairs.push((field.name.clone(), reg));
-                }
+                let exprs: Vec<&Expr> = literal.fields.iter().map(|f| &f.value).collect();
+                let regs = self.compile_operands(&exprs)?;
+                let mut pairs: Vec<(String, Register)> = literal
+                    .fields
+                    .iter()
+                    .zip(regs)
+                    .map(|(f, reg)| (f.name.clone(), reg))
+                    .collect();
                 let shape = crate::ovm::value::intern_shape(
                     &literal.type_name,
                     pairs.iter().map(|(n, _)| n.clone()).collect(),
@@ -4791,11 +4770,13 @@ impl BytecodeCompiler {
             // Anonymous objects are free-form: no validation, type name
             // "Object", exactly as the interpreter builds them.
             Expr::AnonymousObject { fields } => {
-                let mut pairs = Vec::with_capacity(fields.len());
-                for field in fields {
-                    let reg = self.compile_expression(&field.value)?;
-                    pairs.push((field.name.clone(), reg));
-                }
+                let exprs: Vec<&Expr> = fields.iter().map(|f| &f.value).collect();
+                let regs = self.compile_operands(&exprs)?;
+                let mut pairs: Vec<(String, Register)> = fields
+                    .iter()
+                    .zip(regs)
+                    .map(|(f, reg)| (f.name.clone(), reg))
+                    .collect();
                 let shape = crate::ovm::value::intern_shape(
                     "Object",
                     pairs.iter().map(|(n, _)| n.clone()).collect(),
@@ -4817,12 +4798,14 @@ impl BytecodeCompiler {
             Expr::MapLiteral { entries } => {
                 // Keys and values compile in written order, key before value
                 // per entry — the interpreter's evaluation order.
-                let mut entry_regs = Vec::with_capacity(entries.len());
+                let mut flat = Vec::with_capacity(entries.len() * 2);
                 for entry in entries {
-                    let key_reg = self.compile_expression(&entry.key)?;
-                    let value_reg = self.compile_expression(&entry.value)?;
-                    entry_regs.push((key_reg, value_reg));
+                    flat.push(&entry.key);
+                    flat.push(&entry.value);
                 }
+                let regs = self.compile_operands(&flat)?;
+                let entry_regs: Vec<(Register, Register)> =
+                    regs.chunks(2).map(|c| (c[0], c[1])).collect();
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter.instructions.push(Instruction::MakeMap {
                     dst: dst_reg,
@@ -4834,14 +4817,21 @@ impl BytecodeCompiler {
             Expr::TemplateString { parts } => {
                 // Interpolations compile in written order (side-effect
                 // order); literal chunks ride in the instruction.
+                let last_assigning = parts.iter().rposition(|p| {
+                    matches!(p, crate::ast::TemplatePart::Interpolation(e)
+                        if !Self::assignment_free(e))
+                });
                 let mut compiled = Vec::with_capacity(parts.len());
-                for part in parts {
+                for (i, part) in parts.iter().enumerate() {
                     match part {
                         crate::ast::TemplatePart::Literal(text) => {
                             compiled.push(TplPart::Literal(text.clone()));
                         }
                         crate::ast::TemplatePart::Interpolation(expr) => {
-                            compiled.push(TplPart::Reg(self.compile_expression(expr)?));
+                            let reg = self.compile_expression(expr)?;
+                            let reg =
+                                self.shield_operand(reg, last_assigning.is_some_and(|j| i < j));
+                            compiled.push(TplPart::Reg(reg));
                         }
                     }
                 }
@@ -4864,10 +4854,8 @@ impl BytecodeCompiler {
             } => self.compile_lambda(parameters, body, None),
 
             Expr::Tuple(items) => {
-                let mut element_regs = Vec::with_capacity(items.len());
-                for item in items.iter() {
-                    element_regs.push(self.compile_expression(item)?);
-                }
+                let exprs: Vec<&Expr> = items.iter().collect();
+                let element_regs = self.compile_operands(&exprs)?;
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter.instructions.push(Instruction::MakeTuple {
                     dst: dst_reg,
@@ -4910,6 +4898,14 @@ impl BytecodeCompiler {
 
             Expr::Match { value, arms } => {
                 let scrutinee = self.compile_expression(value)?;
+                // A failing arm's guard runs before the NEXT arm's pattern
+                // test re-reads the scrutinee register — shield it from
+                // guards that assign. (Arm bodies never precede a test.)
+                let guards_free = arms.iter().all(|arm| {
+                    arm.guard.as_deref().is_none_or(Self::assignment_free)
+                        && Self::pattern_guards_assignment_free(&arm.pattern)
+                });
+                let scrutinee = self.shield_operand(scrutinee, !guards_free);
                 let result_reg = self.register_allocator.allocate_register();
                 let end_label = self.emitter.create_label();
 
@@ -4973,7 +4969,10 @@ impl BytecodeCompiler {
             } => {
                 // Iterate by index over a list or range, matching the
                 // interpreter (which never materializes a range).
+                // IterGet re-reads the source register EVERY pass, so a body
+                // that reassigns the iterable variable must not share it.
                 let source_reg = self.compile_expression(iterable)?;
+                let source_reg = self.shield_operand(source_reg, !Self::assignment_free(body));
 
                 let len_reg = self.register_allocator.allocate_register();
                 self.emitter.instructions.push(Instruction::IterLen {
@@ -5107,6 +5106,7 @@ impl BytecodeCompiler {
 
             Expr::Index { object, index } => {
                 let object_reg = self.compile_expression(object)?;
+                let object_reg = self.shield_operand(object_reg, !Self::assignment_free(index));
                 let index_reg = self.compile_expression(index)?;
                 let dst = self.register_allocator.allocate_register();
                 self.emitter.instructions.push(Instruction::IndexGet {
@@ -6105,6 +6105,96 @@ impl BytecodeCompiler {
             E::List(items) => items.iter().all(Self::assignment_free),
             E::Tuple(items) => items.iter().all(Self::assignment_free),
             _ => false,
+        }
+    }
+
+    /// True when `reg` is a local variable's home register — the one class
+    /// of register that assignment instructions write in place.
+    fn is_variable_register(&self, reg: Register) -> bool {
+        self.local_variables.values().any(|&r| r == reg)
+    }
+
+    /// Multi-operand instructions read their operand registers when they
+    /// execute — after ALL operand code has run — while the interpreter
+    /// captures each operand's value in evaluation order. Those orders
+    /// agree unless an earlier operand's register is a variable's home
+    /// register and a later operand assigns to it (`x + { x = 1  5 }`).
+    /// In exactly that case, copy the value out to a fresh register at
+    /// the operand's evaluation point; otherwise (the hot path) keep the
+    /// register as-is and pay no Move.
+    fn shield_operand(&mut self, reg: Register, later_may_assign: bool) -> Register {
+        if !later_may_assign || !self.is_variable_register(reg) {
+            return reg;
+        }
+        let dst = self.register_allocator.allocate_register();
+        self.emitter.emit_move(dst, reg);
+        dst
+    }
+
+    /// Compile expressions evaluated left-to-right whose registers feed a
+    /// single instruction (call arguments, list/tuple elements), shielding
+    /// each from assignments in the expressions after it.
+    fn compile_operands(&mut self, exprs: &[&Expr]) -> Result<Vec<Register>, BytecodeError> {
+        let last_assigning = exprs.iter().rposition(|e| !Self::assignment_free(e));
+        let mut regs = Vec::with_capacity(exprs.len());
+        for (i, expr) in exprs.iter().enumerate() {
+            let reg = self.compile_expression(expr)?;
+            let reg = self.shield_operand(reg, last_assigning.is_some_and(|j| i < j));
+            regs.push(reg);
+        }
+        Ok(regs)
+    }
+
+    /// Compile positional call arguments via `compile_operands`; named
+    /// arguments refuse compilation.
+    fn compile_call_args(
+        &mut self,
+        arguments: &[crate::ast::Argument],
+    ) -> Result<Vec<Register>, BytecodeError> {
+        let mut exprs = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            match argument {
+                crate::ast::Argument::Positional(expr) => exprs.push(expr),
+                crate::ast::Argument::Named { .. } => {
+                    return Err(BytecodeError::CompilationFailed(
+                        "Named arguments are not supported in the bytecode tier".to_string(),
+                    ));
+                }
+            }
+        }
+        self.compile_operands(&exprs)
+    }
+
+    /// True when every guard nested in the pattern (via `Guarded`) is
+    /// assignment-free. Guards run between pattern tests, which re-read
+    /// the scrutinee register — see `shield_operand`.
+    fn pattern_guards_assignment_free(p: &crate::ast::Pattern) -> bool {
+        use crate::ast::Pattern as P;
+        match p {
+            P::Guarded { pattern, guard } => {
+                Self::assignment_free(guard) && Self::pattern_guards_assignment_free(pattern)
+            }
+            P::List { patterns, .. } | P::Tuple(patterns) => {
+                patterns.iter().all(Self::pattern_guards_assignment_free)
+            }
+            P::EnumVariant { patterns, .. } => {
+                patterns.iter().all(Self::pattern_guards_assignment_free)
+            }
+            P::Or { alternatives } => alternatives
+                .iter()
+                .all(Self::pattern_guards_assignment_free),
+            P::Ok(inner) | P::Err(inner) => Self::pattern_guards_assignment_free(inner),
+            P::Struct { field_patterns, .. } => field_patterns
+                .iter()
+                .all(|(_, p)| Self::pattern_guards_assignment_free(p)),
+            P::AnonymousStruct { field_patterns } => field_patterns
+                .iter()
+                .all(|(_, p)| Self::pattern_guards_assignment_free(p)),
+            P::Range { start, end, .. } => {
+                Self::pattern_guards_assignment_free(start)
+                    && Self::pattern_guards_assignment_free(end)
+            }
+            _ => true,
         }
     }
 

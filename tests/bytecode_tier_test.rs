@@ -3337,3 +3337,263 @@ f()
 "#,
     );
 }
+
+// ── Operand evaluation order: a variable read as an earlier operand must
+// not observe assignments made by a later operand. The compiler shields
+// the variable's register with a Move in exactly that case; these run
+// each shape through both tiers and require the results to agree — and
+// require promotion, so the shield is actually exercised.
+
+/// Transparent AND promoted — a divergence test that silently stayed on
+/// the interpreter would prove nothing.
+fn assert_tier_transparent_and_promoted(src: &str) {
+    assert!(
+        promotion_count(src, 2) >= 1,
+        "test function must be promoted\n  source: {}",
+        src
+    );
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn binop_left_variable_read_before_assigning_rhs() {
+    // Interpreter: acc (10) is read before the rhs block sets acc = 1,
+    // so the result is 10 + 5 = 15 — not 1 + 5.
+    assert_tier_transparent_and_promoted(
+        r#"
+fn f() = {
+    let mut acc = 10
+    acc = acc + { acc = 1
+    5 }
+    acc
+}
+f() + f() + f()
+"#,
+    );
+}
+
+#[test]
+fn comparison_left_variable_read_before_assigning_rhs() {
+    assert_tier_transparent_and_promoted(
+        r#"
+fn f() = {
+    let mut a = 1
+    let r = a < { a = 100
+    2 }
+    if r => 1 else => 0
+}
+f() + f() + f()
+"#,
+    );
+}
+
+#[test]
+fn logical_and_left_read_before_assigning_rhs() {
+    // `a && rhs`: the combine step must use a's value from BEFORE the
+    // rhs sets it to false.
+    assert_tier_transparent_and_promoted(
+        r#"
+fn f() = {
+    let mut a = true
+    if a && { a = false
+    true } => 1 else => 0
+}
+f() + f() + f()
+"#,
+    );
+}
+
+#[test]
+fn call_argument_read_before_later_assigning_argument() {
+    assert_tier_transparent_and_promoted(
+        r#"
+fn add3(x, y, z) = x + y + z
+fn f() = {
+    let mut v = 1
+    add3(v, { v = 100
+    2 }, 3)
+}
+f() + f() + f()
+"#,
+    );
+}
+
+#[test]
+fn callee_variable_read_before_assigning_argument() {
+    // The interpreter evaluates the callee before the arguments, so the
+    // reassignment inside the argument must not change which function
+    // is called.
+    assert_tier_transparent_and_promoted(
+        r#"
+fn f() = {
+    let mut g = (x) => x + 1
+    g({ g = (x) => x * 100
+    10 })
+}
+f() + f() + f()
+"#,
+    );
+}
+
+#[test]
+fn list_and_tuple_elements_read_before_later_assigning_element() {
+    assert_tier_transparent_and_promoted(
+        r#"
+fn l() = {
+    let mut v = 1
+    [v, { v = 9
+    2 }]
+}
+fn t() = {
+    let mut v = 1
+    (v, { v = 9
+    2 })
+}
+let mut total = 0
+for round in 0..3 {
+    total = total + l()[0] * 1000 + l()[1] * 100 + t()[0] * 10 + t()[1]
+}
+total
+"#,
+    );
+}
+
+#[test]
+fn index_object_read_before_assigning_index_expression() {
+    assert_tier_transparent_and_promoted(
+        r#"
+fn f() = {
+    let mut xs = [1, 2, 3]
+    xs[{ xs = [7, 8, 9]
+    0 }]
+}
+f() + f() + f()
+"#,
+    );
+}
+
+#[test]
+fn range_start_read_before_assigning_end() {
+    assert_tier_transparent_and_promoted(
+        r#"
+fn f() = {
+    let mut a = 0
+    let mut s = 0
+    for i in a..({ a = 5
+    3 }) {
+        s = s + i
+    }
+    s
+}
+f() + f() + f()
+"#,
+    );
+}
+
+#[test]
+fn for_loop_iterable_snapshot_survives_body_reassignment() {
+    // The interpreter iterates the value the iterable had when the loop
+    // began; reassigning the variable mid-loop must not change that.
+    assert_tier_transparent_and_promoted(
+        r#"
+fn f() = {
+    let mut xs = [1, 2, 3]
+    let mut s = 0
+    for x in xs {
+        xs = [10, 20]
+        s = s + x
+    }
+    s
+}
+f() + f() + f()
+"#,
+    );
+}
+
+#[test]
+fn map_key_read_before_assigning_value_expression() {
+    assert_tier_transparent_and_promoted(
+        r#"
+fn f() = {
+    let mut k = "a"
+    let m = #{k: { k = "b"
+    1 }, "z": 2}
+    map_get(m, "a")
+}
+f() + f() + f()
+"#,
+    );
+}
+
+#[test]
+fn template_interpolation_read_before_later_assigning_interpolation() {
+    assert_tier_transparent_and_promoted(
+        r#"
+fn f() = {
+    let mut v = 1
+    `${v}-${{ v = 2
+    v }}`
+}
+f() + f() + f()
+"#,
+    );
+}
+
+#[test]
+fn struct_and_anon_object_fields_read_before_later_assigning_field() {
+    assert_tier_transparent_and_promoted(
+        r#"
+type Pair = struct { a: Int, b: Int }
+fn s() = {
+    let mut v = 1
+    let p = Pair { a: v, b: { v = 9
+    2 } }
+    p.a * 100 + p.b
+}
+fn o() = {
+    let mut v = 1
+    let obj = { a: v, b: { v = 9
+    2 } }
+    obj.a * 100 + obj.b
+}
+let mut total = 0
+for round in 0..3 {
+    total = total + s() * 1000 + o()
+}
+total
+"#,
+    );
+}
+
+#[test]
+fn match_scrutinee_read_before_assigning_guard() {
+    // A failing arm's guard reassigns the scrutinee variable; the next
+    // arm must still test the value captured when the match began.
+    assert_tier_transparent_and_promoted(
+        r#"
+fn f() = {
+    let mut x = 1
+    match x {
+        _ if { x = 2
+        false } => 100,
+        1 => 200,
+        _ => 300
+    }
+}
+f() + f() + f()
+"#,
+    );
+}
+
+#[test]
+fn assignment_free_operands_still_skip_the_shield() {
+    // Plain arithmetic on variables must stay shield-free and promoted —
+    // this is the hot path the Move must not tax. (Behavioral check only;
+    // instruction-level Move counting lives with the compiler.)
+    assert_tier_transparent_and_promoted(
+        r#"
+fn f(a, b) = a + b * a - b
+f(3, 4) + f(5, 6) + f(7, 8)
+"#,
+    );
+}
