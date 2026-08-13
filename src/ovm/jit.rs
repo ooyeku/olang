@@ -1585,32 +1585,30 @@ impl JitCache {
         for plan in &plans {
             match plan.finalize() {
                 Some(inf) => {
-                    // A declared return type must be *statically discharged*:
-                    // native code never runs the VM's per-call return check,
-                    // so the JIT only compiles a function whose inferred
-                    // return kind provably satisfies the annotation. Anything
-                    // else stays on bytecode, which enforces per call.
+                    // Declared types must be *statically discharged*: native
+                    // code never runs the VM's per-call checks, so the JIT
+                    // only compiles a specialization whose parameter kinds
+                    // and inferred return kind provably satisfy their
+                    // annotations. Anything else stays on bytecode, which
+                    // enforces per call.
+                    for (i, check) in plan.bytecode.param_checks.iter().enumerate() {
+                        if let (Some(check), Some(&kind)) = (check, plan.param_kinds.get(i))
+                            && !kind_discharges(check, kind, &group_shapes)
+                        {
+                            if jit_debug() {
+                                eprintln!(
+                                    "[jit] fn#{} refused: parameter {} annotation not statically satisfied",
+                                    plan.func_id.index(),
+                                    i
+                                );
+                            }
+                            return None;
+                        }
+                    }
                     if let Some(check) = &plan.bytecode.return_check {
                         let ok = match (&inf.ret_tuple, inf.ret_kind) {
                             (Some(_), _) => check.accepts("Tuple"),
-                            (None, Kind::Int) => check.accepts("Int"),
-                            (None, Kind::Float) => check.accepts("Float"),
-                            (None, Kind::Bool) => check.accepts("Bool"),
-                            (None, Kind::Str) => check.accepts("String"),
-                            (None, Kind::Result(okp, errp)) => {
-                                result_return_discharged(check, okp, errp)
-                            }
-                            (
-                                None,
-                                Kind::ListInt
-                                | Kind::ListFloat
-                                | Kind::ListStruct(_)
-                                | Kind::ListStr,
-                            ) => check.accepts("List"),
-                            (None, Kind::Map(_)) => check.accepts("Map"),
-                            (None, Kind::Struct(sid)) => group_shapes
-                                .get(&sid)
-                                .is_some_and(|s| check.accepts(&s.shape.type_name)),
+                            (None, k) => kind_discharges(check, k, &group_shapes),
                         };
                         if !ok {
                             if jit_debug() {
@@ -2291,6 +2289,31 @@ fn kind_mask(k: Kind) -> u16 {
         Kind::Str => K_STR,
         Kind::Result(..) => K_RESULT,
         Kind::Map(_) => K_MAP,
+    }
+}
+
+/// Does a value of `kind` provably satisfy `check`, for every value the
+/// kind can classify? The shared question behind both parameter and
+/// return discharge: native code never runs the VM's per-call checks,
+/// so an annotation compiles only when its kind proves it.
+fn kind_discharges(
+    check: &crate::ast::FieldTypeCheck,
+    kind: Kind,
+    shapes: &HashMap<u32, ShapeSpec>,
+) -> bool {
+    match kind {
+        Kind::Int => check.accepts("Int"),
+        Kind::Float => check.accepts("Float"),
+        Kind::Bool => check.accepts("Bool"),
+        Kind::Str => check.accepts("String"),
+        Kind::Result(okp, errp) => result_return_discharged(check, okp, errp),
+        Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr => {
+            check.accepts("List")
+        }
+        Kind::Map(_) => check.accepts("Map"),
+        Kind::Struct(sid) => shapes
+            .get(&sid)
+            .is_some_and(|s| check.accepts(&s.shape.type_name)),
     }
 }
 

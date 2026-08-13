@@ -53,6 +53,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   keys, and object receivers all stay on bytecode with identical
   results; `-> Map` return annotations discharge statically.
 
+- **Runtime errors on the bytecode tier carry the same trace as the
+  interpreter.** A runtime failure now points at the innermost located
+  statement and lists the call stack — identically on every tier.
+  Compiled bytecode carries statement-granularity span markers, the VM
+  records frames as the error unwinds (with the interpreter's exact
+  frame-visibility semantics, quirks included), and the tier splices
+  its trace onto the interpreter's live stack. Previously a tier-run
+  error pointed at the top-level statement with no stack at all. Seven
+  differential tests pin the whole ErrorLocation equal across tiers.
+
+### Fixed
+
+- **The JIT enforces parameter annotations.** A specialization whose
+  observed argument kinds could not provably satisfy the function's
+  parameter annotations compiled anyway and skipped the check — so a
+  hot `fn double(n: Int)` called with a Float returned a wrong value
+  instead of the type error every other tier raises (present since the
+  JIT and gradual typing first coexisted; surfaced by the new trace
+  tests). Parameter annotations now discharge statically exactly like
+  return annotations: unprovable specializations stay on bytecode,
+  which checks per call.
+
 ## [0.50.0] - 2026-08-12
 
 ### Added

@@ -59,6 +59,19 @@ pub struct BytecodeVm {
     /// (all-Integer arguments) holds. See src/ovm/jit.rs.
     #[cfg(feature = "native")]
     jit: crate::ovm::jit::JitCache,
+    /// Trace of the error currently unwinding: the innermost located
+    /// statement's span, and function names innermost-first. Frames
+    /// deeper than the first span-owning frame are dropped — exactly the
+    /// frames the interpreter has already popped when it captures at its
+    /// innermost Located statement.
+    error_trace_span: Option<(u32, u32)>,
+    error_trace_frames: Vec<String>,
+    /// A parameter-check failure keeps exactly one extra frame alive in
+    /// the interpreter (the frame is pushed before the check and the
+    /// early error return skips the pop; each enclosing frame's own pop
+    /// then consumes the leaked slot, so the surviving extra frame
+    /// shifts outward until a span captures). Mirror that observable.
+    error_trace_leak: Option<String>,
     /// Spare execution frames, pooled so register/local vectors keep their
     /// allocated capacity across calls
     /// Pooled argument buffers for Call* instructions, so marshaling a call's
@@ -129,6 +142,8 @@ pub struct BytecodeCompiler {
     builtin_names: std::collections::HashSet<String>,
     /// Enclosing loops, innermost last: (continue target, break target)
     loop_targets: Vec<(Label, Label)>,
+    /// Enclosing Located statements, innermost last, for span markers.
+    span_stack: Vec<(u32, u32)>,
     /// The enclosing function's declaration-time closure. Lambdas whose free
     /// variables all resolve here can carry it verbatim, which is exactly the
     /// snapshot the interpreter layers over the call-site chain.
@@ -218,6 +233,11 @@ pub struct CompiledBytecode {
     /// Runtime check for the declared return type.
     pub return_check: Option<crate::ast::FieldTypeCheck>,
     pub constants: Vec<OvmValue>,
+    /// Statement-granularity source spans: (first instruction index,
+    /// line, column), in emission order. On a runtime error the VM maps
+    /// the failing pc to the last marker at or before it — the same
+    /// "innermost located statement" the interpreter reports.
+    pub span_table: Vec<(u32, u32, u32)>,
     pub debug_info: BytecodeDebugInfo,
     pub optimization_level: u8,
     pub entry_point: usize,
@@ -710,6 +730,7 @@ pub struct RegisterAllocator {
 /// Instruction emitter
 pub struct InstructionEmitter {
     instructions: Vec<Instruction>,
+    span_table: Vec<(u32, u32, u32)>,
     /// Label id -> instruction offset where the label was placed
     label_positions: HashMap<u32, usize>,
     next_label_id: u32,
@@ -973,6 +994,9 @@ impl BytecodeVm {
             max_call_depth: crate::interpreter::DEFAULT_MAX_CALL_DEPTH as u32,
             #[cfg(feature = "native")]
             jit: crate::ovm::jit::JitCache::new(),
+            error_trace_span: None,
+            error_trace_frames: Vec::new(),
+            error_trace_leak: None,
         }
     }
 
@@ -1319,6 +1343,10 @@ impl BytecodeVm {
                             .function_name
                             .as_deref()
                             .unwrap_or("<fn>");
+                        // The interpreter pushes the callee before this
+                        // check and its early error return skips the pop —
+                        // the frame stays visible. Mirror the leak.
+                        self.error_trace_leak = bytecode.debug_info.function_name.clone();
                         return Err(BytecodeError::TypeError(format!(
                             "parameter '{}' of {} expects {}, got {}",
                             bytecode.param_names[i], fn_name, expected, got
@@ -1438,6 +1466,10 @@ impl BytecodeVm {
                             .function_name
                             .as_deref()
                             .unwrap_or("<fn>");
+                        // The interpreter pushes the callee before this
+                        // check and its early error return skips the pop —
+                        // the frame stays visible. Mirror the leak.
+                        self.error_trace_leak = bytecode.debug_info.function_name.clone();
                         return Err(BytecodeError::TypeError(format!(
                             "parameter '{}' of {} expects {}, got {}",
                             bytecode.param_names[i], fn_name, expected, got
@@ -1626,21 +1658,83 @@ impl BytecodeVm {
         // Count instructions in a local and flush once: a stats-field write in
         // the dispatch loop costs a memory op per instruction executed.
         let mut executed: u64 = 0;
-        let result = self.dispatch_loop(bytecode, &mut executed);
+        let mut err_pc: usize = bytecode.entry_point;
+        let result = self.dispatch_loop(bytecode, &mut executed, &mut err_pc);
         self.stats.instructions_executed += executed;
+        if result.is_err() {
+            self.note_error_frame(bytecode, err_pc);
+        }
         result
+    }
+
+    /// One unwinding frame's contribution to the error trace. The first
+    /// frame that owns a span for its failing pc sets the location and
+    /// starts the visible stack; frames deeper than it stay invisible
+    /// (the interpreter's model: those frames were already popped when
+    /// the innermost Located statement captured).
+    fn note_error_frame(&mut self, bytecode: &CompiledBytecode, err_pc: usize) {
+        if self.error_trace_span.is_none() {
+            let pc = err_pc as u32;
+            match bytecode
+                .span_table
+                .iter()
+                .rev()
+                .find(|&&(start, _, _)| start <= pc)
+            {
+                Some(&(_, line, column)) => {
+                    self.error_trace_span = Some((line, column));
+                    if let Some(leaked) = self.error_trace_leak.take() {
+                        self.error_trace_frames.push(leaked);
+                    }
+                }
+                None => {
+                    // No span here: this frame is invisible (the
+                    // interpreter has already popped it) — but its pop
+                    // consumes any leaked slot, so the leak becomes this
+                    // frame instead.
+                    if self.error_trace_leak.is_some() {
+                        self.error_trace_leak = bytecode.debug_info.function_name.clone();
+                    }
+                    return;
+                }
+            }
+        }
+        if let Some(name) = &bytecode.debug_info.function_name {
+            self.error_trace_frames.push(name.clone());
+        }
+    }
+
+    /// Hand the finished trace to the tier boundary (resetting it). The
+    /// frames come back innermost-first.
+    pub fn take_error_trace(&mut self) -> (Option<(u32, u32)>, Vec<String>, Option<String>) {
+        (
+            self.error_trace_span.take(),
+            std::mem::take(&mut self.error_trace_frames),
+            self.error_trace_leak.take(),
+        )
+    }
+
+    /// Reset any stale trace before a fresh top-level run (the tier may
+    /// have consumed an error internally, e.g. an unresolved-callee
+    /// compile-and-retry).
+    pub fn clear_error_trace(&mut self) {
+        self.error_trace_span = None;
+        self.error_trace_frames.clear();
+        self.error_trace_leak = None;
     }
 
     fn dispatch_loop(
         &mut self,
         bytecode: &CompiledBytecode,
         executed: &mut u64,
+        err_pc: &mut usize,
     ) -> Result<OvmValue, BytecodeError> {
         let mut pc = bytecode.entry_point;
 
         while pc < bytecode.instructions.len() {
             let instruction = &bytecode.instructions[pc];
             *executed += 1;
+            *err_pc = pc;
 
             match instruction {
                 Instruction::LoadConst { dst, const_idx } => {
@@ -3901,6 +3995,7 @@ impl BytecodeCompiler {
             local_variables: HashMap::new(),
             builtin_names: std::collections::HashSet::new(),
             loop_targets: Vec::new(),
+            span_stack: Vec::new(),
             enclosing_closure: std::sync::Arc::new(im::HashMap::new()),
             enclosing_bound_names: std::collections::HashSet::new(),
             _label_counter: 0,
@@ -3969,6 +4064,7 @@ impl BytecodeCompiler {
             param_checks: self.pending_param_checks.clone(),
             return_check: self.pending_return_check.clone(),
             constants,
+            span_table: self.emitter.take_spans(),
             debug_info: BytecodeDebugInfo {
                 function_name: Some(func.name.clone()),
                 ..Default::default()
@@ -5884,7 +5980,20 @@ impl BytecodeCompiler {
         statement: &crate::ast::Statement,
     ) -> Result<Register, BytecodeError> {
         match statement {
-            crate::ast::Statement::Located { stmt, .. } => self.compile_statement(stmt),
+            crate::ast::Statement::Located { line, column, stmt } => {
+                // Mirror the interpreter's span discipline: this
+                // statement's span covers its instructions; a nested block
+                // pushes deeper spans, and when it ends the enclosing span
+                // resurfaces for whatever the parent compiles afterwards.
+                self.span_stack.push((*line, *column));
+                self.emitter.note_span(*line, *column);
+                let result = self.compile_statement(stmt);
+                self.span_stack.pop();
+                if let Some(&(l, c)) = self.span_stack.last() {
+                    self.emitter.note_span(l, c);
+                }
+                result
+            }
             crate::ast::Statement::Expression(expr) => self.compile_expression(expr),
             crate::ast::Statement::LetDecl(let_decl) => {
                 // An annotated let is a checked boundary the VM does not
@@ -6003,6 +6112,7 @@ impl InstructionEmitter {
     pub fn new() -> Self {
         Self {
             instructions: Vec::new(),
+            span_table: Vec::new(),
             label_positions: HashMap::new(),
             next_label_id: 0,
             constants: Vec::new(),
@@ -6177,6 +6287,27 @@ impl InstructionEmitter {
 
     pub fn take_instructions(&mut self) -> Vec<Instruction> {
         std::mem::take(&mut self.instructions)
+    }
+
+    /// Mark that instructions emitted from here belong to the statement
+    /// at (line, column). Consecutive duplicates collapse; a marker at
+    /// the same offset as the previous one replaces it.
+    pub fn note_span(&mut self, line: u32, column: u32) {
+        let at = self.instructions.len() as u32;
+        if let Some(last) = self.span_table.last_mut() {
+            if last.1 == line && last.2 == column {
+                return;
+            }
+            if last.0 == at {
+                *last = (at, line, column);
+                return;
+            }
+        }
+        self.span_table.push((at, line, column));
+    }
+
+    pub fn take_spans(&mut self) -> Vec<(u32, u32, u32)> {
+        std::mem::take(&mut self.span_table)
     }
 
     pub fn take_constants(&mut self) -> Vec<OvmValue> {

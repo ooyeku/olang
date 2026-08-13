@@ -295,6 +295,37 @@ impl Interpreter {
 
     /// Loop/return/`?` signals travel as Err but aren't errors — they must
     /// never capture an error location (their consumption is normal flow).
+    /// The tier hands back a bare message string; map it onto the
+    /// interpreter's own error variants so the Display a user sees is
+    /// identical no matter which tier executed the function.
+    fn map_tier_error_message(message: String) -> InterpreterError {
+        if message == "Pattern match failed" {
+            InterpreterError::PatternMatchFailed
+        } else if let Some(rest) = message.strip_prefix("Type error: ") {
+            InterpreterError::TypeError {
+                message: rest.to_string(),
+            }
+        } else if let Some(name) = message.strip_prefix("Undefined variable: ") {
+            InterpreterError::UndefinedVariable {
+                name: name.to_string(),
+            }
+        } else if let Some(rest) = message.strip_prefix("Arity mismatch: expected ") {
+            // "N, got M" — both ends are ours, parse back into the
+            // structured variant so Display is bare (no "Runtime error:"
+            // prefix), exactly like the interpreter's own arity errors.
+            let mut parts = rest.splitn(2, ", got ");
+            match (
+                parts.next().and_then(|s| s.parse().ok()),
+                parts.next().and_then(|s| s.parse().ok()),
+            ) {
+                (Some(expected), Some(got)) => InterpreterError::ArityMismatch { expected, got },
+                _ => InterpreterError::RuntimeError { message },
+            }
+        } else {
+            InterpreterError::RuntimeError { message }
+        }
+    }
+
     fn is_control_signal(e: &InterpreterError) -> bool {
         matches!(
             e,
@@ -1661,43 +1692,47 @@ impl Interpreter {
                     if let crate::ovm::tier::TierOutcome::Ran(result) = outcome {
                         self.call_depth -= 1;
                         self.call_stack_names.pop();
-                        return result.map_err(|message| {
-                            // The tier hands back a bare message string; map
-                            // it onto the interpreter's own error variants so
-                            // the Display a user sees is identical no matter
-                            // which tier executed the function.
-                            if message == "Pattern match failed" {
-                                InterpreterError::PatternMatchFailed
-                            } else if let Some(rest) = message.strip_prefix("Type error: ") {
-                                InterpreterError::TypeError {
-                                    message: rest.to_string(),
-                                }
-                            } else if let Some(name) = message.strip_prefix("Undefined variable: ")
-                            {
-                                InterpreterError::UndefinedVariable {
-                                    name: name.to_string(),
-                                }
-                            } else if let Some(rest) =
-                                message.strip_prefix("Arity mismatch: expected ")
-                            {
-                                // "N, got M" — both ends are ours, parse back
-                                // into the structured variant so Display is
-                                // bare (no "Runtime error:" prefix), exactly
-                                // like the interpreter's own arity errors.
-                                let mut parts = rest.splitn(2, ", got ");
-                                match (
-                                    parts.next().and_then(|s| s.parse().ok()),
-                                    parts.next().and_then(|s| s.parse().ok()),
-                                ) {
-                                    (Some(expected), Some(got)) => {
-                                        InterpreterError::ArityMismatch { expected, got }
+                        return match result {
+                            Ok(v) => Ok(v),
+                            Err(message) => {
+                                let err = Self::map_tier_error_message(message);
+                                // The VM tracked where the error happened
+                                // (innermost located statement) and which of
+                                // its frames were live there — splice them
+                                // onto the interpreter's own live stack so
+                                // the report is identical to a pure
+                                // interpreter run.
+                                if self.pending_error_location.is_none()
+                                    && !Self::is_control_signal(&err)
+                                {
+                                    let (span, frames, leak) = self
+                                        .bytecode_tier
+                                        .as_mut()
+                                        .map(|t| t.take_error_trace())
+                                        .unwrap_or_default();
+                                    if let Some((line, column)) = span {
+                                        let mut call_stack = self.call_stack_names.clone();
+                                        call_stack.extend(frames.into_iter().rev());
+                                        self.pending_error_location =
+                                            Some(crate::ast::ErrorLocation {
+                                                line,
+                                                column,
+                                                call_stack,
+                                                hint: self.pending_error_hint.take(),
+                                            });
+                                    } else if let Some(leaked) = leak {
+                                        // No located statement inside the VM:
+                                        // the capture happens at an enclosing
+                                        // interpreter statement — with the
+                                        // parameter-check frame still alive,
+                                        // exactly like the interpreter's own
+                                        // (never-popped) frame.
+                                        self.call_stack_names.push(leaked);
                                     }
-                                    _ => InterpreterError::RuntimeError { message },
                                 }
-                            } else {
-                                InterpreterError::RuntimeError { message }
+                                Err(err)
                             }
-                        });
+                        };
                     }
                 }
 

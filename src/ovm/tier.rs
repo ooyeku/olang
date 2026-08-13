@@ -46,6 +46,11 @@ pub struct TierStats {
 pub struct BytecodeTier {
     vm: BytecodeVm,
     threshold: u32,
+    /// The trace of the most recent Ran(Err(..)) outcome: the innermost
+    /// located statement's span, the VM call frames (innermost-first),
+    /// and a parameter-check frame that survived without a span. The
+    /// interpreter fetches it right after mapping the error message.
+    last_error_trace: (Option<(u32, u32)>, Vec<String>, Option<String>),
     call_counts: HashMap<String, u32>,
     /// Name -> (compiled id, the exact body it was compiled from). The body is
     /// part of the key on purpose: trait dispatch resolves a bare method name
@@ -86,6 +91,7 @@ impl BytecodeTier {
 
     pub fn new(threshold: u32) -> Self {
         Self {
+            last_error_trace: (None, Vec::new(), None),
             vm: BytecodeVm::new(),
             threshold,
             call_counts: HashMap::new(),
@@ -193,6 +199,12 @@ impl BytecodeTier {
         self.known_functions.insert(name, func);
     }
 
+    /// The trace of the most recent Ran(Err(..)): span + frames
+    /// (innermost-first), reset on take.
+    pub fn take_error_trace(&mut self) -> (Option<(u32, u32)>, Vec<String>, Option<String>) {
+        std::mem::take(&mut self.last_error_trace)
+    }
+
     /// Try to execute `func(args)` on the bytecode VM.
     pub fn try_call(&mut self, func: &Function, args: &[Value]) -> TierOutcome {
         // Borrowed, not cloned: `func` is the caller's, independent of
@@ -256,6 +268,7 @@ impl BytecodeTier {
         }
 
         self.stats.bytecode_calls += 1;
+        self.vm.clear_error_trace();
         match self.vm.execute(func_id, &ovm_args) {
             Ok(value) => match value.to_ast() {
                 Ok(ast) => TierOutcome::Ran(Ok(ast)),
@@ -287,6 +300,7 @@ impl BytecodeTier {
                     .strip_prefix("Runtime error: ")
                     .map(str::to_string)
                     .unwrap_or(message);
+                self.last_error_trace = self.vm.take_error_trace();
                 TierOutcome::Ran(Err(message))
             }
         }

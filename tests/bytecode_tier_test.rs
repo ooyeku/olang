@@ -3082,3 +3082,158 @@ fn literal_type_enforcement_is_tier_transparent() {
     assert_tier_transparent("fn pick(n: 1 | 2 | 3) = n\npick(9)");
     assert_tier_transparent("fn strict(b: true) = b\nstrict(false)");
 }
+
+// ── runtime error traces ───────────────────────────────────────────────
+//
+// A runtime error carries the innermost located statement's span and the
+// call stack live at that point (ErrorLocation). The interpreter has
+// always captured these; the VM now tracks the same trace — statement
+// span markers in compiled bytecode, frames recorded during unwind —
+// and the tier splices it onto the interpreter's live stack. These
+// tests pin the whole ErrorLocation equal across tiers.
+
+fn error_trace(
+    source: &str,
+    tier_threshold: Option<u32>,
+) -> (String, Option<olang::ast::ErrorLocation>) {
+    let source = source.to_string();
+    with_big_stack(move || {
+        let parser = Parser::new();
+        let program = parser.parse(&source).expect("parse");
+        let mut interpreter = Interpreter::new();
+        if let Some(threshold) = tier_threshold {
+            interpreter.enable_bytecode_tier(threshold, false);
+        }
+        let err = interpreter
+            .eval_program(program)
+            .expect_err("program should fail");
+        (err.to_string(), interpreter.take_error_location())
+    })
+}
+
+fn assert_trace_transparent(source: &str) {
+    let (msg_i, loc_i) = error_trace(source, None);
+    let (msg_t, loc_t) = error_trace(source, Some(1));
+    assert_eq!(msg_t, msg_i, "tier changed the error message");
+    assert_eq!(loc_t, loc_i, "tier changed the error location/stack");
+    // The trace must actually exist — a pair of Nones would pass the
+    // equality vacuously.
+    assert!(loc_i.is_some(), "interpreter produced no error location");
+}
+
+#[test]
+fn traces_agree_for_nested_block_bodies() {
+    assert_trace_transparent(
+        r#"
+fn inner(n) = {
+    let x = n + 1
+    x / 0
+}
+fn middle(n) = inner(n * 2)
+fn outer(n) = middle(n + 1)
+outer(3)
+"#,
+    );
+}
+
+#[test]
+fn traces_agree_for_expression_bodies() {
+    assert_trace_transparent(
+        r#"
+fn inner(n) = n / 0
+fn outer(n) = inner(n)
+outer(3)
+"#,
+    );
+}
+
+#[test]
+fn traces_agree_for_arity_errors() {
+    assert_trace_transparent(
+        r#"
+fn add2(a, b) = a + b
+fn caller() = {
+    let x = 1
+    add2(x)
+}
+caller()
+"#,
+    );
+}
+
+#[test]
+fn traces_agree_for_builtin_errors_in_loops() {
+    assert_trace_transparent(
+        r#"
+fn walk(xs, n) = {
+    let mut acc = 0
+    let mut i = 0
+    while i <= n {
+        acc = acc + xs[i]
+        i = i + 1
+    }
+    acc
+}
+walk([1, 2, 3], 5)
+"#,
+    );
+}
+
+#[test]
+fn traces_agree_when_the_error_comes_late() {
+    // The function is hot (and possibly jitted) before the failing call:
+    // the deopt path must produce the identical trace.
+    assert_trace_transparent(
+        r#"
+fn div(a, b) = {
+    let q = a / b
+    q
+}
+fn run() = {
+    let mut acc = 0
+    let mut i = 10
+    while i >= 0 {
+        acc = acc + div(100, i)
+        i = i - 1
+    }
+    acc
+}
+run()
+"#,
+    );
+}
+
+#[test]
+fn traces_agree_for_mixed_tier_stacks() {
+    // The outer function uses a construct the VM refuses (try/catch is
+    // interpreter-only), so the interpreter runs it while the callee
+    // tiers — the trace must splice interpreter and VM frames.
+    assert_trace_transparent(
+        r#"
+fn deep(n) = {
+    let x = n - 1
+    100 / x
+}
+fn tiered(n) = deep(n)
+fn glue(n) = {
+    let v = tiered(n)
+    v
+}
+glue(1)
+"#,
+    );
+}
+
+#[test]
+fn traces_agree_for_type_annotation_violations() {
+    assert_trace_transparent(
+        r#"
+fn double(n: Int) = n * 2
+fn feed() = {
+    let x = 1.5
+    double(x)
+}
+feed()
+"#,
+    );
+}
