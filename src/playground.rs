@@ -159,6 +159,8 @@ unsafe extern "C" {
     fn host_dom_set_interval(ms: f64, callback_id: i64) -> i64;
     fn host_dom_clear_interval(timer_id: i64);
     fn host_dom_request_frame(callback_id: i64);
+    fn host_dom_draw(handle: i64, ptr: *const u8, len: usize);
+    fn host_dom_on_frame(callback_id: i64);
 }
 
 use std::cell::RefCell;
@@ -366,6 +368,32 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         }
         ("clear_interval", [timer]) => {
             unsafe { host_dom_clear_interval(handle(timer)?) };
+            Ok(Value::Unit)
+        }
+        ("draw", [el, ops]) => {
+            // The whole scene crosses the boundary once, as JSON; the
+            // page replays it onto the canvas 2D context.
+            let json = match crate::stdlib::json::call_json_function("stringify", vec![ops.clone()])
+            {
+                Ok(Value::Ok(inner)) => match *inner {
+                    Value::String(s) => s.as_ref().clone(),
+                    other => format!("{}", other),
+                },
+                _ => return Err("dom.draw: ops must be a list of draw operations".into()),
+            };
+            unsafe { host_dom_draw(handle(el)?, json.as_ptr(), json.len()) };
+            Ok(Value::Unit)
+        }
+        ("on_frame", [callback]) => {
+            // The persistent animation loop: register once, the page
+            // re-arms requestAnimationFrame and dispatches every frame
+            // (no per-frame handler registration).
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe { host_dom_on_frame(id) };
             Ok(Value::Unit)
         }
         ("request_frame", [callback]) => {

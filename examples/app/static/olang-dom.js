@@ -4,6 +4,9 @@
 // fetch responses back into the live interpreter.
 
 (async function () {
+  // currentScript is only valid during synchronous execution — capture
+  // the page's chosen program before the first await.
+  const src = document.currentScript?.dataset?.src ?? "/app.ol";
   let ex; // wasm exports
   const mem = () => new Uint8Array(ex.memory.buffer);
   const readStr = (ptr, len) => new TextDecoder().decode(mem().slice(ptr, ptr + len));
@@ -171,12 +174,83 @@
         requestAnimationFrame((now) =>
           dispatchJson(Number(id), { type: "frame", delta: now - start }));
       },
+      host_dom_on_frame: (id) => {
+        const cb = Number(id);
+        let last = performance.now();
+        const tick = (now) => {
+          dispatchJson(cb, { type: "frame", delta: now - last });
+          last = now;
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      },
+      // The draw-list: one JSON scene per call, replayed onto Canvas 2D.
+      host_dom_draw: (h, ptr, len) => {
+        const el = elements[Number(h)];
+        const ctx = (el.__olangCtx ??= el.getContext("2d"));
+        if (!ctx) return;
+        const paint = (op, fillStroke) => {
+          if (op.fill != null) { ctx.fillStyle = op.fill; fillStroke.fill(); }
+          if (op.stroke != null) {
+            ctx.strokeStyle = op.stroke;
+            ctx.lineWidth = op.line_width ?? 1;
+            fillStroke.stroke();
+          }
+        };
+        for (const op of JSON.parse(readStr(ptr, len))) {
+          switch (op.op) {
+            case "clear":
+              if (op.color != null) {
+                ctx.fillStyle = op.color;
+                ctx.fillRect(0, 0, el.width, el.height);
+              } else ctx.clearRect(0, 0, el.width, el.height);
+              break;
+            case "rect":
+              paint(op, {
+                fill: () => ctx.fillRect(op.x, op.y, op.w, op.h),
+                stroke: () => ctx.strokeRect(op.x, op.y, op.w, op.h),
+              });
+              break;
+            case "circle":
+              ctx.beginPath();
+              ctx.arc(op.x, op.y, op.r, 0, Math.PI * 2);
+              paint(op, { fill: () => ctx.fill(), stroke: () => ctx.stroke() });
+              break;
+            case "line":
+              ctx.beginPath();
+              ctx.moveTo(op.x1, op.y1);
+              ctx.lineTo(op.x2, op.y2);
+              ctx.strokeStyle = op.stroke ?? "#000";
+              ctx.lineWidth = op.line_width ?? 1;
+              ctx.stroke();
+              break;
+            case "path":
+              ctx.beginPath();
+              (op.points ?? []).forEach(([x, y], i) =>
+                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y));
+              if (op.close) ctx.closePath();
+              paint(op, { fill: () => ctx.fill(), stroke: () => ctx.stroke() });
+              break;
+            case "text":
+              if (op.font != null) ctx.font = op.font;
+              if (op.align != null) ctx.textAlign = op.align;
+              ctx.fillStyle = op.fill ?? "#000";
+              ctx.fillText(op.text ?? "", op.x, op.y);
+              break;
+            case "save": ctx.save(); break;
+            case "restore": ctx.restore(); break;
+            case "translate": ctx.translate(op.x, op.y); break;
+            case "rotate": ctx.rotate(op.rad); break;
+            case "scale": ctx.scale(op.x, op.y); break;
+          }
+        }
+      },
     },
   };
 
   const [wasmBytes, source] = await Promise.all([
     fetch("/olang.wasm").then((r) => r.arrayBuffer()),
-    fetch("/app.ol").then((r) => r.text()),
+    fetch(src).then((r) => r.text()),
   ]);
   if (wasmBytes.byteLength < 8) {
     document.body.insertAdjacentHTML(

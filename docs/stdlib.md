@@ -844,6 +844,8 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.scroll_into_view(el)` | scroll an element into view |
 | `dom.set_timeout(ms, fn)` / `set_interval(ms, fn)` / `clear_interval(t)` | timers |
 | `dom.request_frame(fn)` | one animation frame; re-arm inside the handler for a loop |
+| `dom.on_frame(fn)` | the persistent animation loop: register once, called every frame with a millisecond `delta` |
+| `dom.draw(canvas, ops)` | replay a draw-list onto a canvas — the whole scene crosses the boundary once |
 
 **Every event handler receives a structured event Map** — the same
 shape for every event type, so handlers pick the fields they need:
@@ -854,6 +856,18 @@ target's `data-*` attributes). Any DOM event name works — `click`,
 `enter`, the keydown-filtered alias. Delegation is the natural style:
 one listener on a container, dispatch on `id` or `data`, re-render
 freely without rebinding.
+
+**Rich graphics are a draw-list.** A scene is plain olang data — a
+list of op maps — submitted with one `dom.draw` call per frame; the
+page replays it onto the canvas 2D context. Ops: `clear` (with a color
+for motion trails, or without to wipe), `rect`, `circle`, `line`,
+`path` (a `points` list, optionally closed), `text`, and the
+transforms `save`/`restore`/`translate`/`rotate`/`scale`. Fill and
+stroke take any CSS color; `line_width` sets stroke width. Paired with
+`dom.on_frame`, that is a 60fps rendering loop in ordinary olang — see
+`examples/app/static/orbit.ol`, an animated orbital system served by
+the tracker at `/orbit.html`, where a click adds a body at the clicked
+radius (structured event coordinates + `dom.measure`).
 
 `dom` is the one browser-only module: in a native build every call
 reports that it needs the wasm build (mirroring how `fs`, `os`, `http`,
@@ -866,7 +880,12 @@ dom.set_html(dom.query("#list"),
 dom.on(dom.query("#list"), "click", (e) => select(map_get(e, "id")))
 dom.on(dom.query("#new-title"), "enter", (e) => add_item(map_get(e, "value")))
 dom.fetch("GET", "/api/items", "", (resp) => render(unwrap(json.parse(resp))))
-dom.request_frame((f) => tick(map_get(f, "delta")))
+dom.on_frame((f) => {
+    dom.draw(canvas, [
+        #{ "op": "clear", "color": "rgba(11,14,20,0.35)" },
+        #{ "op": "circle", "x": 360.0, "y": 240.0, "r": 16.0, "fill": "#f5c542" }
+    ])
+})
 ```
 
 The module has its own chapter, **[olang in the Browser](wasm.md)**:

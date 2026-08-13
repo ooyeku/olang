@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>orbits — olang canvas</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      background: #0b0e14; color: #9aa4b2;
+      font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    main { text-align: center; }
+    canvas {
+      border: 1px solid #1e2430; border-radius: 12px;
+      background: #0b0e14; cursor: crosshair;
+    }
+    p { margin: 0.75rem 0 0; }
+    b { color: #7fd1b9; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <main>
+    <input id="state" type="hidden" />
+    <canvas id="sky" width="720" height="480"></canvas>
+    <p><b>orbits</b> — every frame is an olang draw-list · click to add a body · <span id="hud"></span></p>
+  </main>
+  <script src="/olang-dom.js" data-src="/orbit.ol" defer></script>
+</body>
+</html>

@@ -40,6 +40,9 @@ pub fn create_dom_module() -> Value {
         ("set_interval", 2),
         ("clear_interval", 1),
         ("request_frame", 1),
+        ("on_frame", 1),
+        // Graphics
+        ("draw", 2),
     ] {
         module.insert(
             name.to_string(),

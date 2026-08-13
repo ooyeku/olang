@@ -46,6 +46,8 @@ async function instantiate() {
         host_dom_set_interval: () => 0n,
         host_dom_clear_interval: () => {},
         host_dom_request_frame: () => {},
+        host_dom_draw: () => {},
+        host_dom_on_frame: () => {},
       },
     }
   );

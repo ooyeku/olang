@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Rich graphics out of the box: canvas draw-lists.** A scene is plain
+  olang data — a list of op maps (`clear`, `rect`, `circle`, `line`,
+  `path`, `text`, plus `save`/`restore`/`translate`/`rotate`/`scale`) —
+  submitted with one `dom.draw(canvas, ops)` call per frame and
+  replayed onto the canvas 2D context by the page. `dom.on_frame`
+  completes the loop: register once, called every frame with a
+  millisecond delta, no per-frame handler registration. The proof is
+  `examples/app/static/orbit.ol`, served by the tracker at
+  `/orbit.html`: an animated orbital system with motion trails where
+  clicking adds a body at the clicked radius (structured event
+  coordinates + `dom.measure`), verified live in a browser at 60fps.
+  The dom harness pins the draw-list round-trip — op order, numeric
+  fidelity, nested point lists — against the real wasm build.
+
 - **The dom module grows up: structured events, node control, and
   time.** Every event handler now receives a structured event Map —
   `type`, target `id` and `value`, `key`, pointer `x`/`y`, modifier

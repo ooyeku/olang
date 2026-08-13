@@ -102,6 +102,10 @@ const imports = {
     },
     host_dom_clear_interval: (_t) => {},
     host_dom_request_frame: (id) => { frames.push(Number(id)); },
+    host_dom_on_frame: (id) => { frames.push(Number(id)); },
+    host_dom_draw: (h, ptr, len) => {
+      (node(h).drawn ??= []).push(JSON.parse(readStr(ptr, len)));
+    },
   },
 };
 
@@ -252,6 +256,49 @@ println("attr=" + dom.get_attr(btn, "aria-label") + " w=" + show(map_get(r, "wid
   if (fakeDom["#count"].value !== "frame frame")
     throw new Error("frame mutation missing: " + fakeDom["#count"].value);
   console.log("stage 1: structured events + node ops + timers ok");
+}
+// ── stage 2: the draw-list crosses once and replays faithfully ──
+const prog5 = `
+let sky = dom.query("#btn")
+fn scene(t) = [
+    #{ "op": "clear", "color": "#000" },
+    #{ "op": "save" },
+    #{ "op": "translate", "x": 100.0, "y": 50.0 },
+    #{ "op": "rotate", "rad": t },
+    #{ "op": "rect", "x": 0 - 10.0, "y": 0 - 10.0, "w": 20.0, "h": 20.0, "fill": "#7fd1b9" },
+    #{ "op": "restore" },
+    #{ "op": "circle", "x": 30.0, "y": 40.0, "r": 12.5, "stroke": "#f5c542", "line_width": 2 },
+    #{ "op": "line", "x1": 0.0, "y1": 0.0, "x2": 60.0, "y2": 80.0, "stroke": "#fff" },
+    #{ "op": "path", "points": [[0.0, 0.0], [10.0, 5.0], [20.0, 0.0]], "close": true, "fill": "#345" },
+    #{ "op": "text", "x": 5.0, "y": 95.0, "text": "olang", "fill": "#9aa4b2" }
+]
+dom.on_frame((f) => {
+    dom.draw(sky, scene(map_get(f, "delta") / 1000.0))
+})
+println("scene wired")
+`;
+{
+  const enc5 = new TextEncoder().encode(prog5);
+  const p5 = ex.olang_alloc(enc5.length);
+  mem().set(enc5, p5);
+  const r = result(ex.olang_session_start(p5, enc5.length));
+  ex.olang_dealloc(p5, enc5.length);
+  if (r.error) throw new Error("stage2 session: " + r.error);
+  const frameCb = frames[frames.length - 1];
+  const fr = dispatchJson(frameCb, { type: "frame", delta: 500.0 });
+  if (fr.error) throw new Error("frame draw: " + fr.error);
+  const drawn = node(2).drawn;
+  if (!drawn || drawn.length !== 1) throw new Error("dom.draw not received");
+  const ops = drawn[0];
+  const kinds = ops.map((o) => o.op).join(",");
+  if (kinds !== "clear,save,translate,rotate,rect,restore,circle,line,path,text")
+    throw new Error("op order wrong: " + kinds);
+  if (ops[3].rad !== 0.5) throw new Error("rotate lost precision: " + ops[3].rad);
+  if (ops[4].fill !== "#7fd1b9" || ops[4].w !== 20) throw new Error("rect fields wrong");
+  if (ops[6].line_width !== 2) throw new Error("stroke width missing");
+  if (JSON.stringify(ops[8].points) !== "[[0,0],[10,5],[20,0]]")
+    throw new Error("path points wrong: " + JSON.stringify(ops[8].points));
+  console.log("stage 2: draw-list round-trip ok (" + ops.length + " ops)");
 }
 console.log("final dom:", JSON.stringify(fakeDom));
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");
