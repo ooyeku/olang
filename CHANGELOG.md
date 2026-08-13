@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Trivial constructors no longer pay the JIT call boundary.** A body
+  that exists to allocate — `fn make(i) = [i, i * 2]` and its struct,
+  map, and Result siblings — does the same allocation on every tier, so
+  crossing the bytecode→native boundary (argument marshalling, scratch
+  context, retain resolution, unmarshal) was pure cost: ~26% slower
+  than v0.50.0 on a 3M-call constructor loop. Allocating bodies with at
+  most eight compute instructions now decline the boundary and stay on
+  bytecode, while still compiling as group members reached by direct
+  native call. Boundary calls that do run got cheaper too: all-scalar
+  calls skip the per-family argument sweep the collections lane added,
+  and the scratch context is reused across calls (native calls never
+  nest), so allocating bodies stop paying a malloc/free per call for
+  bookkeeping. Trivial and compute-heavy constructor loops are both
+  back at (or slightly better than) v0.50.0 timings, and guard tests
+  pin the policy via the new `jit_native_calls` tier stat (also shown
+  by `--ovm-stats`).
+
 ### Added
 
 - **The JIT builds lists.** List literals (`[a, b]`) and list

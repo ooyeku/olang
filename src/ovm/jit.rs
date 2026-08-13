@@ -86,6 +86,30 @@ pub struct ScratchCtx {
     retained_map: Option<Arc<HashMap<String, OvmValue>>>,
 }
 
+impl ScratchCtx {
+    /// Drop whatever the previous call left behind while keeping every
+    /// buffer's capacity. The context is reused across boundary calls
+    /// (see JitCache::scratch), so an allocating constructor stops
+    /// paying a malloc/free per call for its bookkeeping vec.
+    fn clear(&mut self) {
+        self.allocs.clear();
+        self.args.clear();
+        self.retained = None;
+        self.str_allocs.clear();
+        self.str_args.clear();
+        self.retained_str = None;
+        self.result_allocs.clear();
+        self.result_args.clear();
+        self.retained_result = None;
+        self.list_allocs.clear();
+        self.list_args.clear();
+        self.retained_list = None;
+        self.map_allocs.clear();
+        self.map_args.clear();
+        self.retained_map = None;
+    }
+}
+
 /// How the VM hands the JIT other functions' bytecode when planning a
 /// call graph.
 pub type BytecodeLookup<'a> = dyn Fn(FunctionId) -> Option<Arc<CompiledBytecode>> + 'a;
@@ -322,6 +346,17 @@ pub struct JitCache {
     /// baked one of these natives is demoted the moment the shadow
     /// appears (see note_shadow); specialization refuses them up front.
     shadowed: std::collections::HashSet<String>,
+    /// Functions whose native body can never pay for the bytecode→native
+    /// boundary (trivial constructors — see boundary_unprofitable). They
+    /// still compile as group members, where callers reach them by direct
+    /// native call; only `has` says no, so bytecode callers skip the
+    /// marshalling entirely.
+    boundary_skip: Vec<bool>,
+    /// One scratch context reused for every boundary call. Native calls
+    /// never nest (a native body reaches other natives by direct call,
+    /// sharing the ctx it was handed), so a single buffer is safe — and
+    /// its vecs keep their capacity between calls.
+    scratch: ScratchCtx,
     pub compiled: u64,
     pub native_calls: u64,
 }
@@ -1057,6 +1092,8 @@ impl JitCache {
             module: None,
             table: Vec::new(),
             shadowed: std::collections::HashSet::new(),
+            boundary_skip: Vec::new(),
+            scratch: ScratchCtx::default(),
             compiled: 0,
             native_calls: 0,
         }
@@ -1122,6 +1159,18 @@ impl JitCache {
         }
         if whitelist_ok(bytecode) {
             self.table[idx] = Some(Slot::Pending);
+            if boundary_unprofitable(bytecode) {
+                if self.boundary_skip.len() <= idx {
+                    self.boundary_skip.resize(idx + 1, false);
+                }
+                self.boundary_skip[idx] = true;
+                if jit_debug() {
+                    eprintln!(
+                        "[jit] fn#{} qualifies but stays bytecode at the call boundary (trivial constructor)",
+                        idx
+                    );
+                }
+            }
         } else {
             if jit_debug() {
                 eprintln!(
@@ -1157,12 +1206,15 @@ impl JitCache {
 
     /// True when a native run is possible or still decidable — callers
     /// use it to decide whether extracting argument values is worth it.
+    /// Boundary-unprofitable bodies answer false even once compiled:
+    /// their native form only exists for direct calls from group members.
     #[inline]
     pub fn has(&self, func_id: FunctionId) -> bool {
+        let idx = func_id.index();
         matches!(
-            self.table.get(func_id.index()),
+            self.table.get(idx),
             Some(Some(Slot::Pending)) | Some(Some(Slot::Ready(_)))
-        )
+        ) && !self.boundary_skip.get(idx).copied().unwrap_or(false)
     }
 
     /// Run the native body if the argument kinds fit (compiling the
@@ -1182,6 +1234,7 @@ impl JitCache {
         if args.len() > MAX_PARAMS {
             return None;
         }
+        let mut any_ref = false;
         for (i, arg) in args.iter().enumerate() {
             match &arg.data {
                 ValueData::Integer(v) => {
@@ -1195,22 +1248,27 @@ impl JitCache {
                 ValueData::Struct(obj) => {
                     bits[i] = Arc::as_ptr(obj) as i64;
                     kinds[i] = Kind::Struct(obj.shape.id);
+                    any_ref = true;
                 }
                 ValueData::List(items) => {
                     kinds[i] = classify_list(items)?;
                     bits[i] = Arc::as_ptr(items) as i64;
+                    any_ref = true;
                 }
                 ValueData::String(s) => {
                     bits[i] = Arc::as_ptr(s) as i64;
                     kinds[i] = Kind::Str;
+                    any_ref = true;
                 }
                 ValueData::Result(r) => {
                     kinds[i] = classify_result(r)?;
                     bits[i] = Arc::as_ptr(r) as i64;
+                    any_ref = true;
                 }
                 ValueData::Map(m) => {
                     kinds[i] = classify_map(m)?;
                     bits[i] = Arc::as_ptr(m) as i64;
+                    any_ref = true;
                 }
                 _ => return None,
             }
@@ -1238,21 +1296,25 @@ impl JitCache {
         let mut result_args: Vec<Arc<crate::ovm::value::ResultObject>> = Vec::new();
         let mut list_args: Vec<Arc<Vec<OvmValue>>> = Vec::new();
         let mut map_args: Vec<Arc<HashMap<String, OvmValue>>> = Vec::new();
-        for arg in args {
-            if let ValueData::Struct(obj) = &arg.data {
-                struct_args.push(obj.clone());
-            }
-            if let ValueData::String(s) = &arg.data {
-                str_args.push(s.clone());
-            }
-            if let ValueData::Result(r) = &arg.data {
-                result_args.push(r.clone());
-            }
-            if let ValueData::List(l) = &arg.data {
-                list_args.push(l.clone());
-            }
-            if let ValueData::Map(m) = &arg.data {
-                map_args.push(m.clone());
+        // The per-family sweep only matters when a reference-kind argument
+        // exists; all-scalar calls (the common boundary) skip it whole.
+        if any_ref {
+            for arg in args {
+                if let ValueData::Struct(obj) = &arg.data {
+                    struct_args.push(obj.clone());
+                }
+                if let ValueData::String(s) = &arg.data {
+                    str_args.push(s.clone());
+                }
+                if let ValueData::Result(r) = &arg.data {
+                    result_args.push(r.clone());
+                }
+                if let ValueData::List(l) = &arg.data {
+                    list_args.push(l.clone());
+                }
+                if let ValueData::Map(m) = &arg.data {
+                    map_args.push(m.clone());
+                }
             }
         }
         self.try_call_raw_with_shapes(
@@ -1349,7 +1411,8 @@ impl JitCache {
             return None;
         }
         let mut out = [0i64; MAX_TUPLE];
-        let mut ctx = ScratchCtx::default();
+        let ctx = &mut self.scratch;
+        ctx.clear();
         for arg in args_for_ctx {
             ctx.args.push(arg.clone());
         }
@@ -1365,19 +1428,21 @@ impl JitCache {
         for m in map_args_for_ctx {
             ctx.map_args.push(m.clone());
         }
+        let ctx_ptr: *mut ScratchCtx = ctx;
         let status = unsafe {
             (jitted.entry)(
                 bits.as_ptr(),
                 remaining_depth as i64,
-                &mut ctx as *mut ScratchCtx,
+                ctx_ptr,
                 out.as_mut_ptr(),
             )
         };
-        if status != STATUS_OK {
-            return None;
-        }
-        self.native_calls += 1;
-        if let Some(tk) = &jitted.ret_tuple {
+        // One exit below: whatever the call left in the scratch context —
+        // deopt leftovers or the temporaries around a retained return —
+        // drops now, not at some later boundary call.
+        let result = if status != STATUS_OK {
+            None
+        } else if let Some(tk) = &jitted.ret_tuple {
             let elems: Vec<OvmValue> = tk
                 .iter()
                 .zip(out.iter())
@@ -1387,50 +1452,34 @@ impl JitCache {
                     _ => OvmValue::new_float(f64::from_bits(*bits as u64)),
                 })
                 .collect();
-            return Some(OvmValue::new_tuple(elems));
-        }
-        if let Kind::Struct(_) = jitted.ret_kind {
-            let arc = ctx.retained.take()?;
-            return Some(OvmValue::new_struct(arc));
-        }
-        if let Kind::Str = jitted.ret_kind {
-            let arc = ctx.retained_str.take()?;
-            return Some(OvmValue {
-                data: ValueData::String(arc),
-            });
-        }
-        if let Kind::Result(..) = jitted.ret_kind {
-            let arc = ctx.retained_result.take()?;
-            return Some(OvmValue {
-                data: ValueData::Result(arc),
-            });
-        }
-        if let Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr =
-            jitted.ret_kind
-        {
-            let arc = ctx.retained_list.take()?;
-            return Some(OvmValue {
-                data: ValueData::List(arc),
-            });
-        }
-        if let Kind::Map(_) = jitted.ret_kind {
-            let arc = ctx.retained_map.take()?;
-            return Some(OvmValue {
-                data: ValueData::Map(arc),
-            });
-        }
-        let out = out[0];
-        Some(match jitted.ret_kind {
-            Kind::Int => OvmValue::new_integer(out),
-            Kind::Bool => OvmValue::new_boolean(out != 0),
-            Kind::Float => OvmValue::new_float(f64::from_bits(out as u64)),
-            Kind::Struct(_) | Kind::Str | Kind::Result(..) | Kind::Map(_) => {
-                unreachable!("handled above")
+            Some(OvmValue::new_tuple(elems))
+        } else {
+            match jitted.ret_kind {
+                Kind::Int => Some(OvmValue::new_integer(out[0])),
+                Kind::Bool => Some(OvmValue::new_boolean(out[0] != 0)),
+                Kind::Float => Some(OvmValue::new_float(f64::from_bits(out[0] as u64))),
+                Kind::Struct(_) => ctx.retained.take().map(OvmValue::new_struct),
+                Kind::Str => ctx.retained_str.take().map(|arc| OvmValue {
+                    data: ValueData::String(arc),
+                }),
+                Kind::Result(..) => ctx.retained_result.take().map(|arc| OvmValue {
+                    data: ValueData::Result(arc),
+                }),
+                Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr => {
+                    ctx.retained_list.take().map(|arc| OvmValue {
+                        data: ValueData::List(arc),
+                    })
+                }
+                Kind::Map(_) => ctx.retained_map.take().map(|arc| OvmValue {
+                    data: ValueData::Map(arc),
+                }),
             }
-            Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) | Kind::ListStr => {
-                unreachable!("handled above")
-            }
-        })
+        };
+        ctx.clear();
+        if result.is_some() {
+            self.native_calls += 1;
+        }
+        result
     }
 
     /// Plan, infer, and compile the call graph reachable from `entry_id`.
@@ -2237,6 +2286,47 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         Instruction::Return { value } => value.is_some(),
         _ => false,
     })
+}
+
+/// How many non-plumbing instructions an allocating body must carry
+/// before its native form can out-earn the call boundary. Measured on
+/// `fn make(i) = [i, i * 2]` called 3M times from a bytecode loop: the
+/// boundary (argument marshalling, scratch-context setup, retain
+/// resolution, unmarshal) costs ~20ns per call, while each bytecode
+/// instruction the native body replaces saves only a few ns — and the
+/// allocation itself goes through the same runtime path on both tiers,
+/// so it saves nothing. Crossover lands around eight compute ops.
+const BOUNDARY_MIN_COMPUTE: usize = 8;
+
+/// True for bodies that exist to allocate — a constructor's MakeStruct/
+/// MakeList/MakeMap/MakeResult plus a handful of compute ops. Calling
+/// such a body natively from bytecode is a net loss (see
+/// BOUNDARY_MIN_COMPUTE), so `has` declines the boundary and the call
+/// stays on bytecode. The body still compiles when a group needs it:
+/// native callers reach it by direct call, which has no boundary.
+fn boundary_unprofitable(bytecode: &CompiledBytecode) -> bool {
+    let mut allocates = false;
+    let mut compute = 0usize;
+    for inst in bytecode.instructions.iter() {
+        match inst {
+            Instruction::MakeStruct { .. }
+            | Instruction::MakeList { .. }
+            | Instruction::MakeMap { .. }
+            | Instruction::MakeResult { .. } => allocates = true,
+            Instruction::CallNamed { function_name, .. } if function_name == "map_set" => {
+                allocates = true
+            }
+            // Plumbing: moved values and constants cost next to nothing
+            // on either tier. MakeTuple is not an allocation (tuples
+            // return through out slots) but it is not compute either.
+            Instruction::Move { .. }
+            | Instruction::LoadConst { .. }
+            | Instruction::Return { .. }
+            | Instruction::MakeTuple { .. } => {}
+            _ => compute += 1,
+        }
+    }
+    allocates && compute <= BOUNDARY_MIN_COMPUTE
 }
 
 fn has_backward_jump(bytecode: &CompiledBytecode) -> bool {

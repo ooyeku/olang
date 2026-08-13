@@ -41,6 +41,11 @@ pub struct TierStats {
     pub rejected: u32,
     pub bytecode_calls: u64,
     pub instructions_executed: u64,
+    /// Calls that ran as native (JIT) code. Zero when nothing qualified —
+    /// including trivial constructors, which decline the call boundary on
+    /// purpose (a native body that only allocates cannot pay for the
+    /// marshalling around it).
+    pub jit_native_calls: u64,
 }
 
 pub struct BytecodeTier {
@@ -115,6 +120,7 @@ impl BytecodeTier {
         // tally, so it is read through at reporting time.
         TierStats {
             instructions_executed: self.vm.instructions_executed(),
+            jit_native_calls: self.vm.jit_native_calls(),
             ..self.stats
         }
     }

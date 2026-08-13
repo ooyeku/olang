@@ -694,11 +694,12 @@ fn execute_file(
                 if ovm_stats {
                     match interpreter.bytecode_tier_stats() {
                         Some(tier) => println!(
-                            "Bytecode tier: {} promoted, {} rejected, {} bytecode calls, {} instructions",
+                            "Bytecode tier: {} promoted, {} rejected, {} bytecode calls, {} instructions, {} native calls",
                             tier.promoted,
                             tier.rejected,
                             tier.bytecode_calls,
-                            tier.instructions_executed
+                            tier.instructions_executed,
+                            tier.jit_native_calls
                         ),
                         None => println!("Bytecode tier: disabled (--no-ovm)"),
                     }

@@ -1498,6 +1498,7 @@ impl BytecodeVm {
             let mut bits = [0i64; 16];
             let mut kinds = [JitKind::Int; 16];
             let mut extractable = true;
+            let mut any_ref = false;
             for (i, reg) in arg_regs.iter().enumerate() {
                 match self.execution_state.register_ref(*reg).map(|v| &v.data) {
                     Ok(crate::ovm::value::ValueData::Integer(v)) => {
@@ -1511,16 +1512,19 @@ impl BytecodeVm {
                     Ok(crate::ovm::value::ValueData::Struct(obj)) => {
                         bits[i] = std::sync::Arc::as_ptr(obj) as i64;
                         kinds[i] = JitKind::Struct(obj.shape.id);
+                        any_ref = true;
                     }
                     Ok(crate::ovm::value::ValueData::String(s)) => {
                         bits[i] = std::sync::Arc::as_ptr(s) as i64;
                         kinds[i] = JitKind::Str;
+                        any_ref = true;
                     }
                     Ok(crate::ovm::value::ValueData::List(items)) => {
                         match crate::ovm::jit::classify_list(items) {
                             Some(k) => {
                                 bits[i] = std::sync::Arc::as_ptr(items) as i64;
                                 kinds[i] = k;
+                                any_ref = true;
                             }
                             None => {
                                 extractable = false;
@@ -1533,6 +1537,7 @@ impl BytecodeVm {
                             Some(k) => {
                                 bits[i] = std::sync::Arc::as_ptr(r) as i64;
                                 kinds[i] = k;
+                                any_ref = true;
                             }
                             None => {
                                 extractable = false;
@@ -1545,6 +1550,7 @@ impl BytecodeVm {
                             Some(k) => {
                                 bits[i] = std::sync::Arc::as_ptr(m) as i64;
                                 kinds[i] = k;
+                                any_ref = true;
                             }
                             None => {
                                 extractable = false;
@@ -1587,22 +1593,27 @@ impl BytecodeVm {
                 let mut map_args: Vec<
                     std::sync::Arc<std::collections::HashMap<String, crate::ovm::value::OvmValue>>,
                 > = Vec::new();
-                for reg in arg_regs {
-                    if let Ok(v) = self.execution_state.register_ref(*reg) {
-                        if let crate::ovm::value::ValueData::Struct(obj) = &v.data {
-                            struct_args.push(obj.clone());
-                        }
-                        if let crate::ovm::value::ValueData::String(s) = &v.data {
-                            str_args.push(s.clone());
-                        }
-                        if let crate::ovm::value::ValueData::Result(r) = &v.data {
-                            result_args.push(r.clone());
-                        }
-                        if let crate::ovm::value::ValueData::List(l) = &v.data {
-                            list_args.push(l.clone());
-                        }
-                        if let crate::ovm::value::ValueData::Map(m) = &v.data {
-                            map_args.push(m.clone());
+                // The per-family sweep only matters when a reference-kind
+                // argument exists; all-scalar calls (the common boundary)
+                // skip it whole.
+                if any_ref {
+                    for reg in arg_regs {
+                        if let Ok(v) = self.execution_state.register_ref(*reg) {
+                            if let crate::ovm::value::ValueData::Struct(obj) = &v.data {
+                                struct_args.push(obj.clone());
+                            }
+                            if let crate::ovm::value::ValueData::String(s) = &v.data {
+                                str_args.push(s.clone());
+                            }
+                            if let crate::ovm::value::ValueData::Result(r) = &v.data {
+                                result_args.push(r.clone());
+                            }
+                            if let crate::ovm::value::ValueData::List(l) = &v.data {
+                                list_args.push(l.clone());
+                            }
+                            if let crate::ovm::value::ValueData::Map(m) = &v.data {
+                                map_args.push(m.clone());
+                            }
                         }
                     }
                 }
@@ -1661,6 +1672,21 @@ impl BytecodeVm {
     /// against.
     pub fn instructions_executed(&self) -> u64 {
         self.stats.instructions_executed
+    }
+
+    /// Calls that ran as native (JIT) code rather than bytecode. The
+    /// counter makes the boundary policy observable: trivial constructors
+    /// decline the boundary (see jit::boundary_unprofitable) and must
+    /// leave this at zero when only they are called.
+    pub fn jit_native_calls(&self) -> u64 {
+        #[cfg(feature = "native")]
+        {
+            self.jit.native_calls
+        }
+        #[cfg(not(feature = "native"))]
+        {
+            0
+        }
     }
 
     /// Execute bytecode instructions - Complete implementation

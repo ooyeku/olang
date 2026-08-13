@@ -1465,3 +1465,117 @@ map_get(grown(7), "v")
 "#,
     );
 }
+
+/// Run tiered and return the tier's stats alongside the result.
+fn eval_with_stats(source: &str) -> (Result<Value, String>, olang::ovm::tier::TierStats) {
+    let source = source.to_string();
+    with_big_stack(move || {
+        let parser = Parser::new();
+        let program = parser.parse(&source).map_err(|e| e.to_string());
+        let mut interpreter = Interpreter::new();
+        interpreter.enable_bytecode_tier(1, false);
+        let result = match program {
+            Ok(p) => interpreter.eval_program(p).map_err(|e| e.to_string()),
+            Err(e) => Err(e),
+        };
+        let stats = interpreter.bytecode_tier_stats().unwrap_or_default();
+        (result, stats)
+    })
+}
+
+// ── The constructor call boundary ──
+//
+// Perf guard for the regression where `fn make(i) = [i, i * 2]` called
+// 3M times from a bytecode loop ran ~26% slower once the JIT learned to
+// compile list constructors: the native body does the same allocation
+// the bytecode would, so every boundary crossing (argument marshalling,
+// scratch-context setup, retain resolution, unmarshal) is pure cost.
+// The policy under test: trivial allocating bodies decline the boundary
+// and stay on bytecode; bodies with enough compute still take it.
+
+#[test]
+fn trivial_list_constructor_declines_the_native_boundary() {
+    let (result, stats) = eval_with_stats(
+        r#"
+fn make(i) = [i, i * 2]
+fn bench(n) = {
+    let mut i = 0
+    let mut acc = 0
+    while i < n { acc = acc + make(i)[0]; i = i + 1 }
+    acc
+}
+bench(200)
+"#,
+    );
+    assert_eq!(result, Ok(Value::Integer(19900)));
+    assert_eq!(
+        stats.jit_native_calls, 0,
+        "a lone MakeList body must stay on bytecode at the call boundary"
+    );
+}
+
+#[test]
+fn trivial_struct_constructor_declines_the_native_boundary() {
+    let (result, stats) = eval_with_stats(
+        r#"
+type Point = struct { x: Int, y: Int }
+fn make(i) = Point { x: i, y: i * 2 }
+fn bench(n) = {
+    let mut i = 0
+    let mut acc = 0
+    while i < n { acc = acc + make(i).x; i = i + 1 }
+    acc
+}
+bench(200)
+"#,
+    );
+    assert_eq!(result, Ok(Value::Integer(19900)));
+    assert_eq!(
+        stats.jit_native_calls, 0,
+        "a lone MakeStruct body must stay on bytecode at the call boundary"
+    );
+}
+
+#[test]
+fn compute_heavy_constructor_still_takes_the_native_boundary() {
+    // Nine compute ops — above BOUNDARY_MIN_COMPUTE — so the native body
+    // out-earns the boundary and the JIT must still run it.
+    let (result, stats) = eval_with_stats(
+        r#"
+type Body = struct { a: Int, b: Int }
+fn make(i) = {
+    let a = i * 3 + 1
+    let b = a * a - i
+    let c = (b + a) * 2 + i * 7
+    let d = c - b + a * 5
+    Body { a: a + d, b: b + c }
+}
+fn bench(n) = {
+    let mut i = 0
+    let mut acc = 0
+    while i < n { acc = acc + make(i).a; i = i + 1 }
+    acc
+}
+bench(200)
+"#,
+    );
+    assert!(result.is_ok(), "heavy constructor result: {result:?}");
+    assert!(
+        stats.jit_native_calls > 0,
+        "a compute-heavy constructor must still run natively at the boundary"
+    );
+}
+
+#[test]
+fn declined_constructor_still_compiles_inside_a_native_caller() {
+    // The boundary policy must not leak into group compilation: a
+    // straight-line caller that needs the constructor natively still
+    // compiles it as a group member and reaches it by direct call.
+    assert_jit_transparent(
+        r#"
+fn make(i) = [i, i * 2]
+fn use_it(i) = make(i)
+use_it(21)
+"#,
+    );
+}
