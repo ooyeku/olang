@@ -55,6 +55,12 @@ async function instantiate() {
         host_dom_storage_get: () => 0,
         host_dom_storage_set: () => {},
         host_dom_storage_remove: () => {},
+        host_dom_worker_spawn: () => 0n,
+        host_dom_worker_send: () => {},
+        host_dom_worker_on: () => {},
+        host_dom_worker_close: () => {},
+        host_dom_post: () => {},
+        host_dom_on_message: () => {},
       },
     }
   );

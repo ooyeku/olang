@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>primes — olang web workers</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      background: #0b0e14; color: #9aa4b2;
+      font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    main { text-align: center; width: 420px; }
+    canvas { display: block; margin: 0 auto 1rem; }
+    button {
+      background: #7fd1b9; color: #0b0e14; border: 0; border-radius: 8px;
+      padding: 0.5rem 1.25rem; font: inherit; font-weight: 600; cursor: pointer;
+    }
+    #track {
+      height: 8px; background: #1e2430; border-radius: 4px;
+      margin: 1rem 0 0.5rem; overflow: hidden;
+    }
+    #bar {
+      height: 100%; width: 0%; background: #f5c542;
+      transition: width 120ms linear;
+    }
+    #out { color: #7fd1b9; font-weight: 600; min-height: 1.5em; margin-top: 0.5rem; }
+    p.note { margin: 1rem 0 0; opacity: 0.7; }
+  </style>
+</head>
+<body>
+  <main>
+    <canvas id="dial" width="120" height="120"></canvas>
+    <button id="go">count primes below 200,000</button>
+    <div id="track"><div id="bar"></div></div>
+    <div id="status">booting worker…</div>
+    <div id="out"></div>
+    <p class="note"><b>web workers</b> — the counting is a second olang on another thread; the dial is the main thread staying live.</p>
+  </main>
+  <script src="/olang-dom.js" data-src="/primes.ol" defer></script>
+</body>
+</html>

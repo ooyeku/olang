@@ -34,7 +34,10 @@ function dispatchWith(cb, payload) {
   return r;
 }
 function dispatchJson(cb, obj) {
-  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  return dispatchRaw(cb, JSON.stringify(obj));
+}
+function dispatchRaw(cb, payload) {
+  const bytes = new TextEncoder().encode(payload);
   const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
   mem().set(bytes, ptr);
   const r = result(ex.olang_dispatch_event_json(BigInt(cb), ptr, bytes.length));
@@ -51,6 +54,83 @@ function giveStr(s) {
   new DataView(ex.memory.buffer).setUint32(ptr, bytes.length, true);
   mem().set(bytes, ptr + 4);
   return ptr;
+}
+
+// ── fake workers: a second wasm instance per worker, message queues ──
+// drained only between wasm frames (mirroring async postMessage — the
+// page and worker never re-enter each other mid-execution).
+const JSON_CALLBACK_BIT = 2 ** 40;
+const fakeWorkerSources = {}; // path -> olang source (tests fill this)
+const workers = [null];
+let workerModule = null; // compiled lazily from the same bytes
+
+function bootWorker(source) {
+  workerModule ??= new WebAssembly.Module(bytes);
+  const entry = { cb: null, pageCb: null, toWorker: [], toPage: [] };
+  let wex;
+  const wmem = () => new Uint8Array(wex.memory.buffer);
+  const wread = (ptr, len) => new TextDecoder().decode(wmem().slice(ptr, ptr + len));
+  const stub = () => {};
+  const wimports = {
+    env: new Proxy(
+      {
+        host_now_ms: () => performance.now(),
+        host_epoch_ms: () => Date.now(),
+        host_random_bytes: (ptr, len) =>
+          crypto.getRandomValues(new Uint8Array(wex.memory.buffer, ptr, len)),
+        host_dom_query: () => 0n,
+        host_dom_get_text: () => 0,
+        host_dom_get_value: () => 0,
+        host_dom_get_attr: () => 0,
+        host_dom_measure: () => 0,
+        host_dom_location: () => 0,
+        host_dom_storage_get: () => 0,
+        host_dom_create: () => 0n,
+        host_dom_set_interval: () => 0n,
+        host_dom_worker_spawn: () => 0n,
+        host_dom_post: (ptr, len) => { entry.toPage.push(wread(ptr, len)); },
+        host_dom_on_message: (id) => { entry.cb = Number(id); },
+      },
+      { get: (t, name) => t[name] ?? stub }
+    ),
+  };
+  wex = new WebAssembly.Instance(workerModule, wimports).exports;
+  const enc = new TextEncoder().encode(source);
+  const ptr = wex.olang_alloc(enc.length);
+  wmem().set(enc, ptr);
+  const view = () => new DataView(wex.memory.buffer);
+  const res = wex.olang_session_start(ptr, enc.length);
+  const len = view().getUint32(res, true);
+  const boot = JSON.parse(new TextDecoder().decode(wmem().slice(res + 4, res + 4 + len)));
+  wex.olang_result_free(res);
+  wex.olang_dealloc(ptr, enc.length);
+  if (boot.error) throw new Error("worker boot: " + boot.error);
+  entry.deliver = (payload) => {
+    const b = new TextEncoder().encode(payload);
+    const p = wex.olang_alloc(Math.max(b.length, 1));
+    wmem().set(b, p);
+    const r = wex.olang_dispatch_event_json(BigInt(entry.cb), p, b.length);
+    const l = view().getUint32(r, true);
+    const json = JSON.parse(new TextDecoder().decode(wmem().slice(r + 4, r + 4 + l)));
+    wex.olang_result_free(r);
+    wex.olang_dealloc(p, Math.max(b.length, 1));
+    if (json.error) throw new Error("worker dispatch: " + json.error);
+  };
+  return entry;
+}
+
+// Drain both directions until quiet; called only from top-level test
+// code, so no wasm instance is ever on the stack when another dispatches.
+function pumpWorkers() {
+  let moved = true;
+  while (moved) {
+    moved = false;
+    for (const w of workers) {
+      if (!w) continue;
+      while (w.cb != null && w.toWorker.length) { w.deliver(w.toWorker.shift()); moved = true; }
+      while (w.pageCb != null && w.toPage.length) { dispatchRaw(w.pageCb, w.toPage.shift()); moved = true; }
+    }
+  }
 }
 
 const imports = {
@@ -153,6 +233,16 @@ const imports = {
     host_dom_draw: (h, ptr, len) => {
       (node(h).drawn ??= []).push(JSON.parse(readStr(ptr, len)));
     },
+    host_dom_worker_spawn: (ptr, len) => {
+      const source = fakeWorkerSources[readStr(ptr, len)];
+      if (source == null) return 0n;
+      return BigInt(workers.push(bootWorker(source)) - 1);
+    },
+    host_dom_worker_send: (h, ptr, len) => { workers[Number(h)].toWorker.push(readStr(ptr, len)); },
+    host_dom_worker_on: (h, id) => { workers[Number(h)].pageCb = Number(id); },
+    host_dom_worker_close: (h) => { workers[Number(h)] = null; },
+    host_dom_post: () => {},
+    host_dom_on_message: () => {},
   },
 };
 
@@ -394,6 +484,64 @@ println("stored=" + dom.storage_get("notes"))
   if (rr.error) throw new Error("route dispatch: " + rr.error);
   if (fakeDom["#count"].text !== "routed /back") throw new Error("route handler missing");
   console.log("stage 3: routing + storage + ui reconciliation ok");
+}
+// ── stage 4: workers (a second olang off the "main thread") + fetch_json ──
+fakeWorkerSources["/sum.ol"] = `
+dom.post(#{ "kind": "ready", "value": 0 })
+dom.on_message((m) => {
+    let n = map_get(m, "upto")
+    let mut total = 0
+    let mut i = 1
+    while i <= n {
+        total = total + i
+        i = i + 1
+    }
+    dom.post(#{ "kind": "sum", "value": total })
+})
+`;
+const prog7 = `
+let log = dom.query("#log")
+let w = dom.worker("/sum.ol")
+dom.worker_on(w, (m) => {
+    dom.set_text(log, dom.get_text(log) + "[" + map_get(m, "kind") + " " + show(map_get(m, "value")) + "]")
+})
+dom.worker_send(w, #{ "kind": "sum", "upto": 10 })
+dom.fetch_json("GET", "/api/data", "", (v) => {
+    dom.set_text(dom.query("#count"), "got " + show(len(map_get(v, "items"))) + " items")
+})
+println("worker handle=" + show(w))
+`;
+{
+  fakeDom["#log"].text = "";
+  const enc7 = new TextEncoder().encode(prog7);
+  const p7 = ex.olang_alloc(enc7.length);
+  mem().set(enc7, p7);
+  const r = result(ex.olang_session_start(p7, enc7.length));
+  ex.olang_dealloc(p7, enc7.length);
+  if (r.error) throw new Error("stage4 session: " + r.error);
+  if (!r.output.includes("worker handle=1")) throw new Error("worker spawn failed: " + r.output);
+
+  // The pre-registration post ("ready") queued; the sum request queued;
+  // one pump delivers both directions in order.
+  pumpWorkers();
+  if (fakeDom["#log"].text !== "[ready 0][sum 55]")
+    throw new Error("worker round-trip wrong: " + fakeDom["#log"].text);
+
+  // fetch_json: the callback id carries the JSON bit, and the response
+  // text is delivered through the JSON dispatch as a parsed value.
+  const f = fetchLog[fetchLog.length - 1];
+  if (f.path !== "/api/data") throw new Error("fetch_json path wrong: " + f.path);
+  if (f.cb < JSON_CALLBACK_BIT) throw new Error("fetch_json callback lacks JSON bit: " + f.cb);
+  const fr = dispatchRaw(f.cb - JSON_CALLBACK_BIT, JSON.stringify({ items: [1, 2, 3, 4] }));
+  if (fr.error) throw new Error("fetch_json dispatch: " + fr.error);
+  if (fakeDom["#count"].text !== "got 4 items")
+    throw new Error("fetch_json payload wrong: " + fakeDom["#count"].text);
+
+  // A worker close survives a later pump.
+  const w = workers[1];
+  workers[1] = null;
+  pumpWorkers();
+  console.log("stage 4: workers + fetch_json ok");
 }
 console.log("final dom:", JSON.stringify(fakeDom));
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");

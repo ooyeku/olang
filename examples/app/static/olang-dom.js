@@ -50,7 +50,13 @@
   // Structured events: the payload is a JSON object the wasm side parses
   // into the Map the olang handler receives.
   function dispatchJson(id, obj) {
-    const bytes = new TextEncoder().encode(JSON.stringify(obj));
+    dispatchRawJson(id, JSON.stringify(obj));
+  }
+
+  // Same dispatch, but the payload is already JSON text (worker messages,
+  // fetch_json responses) — no stringify round-trip.
+  function dispatchRawJson(id, text) {
+    const bytes = new TextEncoder().encode(text);
     const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
     mem().set(bytes, ptr);
     readResult(ex.olang_dispatch_event_json(BigInt(id), ptr, bytes.length));
@@ -71,6 +77,12 @@
       data: { ...(t.dataset ?? {}) },
     };
   }
+
+  const JSON_CALLBACK_BIT = 2 ** 40;
+
+  // Web Workers: each handle is a second olang instance off the main
+  // thread, bridged over postMessage. Values cross as JSON both ways.
+  const workers = [null];
 
   const imports = {
     env: {
@@ -113,15 +125,22 @@
         const method = readStr(mp, ml);
         const path = readStr(pp, pl);
         const body = readStr(bp, bl);
-        const cb = Number(id);
+        // Bit 40 marks a fetch_json callback: deliver the response through
+        // the JSON dispatch so the handler receives a parsed value.
+        const raw = Number(id);
+        const wantsJson = raw >= JSON_CALLBACK_BIT;
+        const cb = wantsJson ? raw - JSON_CALLBACK_BIT : raw;
+        const deliver = wantsJson
+          ? (text) => dispatchRawJson(cb, text)
+          : (text) => dispatch(cb, text);
         fetch(path, {
           method,
           headers: body ? { "Content-Type": "application/json" } : {},
           body: body || undefined,
         })
           .then((r) => r.text())
-          .then((text) => dispatch(cb, text))
-          .catch((e) => dispatch(cb, JSON.stringify({ error: String(e) })));
+          .then(deliver)
+          .catch((e) => deliver(JSON.stringify({ error: String(e) })));
       },
       host_dom_get_attr: (h, ptr, len) =>
         giveStr(elements[Number(h)].getAttribute(readStr(ptr, len)) ?? ""),
@@ -215,6 +234,39 @@
         };
         requestAnimationFrame(tick);
       },
+      host_dom_worker_spawn: (ptr, len) => {
+        const path = readStr(ptr, len);
+        const w = new Worker("/olang-worker.js");
+        const entry = { w, cb: null, inbox: [] };
+        w.onmessage = (e) => {
+          if (e.data.olang == null) return;
+          if (entry.cb == null) entry.inbox.push(e.data.olang);
+          else dispatchRawJson(entry.cb, e.data.olang);
+        };
+        fetch(path)
+          .then((r) => (r.ok ? r.text() : Promise.reject(r.status)))
+          .then((source) =>
+            w.postMessage({ boot: { wasmUrl: "/olang.wasm", source } }))
+          .catch((e) => console.error("olang worker boot:", path, e));
+        return BigInt(workers.push(entry) - 1);
+      },
+      host_dom_worker_send: (h, ptr, len) => {
+        workers[Number(h)]?.w.postMessage({ olang: readStr(ptr, len) });
+      },
+      host_dom_worker_on: (h, id) => {
+        const entry = workers[Number(h)];
+        if (!entry) return;
+        entry.cb = Number(id);
+        while (entry.inbox.length) dispatchRawJson(entry.cb, entry.inbox.shift());
+      },
+      host_dom_worker_close: (h) => {
+        workers[Number(h)]?.w.terminate();
+        workers[Number(h)] = null;
+      },
+      // dom.post / dom.on_message only exist inside a worker; on the page
+      // they are inert (the worker harness implements the live versions).
+      host_dom_post: () => {},
+      host_dom_on_message: () => {},
       // The draw-list: one JSON scene per call, replayed onto Canvas 2D.
       host_dom_draw: (h, ptr, len) => {
         const el = elements[Number(h)];

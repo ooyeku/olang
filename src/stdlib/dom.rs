@@ -52,6 +52,14 @@ pub fn create_dom_module() -> Value {
         ("storage_get", 1),
         ("storage_set", 2),
         ("storage_remove", 1),
+        // Workers (page side) and their in-worker mirrors
+        ("worker", 1),
+        ("worker_send", 2),
+        ("worker_on", 2),
+        ("worker_close", 1),
+        ("post", 1),
+        ("on_message", 1),
+        ("fetch_json", 4),
     ] {
         module.insert(
             name.to_string(),

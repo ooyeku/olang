@@ -169,6 +169,14 @@ unsafe extern "C" {
     fn host_dom_storage_get(ptr: *const u8, len: usize) -> *const u8;
     fn host_dom_storage_set(kp: *const u8, kl: usize, vp: *const u8, vl: usize);
     fn host_dom_storage_remove(ptr: *const u8, len: usize);
+    fn host_dom_worker_spawn(ptr: *const u8, len: usize) -> i64;
+    fn host_dom_worker_send(worker: i64, ptr: *const u8, len: usize);
+    fn host_dom_worker_on(worker: i64, callback_id: i64);
+    fn host_dom_worker_close(worker: i64);
+    /// Inside a worker: post a value to the page.
+    fn host_dom_post(ptr: *const u8, len: usize);
+    /// Inside a worker: register the inbound-message handler.
+    fn host_dom_on_message(callback_id: i64);
 }
 
 use std::cell::RefCell;
@@ -195,6 +203,22 @@ fn read_host_string(ptr: *const u8) -> String {
         // The page allocated via olang_alloc(4 + len); free it.
         drop(Vec::from_raw_parts(ptr as *mut u8, 0, (4 + len).max(1)));
         s
+    }
+}
+
+/// High bit on a fetch callback id: the page must deliver the response
+/// through the JSON dispatch (parsed value) rather than as raw text.
+pub const JSON_CALLBACK_BIT: i64 = 1 << 40;
+
+/// A value as compact JSON, via the same serde bridge as json.stringify.
+#[cfg(target_arch = "wasm32")]
+fn value_to_json(value: &Value) -> Result<String, Box<dyn std::error::Error>> {
+    match crate::stdlib::json::call_json_function("stringify", vec![value.clone()]) {
+        Ok(Value::Ok(inner)) => match *inner {
+            Value::String(s) => Ok(s.as_ref().clone()),
+            other => Ok(format!("{}", other)),
+        },
+        _ => Err("dom: value cannot be serialized to JSON".into()),
     }
 }
 
@@ -450,6 +474,71 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         ("storage_remove", [key]) => {
             let k = text(key)?;
             unsafe { host_dom_storage_remove(k.as_ptr(), k.len()) };
+            Ok(Value::Unit)
+        }
+        ("worker", [src]) => {
+            let p = text(src)?;
+            let h = unsafe { host_dom_worker_spawn(p.as_ptr(), p.len()) };
+            if h == 0 {
+                Err(format!("dom.worker: cannot spawn worker for {:?}", p).into())
+            } else {
+                Ok(Value::Integer(h))
+            }
+        }
+        ("worker_send", [worker, value]) => {
+            let json = value_to_json(value)?;
+            unsafe { host_dom_worker_send(handle(worker)?, json.as_ptr(), json.len()) };
+            Ok(Value::Unit)
+        }
+        ("worker_on", [worker, callback]) => {
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe { host_dom_worker_on(handle(worker)?, id) };
+            Ok(Value::Unit)
+        }
+        ("worker_close", [worker]) => {
+            unsafe { host_dom_worker_close(handle(worker)?) };
+            Ok(Value::Unit)
+        }
+        ("post", [value]) => {
+            let json = value_to_json(value)?;
+            unsafe { host_dom_post(json.as_ptr(), json.len()) };
+            Ok(Value::Unit)
+        }
+        ("on_message", [callback]) => {
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe { host_dom_on_message(id) };
+            Ok(Value::Unit)
+        }
+        ("fetch_json", [method, path, body, callback]) => {
+            // fetch, but the handler receives the parsed value instead of
+            // raw text — the JSON dispatch does the parsing.
+            let (m, pa, b) = (text(method)?, text(path)?, text(body)?);
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            // Reuse host_dom_fetch; the page routes fetch_json callbacks
+            // through the JSON dispatch (id offset marks them).
+            unsafe {
+                host_dom_fetch(
+                    m.as_ptr(),
+                    m.len(),
+                    pa.as_ptr(),
+                    pa.len(),
+                    b.as_ptr(),
+                    b.len(),
+                    id | JSON_CALLBACK_BIT,
+                )
+            };
             Ok(Value::Unit)
         }
         ("request_frame", [callback]) => {

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`dom` workers — browser parallelism out of the box.** `dom.worker(path)`
+  boots a second olang program in a Web Worker (its own thread, its own wasm
+  instance); values cross as JSON both ways via `dom.worker_send` /
+  `dom.worker_on` on the page and `dom.post` / `dom.on_message` inside the
+  worker. Workers can post mid-computation, so long jobs stream progress
+  while the page's frame loop keeps running. New `/primes.html` demo in
+  `examples/app`: a prime counter with a live progress bar and an animation
+  dial proving the main thread never blocks.
+- **`dom.fetch_json`** — `dom.fetch`, but the callback receives the parsed
+  response value directly instead of raw text.
 - **Sophisticated web apps: the `ui` view layer, routing, and
   storage.** `use ui` — an embedded olang package — builds pages as
   values: `h(tag, attrs, children)` trees, `hk` reconciliation keys,

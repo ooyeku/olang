@@ -835,7 +835,8 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.value(el)` / `dom.set_value(el, s)` | read / write a form control's value |
 | `dom.focus(el)` | focus an element |
 | `dom.on(el, event, handler)` | attach an event handler (see below) |
-| `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page |
+| `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page — the callback receives the response text |
+| `dom.fetch_json(method, path, body, callback)` | `dom.fetch`, but the callback receives the parsed value directly |
 | `dom.get_attr(el, name)` / `set_attr(el, name, v)` / `remove_attr(el, name)` | attributes |
 | `dom.class_add(el, c)` / `class_remove(el, c)` / `class_toggle(el, c)` | class list ops (`set_class` replaces wholesale) |
 | `dom.set_style(el, prop, v)` | set one style property |
@@ -850,6 +851,10 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.push_state(path)` / `dom.location()` | SPA navigation; location is a Map of `path` and `query` |
 | `dom.on_route(fn)` | the back/forward listener — a `route` event Map with `path` and `query` |
 | `dom.storage_get(k)` / `storage_set(k, v)` / `storage_remove(k)` | localStorage (missing keys read as `""`) |
+| `dom.worker(path)` | boot a second olang program in a Web Worker; returns a worker handle |
+| `dom.worker_send(w, value)` / `dom.worker_on(w, handler)` | send a value to / receive values from a worker |
+| `dom.worker_close(w)` | terminate a worker |
+| `dom.post(value)` / `dom.on_message(handler)` | the worker-side mirrors: post a value to the page / receive values from it |
 
 **Every event handler receives a structured event Map** — the same
 shape for every event type, so handlers pick the fields they need:
@@ -872,6 +877,19 @@ stroke take any CSS color; `line_width` sets stroke width. Paired with
 `examples/app/static/orbit.ol`, an animated orbital system served by
 the tracker at `/orbit.html`, where a click adds a body at the clicked
 radius (structured event coordinates + `dom.measure`).
+
+**Parallelism is a second program.** `dom.worker(path)` fetches an
+olang source file and boots it in a Web Worker — its own thread, its
+own wasm instance, no DOM. The two sides exchange plain values
+(anything `json.stringify` can carry): the page speaks
+`dom.worker_send` / `dom.worker_on`, the worker speaks `dom.post` /
+`dom.on_message`. Closures do not cross — programs and messages do,
+which is the same discipline as `chan` on native. A worker may `post`
+mid-computation, so long jobs stream progress while the page's frame
+loop never misses a beat. See `examples/app/static/primes.ol` and
+`primes-worker.ol` — served by the tracker at `/primes.html`, a prime
+counter whose progress bar fills while an animation dial proves the
+main thread stayed live.
 
 **Declarative views: the `ui` module.** `use ui` (an embedded olang
 package) builds pages as values: `h(tag, attrs, children)` makes a node,
