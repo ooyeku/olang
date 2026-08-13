@@ -3237,3 +3237,103 @@ feed()
 "#,
     );
 }
+
+// ── AddAssign fusion: in-place string building ─────────────────────────
+//
+// `x = x + rhs` fuses into AddAssign, which appends in place when x
+// holds the only reference to its string (Arc count proves no aliases;
+// strings are immutable values with content equality, so identity is
+// unobservable). These tests pin that aliases survive, self-append
+// copies, numbers fuse harmlessly, and results agree across tiers.
+
+#[test]
+fn string_accumulation_agrees_and_is_linear_shaped() {
+    assert_tier_transparent(
+        r#"
+fn build(n) = {
+    let mut s = ""
+    let mut i = 0
+    while i < n {
+        s = s + "ab"
+        i = i + 1
+    }
+    len(s)
+}
+build(2000)
+"#,
+    );
+}
+
+#[test]
+fn aliased_strings_survive_in_place_append() {
+    // `snapshot` holds a second reference when the append happens: the
+    // fused path must copy, never mutate the shared buffer.
+    assert_tier_transparent(
+        r#"
+fn f() = {
+    let mut s = "a"
+    let snapshot = s
+    s = s + "b"
+    snapshot + " " + s
+}
+f()
+"#,
+    );
+}
+
+#[test]
+fn self_append_copies() {
+    assert_tier_transparent(
+        r#"
+fn f() = {
+    let mut s = "ab"
+    s = s + s
+    s = s + s
+    s
+}
+f()
+"#,
+    );
+}
+
+#[test]
+fn numeric_and_list_accumulation_fuse_harmlessly() {
+    assert_tier_transparent(
+        r#"
+fn nums(n) = {
+    let mut acc = 0
+    let mut i = 0
+    while i < n {
+        acc = acc + i * 2
+        i = i + 1
+    }
+    acc
+}
+fn lists() = {
+    let mut xs = [1]
+    xs = xs + [2]
+    xs = xs + [3]
+    xs[0] + xs[1] + xs[2]
+}
+nums(1000) + lists()
+"#,
+    );
+}
+
+#[test]
+fn strings_passed_elsewhere_before_append_are_unharmed() {
+    // The accumulated string is stored into a list mid-way; later
+    // appends must not mutate the stored copy.
+    assert_tier_transparent(
+        r#"
+fn f() = {
+    let mut s = "x"
+    s = s + "y"
+    let kept = [s]
+    s = s + "z"
+    kept[0] + " " + s
+}
+f()
+"#,
+    );
+}

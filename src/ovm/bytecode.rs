@@ -311,6 +311,16 @@ pub enum Instruction {
         lhs: Register,
         rhs: Register,
     },
+    /// The fused accumulate pattern `x = x + rhs`. Semantically exactly
+    /// Add{dst: target, lhs: target} followed by nothing (the result
+    /// lands in place) — but when the target holds the only reference
+    /// to its string, the executor appends in place, making string
+    /// building O(n) instead of O(n^2). Strings are immutable values
+    /// with content equality, so identity is unobservable.
+    AddAssign {
+        target: Register,
+        rhs: Register,
+    },
     Sub {
         dst: Register,
         lhs: Register,
@@ -1769,6 +1779,43 @@ impl BytecodeVm {
                     };
 
                     self.execution_state.set_register(*dst, result)?;
+                }
+
+                Instruction::AddAssign { target, rhs } => {
+                    use crate::ovm::value::ValueData;
+                    let rhs_val = self.execution_state.get_register(*rhs)?;
+                    let target_val = self.execution_state.take_register(*target)?;
+                    if let (ValueData::String(_), ValueData::String(b)) =
+                        (&target_val.data, &rhs_val.data)
+                    {
+                        let ValueData::String(mut arc) = target_val.data else {
+                            unreachable!("matched above");
+                        };
+                        match std::sync::Arc::get_mut(&mut arc) {
+                            // Sole owner: append in place — O(1) amortized.
+                            Some(s) => s.push_str(b),
+                            // Aliased somewhere (another register, a constant,
+                            // a value already sent elsewhere): copy, exactly
+                            // like Add would.
+                            None => {
+                                let mut s = (*arc).clone();
+                                s.push_str(b);
+                                arc = std::sync::Arc::new(s);
+                            }
+                        }
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::String(arc),
+                            },
+                        )?;
+                    } else {
+                        let result = match Self::binary_fast(&target_val, &rhs_val, BinaryOp::Add) {
+                            Some(v) => v,
+                            None => self.execute_binary_op(&target_val, &rhs_val, BinaryOp::Add)?,
+                        };
+                        self.execution_state.set_register(*target, result)?;
+                    }
                 }
 
                 Instruction::Sub { dst, lhs, rhs } => {
@@ -3954,6 +4001,21 @@ impl ExecutionState {
     }
 
     #[inline]
+    /// Move a value out of a register, leaving Unit. Used by AddAssign
+    /// so a uniquely-held string can be appended in place; the register
+    /// is rewritten before the instruction completes.
+    pub fn take_register(&mut self, reg: Register) -> Result<OvmValue, BytecodeError> {
+        let idx = self.base + reg.0 as usize;
+        if idx < self.top {
+            Ok(std::mem::replace(
+                &mut self.stack[idx],
+                OvmValue::new_unit(),
+            ))
+        } else {
+            Err(BytecodeError::InvalidRegister(reg))
+        }
+    }
+
     pub fn set_register(&mut self, reg: Register, value: OvmValue) -> Result<(), BytecodeError> {
         let idx = self.base + reg.0 as usize;
         if idx < self.top {
@@ -4975,6 +5037,27 @@ impl BytecodeCompiler {
                         )));
                     }
                 };
+                // Fuse the accumulate pattern `x = x + rhs` into AddAssign,
+                // which appends in place when x holds the only reference to
+                // its string. Only when the rhs provably contains no
+                // assignment: fusing evaluates the rhs before reading x, so
+                // an rhs that writes x would observe the wrong order.
+                if let Expr::BinaryOp {
+                    left,
+                    op: crate::ast::BinaryOp::Add,
+                    right,
+                } = value.as_ref()
+                    && matches!(left.as_ref(),
+                        Expr::Identifier(n) if n == target)
+                    && Self::assignment_free(right)
+                {
+                    let rhs_reg = self.compile_expression(right)?;
+                    self.emitter.instructions.push(Instruction::AddAssign {
+                        target: target_reg,
+                        rhs: rhs_reg,
+                    });
+                    return Ok(target_reg);
+                }
                 let value_reg = self.compile_expression(value)?;
                 if value_reg != target_reg {
                     self.emitter.emit_move(target_reg, value_reg);
@@ -5973,6 +6056,58 @@ impl BytecodeCompiler {
         Ok(dst_reg)
     }
 
+    /// True when evaluating `e` provably performs no assignment — the
+    /// precondition for fusing `x = x + rhs` (fusion reorders the read of
+    /// x after the rhs). A whitelist: anything unlisted conservatively
+    /// declines fusion and compiles the ordinary Add + Move. Calls and
+    /// lambdas are safe — compiled functions cannot reach the caller's
+    /// registers, and lambdas that assign captured names are rejected by
+    /// the lambda compiler — but a block or match arm can assign
+    /// directly, so those decline.
+    fn assignment_free(e: &crate::ast::Expr) -> bool {
+        use crate::ast::Expr as E;
+        match e {
+            E::Integer(_)
+            | E::Float(_)
+            | E::String(_)
+            | E::Boolean(_)
+            | E::Identifier(_)
+            | E::LocalRef { .. } => true,
+            E::BinaryOp { left, right, .. } => {
+                Self::assignment_free(left) && Self::assignment_free(right)
+            }
+            E::UnaryOp { operand, .. } => Self::assignment_free(operand),
+            E::FieldAccess { object, .. } => Self::assignment_free(object),
+            E::Index { object, index } => {
+                Self::assignment_free(object) && Self::assignment_free(index)
+            }
+            E::ResultOk(inner) | E::ResultErr(inner) | E::Try(inner) => {
+                Self::assignment_free(inner)
+            }
+            E::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::assignment_free(condition)
+                    && Self::assignment_free(then_branch)
+                    && else_branch
+                        .as_ref()
+                        .is_none_or(|e| Self::assignment_free(e))
+            }
+            E::Call { callee, arguments } => {
+                Self::assignment_free(callee)
+                    && arguments.iter().all(|a| match a {
+                        crate::ast::Argument::Positional(e) => Self::assignment_free(e),
+                        crate::ast::Argument::Named { value, .. } => Self::assignment_free(value),
+                    })
+            }
+            E::List(items) => items.iter().all(Self::assignment_free),
+            E::Tuple(items) => items.iter().all(Self::assignment_free),
+            _ => false,
+        }
+    }
+
     /// Compile a statement inside a block, returning the register holding its
     /// value (let-declarations evaluate to Unit like in the interpreter).
     fn compile_statement(
@@ -6349,6 +6484,9 @@ impl fmt::Display for Instruction {
                 write!(f, "STORE_LOCAL r{}, l{}", src.0, local_idx)
             }
             Instruction::Move { dst, src } => write!(f, "MOVE r{}, r{}", dst.0, src.0),
+            Instruction::AddAssign { target, rhs } => {
+                write!(f, "ADD_ASSIGN r{}, r{}", target.0, rhs.0)
+            }
             Instruction::Add { dst, lhs, rhs } => {
                 write!(f, "ADD r{}, r{}, r{}", dst.0, lhs.0, rhs.0)
             }

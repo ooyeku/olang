@@ -2162,6 +2162,7 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         ),
         Instruction::Move { .. }
         | Instruction::Add { .. }
+        | Instruction::AddAssign { .. }
         | Instruction::Sub { .. }
         | Instruction::Mul { .. }
         | Instruction::Div { .. }
@@ -2431,6 +2432,30 @@ struct Inference {
 
 impl PlanFn {
     fn new(func_id: FunctionId, bytecode: Arc<CompiledBytecode>, param_kinds: Vec<Kind>) -> Self {
+        // Canonicalize: AddAssign{t, r} is semantically Add{dst: t, lhs: t,
+        // rhs: r}; rewriting up front means inference and codegen handle one
+        // shape. 1:1, so jump targets are untouched. The rewritten copy is
+        // what the JittedFn keeps alive (its instructions carry the baked
+        // shape Arcs).
+        let bytecode = if bytecode
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::AddAssign { .. }))
+        {
+            let mut b = (*bytecode).clone();
+            for inst in &mut b.instructions {
+                if let Instruction::AddAssign { target, rhs } = inst {
+                    *inst = Instruction::Add {
+                        dst: *target,
+                        lhs: *target,
+                        rhs: *rhs,
+                    };
+                }
+            }
+            Arc::new(b)
+        } else {
+            bytecode
+        };
         let nregs = bytecode.register_count as usize;
         let mut writes = vec![0u16; nregs];
         let mut exotic = vec![None; nregs];
@@ -3496,6 +3521,7 @@ fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::StoreLocal { .. } => "StoreLocal",
         Instruction::Move { .. } => "Move",
         Instruction::Add { .. } => "Add",
+        Instruction::AddAssign { .. } => "AddAssign",
         Instruction::Sub { .. } => "Sub",
         Instruction::Mul { .. } => "Mul",
         Instruction::Div { .. } => "Div",

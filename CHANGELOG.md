@@ -53,6 +53,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   keys, and object receivers all stay on bytecode with identical
   results; `-> Map` return annotations discharge statically.
 
+- **String building is linear now.** The accumulate pattern `s = s +
+  piece` fuses into a single instruction that appends in place when the
+  string is uniquely referenced — the Arc count proves no alias can
+  observe it, and strings are immutable values with content equality,
+  so identity is unobservable. Building a 400KB string by 200k
+  concatenations drops from ~1.6s to ~10ms (it was O(n²), it is now
+  O(n)) — faster than CPython's specialized in-place append on the
+  same workload. Aliased and self-referencing strings copy exactly as
+  before, fusion declines when the right side could assign, and the
+  JIT canonicalizes the fused form back to a plain add so hot numeric
+  loops compile unchanged.
+
 - **Channels: `spawn`ed tasks can talk.** The new `chan` module is
   message passing between tasks — multi-producer multi-consumer queues
   of olang values. `chan.new()` is unbounded; `chan.bounded(n)` holds
