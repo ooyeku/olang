@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Scalar replacement — structs and lists that never escape are never
+  allocated.** At planning time the JIT now inlines tiny leaf callees
+  (a constructor, a field-math helper) into their callers, propagates
+  single-definition copies, and then dissolves aggregates: a struct
+  whose register is only ever field-read becomes one register per
+  field; a list read only at constant indices becomes one register per
+  element. Construction disappears entirely — no allocation, no helper
+  call, no guard — and the loop that built two structs per iteration
+  compiles to pure float arithmetic. Measured: the struct-building
+  benchmark drops from 1.475s to ~14ms (105x, now ~4x faster than V8
+  on the identical workload) and the list-building one from 0.223s to
+  ~7ms (30x, ~8x faster than V8). The transforms exist only on the
+  JIT's planning clone — the VM's bytecode is untouched, and every
+  error path deopts to a clean rerun, so semantics and stack traces
+  cannot drift.
+
 - **Loops may allocate now — the scratch watermark.** Native loops were
   forbidden from allocating (every scratch allocation lived until the
   call ended), which kept struct-, list-, map-, and Result-building

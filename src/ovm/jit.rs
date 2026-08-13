@@ -1549,6 +1549,7 @@ impl JitCache {
             entry_id,
             Arc::clone(entry_bytecode),
             entry_kinds.to_vec(),
+            lookup,
         )];
         let mut plan_pos: HashMap<usize, usize> = HashMap::new();
         plan_pos.insert(entry_id.index(), 0);
@@ -1666,7 +1667,7 @@ impl JitCache {
                     return None;
                 }
                 plan_pos.insert(idx, plans.len());
-                plans.push(PlanFn::new(fid, bytecode, kinds));
+                plans.push(PlanFn::new(fid, bytecode, kinds, lookup));
                 changed = true;
             }
 
@@ -2292,6 +2293,7 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::JumpIfTrue { .. }
         | Instruction::JumpIfFalse { .. }
         | Instruction::MatchFail
+        | Instruction::Nop
         | Instruction::GetField { .. }
         | Instruction::IndexGet { .. }
         | Instruction::IterLen { .. }
@@ -2590,6 +2592,527 @@ struct Inference {
     scratch_region: Option<(usize, usize)>,
 }
 
+/// Apply `f` to every register an instruction touches. Returns false
+/// for an unmodeled instruction — callers must abort their transform.
+fn for_each_reg(
+    inst: &mut Instruction,
+    mut f: impl FnMut(&mut crate::ovm::bytecode::Register),
+) -> bool {
+    use Instruction as I;
+    match inst {
+        I::LoadConst { dst, .. } => f(dst),
+        I::Move { dst, src } => {
+            f(dst);
+            f(src);
+        }
+        I::AddAssign { target, rhs } => {
+            f(target);
+            f(rhs);
+        }
+        I::Add { dst, lhs, rhs }
+        | I::Sub { dst, lhs, rhs }
+        | I::Mul { dst, lhs, rhs }
+        | I::Div { dst, lhs, rhs }
+        | I::Mod { dst, lhs, rhs }
+        | I::Eq { dst, lhs, rhs }
+        | I::Ne { dst, lhs, rhs }
+        | I::Lt { dst, lhs, rhs }
+        | I::Le { dst, lhs, rhs }
+        | I::Gt { dst, lhs, rhs }
+        | I::Ge { dst, lhs, rhs }
+        | I::And { dst, lhs, rhs }
+        | I::Or { dst, lhs, rhs } => {
+            f(dst);
+            f(lhs);
+            f(rhs);
+        }
+        I::Not { dst, src } | I::Neg { dst, src } => {
+            f(dst);
+            f(src);
+        }
+        I::BinImm { dst, lhs, .. } => {
+            f(dst);
+            f(lhs);
+        }
+        I::Jump { .. } | I::MatchFail | I::Nop => {}
+        I::JumpIfTrue { condition, .. } | I::JumpIfFalse { condition, .. } => f(condition),
+        I::CallFn { dst, args, .. }
+        | I::CallNamed { dst, args, .. }
+        | I::CallBuiltin { dst, args, .. } => {
+            f(dst);
+            args.iter_mut().for_each(&mut f);
+        }
+        I::Return { value } => {
+            if let Some(v) = value {
+                f(v);
+            }
+        }
+        I::MakeStruct {
+            dst, field_regs, ..
+        } => {
+            f(dst);
+            field_regs.iter_mut().for_each(&mut f);
+        }
+        I::MakeList { dst, elements } | I::MakeTuple { dst, elements } => {
+            f(dst);
+            elements.iter_mut().for_each(&mut f);
+        }
+        I::MakeMap { dst, entries } => {
+            f(dst);
+            for (k, v) in entries.iter_mut() {
+                f(k);
+                f(v);
+            }
+        }
+        I::MakeResult { dst, value, .. }
+        | I::PatternTestResult { dst, value, .. }
+        | I::ExtractResult { dst, value, .. }
+        | I::PatternTestTuple { dst, value, .. }
+        | I::ExtractElement { dst, value, .. } => {
+            f(dst);
+            f(value);
+        }
+        I::IterLen { dst, src } => {
+            f(dst);
+            f(src);
+        }
+        I::IterGet { dst, src, idx } => {
+            f(dst);
+            f(src);
+            f(idx);
+        }
+        I::GetField { dst, object, .. } => {
+            f(dst);
+            f(object);
+        }
+        I::IndexGet { dst, object, index } => {
+            f(dst);
+            f(object);
+            f(index);
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// Shift every jump target through `map` (absolute old pc -> new pc).
+fn remap_targets(inst: &mut Instruction, map: &dyn Fn(u32) -> u32) {
+    match inst {
+        Instruction::Jump { target } => target.0 = map(target.0),
+        Instruction::JumpIfTrue { target, .. } | Instruction::JumpIfFalse { target, .. } => {
+            target.0 = map(target.0)
+        }
+        _ => {}
+    }
+}
+
+/// Splice `replacement` over the single instruction at `at`, fixing the
+/// function's jump targets, entry point, and span table. Targets that
+/// pointed AT the replaced instruction land on the replacement's first
+/// instruction; targets beyond it shift by the growth.
+fn splice(b: &mut CompiledBytecode, at: usize, replacement: Vec<Instruction>) {
+    let grow = replacement.len() as i64 - 1;
+    b.instructions.splice(at..=at, replacement);
+    let shift = |pc: u32| -> u32 {
+        if (pc as usize) > at {
+            (pc as i64 + grow) as u32
+        } else {
+            pc
+        }
+    };
+    for (i, inst) in b.instructions.iter_mut().enumerate() {
+        // Instructions inside the replacement were emitted with final
+        // positions already; everything else remaps.
+        if i >= at && i < at + (grow + 1) as usize {
+            continue;
+        }
+        remap_targets(inst, &shift);
+    }
+    if b.entry_point > at {
+        b.entry_point = (b.entry_point as i64 + grow) as usize;
+    }
+    for entry in b.span_table.iter_mut() {
+        entry.0 = shift(entry.0);
+    }
+}
+
+/// Inline calls to tiny leaf callees: no calls of their own, no type
+/// annotations, a handful of instructions. Exposes cross-function
+/// structure (a constructor's fields, a helper's arithmetic) to the
+/// scalar-replacement pass below. The transform only exists on the
+/// JIT's planning clone — the VM's bytecode is untouched, and every
+/// error path deopts to a clean rerun of the original, so semantics
+/// and stack traces cannot drift.
+const INLINE_MAX_CALLEE: usize = 24;
+const INLINE_BUDGET: usize = 256;
+
+fn inline_leaves(b: &mut CompiledBytecode, self_id: FunctionId, lookup: &BytecodeLookup) {
+    let mut budget = INLINE_BUDGET;
+    'rescan: loop {
+        for pc in 0..b.instructions.len() {
+            let Instruction::CallFn { dst, func_id, args } = &b.instructions[pc] else {
+                continue;
+            };
+            let (dst, func_id, args) = (*dst, *func_id, args.clone());
+            if func_id == self_id {
+                continue;
+            }
+            let Some(callee) = lookup(func_id) else {
+                continue;
+            };
+            if callee.instructions.is_empty()
+                || callee.instructions.len() > INLINE_MAX_CALLEE
+                || callee.instructions.len() > budget
+                || callee.entry_point != 0
+                || callee.param_count != args.len()
+                || callee.param_checks.iter().any(|c| c.is_some())
+                || callee.return_check.is_some()
+                || !whitelist_ok(&callee)
+                || callee.instructions.iter().any(|i| {
+                    matches!(
+                        i,
+                        Instruction::CallFn { .. }
+                            | Instruction::CallNamed { .. }
+                            | Instruction::CallBuiltin { .. }
+                    )
+                })
+            {
+                continue;
+            }
+
+            let reg_off = b.register_count;
+            let const_off = b.constants.len() as u32;
+            let body_start = pc + args.len();
+
+            // Where each callee pc lands (Returns grow by one), so
+            // intra-callee jumps can be remapped absolutely.
+            let mut pos = Vec::with_capacity(callee.instructions.len());
+            let mut cursor = body_start;
+            for inst in &callee.instructions {
+                pos.push(cursor);
+                cursor += if matches!(inst, Instruction::Return { .. }) {
+                    2
+                } else {
+                    1
+                };
+            }
+            let cont = cursor as u32; // first instruction after the splice
+
+            let mut rep: Vec<Instruction> = Vec::with_capacity(cursor - pc);
+            for (i, arg) in args.iter().enumerate() {
+                rep.push(Instruction::Move {
+                    dst: crate::ovm::bytecode::Register(reg_off + i as u32),
+                    src: *arg,
+                });
+            }
+            let mut ok = true;
+            for (ci, inst) in callee.instructions.iter().enumerate() {
+                let mut inst = inst.clone();
+                if !for_each_reg(&mut inst, |r| r.0 += reg_off) {
+                    ok = false;
+                    break;
+                }
+                match &mut inst {
+                    Instruction::LoadConst { const_idx, .. } => *const_idx += const_off,
+                    Instruction::GetField { name_const, .. } => *name_const += const_off,
+                    _ => {}
+                }
+                if let Instruction::Return { value } = &inst {
+                    let Some(v) = value else {
+                        ok = false;
+                        break;
+                    };
+                    rep.push(Instruction::Move { dst, src: *v });
+                    rep.push(Instruction::Jump {
+                        target: crate::ovm::bytecode::Label(cont),
+                    });
+                    let _ = ci;
+                    continue;
+                }
+                remap_targets(&mut inst, &|t| pos[t as usize] as u32);
+                rep.push(inst);
+            }
+            if !ok {
+                continue;
+            }
+
+            budget -= callee.instructions.len();
+            b.constants.extend(callee.constants.iter().cloned());
+            b.register_count += callee.register_count;
+            splice(b, pc, rep);
+            continue 'rescan;
+        }
+        break;
+    }
+}
+
+/// Single-def copy propagation and dead-move elimination: when both
+/// sides of a Move are defined exactly once and every use of the copy
+/// sits after the Move, the copy IS the source — uses rewrite to the
+/// source and the Move (now unread) becomes a Nop. This is what lets
+/// scalar replacement see through the parameter-binding Moves the
+/// inliner emits.
+fn propagate_copies(b: &mut CompiledBytecode) {
+    let nregs = b.register_count as usize;
+    let mut uses_scratch: Vec<u32> = Vec::new();
+    let mut defs_scratch: Vec<u32> = Vec::new();
+    loop {
+        let mut def_counts = vec![0u32; nregs];
+        // Parameters are defined at entry — an implicit def that must
+        // count, or a reassigned parameter masquerades as single-def.
+        for d in def_counts.iter_mut().take(b.param_count.min(nregs)) {
+            *d = 1;
+        }
+        for inst in &b.instructions {
+            uses_scratch.clear();
+            defs_scratch.clear();
+            if !inst_uses_defs(inst, &mut uses_scratch, &mut defs_scratch) {
+                return;
+            }
+            for d in &defs_scratch {
+                if (*d as usize) < nregs {
+                    def_counts[*d as usize] += 1;
+                }
+            }
+        }
+        let mut changed = false;
+        for pc in 0..b.instructions.len() {
+            let Instruction::Move { dst: m, src } = b.instructions[pc] else {
+                continue;
+            };
+            if m == src
+                || def_counts.get(m.0 as usize).copied().unwrap_or(2) != 1
+                || def_counts.get(src.0 as usize).copied().unwrap_or(2) != 1
+            {
+                continue;
+            }
+            // Every use of m must sit after the Move; a use before it
+            // (a loop carry) would observe the previous iteration.
+            let mut rewritable = true;
+            for (i, inst) in b.instructions.iter().enumerate() {
+                uses_scratch.clear();
+                defs_scratch.clear();
+                inst_uses_defs(inst, &mut uses_scratch, &mut defs_scratch);
+                if uses_scratch.contains(&m.0) && i <= pc {
+                    rewritable = false;
+                    break;
+                }
+            }
+            if !rewritable {
+                continue;
+            }
+            // Rewrite reads of m to src everywhere except the Move's own
+            // def; then the Move is dead.
+            for (i, inst) in b.instructions.iter_mut().enumerate() {
+                if i == pc {
+                    continue;
+                }
+                for_each_reg(inst, |r| {
+                    if *r == m {
+                        *r = src;
+                    }
+                });
+            }
+            b.instructions[pc] = Instruction::Nop;
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+/// Scalar replacement of aggregates: a MakeStruct whose register has a
+/// single def and is read only by GetField (all after the construction)
+/// never needs to exist. Construction becomes one Move per field into a
+/// fresh snapshot register; each field read becomes a Move from its
+/// snapshot. No allocation, no helper call, no guard — the fields are
+/// plain registers the rest of the pipeline compiles as scalars.
+fn scalar_replace(b: &mut CompiledBytecode) {
+    'rescan: loop {
+        let nregs = b.register_count as usize;
+        let mut def_counts = vec![0u32; nregs];
+        for d in def_counts.iter_mut().take(b.param_count.min(nregs)) {
+            *d = 1;
+        }
+        let mut uses_scratch: Vec<u32> = Vec::new();
+        let mut defs_scratch: Vec<u32> = Vec::new();
+        for inst in &b.instructions {
+            uses_scratch.clear();
+            defs_scratch.clear();
+            if !inst_uses_defs(inst, &mut uses_scratch, &mut defs_scratch) {
+                return; // unmodeled instruction: leave the function alone
+            }
+            for d in &defs_scratch {
+                if (*d as usize) < nregs {
+                    def_counts[*d as usize] += 1;
+                }
+            }
+        }
+        for pc in 0..b.instructions.len() {
+            let Instruction::MakeStruct {
+                dst,
+                shape,
+                field_regs,
+                ..
+            } = &b.instructions[pc]
+            else {
+                continue;
+            };
+            let (d, shape, field_regs) = (*dst, shape.clone(), field_regs.clone());
+            if field_regs.is_empty()
+                || field_regs.len() > 8
+                || def_counts.get(d.0 as usize).copied().unwrap_or(2) != 1
+            {
+                continue;
+            }
+            // Every use of d must be a GetField at a later position whose
+            // name resolves in the shape.
+            let mut eligible = true;
+            let mut reads: Vec<(usize, usize)> = Vec::new(); // (pc, field idx)
+            for (i, inst) in b.instructions.iter().enumerate() {
+                uses_scratch.clear();
+                defs_scratch.clear();
+                inst_uses_defs(inst, &mut uses_scratch, &mut defs_scratch);
+                if !uses_scratch.contains(&d.0) {
+                    continue;
+                }
+                let Instruction::GetField {
+                    object, name_const, ..
+                } = inst
+                else {
+                    eligible = false;
+                    break;
+                };
+                if object.0 != d.0 || i <= pc {
+                    eligible = false;
+                    break;
+                }
+                let Some(ValueData::String(name)) =
+                    b.constants.get(*name_const as usize).map(|c| &c.data)
+                else {
+                    eligible = false;
+                    break;
+                };
+                let Some(idx) = shape.field_names.iter().position(|f| f == name.as_str()) else {
+                    eligible = false;
+                    break;
+                };
+                reads.push((i, idx));
+            }
+            if !eligible {
+                continue;
+            }
+
+            let snap_base = b.register_count;
+            b.register_count += field_regs.len() as u32;
+            for (read_pc, field_idx) in &reads {
+                let Instruction::GetField { dst: g, .. } = b.instructions[*read_pc] else {
+                    unreachable!("collected above");
+                };
+                b.instructions[*read_pc] = Instruction::Move {
+                    dst: g,
+                    src: crate::ovm::bytecode::Register(snap_base + *field_idx as u32),
+                };
+            }
+            let rep: Vec<Instruction> = field_regs
+                .iter()
+                .enumerate()
+                .map(|(j, src)| Instruction::Move {
+                    dst: crate::ovm::bytecode::Register(snap_base + j as u32),
+                    src: *src,
+                })
+                .collect();
+            splice(b, pc, rep);
+            continue 'rescan;
+        }
+        // The list twin: a MakeList read only by IndexGet with constant,
+        // in-bounds indices (negatives wrap, exactly like the runtime)
+        // never needs the Vec.
+        for pc in 0..b.instructions.len() {
+            let Instruction::MakeList { dst, elements } = &b.instructions[pc] else {
+                continue;
+            };
+            let (d, elements) = (*dst, elements.clone());
+            if elements.is_empty()
+                || elements.len() > 8
+                || def_counts.get(d.0 as usize).copied().unwrap_or(2) != 1
+            {
+                continue;
+            }
+            // A register holding a constant integer: single def, LoadConst.
+            let const_int = |reg: crate::ovm::bytecode::Register| -> Option<i64> {
+                if def_counts.get(reg.0 as usize).copied().unwrap_or(2) != 1 {
+                    return None;
+                }
+                b.instructions.iter().find_map(|inst| match inst {
+                    Instruction::LoadConst { dst, const_idx } if *dst == reg => {
+                        match b.constants.get(*const_idx as usize).map(|c| &c.data) {
+                            Some(ValueData::Integer(i)) => Some(*i),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+            };
+            let mut eligible = true;
+            let mut reads: Vec<(usize, usize)> = Vec::new();
+            for (i, inst) in b.instructions.iter().enumerate() {
+                uses_scratch.clear();
+                defs_scratch.clear();
+                inst_uses_defs(inst, &mut uses_scratch, &mut defs_scratch);
+                if !uses_scratch.contains(&d.0) {
+                    continue;
+                }
+                let Instruction::IndexGet { object, index, .. } = inst else {
+                    eligible = false;
+                    break;
+                };
+                if object.0 != d.0 || i <= pc {
+                    eligible = false;
+                    break;
+                }
+                let Some(raw) = const_int(*index) else {
+                    eligible = false;
+                    break;
+                };
+                let len = elements.len() as i64;
+                let resolved = if raw < 0 { len + raw } else { raw };
+                if resolved < 0 || resolved >= len {
+                    eligible = false; // out of bounds: leave the error path
+                    break;
+                }
+                reads.push((i, resolved as usize));
+            }
+            if !eligible {
+                continue;
+            }
+            let snap_base = b.register_count;
+            b.register_count += elements.len() as u32;
+            for (read_pc, elem_idx) in &reads {
+                let Instruction::IndexGet { dst: g, .. } = b.instructions[*read_pc] else {
+                    unreachable!("collected above");
+                };
+                b.instructions[*read_pc] = Instruction::Move {
+                    dst: g,
+                    src: crate::ovm::bytecode::Register(snap_base + *elem_idx as u32),
+                };
+            }
+            let rep: Vec<Instruction> = elements
+                .iter()
+                .enumerate()
+                .map(|(j, src)| Instruction::Move {
+                    dst: crate::ovm::bytecode::Register(snap_base + j as u32),
+                    src: *src,
+                })
+                .collect();
+            splice(b, pc, rep);
+            continue 'rescan;
+        }
+        break;
+    }
+}
+
 /// The registers an instruction reads and the register it defines —
 /// the vocabulary of the loop-liveness analysis. Returns false for an
 /// instruction it doesn't model, which the caller must treat as
@@ -2804,7 +3327,12 @@ fn live_in_at(bytecode: &CompiledBytecode, nregs: usize, at: usize) -> Vec<bool>
 }
 
 impl PlanFn {
-    fn new(func_id: FunctionId, bytecode: Arc<CompiledBytecode>, param_kinds: Vec<Kind>) -> Self {
+    fn new(
+        func_id: FunctionId,
+        bytecode: Arc<CompiledBytecode>,
+        param_kinds: Vec<Kind>,
+        lookup: &BytecodeLookup,
+    ) -> Self {
         // Canonicalize: AddAssign{t, r} is semantically Add{dst: t, lhs: t,
         // rhs: r}; rewriting up front means inference and codegen handle one
         // shape. 1:1, so jump targets are untouched. The rewritten copy is
@@ -2828,6 +3356,16 @@ impl PlanFn {
             Arc::new(b)
         } else {
             bytecode
+        };
+        // Inline tiny leaf callees, then scalar-replace structs that are
+        // only ever field-read — both on this planning clone only. The
+        // passes are no-ops on functions without the shapes they target.
+        let bytecode = {
+            let mut b = (*bytecode).clone();
+            inline_leaves(&mut b, func_id, lookup);
+            propagate_copies(&mut b);
+            scalar_replace(&mut b);
+            Arc::new(b)
         };
         let nregs = bytecode.register_count as usize;
         let shape = loop_shape(&bytecode);
@@ -3583,7 +4121,7 @@ impl PlanFn {
                     }
                     grow!(self.writes[dst.0 as usize], K_FLOAT);
                 }
-                Instruction::Jump { .. } | Instruction::MatchFail => {}
+                Instruction::Jump { .. } | Instruction::MatchFail | Instruction::Nop => {}
                 Instruction::JumpIfTrue { condition, .. }
                 | Instruction::JumpIfFalse { condition, .. } => {
                     narrow!(condition.0, K_BOOL);
@@ -4268,6 +4806,7 @@ fn translate_body(
                 builder.ins().jump(deopt_block, &[]);
                 terminated = true;
             }
+            Instruction::Nop => {}
             Instruction::Move { dst, src } => {
                 if let Some(tk) = inference.tuples.get(&src.0) {
                     if inference.tuples.contains_key(&dst.0) {
