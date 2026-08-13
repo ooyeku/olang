@@ -119,6 +119,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The bytecode tier reads operands in interpreter order.** A binary
+  op whose left operand was a plain variable compiled to the variable's
+  register itself, so `acc + { acc = 1  5 }` read `acc` *after* the
+  right side mutated it — the tier answered 6 where the interpreter
+  answers 15. The same late-read hazard lived in every multi-operand
+  position: call arguments (and the callee and method receiver
+  themselves), list/tuple/map/struct/anonymous-object literals,
+  template interpolations, index and range operands, a match scrutinee
+  re-tested after an assigning guard, and a for-loop iterable
+  reassigned by its own body. The compiler now shields exactly the
+  provable case — the operand's register is a variable's home register
+  AND a later operand contains an assignment (the `assignment_free`
+  whitelist from AddAssign fusion) — by copying the value to a fresh
+  register at its evaluation point; assignment-free operands, i.e. all
+  hot paths, emit no Move. Fourteen differential tests pin every
+  position, each also asserting promotion so a silent refusal can't
+  fake agreement.
+
 - **The JIT enforces parameter annotations.** A specialization whose
   observed argument kinds could not provably satisfy the function's
   parameter annotations compiled anyway and skipped the check — so a
