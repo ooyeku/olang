@@ -84,6 +84,13 @@ pub struct ScratchCtx {
     map_allocs: Vec<Arc<HashMap<String, OvmValue>>>,
     map_args: Vec<Arc<HashMap<String, OvmValue>>>,
     retained_map: Option<Arc<HashMap<String, OvmValue>>>,
+    /// Scratch lengths at loop entry. Each back-edge truncates every
+    /// family back to this mark, freeing the iteration's allocations —
+    /// codegen only permits it when every heap value born in the loop
+    /// provably dies in its iteration. None until a loop is entered;
+    /// release without a mark is a no-op (fail-safe for loop entries
+    /// codegen didn't instrument).
+    mark: Option<[usize; 5]>,
 }
 
 impl ScratchCtx {
@@ -1056,6 +1063,43 @@ unsafe extern "C" fn olang_jit_map_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64
     }
 }
 
+/// Host helper at loop entry: remember every scratch family's length.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_mark(ctx: *mut ScratchCtx) {
+    unsafe {
+        let ctx = &mut *ctx;
+        ctx.mark = Some([
+            ctx.allocs.len(),
+            ctx.str_allocs.len(),
+            ctx.result_allocs.len(),
+            ctx.list_allocs.len(),
+            ctx.map_allocs.len(),
+        ]);
+    }
+}
+
+/// Host helper at each loop back-edge: free the iteration's allocations
+/// by truncating every family to the loop-entry mark. Sound because the
+/// compilation gate proved no pointer into them survives the iteration;
+/// values that escaped into another owner survive on their own Arc.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_release(ctx: *mut ScratchCtx) {
+    unsafe {
+        let ctx = &mut *ctx;
+        if let Some([a, s, r, l, m]) = ctx.mark {
+            ctx.allocs.truncate(a);
+            ctx.str_allocs.truncate(s);
+            ctx.result_allocs.truncate(r);
+            ctx.list_allocs.truncate(l);
+            ctx.map_allocs.truncate(m);
+        }
+    }
+}
+
 unsafe extern "C" fn olang_jit_field(
     obj: *const crate::ovm::value::StructObject,
     idx: u64,
@@ -1140,6 +1184,8 @@ impl JitCache {
             builder.symbol("olang_jit_map_set", olang_jit_map_set as *const u8);
             builder.symbol("olang_jit_make_map", olang_jit_make_map as *const u8);
             builder.symbol("olang_jit_map_retain", olang_jit_map_retain as *const u8);
+            builder.symbol("olang_jit_mark", olang_jit_mark as *const u8);
+            builder.symbol("olang_jit_release", olang_jit_release as *const u8);
             builder.symbol("olang_jit_list_concat", olang_jit_list_concat as *const u8);
             builder.symbol("olang_jit_list_retain", olang_jit_list_retain as *const u8);
             self.module = Some(JITModule::new(builder));
@@ -1936,6 +1982,20 @@ impl JitCache {
                 .declare_function("olang_jit_map_retain", Linkage::Import, &sig)
                 .ok()?
         };
+        let mark_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_mark", Linkage::Import, &sig)
+                .ok()?
+        };
+        let release_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_release", Linkage::Import, &sig)
+                .ok()?
+        };
         let list_retain_helper = {
             let mut sig = module.make_signature();
             sig.params.push(AbiParam::new(types::I64));
@@ -2025,6 +2085,8 @@ impl JitCache {
                         map_has: map_has_helper,
                         map_set: map_set_helper,
                         make_map: make_map_helper,
+                        mark: mark_helper,
+                        release: release_helper,
                     },
                 )
                 .is_none()
@@ -2245,15 +2307,11 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         // ends — the scratch model's memory cost — and a cap-triggered
         // mid-loop deopt costs more than never compiling. Loops that
         // build structs stay on bytecode and call native constructors.
-        Instruction::MakeStruct { field_regs, .. } => {
-            field_regs.len() <= 16 && !has_backward_jump(bytecode)
-        }
+        Instruction::MakeStruct { field_regs, .. } => field_regs.len() <= 16,
         // Same allocation discipline as MakeStruct.
-        Instruction::MakeResult { .. } => !has_backward_jump(bytecode),
-        Instruction::MakeList { elements, .. } => {
-            elements.len() <= 64 && !has_backward_jump(bytecode)
-        }
-        Instruction::MakeMap { entries, .. } => entries.len() <= 64 && !has_backward_jump(bytecode),
+        Instruction::MakeResult { .. } => true,
+        Instruction::MakeList { elements, .. } => elements.len() <= 64,
+        Instruction::MakeMap { entries, .. } => entries.len() <= 64,
         // Named map natives. Reads don't allocate, so they compile in
         // loops; map_set allocates and follows the MakeStruct rule. A
         // user definition shadowing one of these refuses at inference
@@ -2264,7 +2322,7 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
             ..
         } => match function_name.as_str() {
             "map_get" | "map_has_key" => args.len() == 2,
-            "map_set" => args.len() == 3 && !has_backward_jump(bytecode),
+            "map_set" => args.len() == 3,
             _ => false,
         },
         Instruction::BinImm { imm, .. } => {
@@ -2508,6 +2566,13 @@ struct PlanFn {
     ret_mask: u16,
     eq_pairs: Vec<(u32, u32)>,
     return_regs: Vec<u32>,
+    /// The function's single loop region, when it has exactly one
+    /// backward-jump target (see loop_shape).
+    loop_region: Option<(usize, usize)>,
+    /// Registers live at the loop head — the watermark gate's oracle.
+    live_at_head: Vec<bool>,
+    /// Registers defined anywhere inside the loop region.
+    defined_in_region: Vec<bool>,
 }
 
 /// The finalized result codegen consumes.
@@ -2518,6 +2583,224 @@ struct Inference {
     tuples: HashMap<u32, Vec<Kind>>,
     ret_tuple: Option<Vec<Kind>>,
     ret_struct: Option<u32>,
+    /// Some((head, last back-edge)) when codegen should watermark the
+    /// loop: mark scratch lengths on entry, truncate on every taken
+    /// back-edge. Set only when the finalize gate proved every heap
+    /// value born in the region dies in its iteration.
+    scratch_region: Option<(usize, usize)>,
+}
+
+/// The registers an instruction reads and the register it defines —
+/// the vocabulary of the loop-liveness analysis. Returns false for an
+/// instruction it doesn't model, which the caller must treat as
+/// "reads everything" (conservatively live). Only whitelisted
+/// instructions reach planning, so the catch-all is a safety net.
+fn inst_uses_defs(inst: &Instruction, uses: &mut Vec<u32>, defs: &mut Vec<u32>) -> bool {
+    use Instruction as I;
+    match inst {
+        I::LoadConst { dst, .. } => defs.push(dst.0),
+        I::Move { dst, src } => {
+            uses.push(src.0);
+            defs.push(dst.0);
+        }
+        I::AddAssign { target, rhs } => {
+            uses.push(target.0);
+            uses.push(rhs.0);
+            defs.push(target.0);
+        }
+        I::Add { dst, lhs, rhs }
+        | I::Sub { dst, lhs, rhs }
+        | I::Mul { dst, lhs, rhs }
+        | I::Div { dst, lhs, rhs }
+        | I::Mod { dst, lhs, rhs }
+        | I::Eq { dst, lhs, rhs }
+        | I::Ne { dst, lhs, rhs }
+        | I::Lt { dst, lhs, rhs }
+        | I::Le { dst, lhs, rhs }
+        | I::Gt { dst, lhs, rhs }
+        | I::Ge { dst, lhs, rhs }
+        | I::And { dst, lhs, rhs }
+        | I::Or { dst, lhs, rhs } => {
+            uses.push(lhs.0);
+            uses.push(rhs.0);
+            defs.push(dst.0);
+        }
+        I::Not { dst, src } | I::Neg { dst, src } => {
+            uses.push(src.0);
+            defs.push(dst.0);
+        }
+        I::BinImm { dst, lhs, .. } => {
+            uses.push(lhs.0);
+            defs.push(dst.0);
+        }
+        I::Jump { .. } | I::MatchFail | I::Nop => {}
+        I::JumpIfTrue { condition, .. } | I::JumpIfFalse { condition, .. } => {
+            uses.push(condition.0);
+        }
+        I::CallFn { dst, args, .. }
+        | I::CallNamed { dst, args, .. }
+        | I::CallBuiltin { dst, args, .. } => {
+            uses.extend(args.iter().map(|a| a.0));
+            defs.push(dst.0);
+        }
+        I::Return { value } => {
+            if let Some(v) = value {
+                uses.push(v.0);
+            }
+        }
+        I::MakeStruct {
+            dst, field_regs, ..
+        } => {
+            uses.extend(field_regs.iter().map(|r| r.0));
+            defs.push(dst.0);
+        }
+        I::MakeList { dst, elements } | I::MakeTuple { dst, elements } => {
+            uses.extend(elements.iter().map(|r| r.0));
+            defs.push(dst.0);
+        }
+        I::MakeMap { dst, entries } => {
+            for (k, v) in entries {
+                uses.push(k.0);
+                uses.push(v.0);
+            }
+            defs.push(dst.0);
+        }
+        I::MakeResult { dst, value, .. }
+        | I::PatternTestResult { dst, value, .. }
+        | I::ExtractResult { dst, value, .. }
+        | I::PatternTestTuple { dst, value, .. }
+        | I::ExtractElement { dst, value, .. } => {
+            uses.push(value.0);
+            defs.push(dst.0);
+        }
+        I::IterLen { dst, src } => {
+            uses.push(src.0);
+            defs.push(dst.0);
+        }
+        I::IterGet { dst, src, idx } => {
+            uses.push(src.0);
+            uses.push(idx.0);
+            defs.push(dst.0);
+        }
+        I::GetField { dst, object, .. } => {
+            uses.push(object.0);
+            defs.push(dst.0);
+        }
+        I::IndexGet { dst, object, index } => {
+            uses.push(object.0);
+            uses.push(index.0);
+            defs.push(dst.0);
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// The single loop's shape, when the function has exactly one backward-
+/// jump target: `head..=last_back_edge` is the region the watermark
+/// governs. `heads > 1` (nesting or sequential loops) disables the
+/// watermark — allocation the old rules forbade then refuses at
+/// finalize, and everything else compiles exactly as before.
+struct LoopShape {
+    /// Some((head, last back-edge pc)) when exactly one head exists;
+    /// None for straight-line code and for several heads alike (the
+    /// watermark only handles the single-loop shape either way).
+    region: Option<(usize, usize)>,
+}
+
+fn loop_shape(bytecode: &CompiledBytecode) -> LoopShape {
+    let mut heads: Vec<usize> = Vec::new();
+    let mut last_edge: usize = 0;
+    for (pc, inst) in bytecode.instructions.iter().enumerate() {
+        let target = match inst {
+            Instruction::Jump { target } => Some(target.0 as usize),
+            Instruction::JumpIfTrue { target, .. } | Instruction::JumpIfFalse { target, .. } => {
+                Some(target.0 as usize)
+            }
+            _ => None,
+        };
+        if let Some(t) = target
+            && t <= pc
+        {
+            if !heads.contains(&t) {
+                heads.push(t);
+            }
+            last_edge = last_edge.max(pc);
+        }
+    }
+    match heads.len() {
+        1 => LoopShape {
+            region: Some((heads[0], last_edge)),
+        },
+        _ => LoopShape { region: None },
+    }
+}
+
+/// Backward liveness to a fixpoint, returning the live-in set at `at`.
+/// One bit per register; an unmodeled instruction makes every register
+/// live (the conservative direction for this analysis, whose consumers
+/// only act on proven-dead).
+fn live_in_at(bytecode: &CompiledBytecode, nregs: usize, at: usize) -> Vec<bool> {
+    let n = bytecode.instructions.len();
+    let mut live_in: Vec<Vec<bool>> = vec![vec![false; nregs]; n];
+    let mut uses: Vec<u32> = Vec::new();
+    let mut defs: Vec<u32> = Vec::new();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for pc in (0..n).rev() {
+            let inst = &bytecode.instructions[pc];
+            // live-out = union of successors' live-in
+            let mut out = vec![false; nregs];
+            let mut succ = |t: usize| {
+                if t < n {
+                    for (i, b) in live_in[t].iter().enumerate() {
+                        if *b {
+                            out[i] = true;
+                        }
+                    }
+                }
+            };
+            match inst {
+                Instruction::Jump { target } => succ(target.0 as usize),
+                Instruction::JumpIfTrue { target, .. }
+                | Instruction::JumpIfFalse { target, .. } => {
+                    succ(target.0 as usize);
+                    succ(pc + 1);
+                }
+                Instruction::Return { .. } | Instruction::MatchFail => {}
+                _ => succ(pc + 1),
+            }
+            uses.clear();
+            defs.clear();
+            let modeled = inst_uses_defs(inst, &mut uses, &mut defs);
+            let mut new_in = out;
+            if modeled {
+                for d in &defs {
+                    if (*d as usize) < nregs {
+                        new_in[*d as usize] = false;
+                    }
+                }
+                for u in &uses {
+                    if (*u as usize) < nregs {
+                        new_in[*u as usize] = true;
+                    }
+                }
+            } else {
+                for b in new_in.iter_mut() {
+                    *b = true;
+                }
+            }
+            if new_in != live_in[pc] {
+                live_in[pc] = new_in;
+                changed = true;
+            }
+        }
+    }
+    live_in
+        .get(at)
+        .cloned()
+        .unwrap_or_else(|| vec![true; nregs])
 }
 
 impl PlanFn {
@@ -2547,6 +2830,30 @@ impl PlanFn {
             bytecode
         };
         let nregs = bytecode.register_count as usize;
+        let shape = loop_shape(&bytecode);
+        let (loop_region, live_at_head, defined_in_region) = match shape.region {
+            Some((h, e)) => {
+                let live = live_in_at(&bytecode, nregs, h);
+                let mut defined = vec![false; nregs];
+                let mut uses: Vec<u32> = Vec::new();
+                let mut defs: Vec<u32> = Vec::new();
+                for inst in &bytecode.instructions[h..=e] {
+                    uses.clear();
+                    defs.clear();
+                    if inst_uses_defs(inst, &mut uses, &mut defs) {
+                        for d in &defs {
+                            if (*d as usize) < nregs {
+                                defined[*d as usize] = true;
+                            }
+                        }
+                    } else {
+                        defined.iter_mut().for_each(|b| *b = true);
+                    }
+                }
+                (Some((h, e)), live, defined)
+            }
+            None => (None, Vec::new(), Vec::new()),
+        };
         let mut writes = vec![0u16; nregs];
         let mut exotic = vec![None; nregs];
         for (i, k) in param_kinds.iter().enumerate() {
@@ -2572,6 +2879,9 @@ impl PlanFn {
             ret_mask: 0,
             eq_pairs: Vec::new(),
             return_regs: Vec::new(),
+            loop_region,
+            live_at_head,
+            defined_in_region,
         }
     }
 
@@ -2700,12 +3010,8 @@ impl PlanFn {
                         && self.writes[lhs.0 as usize] == K_LIST
                         && self.writes[rhs.0 as usize] == K_LIST
                     {
-                        // List + list is concat: an allocation, under the
-                        // same straight-line rule as MakeStruct. Element
-                        // kinds must already agree exactly.
-                        if has_backward_jump(&self.bytecode) {
-                            return None;
-                        }
+                        // List + list is concat, an allocation — inside a
+                        // loop, finalize's watermark gate decides its fate.
                         // Element kinds may lag the fixpoint (a callee's
                         // list return resolves late): defer, don't refuse.
                         let (Some(lk), Some(rk)) =
@@ -2731,9 +3037,6 @@ impl PlanFn {
                         && self.writes[lhs.0 as usize] == K_STR
                         && self.writes[rhs.0 as usize] == K_STR
                     {
-                        if has_backward_jump(&self.bytecode) {
-                            return None;
-                        }
                         narrow!(lhs.0, K_STR);
                         narrow!(rhs.0, K_STR);
                         grow!(self.writes[dst.0 as usize], K_STR);
@@ -3318,20 +3621,11 @@ impl PlanFn {
                                 changed = true;
                             }
                         }
-                        if *ret_mask == K_STR && has_backward_jump(&self.bytecode) {
-                            return None; // same discipline as struct returns
-                        }
                         if let Some(sid) = ret_struct {
-                            // Struct-returning callees allocate into the
-                            // ENTRY call's scratch context. Straight-line
-                            // callers are bounded (a few allocations per
-                            // call); a caller with a loop would accumulate
-                            // until the cap and waste the whole run on a
-                            // mid-loop deopt — those stay on bytecode and
-                            // drive native constructors call by call.
-                            if has_backward_jump(&self.bytecode) {
-                                return None;
-                            }
+                            // Heap-returning callees allocate into the ENTRY
+                            // call's scratch context; in a loop, finalize's
+                            // watermark gate proves the values die per
+                            // iteration or refuses the function.
                             let k = Kind::Struct(*sid);
                             if self.exotic[dst.0 as usize].is_none() {
                                 self.exotic[dst.0 as usize] = Some(k);
@@ -3341,12 +3635,6 @@ impl PlanFn {
                             }
                         }
                         if let Some(lk) = ret_list {
-                            // List-returning callees allocate into the entry
-                            // call's scratch context — same loop discipline
-                            // as struct returns.
-                            if has_backward_jump(&self.bytecode) {
-                                return None;
-                            }
                             if self.exotic[dst.0 as usize].is_none() {
                                 self.exotic[dst.0 as usize] = Some(*lk);
                                 changed = true;
@@ -3355,12 +3643,6 @@ impl PlanFn {
                             }
                         }
                         if let Some(rk) = ret_result {
-                            // Result-returning callees allocate into the
-                            // entry call's scratch context — same loop
-                            // discipline as struct returns.
-                            if has_backward_jump(&self.bytecode) {
-                                return None;
-                            }
                             match self.exotic[dst.0 as usize] {
                                 None => {
                                     self.exotic[dst.0 as usize] = Some(*rk);
@@ -3593,6 +3875,82 @@ impl PlanFn {
             (k, None)
         };
 
+        // ── the watermark gate ──
+        //
+        // Allocation inside a loop used to refuse wholesale. It is now
+        // allowed exactly when the loop can be watermarked: a single
+        // region, and no heap-kind register defined inside it is live at
+        // the head — liveness at the head covers both a later iteration
+        // reading the pointer and every after-loop path (a while-loop
+        // exits THROUGH the head after the back-edge truncated). Values
+        // that escaped into another owner survive on their own Arc; only
+        // raw borrowed pointers can dangle, and the gate proves none do.
+        let is_heap = |k: Option<Kind>| {
+            matches!(
+                k,
+                Some(
+                    Kind::Struct(_)
+                        | Kind::Str
+                        | Kind::Result(..)
+                        | Kind::Map(_)
+                        | Kind::ListInt
+                        | Kind::ListFloat
+                        | Kind::ListStruct(_)
+                        | Kind::ListStr
+                )
+            )
+        };
+        let mut scratch_region = None;
+        if has_backward_jump(&self.bytecode) {
+            // The forms the old rules forbade alongside any backward
+            // jump (the whitelist was function-global, so this check is
+            // function-global too — nothing that compiled before stops).
+            let newly_allowed = self.bytecode.instructions.iter().any(|inst| match inst {
+                Instruction::MakeStruct { .. }
+                | Instruction::MakeList { .. }
+                | Instruction::MakeMap { .. }
+                | Instruction::MakeResult { .. } => true,
+                Instruction::Add { dst, .. } => is_heap(reg_kind[dst.0 as usize]),
+                Instruction::CallFn { dst, .. } => is_heap(reg_kind[dst.0 as usize]),
+                Instruction::CallNamed { function_name, .. } => function_name == "map_set",
+                _ => false,
+            });
+            if newly_allowed {
+                let (h, e) = self.loop_region?; // several loop heads: refuse, as before
+                for (r, kind) in reg_kind.iter().enumerate() {
+                    if self.defined_in_region.get(r).copied().unwrap_or(true)
+                        && is_heap(*kind)
+                        && self.live_at_head.get(r).copied().unwrap_or(true)
+                    {
+                        if jit_debug() {
+                            eprintln!(
+                                "[jit] fn#{} refused: r{} escapes its loop iteration",
+                                self.func_id.index(),
+                                r
+                            );
+                        }
+                        return None;
+                    }
+                }
+                scratch_region = Some((h, e));
+            } else if let Some((h, e)) = self.loop_region {
+                // Nothing newly allowed, but callees may still allocate
+                // into the entry scratch (an int-returning callee's
+                // internals): watermarking bounds that too, and is safe
+                // here because every heap value the region can reference
+                // lives below the mark.
+                let region_allocates = self.bytecode.instructions[h..=e].iter().any(|inst| {
+                    matches!(
+                        inst,
+                        Instruction::CallFn { .. } | Instruction::CallNamed { .. }
+                    )
+                });
+                if region_allocates {
+                    scratch_region = Some((h, e));
+                }
+            }
+        }
+
         Some(Inference {
             reg_kind,
             param_kinds: self.param_kinds.clone(),
@@ -3600,6 +3958,7 @@ impl PlanFn {
             tuples: self.tuples.clone(),
             ret_tuple,
             ret_struct: self.ret_struct,
+            scratch_region,
         })
     }
 }
@@ -3674,6 +4033,8 @@ struct Helpers {
     map_has: cranelift_module::FuncId,
     map_set: cranelift_module::FuncId,
     make_map: cranelift_module::FuncId,
+    mark: cranelift_module::FuncId,
+    release: cranelift_module::FuncId,
 }
 
 struct Gen<'a> {
@@ -3738,6 +4099,8 @@ fn translate_body(
         map_has: map_has_helper,
         map_set: map_set_helper,
         make_map: make_map_helper,
+        mark: mark_helper,
+        release: release_helper,
     } = helpers;
     let n = bytecode.instructions.len();
     let param_count = inference.param_kinds.len();
@@ -3861,6 +4224,14 @@ fn translate_body(
     for (i, inst) in bytecode.instructions.iter().enumerate() {
         if let Some(block) = blocks[i] {
             if !terminated {
+                // Falling into the watermarked loop's head: remember every
+                // scratch family's length so each back-edge can free the
+                // iteration's allocations.
+                if inference.scratch_region.is_some_and(|(h, _)| h == i) {
+                    let ctx = builder.use_var(ctx_var);
+                    let mark_ref = module.declare_func_in_func(mark_helper, builder.func);
+                    builder.ins().call(mark_ref, &[ctx]);
+                }
                 builder.ins().jump(block, &[]);
             }
             builder.switch_to_block(block);
@@ -4636,13 +5007,47 @@ fn translate_body(
             }
             Instruction::Jump { target } => {
                 let block = blocks[target.0 as usize]?;
+                if let Some((h, _)) = inference.scratch_region
+                    && target.0 as usize == h
+                {
+                    let ctx = builder.use_var(ctx_var);
+                    if i < h {
+                        // A forward entry into the loop: set the mark.
+                        let mark_ref = module.declare_func_in_func(mark_helper, builder.func);
+                        builder.ins().call(mark_ref, &[ctx]);
+                    } else {
+                        // The back-edge: this iteration's heap values are
+                        // proven dead — free them before going around.
+                        let release_ref = module.declare_func_in_func(release_helper, builder.func);
+                        builder.ins().call(release_ref, &[ctx]);
+                    }
+                }
                 builder.ins().jump(block, &[]);
                 terminated = true;
             }
             Instruction::JumpIfTrue { condition, target } => {
                 let cond = r#gen.read(builder, condition.0)?;
-                let then_block = blocks[target.0 as usize]?;
+                let mut then_block = blocks[target.0 as usize]?;
                 let else_block = blocks.get(i + 1).copied().flatten()?;
+                if let Some((h, _)) = inference.scratch_region
+                    && target.0 as usize == h
+                    && i >= h
+                {
+                    // Bottom-tested loop: release only on the taken
+                    // back-edge — the fall-through exits the loop and may
+                    // still read this iteration's values.
+                    let tramp = builder.create_block();
+                    let entry = then_block;
+                    builder.ins().brif(cond, tramp, &[], else_block, &[]);
+                    builder.switch_to_block(tramp);
+                    let ctx = builder.use_var(ctx_var);
+                    let release_ref = module.declare_func_in_func(release_helper, builder.func);
+                    builder.ins().call(release_ref, &[ctx]);
+                    builder.ins().jump(entry, &[]);
+                    terminated = true;
+                    continue;
+                }
+                let _ = &mut then_block;
                 builder.ins().brif(cond, then_block, &[], else_block, &[]);
                 terminated = true;
             }
@@ -4650,6 +5055,20 @@ fn translate_body(
                 let cond = r#gen.read(builder, condition.0)?;
                 let else_block = blocks[target.0 as usize]?;
                 let then_block = blocks.get(i + 1).copied().flatten()?;
+                if let Some((h, _)) = inference.scratch_region
+                    && target.0 as usize == h
+                    && i >= h
+                {
+                    let tramp = builder.create_block();
+                    builder.ins().brif(cond, then_block, &[], tramp, &[]);
+                    builder.switch_to_block(tramp);
+                    let ctx = builder.use_var(ctx_var);
+                    let release_ref = module.declare_func_in_func(release_helper, builder.func);
+                    builder.ins().call(release_ref, &[ctx]);
+                    builder.ins().jump(else_block, &[]);
+                    terminated = true;
+                    continue;
+                }
                 builder.ins().brif(cond, then_block, &[], else_block, &[]);
                 terminated = true;
             }

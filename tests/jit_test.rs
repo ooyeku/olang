@@ -1494,7 +1494,7 @@ fn eval_with_stats(source: &str) -> (Result<Value, String>, olang::ovm::tier::Ti
 // and stay on bytecode; bodies with enough compute still take it.
 
 #[test]
-fn trivial_list_constructor_declines_the_native_boundary() {
+fn trivial_list_constructor_loops_compile_as_one_native_entry() {
     let (result, stats) = eval_with_stats(
         r#"
 fn make(i) = [i, i * 2]
@@ -1508,14 +1508,17 @@ bench(200)
 "#,
     );
     assert_eq!(result, Ok(Value::Integer(19900)));
+    // The watermarked loop compiles the CALLER, so the boundary is
+    // crossed once for the whole loop — never per constructor call
+    // (which would show ~200 entries here).
     assert_eq!(
-        stats.jit_native_calls, 0,
-        "a lone MakeList body must stay on bytecode at the call boundary"
+        stats.jit_native_calls, 1,
+        "the calling loop should enter native code exactly once"
     );
 }
 
 #[test]
-fn trivial_struct_constructor_declines_the_native_boundary() {
+fn trivial_struct_constructor_loops_compile_as_one_native_entry() {
     let (result, stats) = eval_with_stats(
         r#"
 type Point = struct { x: Int, y: Int }
@@ -1530,9 +1533,10 @@ bench(200)
 "#,
     );
     assert_eq!(result, Ok(Value::Integer(19900)));
+    // Same as the list twin: one native entry for the whole loop.
     assert_eq!(
-        stats.jit_native_calls, 0,
-        "a lone MakeStruct body must stay on bytecode at the call boundary"
+        stats.jit_native_calls, 1,
+        "the calling loop should enter native code exactly once"
     );
 }
 
@@ -1576,6 +1580,157 @@ fn declined_constructor_still_compiles_inside_a_native_caller() {
 fn make(i) = [i, i * 2]
 fn use_it(i) = make(i)
 use_it(21)
+"#,
+    );
+}
+
+// ── the watermark: allocation inside native loops ──────────────────────
+//
+// A loop may allocate when every heap value born in an iteration
+// provably dies in it: scratch is marked at loop entry and truncated at
+// each back-edge. The gate is liveness at the loop head — anything that
+// survives an iteration (a carried binding, an accumulating list, a
+// value read after the loop) refuses and stays on bytecode.
+
+#[test]
+fn allocating_loops_agree_and_run_native() {
+    let (result, stats) = eval_with_stats(
+        r#"
+type P = struct { x: Float, y: Float }
+fn dist2(a, b) = {
+    let dx = b.x - a.x
+    let dy = b.y - a.y
+    dx * dx + dy * dy
+}
+fn kernel(n) = {
+    let mut acc = 0.0
+    let mut i = 0.0
+    while i < n {
+        acc = acc + dist2(P { x: i, y: 0.5 }, P { x: 0.0, y: i })
+        i = i + 1.0
+    }
+    acc
+}
+kernel(500.0)
+"#,
+    );
+    assert!(matches!(result, Ok(Value::Float(_))));
+    assert!(
+        stats.jit_native_calls >= 1,
+        "the allocating loop should run natively"
+    );
+}
+
+#[test]
+fn loop_carried_heap_values_refuse_and_agree() {
+    // `last` survives the back-edge, so truncation would free it out
+    // from under the next iteration (and the after-loop read): the gate
+    // must refuse, and bytecode must produce the identical answer.
+    assert_jit_transparent(
+        r#"
+type P = struct { x: Float, y: Float }
+fn escape(n) = {
+    let mut last = P { x: 0.0, y: 0.0 }
+    let mut i = 0.0
+    while i < n {
+        last = P { x: i, y: i }
+        i = i + 1.0
+    }
+    last.x
+}
+escape(200.0)
+"#,
+    );
+}
+
+#[test]
+fn accumulating_lists_refuse_and_agree() {
+    // xs is live at the head (each iteration reads the last one): the
+    // concat allocation cannot be watermarked.
+    assert_jit_transparent(
+        r#"
+fn upto(n) = {
+    let mut xs = [0]
+    let mut i = 1
+    while i < n { xs = xs + [i]; i = i + 1 }
+    xs[n - 1]
+}
+upto(50)
+"#,
+    );
+}
+
+#[test]
+fn watermarked_loops_outlive_the_allocation_cap() {
+    // 1.2M iterations, each allocating: without per-iteration release
+    // this deopts at the scratch cap mid-loop; with it, the loop runs
+    // native start to finish. Either way the answer must agree.
+    assert_jit_transparent(
+        r#"
+type B = struct { v: Int }
+fn total(n) = {
+    let mut acc = 0
+    let mut i = 0
+    while i < n {
+        acc = acc + B { v: i }.v
+        i = i + 1
+    }
+    acc
+}
+total(1200000)
+"#,
+    );
+}
+
+#[test]
+fn preloop_allocations_survive_the_watermark() {
+    // The struct is built BEFORE the loop (below the mark) and read
+    // inside every iteration: truncation must never touch it.
+    assert_jit_transparent(
+        r#"
+type Cfg = struct { step: Float }
+fn run(n) = {
+    let cfg = Cfg { step: 2.5 }
+    let mut acc = 0.0
+    let mut i = 0.0
+    while i < n {
+        acc = acc + cfg.step
+        i = i + 1.0
+    }
+    acc
+}
+run(300.0)
+"#,
+    );
+}
+
+#[test]
+fn results_and_maps_in_loops_agree_under_the_watermark() {
+    assert_jit_transparent(
+        r#"
+fn sign(n) = if n % 2 == 0 => Ok(n) else => Err(n * 3)
+fn tally(n) = {
+    let mut acc = 0
+    let mut i = 0
+    while i < n {
+        acc = acc + match sign(i) {
+            Ok(v) => v,
+            Err(e) => e
+        }
+        i = i + 1
+    }
+    acc
+}
+fn mtally(n) = {
+    let mut acc = 0
+    let mut i = 0
+    while i < n {
+        acc = acc + map_get(#{ "v": i }, "v")
+        i = i + 1
+    }
+    acc
+}
+tally(400) + mtally(400)
 "#,
     );
 }

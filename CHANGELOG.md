@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Loops may allocate now — the scratch watermark.** Native loops were
+  forbidden from allocating (every scratch allocation lived until the
+  call ended), which kept struct-, list-, map-, and Result-building
+  loops on bytecode. The JIT now marks every scratch family's length at
+  loop entry and truncates back to the mark on each taken back-edge,
+  freeing the iteration's allocations — permitted exactly when a
+  liveness gate proves every heap value born in the loop dies in its
+  iteration (nothing carried across the back-edge, nothing read after
+  the loop; values that escaped into another owner survive on their own
+  reference count). Loops that fail the proof refuse and run on
+  bytecode, byte-identically, with a precise debug diagnostic.
+  Measured with `olang bench` against a saved baseline: struct-building
+  loops 60% faster (2.5x), list-building loops 56% faster (2.3x),
+  scalar kernels untouched, and allocation-heavy loops now run past the
+  old 1M scratch cap natively instead of deopting mid-loop.
+
 - **`olang bench` — reproducible timings and a regression guard.** Each
   `.ol` file runs as its own subprocess (fresh VM and JIT per run, the
   wall-clock a user experiences): one discarded warmup, then timed runs
