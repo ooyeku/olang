@@ -2768,6 +2768,7 @@ fn inline_leaves(b: &mut CompiledBytecode, self_id: FunctionId, lookup: &Bytecod
                 || callee.param_checks.iter().any(|c| c.is_some())
                 || callee.return_check.is_some()
                 || !whitelist_ok(&callee)
+                || has_backward_jump(&callee)
                 || callee.instructions.iter().any(|i| {
                     matches!(
                         i,
@@ -4478,10 +4479,14 @@ impl PlanFn {
                 // here because every heap value the region can reference
                 // lives below the mark.
                 let region_allocates = self.bytecode.instructions[h..=e].iter().any(|inst| {
-                    matches!(
-                        inst,
-                        Instruction::CallFn { .. } | Instruction::CallNamed { .. }
-                    )
+                    match inst {
+                        Instruction::CallFn { .. } => true,
+                        // Among the named builtins only map_set allocates;
+                        // guarded reads never do, and a release per
+                        // back-edge is measurable in a hot read loop.
+                        Instruction::CallNamed { function_name, .. } => function_name == "map_set",
+                        _ => false,
+                    }
                 });
                 if region_allocates {
                     scratch_region = Some((h, e));
