@@ -4,9 +4,21 @@
   <meta charset="utf-8" />
   <title>orbits — olang canvas</title>
   <style>
+    nav.demos {
+      position: fixed; top: 0; left: 0; right: 0;
+      display: flex; justify-content: center; align-items: center; gap: 1rem;
+      padding: 0.6rem 1rem; font-size: 12px;
+      background: rgba(11, 14, 20, 0.88); border-bottom: 1px solid #1e2430;
+      backdrop-filter: blur(8px);
+    }
+    nav.demos a { color: #9aa4b2; text-decoration: none; }
+    nav.demos a:hover { color: #7fd1b9; }
+    nav.demos a.here { color: #7fd1b9; font-weight: 600; }
+    nav.demos .sep { color: #2a3444; }
+    nav.demos .src { color: #5b6577; }
     :root { color-scheme: dark; }
     body {
-      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      margin: 0; padding-top: 2.5rem; min-height: 100vh; display: grid; place-items: center;
       background: #0b0e14; color: #9aa4b2;
       font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
     }
@@ -20,6 +32,14 @@
   </style>
 </head>
 <body>
+  <nav class="demos">
+    <a href="/">tracker</a>
+    <a class="here" href="/orbit.html">orbit</a>
+    <a href="/notes.html">notes</a>
+    <a href="/primes.html">primes</a>
+    <span class="sep">|</span>
+    <a class="src" href="/orbit.ol">view source (orbit.ol)</a>
+  </nav>
   <main>
     <input id="state" type="hidden" />
     <canvas id="sky" width="720" height="480"></canvas>

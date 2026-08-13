@@ -16,7 +16,10 @@ let w = dom.worker("/primes-worker.ol")
 
 dom.worker_on(w, (m) => {
     let kind = map_get(m, "kind")
-    if kind == "ready" => dom.set_text(status, "worker ready")
+    if kind == "ready" => {
+        dom.set_text(status, "worker ready")
+        dom.remove_attr(btn, "disabled")
+    }
     if kind == "progress" => {
         let pct = map_get(m, "done") * 100 / map_get(m, "upto")
         dom.set_style(bar, "width", show(pct) + "%")
@@ -26,10 +29,12 @@ dom.worker_on(w, (m) => {
         dom.set_style(bar, "width", "100%")
         dom.set_text(status, "done")
         dom.set_text(out, show(map_get(m, "count")) + " primes below " + show(map_get(m, "upto")))
+        dom.remove_attr(btn, "disabled")
     }
 })
 
 dom.on(btn, "click", (e) => {
+    dom.set_attr(btn, "disabled", "true")
     dom.set_text(out, "")
     dom.set_style(bar, "width", "0%")
     dom.set_text(status, "counting…")

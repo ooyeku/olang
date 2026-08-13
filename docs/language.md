@@ -1228,6 +1228,35 @@ Error variants are ordinary enum values at runtime: they compare with `==`,
 `typeof` reports the declared error type's name, and unit variants match by
 name in patterns.
 
+### Runtime errors carry a stack trace
+
+When a program aborts on a genuine runtime error — division by zero,
+an out-of-bounds index, an arity mismatch — the report carries the
+innermost located statement's span *and the call stack live at that
+point*:
+
+```text
+  × Runtime error: Division by zero
+   ╭─[demo.ol:3:5]
+ 3 │     x / 0
+   ·     ▲
+   ╰────
+
+  Call stack (outermost first):
+    → outer
+    → middle
+    → inner
+```
+
+The trace is a property of the language, not of a tier: the same
+program reports the same span, frames, and message whether it ran
+interpreted, on the bytecode VM, or through a JIT deoptimization —
+[the execution tiers](ovm.md#correctness-policy) are held to
+trace-identical error reporting by the test suite. One shape note:
+statements inside block bodies pinpoint the failing statement, while a
+single-expression function body (`fn f(x) = ...`) attributes the error
+to the nearest enclosing located statement — its call site.
+
 ## Async and Concurrency
 
 olang has two concurrency mechanisms, both explicit:

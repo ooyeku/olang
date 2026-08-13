@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   dial proving the main thread never blocks.
 - **`dom.fetch_json`** — `dom.fetch`, but the callback receives the parsed
   response value directly instead of raw text.
+
+### Changed
+
+- **The example app is now a linked suite.** All four pages — the tracker,
+  `/orbit.html`, `/notes.html`, `/primes.html` — share a nav, link to each
+  other, and link their own `.ol` source; the primes button follows the
+  worker lifecycle (disabled until ready and while counting).
+- **The browser chapter caught up with the platform.** `docs/wasm.md` now
+  documents the full dom surface: structured event Maps, the draw-list and
+  frame loop, the `ui` view layer, routing and storage, Web Workers, and
+  `fetch_json`, with a guided reading of all four frontends. `docs/ovm.md`
+  documents the scratch watermark, inlining + scalar replacement, the
+  collection/Result/Map JIT kinds, and tier-identical error traces;
+  `docs/language.md` documents runtime stack traces.
 - **Sophisticated web apps: the `ui` view layer, routing, and
   storage.** `use ui` — an embedded olang package — builds pages as
   values: `h(tag, attrs, children)` trees, `hk` reconciliation keys,

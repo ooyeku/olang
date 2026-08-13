@@ -22,7 +22,7 @@ the implementation.
 | **[Types](types.md)** | Gradual typing end to end: annotations as enforced promises, the three rules, runtime enforcement on every tier, the `olang check` static checker and its element-type analysis, and how to adopt types incrementally |
 | **[The Standard Library](stdlib.md)** | Every global builtin and all twenty-three modules, each with its design rationale and examples |
 | **[The Data Stack](ods.md)** | `ods`, `stats`, and `plot` in depth: why columns beat rows (measured), every Series and Frame verb, a complete inference workflow, charts as SVG text, the stack's performance characteristics, and the design record — how it was built, benchmarked against NumPy/scipy/Polars, and why it evaluates eagerly |
-| **[olang in the Browser](wasm.md)** | The same language end to end: the WebAssembly build, the `dom` module, stateless frontends and event delegation, and a guided reading of a complete olang frontend |
+| **[olang in the Browser](wasm.md)** | The same language end to end: the WebAssembly build, the `dom` module, structured events, canvas draw-lists, the `ui` view layer, routing and storage, Web Workers, and a guided reading of four complete olang frontends |
 | **[Packages](packages.md)** | Scaffolding projects and libraries, manifests, dependencies, the lockfile model, versioning, the registry |
 
 Complete worked programs live in [`examples/`](../examples/) — a task CLI,

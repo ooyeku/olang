@@ -194,6 +194,15 @@ rule is enforced by two test suites:
   including mixed programs where some functions are promoted and others are
   not, transitive and mutual recursion, and function redefinition.
 
+The contract covers more than results: **runtime error traces are
+tier-identical too**. When a program dies at depth, the reported error
+carries the same call frames, the same spans, and the same message
+whether it ran interpreted, on bytecode, or through a JIT deopt — the
+VM tracks statement spans and rebuilds interpreter-shaped frames on
+the way out, so a stack trace never reveals which tier executed the
+code. `tests/bytecode_tier_test.rs` holds `traces_agree_*` cases
+asserting exactly that.
+
 If you extend the VM, extend the differential suite in the same change. A
 divergence found by these tests is a bytecode bug by definition — the
 interpreter defines the language.
@@ -330,12 +339,20 @@ no refcount is ever touched on the way in):
   definition), the other 21 through an imported helper that calls the
   VM's own float-math evaluator — exactness by construction, not by
   reimplementation.
-- **List indexing and `for` iteration**: lists enter native code as
-  borrowed pointers, classified at specialization by element kind
-  (float, int, or one struct shape); `xs[i]` and the iteration
-  instructions run through guarded host helpers reproducing the VM's
-  exact semantics — subscripts wrap negative indices, iteration does
-  not, bounds violations deopt to bytecode's canonical error.
+- **List indexing, construction, and `for` iteration**: lists enter
+  native code as borrowed pointers, classified at specialization by
+  element kind (int, float, one struct shape, or string); `xs[i]`, list
+  literals, concatenation, and the iteration instructions run through
+  guarded host helpers reproducing the VM's exact semantics —
+  subscripts wrap negative indices, iteration does not, bounds
+  violations deopt to bytecode's canonical error. Built lists follow
+  the scratch discipline and can be returned, with ownership
+  transferred once at the entry boundary.
+- **Results and maps**: `Ok`/`Err` values and string-keyed maps carry
+  their payload kind in the specialization (int, float, bool, or
+  string), so Result-speaking helpers and map-reading kernels compile;
+  construction and access run through the same guarded-helper,
+  scratch-owned model as everything else.
 - **Tuple returns**: functions returning tuples of up to four scalar
   elements become multi-value native returns; destructuring callers
   receive the elements directly in registers, and a deopt deep in a
@@ -351,13 +368,28 @@ no refcount is ever touched on the way in):
   executing the VM's own comparison operators; concatenation is an
   allocation and follows the struct discipline exactly.
 
-Two deliberate **refusal rules**, set by measurement, keep the model
-where it wins: allocation (struct construction, string concat) compiles
-only in straight-line code — constructors — while **allocating loops
-stay on bytecode and drive the native constructors call by call** (an
-unbounded native loop of allocations holds memory until call end, and a
-cap-triggered mid-loop deopt costs more than never compiling); and
-mixed string/number `+` (formatting) stays on bytecode.
+Allocation inside loops is governed by the **scratch watermark**. The
+scratch model owns every value a native call builds, which naively
+means an allocating loop holds all its garbage until the call returns
+— so early versions simply refused to compile them. The watermark
+lifts that: when liveness analysis proves that no heap value built in
+the loop body survives into the next iteration, the compiled loop
+records the scratch depth at entry and truncates back to it at every
+taken back-edge — per-iteration values die per iteration, exactly as
+they would on bytecode. Loops whose allocations *do* cross iterations
+(accumulators that grow a list, say) still refuse and drive the native
+constructors call by call. One deliberate refusal rule remains: mixed
+string/number `+` (formatting) stays on bytecode.
+
+Before any of that, the plan pass rewrites the bytecode it was handed
+(a clone — the VM's own bytecode is untouched, so a deopt re-runs the
+original): small call-free callees (≤24 instructions) **inline** at
+their call sites, single-definition copies propagate, and a struct or
+constant-index list that never escapes dissolves into its fields —
+**scalar replacement** — so a `pt(x, y)`-style helper in a hot loop
+costs nothing at all: no call, no allocation, just registers. These
+transforms are what let idiomatic small-aggregate code run at
+hand-flattened speed.
 
 Purity is the load-bearing property. A qualifying function has no side
 effects, so every guard failure — argument-kind mismatch at entry,
@@ -476,6 +508,17 @@ bytecode + JIT) to ~900× (N-body): the whole N-body simulation —
 construction, stepping, capturing lambdas, struct building, field
 access, `math.sqrt` — runs as 6 promoted functions, 0 rejected, with 7
 tier crossings.
+
+Two later additions moved the remaining hot spots: the scratch
+watermark plus scalar replacement put allocating kernels ahead of the
+JavaScript JITs on the project's benchmark suite (a struct-building
+kernel runs ~4× ahead of V8; list-building within striking distance),
+and the VM's in-place `+=` string append (an `AddAssign` fusion the
+compiler applies when the right-hand side cannot observe the target)
+turned quadratic string building linear — a 150×-class win on
+build-a-report workloads. Reproduce any of this with
+[`olang bench`](tooling.md#olang-bench), which isolates each kernel in
+a subprocess and compares runs against saved baselines.
 
 `--ovm-stats` prints promotions, rejections, tier crossings, and
 instructions retired; `--verbose` names each promoted or refused

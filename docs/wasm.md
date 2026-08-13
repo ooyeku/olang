@@ -30,6 +30,10 @@ Part of [the olang book](README.md) ·
 - [The architecture](#the-architecture)
 - [The `dom` module](#the-dom-module)
 - [The patterns](#the-patterns)
+- [Graphics: the draw-list](#graphics-the-draw-list)
+- [Declarative views: the `ui` module](#declarative-views-the-ui-module)
+- [Routing and storage](#routing-and-storage)
+- [Workers: a second olang, off the main thread](#workers-a-second-olang-off-the-main-thread)
 - [Reading a real frontend](#reading-a-real-frontend)
 - [Running it](#running-it)
 - [The sandbox and its limits](#the-sandbox-and-its-limits)
@@ -48,6 +52,12 @@ the browser. Start it and look at what the one process serves:
 | `GET /app.ol` | the frontend — olang source, served as plain text |
 | `GET /olang.wasm` | the olang language itself, compiled to WebAssembly |
 | `GET /api/...` | the JSON API, handled by the same `http.serve` |
+
+Three more pages ride the same shim and link to each other from a
+shared nav: `/orbit.html` (an animated canvas scene), `/notes.html` (a
+routed SPA with localStorage persistence), and `/primes.html` (a Web
+Worker running a second olang). Each serves its `.ol` source as plain
+text too — every demo is view-source all the way down.
 
 The browser fetches the wasm build and the olang source, instantiates
 the language, and runs `app.ol`. From that moment the page is driven
@@ -90,6 +100,7 @@ exchange for automating about a dozen signatures:
 | `olang_run(ptr, len)` | parse and evaluate source; returns a result buffer |
 | `olang_session_start(ptr, len)` | run source and **keep the interpreter alive** as the page's session |
 | `olang_dispatch_event(id)` / `olang_dispatch_event_with(id, ptr, len)` | re-enter the live session for one event, optionally carrying a string payload |
+| `olang_dispatch_event_json(id, ptr, len)` | the structured variant: the payload is JSON, parsed into the Map the handler receives |
 | `olang_result_free(ptr)` | free a result buffer |
 
 Every call answers with the same shape: a length-prefixed JSON buffer
@@ -102,7 +113,7 @@ into linear memory in both directions. That is the entire protocol.
 A wasm instance can only do what its imports allow, and this one
 imports almost nothing: two clocks (`time` needs them), one entropy
 source (`random` needs it), and — when the page enables the frontend
-role — the nine `dom` operations. Each import is a few lines of
+role — the `dom` operations, one import per primitive. Each import is a few lines of
 JavaScript in the shim implementing one primitive over the real DOM:
 `host_dom_query` runs `document.querySelector`, `host_dom_set_html`
 assigns `innerHTML`, and so on. Elements cross the boundary as opaque
@@ -121,11 +132,13 @@ interpreter, still warm, after the program's top level finishes. When
 the program registered a handler with `dom.on`, the handler function
 was stored in the session's registry under an integer id, and the shim
 attached a real DOM listener that calls back into
-`olang_dispatch_event_with(id, payload)`. The event path is:
+`olang_dispatch_event_json(id, payload)` with a JSON event object,
+parsed on the wasm side into the Map the handler receives. The event
+path is:
 
 ```text
-DOM event → shim listener → dispatch_event(id, payload)
-        → the parked interpreter calls handler(payload)
+DOM event → shim listener → dispatch_event_json(id, {type, id, value, …})
+        → the parked interpreter calls handler(event_map)
         → the handler queries, fetches, re-renders
 ```
 
@@ -137,22 +150,29 @@ browser's loop drives it, one re-entry at a time.
 
 ## The `dom` module
 
-Nine functions. The module is deliberately small because its
-philosophy is the opposite of a widget toolkit's: olang does not wrap
-the DOM object model — it treats the page as a *rendering target*.
-You query elements, wire events, fetch data, and render by writing
-HTML. Everything else is ordinary olang.
+The module's philosophy is the opposite of a widget toolkit's: olang
+does not wrap the DOM object model — it treats the page as a
+*rendering target with controls*. You query elements, wire events,
+render by writing HTML, reach for node-level operations when a full
+re-render would be too blunt, draw scenes onto canvases, and schedule
+work with timers and animation frames. Everything else is ordinary
+olang. The full surface, grouped:
 
-| Function | Description |
+| Group | Functions |
 |---|---|
-| `dom.query(sel)` | first element matching a CSS selector — an error if none matches |
-| `dom.get_text(el)` / `dom.set_text(el, s)` | read / write an element's text content |
-| `dom.set_html(el, html)` | replace an element's inner HTML — the render primitive |
-| `dom.value(el)` / `dom.set_value(el, s)` | read / write a form control's value |
-| `dom.focus(el)` | focus an element |
-| `dom.set_class(el, classes)` | set an element's class list wholesale — the stateless way to toggle visual state (a drawer's `open`, a pill's `active`) |
-| `dom.on(el, event, handler)` | attach an event handler |
-| `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page |
+| Query & content | `query`, `get_text` / `set_text`, `set_html`, `value` / `set_value`, `focus` |
+| Events | `on(el, event, handler)` — any DOM event name, plus the `enter` alias |
+| Attributes & style | `get_attr` / `set_attr` / `remove_attr`, `set_class`, `class_add` / `class_remove` / `class_toggle`, `set_style`, `measure` |
+| Structure | `create`, `append`, `remove`, `insert_before`, `scroll_into_view` |
+| Timers & frames | `set_timeout`, `set_interval` / `clear_interval`, `request_frame`, `on_frame` |
+| Graphics | `draw(canvas, ops)` — the draw-list ([below](#graphics-the-draw-list)) |
+| Navigation & storage | `push_state`, `location`, `on_route`, `storage_get` / `storage_set` / `storage_remove` |
+| HTTP | `fetch(method, path, body, callback)`, `fetch_json(…)` |
+| Workers | `worker`, `worker_send` / `worker_on`, `worker_close`; inside a worker: `post` / `on_message` |
+
+Per-function signatures live in the
+[stdlib reference](stdlib.md#dom--the-browser); this chapter is about
+how they compose.
 
 `dom` is the one browser-only module: in a native build every call
 reports that it needs the wasm build — the mirror image of `fs`, `os`,
@@ -173,32 +193,37 @@ dom.set_html(dom.query("#list"),
     ["a", "b"] |> map((s) => "<li>" + s + "</li>") |> join(""))
 ```
 
-### Events and their payloads
+### Events are structured Maps
 
-`dom.on(el, event, handler)` registers a handler. The handler receives
-at most one argument — a **payload string** whose contents depend on
-the event name (a zero-parameter handler simply ignores it):
+`dom.on(el, event, handler)` registers a handler for any DOM event
+name — `click`, `input`, `keydown`, `pointermove`, `submit`, `wheel`,
+… — plus `enter`, the keydown-filtered alias, because "text field +
+Enter" is the fundamental input gesture and wiring it by hand is
+boilerplate. Every handler receives the **same event Map** regardless
+of event type, so handlers pick the fields they need:
 
-| Event | Fires on | Payload |
-|---|---|---|
-| `"enter"` | the Enter key in that element | the element's current value |
-| `"click"` | any click on or inside the element | the **id of the clicked target** (empty if it has none) |
-| `"change"` | a change on or inside the element | the target's id and its new value, separated by a newline |
-| any other name | that DOM event, verbatim | empty string |
+| Field | Contents |
+|---|---|
+| `type` | the event name that fired |
+| `id`, `value` | the *target* element's id and current value |
+| `key` | the key pressed, for keyboard events |
+| `x`, `y` | pointer coordinates (client space — pair with `dom.measure` for element space) |
+| `alt`, `ctrl`, `shift`, `meta` | modifier flags |
+| `data` | a Map of the target's `data-*` attributes |
 
-Two of these conventions carry the module's whole event philosophy.
-`"enter"` exists because "text field + Enter" is the fundamental input
-gesture, and wiring `keydown` by hand for it is boilerplate. And
-`"click"`/`"change"` deliver the *target's* id even when the listener
-sits on an ancestor — which makes event delegation (next section) the
-natural style rather than an advanced technique. The `"change"`
-payload packs two facts into one string; splitting on the newline
-recovers them:
+One shape, one convention to learn. The target's `id` and `data`
+arrive even when the listener sits on an ancestor — which makes event
+delegation (next section) the natural style rather than an advanced
+technique:
 
 ```olang no-run
-dom.on(dom.query("#rows"), "change", (payload) => {
-    let parts = split(payload, "\n")     // [target id, new value]
-    update_item(parts[0], parts[1])
+dom.on(dom.query("#rows"), "input", (e) => {
+    update_item(map_get(e, "id"), map_get(e, "value"))
+})
+dom.on(dom.query("#sky"), "click", (e) => {
+    let rect = dom.measure(dom.query("#sky"))
+    add_body(map_get(e, "x") - map_get(rect, "x"),
+             map_get(e, "y") - map_get(rect, "y"))
 })
 ```
 
@@ -216,6 +241,18 @@ client stays one honest branch.
 ```olang no-run
 dom.fetch("GET", "/api/issues", "", (resp) => {
     let parsed = unwrap(json.parse(resp))
+    if map_has_key(parsed, "error") => show_error(map_get(parsed, "error"))
+    else => render(map_get(parsed, "items"))
+})
+```
+
+When the response *is* JSON — which for an API client is nearly
+always — `dom.fetch_json` removes the parse step: the callback
+receives the parsed value directly, and the error convention is
+unchanged:
+
+```olang no-run
+dom.fetch_json("GET", "/api/issues", "", (parsed) => {
     if map_has_key(parsed, "error") => show_error(map_get(parsed, "error"))
     else => render(map_get(parsed, "items"))
 })
@@ -266,10 +303,10 @@ row — runs on two listeners bound once at boot; filters, sort headers,
 and the drawer's own controls each add one more on their containers:
 
 ```olang no-run
-dom.on(dom.query("#rows"), "click", (tid) => on_rows_click(tid))
-dom.on(dom.query("#rows"), "change", (payload) => on_rows_change(payload))
-dom.on(dom.query("#filters"), "click", (tid) => on_filter_click(tid))
-dom.on(dom.query("#sort-row"), "click", (tid) => on_sort_click(tid))
+dom.on(dom.query("#rows"), "click", (e) => on_rows_click(map_get(e, "id")))
+dom.on(dom.query("#rows"), "change", (e) => on_rows_change(e))
+dom.on(dom.query("#filters"), "click", (e) => on_filter_click(map_get(e, "id")))
+dom.on(dom.query("#sort-row"), "click", (e) => on_sort_click(map_get(e, "id")))
 ```
 
 Rows can be re-rendered any number of times — the listeners sit on
@@ -296,7 +333,139 @@ println(esc("<b>bold & \"quoted\"</b>"))
 Ampersand first (or the other replacements would be double-escaped),
 quotes too (the text may land inside an attribute). This is the same
 rule every server-side templating system enforces; in the browser the
-stakes are the same and the mechanism is yours.
+stakes are the same and the mechanism is yours. When you adopt the
+[`ui` module](#declarative-views-the-ui-module), this discipline comes
+built in: `ui.esc` is this function, and `ui.html` applies it to every
+text node and attribute automatically.
+
+## Graphics: the draw-list
+
+A scene is plain olang data: a list of op maps, submitted with **one**
+`dom.draw(canvas, ops)` call, replayed by the shim onto the canvas 2D
+context. The whole frame crosses the wasm boundary once, however many
+shapes it holds:
+
+```olang no-run
+dom.on_frame((f) => {
+    let t = map_get(f, "delta") / 1000.0
+    dom.draw(sky, [
+        #{ "op": "clear", "color": "rgba(11,14,20,0.35)" },
+        #{ "op": "circle", "x": 360.0, "y": 240.0, "r": 16.0, "fill": "#f5c542" },
+        #{ "op": "line", "x1": 0.0, "y1": 0.0, "x2": 60.0, "y2": 80.0,
+           "stroke": "#fff", "line_width": 2 }
+    ])
+})
+```
+
+The ops: `clear` (with a color for motion trails, without to wipe),
+`rect`, `circle`, `line`, `path` (a `points` list, optionally closed),
+`text`, and the transforms `save` / `restore` / `translate` / `rotate`
+/ `scale`. Fill and stroke take any CSS color.
+
+The frame loop has two speeds. `dom.request_frame(fn)` is one-shot —
+re-arm it inside the handler if you want another. `dom.on_frame(fn)`
+is the persistent loop: register once at boot, and the handler runs
+every frame with a millisecond `delta` for time-based motion (never
+assume 16.6ms — the delta is real, and animation driven by it survives
+a throttled background tab gracefully). Because handlers keep no
+state (closures capture by value), animation state lives in the DOM
+like everything else — the orbits demo keeps its bodies as JSON in a
+hidden input, loading and saving each frame.
+
+See it whole in [`examples/app/static/orbit.ol`](../examples/app/static/orbit.ol),
+served at `/orbit.html`: five bodies orbiting on trails, and a click
+adds a new one at the clicked radius — structured event coordinates,
+`dom.measure`, and the draw-list in ~100 lines.
+
+## Declarative views: the `ui` module
+
+`dom.set_html` with string building is honest and fine at small scale,
+but it has a cost the tracker pays deliberately: a re-render replaces
+*everything* in the container, so focus and cursor position inside it
+die. The `ui` module — an [embedded package](stdlib.md) written in
+olang itself, loaded with `use ui` — is the next rung: build the page
+as a *value*, and let reconciliation decide what actually changes.
+
+```olang no-run
+use ui { h, hk, render }
+
+fn note_row(n) = hk(map_get(n, "id"), "div", #{ "class": "note" }, [
+    h("span", #{}, [map_get(n, "text")]),
+    h("button", #{ "id": "del-" + map_get(n, "id") }, ["x"])
+])
+
+fn draw() = render(dom.query("#list"), map(load_notes(), note_row))
+```
+
+`h(tag, attrs, children)` builds a node map; strings are text nodes,
+escaped on render; `hk` is `h` plus a **reconciliation key**.
+`ui.html(tree)` renders a tree to an HTML string — pure, no browser
+needed, which is why the module's tests run natively. `ui.render(el,
+children)` mounts a keyed list and diffs against what it rendered last
+time: unchanged children are *not touched* (input state and focus
+survive), changed ones re-render in place, added and removed keys
+insert and remove surgically, and reorders reposition nodes without
+rebuilding them. The memo travels in a `data-ui` attribute on the
+mount element — the same DOM-resident-state discipline as everything
+else, so `render` itself stays stateless.
+
+The rule of thumb: string-build when a container is cheap to replace
+wholesale; `ui.render` when the container holds user state (inputs,
+focus, scroll) or when most of it doesn't change per event.
+
+## Routing and storage
+
+Two small surfaces make single-page applications honest. Navigation:
+`dom.push_state(path)` updates the URL without a reload,
+`dom.location()` reads it back as a Map of `path` and `query`, and
+`dom.on_route(handler)` fires on back/forward with the same shape —
+the URL becomes one more piece of DOM-resident state, bookmarkable and
+back-button-correct. Persistence: `dom.storage_get` / `storage_set` /
+`storage_remove` wrap localStorage (missing keys read as `""` — pair
+with `json.parse` and `unwrap_or` for a default).
+
+[`examples/app/static/notes.ol`](../examples/app/static/notes.ol),
+served at `/notes.html`, composes all of it with `ui.render`: notes
+persist across reloads, selecting one writes `?sel=` into the URL, and
+the back button unselects — a complete SPA in ~80 lines.
+
+## Workers: a second olang, off the main thread
+
+The [sandbox section](#the-sandbox-and-its-limits) is honest that the
+browser build runs interpreter-and-bytecode only — so what about
+genuinely heavy compute? The browser's own answer is threads, and
+`dom.worker` puts olang on them:
+
+```olang no-run
+let w = dom.worker("/primes-worker.ol")
+dom.worker_on(w, (m) => show_progress(m))
+dom.worker_send(w, #{ "upto": 200000 })
+```
+
+`dom.worker(path)` fetches an olang source file and boots it inside a
+Web Worker: its own thread, its own wasm instance, and **no DOM** —
+the worker program's whole surface is `dom.on_message(handler)` for
+requests in and `dom.post(value)` for results out. Values cross as
+plain maps and lists (anything `json.stringify` can carry). Closures
+do not cross — *programs and messages do*, which is the same
+discipline `chan` enforces natively; a worker is to the page what a
+spawned task is to a native program.
+
+The property that makes this more than an escape hatch: a worker may
+`post` *mid-computation*, and the messages arrive as ordinary events
+while the worker keeps grinding. Long jobs stream progress; the page's
+frame loop never misses a beat. The demo at `/primes.html`
+([`primes.ol`](../examples/app/static/primes.ol) /
+[`primes-worker.ol`](../examples/app/static/primes-worker.ol)) makes
+the property visible: the progress bar fills *during* the count while
+an animation dial — driven by `dom.on_frame` on the main thread —
+never stutters.
+
+The worker side rides `olang-worker.js`, a page-served harness that
+instantiates the wasm with inert DOM stubs (the playground sandbox's
+posture) and bridges the two live imports over `postMessage`. Same
+capability story as everything else: the import list is the whole
+surface, and a worker's is two functions long.
 
 ## Reading a real frontend
 
@@ -330,13 +499,14 @@ re-renders; `patch(id, body)` PATCHes one issue and, in its callback,
 reloads — and re-opens the drawer when the patched issue is the
 selected one. Every mutation funnels through this pair.
 
-**The delegated dispatchers.** `on_rows_click(tid)` branches on the
-target-id prefix: `open-` opens the drawer, `adv-` cycles status
-(reading the *current* status from the button's own label — the DOM
-as state store), `pri-` cycles priority, `del-` deletes.
-`on_rows_change` splits its `id\nvalue` payload for assignee and
-points edits; `on_filter_click` and `on_sort_click` drive the hidden
-state inputs and reload. Comments POST and re-open the drawer.
+**The delegated dispatchers.** `on_rows_click` branches on the
+target-id prefix from the event Map: `open-` opens the drawer, `adv-`
+cycles status (reading the *current* status from the button's own
+label — the DOM as state store), `pri-` cycles priority, `del-`
+deletes. `on_rows_change` reads the target's `id` and `value` straight
+from the event for assignee and points edits; `on_filter_click` and
+`on_sort_click` drive the hidden state inputs and reload. Comments
+POST and re-open the drawer.
 
 **Boot.** Twelve `dom.on` registrations — every one on an element that
 exists at boot — and a first `reload()`. There is no step five.
@@ -345,6 +515,15 @@ The exercise worth doing: skim the file and count what is *absent* —
 no component classes, no virtual DOM, no state container, no
 lifecycle. The architecture carries that weight, which is what lets
 the program be only as long as its actual behavior.
+
+Then read the three companion pages in ascending order of machinery,
+each linked from the tracker's header: `orbit.ol` (the draw-list and
+frame loop, no HTML rendering at all), `notes.ol` (`ui.render`,
+routing, storage — the SPA shape), and `primes.ol` with
+`primes-worker.ol` (two programs, one page — the parallelism shape).
+Together with `app.ol` they exercise the module's entire surface, and
+every one is served as source by the same process that serves its
+page.
 
 ## Running it
 
@@ -365,10 +544,11 @@ steps — and also stages the website playground's copy.) The tracker
 checks for the artifact at boot and prints these exact commands if it
 is missing.
 
-On the server side, the frontend is four routes in
-[`examples/app/main.ol`](../examples/app/main.ol). Three serve text
-read at startup; the wasm route uses `body_file`, which streams raw
-bytes from disk — the response form for binary content:
+On the server side, each frontend page is a handful of routes in
+[`examples/app/main.ol`](../examples/app/main.ol) — the page, its
+`.ol` source, and the shared shim — all serving text read at startup;
+the wasm route uses `body_file`, which streams raw bytes from disk —
+the response form for binary content:
 
 ```olang no-run
 fn olang_wasm(req, params) = {
@@ -391,13 +571,15 @@ Honesty about the boundaries, in both directions.
 **Capability.** The wasm instance touches nothing but its own linear
 memory and its explicit imports. `fs`, `os`, `http`, and `db` are
 absent from the browser build — calling them reports exactly that —
-and network access exists only as `dom.fetch`, which goes through the
-browser and is therefore subject to the page's same-origin rules like
-any other web request. On the website's /playground, where arbitrary
-code runs with no dom bridge at all, the page runs the engine inside a
-Web Worker it terminates on timeout — which is what bounds an infinite
-loop. Sandboxing comes from the platform, not from trust in the
-engine.
+and network access exists only as `dom.fetch` / `dom.fetch_json`,
+which go through the browser and are therefore subject to the page's
+same-origin rules like any other web request. A `dom.worker` instance
+is the same sandbox again, minus the DOM: its import surface is
+`post` and `on_message`, period. On the website's /playground, where
+arbitrary code runs with no dom bridge at all, the page runs the
+engine inside a Web Worker it terminates on timeout — which is what
+bounds an infinite loop. Sandboxing comes from the platform, not from
+trust in the engine.
 
 **Speed.** The browser runs the interpreter and the bytecode tier —
 the same execution model as the CLI's default. The third tier, the
@@ -405,10 +587,12 @@ the same execution model as the CLI's default. The third tier, the
 machine code, which has no meaning inside a wasm sandbox. Frontend
 work — rendering, dispatching, fetching — never notices; it is
 I/O-shaped and measured in DOM operations, not olang cycles. Heavy
-numeric work is the case to watch, and the architecture already holds
-the answer: the server is the same language, one `dom.fetch` away, so
+numeric work is the case to watch, and the architecture holds two
+answers: the server is the same language, one `dom.fetch` away, so
 computation moves to where the fast tiers are without changing
-languages.
+languages — and [`dom.worker`](#workers-a-second-olang-off-the-main-thread)
+moves it off the main thread when it must stay client-side, streaming
+progress while the page stays live.
 
 **Failure surfaces.** A parse or runtime error at boot renders into
 the page; a handler error and everything the program prints go to the
