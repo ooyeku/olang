@@ -849,6 +849,119 @@ impl Checker {
         }
     }
 
+    /// Exhaustiveness over literal-union enums. When the scrutinee's
+    /// type is a union of literals (or a single literal), the annotation
+    /// admits exactly those values — so every member should be covered
+    /// by some arm. An unguarded binding or wildcard covers everything.
+    /// Uncovered members are advisory (the program runs until one
+    /// arrives); a match that covers NONE of the admissible values fails
+    /// on every execution, which is provable.
+    fn check_match_exhaustiveness(
+        &mut self,
+        scrutinee: &SType,
+        arms: &[crate::ast::MatchArm],
+        span: (u32, u32),
+    ) {
+        use crate::ast::LitCheck;
+        let members: Vec<LitCheck> = match scrutinee {
+            SType::Lit(l) => vec![l.clone()],
+            SType::Union(bs) if bs.iter().all(|b| matches!(b, SType::Lit(_))) => bs
+                .iter()
+                .filter_map(|b| match b {
+                    SType::Lit(l) => Some(l.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => return,
+        };
+        if members.is_empty() {
+            return;
+        }
+        let mut covered = vec![false; members.len()];
+        for arm in arms {
+            // A guard may reject at runtime, so a guarded arm proves no
+            // coverage (conservative both for catch-alls and members).
+            if arm.guard.is_some() {
+                continue;
+            }
+            if Self::pattern_covers_all(&arm.pattern) {
+                return;
+            }
+            Self::mark_covered(&arm.pattern, &members, &mut covered);
+        }
+        let missing: Vec<String> = members
+            .iter()
+            .zip(&covered)
+            .filter(|(_, c)| !**c)
+            .map(|(m, _)| m.display())
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        if missing.len() == members.len() {
+            self.diag(
+                span,
+                true,
+                format!(
+                    "this match covers none of the scrutinee's possible values ({}) — it fails on every run",
+                    missing.join(", ")
+                ),
+            );
+        } else {
+            self.warn(
+                span,
+                format!(
+                    "match is not exhaustive: {} {} no arm — add {} or a catch-all",
+                    missing.join(", "),
+                    if missing.len() == 1 { "has" } else { "have" },
+                    if missing.len() == 1 { "it" } else { "them" },
+                ),
+            );
+        }
+    }
+
+    /// Does this pattern match every possible value, unconditionally?
+    fn pattern_covers_all(pattern: &crate::ast::Pattern) -> bool {
+        use crate::ast::Pattern as P;
+        match pattern {
+            P::Identifier(_) | P::Wildcard => true,
+            P::Or { alternatives } => alternatives.iter().any(Self::pattern_covers_all),
+            _ => false,
+        }
+    }
+
+    /// Mark union members this pattern provably matches.
+    fn mark_covered(
+        pattern: &crate::ast::Pattern,
+        members: &[crate::ast::LitCheck],
+        covered: &mut [bool],
+    ) {
+        use crate::ast::{LitCheck, Pattern as P, Value};
+        match pattern {
+            P::Literal(v) => {
+                for (i, m) in members.iter().enumerate() {
+                    let hit = match (m, v) {
+                        (LitCheck::Int(a), Value::Integer(b)) => a == b,
+                        (LitCheck::Str(a), Value::String(b)) => a == b.as_ref(),
+                        (LitCheck::Bool(a), Value::Boolean(b)) => a == b,
+                        _ => false,
+                    };
+                    if hit {
+                        covered[i] = true;
+                    }
+                }
+            }
+            P::Or { alternatives } => {
+                for alt in alternatives {
+                    Self::mark_covered(alt, members, covered);
+                }
+            }
+            // Guarded, structural, and binding patterns prove nothing
+            // here (bindings are handled as catch-alls above).
+            _ => {}
+        }
+    }
+
     fn diag(&mut self, span: (u32, u32), runtime: bool, message: String) {
         self.out.push(CheckDiagnostic {
             line: span.0,
@@ -1431,6 +1544,7 @@ impl Checker {
             Expr::Match { value, arms } => {
                 self.check_expr(value, span);
                 let scrutinee = self.infer(value);
+                self.check_match_exhaustiveness(&scrutinee, arms, span);
                 for arm in arms {
                     self.push_scope();
                     self.bind_pattern_unknown(&arm.pattern.clone());
@@ -1506,6 +1620,75 @@ mod tests {
 
     fn check(src: &str) -> Vec<CheckDiagnostic> {
         check_program(&Parser::new().parse(src).expect("parses"))
+    }
+
+    #[test]
+    fn nonexhaustive_enum_match_warns_with_missing_members() {
+        let d = check(
+            "fn advance(s: \"open\" | \"active\" | \"done\") = match s {\n    \"open\" => 1,\n    \"active\" => 2\n}\n",
+        );
+        assert_eq!(d.len(), 1);
+        assert!(d[0].warning, "missing members are advisory");
+        assert!(d[0].message.contains("\"done\""));
+        assert!(d[0].message.contains("not exhaustive"));
+    }
+
+    #[test]
+    fn exhaustive_enum_matches_are_silent() {
+        assert!(
+            check("fn f(s: \"a\" | \"b\") = match s {\n    \"a\" => 1,\n    \"b\" => 2\n}\n")
+                .is_empty()
+        );
+        // a catch-all binding covers everything
+        assert!(
+            check("fn f(s: \"a\" | \"b\") = match s {\n    \"a\" => 1,\n    other => 2\n}\n")
+                .is_empty()
+        );
+        // or-patterns count member by member
+        assert!(
+            check("fn f(n: 1 | 2 | 3) = match n {\n    1 | 2 => \"low\",\n    3 => \"high\"\n}\n")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn match_covering_no_member_is_a_runtime_error() {
+        let d = check("fn f(s: \"a\" | \"b\") = match s {\n    \"x\" => 1,\n    \"y\" => 2\n}\n");
+        assert_eq!(d.len(), 1);
+        assert!(d[0].runtime, "covering nothing fails on every run");
+        assert!(!d[0].warning);
+        assert!(d[0].message.contains("covers none"));
+    }
+
+    #[test]
+    fn guarded_arms_prove_no_coverage() {
+        let d =
+            check("fn f(n: 1 | 2) = match n {\n    1 => \"one\",\n    2 if true => \"two\"\n}\n");
+        assert_eq!(d.len(), 1);
+        assert!(d[0].warning);
+        assert!(d[0].message.contains('2'));
+        // ...including guarded catch-alls
+        let d =
+            check("fn f(n: 1 | 2) = match n {\n    1 => \"one\",\n    x if x > 0 => \"pos\"\n}\n");
+        assert_eq!(d.len(), 1);
+        assert!(d[0].warning);
+    }
+
+    #[test]
+    fn int_and_bool_literal_enums_check_too() {
+        let d = check("fn f(n: 1 | 2 | 3) = match n {\n    1 => \"one\"\n}\n");
+        assert_eq!(d.len(), 1);
+        assert!(d[0].message.contains('2') && d[0].message.contains('3'));
+        assert!(
+            check("fn f(b: true | false) = match b {\n    true => 1,\n    false => 0\n}\n")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn dynamic_scrutinees_are_never_judged_for_exhaustiveness() {
+        assert!(check("fn f(s) = match s {\n    \"a\" => 1\n}\n").is_empty());
+        assert!(check("fn f(s: String) = match s {\n    \"a\" => 1\n}\n").is_empty());
     }
 
     #[test]

@@ -278,6 +278,28 @@ silent; a generic `List<T>` erases the element promise but keeps the
 base. When the checker speaks, the annotation is provably false — there
 is nothing to configure and nothing to suppress.
 
+### Match exhaustiveness over literal enums
+
+A union of literals declares exactly which values are admissible — so
+when one is matched, the checker knows what "covering every case"
+means. A `match` that misses a member gets an advisory warning naming
+what's missing; an unguarded binding or `_` arm covers everything and
+silences it; and a match whose arms cover *none* of the admissible
+values is reported as a runtime error, because it fails on every run:
+
+```olang no-run
+fn advance(s: "open" | "active" | "done") = match s {
+    "open" => "active",
+    "active" => "done"
+}
+// warning: match is not exhaustive: "done" has no arm — add it or a catch-all
+```
+
+Or-patterns count member by member (`1 | 2 => "low"` covers both), and
+guarded arms count for nothing — a guard may reject at runtime, so it
+proves no coverage. Dynamic scrutinees (`String`, unannotated values)
+are never judged.
+
 ## Adopting types gradually
 
 The practical playbook, in the order that pays:

@@ -53,6 +53,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   keys, and object receivers all stay on bytecode with identical
   results; `-> Map` return annotations discharge statically.
 
+- **The checker proves match exhaustiveness over literal enums.** A
+  union of literals declares exactly which values are admissible, so
+  `olang check` (and the editor) now knows what covering every case
+  means: a `match` missing a member gets an advisory warning naming
+  what's absent (`match is not exhaustive: "done" has no arm — add it
+  or a catch-all`), an unguarded binding or `_` covers everything, and
+  a match whose arms cover *none* of the admissible values is reported
+  as a runtime error — it fails on every run. Or-patterns count member
+  by member; guarded arms prove no coverage (a guard may reject);
+  dynamic scrutinees are never judged. Documented in the types chapter.
+
 - **Runtime errors on the bytecode tier carry the same trace as the
   interpreter.** A runtime failure now points at the innermost located
   statement and lists the call stack — identically on every tier.
