@@ -821,10 +821,11 @@ unwrap(db.close(conn))
 
 When olang runs in a browser (as the WebAssembly build behind the
 playground), the page itself becomes a device the program can drive:
-`dom` is that device's API. It is deliberately small — ten functions —
-because olang does not wrap the DOM object model: it treats the page as
-a *rendering target*. You query elements, wire events, fetch data, and
-render by writing HTML; everything else is ordinary olang.
+`dom` is that device's API. olang does not wrap the DOM object model:
+it treats the page as a *rendering target with controls*. You query
+elements, wire events, render by writing HTML, reach for node-level
+operations when a full re-render would be too blunt, and schedule work
+with timers and animation frames; everything else is ordinary olang.
 
 | Function | Description |
 |---|---|
@@ -833,8 +834,26 @@ render by writing HTML; everything else is ordinary olang.
 | `dom.set_html(el, html)` | replace an element's inner HTML — the render primitive |
 | `dom.value(el)` / `dom.set_value(el, s)` | read / write a form control's value |
 | `dom.focus(el)` | focus an element |
-| `dom.on(el, event, handler)` | attach an event handler |
+| `dom.on(el, event, handler)` | attach an event handler (see below) |
 | `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page |
+| `dom.get_attr(el, name)` / `set_attr(el, name, v)` / `remove_attr(el, name)` | attributes |
+| `dom.class_add(el, c)` / `class_remove(el, c)` / `class_toggle(el, c)` | class list ops (`set_class` replaces wholesale) |
+| `dom.set_style(el, prop, v)` | set one style property |
+| `dom.measure(el)` | bounding rect as a Map: `x`, `y`, `width`, `height` |
+| `dom.create(tag)` / `append(parent, child)` / `remove(el)` | surgical structure edits |
+| `dom.scroll_into_view(el)` | scroll an element into view |
+| `dom.set_timeout(ms, fn)` / `set_interval(ms, fn)` / `clear_interval(t)` | timers |
+| `dom.request_frame(fn)` | one animation frame; re-arm inside the handler for a loop |
+
+**Every event handler receives a structured event Map** — the same
+shape for every event type, so handlers pick the fields they need:
+`type`, the target's `id` and `value`, `key`, pointer `x`/`y`, the
+modifier flags `alt`/`ctrl`/`shift`/`meta`, and `data` (a Map of the
+target's `data-*` attributes). Any DOM event name works — `click`,
+`input`, `keydown`, `pointermove`, `submit`, `focus`, `wheel`, … — plus
+`enter`, the keydown-filtered alias. Delegation is the natural style:
+one listener on a container, dispatch on `id` or `data`, re-render
+freely without rebinding.
 
 `dom` is the one browser-only module: in a native build every call
 reports that it needs the wasm build (mirroring how `fs`, `os`, `http`,
@@ -844,8 +863,10 @@ and `db` are absent from the browser). The example is therefore
 ```olang no-run
 dom.set_html(dom.query("#list"),
     ["a", "b"] |> map((s) => "<li>" + s + "</li>") |> join(""))
-dom.on(dom.query("#new-title"), "enter", (title) => add_item(title))
+dom.on(dom.query("#list"), "click", (e) => select(map_get(e, "id")))
+dom.on(dom.query("#new-title"), "enter", (e) => add_item(map_get(e, "value")))
 dom.fetch("GET", "/api/items", "", (resp) => render(unwrap(json.parse(resp))))
+dom.request_frame((f) => tick(map_get(f, "delta")))
 ```
 
 The module has its own chapter, **[olang in the Browser](wasm.md)**:

@@ -280,10 +280,9 @@ fn on_rows_click(tid) = {
     }}}}
 }
 
-fn on_rows_change(payload) = {
-    let parts = split(payload, "\n")
-    let tid = parts[0]
-    let value = parts[1]
+fn on_rows_change(e) = {
+    let tid = map_get(e, "id")
+    let value = map_get(e, "value")
     let id = str.substring(tid, 4, len(tid))
     if starts_with(tid, "asg-") => {
         patch(id, "{\"assignee\": \"" + json_esc(value) + "\"}")
@@ -313,20 +312,19 @@ fn on_sort_click(tid) = {
 
 // ── boot: bind once, render forever ────────────────────────────────────
 
-dom.on(dom.query("#rows"), "click", (tid) => { on_rows_click(tid) })
-dom.on(dom.query("#rows"), "change", (payload) => { on_rows_change(payload) })
-dom.on(dom.query("#filters"), "click", (tid) => { on_filter_click(tid) })
-dom.on(dom.query("#sort-row"), "click", (tid) => { on_sort_click(tid) })
-dom.on(dom.query("#dmeta"), "click", (tid) => { on_meta_click(tid) })
-dom.on(dom.query("#search"), "input", (x) => { reload_rows() })
-dom.on(dom.query("#new-title"), "enter", (v) => { add_issue() })
-dom.on(dom.query("#add-btn"), "click", (t) => { add_issue() })
-dom.on(dom.query("#new-comment"), "enter", (v) => { add_comment() })
-dom.on(dom.query("#comment-btn"), "click", (t) => { add_comment() })
-dom.on(dom.query("#drawer-close"), "click", (t) => { close_drawer() })
-dom.on(dom.query("#dtitle"), "change", (payload) => {
-    let parts = split(payload, "\n")
-    if st("sel") != "" => patch(st("sel"), "{\"title\": \"" + json_esc(parts[1]) + "\"}")
+dom.on(dom.query("#rows"), "click", (e) => { on_rows_click(map_get(e, "id")) })
+dom.on(dom.query("#rows"), "change", (e) => { on_rows_change(e) })
+dom.on(dom.query("#filters"), "click", (e) => { on_filter_click(map_get(e, "id")) })
+dom.on(dom.query("#sort-row"), "click", (e) => { on_sort_click(map_get(e, "id")) })
+dom.on(dom.query("#dmeta"), "click", (e) => { on_meta_click(map_get(e, "id")) })
+dom.on(dom.query("#search"), "input", (e) => { reload_rows() })
+dom.on(dom.query("#new-title"), "enter", (e) => { add_issue() })
+dom.on(dom.query("#add-btn"), "click", (e) => { add_issue() })
+dom.on(dom.query("#new-comment"), "enter", (e) => { add_comment() })
+dom.on(dom.query("#comment-btn"), "click", (e) => { add_comment() })
+dom.on(dom.query("#drawer-close"), "click", (e) => { close_drawer() })
+dom.on(dom.query("#dtitle"), "change", (e) => {
+    if st("sel") != "" => patch(st("sel"), "{\"title\": \"" + json_esc(map_get(e, "value")) + "\"}")
 })
 
 flash("frontend: olang (wasm) · backend: olang · sqlite")

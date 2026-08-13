@@ -144,6 +144,21 @@ unsafe extern "C" {
         body_len: usize,
         callback_id: i64,
     );
+    fn host_dom_get_attr(handle: i64, ptr: *const u8, len: usize) -> *const u8;
+    fn host_dom_set_attr(handle: i64, n: *const u8, nl: usize, v: *const u8, vl: usize);
+    fn host_dom_remove_attr(handle: i64, ptr: *const u8, len: usize);
+    /// op: 0 add, 1 remove, 2 toggle
+    fn host_dom_class_op(handle: i64, op: i64, ptr: *const u8, len: usize);
+    fn host_dom_set_style(handle: i64, n: *const u8, nl: usize, v: *const u8, vl: usize);
+    fn host_dom_measure(handle: i64) -> *const u8;
+    fn host_dom_create(tag: *const u8, len: usize) -> i64;
+    fn host_dom_append(parent: i64, child: i64);
+    fn host_dom_remove(handle: i64);
+    fn host_dom_scroll_into_view(handle: i64);
+    fn host_dom_set_timeout(ms: f64, callback_id: i64);
+    fn host_dom_set_interval(ms: f64, callback_id: i64) -> i64;
+    fn host_dom_clear_interval(timer_id: i64);
+    fn host_dom_request_frame(callback_id: i64);
 }
 
 use std::cell::RefCell;
@@ -258,6 +273,110 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
             };
             Ok(Value::Unit)
         }
+        ("get_attr", [el, n]) => {
+            let a = text(n)?;
+            Ok(Value::String(std::sync::Arc::new(read_host_string(
+                unsafe { host_dom_get_attr(handle(el)?, a.as_ptr(), a.len()) },
+            ))))
+        }
+        ("set_attr", [el, n, v]) => {
+            let (a, b) = (text(n)?, text(v)?);
+            unsafe { host_dom_set_attr(handle(el)?, a.as_ptr(), a.len(), b.as_ptr(), b.len()) };
+            Ok(Value::Unit)
+        }
+        ("remove_attr", [el, n]) => {
+            let a = text(n)?;
+            unsafe { host_dom_remove_attr(handle(el)?, a.as_ptr(), a.len()) };
+            Ok(Value::Unit)
+        }
+        ("class_add", [el, n]) | ("class_remove", [el, n]) | ("class_toggle", [el, n]) => {
+            let op = match name {
+                "class_add" => 0,
+                "class_remove" => 1,
+                _ => 2,
+            };
+            let a = text(n)?;
+            unsafe { host_dom_class_op(handle(el)?, op, a.as_ptr(), a.len()) };
+            Ok(Value::Unit)
+        }
+        ("set_style", [el, n, v]) => {
+            let (a, b) = (text(n)?, text(v)?);
+            unsafe { host_dom_set_style(handle(el)?, a.as_ptr(), a.len(), b.as_ptr(), b.len()) };
+            Ok(Value::Unit)
+        }
+        ("measure", [el]) => {
+            let raw = read_host_string(unsafe { host_dom_measure(handle(el)?) });
+            // The page answers with a JSON rect; hand back a Map.
+            match crate::stdlib::json::call_json_function(
+                "parse",
+                vec![Value::String(std::sync::Arc::new(raw))],
+            ) {
+                Ok(Value::Ok(inner)) => Ok(*inner),
+                _ => Err("dom.measure: host returned an unreadable rect".into()),
+            }
+        }
+        ("create", [tag]) => {
+            let t = text(tag)?;
+            let h = unsafe { host_dom_create(t.as_ptr(), t.len()) };
+            if h == 0 {
+                Err(format!("dom.create: cannot create element {:?}", t).into())
+            } else {
+                Ok(Value::Integer(h))
+            }
+        }
+        ("append", [parent, child]) => {
+            unsafe { host_dom_append(handle(parent)?, handle(child)?) };
+            Ok(Value::Unit)
+        }
+        ("remove", [el]) => {
+            unsafe { host_dom_remove(handle(el)?) };
+            Ok(Value::Unit)
+        }
+        ("scroll_into_view", [el]) => {
+            unsafe { host_dom_scroll_into_view(handle(el)?) };
+            Ok(Value::Unit)
+        }
+        ("set_timeout", [ms, callback]) => {
+            let ms = match ms {
+                Value::Integer(n) => *n as f64,
+                Value::Float(f) => *f,
+                _ => return Err("dom.set_timeout expects a millisecond number".into()),
+            };
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe { host_dom_set_timeout(ms, id) };
+            Ok(Value::Unit)
+        }
+        ("set_interval", [ms, callback]) => {
+            let ms = match ms {
+                Value::Integer(n) => *n as f64,
+                Value::Float(f) => *f,
+                _ => return Err("dom.set_interval expects a millisecond number".into()),
+            };
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            let timer = unsafe { host_dom_set_interval(ms, id) };
+            Ok(Value::Integer(timer))
+        }
+        ("clear_interval", [timer]) => {
+            unsafe { host_dom_clear_interval(handle(timer)?) };
+            Ok(Value::Unit)
+        }
+        ("request_frame", [callback]) => {
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe { host_dom_request_frame(id) };
+            Ok(Value::Unit)
+        }
         _ => Err(format!("dom.{}: unknown function or wrong arity", name).into()),
     }
 }
@@ -366,6 +485,72 @@ pub unsafe extern "C" fn olang_dispatch_event_with(
                     .into_owned()
             };
             vec![Value::String(std::sync::Arc::new(payload))]
+        } else {
+            Vec::new()
+        };
+        interpreter
+            .call_function(handler, args)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    });
+    let output = crate::output::drain_captured();
+    let json = match outcome {
+        Ok(()) => format!(
+            r#"{{"output":{},"value":null,"error":null,"ms":0}}"#,
+            json_escape(&output)
+        ),
+        Err(e) => format!(
+            r#"{{"output":{},"value":null,"error":{},"ms":0}}"#,
+            json_escape(&output),
+            json_escape(&e)
+        ),
+    };
+    result_buffer(json)
+}
+
+/// Re-enter the session for one STRUCTURED event: the page delivers a
+/// JSON object (type, target id, value, key, pointer coordinates,
+/// modifiers, data-* attributes — or a frame's delta), parsed here into
+/// the Map the handler receives. Unparseable payloads fall back to the
+/// raw string rather than dropping the event.
+///
+/// # Safety
+/// `ptr`, when non-null, points at `len` bytes of UTF-8 the page wrote
+/// into wasm memory via olang_alloc (caller deallocates).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn olang_dispatch_event_json(
+    callback_id: i64,
+    ptr: *const u8,
+    len: usize,
+) -> *mut u8 {
+    let handler = HANDLERS.with(|h| h.borrow().get(callback_id as usize).cloned());
+    let outcome = SESSION.with(|s| {
+        let mut s = s.borrow_mut();
+        let Some(interpreter) = s.as_mut() else {
+            return Err("no active session".to_string());
+        };
+        let Some(handler) = handler else {
+            return Err(format!("unknown handler id {}", callback_id));
+        };
+        let arity = match &handler {
+            Value::Function(f) => f.parameters.len(),
+            _ => 0,
+        };
+        let args = if arity >= 1 {
+            let raw = if ptr.is_null() {
+                String::new()
+            } else {
+                String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) })
+                    .into_owned()
+            };
+            let event = match crate::stdlib::json::call_json_function(
+                "parse",
+                vec![Value::String(std::sync::Arc::new(raw.clone()))],
+            ) {
+                Ok(Value::Ok(inner)) => *inner,
+                _ => Value::String(std::sync::Arc::new(raw)),
+            };
+            vec![event]
         } else {
             Vec::new()
         };

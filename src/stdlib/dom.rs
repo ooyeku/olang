@@ -22,6 +22,24 @@ pub fn create_dom_module() -> Value {
         ("fetch", 4),
         ("focus", 1),
         ("set_class", 2),
+        // Node-level control
+        ("get_attr", 2),
+        ("set_attr", 3),
+        ("remove_attr", 2),
+        ("class_add", 2),
+        ("class_remove", 2),
+        ("class_toggle", 2),
+        ("set_style", 3),
+        ("measure", 1),
+        ("create", 1),
+        ("append", 2),
+        ("remove", 1),
+        ("scroll_into_view", 1),
+        // Time
+        ("set_timeout", 2),
+        ("set_interval", 2),
+        ("clear_interval", 1),
+        ("request_frame", 1),
     ] {
         module.insert(
             name.to_string(),

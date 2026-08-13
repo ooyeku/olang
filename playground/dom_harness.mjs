@@ -9,13 +9,32 @@ const fakeDom = {
   "#log": { text: "", value: "" },
 };
 const handles = ["", "#count", "#btn", "#log"]; // handle = index, 0 reserved
+const node = (h) => {
+  const el = fakeDom[handles[Number(h)]];
+  el.attrs ??= {};
+  el.classes ??= new Set();
+  el.style ??= {};
+  el.children ??= [];
+  return el;
+};
 const listeners = {}; // handle -> {event -> callbackId}
 const fetchLog = [];
+const timers = []; // {ms, cb, kind}
+const frames = []; // callback ids
+let created = 0;
 function dispatchWith(cb, payload) {
   const bytes = new TextEncoder().encode(payload);
   const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
   mem().set(bytes, ptr);
   const r = result(ex.olang_dispatch_event_with(BigInt(cb), ptr, bytes.length));
+  ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
+  return r;
+}
+function dispatchJson(cb, obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
+  mem().set(bytes, ptr);
+  const r = result(ex.olang_dispatch_event_json(BigInt(cb), ptr, bytes.length));
   ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
   return r;
 }
@@ -55,6 +74,34 @@ const imports = {
     host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) => {
       fetchLog.push({ method: readStr(mp, ml), path: readStr(pp, pl), body: readStr(bp, bl), cb: Number(id) });
     },
+    host_dom_get_attr: (h, ptr, len) => giveStr(node(h).attrs[readStr(ptr, len)] ?? ""),
+    host_dom_set_attr: (h, np, nl, vp, vl) => { node(h).attrs[readStr(np, nl)] = readStr(vp, vl); },
+    host_dom_remove_attr: (h, ptr, len) => { delete node(h).attrs[readStr(ptr, len)]; },
+    host_dom_class_op: (h, op, ptr, len) => {
+      const c = node(h).classes;
+      const name = readStr(ptr, len);
+      if (Number(op) === 0) c.add(name);
+      else if (Number(op) === 1) c.delete(name);
+      else c.has(name) ? c.delete(name) : c.add(name);
+    },
+    host_dom_set_style: (h, np, nl, vp, vl) => { node(h).style[readStr(np, nl)] = readStr(vp, vl); },
+    host_dom_measure: (h) =>
+      giveStr(JSON.stringify({ x: 1, y: 2, width: 300, height: 40 })),
+    host_dom_create: (ptr, len) => {
+      const key = `#created-${++created}-${readStr(ptr, len)}`;
+      fakeDom[key] = { text: "", value: "" };
+      return BigInt(handles.push(key) - 1);
+    },
+    host_dom_append: (p, c) => { node(p).children.push(handles[Number(c)]); },
+    host_dom_remove: (h) => { node(h).removed = true; },
+    host_dom_scroll_into_view: (_h) => {},
+    host_dom_set_timeout: (ms, id) => { timers.push({ ms, cb: Number(id), kind: "timeout" }); },
+    host_dom_set_interval: (ms, id) => {
+      timers.push({ ms, cb: Number(id), kind: "interval" });
+      return BigInt(timers.length);
+    },
+    host_dom_clear_interval: (_t) => {},
+    host_dom_request_frame: (id) => { frames.push(Number(id)); },
   },
 };
 
@@ -141,6 +188,70 @@ dom.set_text(dom.query("#log"), "random ok: " + show(ok) + " sample: " + show(ra
   if (!fakeDom["#log"].text.startsWith("random ok: true"))
     throw new Error("random check failed: " + fakeDom["#log"].text);
   console.log("random:", fakeDom["#log"].text);
+}
+// ── stage 1: structured events, node ops, timers, frames ──
+const prog4 = `
+let log = dom.query("#log")
+let btn = dom.query("#btn")
+dom.on(btn, "click", (e) => {
+    dom.set_text(log,
+        map_get(e, "type") + " " + map_get(e, "id") + " " +
+        show(map_get(e, "x")) + "," + show(map_get(e, "y")) + " shift=" +
+        show(map_get(e, "shift")) + " row=" + map_get(map_get(e, "data"), "row"))
+})
+dom.set_attr(btn, "aria-label", "counter")
+dom.class_add(btn, "primary")
+dom.class_toggle(btn, "lit")
+dom.set_style(btn, "color", "red")
+let r = dom.measure(btn)
+let card = dom.create("div")
+dom.set_text(card, "made in olang")
+dom.append(log, card)
+dom.set_timeout(5, () => { dom.set_text(dom.query("#count"), "timed") })
+dom.request_frame((f) => {
+    dom.set_value(dom.query("#count"), "frame " + map_get(f, "type"))
+})
+println("attr=" + dom.get_attr(btn, "aria-label") + " w=" + show(map_get(r, "width")))
+`;
+{
+  const enc4 = new TextEncoder().encode(prog4);
+  const p4 = ex.olang_alloc(enc4.length);
+  mem().set(enc4, p4);
+  const r = result(ex.olang_session_start(p4, enc4.length));
+  ex.olang_dealloc(p4, enc4.length);
+  if (r.error) throw new Error("stage1 session: " + r.error);
+  if (!r.output.includes("attr=counter w=300"))
+    throw new Error("attr/measure round-trip failed: " + r.output);
+  const btn = node(2);
+  if (btn.attrs["aria-label"] !== "counter") throw new Error("set_attr missing");
+  if (!btn.classes.has("primary") || !btn.classes.has("lit"))
+    throw new Error("class ops missing: " + [...btn.classes]);
+  if (btn.style["color"] !== "red") throw new Error("set_style missing");
+  if (node(3).children.length !== 1) throw new Error("create/append missing");
+
+  // Structured click: the handler reads type/id/coords/modifiers/data-*.
+  const cb = listeners[2]["click"];
+  const ev = dispatchJson(cb, {
+    type: "click", id: "btn-7", value: "", key: "",
+    x: 12, y: 34, alt: false, ctrl: false, shift: true, meta: false,
+    data: { row: "r42" },
+  });
+  if (ev.error) throw new Error("structured click: " + ev.error);
+  if (fakeDom["#log"].text !== "click btn-7 12,34 shift=true row=r42")
+    throw new Error("structured payload wrong: " + fakeDom["#log"].text);
+
+  // Fire the timer and the frame the program registered.
+  const t = timers.find((t) => t.kind === "timeout");
+  if (!t) throw new Error("set_timeout not registered");
+  const tr = dispatchJson(t.cb, { type: "timeout" });
+  if (tr.error) throw new Error("timeout dispatch: " + tr.error);
+  if (fakeDom["#count"].text !== "timed") throw new Error("timeout mutation missing");
+  if (frames.length !== 1) throw new Error("request_frame not registered");
+  const fr = dispatchJson(frames[0], { type: "frame", delta: 16.6 });
+  if (fr.error) throw new Error("frame dispatch: " + fr.error);
+  if (fakeDom["#count"].value !== "frame frame")
+    throw new Error("frame mutation missing: " + fakeDom["#count"].value);
+  console.log("stage 1: structured events + node ops + timers ok");
 }
 console.log("final dom:", JSON.stringify(fakeDom));
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");

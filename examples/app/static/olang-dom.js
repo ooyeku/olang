@@ -44,6 +44,31 @@
     }
   }
 
+  // Structured events: the payload is a JSON object the wasm side parses
+  // into the Map the olang handler receives.
+  function dispatchJson(id, obj) {
+    const bytes = new TextEncoder().encode(JSON.stringify(obj));
+    const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
+    mem().set(bytes, ptr);
+    readResult(ex.olang_dispatch_event_json(BigInt(id), ptr, bytes.length));
+    ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
+  }
+
+  // Every DOM event delivers the same shape; handlers pick what they use.
+  function eventPayload(e, type) {
+    const t = e.target ?? {};
+    return {
+      type,
+      id: t.id ?? "",
+      value: t.value ?? "",
+      key: e.key ?? "",
+      x: Math.round(e.clientX ?? 0),
+      y: Math.round(e.clientY ?? 0),
+      alt: !!e.altKey, ctrl: !!e.ctrlKey, shift: !!e.shiftKey, meta: !!e.metaKey,
+      data: { ...(t.dataset ?? {}) },
+    };
+  }
+
   const imports = {
     env: {
       host_now_ms: () => performance.now(),
@@ -63,21 +88,20 @@
         const cb = Number(id);
         const ev = readStr(ptr, len);
         const el = elements[Number(h)];
-        // Payload conventions (delivered to 1-argument handlers):
-        //   "enter"  keydown filtered to Enter; payload = element value
-        //   "click"  payload = the clicked target's id (delegation)
-        //   "change" payload = target id + "\n" + target value
+        // Every handler receives a structured event Map: type, target id,
+        // value, key, pointer x/y, modifier flags, and data-* attributes.
+        // "enter" stays as the keydown-filtered alias; delegation is the
+        // model throughout (one listener per container, rebind-free).
         if (ev === "enter") {
           el.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") dispatch(cb, el.value ?? "");
+            if (e.key === "Enter") {
+              const p = eventPayload(e, "enter");
+              p.value = el.value ?? "";
+              dispatchJson(cb, p);
+            }
           });
-        } else if (ev === "click") {
-          el.addEventListener("click", (e) => dispatch(cb, e.target.id ?? ""));
-        } else if (ev === "change") {
-          el.addEventListener("change", (e) =>
-            dispatch(cb, (e.target.id ?? "") + "\n" + (e.target.value ?? "")));
         } else {
-          el.addEventListener(ev, () => dispatch(cb, null));
+          el.addEventListener(ev, (e) => dispatchJson(cb, eventPayload(e, ev)));
         }
       },
       host_dom_focus: (h) => { elements[Number(h)].focus(); },
@@ -95,6 +119,57 @@
           .then((r) => r.text())
           .then((text) => dispatch(cb, text))
           .catch((e) => dispatch(cb, JSON.stringify({ error: String(e) })));
+      },
+      host_dom_get_attr: (h, ptr, len) =>
+        giveStr(elements[Number(h)].getAttribute(readStr(ptr, len)) ?? ""),
+      host_dom_set_attr: (h, np, nl, vp, vl) => {
+        elements[Number(h)].setAttribute(readStr(np, nl), readStr(vp, vl));
+      },
+      host_dom_remove_attr: (h, ptr, len) => {
+        elements[Number(h)].removeAttribute(readStr(ptr, len));
+      },
+      host_dom_class_op: (h, op, ptr, len) => {
+        const cl = elements[Number(h)].classList;
+        const name = readStr(ptr, len);
+        if (Number(op) === 0) cl.add(name);
+        else if (Number(op) === 1) cl.remove(name);
+        else cl.toggle(name);
+      },
+      host_dom_set_style: (h, np, nl, vp, vl) => {
+        elements[Number(h)].style.setProperty(readStr(np, nl), readStr(vp, vl));
+      },
+      host_dom_measure: (h) => {
+        const r = elements[Number(h)].getBoundingClientRect();
+        return giveStr(JSON.stringify({
+          x: r.x, y: r.y, width: r.width, height: r.height,
+        }));
+      },
+      host_dom_create: (ptr, len) => {
+        try {
+          return BigInt(handleOf(document.createElement(readStr(ptr, len))));
+        } catch {
+          return 0n;
+        }
+      },
+      host_dom_append: (p, c) => {
+        elements[Number(p)].appendChild(elements[Number(c)]);
+      },
+      host_dom_remove: (h) => { elements[Number(h)].remove(); },
+      host_dom_scroll_into_view: (h) => {
+        elements[Number(h)].scrollIntoView({ block: "nearest" });
+      },
+      host_dom_set_timeout: (ms, id) => {
+        setTimeout(() => dispatchJson(Number(id), { type: "timeout" }), ms);
+      },
+      host_dom_set_interval: (ms, id) => {
+        return BigInt(setInterval(
+          () => dispatchJson(Number(id), { type: "interval" }), ms));
+      },
+      host_dom_clear_interval: (t) => { clearInterval(Number(t)); },
+      host_dom_request_frame: (id) => {
+        const start = performance.now();
+        requestAnimationFrame((now) =>
+          dispatchJson(Number(id), { type: "frame", delta: now - start }));
       },
     },
   };

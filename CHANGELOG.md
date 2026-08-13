@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **The dom module grows up: structured events, node control, and
+  time.** Every event handler now receives a structured event Map —
+  `type`, target `id` and `value`, `key`, pointer `x`/`y`, modifier
+  flags, and the target's `data-*` attributes — the same shape for
+  every event, so any DOM event name works (`input`, `keydown`,
+  `pointermove`, `submit`, `wheel`, …) and delegation stays the natural
+  style. Sixteen new functions land alongside: attribute get/set/
+  remove, classList add/remove/toggle, per-property styles,
+  `dom.measure` (bounding rect as a Map), surgical `create`/`append`/
+  `remove` structure edits, `scroll_into_view`, timers
+  (`set_timeout`/`set_interval`/`clear_interval`), and
+  `dom.request_frame` for animation loops with a millisecond delta.
+  Structured payloads ride a new JSON dispatch entry over the wasm
+  boundary; the tracker app is migrated to the Map shape and verified
+  live in a browser (delegated clicks, change edits, and Enter-to-add
+  all round-tripping to the server), and the dom harness proves the
+  whole surface end to end against the real wasm build.
+
 ## [0.52.0] - 2026-08-13
 
 ### Added
