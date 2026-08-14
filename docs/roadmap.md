@@ -250,12 +250,28 @@ work they would unlock. Each is a candidate lane, not a promise.
    no promotion needed — so it also lifts the browser boot cost of
    finding #3. The gallery's 50k-point curtain is now generated this
    way.
-3. **The browser tier ceiling.** Wasm sessions run interpreter +
-   bytecode (the JIT emits native code and cannot exist there), so the
-   gallery's ~250k boot-time lambda calls cost visible seconds.
-   Finding 2 removes most of that particular cost; the longer lane is
-   whether the bytecode tier itself can specialize hot lambda loops
-   harder under wasm.
+3. **The browser tier ceiling. Root cause found and fixed (0.57.0+).**
+   Wasm sessions run interpreter + bytecode (the JIT emits native code
+   and cannot exist there), and the suspected cost was per-lambda-call
+   overhead. Profiling found the boundary conversion was already gone
+   (finding #2 era) and tier-resident lambda loops already run natively —
+   the real cliff was elsewhere: the tier dispatches `CallNamed` by name
+   and marks any name shared by two distinct bodies **ambiguous**, never
+   tiering it. Embedded packages register their *private* helpers (`viz`'s
+   `col`, `opt`, `groups`, `distinct`, `fmt`, …) into the global name
+   space, so any program reusing one of those common names — the gallery
+   included — silently ran that function, and its hot map loop, on the
+   *interpreter*. The tier now dispatches an ambiguous name **by body
+   identity** (via `hof_function_id`, keyed on the body pointer, compiled
+   under the function's own closure), so a name-colliding function
+   promotes normally: a `use viz` program mapping `map_get` over records
+   went **~1480 ms → ~170 ms (native, ~8.6×)** and **~1480 ms → ~140 ms
+   (wasm, ~10×)**, correctness identical on both tiers (the right body
+   still runs). Also landed: a fused `map`/`filter` arm that hoists the
+   bytecode fetch and per-call checks out of the element loop (+~16%
+   native on tier-resident builtin-lambda loops). Deeper structural work
+   (lambda-body inlining, promoting top-level script code) remains a
+   future rung.
 4. **Embedded packages importing each other. Done (0.54.0+).** The
    capability was already there — `resolve_module_path` checks
    `is_embedded` before touching the filesystem, so `use ui` inside an

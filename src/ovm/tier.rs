@@ -227,9 +227,21 @@ impl BytecodeTier {
             return TierOutcome::Fallback;
         }
 
-        // A name shared by two distinct functions can't be tiered soundly.
+        // A name shared by two distinct functions can't be dispatched *by
+        // name*, but the caller handed us the specific body — so compile and
+        // run it by identity (its body pointer), bypassing the name and its
+        // ambiguity entirely. This is what lets a user function whose name
+        // collides with an embedded package's private helper (`viz`'s `col`,
+        // `opt`, …) still promote instead of dropping the whole program to
+        // the interpreter. `hof_function_id` compiles under the function's
+        // own closure and caches per body, and returns None for bodies the
+        // tier can't take (arity/defaults/bounds) — an honest fallback.
         if self.ambiguous.contains(name) {
-            return TierOutcome::Fallback;
+            let arity = func.parameters.len();
+            return match self.vm.hof_function_id(func, arity) {
+                Some(func_id) => self.run_on_vm(func_id, args, None),
+                None => TierOutcome::Fallback,
+            };
         }
 
         // A cache hit is only valid for the *same* body. Trait methods share a
@@ -264,6 +276,21 @@ impl BytecodeTier {
             }
         };
 
+        self.run_on_vm(func_id, args, Some(name))
+    }
+
+    /// Convert the arguments, run the compiled body on the VM, and convert
+    /// the result back — the shared tail of every tiered call, whether the
+    /// callee was resolved by name or (for an ambiguous name) by identity.
+    /// `reject_name` is `Some` only for the name-dispatched path: a result
+    /// the VM value model can't represent poisons that name so it isn't
+    /// retried. The identity path passes `None` — there is no name to poison.
+    fn run_on_vm(
+        &mut self,
+        func_id: FunctionId,
+        args: &[Value],
+        reject_name: Option<&str>,
+    ) -> TierOutcome {
         // Arguments must round-trip through the OVM value model
         let mut ovm_args = Vec::with_capacity(args.len());
         for arg in args {
@@ -281,7 +308,9 @@ impl BytecodeTier {
                 // A result we can't convert would be observable as a wrong
                 // value; refuse rather than return something else.
                 Err(_) => {
-                    self.reject(name);
+                    if let Some(name) = reject_name {
+                        self.reject(name);
+                    }
                     TierOutcome::Fallback
                 }
             },
@@ -575,10 +604,13 @@ mod tests {
     }
 
     #[test]
-    fn same_name_distinct_bodies_are_never_tiered() {
-        // Two modules declaring a function of the same name with different
-        // bodies must not share a compilation — the tier resolves by name and
-        // cannot tell them apart, so both fall back to the interpreter.
+    fn same_name_distinct_bodies_tier_by_identity() {
+        // Two functions declaring the same name with different bodies (a user
+        // function shadowing an embedded package's private helper) can't be
+        // dispatched *by name* — that stays ambiguous. But the caller hands
+        // `try_call` the specific body, so each is compiled and run by
+        // identity and returns its OWN correct result, instead of both being
+        // dropped to the interpreter (viz finding #3).
         let mut tier = BytecodeTier::new(1);
         let double = double_fn();
         let triple = triple_fn();
@@ -586,15 +618,15 @@ mod tests {
         tier.note_function("double".to_string(), double.clone());
         tier.note_function("double".to_string(), triple.clone());
 
+        // double(5) = 10, triple(5) = 15 — the right body each time.
         assert!(matches!(
             tier.try_call(&double, &[Value::Integer(5)]),
-            TierOutcome::Fallback
+            TierOutcome::Ran(Ok(Value::Integer(10)))
         ));
         assert!(matches!(
             tier.try_call(&triple, &[Value::Integer(5)]),
-            TierOutcome::Fallback
+            TierOutcome::Ran(Ok(Value::Integer(15)))
         ));
-        assert_eq!(tier.stats().promoted, 0);
     }
 
     #[test]

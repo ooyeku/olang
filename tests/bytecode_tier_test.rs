@@ -102,6 +102,48 @@ once(21)
     assert_tier_transparent(src);
 }
 
+/// Run a program with the tier on and report how many calls executed as
+/// bytecode (each tier entry from the interpreter).
+fn bytecode_calls(source: &str, threshold: u32) -> u64 {
+    let source = source.to_string();
+    with_big_stack(move || {
+        let parser = Parser::new();
+        let program = parser.parse(&source).unwrap();
+        let mut interpreter = Interpreter::new();
+        interpreter.enable_bytecode_tier(threshold, false);
+        interpreter.eval_program(program).unwrap();
+        interpreter.bytecode_tier_stats().unwrap().bytecode_calls
+    })
+}
+
+#[test]
+fn function_colliding_with_an_embedded_package_helper_still_promotes() {
+    // `viz` defines a PRIVATE `col`. A user `col` of the same name used to
+    // make the tier mark the name ambiguous and refuse to tier it — so the
+    // user's function, and its hot map loop, silently ran on the interpreter
+    // (viz finding #3: this is why viz/dash-using programs booted slowly).
+    // It now dispatches by body identity and promotes normally.
+    let src = r#"
+use viz
+fn col(recs, k) = map(recs, (r) => map_get(r, k))
+fn build(n) = map(range(0, n), (i) => #{ "x": i })
+let recs = build(1000)
+let mut total = 0
+for j in range(0, 200) { total = total + len(col(recs, "x")) }
+total
+"#;
+    // The name collides, but the result is the interpreter's on both tiers.
+    assert_tier_transparent(src);
+    assert_eq!(eval(src, Some(2)).unwrap(), Value::Integer(200 * 1000));
+    // And `col` actually promotes: ~198 of its 200 calls run as bytecode.
+    // With the ambiguity bug it dropped to the interpreter and this was ~1.
+    let calls = bytecode_calls(src, 2);
+    assert!(
+        calls > 50,
+        "a name-colliding function must still tier (bytecode_calls={calls}, expected ~198)"
+    );
+}
+
 #[test]
 fn loop_heavy_function_is_transparent() {
     let src = r#"

@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Name-colliding functions now promote to the bytecode tier (viz
+  finding #3).** The tier dispatches `CallNamed` by name and marked any
+  name shared by two distinct function bodies "ambiguous", never tiering
+  it. Because embedded packages register their *private* helpers (`viz`'s
+  `col`, `opt`, `groups`, `distinct`, `fmt`, …) into the global name
+  space, any program reusing one of those common names — a data app, the
+  chart gallery — silently ran that function, and its hot `map`/`filter`
+  loop, on the interpreter. An ambiguous name is now dispatched **by body
+  identity** (compiled under its own closure, keyed on the body pointer),
+  so the correct body runs on the tier. A `use viz` program mapping a
+  field-accessor lambda over records went **~1480 ms → ~170 ms native
+  (~8.6×)** and **~1480 ms → ~140 ms in the wasm playground (~10×)**;
+  results are identical on both tiers.
+
 ### Changed
+
+- **Faster `map`/`filter` on the bytecode tier.** The native `map`/
+  `filter` loop now fetches the callee's bytecode and validates its arity
+  and parameter checks once, before the element loop, instead of on every
+  element (an `execute_prepared` fast path). ~16% faster on the hot
+  builtin-lambda pattern natively; the JIT path is untouched.
 
 - **Embedded packages parse once per process (faster cold start).** The
   built-in olang packages (`cli`, `term`, `viz`, `dash`, `colx`, `mathx`,

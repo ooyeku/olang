@@ -1295,29 +1295,70 @@ impl BytecodeVm {
     }
 
     /// Execute function with bytecode
-    pub fn execute(
+    /// Fetch a function's compiled bytecode: the lock-free hot mirror first,
+    /// the shared cache on miss (populating the mirror). Factored out so a
+    /// hot loop that calls the same function per element (`map`/`filter`)
+    /// can fetch the `Arc` once instead of on every call.
+    fn get_bytecode(
         &mut self,
         func_id: FunctionId,
-        args: &[OvmValue],
-    ) -> Result<OvmValue, BytecodeError> {
-        // Fetch bytecode: index the lock-free mirror first, shared cache on miss
+    ) -> Result<Arc<CompiledBytecode>, BytecodeError> {
         let idx = func_id.index();
-        let bytecode = match self.bytecode_hot.get(idx).and_then(|slot| slot.as_ref()) {
-            Some(b) => b.clone(),
+        match self.bytecode_hot.get(idx).and_then(|slot| slot.as_ref()) {
+            Some(b) => Ok(b.clone()),
             None => {
                 let fetched = self
                     .bytecode_cache
                     .read()
                     .ok()
                     .and_then(|cache| cache.get(&func_id).cloned())
-                    .ok_or_else(|| BytecodeError::FunctionNotFound(func_id))?;
+                    .ok_or(BytecodeError::FunctionNotFound(func_id))?;
                 if self.bytecode_hot.len() <= idx {
                     self.bytecode_hot.resize(idx + 1, None);
                 }
                 self.bytecode_hot[idx] = Some(fetched.clone());
-                fetched
+                Ok(fetched)
             }
-        };
+        }
+    }
+
+    /// Run an already-fetched, already-validated function body — the tail of
+    /// `execute` with the per-call preamble (bytecode fetch, arity check,
+    /// parameter-type checks, JIT dispatch) hoisted to the caller. A hot
+    /// loop that has verified those invariants once (they do not vary
+    /// element to element) calls this per element instead of `execute`,
+    /// paying only the frame push/pop and the body. The result is identical
+    /// to `execute`; only the redundant preamble is skipped.
+    fn execute_prepared(
+        &mut self,
+        bytecode: &Arc<CompiledBytecode>,
+        args: &[OvmValue],
+    ) -> Result<OvmValue, BytecodeError> {
+        if self.call_depth >= self.max_call_depth {
+            return Err(BytecodeError::RuntimeError(format!(
+                "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
+                self.max_call_depth
+            )));
+        }
+        self.call_depth += 1;
+        let saved = self
+            .execution_state
+            .push_frame(bytecode.register_count as usize, args);
+        self.stats.bytecode_cache_hits += 1;
+        self.stats.function_calls += 1;
+        let result = self.execute_bytecode(bytecode);
+        self.execution_state.pop_frame(saved);
+        self.call_depth -= 1;
+        result
+    }
+
+    pub fn execute(
+        &mut self,
+        func_id: FunctionId,
+        args: &[OvmValue],
+    ) -> Result<OvmValue, BytecodeError> {
+        // Fetch bytecode: index the lock-free mirror first, shared cache on miss
+        let bytecode = self.get_bytecode(func_id)?;
 
         if args.len() != bytecode.param_count {
             // Word-for-word the interpreter's messages: a missing argument
@@ -2424,7 +2465,12 @@ impl BytecodeVm {
                     function_name,
                     args,
                 } => {
-                    let mut arg_values = Vec::with_capacity(args.len());
+                    // Pool the argument buffer: a hot loop calling a builtin
+                    // per element (`map(recs, r => map_get(r, k))`) would
+                    // otherwise heap-allocate a fresh Vec on every call.
+                    let mut arg_values = self.arg_pool.pop().unwrap_or_default();
+                    arg_values.clear();
+                    arg_values.reserve(args.len());
                     for arg_reg in args {
                         arg_values.push(self.execution_state.get_register(*arg_reg)?);
                     }
@@ -2432,9 +2478,9 @@ impl BytecodeVm {
                     // Check if it's a builtin function first
                     // User functions first: a user definition shadows a
                     // builtin of the same name, as it does in the interpreter
-                    if let Some(&func_id) = self.function_registry.get(function_name) {
-                        let result = self.execute(func_id, &arg_values)?;
-                        self.execution_state.set_register(*dst, result)?;
+                    let outcome = if let Some(&func_id) = self.function_registry.get(function_name)
+                    {
+                        self.execute(func_id, &arg_values)
                     } else if self.builtin_names.contains(function_name)
                         || function_name.contains('.')
                     {
@@ -2442,11 +2488,15 @@ impl BytecodeVm {
                         // at compile time against the module's own field set;
                         // the bridge dispatches them by prefix exactly as the
                         // interpreter does.
-                        let result = self.execute_builtin_call(function_name, &arg_values)?;
-                        self.execution_state.set_register(*dst, result)?;
+                        self.execute_builtin_call(function_name, &arg_values)
                     } else {
-                        return Err(BytecodeError::NamedFunctionNotFound(function_name.clone()));
+                        Err(BytecodeError::NamedFunctionNotFound(function_name.clone()))
+                    };
+                    arg_values.clear();
+                    if self.arg_pool.len() < 64 {
+                        self.arg_pool.push(arg_values);
                     }
+                    self.execution_state.set_register(*dst, outcome?)?;
                 }
 
                 // Collection operations
@@ -3061,7 +3111,11 @@ impl BytecodeVm {
     /// to the interpreter) for arity mismatch, default parameters, trait
     /// bounds, or an uncompilable body; failures are cached per body so
     /// they are not retried.
-    fn hof_function_id(&mut self, func: &crate::ast::Function, arity: usize) -> Option<FunctionId> {
+    pub(crate) fn hof_function_id(
+        &mut self,
+        func: &crate::ast::Function,
+        arity: usize,
+    ) -> Option<FunctionId> {
         if func.parameters.len() != arity
             || func.parameters.iter().any(|p| p.default_value.is_some())
             || !func.param_bounds.is_empty()
@@ -3310,6 +3364,67 @@ impl BytecodeVm {
                     _ => return None,
                 };
                 let is_map = name == "map";
+
+                // Fused fast path: the callee, its arity, its (absent)
+                // parameter checks, and — on native — its JIT status do not
+                // change across elements, so hoist all of that out of the
+                // loop. Fetch the bytecode `Arc` once and call the body per
+                // element with the per-call preamble already discharged. On
+                // native we defer to the plain `execute` path whenever the
+                // JIT owns this function (compiled or pending), so native code
+                // still runs and this never bypasses it; the fused loop only
+                // takes over when the body is pure bytecode — every call under
+                // wasm, and the common builtin-calling lambdas natively.
+                let fused_ok = {
+                    if let Ok(bytecode) = self.get_bytecode(func_id) {
+                        let jit_owned = {
+                            #[cfg(feature = "native")]
+                            {
+                                self.jit.has(func_id) || self.jit.is_pending(func_id)
+                            }
+                            #[cfg(not(feature = "native"))]
+                            {
+                                false
+                            }
+                        };
+                        if !jit_owned
+                            && bytecode.param_checks.is_empty()
+                            && bytecode.param_count == 1 + captures.len()
+                        {
+                            Some(bytecode)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(bytecode) = fused_ok {
+                    // `call_args` is [element, cap0, cap1, ...]; captures are
+                    // constant, so build them once and only overwrite slot 0.
+                    let mut call_args = Vec::with_capacity(1 + captures.len());
+                    call_args.push(OvmValue::new_unit());
+                    call_args.extend(captures.iter().cloned());
+                    let mut out = Vec::with_capacity(items.len());
+                    for item in items.iter() {
+                        call_args[0] = item.clone();
+                        let result = match self.execute_prepared(&bytecode, &call_args) {
+                            Ok(r) => r,
+                            Err(e) => return Some(Err(e)),
+                        };
+                        if is_map {
+                            out.push(result);
+                        } else if matches!(result.data, ValueData::Boolean(true)) {
+                            out.push(item.clone());
+                        }
+                    }
+                    return Some(Ok(OvmValue::new_list(out)));
+                }
+
+                // Fallback: the plain per-element `execute` (JIT-aware, or a
+                // lambda with parameter checks / an arity we let `execute`
+                // diagnose). Identical results; only the preamble differs.
                 let mut call_args = Vec::with_capacity(1 + captures.len());
                 let mut run = || -> Result<OvmValue, BytecodeError> {
                     let mut out = Vec::with_capacity(items.len());
