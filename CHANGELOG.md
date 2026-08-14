@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Embedded packages parse once per process (faster cold start).** The
+  built-in olang packages (`cli`, `term`, `viz`, `dash`, `colx`, `mathx`,
+  `ui`) are compiled into the binary as source and were re-parsed on
+  every `use` — and a fresh interpreter, which re-parses, is created for
+  every CLI invocation, every `olang test` file, and every playground
+  run. Their parsed AST is now cached process-wide (the source is
+  immutable), so the parse is paid once. A 30-file `olang test` where
+  each file uses `cli`+`term` dropped from ~111ms to ~44ms (2.5×), and
+  the playground's repeat runs skip embedded parsing entirely. Lane T5 of
+  the **Toolsmith campaign**.
+
 ### Added
 
 - **`proc` — child processes, streaming I/O, and pipelines.** A new

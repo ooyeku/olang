@@ -556,30 +556,41 @@ impl Interpreter {
         let start_time = Instant::now();
 
         // The module source is either an embedded olang builtin (compiled into
-        // the binary) or a file on disk.
-        let content = if let Some(name) = file_path
+        // the binary) or a file on disk. Embedded packages come from a
+        // process-wide parsed-AST cache — their source never changes, so the
+        // cold-start parse is paid once per process rather than once per
+        // `use` in every fresh interpreter (each CLI run, each test file,
+        // each playground run). On-disk files are read and parsed as usual.
+        let embedded_name = file_path
             .to_string_lossy()
             .strip_prefix("__embedded__/")
-            .map(|s| s.to_string())
-        {
-            crate::stdlib::embedded::source(&name)
-                .ok_or_else(|| InterpreterError::RuntimeError {
-                    message: format!("Embedded module '{}' not found", name),
-                })?
-                .to_string()
+            .map(|s| s.to_string());
+
+        let program = if let Some(name) = &embedded_name {
+            match crate::stdlib::embedded::parsed(name).map_err(|e| {
+                InterpreterError::RuntimeError {
+                    message: format!("Failed to parse module {}:\n{}", file_path.display(), e),
+                }
+            })? {
+                Some(cached) => (*cached).clone(),
+                None => {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!("Embedded module '{}' not found", name),
+                    });
+                }
+            }
         } else {
-            std::fs::read_to_string(&file_path).map_err(|e| InterpreterError::RuntimeError {
-                message: format!("Failed to read module file {}: {}", file_path.display(), e),
+            let content = std::fs::read_to_string(&file_path).map_err(|e| {
+                InterpreterError::RuntimeError {
+                    message: format!("Failed to read module file {}: {}", file_path.display(), e),
+                }
+            })?;
+            crate::parser::Parser::new().parse(&content).map_err(|e| {
+                InterpreterError::RuntimeError {
+                    message: format!("Failed to parse module {}:\n{}", file_path.display(), e),
+                }
             })?
         };
-
-        // Parse the module
-        let parser = crate::parser::Parser::new();
-        let program = parser
-            .parse(&content)
-            .map_err(|e| InterpreterError::RuntimeError {
-                message: format!("Failed to parse module {}:\n{}", file_path.display(), e),
-            })?;
 
         // Create a new environment for the module with builtins
         let mut module_env = Environment::new();
