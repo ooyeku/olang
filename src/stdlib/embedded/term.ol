@@ -88,18 +88,32 @@ share fn rule(width) = str.repeat("─", width)
 // Replace element `i` of a list (the width scan grows column widths).
 fn with_at(xs, i, v) = map(range(0, len(xs)), (j) => if j == i => v else => xs[j])
 
+/// The visible length of `s` — its width on screen, with ANSI styling
+/// escapes discounted. `visible_len(term.red("hi"))` is 2, not 11.
+share fn visible_len(s) = {
+    let mut n = 0
+    let mut in_esc = false
+    for ch in s {
+        if in_esc => { if ch == "m" => { in_esc = false } }
+        else => {
+            if ch == "\x1b" => { in_esc = true } else => { n = n + 1 }
+        }
+    }
+    n
+}
+
 /// An aligned table. `headers` is a list of column titles (bold);
 /// `rows` is a list of rows, each a list of cell strings. Columns are
-/// padded to their widest plain cell — style cells *after* tabulating,
-/// or the escape bytes throw the alignment off.
+/// padded to their widest cell by *visible* width, so styled cells
+/// (colored, bold) align just as plain ones do.
 share fn table(headers, rows) = {
     let ncols = len(headers)
-    let mut widths = map(headers, (h) => str.length(h))
+    let mut widths = map(headers, (h) => visible_len(h))
     for row in rows {
         let mut c = 0
         while c < ncols {
             if c < len(row) => {
-                let w = str.length(row[c])
+                let w = visible_len(row[c])
                 if w > widths[c] => { widths = with_at(widths, c, w) }
             }
             c = c + 1
@@ -110,7 +124,10 @@ share fn table(headers, rows) = {
         let mut c = 0
         while c < ncols {
             let cell = if c < len(cells) => cells[c] else => ""
-            out = out + str.pad_end(cell, widths[c], " ")
+            // Pad by the invisible-escape allowance so the visible column
+            // width lands exactly, whether or not the cell is styled.
+            let target = widths[c] + str.length(cell) - visible_len(cell)
+            out = out + str.pad_end(cell, target, " ")
             if c < ncols - 1 => { out = out + "  " }
             c = c + 1
         }

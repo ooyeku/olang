@@ -45,6 +45,8 @@ os.set_env("CLICOLOR_FORCE", "1")
 os.remove_env("NO_COLOR")
 let r = term.red("x")
 let s = term.style("y", #{ "fg": "yellow", "bg": "blue", "bold": true })
+// Visible width discounts the styling escapes, so styled table cells align.
+let vis = term.visible_len(term.red("hi")) == 2 && term.visible_len("plain") == 5
 os.remove_env("CLICOLOR_FORCE")
 // Color off now (piped, not a TTY): plain passthrough, and the
 // structure helpers produce clean aligned output.
@@ -61,8 +63,9 @@ let lines = str.lines(t)
     str.starts_with(lines[0], "name  "),
     str.contains(lines[1], "ada   ") && str.contains(lines[1], "128"),
     str.contains(term.bar(0.5, 20), "50%"),
-    str.contains(term.bar(1.0, 10), "100%")
+    str.contains(term.bar(1.0, 10), "100%"),
+    vis
 ]"##,
-        9,
+        10,
     );
 }

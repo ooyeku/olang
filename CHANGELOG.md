@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`survey` — the command-line flagship (dogfood).** A new example
+  (`examples/survey`): a codebase surveyor that turns a directory into a
+  report — colored totals, a per-language bar chart, aligned tables, and
+  a live progress bar — exercising `cli`, `term`, and `fs` in one
+  self-contained file. It is the terminal counterpart of the tracker web
+  suite: written with the toolkit, shippable via `olang build`,
+  documentable via `olang doc`. `term.table` also gained **visible-width
+  alignment** (`term.visible_len`), so colored/styled table cells now
+  align correctly.
+
 - **`olang doc` — API reference from doc comments.** A new subcommand
   that scans `.ol` files for a source-level doc convention — `//!` for a
   module note, `///` above a declaration for its docs (both already

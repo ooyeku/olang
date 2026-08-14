@@ -322,3 +322,11 @@ nothing to do with the web. The application-framework family (`ui` /
 `viz` / `dash` and the server-side `web` batteries) continues in
 parallel as one domain track among several, no longer the center of
 gravity.
+
+The campaign's flagship dogfood is
+[`examples/survey`](../examples/survey/) — a codebase surveyor
+(colored summaries, a per-language bar chart, aligned tables, a live
+progress bar) that exercises `cli` + `term` + `fs` in one
+self-contained file, builds into a standalone binary with `olang
+build`, and documents itself with `olang doc`: the terminal
+counterpart of the tracker web suite.
