@@ -219,12 +219,20 @@ pushed back. These are the findings, ordered by how much viz-and-data
 work they would unlock. Each is a candidate lane, not a promise.
 
 1. **List building is quadratic.** `xs = xs + [v]` in a loop copies the
-   whole list per iteration; the gallery's generators dodge it with
-   closed-form `map(range(n), ...)` and the attractor caps its point
-   count because a genuine recurrence can't. The `+=` string fusion
-   (AddAssign, 0.51.0) is the exact precedent: recognize
-   `xs = xs + [v]` where the target is unobservable and append in
-   place. This is the single highest-value change for data work.
+   whole list per iteration. **Bytecode tier: done (0.54.0+).** The
+   AddAssign fusion (the 0.51.0 string precedent) now extends to lists
+   — a hot list-builder appends in place when it holds the only
+   reference to its Vec, with the same `Arc::get_mut` aliasing guard
+   the strings use (a snapshot taken before an append is never
+   mutated, self-append copies). A promoted 60,000-element build went
+   3807 ms → 2 ms, an O(n²)→O(n) collapse; differential tests pin the
+   aliasing cases across tiers. **Remaining: the interpreter.** Its
+   list is `Value::List(Arc<[Value]>)` — a fixed-size boxed slice that
+   cannot grow in place — so an *unpromoted* one-shot build (the
+   gallery's boot-time generators) is still quadratic. Making the
+   interpreter fast means moving to `Arc<Vec<Value>>` and mirroring
+   the fusion in the assignment path — a ~220-site representation
+   change, tracked as its own lane.
 2. **No vectorized Series transforms.** `math.sin` over 50,000 points
    means Series → list → 50,000 lambda calls → Series. Elementwise
    Series math (`ods.map`, or `sin`/`exp`/arithmetic lifted over

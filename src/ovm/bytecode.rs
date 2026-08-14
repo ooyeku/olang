@@ -1835,6 +1835,34 @@ impl BytecodeVm {
                                 data: ValueData::String(arc),
                             },
                         )?;
+                    } else if let (ValueData::List(_), ValueData::List(b)) =
+                        (&target_val.data, &rhs_val.data)
+                    {
+                        // The same accumulate fusion for lists: `xs = xs + [v]`
+                        // in a loop is O(n²) as a copy per iteration; when `xs`
+                        // holds the only reference, extend in place for O(1)
+                        // amortized. The aliasing guard is identical to the
+                        // string case — `Arc::get_mut` returns None the moment
+                        // another register, a constant, or a value sent
+                        // elsewhere shares the Vec, and we copy exactly like
+                        // Add would, so aliased accumulators stay correct.
+                        let ValueData::List(mut arc) = target_val.data else {
+                            unreachable!("matched above");
+                        };
+                        match std::sync::Arc::get_mut(&mut arc) {
+                            Some(v) => v.extend(b.iter().cloned()),
+                            None => {
+                                let mut v = (*arc).clone();
+                                v.extend(b.iter().cloned());
+                                arc = std::sync::Arc::new(v);
+                            }
+                        }
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::List(arc),
+                            },
+                        )?;
                     } else {
                         let result = match Self::binary_fast(&target_val, &rhs_val, BinaryOp::Add) {
                             Some(v) => v,

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **In-place list building — the AddAssign of collections.** `xs = xs
+  + [v]` in a loop was O(n²): each iteration copied the whole list.
+  The bytecode tier now extends the accumulate fusion (0.51.0's string
+  precedent) to lists — when the accumulator holds the only reference
+  to its Vec, it extends in place, O(1) amortized. The aliasing guard
+  is `Arc::get_mut`, identical to the string case: a snapshot taken
+  before an append is never mutated, self-append (`xs = xs + xs`)
+  copies, and a list handed to another list mid-loop is unharmed.
+  A promoted 60,000-element build drops from **3807 ms to 2 ms**
+  (~1900×). Differential tests pin every aliasing case equal across
+  the interpreter and the VM. (The interpreter's own list is a
+  fixed-size `Arc<[Value]>`, so an unpromoted one-shot build stays
+  quadratic for now — the representation change is the next lane.)
+
 ## [0.54.0] - 2026-08-13
 
 ### Added

@@ -3338,6 +3338,85 @@ f()
     );
 }
 
+// ── AddAssign fusion: in-place list building ───────────────────────────
+//
+// The list analog of the string case: `xs = xs + [v]` fuses into
+// AddAssign, which extends in place when xs holds the only reference to
+// its Vec. Lists are mutable containers others can reference, so the
+// aliasing guard matters even more than for strings — these pin that a
+// snapshot taken before an append is never mutated, self-append copies,
+// and a list handed to another list mid-loop is unharmed by later
+// appends. All must agree across tiers.
+
+#[test]
+fn list_accumulation_agrees_and_is_linear_shaped() {
+    assert_tier_transparent(
+        r#"
+fn build(n) = {
+    let mut xs = []
+    let mut i = 0
+    while i < n {
+        xs = xs + [i * i]
+        i = i + 1
+    }
+    len(xs) + xs[0] + xs[n - 1]
+}
+build(2000)
+"#,
+    );
+}
+
+#[test]
+fn aliased_lists_survive_in_place_append() {
+    // `snapshot` holds a second reference when the append happens: the
+    // fused path must copy, never extend the shared Vec. Reading the
+    // snapshot's length after the append is what catches a leak.
+    assert_tier_transparent(
+        r#"
+fn f() = {
+    let mut xs = [1, 2]
+    let snapshot = xs
+    xs = xs + [3]
+    len(snapshot) * 100 + len(xs)
+}
+f()
+"#,
+    );
+}
+
+#[test]
+fn self_append_list_copies() {
+    assert_tier_transparent(
+        r#"
+fn f() = {
+    let mut xs = [1, 2]
+    xs = xs + xs
+    xs = xs + xs
+    len(xs) * 1000 + xs[0] + xs[7]
+}
+f()
+"#,
+    );
+}
+
+#[test]
+fn lists_stored_elsewhere_before_append_are_unharmed() {
+    // The accumulating list is nested inside another list mid-way;
+    // later appends must not mutate the nested copy.
+    assert_tier_transparent(
+        r#"
+fn f() = {
+    let mut xs = [1]
+    xs = xs + [2]
+    let kept = [xs, [9]]
+    xs = xs + [3]
+    len(kept[0]) * 100 + len(xs)
+}
+f()
+"#,
+    );
+}
+
 // ── Operand evaluation order: a variable read as an earlier operand must
 // not observe assignments made by a later operand. The compiler shields
 // the variable's register with a Move in exactly that case; these run
