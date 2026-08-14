@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Vectorized Series math — `ods.map`.** `ods.map(series, name)`
+  applies a `math.*` unary function (sin, cos, exp, sqrt, ln, floor,
+  … — 24 in all) across a whole column in one native kernel pass. The
+  name is a String, not a closure, precisely so the loop stays in the
+  kernel: it is the vectorized form of `map(xs, (v) => math.f(v))`
+  with no per-element boundary crossing. Bit-identical to the scalar
+  function (same `f64` methods), nulls propagate, domain-restricted
+  functions raise the same error, and it composes with the existing
+  elementwise Series arithmetic into full expressions
+  (`ods.map(xs, "sin") * 2.0 + 1.0`, one kernel per term). A sin·2+1
+  transform over 50,000 points: **238 ms → 1 ms (~240×)**, same
+  checksum — and it runs in the interpreter kernel, no promotion
+  needed. The gallery's 50k-point curtain is now generated this way.
+
 - **In-place list building — the AddAssign of collections.** `xs = xs
   + [v]` in a loop was O(n²): each iteration copied the whole list.
   The bytecode tier now extends the accumulate fusion (0.51.0's string

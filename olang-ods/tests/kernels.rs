@@ -365,3 +365,75 @@ fn series_eq_ignores_values_under_nulls() {
     assert!(!a.series_eq(&c));
     assert!(!a.series_eq(&Series::from_f64(vec![1.0, 0.0])));
 }
+
+#[test]
+fn map_unary_matches_std_and_propagates_nulls() {
+    // Every supported function equals the naive scalar loop over std f64
+    // methods — bit-identical, since map_unary calls the same methods.
+    let src = [0.1, 0.3, 0.9, 1.0, 2.5, 7.0];
+    let s = Series::from_f64(src.to_vec());
+    type UnaryFn = fn(f64) -> f64;
+    let cases: &[(&str, UnaryFn)] = &[
+        ("sin", f64::sin),
+        ("cos", f64::cos),
+        ("tan", f64::tan),
+        ("atan", f64::atan),
+        ("tanh", f64::tanh),
+        ("exp", f64::exp),
+        ("exp2", f64::exp2),
+        ("sqrt", f64::sqrt),
+        ("cbrt", f64::cbrt),
+        ("ln", f64::ln),
+        ("log2", f64::log2),
+        ("log10", f64::log10),
+        ("floor", f64::floor),
+        ("ceil", f64::ceil),
+        ("round", f64::round),
+        ("trunc", f64::trunc),
+        ("fract", f64::fract),
+        ("abs", f64::abs),
+        ("degrees", f64::to_degrees),
+        ("radians", f64::to_radians),
+    ];
+    for (name, f) in cases {
+        let got = s.map_unary(name).unwrap();
+        for (i, &x) in src.iter().enumerate() {
+            assert_eq!(got.scalar_at(i), Scalar::F64(f(x)), "{} at {}", name, i);
+        }
+    }
+
+    // Integer input converts to f64.
+    let is = Series::from_i64(vec![1, 4, 9]);
+    let r = is.map_unary("sqrt").unwrap();
+    assert_eq!(r.scalar_at(1), Scalar::F64(2.0));
+
+    // Nulls stay null; the underlying value is not evaluated.
+    let n = Series::from_f64_options(vec![Some(4.0), None, Some(9.0)]);
+    let rn = n.map_unary("sqrt").unwrap();
+    assert_eq!(rn.scalar_at(0), Scalar::F64(2.0));
+    assert_eq!(rn.scalar_at(1), Scalar::Null);
+    assert_eq!(rn.scalar_at(2), Scalar::F64(3.0));
+}
+
+#[test]
+fn map_unary_domain_and_type_errors() {
+    // Domain errors match math.* exactly (they error, not NaN).
+    let neg = Series::from_f64(vec![1.0, -4.0]);
+    assert!(neg.map_unary("sqrt").is_err());
+    assert!(Series::from_f64(vec![0.0]).map_unary("ln").is_err());
+    assert!(Series::from_f64(vec![2.0]).map_unary("asin").is_err());
+    // A null at the bad position means no error — it is never evaluated.
+    let masked = Series::from_f64_options(vec![Some(1.0), None]);
+    let mut bad = masked;
+    if let Series::F64 { values, .. } = &mut bad {
+        std::sync::Arc::make_mut(values)[1] = -9.0;
+    }
+    assert!(bad.map_unary("sqrt").is_ok());
+    // Unknown function and non-numeric series both refuse.
+    assert!(Series::from_f64(vec![1.0]).map_unary("wat").is_err());
+    assert!(
+        Series::from_str_values(vec!["a".into()])
+            .map_unary("sin")
+            .is_err()
+    );
+}

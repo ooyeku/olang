@@ -204,6 +204,7 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("max", 1),
     ("quantile", 2),
     ("cumsum", 1),
+    ("map", 2),
     ("dot", 2),
     ("sort", 1),
     ("argsort", 1),
@@ -369,6 +370,24 @@ fn dispatch_inner(func: &str, args: Vec<Value>, expected: usize) -> Result<Value
             .cumsum()
             .map(OdsSeries::into_value)
             .map_err(e),
+        "map" => {
+            // ods.map(series, "sin") — a whole elementwise math transform
+            // in the kernel, no per-element lambda crossing. The name is
+            // a String (not a closure) precisely so the loop can stay
+            // native; compose with Series arithmetic for full vectorized
+            // expressions.
+            let ser = want_series(func, &args, 0)?;
+            let name = match args.get(1) {
+                Some(Value::String(s)) => s.as_ref().clone(),
+                other => {
+                    return Err(format!(
+                        "ods.map: argument 2 must be a function name String like \"sin\", got {}",
+                        other.map(|v| v.type_name()).unwrap_or_default()
+                    ));
+                }
+            };
+            ser.map_unary(&name).map(OdsSeries::into_value).map_err(e)
+        }
         "dot" => {
             let a = want_series(func, &args, 0)?;
             let b = want_series(func, &args, 1)?;

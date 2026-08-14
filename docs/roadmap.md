@@ -233,12 +233,20 @@ work they would unlock. Each is a candidate lane, not a promise.
    interpreter fast means moving to `Arc<Vec<Value>>` and mirroring
    the fusion in the assignment path — a ~220-site representation
    change, tracked as its own lane.
-2. **No vectorized Series transforms.** `math.sin` over 50,000 points
-   means Series → list → 50,000 lambda calls → Series. Elementwise
-   Series math (`ods.map`, or `sin`/`exp`/arithmetic lifted over
-   Series in the ods kernel) would make point-cloud generation as
-   native as the aggregations already are — and it composes with
-   `dom.draw_points`, which already takes Series directly.
+2. **No vectorized Series transforms. Done (0.54.0+).** `ods.map(xs,
+   "sin")` applies any of the `math.*` unary functions across a
+   column in one native kernel pass — the vectorized form of
+   `map(xs, (v) => math.sin(v))` with no per-element boundary
+   crossing. Results are bit-identical (the kernel calls the same
+   `f64` methods), nulls propagate, and domain errors match the
+   scalar form. It composes with the existing elementwise arithmetic
+   into full expressions (`ods.map(xs, "sin") * 2.0 + 1.0`, one kernel
+   per term) and feeds `dom.draw_points` directly. Measured: a
+   sin·2+1 transform over 50,000 points went **238 ms → 1 ms** (~240×,
+   bit-identical checksum), and it runs in the *interpreter* kernel —
+   no promotion needed — so it also lifts the browser boot cost of
+   finding #3. The gallery's 50k-point curtain is now generated this
+   way.
 3. **The browser tier ceiling.** Wasm sessions run interpreter +
    bytecode (the JIT emits native code and cannot exist there), so the
    gallery's ~250k boot-time lambda calls cost visible seconds.

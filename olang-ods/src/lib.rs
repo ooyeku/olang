@@ -408,6 +408,98 @@ impl Series {
         }
     }
 
+    /// Apply a unary `f64 → f64` math function elementwise, producing an
+    /// F64 series. Nulls propagate untouched; only valid positions are
+    /// evaluated. Domain-restricted functions (`sqrt`, `ln`, `log2`,
+    /// `log10`, `asin`, `acos`) error on any *valid* out-of-domain
+    /// element, exactly matching the scalar `math.*` functions — so
+    /// `ods.map(xs, "sin")` is the vectorized form of
+    /// `map(xs, (v) => math.sin(v))`, computed entirely in the kernel
+    /// with zero per-element boundary crossings. Every function
+    /// evaluates through the same std `f64` methods `math.*` calls, so
+    /// results are bit-identical by construction.
+    pub fn map_unary(&self, name: &str) -> Result<Series> {
+        let src: Vec<f64> = match self {
+            Series::F64 { values, .. } => (**values).clone(),
+            Series::I64 { values, .. } => values.iter().map(|&x| x as f64).collect(),
+            _ => {
+                return Err(OdsError::TypeMismatch(format!(
+                    "ods.map: a {} series is not numeric",
+                    self.dtype()
+                )));
+            }
+        };
+        let f: fn(f64) -> f64 = match name {
+            "sin" => f64::sin,
+            "cos" => f64::cos,
+            "tan" => f64::tan,
+            "asin" => f64::asin,
+            "acos" => f64::acos,
+            "atan" => f64::atan,
+            "sinh" => f64::sinh,
+            "cosh" => f64::cosh,
+            "tanh" => f64::tanh,
+            "exp" => f64::exp,
+            "exp2" => f64::exp2,
+            "ln" => f64::ln,
+            "log2" => f64::log2,
+            "log10" => f64::log10,
+            "sqrt" => f64::sqrt,
+            "cbrt" => f64::cbrt,
+            "floor" => f64::floor,
+            "ceil" => f64::ceil,
+            "round" => f64::round,
+            "trunc" => f64::trunc,
+            "fract" => f64::fract,
+            "abs" => f64::abs,
+            "degrees" => f64::to_degrees,
+            "radians" => f64::to_radians,
+            _ => {
+                return Err(OdsError::InvalidArgument(format!(
+                    "ods.map: unknown function \"{}\" — one of sin, cos, tan, asin, \
+                     acos, atan, sinh, cosh, tanh, exp, exp2, ln, log2, log10, sqrt, \
+                     cbrt, floor, ceil, round, trunc, fract, abs, degrees, radians",
+                    name
+                )));
+            }
+        };
+        // The domain guard reproduces the exact error the scalar
+        // `math.<name>` raises on an out-of-range argument.
+        let domain_err = |x: f64| -> Option<String> {
+            match name {
+                "sqrt" if x < 0.0 => {
+                    Some("sqrt: cannot take square root of negative number".to_string())
+                }
+                "ln" if x <= 0.0 => Some("ln: input must be positive".to_string()),
+                "log2" if x <= 0.0 => Some("log2: input must be positive".to_string()),
+                "log10" if x <= 0.0 => Some("log10: input must be positive".to_string()),
+                "asin" if !(-1.0..=1.0).contains(&x) => {
+                    Some("asin: input must be in range [-1, 1]".to_string())
+                }
+                "acos" if !(-1.0..=1.0).contains(&x) => {
+                    Some("acos: input must be in range [-1, 1]".to_string())
+                }
+                _ => None,
+            }
+        };
+        let validity = self.validity().cloned();
+        let mut out = Vec::with_capacity(src.len());
+        for (i, &x) in src.iter().enumerate() {
+            if validity.as_ref().map(|v| v.get(i)).unwrap_or(true) {
+                if let Some(msg) = domain_err(x) {
+                    return Err(OdsError::InvalidArgument(msg));
+                }
+                out.push(f(x));
+            } else {
+                out.push(0.0);
+            }
+        }
+        Ok(Series::F64 {
+            values: Arc::new(out),
+            validity,
+        })
+    }
+
     // -----------------------------------------------------------------
     // Comparisons
     // -----------------------------------------------------------------

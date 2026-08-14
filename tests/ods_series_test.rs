@@ -336,3 +336,52 @@ fn type_errors_are_informative() {
     let err = eval("ods.quantile(ods.series([1.0]), 2.0)", None).unwrap_err();
     assert!(err.contains("[0, 1]"), "got: {}", err);
 }
+
+#[test]
+fn vectorized_map_equals_the_lambda_form() {
+    // ods.map(xs, "sin") is the vectorized form of the per-element
+    // lambda — the whole point of finding #2. It must agree exactly,
+    // and compose with Series arithmetic into full expressions. Run
+    // both tiers (None = interpreter, Some = bytecode).
+    for threshold in [None, Some(1)] {
+        let result = eval(
+            r#"
+let xs = ods.linspace(0.0, 6.28, 200)
+let a = ods.to_list(ods.map(xs, "sin") * 2.0 + 1.0)
+let b = map(ods.to_list(xs), (v) => math.sin(v) * 2.0 + 1.0)
+let c = ods.to_list(ods.map(xs, "exp"))
+let d = map(ods.to_list(xs), (v) => math.exp(v))
+[show(a) == show(b), show(c) == show(d)]
+"#,
+            threshold,
+        );
+        assert_eq!(
+            result,
+            Ok(Value::List(
+                vec![Value::Boolean(true), Value::Boolean(true)].into()
+            )),
+            "threshold {:?}",
+            threshold
+        );
+    }
+}
+
+#[test]
+fn vectorized_map_nulls_and_errors() {
+    // Nulls propagate; a domain error matches the scalar math function.
+    let nulls = eval(
+        r#"
+let m = map_get(#{}, "x")
+ods.null_count(ods.map(ods.series([4.0, m, 9.0]), "sqrt"))
+"#,
+        None,
+    );
+    assert_eq!(nulls, Ok(Value::Integer(1)));
+
+    let err = eval(r#"ods.map(ods.series([1.0]), "nope")"#, None).unwrap_err();
+    assert!(err.contains("unknown function"), "got: {}", err);
+    let err = eval(r#"ods.map(ods.series([1.0]), (v) => v)"#, None).unwrap_err();
+    assert!(err.contains("function name String"), "got: {}", err);
+    let err = eval(r#"ods.map(ods.series([-1.0]), "sqrt")"#, None).unwrap_err();
+    assert!(err.contains("square root"), "got: {}", err);
+}

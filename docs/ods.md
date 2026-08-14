@@ -126,6 +126,34 @@ println(to_string(ods.mean(taxed)))
 println(to_string(ods.sum(spread) < 0.0000001))   // centered: ~0
 ```
 
+### Elementwise math: `ods.map`
+
+Arithmetic covers `+ - * /`; `ods.map(series, name)` covers the rest —
+the whole `math.*` family applied across a column in one native pass.
+The second argument is a function *name* (a String, not a closure)
+precisely so the loop stays in the kernel: `ods.map(xs, "sin")` is the
+vectorized form of `map(xs, (v) => math.sin(v))` with no per-element
+boundary crossing. Results are bit-identical to the scalar function
+(the kernel calls the same `f64` methods), nulls propagate, and
+domain-restricted functions (`sqrt`, `ln`, `asin`, …) raise the same
+error the scalar form would. Compose it with arithmetic for a full
+vectorized expression — one kernel per term:
+
+```olang
+let t = ods.linspace(0.0, 6.28, 8)
+let wave = ods.map(t, "sin") * 2.0 + 1.0          // sin(t)*2 + 1, native
+println(to_string(ods.mean(wave)))
+```
+
+The functions: `sin cos tan asin acos atan sinh cosh tanh exp exp2 ln
+log2 log10 sqrt cbrt floor ceil round trunc fract abs degrees
+radians` — all `f64 → f64`, producing a Float series (Int series
+widen). Because a Series feeds
+[`dom.draw_points`](wasm.md#graphics-the-draw-list) directly, generating
+a 50,000-point cloud this way runs entirely in native code — about
+**240× faster** than the closure form, and the whole reason large
+scatter and line art in the gallery is cheap to build.
+
 ### Comparisons make masks
 
 `< <= > >=` between a Series and a scalar (or another Series) produce
