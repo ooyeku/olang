@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`cli` — declarative command-line argument parsing.** A new embedded
+  olang package (`use cli`) that turns a program's argument surface into
+  a spec map: typed flags (`bool`/`int`/`float`/`string`, short + long,
+  defaults, `required`, env fallback), positional arguments,
+  subcommands, and auto-generated `--help`. `cli.parse(spec, argv)` →
+  `Ok(values)` \| `Err(message)`; `cli.help(spec)` renders usage;
+  `cli.args()` is `os.args()` with the program path dropped. The
+  `taskcli` example is rewritten onto it — its whole command surface
+  (`list`/`open`/`stats`/`add --priority`) is one spec, with help and
+  clean exit codes for free. First lane of the **Toolsmith campaign**
+  (build & ship real command-line tools in olang).
+
 ## [0.56.0] - 2026-08-14
 
 ### Added

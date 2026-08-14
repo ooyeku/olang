@@ -291,3 +291,34 @@ work they would unlock. Each is a candidate lane, not a promise.
    counts gets 0,1,2,3 instead of 0,0.5,1,…. Float data is untouched.
    The charts page's status bars read as whole numbers live.
 
+
+## The Toolsmith campaign — building and shipping real tools in olang
+
+olang is a general-purpose language, and the recent web/data-viz work
+is one domain it happens to be good at — not its identity. This
+campaign deliberately balances that by making olang excellent at the
+*other* end of the general-purpose spectrum: command-line tools and
+systems programs. One coherent arc — **write** the tool ergonomically,
+**ship** it as a fast single binary, **maintain** it with first-class
+tooling — and each lane's first consumer is olang's own toolchain, the
+dogfooding loop that has carried the whole project. Grouped by the
+three pillars it draws from: **C** (CLI & systems), **D** (runtime &
+performance), **E** (tooling & DX).
+
+| # | Lane | Pillar | What ships | Status |
+|---|---|---|---|---|
+| T1 | **`cli` — declarative argument parsing** | C | An embedded package: spec-driven flags (short/long, typed, defaults, `required`, env fallback), positional args, subcommands, auto-generated `--help`/usage, and precise errors. `cli.parse(spec, argv)` → `Ok(values)` \| `Err(msg)`; `cli.help(spec)` renders usage. The pattern olang's own `main.rs` hand-rolls today | planned — **leads the campaign** |
+| T2 | **`term` — the terminal toolkit** | C | What `viz` is for the browser, for the terminal: fg/bg color + bold/dim/underline with TTY auto-detection (plain when piped), aligned tables and key/value blocks, progress bars and spinners, and `prompt`/`confirm`/`select` input. The test runner's report and `bench`'s tables are the first consumers | planned |
+| T3 | **Process & pipe depth** | C | Beyond the existing `os.exec`: streaming stdin/stdout, process pipelines, exit-code plumbing, and signal handling (SIGINT → graceful shutdown) for long-running tools and servers | planned |
+| T4 | **`olang build` — AOT to a standalone binary** | D | The headline. Ship an olang tool as one self-contained executable, no olang install required. Rung A: bundle source + runtime into a self-extracting binary. Rung B: embed precompiled bytecode (skip parse at startup). Rung C: AOT-compile hot functions via Cranelift's `ObjectModule` (the JIT already proves the codegen; this emits `.o` and links). olang itself ships this way | planned |
+| T5 | **Startup & the wasm tier** | D | Cold-start matters for CLI tools invoked repeatedly *and* for browser boot (viz finding #3): bytecode caching, lazy stdlib init, measured with `olang bench` | planned |
+| T6 | **`olang doc` — API reference generator** | E | Establish a `///` doc-comment convention (the parser keeps them on declarations), then `olang doc` extracts them to a browsable, suite-themed reference. The stdlib reference generates from source instead of being hand-maintained | planned |
+| T7 | **`olang test --coverage`** | E | Line/function coverage from the existing test runner — the last piece of a credible test story that already has discovery, reporting, and `olang bench` beside it | planned |
+
+The through-line: after this campaign you can write a polished CLI
+tool in olang, ship it as a single fast binary, and document and test
+it with first-class tooling — a complete general-purpose story that has
+nothing to do with the web. The application-framework family (`ui` /
+`viz` / `dash` and the server-side `web` batteries) continues in
+parallel as one domain track among several, no longer the center of
+gravity.

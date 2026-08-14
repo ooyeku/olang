@@ -1,7 +1,7 @@
 # The olang Standard Library Reference
 
 Everything the runtime ships: the global builtins (always in scope) and the
-twenty-one native modules plus two olang-source modules compiled into the
+twenty-one native modules plus the olang-source modules compiled into the
 binary. As in the [language reference](language.md), every `olang` code
 block here is executed by the test suite — the examples cannot drift from
 the implementation. (Blocks marked `no-run` are parse-checked only: they
@@ -33,6 +33,7 @@ Part of [the olang book](README.md) ·
 - [`base64` — base64](#base64--base64)
 - [`fs` — file system](#fs--file-system)
 - [`os` — operating system](#os--operating-system)
+- [`cli` — command-line argument parsing](#cli--command-line-argument-parsing)
 - [`http` — HTTP](#http--http)
 - [`db` — SQLite](#db--sqlite)
 - [`dom` — the browser](#dom--the-browser)
@@ -44,8 +45,8 @@ Part of [the olang book](README.md) ·
 ## Conventions
 
 **Modules are always in scope.** `str.trim(...)`, `json.parse(...)`, and the
-rest work without any `use`. (The olang-source modules `colx` and `mathx`
-are the exception: import them with `use colx`.) A `use str` still works —
+rest work without any `use`. (The olang-source modules `colx`, `mathx`, and `cli`
+are the exception: import them with `use colx` / `use cli`.) A `use str` still works —
 useful when you want the import list of a file to be explicit — but is
 never required.
 
@@ -704,6 +705,61 @@ let r = unwrap(os.exec("git", ["status", "--short"], #{ "cwd": target }))
 if r.code == 0 => print(r.stdout)
 else => println("git failed: " + r.stderr)
 ```
+
+## `cli` — command-line argument parsing
+
+`use cli` — an embedded olang package — turns a command-line
+program's argument surface into a **declarative spec** and does the
+parsing for you: typed flags, positional arguments, subcommands,
+`--help`, and precise error messages, in the spirit of what `argparse`
+or `clap` provide. A spec is a plain map; `cli.parse(spec, argv)`
+returns `Ok(values)` — a map holding every flag and argument by name,
+plus a boolean `help` — or `Err(message)`. `cli.help(spec)` renders
+the usage text, and `cli.args()` is `os.args()` with the program path
+already dropped.
+
+| Function | Description |
+|---|---|
+| `cli.parse(spec, argv)` | parse an argv list; `Ok(values)` or `Err(diagnostic)` |
+| `cli.help(spec)` | the usage/help text as a string |
+| `cli.args()` | the program's own arguments (program path removed) |
+
+A spec's `flags` each carry a `name` (the long form and result key), an
+optional `short`, a `type` (`"bool"`, `"int"`, `"float"`, or the
+default `"string"`), an optional `default`, `required`, `env` (an
+environment-variable fallback), and `help`. `args` are positional, in
+order, each with `name`, `required`, `default`, and `help`. A spec with
+`commands` becomes a subcommand dispatcher — the first token selects the
+command, and the result carries `command`. Flags accept both
+`--count 3` and `--count=3` (and `-n 3` / `-n=3`); `-h`/`--help`
+short-circuits with `help` set true.
+
+```olang no-run
+use cli
+let spec = #{
+    "name": "greet", "about": "Greet someone",
+    "flags": [
+        #{ "name": "loud", "short": "l", "type": "bool", "help": "SHOUT it" },
+        #{ "name": "count", "short": "n", "type": "int", "default": 1,
+           "help": "repeat N times" }
+    ],
+    "args": [ #{ "name": "who", "required": true, "help": "who to greet" } ]
+}
+match cli.parse(spec, cli.args()) {
+    Err(e) => { println("greet: " + e); os.exit(2) },
+    Ok(a) => if map_get(a, "help") => println(cli.help(spec))
+        else => {
+            let line = map_get(a, "who")
+            let shout = if map_get(a, "loud") => str.to_upper(line) else => line
+            for i in range(0, map_get(a, "count")) { println("Hello, " + shout + "!") }
+        }
+}
+```
+
+[`examples/taskcli`](../examples/taskcli/) is the worked example — a
+small task tracker whose entire command surface (`list`, `open`,
+`stats`, `add --priority`) is one `cli` spec, with `--help` and clean
+exit codes for free.
 
 ## `http` — HTTP
 
