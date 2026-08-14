@@ -29,18 +29,39 @@ card("g-area", plot.area(xs, ods.series(map(t, (x) =>
     2.2 + math.sin(x) + 0.6 * math.sin(x * 2.7 + 0.8) + 0.35 * math.sin(x * 5.3 + 2.0))),
     o("layered waveform")))
 
-// ── spiral galaxy: two noisy arms, brightness by scatter density ─────
-fn arm(n, phase) = map(range(0, n), (i) => {
-    let a = to_float(i) * 0.03
-    let r = 0.34 * a + 0.12
-    [r * math.cos(a * 3.2 + phase) + jitter(0.10 * r + 0.02),
-     r * math.sin(a * 3.2 + phase) + jitter(0.10 * r + 0.02)]
+// ── the galaxy: 12,500 stars, spinning on one parameter ──────────────
+// Star positions are computed ONCE (closed-form arms + a core bulge);
+// every frame re-sends the same three buffers with a new rotation —
+// dom.draw_points applies the spin host-side, so olang's per-frame
+// work is three calls, whatever the star count.
+fn arm_x(n, phase) = ods.series(map(range(0, n), (i) => {
+    let f = to_float(i) / to_float(n)
+    let a = f * 5.2 + phase
+    (0.08 + f * 0.92) * math.cos(a) + jitter(0.03 + 0.09 * f)
+}))
+fn arm_y(n, phase) = ods.series(map(range(0, n), (i) => {
+    let f = to_float(i) / to_float(n)
+    let a = f * 5.2 + phase
+    (0.08 + f * 0.92) * math.sin(a) + jitter(0.03 + 0.09 * f)
+}))
+let a1x = arm_x(5000, 0.0)
+let a1y = arm_y(5000, 0.0)
+let a2x = arm_x(5000, 3.14159)
+let a2y = arm_y(5000, 3.14159)
+let core_x = ods.series(map(range(0, 2500), (i) => jitter(0.16)))
+let core_y = ods.series(map(range(0, 2500), (i) => jitter(0.13)))
+let gal = dom.query("#g-galaxy")
+dom.on_frame((f) => {
+    let rot = time.monotonic_ms() / 11000.0
+    dom.draw(gal, [#{ "op": "clear", "color": "#0b0e14" }])
+    dom.draw_points(gal, a1x, a1y, #{ "mode": "points", "size": 1.0, "alpha": 0.75,
+        "color": "#5aa9e6", "sx": 185.0, "sy": 185.0, "tx": 260.0, "ty": 190.0, "rot": rot })
+    dom.draw_points(gal, a2x, a2y, #{ "mode": "points", "size": 1.0, "alpha": 0.75,
+        "color": "#3ddc97", "sx": 185.0, "sy": 185.0, "tx": 260.0, "ty": 190.0, "rot": rot })
+    dom.draw_points(gal, core_x, core_y, #{ "mode": "points", "size": 1.5, "alpha": 0.9,
+        "color": "#f5e9c9", "sx": 185.0, "sy": 185.0, "tx": 260.0, "ty": 190.0,
+        "rot": rot * 1.4 })
 })
-let stars = concat(arm(260, 0.0), arm(260, 3.14159))
-card("g-spiral", plot.scatter(
-    ods.series(map(stars, (p) => p[0])),
-    ods.series(map(stars, (p) => p[1])),
-    o("spiral galaxy")))
 
 // ── interference field: two wave systems crossing, as a heatmap ──────
 let g = range(0, 26)
@@ -141,7 +162,7 @@ viz.draw(dom.query("#g-attractor"),
 // same packed f64 buffer with a new affine + color. No JSON, no
 // per-point olang work — dom.draw_points is one memcpy and one native
 // loop per frame.
-let curtain_t = map(range(0, 30000), (i) => to_float(i) * 0.0021)
+let curtain_t = map(range(0, 50000), (i) => to_float(i) * 0.00126)
 let curtain_x = ods.series(map(curtain_t, (t) => math.sin(t * 3.01)))
 let curtain_y = ods.series(map(curtain_t, (t) => math.sin(t * 3.97 + 1.57)))
 let big = dom.query("#g-big")
@@ -155,7 +176,7 @@ dom.on_frame((f) => {
         "sx": 500.0 * (1.0 + 0.1 * math.sin(tt * 0.6)),
         "sy": 165.0 * (1.0 + 0.1 * math.cos(tt * 0.8)),
         "tx": 560.0, "ty": 190.0 })
-    dom.set_text(big_hud, "30,000 points · " +
+    dom.set_text(big_hud, "50,000 points · " +
         show(to_int(math.round(1000.0 / math.max(map_get(f, "delta"), 1.0)))) + " fps")
 })
 

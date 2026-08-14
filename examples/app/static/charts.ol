@@ -75,8 +75,8 @@ fn draw(items) = {
         n = n + 1
     }
     card("c-area", viz.chart(themed(#{ "data": cum, "layers": [
-        #{ "mark": "area", "x": "n", "y": "total" },
-        #{ "mark": "point", "x": "n", "y": "total" }
+        #{ "mark": "area", "x": "n", "y": "total", "label": "" },
+        #{ "mark": "point", "x": "n", "y": "total", "label": "" }
     ] }, "cumulative points")))
 
     dom.set_text(dom.query("#hud"),
@@ -85,9 +85,12 @@ fn draw(items) = {
 }
 
 fn refresh() = dom.fetch_json("GET", "/api/issues?limit=500", "", (resp) => {
-    let items = map_get(resp, "items")
-    if len(items) == 0 => dom.set_text(dom.query("#hud"), "no issues to chart — add some in the tracker")
-    else => draw(items)
+    // A fetch failure delivers #{ "error": ... } — keep the last render.
+    if map_has_key(resp, "items") => {
+        let items = map_get(resp, "items")
+        if len(items) == 0 => dom.set_text(dom.query("#hud"), "no issues to chart — add some in the tracker")
+        else => draw(items)
+    }
 })
 
 dom.on(dom.query("#refresh"), "click", (e) => { refresh() })

@@ -197,14 +197,22 @@ pub fn render_xy(series: &[XySeries], opts: &PlotOptions) -> Result<String> {
                     let _ = write!(d, "{}{:.2},{:.2}", if j == 0 { "M" } else { " L" }, x, y);
                 }
                 if s.kind == XyKind::Area {
-                    // Fill to the plot floor; translucent so stacked
-                    // series stay readable, the line carries the value.
+                    // Fill to the plot floor with a vertical gradient
+                    // fading toward the axis — the fill stays a hint,
+                    // the line carries the value. Gradient ids derive
+                    // from the color, so identical definitions collide
+                    // harmlessly when several charts share a page.
                     let floor = geo.top + geo.plot_h;
                     let (first, last) = (pts[0].0, pts[pts.len() - 1].0);
+                    let gid = format!("vzg{}", color.trim_start_matches('#'));
                     let _ = write!(
                         svg.body,
-                        "<path d=\"{d} L{last:.2},{floor:.2} L{first:.2},{floor:.2} Z\" \
-                         fill=\"{color}\" fill-opacity=\"0.22\" stroke=\"none\"/>",
+                        "<linearGradient id=\"{gid}\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\
+                         <stop offset=\"0\" stop-color=\"{color}\" stop-opacity=\"0.5\"/>\
+                         <stop offset=\"1\" stop-color=\"{color}\" stop-opacity=\"0.03\"/>\
+                         </linearGradient>\
+                         <path d=\"{d} L{last:.2},{floor:.2} L{first:.2},{floor:.2} Z\" \
+                         fill=\"url(#{gid})\" stroke=\"none\"/>",
                     );
                 }
                 let _ = write!(
@@ -1129,7 +1137,8 @@ mod tests {
             &PlotOptions::default(),
         )
         .unwrap();
-        assert!(s.contains("fill-opacity=\"0.22\""));
+        assert!(s.contains("<linearGradient id=\"vzg"));
+        assert!(s.contains("stop-opacity=\"0.5\""));
         // The stroke line still draws on top of the fill.
         assert!(s.contains("stroke-width=\"2\""));
     }

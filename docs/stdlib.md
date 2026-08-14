@@ -847,7 +847,7 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.request_frame(fn)` | one animation frame; re-arm inside the handler for a loop |
 | `dom.on_frame(fn)` | the persistent animation loop: register once, called every frame with a millisecond `delta` |
 | `dom.draw(canvas, ops)` | replay a draw-list onto a canvas — the whole scene crosses the boundary once |
-| `dom.draw_points(canvas, xs, ys, style)` | the bulk path: coordinates cross as one packed binary buffer (Series or lists; nulls drop pairwise); style takes `mode` (`"points"`/`"path"`), `color`, `size`, `alpha`, and an affine `sx`/`sy`/`tx`/`ty` applied host-side |
+| `dom.draw_points(canvas, xs, ys, style)` | the bulk path: coordinates cross as one packed binary buffer (Series or lists; nulls drop pairwise); style takes `mode` (`"points"`/`"path"`), `color`, `size`, `alpha`, a rotation `rot` (radians), and an affine `sx`/`sy`/`tx`/`ty` — all applied host-side |
 | `dom.insert_before(parent, child, before)` | position a child (`0` appends) |
 | `dom.push_state(path)` / `dom.location()` | SPA navigation; location is a Map of `path` and `query` |
 | `dom.on_route(fn)` | the back/forward listener — a `route` event Map with `path` and `query` |
@@ -1036,6 +1036,16 @@ the browser. With `"interactive": true` marks carry their datum as
 `data-*` attributes, and `viz.tooltip` / `viz.on_mark` / `viz.brush`
 turn hover, click-to-filter, and brush-to-zoom into one-liners. See
 [the Data Stack](ods.md#the-viz-grammar).
+
+Above both sits **`use dash`** — the dashboard kit. `dash.kpi(label,
+value, note)`, `dash.card(title, inner)`, `dash.wide(...)`, and
+`dash.grid(cards, columns)` build a dashboard shell as pure HTML
+strings (escaped, natively tested), and `dash.styles()` ships the
+styling — a page needs no CSS of its own. The wiring pattern stays in
+your program: fetch, compute, `dom.set_html` the shell, fill the chart
+mounts with `viz.chart`. The tracker's `/board.html` is the flagship:
+a KPI row, five charts, a URL-carried status filter, and a 5-second
+auto-refresh in one source file.
 
 ```olang
 let x = ods.linspace(0.0, 6.28, 50)

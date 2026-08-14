@@ -143,7 +143,7 @@ fn area_grouped_stacked_heatmap_box() {
         let hm = plot.heatmap(["mon", "tue"], ["am", "pm"], [[1, 2], [3, 4]], #{})
         let bx = plot.box([["east", ods.series([1.0, 5.0, 3.0, 2.0])]], #{})
         [
-            str.contains(a, "fill-opacity"),
+            str.contains(a, "linearGradient"),
             str.contains(grouped, "east") && str.contains(grouped, "west"),
             str.contains(stacked, "east"),
             str.contains(hm, "mon") && str.contains(hm, "am"),

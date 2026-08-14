@@ -369,12 +369,14 @@ zero-copy typed-array view: no serialization, no per-point boundary
 crossing. `xs`/`ys` are ods Series (the fast lane — the data stack
 feeds the graphics pipeline directly) or plain lists; nulls drop
 pairwise. The style map picks `mode` (`"points"` or `"path"`),
-`color`, `size`, `alpha` — and an affine `sx`/`sy`/`tx`/`ty` applied
-*host-side*, which is the trick that makes animation cheap: compute
-the data once, and every frame just re-sends the same buffer with new
-transform parameters. The gallery's finale animates 30,000 points at
-frame rate this way, and `viz.draw` compiles its point and line marks
-onto this path automatically.
+`color`, `size`, `alpha` — plus a rotation `rot` and an affine
+`sx`/`sy`/`tx`/`ty` applied *host-side*, which is the trick that
+makes animation cheap: compute the data once, and every frame just
+re-sends the same buffer with new transform parameters. The gallery
+spins a 12,500-star galaxy on the rotation parameter alone and
+animates a 50,000-point curtain at frame rate this way, and
+`viz.draw` compiles its point and line marks onto this path
+automatically.
 
 The frame loop has two speeds. `dom.request_frame(fn)` is one-shot —
 re-arm it inside the handler if you want another. `dom.on_frame(fn)`
@@ -554,9 +556,12 @@ loop, no HTML rendering at all), `notes.ol` (`ui.render`, routing,
 storage — the SPA shape), `primes.ol` with `primes-worker.ol` (two
 programs, one page — the parallelism shape), and the data-viz pair:
 `charts.ol` (live analytics from `fetch_json` through ods frames into
-plot SVG) and `gallery.ol` (the visualization showcase). Together with
-`app.ol` they exercise the module's entire surface, and every one is
-served as source by the same process that serves its page.
+plot SVG), `gallery.ol` (the visualization showcase), and `board.ol`
+(the `dash` kit's flagship: KPI tiles, chart cards, a URL-carried
+filter, and auto-refresh — a complete ops dashboard in one file).
+Together with `app.ol` they exercise the module's entire surface, and
+every one is served as source by the same process that serves its
+page.
 
 ## Running it
 

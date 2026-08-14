@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>charts — olang data stack</title>
+  <title>board — olang dashboard</title>
   <style>
     nav.demos {
       position: fixed; top: 0; left: 0; right: 0; z-index: 10;
@@ -27,21 +27,13 @@
       display: flex; align-items: baseline; gap: 1rem;
     }
     h1 { color: #7fd1b9; font-size: 1.05rem; margin: 0; }
-    #hud { color: #5b6577; }
-    button {
+    header span { color: #5b6577; }
+    select {
       margin-left: auto; background: #1a2230; color: #7fd1b9;
       border: 1px solid #263042; border-radius: 8px;
-      padding: 0.35rem 0.9rem; font: inherit; cursor: pointer;
+      padding: 0.35rem 0.7rem; font: inherit;
     }
-    #grid {
-      max-width: 1180px; margin: 0 auto;
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-      gap: 1rem;
-    }
-    #grid > div {
-      background: #0e1116; border: 1px solid #1e2430; border-radius: 12px;
-      padding: 0.5rem; overflow: hidden;
-    }
+    #board { max-width: 1180px; margin: 0 auto; }
     p.note { max-width: 1180px; margin: 1rem auto 0; opacity: 0.7; }
   </style>
 </head>
@@ -51,28 +43,24 @@
     <a href="/orbit.html">orbit</a>
     <a href="/notes.html">notes</a>
     <a href="/primes.html">primes</a>
-    <a class="here" href="/charts.html">charts</a>
+    <a href="/charts.html">charts</a>
     <a href="/gallery.html">gallery</a>
-    <a href="/board.html">board</a>
+    <a class="here" href="/board.html">board</a>
     <span class="sep">|</span>
-    <a class="src" href="/charts.ol">view source (charts.ol)</a>
+    <a class="src" href="/board.ol">view source (board.ol)</a>
   </nav>
   <header>
-    <h1>charts — live tracker analytics</h1>
-    <span id="hud">loading…</span>
-    <button id="refresh">refresh</button>
+    <h1>board — tracker ops</h1>
+    <span>auto-refreshes every 5s · filter is the URL</span>
+    <select id="b-flt">
+      <option value="">all statuses</option>
+      <option value="open">open</option>
+      <option value="in-progress">in progress</option>
+      <option value="done">done</option>
+    </select>
   </header>
-  <input type="hidden" id="flt" />
-  <div id="grid">
-    <div id="c-status"></div>
-    <div id="c-grouped"></div>
-    <div id="c-stacked"></div>
-    <div id="c-hist"></div>
-    <div id="c-box"></div>
-    <div id="c-heat"></div>
-    <div id="c-area"></div>
-  </div>
-  <p class="note"><b>the data stack in the browser</b> — one fetch_json, then viz specs and plot SVG, all in olang. Hover any mark for its datum; click a status bar to cross-filter every card. Edit issues in the tracker and hit refresh.</p>
-  <script src="/olang-dom.js" data-src="/charts.ol" defer></script>
+  <div id="board"></div>
+  <p class="note"><b>the dashboard kit</b> — dash builds the shell (KPIs, cards, grid), viz fills it, the URL carries the filter, and the whole page is one olang source file.</p>
+  <script src="/olang-dom.js" data-src="/board.ol" defer></script>
 </body>
 </html>

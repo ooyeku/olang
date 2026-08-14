@@ -28,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   draw-list for point counts SVG can't carry. Underneath, `plot.xy`
   is new: layered mixed marks (line/area/scatter, each with its own
   x) in one document over shared scales.
+- **The `dash` kit and the ops board.** `use dash`: KPI tiles, cards,
+  wide cards, and the grid as pure HTML builders (escaped, natively
+  tested) plus `dash.styles()` so a dashboard page ships no CSS. The
+  flagship `/board.html`: a KPI row and five viz charts over live
+  tracker data, a status filter carried in the URL (bookmarkable,
+  back-button correct), one delegated tooltip for every chart, and a
+  5-second auto-refresh — one olang source file end to end. Fetch
+  failures now keep the last render on both data pages instead of
+  erroring.
+- **The beauty pass.** Area marks fill with a vertical gradient fading
+  toward the axis (SVG, both themes); `dom.draw_points` gains a
+  host-side rotation term; the gallery's spiral becomes a 12,500-star
+  galaxy spinning on that one parameter, and the finale curtain grows
+  to 50,000 points — still at frame rate.
 - **The binary bulk path — big data at frame rate.**
   `dom.draw_points(canvas, xs, ys, style)`: coordinates cross the wasm
   boundary as ONE packed f64 buffer the page reads as a zero-copy

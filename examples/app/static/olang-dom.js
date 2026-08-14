@@ -278,12 +278,17 @@
         const pts = new Float64Array(ex.memory.buffer, Number(ptr), n * 2);
         const sx = style.sx ?? 1, sy = style.sy ?? 1;
         const tx = style.tx ?? 0, ty = style.ty ?? 0;
+        // Optional rotation (radians) around the data origin, applied
+        // before scale/translate — spinning a point cloud costs one
+        // parameter, not a recompute.
+        const cr = Math.cos(style.rot ?? 0), sr = Math.sin(style.rot ?? 0);
         const color = style.color ?? "#5aa9e6";
         if (style.alpha != null) ctx.globalAlpha = style.alpha;
         if (style.mode === "path") {
           ctx.beginPath();
           for (let i = 0; i < n; i++) {
-            const x = pts[2 * i] * sx + tx, y = pts[2 * i + 1] * sy + ty;
+            const px = pts[2 * i], py = pts[2 * i + 1];
+            const x = (px * cr - py * sr) * sx + tx, y = (px * sr + py * cr) * sy + ty;
             i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
           }
           ctx.strokeStyle = color;
@@ -293,7 +298,8 @@
           ctx.fillStyle = color;
           const r = style.size ?? 1.5;
           for (let i = 0; i < n; i++) {
-            ctx.fillRect(pts[2 * i] * sx + tx - r / 2, pts[2 * i + 1] * sy + ty - r / 2, r, r);
+            const px = pts[2 * i], py = pts[2 * i + 1];
+            ctx.fillRect((px * cr - py * sr) * sx + tx - r / 2, (px * sr + py * cr) * sy + ty - r / 2, r, r);
           }
         }
         if (style.alpha != null) ctx.globalAlpha = 1;

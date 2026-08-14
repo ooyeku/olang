@@ -65,7 +65,7 @@ let svg = viz.chart(#{{ "data": rows, "layers": [
     #{{ "mark": "point", "x": "day", "y": "value" }}
 ]}})
 [
-    str.contains(svg, "fill-opacity=\"0.22\""),
+    str.contains(svg, "linearGradient"),
     str.contains(svg, "circle"),
     str.contains(svg, "stroke-width=\"2\"")
 ]"##

@@ -62,6 +62,8 @@ let charts_html = unwrap(fs.read_file("static/charts.html"))
 let charts_ol = unwrap(fs.read_file("static/charts.ol"))
 let gallery_html = unwrap(fs.read_file("static/gallery.html"))
 let gallery_ol = unwrap(fs.read_file("static/gallery.ol"))
+let board_html = unwrap(fs.read_file("static/board.html"))
+let board_ol = unwrap(fs.read_file("static/board.ol"))
 
 // The wasm artifact is gitignored; warn loudly at boot when missing.
 // (fs.exists, not read_file: the artifact is binary, and reading it as
@@ -122,6 +124,13 @@ fn gallery_page(req, params) =
         #{ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" })
 fn gallery_source(req, params) =
     http.response_with_headers(200, gallery_ol,
+        #{ "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
+// The ops board: the dash kit's flagship (viz stage 5).
+fn board_page(req, params) =
+    http.response_with_headers(200, board_html,
+        #{ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" })
+fn board_source(req, params) =
+    http.response_with_headers(200, board_ol,
         #{ "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
 // The wasm is binary: body_file serves raw bytes straight from disk.
 fn olang_wasm(req, params) = {
@@ -293,6 +302,8 @@ let routes = [
     route("GET", "/charts.ol", charts_source),
     route("GET", "/gallery.html", gallery_page),
     route("GET", "/gallery.ol", gallery_source),
+    route("GET", "/board.html", board_page),
+    route("GET", "/board.ol", board_source),
     route("GET", "/olang.wasm", olang_wasm),
     route("GET", "/health", health),
     route("GET", "/api/issues", issues_list),
