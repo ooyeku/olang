@@ -1159,6 +1159,30 @@ for rec in ods.to_records(summary) {
 }
 ```
 
+### Series verbs
+
+Arithmetic, comparison, and math *operators* are vectorized directly
+(`s * 2.0`, `s > 2`, `s + t`); the named verbs are:
+
+| Group | Verbs |
+|---|---|
+| Create | `series(list\|range)` · `zeros(n)` (n float zeros) · `linspace(a, b, n)` (n evenly spaced floats, inclusive) |
+| Elementwise | `map(s, "sin")` — apply a `math.*` unary fn over the column in one kernel pass |
+| Comparisons | `eq(a, b)` · `ne(a, b)` — elementwise masks between two Series (against a *scalar*, use the `s == v` / `s != v` operators) |
+| Nulls | `is_null(s)` (mask) · `fill_null(s, v)` · `null_count(s)` |
+| Reductions | `sum` `mean` `var` `std` `min` `max` (skip nulls; `var`/`std` are sample) · `quantile(s, q)` · `cumsum(s)` · `dot(a, b)` |
+| Order / select | `sort(s)` (nulls last) · `argsort(s)` (sorting indices) · `take(s, idx)` (gather) · `get(s, i)` (negative counts from end) |
+| Convert | `to_list(s)` (nulls → `()`) · `len(s)` |
+
+### Frame verbs
+
+| Group | Verbs |
+|---|---|
+| Build | `frame(columns)` · `frame_from_records(records)` · `read_csv(text)` |
+| Inspect | `columns(f)` · `column(f, name)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `to_records(f)` |
+| Shape | `select(f, names)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
+| Aggregate / join | `group_by(f, key, aggs)` · `join(a, b, key)` · `join_left(a, b, key)` |
+
 The stack has its own chapter, **[The Data Stack](ods.md)**: why the
 columnar model wins (with the measured 50× rewrite behind it), every
 Series and Frame verb with its semantics, null handling, joins and
