@@ -55,7 +55,8 @@ fn groups(records, name) = {
 // The plot options that pass straight through from the spec.
 fn plot_opts(spec) = {
     let mut o = #{}
-    for k in ["title", "x_label", "y_label", "width", "height", "theme", "responsive", "interactive"] {
+    for k in ["title", "x_label", "y_label", "width", "height", "theme",
+              "responsive", "interactive", "colors", "vary", "scale"] {
         if map_has_key(spec, k) => {
             o = map_set(o, k, map_get(spec, k))
         }
@@ -64,6 +65,27 @@ fn plot_opts(spec) = {
 }
 
 fn norm_mark(m) = if m == "point" => "scatter" else => m
+
+// Distinct values of a plain list, first-seen order.
+fn distinct(vals) = {
+    let mut seen = []
+    for v in vals {
+        if contains(seen, v) == false => {
+            seen = seen + [v]
+        }
+    }
+    seen
+}
+
+// Continuous color encoding: map values onto a named ramp, quantized
+// to 24 steps — smooth to the eye, cheap to bucket on canvas.
+fn ramp_colors(vals, scale) = {
+    let lo = to_float(min(vals))
+    let hi = to_float(max(vals))
+    let span = if hi > lo => hi - lo else => 1.0
+    map(vals, (v) =>
+        plot.ramp(scale, math.round((to_float(v) - lo) / span * 23.0) / 23.0))
+}
 
 // ── xy compilation (shared by chart and draw) ──────────────────────────
 // An entry is [label, mark, xs (list), ys (list)].
@@ -84,11 +106,20 @@ fn layer_entries(layer, fallback_data) = {
                 let rows = filter(records, (r) => map_get(r, c) == g)
                 [to_label(g), mark, col(rows, x), col(rows, y)]
             })
-        } else => [[to_label(opt(layer, "label", y)), mark, col(records, x), col(records, y)]]
+        } else => {
+            let base = [to_label(opt(layer, "label", y)), mark, col(records, x), col(records, y)]
+            if map_has_key(layer, "color_by") => [base + [ramp_colors(
+                col(records, map_get(layer, "color_by")), opt(layer, "scale", "thermal"))]]
+            else => [base]
+        }
     } else => {
         // A Frame with no color split: columns come out as Series —
         // no per-row conversion, the fast lane for large data.
-        [[to_label(opt(layer, "label", y)), mark, ods.column(d, x), ods.column(d, y)]]
+        let base = [to_label(opt(layer, "label", y)), mark, ods.column(d, x), ods.column(d, y)]
+        if map_has_key(layer, "color_by") => [base + [ramp_colors(
+            ods.to_list(ods.column(d, map_get(layer, "color_by"))),
+            opt(layer, "scale", "thermal"))]]
+        else => [base]
     }
 }
 
@@ -116,7 +147,8 @@ share fn chart(spec) = {
     let o = plot_opts(spec)
     if map_has_key(spec, "layers") || mark == "line" || mark == "area" || mark == "scatter" => {
         plot.xy(map(xy_entries(spec), (en) =>
-            [en[0], en[1], as_series(en[2]), as_series(en[3])]), o)
+            if len(en) == 5 => [en[0], en[1], as_series(en[2]), as_series(en[3]), en[4]]
+            else => [en[0], en[1], as_series(en[2]), as_series(en[3])]), o)
     } else => {
         let records = records_of(map_get(spec, "data"))
         if mark == "hist" => plot.hist(
@@ -226,12 +258,26 @@ share fn draw(el, spec) = {
     let mut j = 0
     for en in entries {
         let color = palette[j % len(palette)]
-        if en[1] == "scatter" => {
-            dom.draw_points(el, en[2], en[3], #{ "mode": "points", "size": 2.5,
-                "color": color, "sx": sx, "sy": sy, "tx": tx, "ty": ty })
+        if len(en) == 5 => {
+            // Continuous color on canvas: the 24 quantized ramp steps
+            // become at most 24 bulk calls — still the binary path.
+            let cs = en[4]
+            let xs = as_list(en[2])
+            let ys = as_list(en[3])
+            for c in distinct(cs) {
+                let idx = filter(range(0, len(cs)), (i) => cs[i] == c)
+                dom.draw_points(el, map(idx, (i) => xs[i]), map(idx, (i) => ys[i]),
+                    #{ "mode": "points", "size": 2.0, "color": c,
+                       "sx": sx, "sy": sy, "tx": tx, "ty": ty })
+            }
         } else => {
-            dom.draw_points(el, en[2], en[3], #{ "mode": "path", "size": 1.5,
-                "color": color, "sx": sx, "sy": sy, "tx": tx, "ty": ty })
+            if en[1] == "scatter" => {
+                dom.draw_points(el, en[2], en[3], #{ "mode": "points", "size": 2.5,
+                    "color": color, "sx": sx, "sy": sy, "tx": tx, "ty": ty })
+            } else => {
+                dom.draw_points(el, en[2], en[3], #{ "mode": "path", "size": 1.5,
+                    "color": color, "sx": sx, "sy": sy, "tx": tx, "ty": ty })
+            }
         }
         j = j + 1
     }

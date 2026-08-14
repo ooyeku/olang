@@ -29,7 +29,7 @@ card("g-osc", plot.lines(xs, [
 // ── layered waveform: three harmonics summed under an area fill ──────
 card("g-area", plot.area(xs, ods.series(map(t, (x) =>
     2.2 + math.sin(x) + 0.6 * math.sin(x * 2.7 + 0.8) + 0.35 * math.sin(x * 5.3 + 2.0))),
-    o("layered waveform")))
+    map_set(o("layered waveform"), "colors", ["#4dd0e1"])))
 
 // ── the galaxy: 12,500 stars, spinning on one parameter ──────────────
 // Star positions are computed ONCE (closed-form arms + a core bulge);
@@ -50,6 +50,8 @@ let a1x = arm_x(5000, 0.0)
 let a1y = arm_y(5000, 0.0)
 let a2x = arm_x(5000, 3.14159)
 let a2y = arm_y(5000, 3.14159)
+let dust_x = arm_x(1500, 1.5708)
+let dust_y = arm_y(1500, 1.5708)
 let core_x = ods.series(map(range(0, 2500), (i) => jitter(0.16)))
 let core_y = ods.series(map(range(0, 2500), (i) => jitter(0.13)))
 let gal = dom.query("#g-galaxy")
@@ -60,6 +62,8 @@ dom.on_frame((f) => {
         "color": "#5aa9e6", "sx": 185.0, "sy": 185.0, "tx": 280.0, "ty": 190.0, "rot": rot })
     dom.draw_points(gal, a2x, a2y, #{ "mode": "points", "size": 1.0, "alpha": 0.75,
         "color": "#3ddc97", "sx": 185.0, "sy": 185.0, "tx": 280.0, "ty": 190.0, "rot": rot })
+    dom.draw_points(gal, dust_x, dust_y, #{ "mode": "points", "size": 1.0, "alpha": 0.4,
+        "color": "#ef8bb0", "sx": 185.0, "sy": 185.0, "tx": 280.0, "ty": 190.0, "rot": rot })
     dom.draw_points(gal, core_x, core_y, #{ "mode": "points", "size": 1.5, "alpha": 0.9,
         "color": "#f5e9c9", "sx": 185.0, "sy": 185.0, "tx": 280.0, "ty": 190.0,
         "rot": rot * 1.4 })
@@ -73,7 +77,7 @@ card("g-field", plot.heatmap(
     map(g, (r) => map(g, (c) =>
         math.sin(to_float(c) * 0.30) * math.cos(to_float(r) * 0.30) +
         0.5 * math.sin((to_float(c) + to_float(r)) * 0.19))),
-    o("interference field")))
+    map_set(o("interference field (diverging)"), "scale", "diverging")))
 
 // ── revenue mix: growth curves stacked into a part-of-whole story ────
 let quarters = map(range(1, 9), (q) => "Q" + show(q))
@@ -92,12 +96,12 @@ card("g-box", plot.box([
     ["wide", stats.norm.sample(240, 0.0, 1.8)],
     ["shifted", stats.norm.sample(240, 2.5, 1.0)],
     ["skewed", ods.series(map(range(0, 240), (i) => math.exp(jitter(0.9))))]
-], o("distribution zoo")))
+], map_set(o("distribution zoo"), "colors", ["#f0854a"])))
 
 // ── the central limit theorem, watched happening ─────────────────────
 card("g-clt", plot.hist(ods.series(map(range(0, 3000), (i) =>
     random.random() + random.random() + random.random() + random.random())),
-    36, o("central limit: sum of 4 uniforms")))
+    36, map_set(o("central limit: sum of 4 uniforms"), "colors", ["#8b7ae0"])))
 
 // ── ensemble forecast: layered marks, brushable, hoverable ───────────
 let forecast = map(range(0, 30), (d) => {
@@ -153,11 +157,12 @@ while n < 4000 {
     let ny = math.sin(c * ax) - math.cos(d * ay)
     ax = nx
     ay = ny
-    pts = pts + [#{ "x": ax, "y": ay }]
+    pts = pts + [#{ "x": ax, "y": ay, "n": n }]
     n = n + 1
 }
 viz.draw(dom.query("#g-attractor"),
-    #{ "data": pts, "mark": "point", "x": "x", "y": "y" })
+    #{ "data": pts, "mark": "point", "x": "x", "y": "y",
+       "color_by": "n", "scale": "ember" })
 
 // ── thirty thousand points at frame rate: the binary bulk path ───────
 // The curtain is computed ONCE as two Series; every frame re-sends the
@@ -174,7 +179,7 @@ dom.on_frame((f) => {
     dom.draw(big, [#{ "op": "clear", "color": "rgba(16,23,32,0.55)" }])
     dom.draw_points(big, curtain_x, curtain_y, #{
         "mode": "points", "size": 1.0, "alpha": 0.6,
-        "color": "hsl(" + show(165.0 + 45.0 * math.sin(tt * 0.4)) + " 70% 62%)",
+        "color": "hsl(" + show(190.0 + 130.0 * math.sin(tt * 0.25)) + " 75% 64%)",
         "sx": 500.0 * (1.0 + 0.1 * math.sin(tt * 0.6)),
         "sy": 165.0 * (1.0 + 0.1 * math.cos(tt * 0.8)),
         "tx": 560.0, "ty": 190.0 })
@@ -201,6 +206,8 @@ dom.on_frame((f) => {
         #{ "op": "path", "points": rose(k * 1.5, 120.0, 0.0 - tt * 0.3),
            "close": false, "stroke": "#5aa9e6", "line_width": 1 },
         #{ "op": "path", "points": rose(k * 0.5, 80.0, tt * 0.6),
-           "close": false, "stroke": "#f4b84c", "line_width": 1 }
+           "close": false, "stroke": "#f4b84c", "line_width": 1 },
+        #{ "op": "path", "points": rose(k * 2.5, 60.0, 0.0 - tt * 0.5),
+           "close": false, "stroke": "#8b7ae0", "line_width": 1 }
     ])
 })

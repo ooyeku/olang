@@ -41,7 +41,7 @@ fn draw(items) = {
     let rows = map(picked, (i) => map_set(i, "one", 1))
 
     card("c-status", viz.chart(themed(#{ "data": all_rows, "mark": "bar",
-        "x": "status", "y": "one" },
+        "x": "status", "y": "one", "vary": true },
         if sel == "" => "issues by status (click a bar to filter)"
         else => "issues by status · filtering: " + sel + " (click again to clear)")))
 
@@ -53,16 +53,16 @@ fn draw(items) = {
         "priority mix, stacked")))
 
     card("c-hist", viz.chart(themed(#{ "data": rows, "mark": "hist",
-        "y": "points", "bins": 8 }, "points distribution")))
+        "y": "points", "bins": 8, "colors": ["#5aa9e6"] }, "points distribution")))
 
     card("c-box", viz.chart(themed(#{ "data": rows, "mark": "box",
-        "x": "status", "y": "points" }, "points by status")))
+        "x": "status", "y": "points", "colors": ["#8b7ae0"] }, "points by status")))
 
     // A matrix is not (yet) a grammar mark — the direct plot API is
     // right there for it.
     card("c-heat", plot.heatmap(statuses, priorities,
         map(priorities, (p) => map(statuses, (s) => count_where(picked, s, p))),
-        #{ "theme": "dark", "responsive": true, "interactive": true,
+        #{ "theme": "dark", "responsive": true, "interactive": true, "scale": "ocean",
            "width": 560, "height": 360, "title": "count: status × priority" }))
 
     // Cumulative points as a layered spec: the fill tells the trend,
@@ -75,7 +75,7 @@ fn draw(items) = {
         cum = cum + [#{ "n": n, "total": total }]
         n = n + 1
     }
-    card("c-area", viz.chart(map_set(map_set(themed(#{ "data": cum, "layers": [
+    card("c-area", viz.chart(map_set(map_set(themed(#{ "data": cum, "colors": ["#4dd0e1", "#f4b84c"], "layers": [
         #{ "mark": "area", "x": "n", "y": "total", "label": "" },
         #{ "mark": "point", "x": "n", "y": "total", "label": "" }
     ] }, "cumulative points"), "width", 1140), "height", 320)))

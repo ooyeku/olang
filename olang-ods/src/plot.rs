@@ -18,7 +18,7 @@ use std::fmt::Write as _;
 type Result<T> = std::result::Result<T, OdsError>;
 
 // Validated categorical palette (light surface), fixed assignment order.
-const SERIES_COLORS: [&str; 8] = [
+const SERIES_COLORS: [&str; 10] = [
     "#2a78d6", // blue
     "#eb6834", // orange
     "#1baf7a", // aqua
@@ -27,18 +27,22 @@ const SERIES_COLORS: [&str; 8] = [
     "#008300", // green
     "#4a3aa7", // violet
     "#e34948", // red
+    "#00838f", // teal
+    "#8d6e63", // umber
 ];
-// The same hues re-tuned for a dark surface (matching the example
-// suite's page background), so a chart drops into a dark app unstyled.
-const SERIES_COLORS_DARK: [&str; 8] = [
+// The same discipline re-tuned for a dark surface (the example suite's
+// panels): ten distinct hues, mint leading, assigned in fixed order.
+const SERIES_COLORS_DARK: [&str; 10] = [
     "#3ddc97", // mint — the suite's lead accent
     "#5aa9e6", // blue
     "#f4b84c", // amber
-    "#f0854a", // orange
+    "#f0854a", // coral
     "#ef8bb0", // magenta
     "#8b7ae0", // violet
-    "#58c458", // green
+    "#4dd0e1", // cyan
+    "#a3d977", // lime
     "#ef6b73", // red
+    "#2bb8a3", // teal
 ];
 const FONT: &str = "system-ui, -apple-system, 'Segoe UI', sans-serif";
 
@@ -97,6 +101,73 @@ impl Theme {
     }
 }
 
+/// Named color ramps for continuous data. `Auto` follows the theme's
+/// sequential scale; the rest are hand-tuned multi-stop gradients —
+/// perceptual cousins of the scientific colormaps, chosen to sit well
+/// on the suite's dark panels (and acceptably on light).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HeatScale {
+    #[default]
+    Auto,
+    Ocean,
+    Ember,
+    Thermal,
+    Diverging,
+}
+
+impl HeatScale {
+    pub fn parse(name: &str) -> Option<HeatScale> {
+        Some(match name {
+            "auto" => HeatScale::Auto,
+            "ocean" => HeatScale::Ocean,
+            "ember" => HeatScale::Ember,
+            "thermal" => HeatScale::Thermal,
+            "diverging" => HeatScale::Diverging,
+            _ => return None,
+        })
+    }
+
+    fn stops(self, theme: Theme) -> Vec<(u8, u8, u8)> {
+        match self {
+            HeatScale::Auto => {
+                let (lo, hi) = theme.heat();
+                vec![lo, hi]
+            }
+            HeatScale::Ocean => vec![(11, 32, 58), (29, 111, 184), (77, 208, 225)],
+            HeatScale::Ember => vec![(30, 16, 26), (140, 46, 76), (233, 105, 82), (244, 184, 76)],
+            HeatScale::Thermal => vec![
+                (14, 16, 38),
+                (84, 39, 128),
+                (190, 66, 143),
+                (240, 133, 74),
+                (255, 231, 197),
+            ],
+            // Signed data: cold through the surface to warm.
+            HeatScale::Diverging => match theme {
+                Theme::Dark => vec![(90, 169, 230), (18, 26, 36), (244, 184, 76)],
+                Theme::Light => vec![(42, 120, 214), (247, 247, 244), (235, 104, 52)],
+            },
+        }
+    }
+}
+
+/// Piecewise-linear interpolation over a ramp's stops, t in [0, 1].
+pub fn ramp_color(scale: HeatScale, theme: Theme, t: f64) -> String {
+    let stops = scale.stops(theme);
+    let t = t.clamp(0.0, 1.0) * (stops.len() - 1) as f64;
+    let i = (t.floor() as usize).min(stops.len() - 2);
+    let f = t - i as f64;
+    let (r0, g0, b0) = stops[i];
+    let (r1, g1, b1) = stops[i + 1];
+    let lerp = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * f).round() as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        lerp(r0, r1),
+        lerp(g0, g1),
+        lerp(b0, b1)
+    )
+}
+
 #[derive(Clone, Debug)]
 pub struct PlotOptions {
     pub width: u32,
@@ -112,6 +183,14 @@ pub struct PlotOptions {
     /// scatter points, bars, heatmap cells, and boxes become event
     /// targets the browser's delegated handlers can read.
     pub interactive: bool,
+    /// Per-chart palette override: series take these colors in order
+    /// (cycling), falling back to the theme palette when empty.
+    pub colors: Vec<String>,
+    /// Single-series bar charts color each category from the palette —
+    /// categorical identity, the classic statistical-graphics look.
+    pub vary: bool,
+    /// The heatmap's color ramp.
+    pub scale: HeatScale,
 }
 
 impl Default for PlotOptions {
@@ -125,6 +204,9 @@ impl Default for PlotOptions {
             theme: Theme::default(),
             responsive: false,
             interactive: false,
+            colors: Vec::new(),
+            vary: false,
+            scale: HeatScale::default(),
         }
     }
 }
@@ -137,6 +219,17 @@ pub enum XyKind {
     Area,
 }
 
+/// Resolve series color `i`: the chart's own palette first, the theme's
+/// otherwise. Every renderer routes through here, so `colors` works
+/// uniformly across marks, legends, and gradients.
+fn pick(opts: &PlotOptions, i: usize) -> &str {
+    if opts.colors.is_empty() {
+        opts.theme.series(i % SERIES_COLORS_DARK.len())
+    } else {
+        &opts.colors[i % opts.colors.len()]
+    }
+}
+
 /// One xy series; points are pre-cleaned by the caller (no NaN/null).
 /// `kind` is per-series so layered charts (an area under a line under
 /// markers) render into one document with shared scales.
@@ -146,6 +239,9 @@ pub struct XySeries {
     pub xs: Vec<f64>,
     pub ys: Vec<f64>,
     pub kind: XyKind,
+    /// Scatter only: one color per point (continuous color encoding).
+    /// Empty means the series color. Length must match xs/ys.
+    pub point_colors: Vec<String>,
 }
 
 // ---------------------------------------------------------------------
@@ -171,6 +267,12 @@ pub fn render_xy(series: &[XySeries], opts: &PlotOptions) -> Result<String> {
                 right: s.ys.len(),
             });
         }
+        if !s.point_colors.is_empty() && s.point_colors.len() != s.xs.len() {
+            return Err(OdsError::LengthMismatch {
+                left: s.xs.len(),
+                right: s.point_colors.len(),
+            });
+        }
     }
 
     let all_x: Vec<f64> = series.iter().flat_map(|s| s.xs.iter().copied()).collect();
@@ -184,7 +286,7 @@ pub fn render_xy(series: &[XySeries], opts: &PlotOptions) -> Result<String> {
     svg.x_numeric_ticks(&geo, &x_ticks, x_lo, x_hi);
 
     for (i, s) in series.iter().enumerate() {
-        let color = opts.theme.series(i);
+        let color = pick(opts, i);
         let pts: Vec<(f64, f64)> =
             s.xs.iter()
                 .zip(&s.ys)
@@ -232,17 +334,28 @@ pub fn render_xy(series: &[XySeries], opts: &PlotOptions) -> Result<String> {
                             ("y", format_num(s.ys[j])),
                         ],
                     );
+                    let fill = if s.point_colors.is_empty() {
+                        color
+                    } else {
+                        &s.point_colors[j]
+                    };
                     let _ = write!(
                         svg.body,
                         "<circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"4\" fill=\"{}\"{}/>",
-                        x, y, color, attrs
+                        x, y, fill, attrs
                     );
                 }
             }
         }
     }
     if geo.legend {
-        svg.legend(&geo, series.iter().map(|s| s.label.as_str()));
+        svg.legend(
+            &geo,
+            series
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (s.label.as_str(), pick(opts, i))),
+        );
     }
     Ok(svg.close(opts, &geo))
 }
@@ -284,10 +397,15 @@ pub fn render_bars(labels: &[String], values: &[f64], opts: &PlotOptions) -> Res
             opts.interactive,
             &[("label", labels[i].clone()), ("value", format_num(v))],
         );
+        let color = if opts.vary {
+            pick(opts, i)
+        } else {
+            pick(opts, 0)
+        };
         let _ = write!(
             svg.body,
             "{}",
-            rounded_bar(x, top, bar_w, h, v >= 0.0, opts.theme.series(0), &attrs)
+            rounded_bar(x, top, bar_w, h, v >= 0.0, color, &attrs)
         );
     }
     svg.x_category_labels(&geo, labels, slot);
@@ -416,7 +534,7 @@ pub fn render_bar_groups(
                         top,
                         bar_w,
                         bottom - top,
-                        opts.theme.series(si),
+                        pick(opts, si),
                         attrs
                     )
                 };
@@ -449,14 +567,20 @@ pub fn render_bar_groups(
                 let _ = write!(
                     svg.body,
                     "{}",
-                    rounded_bar(x, top, bar_w, h, v >= 0.0, opts.theme.series(si), &attrs)
+                    rounded_bar(x, top, bar_w, h, v >= 0.0, pick(opts, si), &attrs)
                 );
             }
         }
     }
     svg.x_category_labels(&geo, labels, slot);
     if geo.legend {
-        svg.legend(&geo, series.iter().map(|s| s.label.as_str()));
+        svg.legend(
+            &geo,
+            series
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (s.label.as_str(), pick(opts, i))),
+        );
     }
     Ok(svg.close(opts, &geo))
 }
@@ -520,7 +644,7 @@ pub fn render_heatmap(
                 geo.top + cell_h * r as f64 + 0.5,
                 cell_w - 1.0,
                 cell_h - 1.0,
-                heat_color(opts.theme, t),
+                ramp_color(opts.scale, opts.theme, t),
                 attrs,
             );
         }
@@ -551,12 +675,12 @@ pub fn render_heatmap(
          <rect x=\"{:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" rx=\"2\" fill=\"{}\"/>\
          <text x=\"{:.2}\" y=\"{key_y:.2}\" font-size=\"12.5\" fill=\"{ink}\">{}</text>",
         key_y - 9.0,
-        heat_color(opts.theme, 0.0),
+        ramp_color(opts.scale, opts.theme, 0.0),
         key_x + 14.0,
         escape(&format_num(lo)),
         key_x + 60.0,
         key_y - 9.0,
-        heat_color(opts.theme, 1.0),
+        ramp_color(opts.scale, opts.theme, 1.0),
         key_x + 74.0,
         escape(&format_num(hi)),
         ink = opts.theme.ink2(),
@@ -589,7 +713,7 @@ pub fn render_box(series: &[BarSeries], opts: &PlotOptions) -> Result<String> {
 
     let slot = geo.plot_w / series.len() as f64;
     let box_w = (slot * 0.44).max(2.0);
-    let color = opts.theme.series(0);
+    let color = pick(opts, 0);
     for (i, s) in series.iter().enumerate() {
         let mut sorted = s.values.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).expect("finite checked above"));
@@ -635,19 +759,6 @@ pub fn render_box(series: &[BarSeries], opts: &PlotOptions) -> Result<String> {
     let labels: Vec<String> = series.iter().map(|s| s.label.clone()).collect();
     svg.x_category_labels(&geo, &labels, slot);
     Ok(svg.close(opts, &geo))
-}
-
-/// Linear interpolation on the theme's sequential scale, t in [0, 1].
-fn heat_color(theme: Theme, t: f64) -> String {
-    let ((r0, g0, b0), (r1, g1, b1)) = theme.heat();
-    let t = t.clamp(0.0, 1.0);
-    let lerp = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t).round() as u8;
-    format!(
-        "#{:02x}{:02x}{:02x}",
-        lerp(r0, r1),
-        lerp(g0, g1),
-        lerp(b0, b1)
-    )
 }
 
 /// Quantile by linear interpolation over a sorted slice (type 7, the
@@ -795,16 +906,16 @@ impl Svg {
         }
     }
 
-    fn legend<'a>(&mut self, geo: &Geometry, labels: impl Iterator<Item = &'a str>) {
+    fn legend<'a>(&mut self, geo: &Geometry, entries: impl Iterator<Item = (&'a str, &'a str)>) {
         let mut x = geo.left;
         let y = geo.top - 12.0;
-        for (i, label) in labels.enumerate() {
+        for (label, color) in entries {
             let _ = write!(
                 self.body,
                 "<rect x=\"{x:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" rx=\"2\" fill=\"{}\"/>\
                  <text x=\"{:.2}\" y=\"{:.2}\" font-size=\"12.5\" fill=\"{}\">{}</text>",
                 y - 9.0,
-                self.theme.series(i),
+                color,
                 x + 14.0,
                 y,
                 self.theme.ink2(),
@@ -1004,6 +1115,7 @@ mod tests {
                 xs: vec![0.0, 1.0, 2.0],
                 ys: vec![1.0, 3.0, 2.0],
                 kind: XyKind::Line,
+                point_colors: vec![],
             }],
             &opts(),
         )
@@ -1025,6 +1137,7 @@ mod tests {
                 xs: vec![1.0, 2.0],
                 ys: vec![1.0, 2.0],
                 kind: XyKind::Scatter,
+                point_colors: vec![],
             }],
             &PlotOptions::default(),
         )
@@ -1040,12 +1153,14 @@ mod tests {
                     xs: vec![0.0, 1.0],
                     ys: vec![0.0, 1.0],
                     kind: XyKind::Line,
+                    point_colors: vec![],
                 },
                 XySeries {
                     label: "beta".to_string(),
                     xs: vec![0.0, 1.0],
                     ys: vec![1.0, 0.0],
                     kind: XyKind::Line,
+                    point_colors: vec![],
                 },
             ],
             &PlotOptions::default(),
@@ -1079,12 +1194,13 @@ mod tests {
     #[test]
     fn errors_and_limits() {
         assert!(render_xy(&[], &PlotOptions::default()).is_err());
-        let too_many: Vec<XySeries> = (0..9)
+        let too_many: Vec<XySeries> = (0..11)
             .map(|i| XySeries {
                 label: format!("s{}", i),
                 xs: vec![0.0],
                 ys: vec![0.0],
                 kind: XyKind::Line,
+                point_colors: vec![],
             })
             .collect();
         assert!(render_xy(&too_many, &PlotOptions::default()).is_err());
@@ -1093,6 +1209,7 @@ mod tests {
             xs: vec![0.0, 1.0],
             ys: vec![0.0],
             kind: XyKind::Line,
+            point_colors: vec![],
         };
         assert!(render_xy(&[bad], &PlotOptions::default()).is_err());
     }
@@ -1105,6 +1222,7 @@ mod tests {
                 xs: vec![0.0, 1.0],
                 ys: vec![0.0, 1.0],
                 kind: XyKind::Line,
+                point_colors: vec![],
             }],
             &PlotOptions {
                 theme: Theme::Dark,
@@ -1133,6 +1251,7 @@ mod tests {
                 xs: vec![0.0, 1.0, 2.0],
                 ys: vec![1.0, 3.0, 2.0],
                 kind: XyKind::Area,
+                point_colors: vec![],
             }],
             &PlotOptions::default(),
         )
@@ -1191,8 +1310,8 @@ mod tests {
         let s = render_heatmap(&xs, &ys, &rows, &PlotOptions::default()).unwrap();
         // 4 cells + 2 key swatches; extreme cells hit the scale endpoints.
         assert_eq!(s.matches("rx=\"2\"").count(), 6);
-        assert!(s.contains(&heat_color(Theme::Light, 0.0)));
-        assert!(s.contains(&heat_color(Theme::Light, 1.0)));
+        assert!(s.contains(&ramp_color(HeatScale::Auto, Theme::Light, 0.0)));
+        assert!(s.contains(&ramp_color(HeatScale::Auto, Theme::Light, 1.0)));
         assert!(s.contains(">am<") && s.contains(">mon<"));
 
         let ragged = vec![vec![0.0, 1.0], vec![2.0]];
@@ -1246,6 +1365,7 @@ mod tests {
                 xs: vec![1.0, 2.0],
                 ys: vec![3.0, 4.5],
                 kind: XyKind::Scatter,
+                point_colors: vec![],
             }],
             &on,
         )

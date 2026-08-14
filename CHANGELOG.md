@@ -28,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   draw-list for point counts SVG can't carry. Underneath, `plot.xy`
   is new: layered mixed marks (line/area/scatter, each with its own
   x) in one document over shared scales.
+- **The color system — expressive, not monochrome.** Ten curated hues
+  per theme (mint leads dark, classic ten on light). Every chart can
+  own its palette (`colors`), single-series bars can color each
+  category (`vary`), heatmaps pick multi-stop ramps (`scale`:
+  ocean/ember/thermal/diverging — diverging runs cold through the
+  surface to warm for signed data), and `plot.ramp(name, t)` exposes
+  the ramps to olang code. The viz grammar gains **`color_by`** —
+  continuous color encoding per point, rendered individually in SVG
+  and bucketed into at most 24 bulk calls on canvas. `dash.stat` adds
+  accent-colored KPI tiles. The pages put it to work deliberately:
+  varied status bars, an ocean heatmap, violet boxes and histograms,
+  cyan-amber cumulative charts, a diverging interference field, an
+  ember-ramped attractor, a magenta dust arm in the galaxy, a
+  four-voice rose, and a curtain that sweeps the spectrum.
 - **Fidelity and cohesion — the suite becomes one program.** Every
   canvas now renders at devicePixelRatio (the backing store scales
   once, the context pre-scales, all drawing stays in design units) —

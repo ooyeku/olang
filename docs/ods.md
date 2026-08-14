@@ -512,13 +512,25 @@ which is also why the whole stack runs in the browser build.
 | `plot.box(pairs, opts)` | five-number-summary boxes: whiskers to min/max, quartile box, median line |
 
 Options ride in a single map — `title`, `x_label`, `y_label`, `width`,
-`height`, `theme`, `responsive` — and passing `#{}` accepts the
-defaults, which follow a colorblind-validated palette assigned in
-fixed series order. `theme: "dark"` re-tunes every color for a dark
-surface; `responsive: true` drops the fixed pixel size so the SVG
-fills its container (the browser case — the viewBox keeps the aspect
-ratio). An unknown option key is an error, because it is always a
-typo. Null handling matches what a chart can honestly draw: xy plots
+`height`, `theme`, `responsive`, `interactive`, `colors`, `vary`,
+`scale` — and passing `#{}` accepts the defaults, which follow a
+colorblind-validated ten-hue palette assigned in fixed series order.
+`theme: "dark"` re-tunes every color for a dark surface (mint leads);
+`responsive: true` drops the fixed pixel size so the SVG fills its
+container (the browser case — the viewBox keeps the aspect ratio). An
+unknown option key is an error, because it is always a typo.
+
+**Color is a first-class option.** `colors: ["#5aa9e6", ...]` gives a
+chart its own palette (series take the list in order, cycling) —
+dashboards read best when each card owns a hue. `vary: true` makes a
+single-series bar chart color each *category* from the palette —
+categorical identity, the classic statistical-graphics look. Heatmaps
+pick a ramp with `scale`: `"auto"` (the theme's sequential scale),
+`"ocean"`, `"ember"`, `"thermal"`, or `"diverging"` (signed data:
+cold through the surface color to warm) — hand-tuned multi-stop
+gradients in the spirit of the scientific colormaps. `plot.ramp(name,
+t)` exposes the same ramps to olang code: one color for `t` in
+[0, 1], which is how `viz`'s continuous color encoding is built. Null handling matches what a chart can honestly draw: xy plots
 drop a point when either coordinate is null; the bar family refuses
 null values outright, since a bar of unknown height is a lie —
 `fill_null` or `filter` first, so the decision is visible in the code;
@@ -584,9 +596,17 @@ println(to_string(str.contains(svg, "<svg")))
 
 Marks: `line`, `area`, `scatter`/`point` (layerable,
 color-splittable), `bar`, `hist` (with `bins`), and `box` (one box
-per distinct `x`). Options (`title`, `x_label`, `y_label`, `width`,
-`height`, `theme`, `responsive`, `interactive`) ride in the spec
-itself.
+per distinct `x`). All plot options (`colors`, `vary`, `scale`,
+`theme`, `interactive`, sizes, labels) ride in the spec itself.
+
+**Continuous color: `color_by`.** Where `color` splits rows into
+discrete series, `"color_by": "column"` maps each point's value onto
+a ramp (`"scale"` picks it, `"thermal"` by default) — the
+`aes(color = value)` of the grammar. It works on both targets: the
+SVG renderer colors each mark individually, and the canvas target
+buckets the 24 quantized ramp steps into at most 24 bulk
+`draw_points` calls, so even a hundred-thousand-point cloud keeps the
+binary path.
 
 **Interactive charts are event delegation.** With `"interactive":
 true`, every mark carries its datum as `data-*` attributes — scatter

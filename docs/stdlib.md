@@ -1023,10 +1023,16 @@ with `dom.set_html`. `plot.line`, `plot.scatter`, `plot.area`,
 shared scales), `plot.bar`, `plot.bars` (grouped), `plot.stacked`,
 `plot.hist`, `plot.heatmap`, and `plot.box` take Series data plus one
 options map (`title`, `x_label`, `y_label`, `width`, `height`, `theme`
-— `"dark"` re-tunes every color for a dark surface — and `responsive`,
-which sizes the SVG to its container; unknown keys are errors).
-Defaults follow a colorblind-validated palette, so a chart is
-presentable with `#{}`.
+— `"dark"` re-tunes every color for a dark surface — `responsive`,
+which sizes the SVG to its container, plus the color system below;
+unknown keys are errors). Defaults follow a colorblind-validated
+ten-hue palette, so a chart is presentable with `#{}` — and color is
+an option, not a fate: `colors` gives a chart its own palette, `vary`
+colors bar categories individually, `scale` picks a heatmap ramp
+(`ocean`/`ember`/`thermal`/`diverging`), and `plot.ramp(name, t)`
+hands the same ramps to your code. In `viz`, `"color_by": "column"`
+maps values onto a ramp per point — continuous color encoding on both
+the SVG and canvas targets.
 
 One level up, **`use viz`** (an embedded olang package) makes a chart
 a *value*: a spec map with data (records or a Frame), a mark, and

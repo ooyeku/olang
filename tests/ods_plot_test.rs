@@ -202,6 +202,38 @@ fn json_records_round_trip_into_frames_and_charts() {
 }
 
 #[test]
+fn color_system_options() {
+    let result = eval(
+        r##"
+let vary = plot.bar(["a", "b", "c"], ods.series([1, 2, 3]), #{ "theme": "dark", "vary": true })
+let own = plot.bar(["a"], ods.series([1]), #{ "colors": ["#123456"] })
+let hm = plot.heatmap(["m"], ["r", "s"], [[1], [2]], #{ "scale": "diverging", "theme": "dark" })
+let x = ods.series([1.0, 2.0])
+let xy = plot.xy([["p", "scatter", x, x, ["#ff0000", "#00ff00"]]], #{})
+[
+    str.contains(vary, "#3ddc97") && str.contains(vary, "#5aa9e6") && str.contains(vary, "#f4b84c"),
+    str.contains(own, "#123456"),
+    str.contains(hm, "#5aa9e6") || str.contains(hm, "#f4b84c"),
+    str.contains(xy, "#ff0000") && str.contains(xy, "#00ff00"),
+    str.contains(plot.ramp("thermal", 1.0), "#"),
+    plot.ramp("diverging", 0.5) == "#121a24"
+]"##,
+    )
+    .unwrap();
+    assert_eq!(result, Value::List(vec![Value::Boolean(true); 6].into()));
+
+    let err = eval(r#"plot.heatmap(["m"], ["r"], [[1]], #{ "scale": "sepia" })"#).unwrap_err();
+    assert!(err.contains("thermal"), "got: {}", err);
+    let err = eval(r##"plot.xy([["p", "scatter", ods.series([1.0]), ods.series([1.0]), ["#f00", "#0f0"]]], #{})"##)
+        .unwrap_err();
+    assert!(
+        err.contains("lengths differ") || err.contains("mismatch") || err.contains("Length"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
 fn option_errors_are_informative() {
     let err = eval(r#"plot.line(ods.series([1.0]), ods.series([1.0]), #{ "tite": "typo" })"#)
         .unwrap_err();

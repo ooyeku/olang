@@ -13,8 +13,8 @@
 use super::series::series_of;
 use crate::ast::Value;
 use olang_ods::plot::{
-    BarSeries, PlotOptions, Theme, XyKind, XySeries, render_bar_groups, render_bars, render_box,
-    render_heatmap, render_hist, render_xy,
+    BarSeries, HeatScale, PlotOptions, Theme, XyKind, XySeries, ramp_color, render_bar_groups,
+    render_bars, render_box, render_heatmap, render_hist, render_xy,
 };
 use olang_ods::{Scalar, Series};
 
@@ -31,6 +31,7 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("hist", 3),
     ("heatmap", 4),
     ("box", 2),
+    ("ramp", 2),
 ];
 
 pub fn handles(func: &str) -> bool {
@@ -92,16 +93,55 @@ fn parse_options(value: &Value) -> Result<PlotOptions, String> {
             }
             ("responsive", Value::Boolean(b)) => opts.responsive = *b,
             ("interactive", Value::Boolean(b)) => opts.interactive = *b,
-            ("responsive" | "interactive", other) => {
+            ("vary", Value::Boolean(b)) => opts.vary = *b,
+            ("responsive" | "interactive" | "vary", other) => {
                 return Err(format!(
                     "plot: {} must be a Bool, got {}",
                     key,
                     other.type_name()
                 ));
             }
+            ("colors", Value::List(items)) => {
+                opts.colors = items
+                    .iter()
+                    .map(|v| match v {
+                        Value::String(c) => Ok(c.as_ref().clone()),
+                        other => Err(format!(
+                            "plot: colors must be Strings, got {}",
+                            other.type_name()
+                        )),
+                    })
+                    .collect::<Result<_, _>>()?;
+                if opts.colors.is_empty() {
+                    return Err(
+                        "plot: colors must not be empty (omit it for the theme palette)"
+                            .to_string(),
+                    );
+                }
+            }
+            ("colors", other) => {
+                return Err(format!(
+                    "plot: colors must be a list of CSS colors, got {}",
+                    other.type_name()
+                ));
+            }
+            ("scale", Value::String(name)) => {
+                opts.scale = HeatScale::parse(name).ok_or_else(|| {
+                    format!(
+                        "plot: scale must be \"auto\", \"ocean\", \"ember\", \"thermal\", or \"diverging\", got \"{}\"",
+                        name
+                    )
+                })?;
+            }
+            ("scale", other) => {
+                return Err(format!(
+                    "plot: scale must be a String, got {}",
+                    other.type_name()
+                ));
+            }
             _ => {
                 return Err(format!(
-                    "plot: unknown option '{}' (title, x_label, y_label, width, height, theme, responsive, interactive)",
+                    "plot: unknown option '{}' (title, x_label, y_label, width, height, theme, responsive, interactive, colors, vary, scale)",
                     key
                 ));
             }
@@ -309,6 +349,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                     xs,
                     ys,
                     kind,
+                    point_colors: Vec::new(),
                 }],
                 &opts,
             )
@@ -326,6 +367,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                     xs,
                     ys,
                     kind: XyKind::Line,
+                    point_colors: Vec::new(),
                 });
             }
             render_xy(&series, &opts).map_err(e)?
@@ -345,16 +387,35 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
             };
             let mut series = Vec::new();
             for entry in entries.iter() {
-                let (label, mark, x, y) = match entry {
-                    Value::List(p) if p.len() == 4 => {
+                let (label, mark, x, y, point_colors) = match entry {
+                    Value::List(p) if p.len() == 4 || p.len() == 5 => {
+                        let colors = match p.get(4) {
+                            None => Vec::new(),
+                            Some(Value::List(cs)) => cs
+                                .iter()
+                                .map(|c| match c {
+                                    Value::String(c) => Ok(c.as_ref().clone()),
+                                    other => Err(format!(
+                                        "plot.xy: point colors must be Strings, got {}",
+                                        other.type_name()
+                                    )),
+                                })
+                                .collect::<Result<_, _>>()?,
+                            Some(other) => {
+                                return Err(format!(
+                                    "plot.xy: the 5th entry element is a list of colors, got {}",
+                                    other.type_name()
+                                ));
+                            }
+                        };
                         match (&p[0], &p[1], series_of(&p[2]), series_of(&p[3])) {
                             (Value::String(l), Value::String(m), Some(x), Some(y)) => {
-                                (l.as_ref().clone(), m.as_ref().clone(), x, y)
+                                (l.as_ref().clone(), m.as_ref().clone(), x, y, colors)
                             }
                             _ => {
                                 return Err(
                                     "plot.xy: each entry is [label (String), mark (String), \
-                                     x (Series), y (Series)]"
+                                     x (Series), y (Series), colors?]"
                                         .to_string(),
                                 );
                             }
@@ -384,6 +445,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                     xs,
                     ys,
                     kind,
+                    point_colors,
                 });
             }
             render_xy(&series, &opts).map_err(e)?
@@ -425,6 +487,37 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
             };
             let opts = parse_options(&args[3])?;
             render_heatmap(&x_labels, &y_labels, &rows, &opts).map_err(e)?
+        }
+        "ramp" => {
+            // plot.ramp(scale, t) — one color from a named ramp; how
+            // olang code (viz's color_by, custom pieces) speaks the
+            // same scales the heatmap uses. Dark-theme tuned.
+            let name = match &args[0] {
+                Value::String(s) => s.as_ref().clone(),
+                other => {
+                    return Err(format!(
+                        "plot.ramp: scale must be a String, got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            let scale = HeatScale::parse(&name).ok_or_else(|| {
+                format!(
+                    "plot.ramp: scale must be \"auto\", \"ocean\", \"ember\", \"thermal\", or \"diverging\", got \"{}\"",
+                    name
+                )
+            })?;
+            let t = match &args[1] {
+                Value::Float(f) => *f,
+                Value::Integer(n) => *n as f64,
+                other => {
+                    return Err(format!(
+                        "plot.ramp: t must be a number in [0, 1], got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            ramp_color(scale, Theme::Dark, t)
         }
         "box" => {
             // plot.box([[label, values], ...], opts) — nulls dropped

@@ -36,13 +36,14 @@ fn render(items) = {
     let total_pts = sum(points)
 
     dom.set_html(mount, dash.styles() + dash.grid([
-        dash.kpi(if sel == "" => "issues" else => "issues · " + sel,
-            show(len(picked)), show(len(items)) + " in tracker"),
-        dash.kpi("open", show(open_n), pct(open_n, len(items)) + " of all"),
-        dash.kpi("done", show(done_n), pct(done_n, len(items)) + " complete"),
-        dash.kpi("points", show(total_pts),
+        dash.stat(if sel == "" => "issues" else => "issues · " + sel,
+            show(len(picked)), show(len(items)) + " in tracker", "#3ddc97"),
+        dash.stat("open", show(open_n), pct(open_n, len(items)) + " of all", "#5aa9e6"),
+        dash.stat("done", show(done_n), pct(done_n, len(items)) + " complete", "#8b7ae0"),
+        dash.stat("points", show(total_pts),
             if len(picked) == 0 => "—"
-            else => "avg " + show(to_int(math.round(to_float(total_pts) / to_float(len(picked)))))),
+            else => "avg " + show(to_int(math.round(to_float(total_pts) / to_float(len(picked))))),
+            "#f4b84c"),
         dash.half("by status", "<div id=\"b-status\"></div>"),
         dash.half("priority mix", "<div id=\"b-mix\"></div>"),
         dash.half("points by status", "<div id=\"b-box\"></div>"),
@@ -52,14 +53,14 @@ fn render(items) = {
 
     if len(picked) > 0 => {
         dom.set_html(dom.query("#b-status"), viz.chart(themed(#{ "data": rows,
-            "mark": "bar", "x": "status", "y": "one" }, "")))
+            "mark": "bar", "x": "status", "y": "one", "vary": true }, "")))
         dom.set_html(dom.query("#b-mix"), viz.chart(themed(#{ "data": rows,
             "mark": "bar", "x": "status", "y": "one", "color": "priority",
             "stack": true }, "")))
         dom.set_html(dom.query("#b-box"), viz.chart(themed(#{ "data": rows,
-            "mark": "box", "x": "status", "y": "points" }, "")))
+            "mark": "box", "x": "status", "y": "points", "colors": ["#f4b84c"] }, "")))
         dom.set_html(dom.query("#b-hist"), viz.chart(themed(#{ "data": rows,
-            "mark": "hist", "y": "points", "bins": 8 }, "")))
+            "mark": "hist", "y": "points", "bins": 8, "colors": ["#5aa9e6"] }, "")))
         let mut total = 0
         let mut n = 1
         let mut cum = []
@@ -69,7 +70,7 @@ fn render(items) = {
             n = n + 1
         }
         dom.set_html(dom.query("#b-cum"), viz.chart(map_set(map_set(
-            themed(#{ "data": cum, "layers": [
+            themed(#{ "data": cum, "colors": ["#4dd0e1", "#f4b84c"], "layers": [
                 #{ "mark": "area", "x": "n", "y": "total", "label": "" },
                 #{ "mark": "point", "x": "n", "y": "total", "label": "" }
             ] }, ""), "width", 1140), "height", 300)))

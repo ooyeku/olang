@@ -31,6 +31,16 @@ share fn kpi(label, value, note) = {
         + "</div><div class=\"dash-value\">" + esc(value) + "</div>" + tail + "</div>"
 }
 
+// A KPI tile with its own accent color for the value — dashboards
+// read faster when each number owns a hue.
+share fn stat(label, value, note, accent) = {
+    let tail = if note == "" => ""
+        else => "<div class=\"dash-note\">" + esc(note) + "</div>"
+    "<div class=\"dash-kpi\"><div class=\"dash-label\">" + esc(label)
+        + "</div><div class=\"dash-value\" style=\"color:" + esc(accent) + "\">"
+        + esc(value) + "</div>" + tail + "</div>"
+}
+
 // A card: a titled panel around arbitrary inner HTML. The inner HTML
 // is NOT escaped — it is your markup (a chart mount, a table); escape
 // any user data you interpolate into it.

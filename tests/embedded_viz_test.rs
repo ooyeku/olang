@@ -136,6 +136,23 @@ let plain = viz.chart(#{{ "data": rows, "mark": "point", "x": "day", "y": "value
 }
 
 #[test]
+fn color_by_encodes_values_on_a_ramp() {
+    assert_all_true(
+        r##"use viz
+let rows = map(range(0, 30), (i) => #{ "x": to_float(i), "y": to_float(i), "m": to_float(i) })
+let svg = viz.chart(#{ "data": rows, "mark": "point", "x": "x", "y": "y",
+    "color_by": "m", "scale": "thermal" })
+let plain = viz.chart(#{ "data": rows, "mark": "point", "x": "x", "y": "y",
+    "colors": ["#4dd0e1"] })
+[
+    str.contains(svg, plot.ramp("thermal", 0.0)) && str.contains(svg, plot.ramp("thermal", 1.0)),
+    str.contains(plain, "#4dd0e1")
+]"##,
+        2,
+    );
+}
+
+#[test]
 fn plot_xy_rejects_unknown_marks() {
     let err = eval(
         r#"
