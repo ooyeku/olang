@@ -14,11 +14,11 @@
 //   ], 4))
 //   dom.set_html(dom.query("#b-status"), viz.chart(...))
 
-fn esc(s) = {
-    let raw = if typeof(s) == "String" => s else => show(s)
-    str.replace(str.replace(str.replace(str.replace(raw,
-        "&", "&amp;"), "<", "&lt;"), ">", "&gt;"), "\"", "&quot;")
-}
+// Escaping is ui's job — an embedded package importing another, so the
+// HTML-escape discipline lives in exactly one place. (This is the
+// dedup the roadmap's finding #4 called for: embedded packages can
+// `use` each other.)
+use ui { esc }
 
 // ── tiles and cards (pure HTML builders) ───────────────────────────────
 

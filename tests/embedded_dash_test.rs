@@ -60,3 +60,22 @@ let g = dash.grid([dash.kpi("a", "1", ""), c, w], 4)
         4,
     );
 }
+
+#[test]
+fn embedded_packages_can_import_each_other() {
+    // dash's escaping is ui's `esc`, reached via `use ui { esc }` inside
+    // the embedded dash source — the finding-#4 capability. This pins
+    // that embedded→embedded imports resolve (loading dash transitively
+    // loads ui) and that the shared escape actually runs.
+    assert_all_true(
+        r##"use dash
+// The <, >, & below must come back escaped — proof dash reached ui.esc.
+let tile = dash.kpi("a <b> & c", "x", "")
+let card = dash.card("t<i>tle", "<div></div>")
+[
+    str.contains(tile, "a &lt;b&gt; &amp; c") && str.contains(tile, "<b>") == false,
+    str.contains(card, "t&lt;i&gt;tle") && str.contains(card, "<div></div>")
+]"##,
+        2,
+    );
+}

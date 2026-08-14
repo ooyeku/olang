@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Embedded packages import each other.** The builtin olang packages
+  (`ui`, `viz`, `dash`, …) can now `use` one another — the resolution
+  already handled it (embedded modules resolve before the filesystem,
+  natively and in wasm), but nothing used or tested it. `dash` now
+  imports `ui`'s HTML escape (`use ui { esc }`) instead of
+  re-implementing it, so the discipline lives in one place, with a
+  test pinning that loading one embedded package transitively loads
+  its imports.
+
 - **Vectorized Series math — `ods.map`.** `ods.map(series, name)`
   applies a `math.*` unary function (sin, cos, exp, sqrt, ln, floor,
   … — 24 in all) across a whole column in one native kernel pass. The

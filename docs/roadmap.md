@@ -253,10 +253,16 @@ work they would unlock. Each is a candidate lane, not a promise.
    Finding 2 removes most of that particular cost; the longer lane is
    whether the bytecode tier itself can specialize hot lambda loops
    harder under wasm.
-4. **Embedded packages cannot import each other.** `dash` re-implements
-   `ui.esc` because `use ui` inside an embedded module doesn't
-   resolve. Allowing embedded→embedded imports keeps the builtin
-   packages honest as they multiply.
+4. **Embedded packages importing each other. Done (0.54.0+).** The
+   capability was already there — `resolve_module_path` checks
+   `is_embedded` before touching the filesystem, so `use ui` inside an
+   embedded module resolves natively *and* in wasm — it just wasn't
+   used or pinned. `dash` now does `use ui { esc }` instead of
+   re-implementing the HTML escape, so the discipline lives in one
+   place, and a test pins that loading `dash` transitively loads `ui`
+   and the shared escape runs (verified in the browser: the board's
+   dash cards render). The pattern is available to every embedded
+   package as they multiply.
 5. **Session state wants a primitive.** Closures capture by value, so
    every browser app stores state in the DOM (hidden inputs, data-ui
    attributes, the URL). The discipline is sound — it made the back
