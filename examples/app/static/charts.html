@@ -61,6 +61,7 @@
     <span id="hud">loading…</span>
     <button id="refresh">refresh</button>
   </header>
+  <input type="hidden" id="flt" />
   <div id="grid">
     <div id="c-status"></div>
     <div id="c-grouped"></div>
@@ -70,7 +71,7 @@
     <div id="c-heat"></div>
     <div id="c-area"></div>
   </div>
-  <p class="note"><b>the data stack in the browser</b> — one fetch_json, then ods frames and plot SVG, all in olang. Edit issues in the tracker and hit refresh.</p>
+  <p class="note"><b>the data stack in the browser</b> — one fetch_json, then viz specs and plot SVG, all in olang. Hover any mark for its datum; click a status bar to cross-filter every card. Edit issues in the tracker and hit refresh.</p>
   <script src="/olang-dom.js" data-src="/charts.ol" defer></script>
 </body>
 </html>

@@ -108,6 +108,10 @@ pub struct PlotOptions {
     /// When set, the SVG carries no fixed pixel size — the viewBox plus
     /// `width:100%` lets the *container* size it (the browser case).
     pub responsive: bool,
+    /// When set, marks carry their datum as `data-*` attributes —
+    /// scatter points, bars, heatmap cells, and boxes become event
+    /// targets the browser's delegated handlers can read.
+    pub interactive: bool,
 }
 
 impl Default for PlotOptions {
@@ -120,6 +124,7 @@ impl Default for PlotOptions {
             y_label: String::new(),
             theme: Theme::default(),
             responsive: false,
+            interactive: false,
         }
     }
 }
@@ -210,11 +215,19 @@ pub fn render_xy(series: &[XySeries], opts: &PlotOptions) -> Result<String> {
                 );
             }
             XyKind::Scatter => {
-                for (x, y) in &pts {
+                for (j, (x, y)) in pts.iter().enumerate() {
+                    let attrs = data_attrs(
+                        opts.interactive,
+                        &[
+                            ("s", s.label.clone()),
+                            ("x", format_num(s.xs[j])),
+                            ("y", format_num(s.ys[j])),
+                        ],
+                    );
                     let _ = write!(
                         svg.body,
-                        "<circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"4\" fill=\"{}\"/>",
-                        x, y, color
+                        "<circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"4\" fill=\"{}\"{}/>",
+                        x, y, color, attrs
                     );
                 }
             }
@@ -259,10 +272,14 @@ pub fn render_bars(labels: &[String], values: &[f64], opts: &PlotOptions) -> Res
         } else {
             (y0, yv - y0)
         };
+        let attrs = data_attrs(
+            opts.interactive,
+            &[("label", labels[i].clone()), ("value", format_num(v))],
+        );
         let _ = write!(
             svg.body,
             "{}",
-            rounded_bar(x, top, bar_w, h, v >= 0.0, opts.theme.series(0))
+            rounded_bar(x, top, bar_w, h, v >= 0.0, opts.theme.series(0), &attrs)
         );
     }
     svg.x_category_labels(&geo, labels, slot);
@@ -366,16 +383,33 @@ pub fn render_bar_groups(
                 let bottom = geo.py(running, y_lo, y_hi);
                 // Only the topmost segment gets the rounded data-end.
                 let last = series[si + 1..].iter().all(|r| r.values[i] <= 0.0);
+                let attrs = data_attrs(
+                    opts.interactive,
+                    &[
+                        ("s", s.label.clone()),
+                        ("label", labels[i].clone()),
+                        ("value", format_num(v)),
+                    ],
+                );
                 let seg = if last {
-                    rounded_bar(x, top, bar_w, bottom - top, true, opts.theme.series(si))
-                } else {
-                    format!(
-                        "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"{}\"/>",
+                    rounded_bar(
                         x,
                         top,
                         bar_w,
                         bottom - top,
-                        opts.theme.series(si)
+                        true,
+                        opts.theme.series(si),
+                        &attrs,
+                    )
+                } else {
+                    format!(
+                        "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"{}\"{}/>",
+                        x,
+                        top,
+                        bar_w,
+                        bottom - top,
+                        opts.theme.series(si),
+                        attrs
                     )
                 };
                 let _ = write!(svg.body, "{}", seg);
@@ -396,10 +430,18 @@ pub fn render_bar_groups(
                 } else {
                     (y0, yv - y0)
                 };
+                let attrs = data_attrs(
+                    opts.interactive,
+                    &[
+                        ("s", s.label.clone()),
+                        ("label", labels[i].clone()),
+                        ("value", format_num(v)),
+                    ],
+                );
                 let _ = write!(
                     svg.body,
                     "{}",
-                    rounded_bar(x, top, bar_w, h, v >= 0.0, opts.theme.series(si))
+                    rounded_bar(x, top, bar_w, h, v >= 0.0, opts.theme.series(si), &attrs)
                 );
             }
         }
@@ -455,14 +497,23 @@ pub fn render_heatmap(
     for (r, row) in rows.iter().enumerate() {
         for (c, &v) in row.iter().enumerate() {
             let t = if hi > lo { (v - lo) / (hi - lo) } else { 0.5 };
+            let attrs = data_attrs(
+                opts.interactive,
+                &[
+                    ("xl", x_labels[c].clone()),
+                    ("yl", y_labels[r].clone()),
+                    ("value", format_num(v)),
+                ],
+            );
             let _ = write!(
                 svg.body,
-                "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"2\" fill=\"{}\"/>",
+                "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"2\" fill=\"{}\"{}/>",
                 geo.left + cell_w * c as f64 + 0.5,
                 geo.top + cell_h * r as f64 + 0.5,
                 cell_w - 1.0,
                 cell_h - 1.0,
                 heat_color(opts.theme, t),
+                attrs,
             );
         }
     }
@@ -551,7 +602,7 @@ pub fn render_box(series: &[BarSeries], opts: &PlotOptions) -> Result<String> {
              <line x1=\"{:.2}\" y1=\"{py_min:.2}\" x2=\"{:.2}\" y2=\"{py_min:.2}\" stroke=\"{color}\"/>\
              <line x1=\"{:.2}\" y1=\"{py_max:.2}\" x2=\"{:.2}\" y2=\"{py_max:.2}\" stroke=\"{color}\"/>\
              <rect x=\"{x:.2}\" y=\"{py_q3:.2}\" width=\"{box_w:.2}\" height=\"{:.2}\" rx=\"2\" \
-             fill=\"{color}\" fill-opacity=\"0.28\" stroke=\"{color}\"/>\
+             fill=\"{color}\" fill-opacity=\"0.28\" stroke=\"{color}\"{attrs}/>\
              <line x1=\"{x:.2}\" y1=\"{py_med:.2}\" x2=\"{:.2}\" y2=\"{py_med:.2}\" \
              stroke=\"{color}\" stroke-width=\"2\"/>",
             cx - box_w / 4.0,
@@ -560,6 +611,17 @@ pub fn render_box(series: &[BarSeries], opts: &PlotOptions) -> Result<String> {
             cx + box_w / 4.0,
             py_q1 - py_q3,
             x + box_w,
+            attrs = data_attrs(
+                opts.interactive,
+                &[
+                    ("s", s.label.clone()),
+                    ("med", format_num(med)),
+                    ("q1", format_num(q1)),
+                    ("q3", format_num(q3)),
+                    ("lo", format_num(min)),
+                    ("hi", format_num(max)),
+                ],
+            ),
         );
     }
     let labels: Vec<String> = series.iter().map(|s| s.label.clone()).collect();
@@ -781,9 +843,21 @@ impl Svg {
     }
 }
 
+/// `data-*` attribute text for an interactive mark, or empty.
+fn data_attrs(on: bool, pairs: &[(&str, String)]) -> String {
+    if !on {
+        return String::new();
+    }
+    let mut out = String::new();
+    for (k, v) in pairs {
+        let _ = write!(out, " data-{}=\"{}\"", k, escape(v));
+    }
+    out
+}
+
 /// A bar with 4px-rounded *data ends* only: the baseline edge stays
 /// square (anchored), the far edge rounds.
-fn rounded_bar(x: f64, y: f64, w: f64, h: f64, positive: bool, color: &str) -> String {
+fn rounded_bar(x: f64, y: f64, w: f64, h: f64, positive: bool, color: &str, attrs: &str) -> String {
     let r = 4.0_f64.min(w / 2.0).min(h);
     if h <= 0.0 {
         return String::new();
@@ -821,7 +895,7 @@ fn rounded_bar(x: f64, y: f64, w: f64, h: f64, positive: bool, color: &str) -> S
             by = y + h - r,
         )
     };
-    format!("<path d=\"{}\" fill=\"{}\"/>", d, color)
+    format!("<path d=\"{}\" fill=\"{}\"{}/>", d, color, attrs)
 }
 
 /// 1-2-5 nice ticks over the data range; returns (ticks, lo, hi) with
@@ -1149,6 +1223,47 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn interactive_marks_carry_their_datum() {
+        let on = PlotOptions {
+            interactive: true,
+            ..Default::default()
+        };
+        let sc = render_xy(
+            &[XySeries {
+                label: "obs".to_string(),
+                xs: vec![1.0, 2.0],
+                ys: vec![3.0, 4.5],
+                kind: XyKind::Scatter,
+            }],
+            &on,
+        )
+        .unwrap();
+        assert!(sc.contains("data-s=\"obs\""));
+        assert!(sc.contains("data-x=\"2\"") && sc.contains("data-y=\"4.5\""));
+
+        let bars = render_bars(&["a<b".to_string()], &[7.0], &on).unwrap();
+        // Labels are escaped inside attributes, like everywhere else.
+        assert!(bars.contains("data-label=\"a&lt;b\"") && bars.contains("data-value=\"7\""));
+
+        let hm = render_heatmap(&["m".to_string()], &["r".to_string()], &[vec![2.0]], &on).unwrap();
+        assert!(hm.contains("data-xl=\"m\"") && hm.contains("data-yl=\"r\""));
+
+        let bx = render_box(
+            &[BarSeries {
+                label: "d".to_string(),
+                values: vec![1.0, 2.0, 3.0],
+            }],
+            &on,
+        )
+        .unwrap();
+        assert!(bx.contains("data-med=\"2\"") && bx.contains("data-q3=\"2.5\""));
+
+        // Off by default: no data attributes anywhere.
+        let off = render_bars(&["a".to_string()], &[1.0], &PlotOptions::default()).unwrap();
+        assert!(!off.contains("data-"));
     }
 
     #[test]

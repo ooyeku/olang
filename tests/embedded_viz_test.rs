@@ -115,6 +115,27 @@ let ff = viz.chart(#{{ "data": df, "mark": "bar", "x": "kind", "y": "value" }})
 }
 
 #[test]
+fn interactive_passes_through_to_marks() {
+    assert_all_true(
+        &format!(
+            r##"use viz
+{ROWS}
+let sc = viz.chart(#{{ "data": rows, "mark": "point", "x": "day", "y": "value",
+    "interactive": true }})
+let br = viz.chart(#{{ "data": rows, "mark": "bar", "x": "kind", "y": "value",
+    "color": "kind", "stack": true, "interactive": true }})
+let plain = viz.chart(#{{ "data": rows, "mark": "point", "x": "day", "y": "value" }})
+[
+    str.contains(sc, "data-x=") && str.contains(sc, "data-y="),
+    str.contains(br, "data-s=") && str.contains(br, "data-value="),
+    str.contains(plain, "data-x=") == false
+]"##
+        ),
+        3,
+    );
+}
+
+#[test]
 fn plot_xy_rejects_unknown_marks() {
     let err = eval(
         r#"

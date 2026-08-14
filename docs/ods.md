@@ -580,7 +580,23 @@ println(to_string(str.contains(svg, "<svg")))
 Marks: `line`, `area`, `scatter`/`point` (layerable,
 color-splittable), `bar`, `hist` (with `bins`), and `box` (one box
 per distinct `x`). Options (`title`, `x_label`, `y_label`, `width`,
-`height`, `theme`, `responsive`) ride in the spec itself.
+`height`, `theme`, `responsive`, `interactive`) ride in the spec
+itself.
+
+**Interactive charts are event delegation.** With `"interactive":
+true`, every mark carries its datum as `data-*` attributes — scatter
+points (`s`/`x`/`y`), bars (`s`/`label`/`value`), heatmap cells
+(`xl`/`yl`/`value`), boxes (the five-number summary) — and dom events
+deliver the target's data map, so hover and click cost no new
+machinery. In the browser, three helpers package the common moves:
+`viz.tooltip(el)` shows the hovered mark's datum in a floating tip;
+`viz.on_mark(el, event, handler)` fires the handler with the mark's
+data map only when a mark was hit (the click-to-filter primitive);
+and `viz.brush(el, handler)` reports a pressed-dragged-released
+horizontal range as width fractions — map them onto your data domain
+and re-render for brush-to-zoom. The tracker's `/charts.html`
+cross-filters every card from clicked status bars, and the gallery's
+forecast piece zooms by brushing.
 
 ## The stack and the language
 

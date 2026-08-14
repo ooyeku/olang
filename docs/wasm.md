@@ -385,10 +385,15 @@ the output drop into a page unstyled. One level up, the
 [`viz` grammar](ods.md#the-viz-grammar) makes a chart a value: a spec
 map of data, mark, and column encodings that compiles to plot SVG —
 or, via `viz.draw(canvas, spec)`, to a draw-list for point counts SVG
-can't carry. `/charts.html` draws live tracker analytics that way
-(`fetch_json` delivers records, records are what specs eat), and
-`/gallery.html` is the standing showcase — draw-lists for motion,
-plot and viz for statements.
+can't carry. Interactivity is the same event delegation as everything
+else: `"interactive": true` marks carry their datum as `data-*`
+attributes, so `viz.tooltip`, `viz.on_mark`, and `viz.brush` ride the
+structured-event path with zero new runtime. `/charts.html` draws
+live tracker analytics that way (`fetch_json` delivers records,
+records are what specs eat — hover any mark, click a status bar to
+cross-filter), and `/gallery.html` is the standing showcase —
+draw-lists for motion, plot and viz for statements, a brushable
+forecast for zoom.
 
 ## Declarative views: the `ui` module
 

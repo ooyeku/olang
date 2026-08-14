@@ -1031,7 +1031,10 @@ One level up, **`use viz`** (an embedded olang package) makes a chart
 a *value*: a spec map with data (records or a Frame), a mark, and
 column-name encodings — `color` splits series, `layers` composes
 marks, and `viz.draw` compiles the same specs to canvas draw-lists in
-the browser. See [the Data Stack](ods.md#the-viz-grammar).
+the browser. With `"interactive": true` marks carry their datum as
+`data-*` attributes, and `viz.tooltip` / `viz.on_mark` / `viz.brush`
+turn hover, click-to-filter, and brush-to-zoom into one-liners. See
+[the Data Stack](ods.md#the-viz-grammar).
 
 ```olang
 let x = ods.linspace(0.0, 6.28, 50)

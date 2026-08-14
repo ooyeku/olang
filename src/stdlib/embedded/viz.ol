@@ -55,7 +55,7 @@ fn groups(records, name) = {
 // The plot options that pass straight through from the spec.
 fn plot_opts(spec) = {
     let mut o = #{}
-    for k in ["title", "x_label", "y_label", "width", "height", "theme", "responsive"] {
+    for k in ["title", "x_label", "y_label", "width", "height", "theme", "responsive", "interactive"] {
         if map_has_key(spec, k) => {
             o = map_set(o, k, map_get(spec, k))
         }
@@ -216,4 +216,92 @@ share fn draw(el, spec) = {
         i = i + 1
     }
     dom.draw(el, ops)
+}
+
+// ── interactivity ──────────────────────────────────────────────────────
+// Marks rendered with `"interactive": true` carry their datum as
+// data-* attributes, and every dom event delivers the target's data
+// map — so hovering and clicking marks is ordinary event delegation.
+
+// True when an event's data map came from a chart mark.
+fn is_mark(d) =
+    map_has_key(d, "x") || map_has_key(d, "value") || map_has_key(d, "med")
+
+// One line per mark family; values arrive as attribute strings.
+fn tip_text(d) = {
+    let prefix = if map_has_key(d, "s") && map_get(d, "s") != "" => map_get(d, "s") + " · " else => ""
+    if map_has_key(d, "med") => prefix + "median " + map_get(d, "med")
+            + "  [" + map_get(d, "q1") + " – " + map_get(d, "q3") + "]"
+    else => {
+        if map_has_key(d, "xl") => map_get(d, "xl") + " × " + map_get(d, "yl") + ": " + map_get(d, "value")
+        else => {
+            if map_has_key(d, "value") => prefix + map_get(d, "label") + ": " + map_get(d, "value")
+            else => prefix + "(" + map_get(d, "x") + ", " + map_get(d, "y") + ")"
+        }
+    }
+}
+
+// Attach a hover tooltip to a chart container: hovering any
+// interactive mark shows its datum, leaving hides it.
+share fn tooltip(el) = {
+    let tip = dom.create("div")
+    for (k, v) in entries(#{
+        "position": "fixed", "display": "none", "pointer-events": "none",
+        "background": "#131c27", "border": "1px solid #2a3444",
+        "border-radius": "6px", "padding": "3px 8px", "font": "12px monospace",
+        "color": "#d9e6ef", "z-index": "50"
+    }) {
+        dom.set_style(tip, k, v)
+    }
+    dom.append(dom.query("body"), tip)
+    dom.on(el, "pointermove", (e) => {
+        let d = map_get(e, "data")
+        if is_mark(d) => {
+            dom.set_text(tip, tip_text(d))
+            dom.set_style(tip, "left", show(map_get(e, "x") + 14) + "px")
+            dom.set_style(tip, "top", show(map_get(e, "y") + 12) + "px")
+            dom.set_style(tip, "display", "block")
+        } else => dom.set_style(tip, "display", "none")
+    })
+    dom.on(el, "pointerleave", (e) => {
+        dom.set_style(tip, "display", "none")
+    })
+}
+
+// Delegated mark events: the handler fires only when the event target
+// was an interactive mark, and receives the mark's data map.
+share fn on_mark(el, event, handler) =
+    dom.on(el, event, (e) => {
+        let d = map_get(e, "data")
+        if is_mark(d) => handler(d)
+    })
+
+// Horizontal brush: press, drag, release inside `el`; the handler
+// receives #{ "from", "to" } as fractions of the element's width
+// (0.0 at the left edge, 1.0 at the right). Taps shorter than 2% of
+// the width are ignored — they are clicks, not brushes.
+share fn brush(el, handler) = {
+    let anchor = dom.create("input")
+    dom.set_attr(anchor, "type", "hidden")
+    dom.append(dom.query("body"), anchor)
+    dom.on(el, "pointerdown", (e) => {
+        dom.set_value(anchor, show(x_frac(el, e)))
+    })
+    dom.on(el, "pointerup", (e) => {
+        let start = dom.value(anchor)
+        if start != "" => {
+            dom.set_value(anchor, "")
+            let a = unwrap(str.parse_float(start))
+            let b = x_frac(el, e)
+            if math.abs(b - a) > 0.02 => {
+                handler(#{ "from": math.min(a, b), "to": math.max(a, b) })
+            }
+        }
+    })
+}
+
+fn x_frac(el, e) = {
+    let r = dom.measure(el)
+    let f = (to_float(map_get(e, "x")) - map_get(r, "x")) / map_get(r, "width")
+    math.max(0.0, math.min(1.0, f))
 }

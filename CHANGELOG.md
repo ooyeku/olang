@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   draw-list for point counts SVG can't carry. Underneath, `plot.xy`
   is new: layered mixed marks (line/area/scatter, each with its own
   x) in one document over shared scales.
+- **Interactive charts — hover, click-to-filter, brush.** With
+  `"interactive": true` (plot option and viz spec key), marks carry
+  their datum as `data-*` attributes: scatter points, bars and stacked
+  segments, heatmap cells, and boxes become event targets, escaped and
+  off by default. Three viz helpers ride the existing structured-event
+  path: `viz.tooltip(el)` (floating datum tip on hover),
+  `viz.on_mark(el, event, handler)` (handler fires only on mark hits,
+  receiving the datum), and `viz.brush(el, handler)` (horizontal
+  press-drag-release as width fractions). The charts page cross-filters
+  every card from clicked status bars; the gallery forecast zooms by
+  brushing and resets on double-click.
 - **The data stack meets the page.** Two new pages in the example app:
   `/charts.html` — live tracker analytics (one `dom.fetch_json`, then
   `ods.frame_from_records`, frames, and plot SVG landed with

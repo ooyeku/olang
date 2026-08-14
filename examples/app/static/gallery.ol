@@ -76,17 +76,31 @@ card("g-clt", plot.hist(ods.series(map(range(0, 3000), (i) =>
     random.random() + random.random() + random.random() + random.random())),
     36, o("central limit: sum of 4 uniforms")))
 
-// ── ensemble forecast: three marks layered over shared scales ────────
+// ── ensemble forecast: layered marks, brushable, hoverable ───────────
 let forecast = map(range(0, 30), (d) => {
     let x = to_float(d)
     let mid = 12.0 + 6.0 * math.sin(x * 0.35) + x * 0.15
     #{ "day": d, "hi": mid + 2.5 + jitter(0.4), "mid": mid, "obs": mid + jitter(1.6) }
 })
-card("g-layers", viz.chart(spec(#{ "data": forecast, "layers": [
-    #{ "mark": "area", "x": "day", "y": "hi", "label": "envelope" },
-    #{ "mark": "line", "x": "day", "y": "mid", "label": "forecast" },
-    #{ "mark": "point", "x": "day", "y": "obs", "label": "observed" }
-] }, "ensemble forecast (viz layers)")))
+fn draw_forecast(lo, hi) = {
+    let window = filter(forecast, (r) =>
+        map_get(r, "day") >= lo && map_get(r, "day") <= hi)
+    let title = if lo == 0 && hi == 29 => "ensemble forecast (brush to zoom)"
+        else => "ensemble forecast · days " + show(to_int(lo)) + "–" + show(to_int(hi)) + " (dblclick resets)"
+    card("g-layers", viz.chart(map_set(spec(#{ "data": window, "layers": [
+        #{ "mark": "area", "x": "day", "y": "hi", "label": "envelope" },
+        #{ "mark": "line", "x": "day", "y": "mid", "label": "forecast" },
+        #{ "mark": "point", "x": "day", "y": "obs", "label": "observed" }
+    ] }, title), "interactive", true)))
+}
+draw_forecast(0, 29)
+viz.brush(dom.query("#g-layers"), (b) => {
+    let lo = math.round(map_get(b, "from") * 29.0)
+    let hi = math.round(map_get(b, "to") * 29.0)
+    if hi > lo + 1.0 => draw_forecast(lo, hi)
+})
+dom.on(dom.query("#g-layers"), "dblclick", (e) => { draw_forecast(0, 29) })
+viz.tooltip(dom.query("#g-layers"))
 
 // ── three species: one scatter spec, color does the splitting ────────
 fn cluster(n, mx, my, sd, name) = map(range(0, n), (i) =>
@@ -95,8 +109,10 @@ let blobs = concat(concat(
     cluster(90, 2.0, 3.0, 0.9, "adelie"),
     cluster(90, 5.5, 5.5, 1.1, "gentoo")),
     cluster(90, 4.0, 1.5, 0.8, "chinstrap"))
-card("g-species", viz.chart(spec(#{ "data": blobs, "mark": "point",
-    "x": "x", "y": "y", "color": "species" }, "clusters (color encoding)")))
+card("g-species", viz.chart(map_set(spec(#{ "data": blobs, "mark": "point",
+    "x": "x", "y": "y", "color": "species" }, "clusters (hover a point)"),
+    "interactive", true)))
+viz.tooltip(dom.query("#g-species"))
 
 // ── a strange attractor: the same grammar, compiled to canvas ────────
 // 4,000 points would drown a DOM in SVG nodes; viz.draw takes the

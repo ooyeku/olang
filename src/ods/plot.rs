@@ -91,15 +91,17 @@ fn parse_options(value: &Value) -> Result<PlotOptions, String> {
                 ));
             }
             ("responsive", Value::Boolean(b)) => opts.responsive = *b,
-            ("responsive", other) => {
+            ("interactive", Value::Boolean(b)) => opts.interactive = *b,
+            ("responsive" | "interactive", other) => {
                 return Err(format!(
-                    "plot: responsive must be a Bool, got {}",
+                    "plot: {} must be a Bool, got {}",
+                    key,
                     other.type_name()
                 ));
             }
             _ => {
                 return Err(format!(
-                    "plot: unknown option '{}' (title, x_label, y_label, width, height, theme, responsive)",
+                    "plot: unknown option '{}' (title, x_label, y_label, width, height, theme, responsive, interactive)",
                     key
                 ));
             }

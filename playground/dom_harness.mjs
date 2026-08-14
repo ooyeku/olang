@@ -7,8 +7,9 @@ const fakeDom = {
   "#count": { text: "0", value: "" },
   "#btn": { text: "click me", value: "" },
   "#log": { text: "", value: "" },
+  "body": { text: "", value: "" },
 };
-const handles = ["", "#count", "#btn", "#log"]; // handle = index, 0 reserved
+const handles = ["", "#count", "#btn", "#log", "body"]; // handle = index, 0 reserved
 const node = (h) => {
   const el = fakeDom[handles[Number(h)]];
   el.attrs ??= {};
@@ -542,6 +543,64 @@ println("worker handle=" + show(w))
   workers[1] = null;
   pumpWorkers();
   console.log("stage 4: workers + fetch_json ok");
+}
+// ── stage 5: viz interactivity — marks carry data, helpers ride events ──
+const prog9 = `
+use viz
+let rows = [#{ "t": 1, "v": 2.0 }, #{ "t": 2, "v": 3.5 }]
+dom.set_html(dom.query("#log"),
+    viz.chart(#{ "data": rows, "mark": "point", "x": "t", "y": "v", "interactive": true }))
+viz.brush(dom.query("#btn"), (b) => {
+    dom.set_text(dom.query("#btn"),
+        "brushed " + show(math.round(map_get(b, "from") * 10.0)) + "-" +
+        show(math.round(map_get(b, "to") * 10.0)))
+})
+viz.tooltip(dom.query("#log"))
+viz.on_mark(dom.query("#log"), "click", (d) => {
+    dom.set_text(dom.query("#count"), "picked " + map_get(d, "x"))
+})
+println("viz wired")
+`;
+{
+  const enc9 = new TextEncoder().encode(prog9);
+  const p9 = ex.olang_alloc(enc9.length);
+  mem().set(enc9, p9);
+  const r = result(ex.olang_session_start(p9, enc9.length));
+  ex.olang_dealloc(p9, enc9.length);
+  if (r.error) throw new Error("stage5 session: " + r.error);
+  if (!fakeDom["#log"].html.includes('data-x="2"'))
+    throw new Error("interactive marks missing data attrs");
+
+  // The tooltip div and the brush anchor were appended to body.
+  const kids = node(handles.indexOf("body")).children;
+  const tipKey = kids.find((k) => k.endsWith("-div"));
+  const anchorKey = kids.find((k) => k.endsWith("-input"));
+  if (!tipKey || !anchorKey) throw new Error("tooltip/brush elements missing: " + kids);
+
+  const base = { type: "pointermove", id: "", value: "", key: "",
+    x: 100, y: 80, alt: false, ctrl: false, shift: false, meta: false };
+  // Hovering a mark shows its datum; leaving the marks hides it.
+  dispatchJson(listeners[3]["pointermove"], { ...base, data: { s: "v", x: "2", y: "3.5" } });
+  if (fakeDom[tipKey].text !== "v · (2, 3.5)")
+    throw new Error("tooltip text wrong: " + fakeDom[tipKey].text);
+  if (node(handles.indexOf(tipKey)).style["display"] !== "block")
+    throw new Error("tooltip not shown");
+  dispatchJson(listeners[3]["pointermove"], { ...base, data: {} });
+  if (node(handles.indexOf(tipKey)).style["display"] !== "none")
+    throw new Error("tooltip not hidden off-marks");
+
+  // on_mark fires only for mark targets.
+  dispatchJson(listeners[3]["click"], { ...base, type: "click", data: { s: "v", x: "2", y: "3.5" } });
+  if (fakeDom["#count"].text !== "picked 2") throw new Error("on_mark missing: " + fakeDom["#count"].text);
+  dispatchJson(listeners[3]["click"], { ...base, type: "click", data: {} });
+  if (fakeDom["#count"].text !== "picked 2") throw new Error("on_mark fired off-mark");
+
+  // Brush: down at 20% of the fake 300px-wide rect (x=1), up at 60%.
+  dispatchJson(listeners[2]["pointerdown"], { ...base, type: "pointerdown", x: 61 });
+  dispatchJson(listeners[2]["pointerup"], { ...base, type: "pointerup", x: 181 });
+  if (fakeDom["#btn"].text !== "brushed 2.0-6.0")
+    throw new Error("brush range wrong: " + fakeDom["#btn"].text);
+  console.log("stage 5: viz interactivity ok");
 }
 console.log("final dom:", JSON.stringify(fakeDom));
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");
