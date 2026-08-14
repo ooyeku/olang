@@ -47,9 +47,9 @@ fn body_ops(b) = {
     let color = hsl(map_get(b, "hue"))
     [
         #{ "op": "circle", "x": cx, "y": cy, "r": r,
-           "stroke": "rgba(154,164,178,0.12)", "line_width": 1 },
+           "stroke": "rgba(127,147,163,0.14)", "line_width": 1 },
         #{ "op": "line", "x1": cx, "y1": cy, "x2": x, "y2": y,
-           "stroke": "rgba(154,164,178,0.06)", "line_width": 1 },
+           "stroke": "rgba(127,147,163,0.07)", "line_width": 1 },
         #{ "op": "circle", "x": x, "y": y, "r": size, "fill": color },
         #{ "op": "circle", "x": x, "y": y, "r": size + 3.0,
            "stroke": color, "line_width": 1 }
@@ -58,10 +58,10 @@ fn body_ops(b) = {
 
 fn scene(bodies) = {
     let mut ops = [
-        #{ "op": "clear", "color": "rgba(11,14,20,0.35)" },
-        #{ "op": "circle", "x": cx, "y": cy, "r": 16.0, "fill": "#f5c542" },
+        #{ "op": "clear", "color": "rgba(16,23,32,0.38)" },
+        #{ "op": "circle", "x": cx, "y": cy, "r": 16.0, "fill": "#f4b84c" },
         #{ "op": "circle", "x": cx, "y": cy, "r": 22.0,
-           "stroke": "rgba(245,197,66,0.35)", "line_width": 2 }
+           "stroke": "rgba(244,184,76,0.35)", "line_width": 2 }
     ]
     for b in bodies {
         ops = ops + body_ops(b)

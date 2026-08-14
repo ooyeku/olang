@@ -13,8 +13,9 @@ use dash
 let mount = dom.query("#board")
 
 fn themed(s, title) =
-    map_set(map_set(map_set(map_set(s, "title", title),
-        "theme", "dark"), "responsive", true), "interactive", true)
+    map_set(map_set(map_set(map_set(map_set(map_set(s, "title", title),
+        "theme", "dark"), "responsive", true), "interactive", true),
+        "width", 560), "height", 340)
 
 fn sel_status() = {
     let q = map_get(dom.location(), "query")
@@ -42,10 +43,10 @@ fn render(items) = {
         dash.kpi("points", show(total_pts),
             if len(picked) == 0 => "—"
             else => "avg " + show(to_int(math.round(to_float(total_pts) / to_float(len(picked)))))),
-        dash.card("by status", "<div id=\"b-status\"></div>"),
-        dash.card("priority mix", "<div id=\"b-mix\"></div>"),
-        dash.card("points by status", "<div id=\"b-box\"></div>"),
-        dash.card("points spread", "<div id=\"b-hist\"></div>"),
+        dash.half("by status", "<div id=\"b-status\"></div>"),
+        dash.half("priority mix", "<div id=\"b-mix\"></div>"),
+        dash.half("points by status", "<div id=\"b-box\"></div>"),
+        dash.half("points spread", "<div id=\"b-hist\"></div>"),
         dash.wide("cumulative points", "<div id=\"b-cum\"></div>")
     ], 4))
 
@@ -67,10 +68,11 @@ fn render(items) = {
             cum = cum + [#{ "n": n, "total": total }]
             n = n + 1
         }
-        dom.set_html(dom.query("#b-cum"), viz.chart(themed(#{ "data": cum, "layers": [
-            #{ "mark": "area", "x": "n", "y": "total", "label": "" },
-            #{ "mark": "point", "x": "n", "y": "total", "label": "" }
-        ], "height": 260 }, "")))
+        dom.set_html(dom.query("#b-cum"), viz.chart(map_set(map_set(
+            themed(#{ "data": cum, "layers": [
+                #{ "mark": "area", "x": "n", "y": "total", "label": "" },
+                #{ "mark": "point", "x": "n", "y": "total", "label": "" }
+            ] }, ""), "width", 1140), "height", 300)))
     }
 }
 

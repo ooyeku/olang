@@ -18,6 +18,29 @@
     return ptr;
   }
 
+  // Canvas contexts render at devicePixelRatio: the backing store
+  // scales up once and the context pre-scales, so every draw call keeps
+  // working in design units while the pixels stay retina-crisp.
+  function ctx2d(el) {
+    if (!el.__olangCtx) {
+      const dpr = window.devicePixelRatio || 1;
+      const w = el.width, h = el.height;
+      if (!el.style.width) {
+        el.style.width = w + "px";
+        el.style.height = h + "px";
+      }
+      if (dpr !== 1) {
+        el.width = Math.round(w * dpr);
+        el.height = Math.round(h * dpr);
+      }
+      el.__olangCtx = el.getContext("2d");
+      if (el.__olangCtx && dpr !== 1) el.__olangCtx.scale(dpr, dpr);
+      el.__olangW = w;
+      el.__olangH = h;
+    }
+    return el.__olangCtx;
+  }
+
   // Element handles: index into this array (0 reserved = not found).
   const elements = [null];
   const handleOf = (el) => {
@@ -272,7 +295,7 @@
       // maps data coordinates to pixels host-side.
       host_dom_draw_points: (h, ptr, n, sp, sl) => {
         const el = elements[Number(h)];
-        const ctx = (el.__olangCtx ??= el.getContext("2d"));
+        const ctx = ctx2d(el);
         if (!ctx) return;
         const style = JSON.parse(readStr(sp, sl));
         const pts = new Float64Array(ex.memory.buffer, Number(ptr), n * 2);
@@ -307,7 +330,7 @@
       // The draw-list: one JSON scene per call, replayed onto Canvas 2D.
       host_dom_draw: (h, ptr, len) => {
         const el = elements[Number(h)];
-        const ctx = (el.__olangCtx ??= el.getContext("2d"));
+        const ctx = ctx2d(el);
         if (!ctx) return;
         const paint = (op, fillStroke) => {
           if (op.fill != null) { ctx.fillStyle = op.fill; fillStroke.fill(); }
@@ -322,8 +345,8 @@
             case "clear":
               if (op.color != null) {
                 ctx.fillStyle = op.color;
-                ctx.fillRect(0, 0, el.width, el.height);
-              } else ctx.clearRect(0, 0, el.width, el.height);
+                ctx.fillRect(0, 0, el.__olangW, el.__olangH);
+              } else ctx.clearRect(0, 0, el.__olangW, el.__olangH);
               break;
             case "rect":
               paint(op, {

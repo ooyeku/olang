@@ -31,13 +31,13 @@ const SERIES_COLORS: [&str; 8] = [
 // The same hues re-tuned for a dark surface (matching the example
 // suite's page background), so a chart drops into a dark app unstyled.
 const SERIES_COLORS_DARK: [&str; 8] = [
+    "#3ddc97", // mint — the suite's lead accent
     "#5aa9e6", // blue
+    "#f4b84c", // amber
     "#f0854a", // orange
-    "#3ddc97", // aqua
-    "#f5c542", // yellow
     "#ef8bb0", // magenta
-    "#58c458", // green
     "#8b7ae0", // violet
+    "#58c458", // green
     "#ef6b73", // red
 ];
 const FONT: &str = "system-ui, -apple-system, 'Segoe UI', sans-serif";
@@ -55,7 +55,7 @@ impl Theme {
     fn surface(self) -> &'static str {
         match self {
             Theme::Light => "#fcfcfb",
-            Theme::Dark => "#0b0e14",
+            Theme::Dark => "#101720",
         }
     }
     fn ink(self) -> &'static str {
@@ -67,19 +67,19 @@ impl Theme {
     fn ink2(self) -> &'static str {
         match self {
             Theme::Light => "#52514e",
-            Theme::Dark => "#9aa4b2",
+            Theme::Dark => "#7f93a3",
         }
     }
     fn grid(self) -> &'static str {
         match self {
             Theme::Light => "#e4e3df",
-            Theme::Dark => "#1c2430",
+            Theme::Dark => "#1d2937",
         }
     }
     fn axis(self) -> &'static str {
         match self {
             Theme::Light => "#d0cfca",
-            Theme::Dark => "#2a3444",
+            Theme::Dark => "#2b3b4f",
         }
     }
     fn series(self, i: usize) -> &'static str {
@@ -92,7 +92,7 @@ impl Theme {
     fn heat(self) -> ((u8, u8, u8), (u8, u8, u8)) {
         match self {
             Theme::Light => ((232, 238, 248), (42, 120, 214)),
-            Theme::Dark => ((17, 26, 38), (90, 169, 230)),
+            Theme::Dark => ((16, 23, 32), (61, 220, 151)),
         }
     }
 }
@@ -534,7 +534,7 @@ pub fn render_heatmap(
         }
         let _ = write!(
             svg.body,
-            "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"end\" font-size=\"11\" fill=\"{}\">{}</text>",
+            "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"end\" font-size=\"12.5\" fill=\"{}\">{}</text>",
             geo.left - 8.0,
             geo.top + cell_h * r as f64 + cell_h / 2.0 + 4.0,
             opts.theme.ink2(),
@@ -547,9 +547,9 @@ pub fn render_heatmap(
     let _ = write!(
         svg.body,
         "<rect x=\"{key_x:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" rx=\"2\" fill=\"{}\"/>\
-         <text x=\"{:.2}\" y=\"{key_y:.2}\" font-size=\"11\" fill=\"{ink}\">{}</text>\
+         <text x=\"{:.2}\" y=\"{key_y:.2}\" font-size=\"12.5\" fill=\"{ink}\">{}</text>\
          <rect x=\"{:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" rx=\"2\" fill=\"{}\"/>\
-         <text x=\"{:.2}\" y=\"{key_y:.2}\" font-size=\"11\" fill=\"{ink}\">{}</text>",
+         <text x=\"{:.2}\" y=\"{key_y:.2}\" font-size=\"12.5\" fill=\"{ink}\">{}</text>",
         key_y - 9.0,
         heat_color(opts.theme, 0.0),
         key_x + 14.0,
@@ -736,7 +736,7 @@ impl Svg {
             let _ = write!(
                 self.body,
                 "<line x1=\"{:.2}\" y1=\"{y:.2}\" x2=\"{:.2}\" y2=\"{y:.2}\" stroke=\"{}\" stroke-width=\"1\"/>\
-                 <text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"end\" font-size=\"11\" fill=\"{}\">{}</text>",
+                 <text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"end\" font-size=\"12.5\" fill=\"{}\">{}</text>",
                 geo.left,
                 geo.left + geo.plot_w,
                 self.theme.grid(),
@@ -765,7 +765,7 @@ impl Svg {
             let x = geo.px(t, lo, hi);
             let _ = write!(
                 self.body,
-                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"11\" fill=\"{}\">{}</text>",
+                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"12.5\" fill=\"{}\">{}</text>",
                 x,
                 geo.top + geo.plot_h + 16.0,
                 self.theme.ink2(),
@@ -786,7 +786,7 @@ impl Svg {
             let text = truncate(label, 12);
             let _ = write!(
                 self.body,
-                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"11\" fill=\"{}\">{}</text>",
+                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"12.5\" fill=\"{}\">{}</text>",
                 x,
                 geo.top + geo.plot_h + 16.0,
                 self.theme.ink2(),
@@ -802,7 +802,7 @@ impl Svg {
             let _ = write!(
                 self.body,
                 "<rect x=\"{x:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" rx=\"2\" fill=\"{}\"/>\
-                 <text x=\"{:.2}\" y=\"{:.2}\" font-size=\"11\" fill=\"{}\">{}</text>",
+                 <text x=\"{:.2}\" y=\"{:.2}\" font-size=\"12.5\" fill=\"{}\">{}</text>",
                 y - 9.0,
                 self.theme.series(i),
                 x + 14.0,
@@ -819,7 +819,7 @@ impl Svg {
         if !opts.title.is_empty() {
             let _ = write!(
                 self.body,
-                "<text x=\"{:.2}\" y=\"24\" font-size=\"15\" font-weight=\"600\" fill=\"{}\">{}</text>",
+                "<text x=\"{:.2}\" y=\"25\" font-size=\"16.5\" font-weight=\"600\" fill=\"{}\">{}</text>",
                 geo.left,
                 self.theme.ink(),
                 escape(&opts.title)
@@ -828,7 +828,7 @@ impl Svg {
         if !opts.x_label.is_empty() {
             let _ = write!(
                 self.body,
-                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"12\" fill=\"{}\">{}</text>",
+                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"13\" fill=\"{}\">{}</text>",
                 geo.left + geo.plot_w / 2.0,
                 opts.height as f64 - 12.0,
                 self.theme.ink2(),
@@ -838,7 +838,7 @@ impl Svg {
         if !opts.y_label.is_empty() {
             let _ = write!(
                 self.body,
-                "<text x=\"16\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"12\" fill=\"{}\" \
+                "<text x=\"16\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"13\" fill=\"{}\" \
                  transform=\"rotate(-90 16 {:.2})\">{}</text>",
                 geo.top + geo.plot_h / 2.0,
                 geo.top + geo.plot_h / 2.0,

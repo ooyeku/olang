@@ -64,6 +64,7 @@ let gallery_html = unwrap(fs.read_file("static/gallery.html"))
 let gallery_ol = unwrap(fs.read_file("static/gallery.ol"))
 let board_html = unwrap(fs.read_file("static/board.html"))
 let board_ol = unwrap(fs.read_file("static/board.ol"))
+let suite_css = unwrap(fs.read_file("static/suite.css"))
 
 // The wasm artifact is gitignored; warn loudly at boot when missing.
 // (fs.exists, not read_file: the artifact is binary, and reading it as
@@ -132,6 +133,9 @@ fn board_page(req, params) =
 fn board_source(req, params) =
     http.response_with_headers(200, board_ol,
         #{ "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
+fn suite_styles(req, params) =
+    http.response_with_headers(200, suite_css,
+        #{ "Content-Type": "text/css; charset=utf-8", "Cache-Control": "no-store" })
 // The wasm is binary: body_file serves raw bytes straight from disk.
 fn olang_wasm(req, params) = {
     status: 200,
@@ -304,6 +308,7 @@ let routes = [
     route("GET", "/gallery.ol", gallery_source),
     route("GET", "/board.html", board_page),
     route("GET", "/board.ol", board_source),
+    route("GET", "/suite.css", suite_styles),
     route("GET", "/olang.wasm", olang_wasm),
     route("GET", "/health", health),
     route("GET", "/api/issues", issues_list),

@@ -38,6 +38,11 @@ share fn card(title, inner) =
     "<div class=\"dash-card\"><div class=\"dash-title\">" + esc(title)
         + "</div>" + inner + "</div>"
 
+// A card that spans two grid columns — the chart-friendly width.
+share fn half(title, inner) =
+    "<div class=\"dash-card dash-span2\"><div class=\"dash-title\">" + esc(title)
+        + "</div>" + inner + "</div>"
+
 // A card that spans the full grid width.
 share fn wide(title, inner) =
     "<div class=\"dash-card dash-wide\"><div class=\"dash-title\">" + esc(title)
@@ -58,13 +63,14 @@ share fn grid(cards, columns) = {
 // the mount's HTML and the classes above just work.
 share fn styles() = "<style>"
     + ".dash-grid{display:grid;gap:1rem;align-items:stretch}"
-    + ".dash-kpi{background:#0e1116;border:1px solid #1e2430;border-radius:12px;"
+    + ".dash-kpi{background:#101720;border:1px solid #1d2937;border-radius:12px;"
     + "padding:0.9rem 1.1rem;display:flex;flex-direction:column;gap:0.15rem}"
-    + ".dash-label{color:#5b6577;font-size:11px;text-transform:uppercase;letter-spacing:0.08em}"
-    + ".dash-value{color:#7fd1b9;font-size:26px;font-weight:600;font-family:ui-monospace,monospace}"
-    + ".dash-note{color:#9aa4b2;font-size:12px}"
-    + ".dash-card{background:#0e1116;border:1px solid #1e2430;border-radius:12px;"
+    + ".dash-label{color:#55697a;font-size:11px;text-transform:uppercase;letter-spacing:0.08em}"
+    + ".dash-value{color:#3ddc97;font-size:26px;font-weight:600;font-family:ui-monospace,monospace}"
+    + ".dash-note{color:#7f93a3;font-size:12px}"
+    + ".dash-card{background:#101720;border:1px solid #1d2937;border-radius:12px;"
     + "padding:0.6rem;overflow:hidden}"
-    + ".dash-title{color:#9aa4b2;font-size:12px;padding:0.1rem 0.3rem 0.4rem}"
+    + ".dash-title{color:#7f93a3;font-size:12px;padding:0.1rem 0.3rem 0.4rem}"
     + ".dash-wide{grid-column:1 / -1}"
+    + ".dash-span2{grid-column:span 2}"
     + "</style>"

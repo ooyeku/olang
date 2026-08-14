@@ -28,6 +28,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   draw-list for point counts SVG can't carry. Underneath, `plot.xy`
   is new: layered mixed marks (line/area/scatter, each with its own
   x) in one document over shared scales.
+- **Fidelity and cohesion — the suite becomes one program.** Every
+  canvas now renders at devicePixelRatio (the backing store scales
+  once, the context pre-scales, all drawing stays in design units) —
+  the blurriness on retina displays is gone. Charts are designed at
+  the size they display: pages pass card-matched viewBoxes, tick and
+  category type grows to 12.5px, titles to 16.5px, and the two-column
+  grid gives every chart room to read. One design system
+  (`suite.css`, served by the app) carries the tracker's palette to
+  all seven pages — mint `#3ddc97` leads the dark series order, chart
+  surfaces match the card panels, and the nav, headers, cards,
+  buttons, and inputs share one look. The viz canvas target, tooltip,
+  and dash stylesheet all speak the same tokens.
+- **The roadmap gains the viz campaign's findings** — the
+  language-level growth list the campaign surfaced (in-place list
+  append as the AddAssign of collections, vectorized Series
+  transforms, embedded-package imports, a session state primitive,
+  syntax friction), recorded so the next lanes aim where data work
+  actually pushed back.
 - **The `dash` kit and the ops board.** `use dash`: KPI tiles, cards,
   wide cards, and the grid as pure HTML builders (escaped, natively
   tested) plus `dash.styles()` so a dashboard page ships no CSS. The

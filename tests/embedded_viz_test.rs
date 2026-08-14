@@ -46,7 +46,7 @@ let svg = viz.chart(#{{ "data": rows, "mark": "line", "x": "day", "y": "value",
     "color": "kind", "theme": "dark" }})
 [
     str.contains(svg, ">a<") && str.contains(svg, ">b<"),
-    str.contains(svg, "#0b0e14")
+    str.contains(svg, "#101720")
 ]"##
         ),
         2,

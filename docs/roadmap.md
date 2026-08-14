@@ -208,3 +208,52 @@ a single documented manual step lights the channel up.
 | D3 | **VS Code .vsix** — publish-ready extension (bundled, iconed, licensed); `npx vsce package` or `make dist` emits a clean installable .vsix, shareable with zero accounts | prepped — packaging verified locally |
 | D4 | **Zed registry submission** — one PR to `zed-industries/extensions` (submodule + `extensions.toml` entry with `path = "editors/zed"`); grammar rev is SHA-pinned and pushed; process in [editors/zed/PUBLISHING.md](../editors/zed/PUBLISHING.md) | prepped — PR not yet opened; no account needed beyond GitHub |
 | D5 | **VS Code Marketplace** — `vsce publish` under publisher `ooyeku`; steps in [editors/vscode/PUBLISHING.md](../editors/vscode/PUBLISHING.md) | blocked-on-account — needs the (free) Azure DevOps publisher created; D3 is the account-free fallback meanwhile |
+
+## The viz campaign's findings — where the language should grow next
+
+The five-stage visualization campaign (plot → viz grammar →
+interactivity → binary bulk path → dash kit, all under 0.53.0's
+[Unreleased]) was deliberately run as a stress test: build something
+that competes with D3/ggplot and write down every place the language
+pushed back. These are the findings, ordered by how much viz-and-data
+work they would unlock. Each is a candidate lane, not a promise.
+
+1. **List building is quadratic.** `xs = xs + [v]` in a loop copies the
+   whole list per iteration; the gallery's generators dodge it with
+   closed-form `map(range(n), ...)` and the attractor caps its point
+   count because a genuine recurrence can't. The `+=` string fusion
+   (AddAssign, 0.51.0) is the exact precedent: recognize
+   `xs = xs + [v]` where the target is unobservable and append in
+   place. This is the single highest-value change for data work.
+2. **No vectorized Series transforms.** `math.sin` over 50,000 points
+   means Series → list → 50,000 lambda calls → Series. Elementwise
+   Series math (`ods.map`, or `sin`/`exp`/arithmetic lifted over
+   Series in the ods kernel) would make point-cloud generation as
+   native as the aggregations already are — and it composes with
+   `dom.draw_points`, which already takes Series directly.
+3. **The browser tier ceiling.** Wasm sessions run interpreter +
+   bytecode (the JIT emits native code and cannot exist there), so the
+   gallery's ~250k boot-time lambda calls cost visible seconds.
+   Finding 2 removes most of that particular cost; the longer lane is
+   whether the bytecode tier itself can specialize hot lambda loops
+   harder under wasm.
+4. **Embedded packages cannot import each other.** `dash` re-implements
+   `ui.esc` because `use ui` inside an embedded module doesn't
+   resolve. Allowing embedded→embedded imports keeps the builtin
+   packages honest as they multiply.
+5. **Session state wants a primitive.** Closures capture by value, so
+   every browser app stores state in the DOM (hidden inputs, data-ui
+   attributes, the URL). The discipline is sound — it made the back
+   button and bookmarks free — but a deliberate session-scoped store
+   (even just a blessed `dom.state_get/set` over one hidden root)
+   would name the pattern instead of leaving each app to rediscover
+   it.
+6. **Syntax friction found by writing lots of olang:** no unary minus
+   (`0.0 - x` everywhere trigonometry appears); `=>` must share the
+   `if`'s line, which bites exactly when conditions get long; struct
+   fields require type annotations, pushing dynamic shapes to
+   anonymous objects and maps. Small, but each one was hit repeatedly.
+7. **Tick generation is integer-blind** (renderer, not language): count
+   data gets 0.5 gridlines. A "these are integers" hint — or detecting
+   whole-valued data — finishes the chart typography story.
+

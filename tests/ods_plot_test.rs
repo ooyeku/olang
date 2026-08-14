@@ -166,7 +166,7 @@ fn theme_and_responsive_options() {
         )
         .unwrap(),
     );
-    assert!(svg.contains("#0b0e14"), "dark surface missing");
+    assert!(svg.contains("#101720"), "dark surface missing");
     assert!(
         svg.starts_with(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" style=\"width:100%;height:auto\""

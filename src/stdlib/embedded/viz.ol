@@ -151,8 +151,8 @@ share fn chart(spec) = {
 // The same xy specs, compiled to a draw-list: for point counts where
 // SVG nodes would drown the DOM, or for redrawing every frame.
 
-let palette = ["#5aa9e6", "#f0854a", "#3ddc97", "#f5c542",
-               "#ef8bb0", "#58c458", "#8b7ae0", "#ef6b73"]
+let palette = ["#3ddc97", "#5aa9e6", "#f4b84c", "#f0854a",
+               "#ef8bb0", "#8b7ae0", "#58c458", "#ef6b73"]
 
 // Axis labels round to two decimals — full float precision on a
 // canvas label is noise.
@@ -176,25 +176,25 @@ share fn draw(el, spec) = {
     let py = (v) => top + ph - (to_float(v) - y0) / yspan * ph
 
     let mut ops = [
-        #{ "op": "clear", "color": "#0b0e14" },
+        #{ "op": "clear", "color": "#101720" },
         #{ "op": "line", "x1": left, "y1": top, "x2": left, "y2": top + ph,
-           "stroke": "#2a3444", "line_width": 1 },
+           "stroke": "#2b3b4f", "line_width": 1 },
         #{ "op": "line", "x1": left, "y1": top + ph, "x2": left + pw, "y2": top + ph,
-           "stroke": "#2a3444", "line_width": 1 },
+           "stroke": "#2b3b4f", "line_width": 1 },
         #{ "op": "text", "x": left - 6.0, "y": top + 10.0, "align": "right",
-           "text": fmt(y1), "fill": "#9aa4b2", "font": "11px monospace" },
+           "text": fmt(y1), "fill": "#7f93a3", "font": "12px monospace" },
         #{ "op": "text", "x": left - 6.0, "y": top + ph, "align": "right",
-           "text": fmt(y0), "fill": "#9aa4b2", "font": "11px monospace" },
+           "text": fmt(y0), "fill": "#7f93a3", "font": "12px monospace" },
         #{ "op": "text", "x": left, "y": top + ph + 16.0, "align": "left",
-           "text": fmt(x0), "fill": "#9aa4b2", "font": "11px monospace" },
+           "text": fmt(x0), "fill": "#7f93a3", "font": "12px monospace" },
         #{ "op": "text", "x": left + pw, "y": top + ph + 16.0, "align": "right",
-           "text": fmt(x1), "fill": "#9aa4b2", "font": "11px monospace" }
+           "text": fmt(x1), "fill": "#7f93a3", "font": "12px monospace" }
     ]
     let mut gi = 1
     while gi <= 3 {
         let gy = top + ph * to_float(gi) / 4.0
         ops = ops + [#{ "op": "line", "x1": left, "y1": gy, "x2": left + pw, "y2": gy,
-                        "stroke": "#1c2430", "line_width": 1 }]
+                        "stroke": "#1d2937", "line_width": 1 }]
         gi = gi + 1
     }
 
@@ -209,7 +209,7 @@ share fn draw(el, spec) = {
             let closed = concat(pts, [[px(xs[len(xs) - 1]), top + ph],
                                       [px(xs[0]), top + ph]])
             ops = ops + [#{ "op": "path", "points": closed, "close": true,
-                            "fill": "rgba(90,169,230,0.18)" }]
+                            "fill": "rgba(61,220,151,0.16)" }]
         }
         i = i + 1
     }
@@ -266,7 +266,7 @@ share fn tooltip(el) = {
     let tip = dom.create("div")
     for (k, v) in entries(#{
         "position": "fixed", "display": "none", "pointer-events": "none",
-        "background": "#131c27", "border": "1px solid #2a3444",
+        "background": "#131c27", "border": "1px solid #1d2937",
         "border-radius": "6px", "padding": "3px 8px", "font": "12px monospace",
         "color": "#d9e6ef", "z-index": "50"
     }) {

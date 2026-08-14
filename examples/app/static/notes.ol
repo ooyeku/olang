@@ -17,7 +17,7 @@ fn selected() = {
 
 fn note_row(n, sel) = {
     let id = map_get(n, "id")
-    let classes = if id == sel => "note sel" else => "note"
+    let classes = if id == sel => "n-row sel" else => "n-row"
     hk(id, "div", #{ "class": classes, "id": "note-" + id }, [
         h("span", #{ "id": "t-" + id }, [map_get(n, "title")]),
         h("button", #{ "id": "del-" + id }, ["x"])

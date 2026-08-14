@@ -7,9 +7,11 @@
 
 use viz
 
-fn o(title) = #{ "theme": "dark", "responsive": true, "title": title }
+fn o(title) = #{ "theme": "dark", "responsive": true, "title": title,
+    "width": 560, "height": 360 }
 fn spec(s, title) =
-    map_set(map_set(map_set(s, "title", title), "theme", "dark"), "responsive", true)
+    map_set(map_set(map_set(map_set(map_set(s, "title", title),
+        "theme", "dark"), "responsive", true), "width", 560), "height", 360)
 fn card(id, svg) = dom.set_html(dom.query("#" + id), svg)
 fn jitter(s) = (random.random() + random.random() + random.random() - 1.5) * s
 
@@ -55,11 +57,11 @@ dom.on_frame((f) => {
     let rot = time.monotonic_ms() / 11000.0
     dom.draw(gal, [#{ "op": "clear", "color": "#0b0e14" }])
     dom.draw_points(gal, a1x, a1y, #{ "mode": "points", "size": 1.0, "alpha": 0.75,
-        "color": "#5aa9e6", "sx": 185.0, "sy": 185.0, "tx": 260.0, "ty": 190.0, "rot": rot })
+        "color": "#5aa9e6", "sx": 185.0, "sy": 185.0, "tx": 280.0, "ty": 190.0, "rot": rot })
     dom.draw_points(gal, a2x, a2y, #{ "mode": "points", "size": 1.0, "alpha": 0.75,
-        "color": "#3ddc97", "sx": 185.0, "sy": 185.0, "tx": 260.0, "ty": 190.0, "rot": rot })
+        "color": "#3ddc97", "sx": 185.0, "sy": 185.0, "tx": 280.0, "ty": 190.0, "rot": rot })
     dom.draw_points(gal, core_x, core_y, #{ "mode": "points", "size": 1.5, "alpha": 0.9,
-        "color": "#f5e9c9", "sx": 185.0, "sy": 185.0, "tx": 260.0, "ty": 190.0,
+        "color": "#f5e9c9", "sx": 185.0, "sy": 185.0, "tx": 280.0, "ty": 190.0,
         "rot": rot * 1.4 })
 })
 
@@ -169,7 +171,7 @@ let big = dom.query("#g-big")
 let big_hud = dom.query("#g-big-hud")
 dom.on_frame((f) => {
     let tt = time.monotonic_ms() / 1000.0
-    dom.draw(big, [#{ "op": "clear", "color": "rgba(11,14,20,0.5)" }])
+    dom.draw(big, [#{ "op": "clear", "color": "rgba(16,23,32,0.55)" }])
     dom.draw_points(big, curtain_x, curtain_y, #{
         "mode": "points", "size": 1.0, "alpha": 0.6,
         "color": "hsl(" + show(165.0 + 45.0 * math.sin(tt * 0.4)) + " 70% 62%)",
@@ -193,12 +195,12 @@ dom.on_frame((f) => {
     let tt = time.monotonic_ms() / 1000.0
     let k = 3.0 + 1.5 * math.sin(tt * 0.23)
     dom.draw(stage, [
-        #{ "op": "clear", "color": "rgba(11,14,20,0.16)" },
+        #{ "op": "clear", "color": "rgba(16,23,32,0.18)" },
         #{ "op": "path", "points": rose(k, 170.0, tt * 0.4),
-           "close": false, "stroke": "#7fd1b9", "line_width": 1.5 },
+           "close": false, "stroke": "#3ddc97", "line_width": 1.5 },
         #{ "op": "path", "points": rose(k * 1.5, 120.0, 0.0 - tt * 0.3),
            "close": false, "stroke": "#5aa9e6", "line_width": 1 },
         #{ "op": "path", "points": rose(k * 0.5, 80.0, tt * 0.6),
-           "close": false, "stroke": "#f5c542", "line_width": 1 }
+           "close": false, "stroke": "#f4b84c", "line_width": 1 }
     ])
 })

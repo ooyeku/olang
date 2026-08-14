@@ -18,8 +18,9 @@ fn card(id, svg) = dom.set_html(dom.query("#" + id), svg)
 
 // Every chart on this page is dark, responsive, and titled.
 fn themed(s, title) =
-    map_set(map_set(map_set(map_set(s, "title", title),
-        "theme", "dark"), "responsive", true), "interactive", true)
+    map_set(map_set(map_set(map_set(map_set(map_set(s, "title", title),
+        "theme", "dark"), "responsive", true), "interactive", true),
+        "width", 560), "height", 360)
 
 let statuses = ["open", "in-progress", "done"]
 let priorities = ["low", "medium", "high"]
@@ -62,7 +63,7 @@ fn draw(items) = {
     card("c-heat", plot.heatmap(statuses, priorities,
         map(priorities, (p) => map(statuses, (s) => count_where(picked, s, p))),
         #{ "theme": "dark", "responsive": true, "interactive": true,
-           "title": "count: status × priority" }))
+           "width": 560, "height": 360, "title": "count: status × priority" }))
 
     // Cumulative points as a layered spec: the fill tells the trend,
     // the markers pin each issue.
@@ -74,10 +75,10 @@ fn draw(items) = {
         cum = cum + [#{ "n": n, "total": total }]
         n = n + 1
     }
-    card("c-area", viz.chart(themed(#{ "data": cum, "layers": [
+    card("c-area", viz.chart(map_set(map_set(themed(#{ "data": cum, "layers": [
         #{ "mark": "area", "x": "n", "y": "total", "label": "" },
         #{ "mark": "point", "x": "n", "y": "total", "label": "" }
-    ] }, "cumulative points")))
+    ] }, "cumulative points"), "width", 1140), "height", 320)))
 
     dom.set_text(dom.query("#hud"),
         if sel == "" => show(len(items)) + " issues charted"

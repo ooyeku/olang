@@ -53,9 +53,9 @@ dom.on_frame((f) => {
     dom.draw(dial, [
         #{ "op": "clear" },
         #{ "op": "circle", "x": cx, "y": cy, "r": 52.0,
-           "stroke": "#1e2430", "line_width": 2 },
+           "stroke": "#1d2937", "line_width": 2 },
         #{ "op": "line", "x1": cx, "y1": cy, "x2": x, "y2": y,
-           "stroke": "#7fd1b9", "line_width": 3 },
-        #{ "op": "circle", "x": x, "y": y, "r": 5.0, "fill": "#7fd1b9" }
+           "stroke": "#3ddc97", "line_width": 3 },
+        #{ "op": "circle", "x": x, "y": y, "r": 5.0, "fill": "#3ddc97" }
     ])
 })
