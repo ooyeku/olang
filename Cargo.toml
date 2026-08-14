@@ -1,6 +1,6 @@
 [package]
 name = "olang"
-version = "0.56.0"
+version = "0.57.0"
 edition = "2024"
 authors = ["Ola Yeku <ooyeku@gmail.com>"]
 description = "A minimal, expressive language with first-class functions, pipelines, and pattern matching"
