@@ -218,21 +218,24 @@ that competes with D3/ggplot and write down every place the language
 pushed back. These are the findings, ordered by how much viz-and-data
 work they would unlock. Each is a candidate lane, not a promise.
 
-1. **List building is quadratic.** `xs = xs + [v]` in a loop copies the
-   whole list per iteration. **Bytecode tier: done (0.54.0+).** The
-   AddAssign fusion (the 0.51.0 string precedent) now extends to lists
-   — a hot list-builder appends in place when it holds the only
-   reference to its Vec, with the same `Arc::get_mut` aliasing guard
-   the strings use (a snapshot taken before an append is never
-   mutated, self-append copies). A promoted 60,000-element build went
-   3807 ms → 2 ms, an O(n²)→O(n) collapse; differential tests pin the
-   aliasing cases across tiers. **Remaining: the interpreter.** Its
-   list is `Value::List(Arc<[Value]>)` — a fixed-size boxed slice that
-   cannot grow in place — so an *unpromoted* one-shot build (the
-   gallery's boot-time generators) is still quadratic. Making the
-   interpreter fast means moving to `Arc<Vec<Value>>` and mirroring
-   the fusion in the assignment path — a ~220-site representation
-   change, tracked as its own lane.
+1. **List building is quadratic. Done end-to-end (0.54.0+).** `xs = xs
+   + [v]` in a loop copied the whole list per iteration. It now
+   appends in place on **every tier**. The bytecode tier extended the
+   AddAssign fusion (the 0.51.0 string precedent): a promoted
+   60,000-element build went 3807 ms → 2 ms. Then the interpreter was
+   finished too — `Value::List` moved from `Arc<[Value]>` (a
+   fixed-size boxed slice) to `Arc<Vec<Value>>` (which grows), a
+   change that cost only a handful of edits because reads deref
+   identically, and the assignment path gained the same fusion (list-
+   literal rhs, `Arc::get_mut` sole-owner guard). An *unpromoted*
+   interpreter build of 8,000 elements went 215 ms → 1 ms — so the
+   cold path, the wasm/browser path, and the hot path are all O(n)
+   now. The aliasing guard is identical across tiers (a snapshot, a
+   nested list, or a captured closure is copied, never mutated) and
+   pinned by interpreter-only and cross-tier differential tests. The
+   only remaining cap is the interpreter's global 10,000-allocation
+   safety budget, which bounds a *single* unpromoted loop regardless
+   — promoted functions run on the tier without it.
 2. **No vectorized Series transforms. Done (0.54.0+).** `ods.map(xs,
    "sin")` applies any of the `math.*` unary functions across a
    column in one native kernel pass — the vectorized form of

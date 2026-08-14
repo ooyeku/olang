@@ -6118,7 +6118,7 @@ impl BytecodeCompiler {
     /// registers, and lambdas that assign captured names are rejected by
     /// the lambda compiler — but a block or match arm can assign
     /// directly, so those decline.
-    fn assignment_free(e: &crate::ast::Expr) -> bool {
+    pub(crate) fn assignment_free(e: &crate::ast::Expr) -> bool {
         use crate::ast::Expr as E;
         match e {
             E::Integer(_)

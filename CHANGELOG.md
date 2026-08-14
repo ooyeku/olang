@@ -32,19 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   checksum — and it runs in the interpreter kernel, no promotion
   needed. The gallery's 50k-point curtain is now generated this way.
 
-- **In-place list building — the AddAssign of collections.** `xs = xs
-  + [v]` in a loop was O(n²): each iteration copied the whole list.
-  The bytecode tier now extends the accumulate fusion (0.51.0's string
-  precedent) to lists — when the accumulator holds the only reference
-  to its Vec, it extends in place, O(1) amortized. The aliasing guard
-  is `Arc::get_mut`, identical to the string case: a snapshot taken
-  before an append is never mutated, self-append (`xs = xs + xs`)
-  copies, and a list handed to another list mid-loop is unharmed.
-  A promoted 60,000-element build drops from **3807 ms to 2 ms**
-  (~1900×). Differential tests pin every aliasing case equal across
-  the interpreter and the VM. (The interpreter's own list is a
-  fixed-size `Arc<[Value]>`, so an unpromoted one-shot build stays
-  quadratic for now — the representation change is the next lane.)
+- **In-place list building — the AddAssign of collections, on every
+  tier.** `xs = xs + [v]` in a loop was O(n²): each iteration copied
+  the whole list. Now it appends in place when the accumulator holds
+  the only reference to its `Vec`, O(1) amortized, with an
+  `Arc::get_mut` aliasing guard identical to the string case — a
+  snapshot taken before an append is never mutated, self-append
+  copies, a nested list is unharmed. The **bytecode tier** got this
+  first (a promoted 60,000-element build: **3807 ms → 2 ms**), and now
+  the **interpreter** does too: `Value::List` moved from a fixed-size
+  `Arc<[Value]>` to a growable `Arc<Vec<Value>>` (reads deref
+  identically, so it was a handful of edits), and the assignment path
+  gained the same fusion. An unpromoted interpreter build of 8,000
+  elements: **215 ms → 1 ms**. Cold, hot, native, and wasm paths are
+  all O(n) now, pinned by interpreter-only and cross-tier differential
+  tests.
 
 ## [0.54.0] - 2026-08-13
 

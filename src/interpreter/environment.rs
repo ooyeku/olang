@@ -180,6 +180,37 @@ impl Environment {
         }
     }
 
+    /// Extend the `List` bound to `name` in place with `items`, but only
+    /// when this environment solely owns both the binding's slot and the
+    /// list's `Arc` — the sole-owner fast path behind `xs = xs + [..]`
+    /// that makes list accumulation O(n) instead of O(n²) on the
+    /// interpreter. Returns `true` if it extended in place; `false` means
+    /// the caller must fall back to the ordinary copying concat (the
+    /// binding is aliased, not a list, or lives in a shared map). It
+    /// never mutates on the `false` path, so any alias — a snapshot, a
+    /// nested list, a captured closure — is always left untouched, which
+    /// is what keeps this transparent against the interpreter oracle.
+    pub fn try_extend_list(&mut self, name: &str, items: &[Value]) -> bool {
+        // Frame-locals are a plain Vec: a clean mutable borrow.
+        if let Some((_, val)) = self.locals.iter_mut().rev().find(|(n, _)| n == name) {
+            return extend_if_sole(val, items);
+        }
+        // The persistent map lives behind a structurally-shared `im`
+        // HashMap whose `get_mut` copies on write — no clean in-place
+        // borrow — so top-level accumulation falls back to the copy path.
+        if self.variables.contains_key(name) {
+            return false;
+        }
+        // Ancestor scope: recurse only when we solely own the parent Arc
+        // (nothing else — a closure, another frame — captured it).
+        if let Some(parent) = self.parent.as_mut()
+            && let Some(p) = Arc::get_mut(parent)
+        {
+            return p.try_extend_list(name, items);
+        }
+        false
+    }
+
     /// Get all variables in this environment (excluding parent environments)
     /// Returns a clone for compatibility with existing code
     pub fn get_all_variables(&self) -> HashMap<String, Value> {
@@ -222,4 +253,19 @@ impl Environment {
             .into_iter()
             .collect()
     }
+}
+
+/// Extend `val` in place iff it is a sole-owner `List`; otherwise leave it
+/// untouched and report failure so the caller copies. `Arc::get_mut` is the
+/// aliasing guard — it yields `Some` only when this is the single reference
+/// to the underlying `Vec`, exactly the discipline the string/list AddAssign
+/// fusion uses in the bytecode tier.
+fn extend_if_sole(val: &mut Value, items: &[Value]) -> bool {
+    if let Value::List(arc) = val
+        && let Some(v) = Arc::get_mut(arc)
+    {
+        v.extend_from_slice(items);
+        return true;
+    }
+    false
 }

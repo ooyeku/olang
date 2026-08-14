@@ -1003,7 +1003,7 @@ fn csv_sort_by_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     };
 
     if csv_data.is_empty() {
-        return Ok(Value::Ok(Box::new(Value::List(Arc::new([])))));
+        return Ok(Value::Ok(Box::new(Value::List(Arc::new(vec![])))));
     }
 
     let mut sorted_rows: Vec<Value> = csv_data.iter().skip(1).cloned().collect();

@@ -1752,7 +1752,7 @@ mod tests {
         );
         params.insert(
             "list".to_string(),
-            Value::List(Arc::new([string_val("item1"), string_val("item2")])),
+            Value::List(Arc::new(vec![string_val("item1"), string_val("item2")])),
         );
 
         let params_struct = struct_val("QueryParams", params);

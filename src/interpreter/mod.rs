@@ -1131,6 +1131,51 @@ impl Interpreter {
                 Err(InterpreterError::ReturnSignal(v))
             }
             Expr::Assignment { target, value } => {
+                // Fuse `xs = xs + [..]` into an in-place extend when xs holds
+                // a sole-owned list — the interpreter half of finding #1,
+                // turning O(n²) accumulation into O(n). Narrowed to a list
+                // *literal* rhs so numeric and string accumulation keep their
+                // existing path untouched. Guarded exactly like the bytecode
+                // tier: fusion evaluates rhs before touching xs, so rhs must
+                // provably assign nothing (else the read order would change),
+                // and `try_extend_list`'s `Arc::get_mut` guard copies instead
+                // of mutating whenever the list is aliased — so a snapshot, a
+                // nested list, or a captured closure is never disturbed.
+                if let Expr::BinaryOp {
+                    left,
+                    op: crate::ast::BinaryOp::Add,
+                    right,
+                } = value.as_ref()
+                    && matches!(right.as_ref(), Expr::List(_))
+                    && matches!(left.as_ref(), Expr::Identifier(n) if n == target)
+                    && crate::ovm::bytecode::BytecodeCompiler::assignment_free(right)
+                {
+                    let rhs = self.eval_expr(right)?;
+                    if let Value::List(items) = &rhs
+                        && self.environment.try_extend_list(target, items)
+                    {
+                        return self.environment.get(target).ok_or_else(|| {
+                            InterpreterError::UndefinedVariable {
+                                name: target.clone(),
+                            }
+                        });
+                    }
+                    // Aliased, or xs is not a list: finish as an ordinary
+                    // `xs + rhs`. rhs is assignment-free, so reading xs now
+                    // (after rhs) gives the same value the normal left-first
+                    // order would have.
+                    let current = self.environment.get(target).ok_or_else(|| {
+                        InterpreterError::UndefinedVariable {
+                            name: target.clone(),
+                        }
+                    })?;
+                    let val = self.eval_binary_op(current, crate::ast::BinaryOp::Add, rhs)?;
+                    self.environment.set(target, val.clone()).or_else(|_| {
+                        self.environment.define(target.clone(), val.clone());
+                        Ok(())
+                    })?;
+                    return Ok(val);
+                }
                 let val = self.eval_expr(value)?;
                 self.environment.set(target, val.clone()).or_else(|_| {
                     // If variable not defined, define it

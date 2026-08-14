@@ -100,7 +100,7 @@ fn list_arg<'a>(
     args: &'a [Value],
     i: usize,
     func: &str,
-) -> Result<&'a Arc<[Value]>, InterpreterError> {
+) -> Result<&'a Arc<Vec<Value>>, InterpreterError> {
     match args.get(i) {
         Some(Value::List(items)) => Ok(items),
         Some(other) => Err(InterpreterError::TypeError {

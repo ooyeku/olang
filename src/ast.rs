@@ -532,7 +532,11 @@ pub enum Value {
     Float(f64),
     String(Arc<String>),
     Boolean(bool),
-    List(Arc<[Value]>),
+    // `Arc<Vec<_>>`, not `Arc<[_]>`, so a sole-owner list can grow in
+    // place (`Arc::get_mut` + `Vec::extend`) — the interpreter half of
+    // the in-place-append fusion. Reads are unaffected: `Vec` derefs to
+    // the same slice.
+    List(Arc<Vec<Value>>),
     Map(Arc<HashMap<String, Value>>),
     Tuple(Arc<Vec<Value>>),
     Function(Function),

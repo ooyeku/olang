@@ -84,7 +84,7 @@ pub struct BytecodeTier {
     /// list no longer pays a deep Value->OvmValue walk per call. Entries are
     /// keyed by allocation address and validated with a Weak upgrade, so a
     /// freed-and-reused address can never produce a stale hit.
-    arg_cache: HashMap<usize, (Weak<[Value]>, OvmValue)>,
+    arg_cache: HashMap<usize, (Weak<Vec<Value>>, OvmValue)>,
 }
 
 impl BytecodeTier {
