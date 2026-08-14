@@ -53,6 +53,7 @@ export async function highlight(code, lang = 'olang') {
 export const BOOK = [
   { slug: 'tour', file: 'tour.md', title: 'The Tour' },
   { slug: 'language', file: 'language.md', title: 'The Language' },
+  { slug: 'pitfalls', file: 'pitfalls.md', title: 'Common Pitfalls' },
   { slug: 'types', file: 'types.md', title: 'Types' },
   { slug: 'stdlib', file: 'stdlib.md', title: 'The Standard Library' },
   { slug: 'ods', file: 'ods.md', title: 'The Data Stack' },

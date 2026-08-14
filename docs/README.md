@@ -19,8 +19,9 @@ the implementation.
 |---|---|
 | **[A Tour of olang](tour.md)** | The language, taught by building one small program end-to-end — from a list of strings to a parallel statistical report |
 | **[The Language Reference](language.md)** | Every construct, precisely: values and mutability, evaluation order, operators, control flow, pattern matching, functions and closure semantics, types, traits, errors, concurrency, modules, testing |
+| **[Common Pitfalls](pitfalls.md)** | The sharp edges collected in one place — missing map keys, integer division, operator-precedence surprises, closure capture, truthiness, indexing, and the other behaviors that trip up newcomers, each with the idiom that avoids it |
 | **[Types](types.md)** | Gradual typing end to end: annotations as enforced promises, the three rules, runtime enforcement on every tier, the `olang check` static checker and its element-type analysis, and how to adopt types incrementally |
-| **[The Standard Library](stdlib.md)** | Every global builtin and all twenty-three modules, each with its design rationale and examples |
+| **[The Standard Library](stdlib.md)** | Every global builtin and all thirty modules — native (`str`, `os`, `fs`, `http`, `db`, `proc`, …), the embedded olang packages (`cli`, `term`, `ui`, `viz`, `dash`, …), and the data stack — each with its design rationale and examples |
 | **[The Data Stack](ods.md)** | `ods`, `stats`, and `plot` in depth: why columns beat rows (measured), every Series and Frame verb, a complete inference workflow, charts as SVG text, the stack's performance characteristics, and the design record — how it was built, benchmarked against NumPy/scipy/Polars, and why it evaluates eagerly |
 | **[olang in the Browser](wasm.md)** | The same language end to end: the WebAssembly build, the `dom` module, structured events, canvas draw-lists, the `ui` view layer, routing and storage, Web Workers, and a guided reading of four complete olang frontends |
 | **[Packages](packages.md)** | Scaffolding projects and libraries, manifests, dependencies, the lockfile model, versioning, the registry |
@@ -42,13 +43,14 @@ run_all.ol`.
 | **[Internals](internals.md)** | The implementation as a design study: why an interpreter is the authority, the fail-closed refusal ladder, how promotion/inference/deopt work, the value model, modules, how to add things |
 | **[The OVM](ovm.md)** | The bytecode and JIT tiers in depth: the register machine's design, the JIT whitelist and specialization, measured performance, deliberate refusals |
 | **[Stability](stability.md)** | What is stable, what is experimental, and how the language evolves from here |
-| **[Tooling](tooling.md)** | `olang test` (the test runner), `olang fmt` (the formatter), and `olang check` (the static checker) |
+| **[Tooling](tooling.md)** | The command-line toolbox: `olang test` (runner, with `--coverage`), `olang fmt` (formatter), `olang check` (static checker), `olang build` (standalone single-file executables), `olang doc` (API docs from `///` comments), and `olang bench` (reproducible timings) |
 | **[Roadmap](roadmap.md)** | Development history and direction — where decisions, verdicts, and deferred work are recorded |
 
 ## Reading order
 
 New to olang? **Tour → Language Reference** (skim, then keep as reference)
-**→ examples/**. Building something specific? Go straight to the
+**→ examples/**, with [Common Pitfalls](pitfalls.md) close at hand for the
+behaviors that surprise. Building something specific? Go straight to the
 [stdlib](stdlib.md) chapter for your domain — data work has its own
 chapter in [The Data Stack](ods.md), and frontends in
 [olang in the Browser](wasm.md). Adding type annotations to a program?

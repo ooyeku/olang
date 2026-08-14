@@ -138,3 +138,8 @@ fn ods_chapter_examples_work() {
 fn wasm_chapter_examples_work() {
     run_doc_file("docs/wasm.md", include_str!("../docs/wasm.md"));
 }
+
+#[test]
+fn pitfalls_chapter_examples_work() {
+    run_doc_file("docs/pitfalls.md", include_str!("../docs/pitfalls.md"));
+}

@@ -1067,6 +1067,17 @@ rebuilding. See `examples/app/static/notes.ol` — a small SPA at
 `/notes.html` combining `ui.render`, `push_state`/`on_route`
 navigation, and localStorage persistence.
 
+| Function | Purpose |
+|---|---|
+| `h(tag, attrs, children)` | Build a virtual node — a tag, an attribute map, and a list of child nodes or text strings |
+| `hk(key, tag, attrs, children)` | Like `h`, plus a stable reconciliation key for keyed lists |
+| `esc(s)` | HTML-escape a string (`&` `<` `>` `"` → entities); applied automatically to text on render |
+| `html(node)` | Render a node tree to an HTML string — pure, testable without a browser |
+| `render(el, children)` | Mount and reconcile a keyed child list into a live DOM element (browser only) |
+
+`h`, `hk`, `esc`, and `html` are pure and run anywhere; only `render`
+needs the browser.
+
 `dom` is the one browser-only module: in a native build every call
 reports that it needs the wasm build (mirroring how `fs`, `os`, `http`,
 and `db` are absent from the browser). The example is therefore
@@ -1206,15 +1217,32 @@ the browser. With `"interactive": true` marks carry their datum as
 turn hover, click-to-filter, and brush-to-zoom into one-liners. See
 [the Data Stack](ods.md#the-viz-grammar).
 
-Above both sits **`use dash`** — the dashboard kit. `dash.kpi(label,
-value, note)`, `dash.card(title, inner)`, `dash.wide(...)`, and
-`dash.grid(cards, columns)` build a dashboard shell as pure HTML
-strings (escaped, natively tested), and `dash.styles()` ships the
-styling — a page needs no CSS of its own. The wiring pattern stays in
-your program: fetch, compute, `dom.set_html` the shell, fill the chart
-mounts with `viz.chart`. The tracker's `/board.html` is the flagship:
-a KPI row, five charts, a URL-carried status filter, and a 5-second
-auto-refresh in one source file.
+| `viz` function | Purpose |
+|---|---|
+| `chart(spec)` | Render a spec (data + mark + encodings) to a standalone SVG string |
+| `draw(el, spec)` | Compile the same spec to canvas draw-lists on a browser element |
+| `tooltip(el)` | Attach hover tooltips reading each mark's `data-*` datum |
+| `on_mark(el, event, handler)` | Call `handler` with the datum when a mark fires `event` (e.g. click-to-filter) |
+| `brush(el, handler)` | Drag-select a range on the chart, calling `handler` with the bounds |
+
+Above both sits **`use dash`** — the dashboard kit. Its helpers build a
+dashboard shell as pure, escaped HTML strings (natively tested), and
+`dash.styles()` ships the CSS so a page needs none of its own:
+
+| `dash` function | Purpose |
+|---|---|
+| `kpi(label, value, note)` | A single metric tile |
+| `stat(label, value, note, accent)` | Like `kpi`, with an accent color |
+| `card(title, inner)` | A titled panel wrapping arbitrary HTML |
+| `half(title, inner)` | A two-column-span card for wide content |
+| `wide(title, inner)` | A full-width card |
+| `grid(cards, columns)` | Lay a list of cards out in an N-column grid |
+| `styles()` | The `<style>` block the shell needs |
+
+The wiring pattern stays in your program: fetch, compute, `dom.set_html`
+the shell, fill the chart mounts with `viz.chart`. The tracker's
+`/board.html` is the flagship: a KPI row, five charts, a URL-carried
+status filter, and a 5-second auto-refresh in one source file.
 
 ```olang
 let x = ods.linspace(0.0, 6.28, 50)

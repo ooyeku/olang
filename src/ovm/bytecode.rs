@@ -3900,6 +3900,12 @@ impl BytecodeVm {
     }
 
     /// Check if value is truthy
+    /// Truthiness for `if`/`while` conditions. Must match the interpreter's
+    /// `to_boolean` (src/interpreter/ops.rs) exactly, or a promoted function
+    /// disagrees with the tree-walker: an *empty* string, list, tuple, or
+    /// range is falsy (like `0`/`false`/Unit), not just Unit. The old
+    /// catch-all made empty collections truthy, so `if xs => …` on a
+    /// promoted function took the wrong branch for an empty `xs`.
     fn is_truthy(&self, value: &OvmValue) -> bool {
         use crate::ovm::value::ValueData;
 
@@ -3907,6 +3913,16 @@ impl BytecodeVm {
             ValueData::Boolean(b) => *b,
             ValueData::Integer(i) => *i != 0,
             ValueData::Float(f) => *f != 0.0,
+            ValueData::String(s) => !s.is_empty(),
+            ValueData::List(items) => !items.is_empty(),
+            ValueData::Tuple(items) => !items.is_empty(),
+            ValueData::Range(r) => {
+                if r.inclusive {
+                    r.start <= r.end
+                } else {
+                    r.start < r.end
+                }
+            }
             ValueData::Unit => false,
             _ => true,
         }

@@ -382,8 +382,21 @@ From loosest to tightest binding:
 | 8 | `-` `!` (prefix) | unary |
 | 9 | `f(x)` `.field` `[i]` `?` | call, access, index, try |
 
-When in doubt, parenthesize — especially around comparisons feeding `&&`,
-which read best fully grouped: `(a >= lo) && (a <= hi)`.
+All binary operators are **left-associative**, and comparisons do not
+chain (`a < b < c` is a type error — write `a < b && b < c`). Three
+orderings differ from C/Rust and are the usual source of precedence bugs:
+
+- **`&&` and `||` share level 1.** `a || b && c` is `(a || b) && c`, *not*
+  `a || (b && c)`. Parenthesize every mixed `&&`/`||`.
+- **Ranges (level 7) bind tighter than `+`/`-` (level 3).** `0..n-1` parses
+  as `(0..n) - 1` — a range minus an integer, a runtime error. Write
+  `0..(n-1)`.
+- **Bitwise (5) and the pipeline `|>` (6) bind tighter than arithmetic.**
+  `1 << 4 * 2` is `(1 << 4) * 2`, and `x + 1 |> f` is `x + (1 |> f)`.
+
+When in doubt, parenthesize — especially comparisons feeding `&&`, which
+read best fully grouped: `(a >= lo) && (a <= hi)`. See
+[Common Pitfalls](pitfalls.md) for worked examples.
 
 ### Evaluation order
 
@@ -1496,8 +1509,34 @@ true false async await try catch error share use
 struct enum test trait impl
 ```
 
-`mut` is a *contextual* keyword: special only right after `let`. `Ok`,
-`Err`, `Promise`, and `spawn` are ordinary names with built-in meaning.
+Each, in one line:
+
+| Keyword | Meaning |
+|---|---|
+| `fn` | Declare a function (`fn name(params) = expr`) |
+| `let` | Bind a name; `let mut` marks intended mutability |
+| `type` | Declare a `struct` or `enum` type |
+| `if` / `else` | Conditional *expression* — `if cond => a else => b` |
+| `match` | Pattern-match an expression over arms |
+| `for` | Iterate over a list, range, string, or map |
+| `while` | Loop while a condition holds |
+| `loop` | Loop forever until `break` |
+| `break` / `continue` | Exit a loop (optionally with a value) / skip to the next iteration |
+| `return` | Return early from a function |
+| `true` / `false` | Boolean literals |
+| `async` / `await` | Declare an async function/lambda; await a promise |
+| `try` / `catch` | Catch a raised error (`try { … } catch e { … }`) |
+| `error` | Declare a named error type with fields |
+| `share` | Export a declaration from a module |
+| `use` | Import from another module or package |
+| `struct` / `enum` | Type-definition forms after `type Name =` |
+| `trait` / `impl` | Declare a trait / implement it for a type |
+| `test` | A named test block, run by `olang test` |
+
+`mut` and `par` are *contextual* keywords: `mut` is special only right
+after `let`, and `par` only directly before `for` (`par for x in xs`).
+`Ok`, `Err`, `Result`, `Promise`, and `spawn` are ordinary names with
+built-in meaning rather than reserved words.
 
 Statement separators are newlines or `;`. Comments are `//` to end of
 line. A leading `#!` line (`#!/usr/bin/env olang`) is host metadata,

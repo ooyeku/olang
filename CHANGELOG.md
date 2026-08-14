@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Empty-collection truthiness now agrees across tiers.** A promoted
+  (bytecode-tier) function used an incomplete condition test that treated
+  an empty string, list, tuple, or range as *truthy* — so `if xs => …` or
+  `while xs { … }` on a promoted function took the wrong branch for an
+  empty `xs`, disagreeing with the interpreter (which correctly treats
+  them as falsy, like `0`/`false`/Unit). The tier's `is_truthy` now
+  mirrors the interpreter's `to_boolean` exactly, pinned by a differential
+  test. Found while writing the new Common Pitfalls chapter.
+
+### Documentation
+
+- **New chapter: [Common Pitfalls](docs/pitfalls.md).** The language's
+  sharp edges collected in one place with the idiom that avoids each —
+  missing map keys returning Unit, integer division, the `&&`/`||` and
+  range precedence surprises, `Result`/struct equality, closure capture,
+  truthiness, indexing/slicing, empty-list builtins, `match`-pattern
+  binding, bare-block scoping, and `os.args` argv. Wired into the book,
+  the website, and the doc-examples test (every example is executed).
+- Documented the three embedded packages `ui`, `viz`, and `dash` with
+  function tables in the stdlib chapter (previously prose-only; `ui.esc`,
+  `dash.stat`, and `dash.half` were undocumented), corrected the stdlib
+  module count, completed the tooling chapter list, and added operator
+  associativity + non-standard-precedence warnings to the language
+  reference.
+
 ### Changed
 
 - **`olang build` embeds the parsed AST, not just source (rung B).** A
