@@ -12,7 +12,10 @@
 
 use super::series::series_of;
 use crate::ast::Value;
-use olang_ods::plot::{PlotOptions, XyKind, XySeries, render_bars, render_hist, render_xy};
+use olang_ods::plot::{
+    BarSeries, PlotOptions, Theme, XyKind, XySeries, render_bar_groups, render_bars, render_box,
+    render_heatmap, render_hist, render_xy,
+};
 use olang_ods::{Scalar, Series};
 
 /// (name, arity) of the plot functions.
@@ -20,8 +23,13 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("line", 3),
     ("scatter", 3),
     ("lines", 3),
+    ("area", 3),
     ("bar", 3),
+    ("bars", 3),
+    ("stacked", 3),
     ("hist", 3),
+    ("heatmap", 4),
+    ("box", 2),
 ];
 
 pub fn handles(func: &str) -> bool {
@@ -63,9 +71,34 @@ fn parse_options(value: &Value) -> Result<PlotOptions, String> {
                     other.type_name()
                 ));
             }
+            ("theme", Value::String(s)) => {
+                opts.theme = match s.as_str() {
+                    "light" => Theme::Light,
+                    "dark" => Theme::Dark,
+                    other => {
+                        return Err(format!(
+                            "plot: theme must be \"light\" or \"dark\", got \"{}\"",
+                            other
+                        ));
+                    }
+                };
+            }
+            ("theme", other) => {
+                return Err(format!(
+                    "plot: theme must be a String, got {}",
+                    other.type_name()
+                ));
+            }
+            ("responsive", Value::Boolean(b)) => opts.responsive = *b,
+            ("responsive", other) => {
+                return Err(format!(
+                    "plot: responsive must be a Bool, got {}",
+                    other.type_name()
+                ));
+            }
             _ => {
                 return Err(format!(
-                    "plot: unknown option '{}' (title, x_label, y_label, width, height)",
+                    "plot: unknown option '{}' (title, x_label, y_label, width, height, theme, responsive)",
                     key
                 ));
             }
@@ -129,6 +162,119 @@ fn xy_points(func: &str, x: &Series, y: &Series) -> Result<(Vec<f64>, Vec<f64>),
     Ok((xs, ys))
 }
 
+/// Category labels from a Series or a plain list; numbers stringify,
+/// nulls refuse (a category with no name is a data bug).
+fn want_labels(func: &str, arg: &Value) -> Result<Vec<String>, String> {
+    match (arg, series_of(arg)) {
+        (_, Some(s)) => (0..s.len())
+            .map(|i| match s.scalar_at(i) {
+                Scalar::Str(v) => Ok(v),
+                Scalar::Null => Err(format!("plot.{}: category labels must not be null", func)),
+                Scalar::F64(v) => Ok(Value::Float(v).to_string()),
+                Scalar::I64(v) => Ok(v.to_string()),
+                Scalar::Bool(b) => Ok(b.to_string()),
+            })
+            .collect(),
+        (Value::List(items), None) => items
+            .iter()
+            .map(|v| match v {
+                Value::String(s) => Ok(s.as_ref().clone()),
+                Value::Integer(n) => Ok(n.to_string()),
+                other => Err(format!(
+                    "plot.{}: labels must be Strings, got {}",
+                    func,
+                    other.type_name()
+                )),
+            })
+            .collect(),
+        (other, None) => Err(format!(
+            "plot.{}: labels must be a Series or list, got {}",
+            func,
+            other.type_name()
+        )),
+    }
+}
+
+/// `[[label, series], ...]` pairs — the multi-series argument shape
+/// shared by lines, bars, stacked, and box.
+fn want_pairs<'a>(func: &str, arg: &'a Value) -> Result<Vec<(String, &'a Series)>, String> {
+    let items = match arg {
+        Value::List(items) => items,
+        other => {
+            return Err(format!(
+                "plot.{} expects a list of [label, series] pairs, got {}",
+                func,
+                other.type_name()
+            ));
+        }
+    };
+    items
+        .iter()
+        .map(|pair| match pair {
+            Value::List(p) if p.len() == 2 => match (&p[0], series_of(&p[1])) {
+                (Value::String(s), Some(y)) => Ok((s.as_ref().clone(), y)),
+                _ => Err(format!(
+                    "plot.{}: each entry is [label (String), values (Series)]",
+                    func
+                )),
+            },
+            other => Err(format!(
+                "plot.{}: each entry is [label, series], got {}",
+                func,
+                other.type_name()
+            )),
+        })
+        .collect()
+}
+
+/// Every value of a numeric series, nulls refused — bar-family charts
+/// draw absolute quantities, and a bar of unknown height draws a lie.
+fn dense_values(func: &str, s: &Series) -> Result<Vec<f64>, String> {
+    if s.null_count() > 0 {
+        return Err(format!(
+            "plot.{}: values must not contain nulls (fill_null or filter first)",
+            func
+        ));
+    }
+    (0..s.len())
+        .map(|i| match s.scalar_at(i) {
+            Scalar::F64(v) => Ok(v),
+            Scalar::I64(v) => Ok(v as f64),
+            _ => Err(format!(
+                "plot.{}: values must be numeric, got a {} series",
+                func,
+                s.dtype()
+            )),
+        })
+        .collect()
+}
+
+/// A row of heatmap cells: a Series or a plain list of numbers.
+fn want_row(func: &str, row: &Value) -> Result<Vec<f64>, String> {
+    if let Some(s) = series_of(row) {
+        return dense_values(func, s);
+    }
+    match row {
+        Value::List(items) => items
+            .iter()
+            .map(|v| match v {
+                Value::Integer(n) => Ok(*n as f64),
+                Value::Float(f) => Ok(*f),
+                other => Err(format!(
+                    "plot.{}: cell values must be numeric, got {}",
+                    func,
+                    other.type_name()
+                )),
+            })
+            .collect(),
+        other => Err(format!(
+            "plot.{}: each row must be a Series or list of numbers, got {}",
+            func,
+            other.type_name()
+        )),
+    }
+}
+
 pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
     let expected = FUNCTIONS
         .iter()
@@ -144,15 +290,15 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
         ));
     }
     let svg = match func {
-        "line" | "scatter" => {
+        "line" | "scatter" | "area" => {
             let x = want_series(func, &args, 0)?;
             let y = want_series(func, &args, 1)?;
             let opts = parse_options(&args[2])?;
             let (xs, ys) = xy_points(func, x, y)?;
-            let kind = if func == "line" {
-                XyKind::Line
-            } else {
-                XyKind::Scatter
+            let kind = match func {
+                "line" => XyKind::Line,
+                "area" => XyKind::Area,
+                _ => XyKind::Scatter,
             };
             render_xy(
                 kind,
@@ -169,90 +315,71 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
             // plot.lines(x, [[label, y], ...], opts) — multi-series.
             let x = want_series(func, &args, 0)?;
             let opts = parse_options(&args[2])?;
-            let pairs = match &args[1] {
-                Value::List(items) => items,
-                other => {
-                    return Err(format!(
-                        "plot.lines expects a list of [label, series] pairs, got {}",
-                        other.type_name()
-                    ));
-                }
-            };
-            let mut series = Vec::with_capacity(pairs.len());
-            for pair in pairs.iter() {
-                let (label, y) = match pair {
-                    Value::List(p) if p.len() == 2 => match (&p[0], series_of(&p[1])) {
-                        (Value::String(s), Some(y)) => (s.as_ref().clone(), y),
-                        _ => {
-                            return Err("plot.lines: each entry is [label (String), y (Series)]"
-                                .to_string());
-                        }
-                    },
-                    other => {
-                        return Err(format!(
-                            "plot.lines: each entry is [label, series], got {}",
-                            other.type_name()
-                        ));
-                    }
-                };
+            let mut series = Vec::new();
+            for (label, y) in want_pairs(func, &args[1])? {
                 let (xs, ys) = xy_points(func, x, y)?;
                 series.push(XySeries { label, xs, ys });
             }
             render_xy(XyKind::Line, &series, &opts).map_err(e)?
         }
         "bar" => {
-            let labels: Vec<String> = match (&args[0], args.first().and_then(series_of)) {
-                (_, Some(s)) => (0..s.len())
-                    .map(|i| match s.scalar_at(i) {
-                        Scalar::Str(v) => Ok(v),
-                        Scalar::Null => {
-                            Err("plot.bar: category labels must not be null".to_string())
-                        }
-                        other => Ok(match other {
-                            Scalar::F64(v) => Value::Float(v).to_string(),
-                            Scalar::I64(v) => v.to_string(),
-                            Scalar::Bool(b) => b.to_string(),
-                            _ => unreachable!(),
-                        }),
-                    })
-                    .collect::<Result<_, _>>()?,
-                (Value::List(items), None) => items
+            let labels = want_labels(func, &args[0])?;
+            let vals = dense_values(func, want_series(func, &args, 1)?)?;
+            let opts = parse_options(&args[2])?;
+            render_bars(&labels, &vals, &opts).map_err(e)?
+        }
+        "bars" | "stacked" => {
+            // plot.bars/stacked(labels, [[label, values], ...], opts).
+            let labels = want_labels(func, &args[0])?;
+            let opts = parse_options(&args[2])?;
+            let mut series = Vec::new();
+            for (label, s) in want_pairs(func, &args[1])? {
+                series.push(BarSeries {
+                    label,
+                    values: dense_values(func, s)?,
+                });
+            }
+            render_bar_groups(&labels, &series, func == "stacked", &opts).map_err(e)?
+        }
+        "heatmap" => {
+            // plot.heatmap(x_labels, y_labels, rows, opts) — rows[r][c].
+            let x_labels = want_labels(func, &args[0])?;
+            let y_labels = want_labels(func, &args[1])?;
+            let rows = match &args[2] {
+                Value::List(items) => items
                     .iter()
-                    .map(|v| match v {
-                        Value::String(s) => Ok(s.as_ref().clone()),
-                        Value::Integer(n) => Ok(n.to_string()),
-                        other => Err(format!(
-                            "plot.bar: labels must be Strings, got {}",
-                            other.type_name()
-                        )),
-                    })
-                    .collect::<Result<_, _>>()?,
-                (other, None) => {
+                    .map(|row| want_row(func, row))
+                    .collect::<Result<Vec<_>, _>>()?,
+                other => {
                     return Err(format!(
-                        "plot.bar: labels must be a Series or list, got {}",
+                        "plot.heatmap: rows must be a list of rows, got {}",
                         other.type_name()
                     ));
                 }
             };
-            let values = want_series(func, &args, 1)?;
-            if values.null_count() > 0 {
-                return Err(
-                    "plot.bar: values must not contain nulls (fill_null or filter first)"
-                        .to_string(),
-                );
+            let opts = parse_options(&args[3])?;
+            render_heatmap(&x_labels, &y_labels, &rows, &opts).map_err(e)?
+        }
+        "box" => {
+            // plot.box([[label, values], ...], opts) — nulls dropped
+            // (a distribution summary tolerates missing observations).
+            let opts = parse_options(&args[1])?;
+            let mut series = Vec::new();
+            for (label, s) in want_pairs(func, &args[0])? {
+                let values: Vec<f64> = (0..s.len())
+                    .filter_map(|i| match s.scalar_at(i) {
+                        Scalar::F64(v) => Some(Ok(v)),
+                        Scalar::I64(v) => Some(Ok(v as f64)),
+                        Scalar::Null => None,
+                        _ => Some(Err(format!(
+                            "plot.box: values must be numeric, got a {} series",
+                            s.dtype()
+                        ))),
+                    })
+                    .collect::<Result<_, _>>()?;
+                series.push(BarSeries { label, values });
             }
-            let opts = parse_options(&args[2])?;
-            let vals: Vec<f64> = (0..values.len())
-                .map(|i| match values.scalar_at(i) {
-                    Scalar::F64(v) => Ok(v),
-                    Scalar::I64(v) => Ok(v as f64),
-                    _ => Err(format!(
-                        "plot.bar: values must be numeric, got a {} series",
-                        values.dtype()
-                    )),
-                })
-                .collect::<Result<_, _>>()?;
-            render_bars(&labels, &vals, &opts).map_err(e)?
+            render_box(&series, &opts).map_err(e)?
         }
         "hist" => {
             let s = want_series(func, &args, 0)?;

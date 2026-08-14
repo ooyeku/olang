@@ -377,6 +377,15 @@ served at `/orbit.html`: five bodies orbiting on trails, and a click
 adds a new one at the clicked radius — structured event coordinates,
 `dom.measure`, and the draw-list in ~100 lines.
 
+Charts take the other road: the [data stack](ods.md) runs in this
+build, and [`plot`](ods.md#plot--charts-as-svg-text) renders charts as
+SVG *text* — so `dom.set_html(el, plot.line(...))` is a complete
+rendering pipeline, with `theme: "dark"` and `responsive: true` making
+the output drop into a page unstyled. `/charts.html` draws live
+tracker analytics that way (`fetch_json` → `ods.frame_from_records` →
+charts), and `/gallery.html` is the standing showcase — draw-lists for
+motion, plot for statements.
+
 ## Declarative views: the `ui` module
 
 `dom.set_html` with string building is honest and fine at small scale,
@@ -516,14 +525,15 @@ no component classes, no virtual DOM, no state container, no
 lifecycle. The architecture carries that weight, which is what lets
 the program be only as long as its actual behavior.
 
-Then read the three companion pages in ascending order of machinery,
-each linked from the tracker's header: `orbit.ol` (the draw-list and
-frame loop, no HTML rendering at all), `notes.ol` (`ui.render`,
-routing, storage — the SPA shape), and `primes.ol` with
-`primes-worker.ol` (two programs, one page — the parallelism shape).
-Together with `app.ol` they exercise the module's entire surface, and
-every one is served as source by the same process that serves its
-page.
+Then read the companion pages in ascending order of machinery, each
+linked from the tracker's header: `orbit.ol` (the draw-list and frame
+loop, no HTML rendering at all), `notes.ol` (`ui.render`, routing,
+storage — the SPA shape), `primes.ol` with `primes-worker.ol` (two
+programs, one page — the parallelism shape), and the data-viz pair:
+`charts.ol` (live analytics from `fetch_json` through ods frames into
+plot SVG) and `gallery.ol` (the visualization showcase). Together with
+`app.ol` they exercise the module's entire surface, and every one is
+served as source by the same process that serves its page.
 
 ## Running it
 

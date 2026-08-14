@@ -501,18 +501,28 @@ which is also why the whole stack runs in the browser build.
 |---|---|
 | `plot.line(x, y, opts)` | one line through xy points |
 | `plot.scatter(x, y, opts)` | one point cloud |
+| `plot.area(x, y, opts)` | a line with the region beneath it filled |
 | `plot.lines(x, pairs, opts)` | several lines with a legend; `pairs` is `[[label, y], ...]` (up to 8) |
 | `plot.bar(labels, values, opts)` | one bar per category; `labels` is a Series or list |
+| `plot.bars(labels, pairs, opts)` | grouped (side-by-side) bars, one group per category |
+| `plot.stacked(labels, pairs, opts)` | stacked bars — non-negative values only (a negative part misleads) |
 | `plot.hist(s, bins, opts)` | binned counts of one numeric Series |
+| `plot.heatmap(x_labels, y_labels, rows, opts)` | a matrix of values as colored cells on a sequential scale |
+| `plot.box(pairs, opts)` | five-number-summary boxes: whiskers to min/max, quartile box, median line |
 
 Options ride in a single map — `title`, `x_label`, `y_label`, `width`,
-`height` — and passing `#{}` accepts the defaults, which follow a
-colorblind-validated palette assigned in fixed series order. An
-unknown option key is an error, because it is always a typo. Null
-handling matches what a chart can honestly draw: xy plots drop a point
-when either coordinate is null; `bar` refuses null values outright,
-since a bar of unknown height is a lie — `fill_null` or `filter`
-first, so the decision is visible in the code.
+`height`, `theme`, `responsive` — and passing `#{}` accepts the
+defaults, which follow a colorblind-validated palette assigned in
+fixed series order. `theme: "dark"` re-tunes every color for a dark
+surface; `responsive: true` drops the fixed pixel size so the SVG
+fills its container (the browser case — the viewBox keeps the aspect
+ratio). An unknown option key is an error, because it is always a
+typo. Null handling matches what a chart can honestly draw: xy plots
+drop a point when either coordinate is null; the bar family refuses
+null values outright, since a bar of unknown height is a lie —
+`fill_null` or `filter` first, so the decision is visible in the code;
+`box` drops nulls, since a distribution summary honestly tolerates
+missing observations.
 
 ```olang
 let x = ods.linspace(0.0, 6.28, 60)
@@ -532,6 +542,14 @@ println(to_string(str.length(hist) > 500))
 // The usual ending: a chart on disk, viewable in any browser.
 unwrap(fs.write_file("waves.svg", svg))
 ```
+
+In the browser the same charts land on the page directly — the whole
+stack runs in the wasm build, so `dom.set_html(el, svg)` is the
+entire rendering step. The tracker's `/charts.html` draws live
+analytics that way (one `dom.fetch_json`, then frames and charts),
+and `/gallery.html` is the showcase: computed art and statistical
+pieces, every one rendered by `plot`. See
+[olang in the Browser](wasm.md#the-dom-module).
 
 ## The stack and the language
 

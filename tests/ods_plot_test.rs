@@ -130,6 +130,78 @@ fn null_pairs_drop_in_xy_and_refuse_in_bars() {
 }
 
 #[test]
+fn area_grouped_stacked_heatmap_box() {
+    let result = eval(
+        r#"
+        let x = ods.series([1.0, 2.0, 3.0])
+        let y = ods.series([2.0, 5.0, 3.0])
+        let a = plot.area(x, y, #{})
+        let labels = ["q1", "q2"]
+        let pairs = [["east", ods.series([10, 20])], ["west", ods.series([5, 15])]]
+        let grouped = plot.bars(labels, pairs, #{})
+        let stacked = plot.stacked(labels, pairs, #{})
+        let hm = plot.heatmap(["mon", "tue"], ["am", "pm"], [[1, 2], [3, 4]], #{})
+        let bx = plot.box([["east", ods.series([1.0, 5.0, 3.0, 2.0])]], #{})
+        [
+            str.contains(a, "fill-opacity"),
+            str.contains(grouped, "east") && str.contains(grouped, "west"),
+            str.contains(stacked, "east"),
+            str.contains(hm, "mon") && str.contains(hm, "am"),
+            str.contains(bx, "east")
+        ]
+        "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::List(vec![Value::Boolean(true); 5].into()));
+}
+
+#[test]
+fn theme_and_responsive_options() {
+    let svg = as_string(
+        eval(
+            r#"
+            let x = ods.series([1.0, 2.0])
+            plot.line(x, x, #{ "theme": "dark", "responsive": true })
+            "#,
+        )
+        .unwrap(),
+    );
+    assert!(svg.contains("#0b0e14"), "dark surface missing");
+    assert!(
+        svg.starts_with(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" style=\"width:100%;height:auto\""
+        ),
+        "responsive sizing missing from the svg tag"
+    );
+
+    let err = eval(r#"plot.line(ods.series([1.0]), ods.series([1.0]), #{ "theme": "sepia" })"#)
+        .unwrap_err();
+    assert!(err.contains("\"light\" or \"dark\""), "got: {}", err);
+
+    let err = eval(r#"plot.stacked(["a"], [["s", ods.series([0 - 1])]], #{})"#).unwrap_err();
+    assert!(err.contains("non-negative"), "got: {}", err);
+}
+
+#[test]
+fn json_records_round_trip_into_frames_and_charts() {
+    // The browser shape: dom.fetch_json delivers parsed records; a
+    // frame and a chart are one call each. Nulls survive the trip.
+    let result = eval(
+        r#"
+        let body = "[{\"region\":\"east\",\"rev\":10},{\"region\":\"west\",\"rev\":20},{\"region\":\"east\",\"rev\":null}]"
+        let records = unwrap(json.parse(body))
+        let df = ods.frame_from_records(records)
+        let by = df |> ods.group_by("region", [["n", "count", "rev"]])
+        let svg = plot.bar(ods.column(by, "region"), ods.column(by, "n"), #{})
+        let back = unwrap(json.stringify(ods.to_records(df)))
+        [ods.n_rows(df) == 3, str.contains(svg, "east"), str.contains(back, "west")]
+        "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::List(vec![Value::Boolean(true); 3].into()));
+}
+
+#[test]
 fn option_errors_are_informative() {
     let err = eval(r#"plot.line(ods.series([1.0]), ods.series([1.0]), #{ "tite": "typo" })"#)
         .unwrap_err();

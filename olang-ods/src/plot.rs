@@ -28,12 +28,74 @@ const SERIES_COLORS: [&str; 8] = [
     "#4a3aa7", // violet
     "#e34948", // red
 ];
-const SURFACE: &str = "#fcfcfb";
-const INK_PRIMARY: &str = "#0b0b0b";
-const INK_SECONDARY: &str = "#52514e";
-const GRID: &str = "#e4e3df";
-const AXIS: &str = "#d0cfca";
+// The same hues re-tuned for a dark surface (matching the example
+// suite's page background), so a chart drops into a dark app unstyled.
+const SERIES_COLORS_DARK: [&str; 8] = [
+    "#5aa9e6", // blue
+    "#f0854a", // orange
+    "#3ddc97", // aqua
+    "#f5c542", // yellow
+    "#ef8bb0", // magenta
+    "#58c458", // green
+    "#8b7ae0", // violet
+    "#ef6b73", // red
+];
 const FONT: &str = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+/// Surface theme: every color the renderer touches routes through this,
+/// so a chart is dark-ready by option rather than by post-processing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Theme {
+    #[default]
+    Light,
+    Dark,
+}
+
+impl Theme {
+    fn surface(self) -> &'static str {
+        match self {
+            Theme::Light => "#fcfcfb",
+            Theme::Dark => "#0b0e14",
+        }
+    }
+    fn ink(self) -> &'static str {
+        match self {
+            Theme::Light => "#0b0b0b",
+            Theme::Dark => "#d9e6ef",
+        }
+    }
+    fn ink2(self) -> &'static str {
+        match self {
+            Theme::Light => "#52514e",
+            Theme::Dark => "#9aa4b2",
+        }
+    }
+    fn grid(self) -> &'static str {
+        match self {
+            Theme::Light => "#e4e3df",
+            Theme::Dark => "#1c2430",
+        }
+    }
+    fn axis(self) -> &'static str {
+        match self {
+            Theme::Light => "#d0cfca",
+            Theme::Dark => "#2a3444",
+        }
+    }
+    fn series(self, i: usize) -> &'static str {
+        match self {
+            Theme::Light => SERIES_COLORS[i],
+            Theme::Dark => SERIES_COLORS_DARK[i],
+        }
+    }
+    /// Sequential scale endpoints for heatmaps: near-surface to full hue.
+    fn heat(self) -> ((u8, u8, u8), (u8, u8, u8)) {
+        match self {
+            Theme::Light => ((232, 238, 248), (42, 120, 214)),
+            Theme::Dark => ((17, 26, 38), (90, 169, 230)),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct PlotOptions {
@@ -42,6 +104,10 @@ pub struct PlotOptions {
     pub title: String,
     pub x_label: String,
     pub y_label: String,
+    pub theme: Theme,
+    /// When set, the SVG carries no fixed pixel size — the viewBox plus
+    /// `width:100%` lets the *container* size it (the browser case).
+    pub responsive: bool,
 }
 
 impl Default for PlotOptions {
@@ -52,6 +118,8 @@ impl Default for PlotOptions {
             title: String::new(),
             x_label: String::new(),
             y_label: String::new(),
+            theme: Theme::default(),
+            responsive: false,
         }
     }
 }
@@ -60,6 +128,8 @@ impl Default for PlotOptions {
 pub enum XyKind {
     Line,
     Scatter,
+    /// Line with the region down to the plot floor filled translucently.
+    Area,
 }
 
 /// One xy series; points are pre-cleaned by the caller (no NaN/null).
@@ -106,17 +176,28 @@ pub fn render_xy(kind: XyKind, series: &[XySeries], opts: &PlotOptions) -> Resul
     svg.x_numeric_ticks(&geo, &x_ticks, x_lo, x_hi);
 
     for (i, s) in series.iter().enumerate() {
-        let color = SERIES_COLORS[i];
+        let color = opts.theme.series(i);
         let pts: Vec<(f64, f64)> =
             s.xs.iter()
                 .zip(&s.ys)
                 .map(|(&x, &y)| (geo.px(x, x_lo, x_hi), geo.py(y, y_lo, y_hi)))
                 .collect();
         match kind {
-            XyKind::Line => {
+            XyKind::Line | XyKind::Area => {
                 let mut d = String::new();
                 for (j, (x, y)) in pts.iter().enumerate() {
                     let _ = write!(d, "{}{:.2},{:.2}", if j == 0 { "M" } else { " L" }, x, y);
+                }
+                if kind == XyKind::Area {
+                    // Fill to the plot floor; translucent so stacked
+                    // series stay readable, the line carries the value.
+                    let floor = geo.top + geo.plot_h;
+                    let (first, last) = (pts[0].0, pts[pts.len() - 1].0);
+                    let _ = write!(
+                        svg.body,
+                        "<path d=\"{d} L{last:.2},{floor:.2} L{first:.2},{floor:.2} Z\" \
+                         fill=\"{color}\" fill-opacity=\"0.22\" stroke=\"none\"/>",
+                    );
                 }
                 let _ = write!(
                     svg.body,
@@ -178,26 +259,10 @@ pub fn render_bars(labels: &[String], values: &[f64], opts: &PlotOptions) -> Res
         let _ = write!(
             svg.body,
             "{}",
-            rounded_bar(x, top, bar_w, h, v >= 0.0, SERIES_COLORS[0])
+            rounded_bar(x, top, bar_w, h, v >= 0.0, opts.theme.series(0))
         );
     }
-    // Category labels: skip-step when crowded, truncate when long.
-    let step = (labels.len() / 12).max(1);
-    for (i, label) in labels.iter().enumerate() {
-        if i % step != 0 {
-            continue;
-        }
-        let x = geo.left + slot * i as f64 + slot / 2.0;
-        let text = truncate(label, 12);
-        let _ = write!(
-            svg.body,
-            "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"11\" fill=\"{}\">{}</text>",
-            x,
-            geo.top + geo.plot_h + 16.0,
-            INK_SECONDARY,
-            escape(&text)
-        );
-    }
+    svg.x_category_labels(&geo, labels, slot);
     Ok(svg.close(opts, &geo))
 }
 
@@ -224,6 +289,308 @@ pub fn render_hist(values: &[f64], bins: usize, opts: &PlotOptions) -> Result<St
         .map(|b| format_sig(lo + width * (b as f64 + 0.5) / bins as f64, 3))
         .collect();
     render_bars(&labels, &counts, opts)
+}
+
+/// One named value-list per series, aligned to the shared category labels.
+#[derive(Clone, Debug)]
+pub struct BarSeries {
+    pub label: String,
+    pub values: Vec<f64>,
+}
+
+/// Grouped (side-by-side) or stacked bars for several series over the
+/// same categories. Stacking is a part-of-whole statement, so stacked
+/// bars refuse negative values — a negative part draws a lie.
+pub fn render_bar_groups(
+    labels: &[String],
+    series: &[BarSeries],
+    stacked: bool,
+    opts: &PlotOptions,
+) -> Result<String> {
+    if labels.is_empty() || series.is_empty() {
+        return Err(OdsError::InvalidArgument(
+            "plot: no data points to draw".to_string(),
+        ));
+    }
+    if series.len() > SERIES_COLORS.len() {
+        return Err(OdsError::InvalidArgument(format!(
+            "plot: at most {} series per chart (fold the rest or facet)",
+            SERIES_COLORS.len()
+        )));
+    }
+    for s in series {
+        if s.values.len() != labels.len() {
+            return Err(OdsError::LengthMismatch {
+                left: labels.len(),
+                right: s.values.len(),
+            });
+        }
+        if stacked && s.values.iter().any(|&v| v < 0.0) {
+            return Err(OdsError::InvalidArgument(
+                "plot.stacked: values must be non-negative (a negative part misleads)".to_string(),
+            ));
+        }
+    }
+
+    // Scale: grouped spans every value; stacked spans category sums.
+    let mut extent: Vec<f64> = vec![0.0];
+    if stacked {
+        for i in 0..labels.len() {
+            extent.push(series.iter().map(|s| s.values[i]).sum());
+        }
+    } else {
+        extent.extend(series.iter().flat_map(|s| s.values.iter().copied()));
+    }
+    let (y_ticks, y_lo, y_hi) = nice_ticks(&extent);
+
+    let geo = Geometry::new(opts, series.len() >= 2);
+    let mut svg = Svg::open(opts, &geo);
+    svg.grid_and_axes(&geo, &y_ticks, y_lo, y_hi);
+
+    let slot = geo.plot_w / labels.len() as f64;
+    let y0 = geo.py(0.0, y_lo, y_hi);
+    if stacked {
+        let bar_w = (slot * 0.72).max(1.0);
+        for (i, _) in labels.iter().enumerate() {
+            let x = geo.left + slot * i as f64 + (slot - bar_w) / 2.0;
+            let mut running = 0.0;
+            for (si, s) in series.iter().enumerate() {
+                let v = s.values[i];
+                if v <= 0.0 {
+                    continue;
+                }
+                let top = geo.py(running + v, y_lo, y_hi);
+                let bottom = geo.py(running, y_lo, y_hi);
+                // Only the topmost segment gets the rounded data-end.
+                let last = series[si + 1..].iter().all(|r| r.values[i] <= 0.0);
+                let seg = if last {
+                    rounded_bar(x, top, bar_w, bottom - top, true, opts.theme.series(si))
+                } else {
+                    format!(
+                        "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"{}\"/>",
+                        x,
+                        top,
+                        bar_w,
+                        bottom - top,
+                        opts.theme.series(si)
+                    )
+                };
+                let _ = write!(svg.body, "{}", seg);
+                running += v;
+            }
+        }
+    } else {
+        let group_w = (slot * 0.78).max(1.0);
+        let bar_w = (group_w / series.len() as f64 - 2.0).max(1.0);
+        for (i, _) in labels.iter().enumerate() {
+            let start = geo.left + slot * i as f64 + (slot - group_w) / 2.0;
+            for (si, s) in series.iter().enumerate() {
+                let v = s.values[i];
+                let x = start + (bar_w + 2.0) * si as f64;
+                let yv = geo.py(v, y_lo, y_hi);
+                let (top, h) = if yv <= y0 {
+                    (yv, y0 - yv)
+                } else {
+                    (y0, yv - y0)
+                };
+                let _ = write!(
+                    svg.body,
+                    "{}",
+                    rounded_bar(x, top, bar_w, h, v >= 0.0, opts.theme.series(si))
+                );
+            }
+        }
+    }
+    svg.x_category_labels(&geo, labels, slot);
+    if geo.legend {
+        svg.legend(&geo, series.iter().map(|s| s.label.as_str()));
+    }
+    Ok(svg.close(opts, &geo))
+}
+
+/// A matrix of values as colored cells: rows[r][c] maps to the cell at
+/// (x_labels[c], y_labels[r]), colored on a sequential scale from the
+/// theme's surface toward its primary hue. Row 0 renders at the top.
+pub fn render_heatmap(
+    x_labels: &[String],
+    y_labels: &[String],
+    rows: &[Vec<f64>],
+    opts: &PlotOptions,
+) -> Result<String> {
+    if rows.is_empty() || x_labels.is_empty() || y_labels.is_empty() {
+        return Err(OdsError::InvalidArgument(
+            "plot: no data points to draw".to_string(),
+        ));
+    }
+    if rows.len() != y_labels.len() {
+        return Err(OdsError::LengthMismatch {
+            left: y_labels.len(),
+            right: rows.len(),
+        });
+    }
+    for row in rows {
+        if row.len() != x_labels.len() {
+            return Err(OdsError::LengthMismatch {
+                left: x_labels.len(),
+                right: row.len(),
+            });
+        }
+    }
+    let all: Vec<f64> = rows.iter().flatten().copied().collect();
+    if all.iter().any(|v| !v.is_finite()) {
+        return Err(OdsError::InvalidArgument(
+            "plot.heatmap: values must be finite".to_string(),
+        ));
+    }
+    let lo = all.iter().copied().fold(f64::INFINITY, f64::min);
+    let hi = all.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+
+    let geo = Geometry::new(opts, false);
+    let mut svg = Svg::open(opts, &geo);
+    let cell_w = geo.plot_w / x_labels.len() as f64;
+    let cell_h = geo.plot_h / y_labels.len() as f64;
+    for (r, row) in rows.iter().enumerate() {
+        for (c, &v) in row.iter().enumerate() {
+            let t = if hi > lo { (v - lo) / (hi - lo) } else { 0.5 };
+            let _ = write!(
+                svg.body,
+                "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"2\" fill=\"{}\"/>",
+                geo.left + cell_w * c as f64 + 0.5,
+                geo.top + cell_h * r as f64 + 0.5,
+                cell_w - 1.0,
+                cell_h - 1.0,
+                heat_color(opts.theme, t),
+            );
+        }
+    }
+    svg.x_category_labels(&geo, x_labels, cell_w);
+    // Row labels down the left, skip-stepped like the x labels.
+    let step = (y_labels.len() / 16).max(1);
+    for (r, label) in y_labels.iter().enumerate() {
+        if r % step != 0 {
+            continue;
+        }
+        let _ = write!(
+            svg.body,
+            "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"end\" font-size=\"11\" fill=\"{}\">{}</text>",
+            geo.left - 8.0,
+            geo.top + cell_h * r as f64 + cell_h / 2.0 + 4.0,
+            opts.theme.ink2(),
+            escape(&truncate(label, 12)),
+        );
+    }
+    // A minimal scale key: lo and hi swatches in the top-right corner.
+    let key_x = geo.left + geo.plot_w - 120.0;
+    let key_y = geo.top - 12.0;
+    let _ = write!(
+        svg.body,
+        "<rect x=\"{key_x:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" rx=\"2\" fill=\"{}\"/>\
+         <text x=\"{:.2}\" y=\"{key_y:.2}\" font-size=\"11\" fill=\"{ink}\">{}</text>\
+         <rect x=\"{:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" rx=\"2\" fill=\"{}\"/>\
+         <text x=\"{:.2}\" y=\"{key_y:.2}\" font-size=\"11\" fill=\"{ink}\">{}</text>",
+        key_y - 9.0,
+        heat_color(opts.theme, 0.0),
+        key_x + 14.0,
+        escape(&format_num(lo)),
+        key_x + 60.0,
+        key_y - 9.0,
+        heat_color(opts.theme, 1.0),
+        key_x + 74.0,
+        escape(&format_num(hi)),
+        ink = opts.theme.ink2(),
+    );
+    Ok(svg.close(opts, &geo))
+}
+
+/// Five-number-summary box plots, one per labeled series: whiskers to
+/// min/max, a quartile box, and the median as the emphasized line.
+pub fn render_box(series: &[BarSeries], opts: &PlotOptions) -> Result<String> {
+    if series.is_empty() || series.iter().any(|s| s.values.is_empty()) {
+        return Err(OdsError::InvalidArgument(
+            "plot: no data points to draw".to_string(),
+        ));
+    }
+    let all: Vec<f64> = series
+        .iter()
+        .flat_map(|s| s.values.iter().copied())
+        .collect();
+    if all.iter().any(|v| !v.is_finite()) {
+        return Err(OdsError::InvalidArgument(
+            "plot.box: values must be finite".to_string(),
+        ));
+    }
+    let (y_ticks, y_lo, y_hi) = nice_ticks(&all);
+
+    let geo = Geometry::new(opts, false);
+    let mut svg = Svg::open(opts, &geo);
+    svg.grid_and_axes(&geo, &y_ticks, y_lo, y_hi);
+
+    let slot = geo.plot_w / series.len() as f64;
+    let box_w = (slot * 0.44).max(2.0);
+    let color = opts.theme.series(0);
+    for (i, s) in series.iter().enumerate() {
+        let mut sorted = s.values.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).expect("finite checked above"));
+        let [min, q1, med, q3, max] = [0.0, 0.25, 0.5, 0.75, 1.0].map(|q| quantile(&sorted, q));
+        let cx = geo.left + slot * i as f64 + slot / 2.0;
+        let x = cx - box_w / 2.0;
+        let (py_min, py_q1, py_med, py_q3, py_max) = (
+            geo.py(min, y_lo, y_hi),
+            geo.py(q1, y_lo, y_hi),
+            geo.py(med, y_lo, y_hi),
+            geo.py(q3, y_lo, y_hi),
+            geo.py(max, y_lo, y_hi),
+        );
+        let _ = write!(
+            svg.body,
+            "<line x1=\"{cx:.2}\" y1=\"{py_min:.2}\" x2=\"{cx:.2}\" y2=\"{py_q1:.2}\" stroke=\"{color}\"/>\
+             <line x1=\"{cx:.2}\" y1=\"{py_q3:.2}\" x2=\"{cx:.2}\" y2=\"{py_max:.2}\" stroke=\"{color}\"/>\
+             <line x1=\"{:.2}\" y1=\"{py_min:.2}\" x2=\"{:.2}\" y2=\"{py_min:.2}\" stroke=\"{color}\"/>\
+             <line x1=\"{:.2}\" y1=\"{py_max:.2}\" x2=\"{:.2}\" y2=\"{py_max:.2}\" stroke=\"{color}\"/>\
+             <rect x=\"{x:.2}\" y=\"{py_q3:.2}\" width=\"{box_w:.2}\" height=\"{:.2}\" rx=\"2\" \
+             fill=\"{color}\" fill-opacity=\"0.28\" stroke=\"{color}\"/>\
+             <line x1=\"{x:.2}\" y1=\"{py_med:.2}\" x2=\"{:.2}\" y2=\"{py_med:.2}\" \
+             stroke=\"{color}\" stroke-width=\"2\"/>",
+            cx - box_w / 4.0,
+            cx + box_w / 4.0,
+            cx - box_w / 4.0,
+            cx + box_w / 4.0,
+            py_q1 - py_q3,
+            x + box_w,
+        );
+    }
+    let labels: Vec<String> = series.iter().map(|s| s.label.clone()).collect();
+    svg.x_category_labels(&geo, &labels, slot);
+    Ok(svg.close(opts, &geo))
+}
+
+/// Linear interpolation on the theme's sequential scale, t in [0, 1].
+fn heat_color(theme: Theme, t: f64) -> String {
+    let ((r0, g0, b0), (r1, g1, b1)) = theme.heat();
+    let t = t.clamp(0.0, 1.0);
+    let lerp = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t).round() as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        lerp(r0, r1),
+        lerp(g0, g1),
+        lerp(b0, b1)
+    )
+}
+
+/// Quantile by linear interpolation over a sorted slice (type 7, the
+/// same convention the stats namespace uses).
+fn quantile(sorted: &[f64], q: f64) -> f64 {
+    if sorted.len() == 1 {
+        return sorted[0];
+    }
+    let pos = q * (sorted.len() - 1) as f64;
+    let base = pos.floor() as usize;
+    let frac = pos - base as f64;
+    if base + 1 < sorted.len() {
+        sorted[base] + frac * (sorted[base + 1] - sorted[base])
+    } else {
+        sorted[base]
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -263,22 +630,31 @@ impl Geometry {
 
 struct Svg {
     body: String,
+    theme: Theme,
 }
 
 impl Svg {
     fn open(opts: &PlotOptions, _geo: &Geometry) -> Self {
         let mut body = String::with_capacity(4096);
+        let size = if opts.responsive {
+            "style=\"width:100%;height:auto\"".to_string()
+        } else {
+            format!("width=\"{}\" height=\"{}\"", opts.width, opts.height)
+        };
         let _ = write!(
             body,
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" \
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" {size} \
              viewBox=\"0 0 {w} {h}\" font-family=\"{font}\">\
              <rect width=\"{w}\" height=\"{h}\" fill=\"{surface}\"/>",
             w = opts.width,
             h = opts.height,
             font = FONT,
-            surface = SURFACE
+            surface = opts.theme.surface(),
         );
-        Self { body }
+        Self {
+            body,
+            theme: opts.theme,
+        }
     }
 
     fn grid_and_axes(&mut self, geo: &Geometry, y_ticks: &[f64], y_lo: f64, y_hi: f64) {
@@ -290,10 +666,10 @@ impl Svg {
                  <text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"end\" font-size=\"11\" fill=\"{}\">{}</text>",
                 geo.left,
                 geo.left + geo.plot_w,
-                GRID,
+                self.theme.grid(),
                 geo.left - 8.0,
                 y + 4.0,
-                INK_SECONDARY,
+                self.theme.ink2(),
                 escape(&format_num(t)),
                 y = y,
             );
@@ -307,7 +683,7 @@ impl Svg {
             t = geo.top,
             b = geo.top + geo.plot_h,
             r = geo.left + geo.plot_w,
-            axis = AXIS
+            axis = self.theme.axis(),
         );
     }
 
@@ -319,8 +695,29 @@ impl Svg {
                 "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"11\" fill=\"{}\">{}</text>",
                 x,
                 geo.top + geo.plot_h + 16.0,
-                INK_SECONDARY,
+                self.theme.ink2(),
                 escape(&format_num(t))
+            );
+        }
+    }
+
+    /// Category tick labels along the x axis, skip-stepped when crowded
+    /// and truncated when long — bars, heatmaps, and boxes all share it.
+    fn x_category_labels(&mut self, geo: &Geometry, labels: &[String], slot: f64) {
+        let step = (labels.len() / 12).max(1);
+        for (i, label) in labels.iter().enumerate() {
+            if i % step != 0 {
+                continue;
+            }
+            let x = geo.left + slot * i as f64 + slot / 2.0;
+            let text = truncate(label, 12);
+            let _ = write!(
+                self.body,
+                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"11\" fill=\"{}\">{}</text>",
+                x,
+                geo.top + geo.plot_h + 16.0,
+                self.theme.ink2(),
+                escape(&text)
             );
         }
     }
@@ -334,10 +731,10 @@ impl Svg {
                 "<rect x=\"{x:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" rx=\"2\" fill=\"{}\"/>\
                  <text x=\"{:.2}\" y=\"{:.2}\" font-size=\"11\" fill=\"{}\">{}</text>",
                 y - 9.0,
-                SERIES_COLORS[i],
+                self.theme.series(i),
                 x + 14.0,
                 y,
-                INK_SECONDARY,
+                self.theme.ink2(),
                 escape(label),
                 x = x,
             );
@@ -351,7 +748,7 @@ impl Svg {
                 self.body,
                 "<text x=\"{:.2}\" y=\"24\" font-size=\"15\" font-weight=\"600\" fill=\"{}\">{}</text>",
                 geo.left,
-                INK_PRIMARY,
+                self.theme.ink(),
                 escape(&opts.title)
             );
         }
@@ -361,7 +758,7 @@ impl Svg {
                 "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"12\" fill=\"{}\">{}</text>",
                 geo.left + geo.plot_w / 2.0,
                 opts.height as f64 - 12.0,
-                INK_SECONDARY,
+                self.theme.ink2(),
                 escape(&opts.x_label)
             );
         }
@@ -372,7 +769,7 @@ impl Svg {
                  transform=\"rotate(-90 16 {:.2})\">{}</text>",
                 geo.top + geo.plot_h / 2.0,
                 geo.top + geo.plot_h / 2.0,
-                INK_SECONDARY,
+                self.theme.ink2(),
                 escape(&opts.y_label)
             );
         }
@@ -610,6 +1007,151 @@ mod tests {
             ys: vec![0.0],
         };
         assert!(render_xy(XyKind::Line, &[bad], &PlotOptions::default()).is_err());
+    }
+
+    #[test]
+    fn dark_theme_and_responsive_sizing() {
+        let dark = render_xy(
+            XyKind::Line,
+            &[XySeries {
+                label: String::new(),
+                xs: vec![0.0, 1.0],
+                ys: vec![0.0, 1.0],
+            }],
+            &PlotOptions {
+                theme: Theme::Dark,
+                responsive: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(dark.contains(Theme::Dark.surface()));
+        assert!(dark.contains(SERIES_COLORS_DARK[0]));
+        assert!(!dark.contains(SERIES_COLORS[0]));
+        // Responsive: the svg tag carries container-driven sizing, not
+        // fixed pixel attributes (the background rect keeps viewBox units).
+        assert!(dark.starts_with(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" style=\"width:100%;height:auto\""
+        ));
+        // The viewBox still fixes the aspect ratio.
+        assert!(dark.contains("viewBox=\"0 0 720 440\""));
+    }
+
+    #[test]
+    fn area_fills_below_the_line() {
+        let s = render_xy(
+            XyKind::Area,
+            &[XySeries {
+                label: String::new(),
+                xs: vec![0.0, 1.0, 2.0],
+                ys: vec![1.0, 3.0, 2.0],
+            }],
+            &PlotOptions::default(),
+        )
+        .unwrap();
+        assert!(s.contains("fill-opacity=\"0.22\""));
+        // The stroke line still draws on top of the fill.
+        assert!(s.contains("stroke-width=\"2\""));
+    }
+
+    fn two_bar_series() -> Vec<BarSeries> {
+        vec![
+            BarSeries {
+                label: "a".to_string(),
+                values: vec![1.0, 2.0],
+            },
+            BarSeries {
+                label: "b".to_string(),
+                values: vec![3.0, 4.0],
+            },
+        ]
+    }
+
+    #[test]
+    fn grouped_and_stacked_bars() {
+        let labels = vec!["q1".to_string(), "q2".to_string()];
+        let grouped =
+            render_bar_groups(&labels, &two_bar_series(), false, &PlotOptions::default()).unwrap();
+        // 2 categories × 2 series bars, both series colors, a legend.
+        assert!(grouped.matches("<path").count() >= 4);
+        assert!(grouped.contains(SERIES_COLORS[0]) && grouped.contains(SERIES_COLORS[1]));
+        assert!(grouped.contains(">a<") && grouped.contains(">b<"));
+
+        let stacked =
+            render_bar_groups(&labels, &two_bar_series(), true, &PlotOptions::default()).unwrap();
+        assert!(stacked.contains("<rect")); // lower segments are square
+        assert!(stacked.contains(SERIES_COLORS[1]));
+
+        // Stacked refuses negatives; grouped allows them.
+        let mut neg = two_bar_series();
+        neg[0].values[0] = -1.0;
+        assert!(render_bar_groups(&labels, &neg, true, &PlotOptions::default()).is_err());
+        assert!(render_bar_groups(&labels, &neg, false, &PlotOptions::default()).is_ok());
+
+        // Length mismatch refuses.
+        let mut ragged = two_bar_series();
+        ragged[1].values.pop();
+        assert!(render_bar_groups(&labels, &ragged, false, &PlotOptions::default()).is_err());
+    }
+
+    #[test]
+    fn heatmap_cells_and_scale() {
+        let xs = vec!["mon".to_string(), "tue".to_string()];
+        let ys = vec!["am".to_string(), "pm".to_string()];
+        let rows = vec![vec![0.0, 1.0], vec![2.0, 3.0]];
+        let s = render_heatmap(&xs, &ys, &rows, &PlotOptions::default()).unwrap();
+        // 4 cells + 2 key swatches; extreme cells hit the scale endpoints.
+        assert_eq!(s.matches("rx=\"2\"").count(), 6);
+        assert!(s.contains(&heat_color(Theme::Light, 0.0)));
+        assert!(s.contains(&heat_color(Theme::Light, 1.0)));
+        assert!(s.contains(">am<") && s.contains(">mon<"));
+
+        let ragged = vec![vec![0.0, 1.0], vec![2.0]];
+        assert!(render_heatmap(&xs, &ys, &ragged, &PlotOptions::default()).is_err());
+        assert!(
+            render_heatmap(
+                &xs,
+                &ys,
+                &[vec![f64::NAN, 1.0], vec![2.0, 3.0]],
+                &PlotOptions::default()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn box_plot_five_number_summary() {
+        let s = render_box(
+            &[BarSeries {
+                label: "sample".to_string(),
+                values: vec![5.0, 1.0, 3.0, 2.0, 4.0],
+            }],
+            &PlotOptions::default(),
+        )
+        .unwrap();
+        // Whisker lines + caps + median line, quartile box, label.
+        assert!(s.matches("<line").count() >= 5);
+        assert!(s.contains("fill-opacity=\"0.28\""));
+        assert!(s.contains(">sample<"));
+        assert!(
+            render_box(
+                &[BarSeries {
+                    label: "empty".to_string(),
+                    values: vec![],
+                }],
+                &PlotOptions::default()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn quantiles_interpolate() {
+        let sorted = [1.0, 2.0, 3.0, 4.0];
+        assert_eq!(quantile(&sorted, 0.0), 1.0);
+        assert_eq!(quantile(&sorted, 0.5), 2.5);
+        assert_eq!(quantile(&sorted, 1.0), 4.0);
+        assert_eq!(quantile(&[7.0], 0.5), 7.0);
     }
 
     #[test]

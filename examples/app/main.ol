@@ -58,6 +58,10 @@ let worker_harness = unwrap(fs.read_file("static/olang-worker.js"))
 let primes_html = unwrap(fs.read_file("static/primes.html"))
 let primes_ol = unwrap(fs.read_file("static/primes.ol"))
 let primes_worker_ol = unwrap(fs.read_file("static/primes-worker.ol"))
+let charts_html = unwrap(fs.read_file("static/charts.html"))
+let charts_ol = unwrap(fs.read_file("static/charts.ol"))
+let gallery_html = unwrap(fs.read_file("static/gallery.html"))
+let gallery_ol = unwrap(fs.read_file("static/gallery.ol"))
 
 // The wasm artifact is gitignored; warn loudly at boot when missing.
 // (fs.exists, not read_file: the artifact is binary, and reading it as
@@ -105,6 +109,19 @@ fn primes_source(req, params) =
         #{ "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
 fn primes_worker_source(req, params) =
     http.response_with_headers(200, primes_worker_ol,
+        #{ "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
+// The data-viz pages: live tracker analytics and the gallery (viz stage 1).
+fn charts_page(req, params) =
+    http.response_with_headers(200, charts_html,
+        #{ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" })
+fn charts_source(req, params) =
+    http.response_with_headers(200, charts_ol,
+        #{ "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
+fn gallery_page(req, params) =
+    http.response_with_headers(200, gallery_html,
+        #{ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" })
+fn gallery_source(req, params) =
+    http.response_with_headers(200, gallery_ol,
         #{ "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
 // The wasm is binary: body_file serves raw bytes straight from disk.
 fn olang_wasm(req, params) = {
@@ -272,6 +289,10 @@ let routes = [
     route("GET", "/primes.html", primes_page),
     route("GET", "/primes.ol", primes_source),
     route("GET", "/primes-worker.ol", primes_worker_source),
+    route("GET", "/charts.html", charts_page),
+    route("GET", "/charts.ol", charts_source),
+    route("GET", "/gallery.html", gallery_page),
+    route("GET", "/gallery.ol", gallery_source),
     route("GET", "/olang.wasm", olang_wasm),
     route("GET", "/health", health),
     route("GET", "/api/issues", issues_list),

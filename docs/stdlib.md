@@ -1016,12 +1016,15 @@ workflow and how to read p-values and `r2` honestly.
 ## `plot` — charts as SVG text
 
 Charts render to complete standalone SVG documents as strings — write
-one with `fs.write_file`, serve it over `http`, or return it from the
-playground. `plot.line`, `plot.scatter`, `plot.lines` (multi-series
-with legend), `plot.bar`, and `plot.hist` take Series data plus one
-options map (`title`, `x_label`, `y_label`, `width`, `height`; unknown
-keys are errors). Defaults follow a colorblind-validated palette, so a
-chart is presentable with `#{}`.
+one with `fs.write_file`, serve it over `http`, or land it on a page
+with `dom.set_html`. `plot.line`, `plot.scatter`, `plot.area`,
+`plot.lines` (multi-series with legend), `plot.bar`, `plot.bars`
+(grouped), `plot.stacked`, `plot.hist`, `plot.heatmap`, and `plot.box`
+take Series data plus one options map (`title`, `x_label`, `y_label`,
+`width`, `height`, `theme` — `"dark"` re-tunes every color for a dark
+surface — and `responsive`, which sizes the SVG to its container;
+unknown keys are errors). Defaults follow a colorblind-validated
+palette, so a chart is presentable with `#{}`.
 
 ```olang
 let x = ods.linspace(0.0, 6.28, 50)

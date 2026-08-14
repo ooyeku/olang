@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>gallery — olang data visualization</title>
+  <style>
+    nav.demos {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+      display: flex; justify-content: center; align-items: center; gap: 1rem;
+      padding: 0.6rem 1rem; font-size: 12px;
+      background: rgba(11, 14, 20, 0.88); border-bottom: 1px solid #1e2430;
+      backdrop-filter: blur(8px);
+    }
+    nav.demos a { color: #9aa4b2; text-decoration: none; }
+    nav.demos a:hover { color: #7fd1b9; }
+    nav.demos a.here { color: #7fd1b9; font-weight: 600; }
+    nav.demos .sep { color: #2a3444; }
+    nav.demos .src { color: #5b6577; }
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; padding: 3.5rem 1.5rem 2rem; min-height: 100vh;
+      background: #0b0e14; color: #9aa4b2;
+      font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    header { max-width: 1180px; margin: 0 auto 1rem; display: flex; align-items: baseline; gap: 1rem; }
+    h1 { color: #7fd1b9; font-size: 1.05rem; margin: 0; }
+    header span { color: #5b6577; }
+    #grid {
+      max-width: 1180px; margin: 0 auto;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 1rem;
+    }
+    #grid > div {
+      background: #0e1116; border: 1px solid #1e2430; border-radius: 12px;
+      padding: 0.5rem; overflow: hidden;
+    }
+    #grid > .wide { grid-column: 1 / -1; }
+    canvas { display: block; width: 100%; height: auto; }
+    p.note { max-width: 1180px; margin: 1rem auto 0; opacity: 0.7; }
+  </style>
+</head>
+<body>
+  <nav class="demos">
+    <a href="/">tracker</a>
+    <a href="/orbit.html">orbit</a>
+    <a href="/notes.html">notes</a>
+    <a href="/primes.html">primes</a>
+    <a href="/charts.html">charts</a>
+    <a class="here" href="/gallery.html">gallery</a>
+    <span class="sep">|</span>
+    <a class="src" href="/gallery.ol">view source (gallery.ol)</a>
+  </nav>
+  <header>
+    <h1>gallery — data visualization in olang</h1>
+    <span>every piece is computed and rendered by the language</span>
+  </header>
+  <div id="grid">
+    <div class="wide"><canvas id="g-live" width="1120" height="380"></canvas></div>
+    <div id="g-osc"></div>
+    <div id="g-area"></div>
+    <div id="g-spiral"></div>
+    <div id="g-field"></div>
+    <div id="g-stack"></div>
+    <div id="g-box"></div>
+    <div id="g-clt"></div>
+  </div>
+  <p class="note"><b>the gallery grows with the stack</b> — stills are plot SVG (ods + math + stats in the browser); the centerpiece is a draw-list rebuilt every frame. New viz capabilities land here first.</p>
+  <script src="/olang-dom.js" data-src="/gallery.ol" defer></script>
+</body>
+</html>

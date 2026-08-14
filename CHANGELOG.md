@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`plot` grows into a charting library.** Five new chart types —
+  `plot.area`, `plot.bars` (grouped), `plot.stacked`, `plot.heatmap`
+  (sequential color scale with a min/max key), and `plot.box`
+  (five-number summaries) — joining line, scatter, lines, bar, and
+  hist. Two new options on every chart: `theme: "dark"` re-tunes the
+  full palette (surface, ink, grid, series hues, heat scale) for dark
+  pages, and `responsive: true` drops the fixed pixel size so the SVG
+  fills its container while the viewBox keeps the aspect ratio.
+  Stacked bars refuse negative values; box plots drop nulls.
+- **The data stack meets the page.** Two new pages in the example app:
+  `/charts.html` — live tracker analytics (one `dom.fetch_json`, then
+  `ods.frame_from_records`, frames, and plot SVG landed with
+  `dom.set_html`) — and `/gallery.html`, the standing data-viz
+  showcase (computed art and statistical pieces, plus a live draw-list
+  centerpiece) where new viz capabilities land first. Both wired into
+  the suite nav.
+
 ## [0.53.0] - 2026-08-13
 
 ### Added
