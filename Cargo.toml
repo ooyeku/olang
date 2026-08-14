@@ -1,8 +1,8 @@
 [package]
 name = "olang"
-version = "0.54.0"
+version = "0.55.0"
 edition = "2024"
-authors = ["Ola Yeku <oyeku@gmail.com>"]
+authors = ["Ola Yeku <ooyeku@gmail.com>"]
 description = "A minimal, expressive language with first-class functions, pipelines, and pattern matching"
 license = "MIT"
 repository = "https://github.com/ooyeku/olang"
