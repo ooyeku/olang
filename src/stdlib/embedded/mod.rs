@@ -16,6 +16,7 @@ const MODULES: &[(&str, &str)] = &[
     ("viz", include_str!("viz.ol")),
     ("dash", include_str!("dash.ol")),
     ("cli", include_str!("cli.ol")),
+    ("term", include_str!("term.ol")),
 ];
 
 /// The olang source of an embedded module, if one is registered under `name`.

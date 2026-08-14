@@ -54,6 +54,10 @@ pub fn create_os_module() -> Value {
     module.insert("arch".to_string(), create_builtin_function("arch", 0));
     module.insert("family".to_string(), create_builtin_function("family", 0));
 
+    // Terminal
+    module.insert("is_tty".to_string(), create_builtin_function("is_tty", 0));
+    module.insert("flush".to_string(), create_builtin_function("flush", 0));
+
     // Process information
     module.insert("pid".to_string(), create_builtin_function("pid", 0));
     module.insert("args".to_string(), create_builtin_function("args", 0));
@@ -130,6 +134,8 @@ pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "exit" => os_exit(args),
         "exec" => os_exec(args),
         "read_line" => os_read_line(args),
+        "is_tty" => os_is_tty(args),
+        "flush" => os_flush(args),
         _ => Err(format!("Unknown os function: {}", name).into()),
     }
 }
@@ -754,6 +760,38 @@ fn os_exit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
 
     process::exit(exit_code);
+}
+
+/// Whether standard output is a terminal (a TTY) rather than a pipe or
+/// file — the signal a program uses to decide whether ANSI styling
+/// will render. `Ok(true)` when interactive, `Ok(false)` otherwise
+/// (including under wasm, which has no terminal).
+fn os_is_tty(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "is_tty expects 0 arguments, got {}",
+            args.len()
+        ))))));
+    }
+    use std::io::IsTerminal;
+    Ok(Value::Ok(Box::new(Value::Boolean(
+        std::io::stdout().is_terminal(),
+    ))))
+}
+
+/// Flush standard output. `print` without a newline is buffered, so a
+/// progress bar or spinner redrawn with `\r` needs an explicit flush
+/// to appear. Returns `Ok(Unit)`.
+fn os_flush(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "flush expects 0 arguments, got {}",
+            args.len()
+        ))))));
+    }
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    Ok(Value::Ok(Box::new(Value::Unit)))
 }
 
 #[cfg(test)]

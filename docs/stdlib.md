@@ -34,6 +34,7 @@ Part of [the olang book](README.md) ·
 - [`fs` — file system](#fs--file-system)
 - [`os` — operating system](#os--operating-system)
 - [`cli` — command-line argument parsing](#cli--command-line-argument-parsing)
+- [`term` — the terminal toolkit](#term--the-terminal-toolkit)
 - [`http` — HTTP](#http--http)
 - [`db` — SQLite](#db--sqlite)
 - [`dom` — the browser](#dom--the-browser)
@@ -686,6 +687,7 @@ else.
 | Group | Functions |
 |---|---|
 | Process | `args` `exit(code)` `pid` `exe_path` `exec(program, args)` |
+| Terminal | `is_tty()` — is stdout a terminal? (`Ok(bool)`); `flush()` — flush buffered stdout, for progress bars |
 | Input | `read_line()` — one line from stdin as `Ok(line)`, `Err("eof")` at end; `stdin()` — everything to end-of-file as one string; `stdin_lines()` — everything as a list of lines, endings stripped. The stdin pair is what makes olang pipe-friendly: `cat access.log \| olang analyze.ol` |
 | Environment | `get_env` `set_env` `remove_env` `has_env` `list_env` |
 | Directories | `cwd` `chdir` `home_dir` `temp_dir` |
@@ -760,6 +762,50 @@ match cli.parse(spec, cli.args()) {
 small task tracker whose entire command surface (`list`, `open`,
 `stats`, `add --priority`) is one `cli` spec, with `--help` and clean
 exit codes for free.
+
+## `term` — the terminal toolkit
+
+`use term` — an embedded olang package — is what `plot`/`viz` are for
+the browser, for the terminal: color and text styling, aligned tables
+and rules, progress bars, and interactive prompts. Styling is emitted
+**only when it will render** — standard output is a TTY and `NO_COLOR`
+is unset — or when `CLICOLOR_FORCE` is set (the convention that also
+makes styled output testable through a pipe). The check is per call, so
+a program's output is colored on a terminal and plain in a pipe or file
+with no extra logic.
+
+| Group | Functions |
+|---|---|
+| Color | `red` `green` `yellow` `blue` `magenta` `cyan` `white` `black` `gray` — each wraps a string |
+| Attributes | `bold` `dim` `italic` `underline` |
+| General | `style(s, opts)` — `opts` is `#{ "fg": ..., "bg": ..., "bold": ..., "dim": ..., "italic": ..., "underline": ... }`; `color()` — is styling active right now? |
+| Structure | `rule(width)` — a horizontal line; `table(headers, rows)` — columns aligned to their widest plain cell, header bold |
+| Progress | `bar(fraction, width)` — a `[████░░░░]  50%` bar string; print it with a leading `\r` and `os.flush()` to redraw in place |
+| Input | `prompt(question)` — a line from stdin; `confirm(question)` — yes/no → bool; `select(question, options)` — a numbered menu → `Ok(chosen)` \| `Err` |
+
+Because color falls back to plain automatically, the same program is
+correct piped or interactive:
+
+```olang no-run
+use term
+println(term.green("✓") + " built " + term.bold("olang") + " in " + term.cyan("1.2s"))
+println(term.table(["name", "commits"], [["ada", "128"], ["evelyn", "12"]]))
+
+// A download loop redrawing one line in place:
+for i in range(0, 21) {
+    print("\r" + term.bar(to_float(i) / 20.0, 24))
+    os.flush()
+    time.sleep(30)
+}
+println("")
+
+if term.confirm("deploy now?") => run_deploy()
+```
+
+The [`taskcli` example](../examples/taskcli/) uses it for a colored
+summary and a `term.table` breakdown — both of which print plain when
+its output is piped (which is why the examples harness still sees clean
+text).
 
 ## `http` — HTTP
 

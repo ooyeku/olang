@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`term` — the terminal toolkit.** A new embedded olang package
+  (`use term`): ANSI color and text styling (`red`/`green`/`bold`/… and
+  a general `style(s, opts)`), aligned `table`s and `rule`s, a progress
+  `bar`, and interactive `prompt`/`confirm`/`select`. Styling gates on
+  whether it will render — stdout is a TTY and `NO_COLOR` is unset, or
+  `CLICOLOR_FORCE` is set — so the same program is colored on a terminal
+  and plain in a pipe with no extra logic. Two native primitives back
+  it: `os.is_tty()` and `os.flush()`. The `taskcli` example colorizes
+  its summary and renders a `term.table` (plain when piped). Lane T2 of
+  the **Toolsmith campaign**.
+
 - **`cli` — declarative command-line argument parsing.** A new embedded
   olang package (`use cli`) that turns a program's argument surface into
   a spec map: typed flags (`bool`/`int`/`float`/`string`, short + long,
