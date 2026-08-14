@@ -1,0 +1,87 @@
+//! `olang build` — the self-contained-executable path. These are true
+//! end-to-end tests: they invoke the built `olang` binary to produce a
+//! standalone executable, then run *that* and check its behavior.
+
+use std::process::Command;
+
+fn olang_bin() -> &'static str {
+    env!("CARGO_BIN_EXE_olang")
+}
+
+fn tmp(sub: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("olang_build_{}_{}", sub, std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn build_produces_a_runnable_standalone() {
+    let dir = tmp("run");
+    let src = dir.join("hi.ol");
+    // A self-contained tool: only stdlib + the embedded `cli` package,
+    // which travel inside the runtime, so nothing external is needed.
+    std::fs::write(
+        &src,
+        r#"
+use cli
+let spec = #{ "name": "hi", "args": [ #{ "name": "who", "required": true } ] }
+match cli.parse(spec, cli.args()) {
+    Err(e) => { println("ERR " + e); os.exit(2) },
+    Ok(a) => println("hi " + map_get(a, "who"))
+}
+"#,
+    )
+    .unwrap();
+    let out = dir.join("hi");
+
+    let build = Command::new(olang_bin())
+        .args(["build", src.to_str().unwrap(), "-o", out.to_str().unwrap()])
+        .output()
+        .expect("run olang build");
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(out.exists(), "output binary was not created");
+
+    // The standalone runs its embedded program, and its own argv reaches
+    // cli.args() — proof the payload is detected and dispatched.
+    let happy = Command::new(&out).arg("Ada").output().expect("run tool");
+    assert!(happy.status.success());
+    assert_eq!(String::from_utf8_lossy(&happy.stdout).trim(), "hi Ada");
+
+    // The tool's own error path (a missing required arg) exits non-zero.
+    let miss = Command::new(&out).output().expect("run tool no args");
+    assert_eq!(miss.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&miss.stdout).contains("missing required"),
+        "stdout: {}",
+        String::from_utf8_lossy(&miss.stdout)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn build_rejects_a_program_that_does_not_parse() {
+    let dir = tmp("parse");
+    let src = dir.join("broken.ol");
+    std::fs::write(&src, "let x = = = broken\n").unwrap();
+    let out = dir.join("broken");
+
+    let build = Command::new(olang_bin())
+        .args(["build", src.to_str().unwrap(), "-o", out.to_str().unwrap()])
+        .output()
+        .expect("run olang build");
+    assert!(!build.status.success(), "a broken program must not build");
+    assert!(
+        String::from_utf8_lossy(&build.stderr).contains("does not parse"),
+        "stderr: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(!out.exists() || std::fs::metadata(&out).is_ok());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

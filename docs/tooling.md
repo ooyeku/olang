@@ -157,6 +157,40 @@ not news, and prints as `~`. Add `--fail-on-regress` to turn any red
 row into exit code 1 — that flag is what makes a saved baseline a
 standing guard for performance work.
 
+## `olang build`
+
+Bundle a program into a **standalone executable** — a single file that
+runs on a machine with no olang installed:
+
+```bash
+olang build greet.ol              # → ./greet
+olang build greet.ol -o mytool    # choose the output name
+./greet Ada --loud                # run it; its argv reaches cli.args()
+```
+
+The mechanism needs no C compiler or linker: `build` copies the `olang`
+runtime and appends the program's source with a small trailing marker.
+At startup the binary notices that marker, extracts the program, and
+runs it with the full process argv — so a bundled tool's own flags and
+arguments behave exactly as they would under `olang program.ol`. The
+source is parse-checked first, so a broken program never produces a
+binary.
+
+Because the runtime is baked in, the whole standard library and the
+embedded packages (`cli`, `term`, `ui`, `viz`, `dash`, `colx`,
+`mathx`) travel with the executable. A program that `use`s local
+`.ol` files is the one limitation — `build` bundles a single source
+file, so keep a shippable tool to stdlib and the embedded packages
+(or inline its helpers). The trade for zero-dependency distribution is
+size: the binary carries the runtime, so it is tens of megabytes (much
+smaller from a `--release` olang than a debug one). On macOS the
+appended data invalidates any code signature; re-sign the output if you
+distribute it.
+
+[`examples/greet.ol`](../examples/greet.ol) is a self-contained tool
+built exactly this way — `cli` for its arguments, `term` for color, and
+nothing external.
+
 ## `olang --watch`
 
 The edit-run loop as a flag:

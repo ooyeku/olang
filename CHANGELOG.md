@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`olang build` — standalone single-file executables.** `olang build
+  prog.ol -o tool` bundles a program into a self-contained binary that
+  runs with no olang installed. No C compiler or linker: `build` copies
+  the runtime and appends the parse-checked source with a trailing
+  marker; at startup the binary detects it and runs the embedded program
+  with the full process argv (so a bundled tool's own flags reach
+  `cli.args()` intact). The whole stdlib and the embedded packages
+  (`cli`, `term`, …) travel inside it; single-source tools bundle
+  cleanly. `examples/greet.ol` is a worked example. Lane T4 (Rung A) of
+  the **Toolsmith campaign** — the "ship it" half of the build-and-ship
+  arc.
+
 - **`term` — the terminal toolkit.** A new embedded olang package
   (`use term`): ANSI color and text styling (`red`/`green`/`bold`/… and
   a general `style(s, opts)`), aligned `table`s and `rule`s, a progress

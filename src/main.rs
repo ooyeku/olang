@@ -81,6 +81,17 @@ fn main() {
 }
 
 fn run() -> i32 {
+    // A binary produced by `olang build` carries its program appended
+    // after the runtime. Run that and nothing else — checked before any
+    // CLI parsing, so the bundled tool's own arguments reach it intact.
+    if let Some(source) = embedded_program() {
+        let logger = init_logger();
+        let _ = initialize_parallelization(None);
+        set_parallel_threshold(10_000);
+        miette::set_panic_hook();
+        return run_embedded(&source, logger);
+    }
+
     let cli = Cli::parse();
 
     // Initialize logger
@@ -191,6 +202,18 @@ fn run() -> i32 {
                     paths.push(PathBuf::from("."));
                 }
                 return olang::tools::fmt::run(&paths, check);
+            }
+            "build" => {
+                return match build_executable(&cli.script_args) {
+                    Ok(out) => {
+                        println!("built {}", out);
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("olang build: {}", e);
+                        1
+                    }
+                };
             }
             _ => {}
         }
@@ -626,6 +649,115 @@ fn show_suggestion(suggestion: &ErrorSuggestion) {
     }
 }
 
+/// Trailer marking an `olang build` executable. The program is appended
+/// to the runtime as `[source bytes][source len: u64 LE][MAGIC: 8]`, so
+/// a build never touches a linker — a byte copy and an append suffice.
+const OLANG_BUNDLE_MAGIC: &[u8; 8] = b"oLaNgBnd";
+
+/// If this executable was produced by `olang build`, return the olang
+/// source appended to it. `None` for the plain `olang` binary.
+fn embedded_program() -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let exe = std::env::current_exe().ok()?;
+    let mut f = std::fs::File::open(&exe).ok()?;
+    let total = f.metadata().ok()?.len();
+    if total < 16 {
+        return None;
+    }
+    f.seek(SeekFrom::End(-16)).ok()?;
+    let mut footer = [0u8; 16];
+    f.read_exact(&mut footer).ok()?;
+    if &footer[8..16] != OLANG_BUNDLE_MAGIC {
+        return None;
+    }
+    let src_len = u64::from_le_bytes(footer[0..8].try_into().ok()?);
+    if src_len == 0 || src_len + 16 > total {
+        return None;
+    }
+    f.seek(SeekFrom::End(-(16 + src_len as i64))).ok()?;
+    let mut buf = vec![0u8; src_len as usize];
+    f.read_exact(&mut buf).ok()?;
+    String::from_utf8(buf).ok()
+}
+
+/// Run a bundled program. Its argv is the whole process argv, so the
+/// tool's own flags reach `os.args()` / `cli.args()` exactly as they
+/// would for a normal script.
+fn run_embedded(source: &str, logger: &Logger) -> i32 {
+    olang::stdlib::os::set_script_args(std::env::args().collect());
+    let path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("program"));
+    match execute_source(source, &path, false, false, false, None, logger) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+/// `olang build <program.ol> [-o output]` — copy this runtime and append
+/// the program, producing a self-contained executable with no external
+/// olang install required. The source is parse-checked first, so a
+/// broken program is never shipped. Bundles a single source file: a
+/// program that `use`s local files should be a package built with all
+/// its sources inlined, or restrict itself to stdlib and the embedded
+/// packages (cli, term, ui, viz, dash, …), which travel in the runtime.
+fn build_executable(args: &[String]) -> anyhow::Result<String> {
+    let mut source_path: Option<String> = None;
+    let mut output: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--output" => {
+                i += 1;
+                output = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("-o needs an output path"))?,
+                );
+            }
+            other if other.starts_with('-') => {
+                return Err(anyhow::anyhow!("unknown flag: {}", other));
+            }
+            other => {
+                if source_path.is_none() {
+                    source_path = Some(other.to_string());
+                }
+            }
+        }
+        i += 1;
+    }
+    let source_path = source_path
+        .ok_or_else(|| anyhow::anyhow!("usage: olang build <program.ol> [-o output]"))?;
+    let src = std::fs::read_to_string(&source_path)?;
+    OlangParser::new()
+        .parse(&src)
+        .map_err(|e| anyhow::anyhow!("{} does not parse:\n{}", source_path, e))?;
+
+    let output = output.unwrap_or_else(|| {
+        PathBuf::from(&source_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "program".to_string())
+    });
+
+    let exe = std::env::current_exe()?;
+    std::fs::copy(&exe, &output)?;
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&output)?;
+        f.write_all(src.as_bytes())?;
+        f.write_all(&(src.len() as u64).to_le_bytes())?;
+        f.write_all(OLANG_BUNDLE_MAGIC)?;
+        f.flush()?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&output)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&output, perms)?;
+    }
+    Ok(output)
+}
+
 fn execute_file(
     file_path: &PathBuf,
     verbose: bool,
@@ -635,6 +767,23 @@ fn execute_file(
     logger: &Logger,
 ) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file_path)?;
+    execute_source(
+        &source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, logger,
+    )
+}
+
+/// Run a program from source already in hand (a file's contents, or the
+/// program bundled into an `olang build` executable). `file_path` names
+/// it for error messages and cwd-relative module resolution.
+fn execute_source(
+    source: &str,
+    file_path: &PathBuf,
+    verbose: bool,
+    no_ovm: bool,
+    ovm_stats: bool,
+    ovm_tier: Option<u32>,
+    logger: &Logger,
+) -> anyhow::Result<()> {
     let parser = OlangParser::new();
 
     // Get absolute path for module resolution
@@ -688,7 +837,7 @@ fn execute_file(
         }
     }
 
-    match parser.parse(&source) {
+    match parser.parse(source) {
         Ok(ast) => match interpreter.eval_program(ast) {
             Ok(result) => {
                 if verbose {
@@ -711,12 +860,12 @@ fn execute_file(
             }
             Err(e) => {
                 let location = interpreter.take_error_location();
-                show_classic_interpreter_error(&e, file_path, &interpreter, location, &source);
+                show_classic_interpreter_error(&e, file_path, &interpreter, location, source);
                 Err(anyhow::anyhow!("Execution failed"))
             }
         },
         Err(e) => {
-            show_file_parse_error(&e, file_path, &source);
+            show_file_parse_error(&e, file_path, source);
             Err(anyhow::anyhow!("Parse failed"))
         }
     }
