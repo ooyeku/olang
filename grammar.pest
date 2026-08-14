@@ -186,7 +186,7 @@ pattern_wildcard    = { "_" }
 block       = { "{" ~ NL* ~ (statement ~ (";" | NL)* )* ~ "}" }
 
 // Conditionals
-if_expr     = { "if" ~ expr ~ "=>" ~ NL* ~ (block | expr) ~ (NL* ~ "else" ~ NL* ~ (if_expr | ("=>" ~ NL* ~ (block | expr))))? }
+if_expr     = { "if" ~ expr ~ NL* ~ "=>" ~ NL* ~ (block | expr) ~ (NL* ~ "else" ~ NL* ~ (if_expr | ("=>" ~ NL* ~ (block | expr))))? }
 
 // Literals
 literal     = { float | binary | octal | hex | integer | char_literal | raw_string | template_string | string | boolean | list }

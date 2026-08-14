@@ -266,19 +266,28 @@ work they would unlock. Each is a candidate lane, not a promise.
    and the shared escape runs (verified in the browser: the board's
    dash cards render). The pattern is available to every embedded
    package as they multiply.
-5. **Session state wants a primitive.** Closures capture by value, so
-   every browser app stores state in the DOM (hidden inputs, data-ui
-   attributes, the URL). The discipline is sound — it made the back
-   button and bookmarks free — but a deliberate session-scoped store
-   (even just a blessed `dom.state_get/set` over one hidden root)
-   would name the pattern instead of leaving each app to rediscover
-   it.
-6. **Syntax friction found by writing lots of olang:** no unary minus
-   (`0.0 - x` everywhere trigonometry appears); `=>` must share the
-   `if`'s line, which bites exactly when conditions get long; struct
-   fields require type annotations, pushing dynamic shapes to
-   anonymous objects and maps. Small, but each one was hit repeatedly.
-7. **Tick generation is integer-blind** (renderer, not language): count
-   data gets 0.5 gridlines. A "these are integers" hint — or detecting
-   whole-valued data — finishes the chart typography story.
+5. **Session state has a primitive. Done (0.55.0+).** `dom.state_set(key,
+   value)` / `dom.state_get(key)` name the DOM-resident-state pattern:
+   a blessed, JSON-typed, page-lifetime store (a Map or list
+   round-trips; a missing key reads as Unit; not persisted — that is
+   `storage_*`). The charts page's cross-filter now rides it instead
+   of a hidden input, and the pattern is one call each rather than
+   query-a-hidden-input-and-parse-JSON. The DOM-resident *discipline*
+   stays — it is still why the back button and bookmarks are free —
+   this just names it.
+6. **Syntax friction. Mostly done (0.55.0+).** Unary minus (`-x`) in
+   fact already worked in every position — the finding was stale. The
+   `=>` of an `if` may now start a new line, so a long condition wraps
+   cleanly (`if a && b && c\n    => ...`) — the friction that bit
+   most. The third item, **struct fields without type annotations**,
+   is deferred on purpose: the field grammar is shared across struct,
+   enum, error, and anonymous-struct contexts, so making types
+   optional there means a separate rule plus AST/checker/validation
+   changes through the gradual-typing pipeline — real risk for a case
+   the anonymous-object (`#{ .. }`) and map workaround already covers
+   idiomatically.
+7. **Integer-aware ticks. Done (0.55.0+).** `nice_ticks` now detects
+   whole-valued data and floors a sub-1 step to 1, so a bar chart of
+   counts gets 0,1,2,3 instead of 0,0.5,1,…. Float data is untouched.
+   The charts page's status bars read as whole numbers live.
 

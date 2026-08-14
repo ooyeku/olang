@@ -52,6 +52,8 @@ pub fn create_dom_module() -> Value {
         ("on_route", 1),
         ("storage_get", 1),
         ("storage_set", 2),
+        ("state_get", 1),
+        ("state_set", 2),
         ("storage_remove", 1),
         // Workers (page side) and their in-worker mirrors
         ("worker", 1),

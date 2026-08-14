@@ -102,6 +102,8 @@
   }
 
   const JSON_CALLBACK_BIT = 2 ** 40;
+  // Session state: dom.state_get/set live here (see the two host imports).
+  const sessionState = {};
 
   // Web Workers: each handle is a second olang instance off the main
   // thread, bridged over postMessage. Values cross as JSON both ways.
@@ -246,6 +248,13 @@
       },
       host_dom_storage_remove: (ptr, len) => {
         localStorage.removeItem(readStr(ptr, len));
+      },
+      // Session state: an in-memory, page-lifetime store (not persisted
+      // — that is localStorage above). Values are JSON strings the
+      // olang side encodes/decodes, so the store itself is dumb.
+      host_dom_state_get: (ptr, len) => giveStr(sessionState[readStr(ptr, len)] ?? ""),
+      host_dom_state_set: (kp, kl, vp, vl) => {
+        sessionState[readStr(kp, kl)] = readStr(vp, vl);
       },
       host_dom_on_frame: (id) => {
         const cb = Number(id);

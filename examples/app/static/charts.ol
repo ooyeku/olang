@@ -31,7 +31,10 @@ fn count_where(items, st, pr) = len(filter(items, (i) =>
 fn draw(items) = {
     // The cross-filter: a clicked status narrows every card but the
     // status bars themselves (so the selection stays clickable).
-    let sel = dom.value(dom.query("#flt"))
+    // The cross-filter selection lives in session state (dom.state),
+    // not a hidden input — the pattern named. Missing reads as "".
+    let saved = dom.state_get("filter")
+    let sel = if typeof(saved) == "String" => saved else => ""
     let picked = if sel == "" => items
         else => filter(items, (i) => map_get(i, "status") == sel)
 
@@ -101,9 +104,10 @@ for id in ["c-status", "c-grouped", "c-stacked", "c-hist", "c-box", "c-heat", "c
     viz.tooltip(dom.query("#" + id))
 }
 viz.on_mark(dom.query("#c-status"), "click", (d) => {
-    let flt = dom.query("#flt")
     let hit = map_get(d, "label")
-    dom.set_value(flt, if dom.value(flt) == hit => "" else => hit)
+    let saved = dom.state_get("filter")
+    let cur = if typeof(saved) == "String" => saved else => ""
+    dom.state_set("filter", if cur == hit => "" else => hit)
     refresh()
 })
 refresh()

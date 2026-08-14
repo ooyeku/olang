@@ -176,6 +176,8 @@ unsafe extern "C" {
     fn host_dom_storage_get(ptr: *const u8, len: usize) -> *const u8;
     fn host_dom_storage_set(kp: *const u8, kl: usize, vp: *const u8, vl: usize);
     fn host_dom_storage_remove(ptr: *const u8, len: usize);
+    fn host_dom_state_get(ptr: *const u8, len: usize) -> *const u8;
+    fn host_dom_state_set(kp: *const u8, kl: usize, vp: *const u8, vl: usize);
     fn host_dom_worker_spawn(ptr: *const u8, len: usize) -> i64;
     fn host_dom_worker_send(worker: i64, ptr: *const u8, len: usize);
     fn host_dom_worker_on(worker: i64, callback_id: i64);
@@ -557,6 +559,31 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
             let k = text(key)?;
             unsafe { host_dom_storage_remove(k.as_ptr(), k.len()) };
             Ok(Value::Unit)
+        }
+        // Session state: a blessed, JSON-typed, page-lifetime store —
+        // names the DOM-resident-state pattern (hidden inputs holding
+        // JSON) that every closure-by-value app rediscovers. Values
+        // cross as JSON, so a Map/list round-trips; a missing key reads
+        // as Unit. Not persisted — `storage_*` is the localStorage path.
+        ("state_set", [key, val]) => {
+            let k = text(key)?;
+            let json = value_to_json(val).map_err(|e| e.to_string())?;
+            unsafe { host_dom_state_set(k.as_ptr(), k.len(), json.as_ptr(), json.len()) };
+            Ok(Value::Unit)
+        }
+        ("state_get", [key]) => {
+            let k = text(key)?;
+            let raw = read_host_string(unsafe { host_dom_state_get(k.as_ptr(), k.len()) });
+            if raw.is_empty() {
+                return Ok(Value::Unit);
+            }
+            match crate::stdlib::json::call_json_function(
+                "parse",
+                vec![Value::String(std::sync::Arc::new(raw))],
+            ) {
+                Ok(Value::Ok(inner)) => Ok(*inner),
+                _ => Ok(Value::Unit),
+            }
         }
         ("worker", [src]) => {
             let p = text(src)?;

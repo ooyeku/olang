@@ -1020,6 +1020,9 @@ fn rounded_bar(x: f64, y: f64, w: f64, h: f64, positive: bool, color: &str, attr
 /// 1-2-5 nice ticks over the data range; returns (ticks, lo, hi) with
 /// the range expanded to tick boundaries. Degenerate ranges widen.
 fn nice_ticks(values: &[f64]) -> (Vec<f64>, f64, f64) {
+    // Whole-valued data (counts, indices) should never get fractional
+    // gridlines — a "3 issues" bar chart wants 0,1,2,3, not 0,0.5,1,….
+    let integer_data = values.iter().all(|v| !v.is_finite() || v.fract() == 0.0);
     let mut lo = values.iter().copied().fold(f64::INFINITY, f64::min);
     let mut hi = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     if !lo.is_finite() || !hi.is_finite() {
@@ -1034,7 +1037,7 @@ fn nice_ticks(values: &[f64]) -> (Vec<f64>, f64, f64) {
     let raw_step = span / 5.0;
     let mag = 10f64.powf(raw_step.log10().floor());
     let norm = raw_step / mag;
-    let step = mag
+    let mut step = mag
         * if norm <= 1.0 {
             1.0
         } else if norm <= 2.0 {
@@ -1044,6 +1047,11 @@ fn nice_ticks(values: &[f64]) -> (Vec<f64>, f64, f64) {
         } else {
             10.0
         };
+    // Integer data with a small range would land a fractional step
+    // (0.5, 0.2, …); floor the gridlines to whole numbers instead.
+    if integer_data && step < 1.0 {
+        step = 1.0;
+    }
     let lo = (lo / step).floor() * step;
     let hi = (hi / step).ceil() * step;
     let mut ticks = Vec::new();
@@ -1412,5 +1420,20 @@ mod tests {
         assert_eq!(ticks, vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0]);
         let (t2, _, _) = nice_ticks(&[5.0, 5.0]);
         assert!(t2.len() >= 2);
+    }
+
+    #[test]
+    fn integer_data_gets_whole_gridlines() {
+        // Count data (0..3) used to land 0.5 gridlines; now it floors to
+        // whole steps.
+        let (ticks, _, _) = nice_ticks(&[0.0, 1.0, 2.0, 3.0]);
+        assert!(ticks.iter().all(|t| t.fract() == 0.0), "got {:?}", ticks);
+        assert!(ticks.contains(&1.0) && ticks.contains(&2.0));
+        // A tiny integer range still gets a whole step.
+        let (small, _, _) = nice_ticks(&[0.0, 1.0]);
+        assert!(small.iter().all(|t| t.fract() == 0.0), "got {:?}", small);
+        // Float data is untouched — fractional steps remain available.
+        let (floaty, _, _) = nice_ticks(&[0.0, 0.5]);
+        assert!(floaty.iter().any(|t| t.fract() != 0.0), "got {:?}", floaty);
     }
 }

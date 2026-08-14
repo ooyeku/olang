@@ -170,3 +170,49 @@ fn let_mut_is_one_statement_with_no_stray_binding() {
         "`mut` must not be bound by `let mut x`"
     );
 }
+
+#[test]
+fn fat_arrow_may_start_a_new_line() {
+    // Dogfooding viz: a long `if` condition reads better with the `=>`
+    // wrapped to the next line. The grammar now tolerates NL before it.
+    assert_eq!(
+        s(eval(
+            r#"
+let x = 5
+if x > 0
+    => "positive"
+    else => "non-positive"
+"#
+        )),
+        "positive"
+    );
+    // Long multi-term condition, arrow on its own line.
+    assert_eq!(
+        s(eval(
+            r#"
+let a = 3
+let b = 4
+if a > 0 && b > 0 && a + b > 5
+    => "both, big"
+    else => "no"
+"#
+        )),
+        "both, big"
+    );
+    // The original same-line form is unchanged.
+    assert_eq!(s(eval(r#"if 1 > 0 => "a" else => "b""#)), "a");
+    // `else if` chains still parse with a wrapped arrow.
+    assert_eq!(
+        s(eval(
+            r#"
+let n = 2
+if n == 1
+    => "one"
+    else => if n == 2
+        => "two"
+        else => "many"
+"#
+        )),
+        "two"
+    );
+}

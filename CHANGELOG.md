@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`dom.state` — a session-state primitive.** `dom.state_set(key,
+  value)` / `dom.state_get(key)` name the DOM-resident-state pattern
+  every closure-by-value browser app rediscovers: a blessed,
+  JSON-typed, page-lifetime store (a Map or list round-trips; a
+  missing key reads as Unit; not persisted — `storage_*` is the
+  localStorage path). The charts page's cross-filter now rides it
+  instead of a hidden input.
+
+### Changed
+
+- **`if`'s `=>` may start a new line.** A long condition can wrap
+  before the arrow (`if a && b && c\n    => ...`) — the syntax
+  friction that bit most when dogfooding viz. Same-line and `else if`
+  chains are unchanged.
+- **Charts use whole-number gridlines for count data.** `nice_ticks`
+  detects whole-valued data and floors a fractional step to 1, so a
+  bar chart of counts reads 0,1,2,3 rather than 0,0.5,1,…. Float data
+  keeps fractional ticks.
+
 ## [0.55.0] - 2026-08-13
 
 ### Added

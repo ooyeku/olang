@@ -852,6 +852,7 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.push_state(path)` / `dom.location()` | SPA navigation; location is a Map of `path` and `query` |
 | `dom.on_route(fn)` | the back/forward listener — a `route` event Map with `path` and `query` |
 | `dom.storage_get(k)` / `storage_set(k, v)` / `storage_remove(k)` | localStorage (missing keys read as `""`) |
+| `dom.state_get(k)` / `state_set(k, v)` | session state — a JSON-typed, page-lifetime store (a Map/list round-trips; missing keys read as Unit; not persisted) |
 | `dom.worker(path)` | boot a second olang program in a Web Worker; returns a worker handle |
 | `dom.worker_send(w, value)` / `dom.worker_on(w, handler)` | send a value to / receive values from a worker |
 | `dom.worker_close(w)` | terminate a worker |

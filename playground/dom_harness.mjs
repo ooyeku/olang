@@ -23,6 +23,7 @@ const fetchLog = [];
 const timers = []; // {ms, cb, kind}
 const frames = []; // callback ids
 const fakeStorage = {};
+const fakeState = {};
 const fakeHistory = ["/"];
 const routeHandlers = [];
 let created = 0;
@@ -231,6 +232,8 @@ const imports = {
     host_dom_storage_get: (ptr, len) => giveStr(fakeStorage[readStr(ptr, len)] ?? ""),
     host_dom_storage_set: (kp, kl, vp, vl) => { fakeStorage[readStr(kp, kl)] = readStr(vp, vl); },
     host_dom_storage_remove: (ptr, len) => { delete fakeStorage[readStr(ptr, len)]; },
+    host_dom_state_get: (ptr, len) => giveStr(fakeState[readStr(ptr, len)] ?? ""),
+    host_dom_state_set: (kp, kl, vp, vl) => { fakeState[readStr(kp, kl)] = readStr(vp, vl); },
     host_dom_draw: (h, ptr, len) => {
       (node(h).drawn ??= []).push(JSON.parse(readStr(ptr, len)));
     },
@@ -639,6 +642,31 @@ println("points sent")
   if (c.n !== 2 || JSON.stringify(c.head) !== "[1,9,3,10]")
     throw new Error("null drop wrong: " + JSON.stringify(c));
   console.log("stage 6: bulk point path ok");
+}
+// ── stage 7: session state — JSON-typed, page-lifetime store ──
+const prog11 = `
+dom.state_set("count", 3)
+dom.state_set("filter", #{ "status": "open", "tags": ["a", "b"] })
+let c = dom.state_get("count")
+let f = dom.state_get("filter")
+let missing = dom.state_get("nope")
+dom.set_text(dom.query("#log"),
+    show(c + 1) + " " + map_get(f, "status") + " " +
+    show(len(map_get(f, "tags"))) + " " + show(typeof(missing) == "Unit"))
+println("state ok")
+`;
+{
+  const enc11 = new TextEncoder().encode(prog11);
+  const p11 = ex.olang_alloc(enc11.length);
+  mem().set(enc11, p11);
+  const r = result(ex.olang_session_start(p11, enc11.length));
+  ex.olang_dealloc(p11, enc11.length);
+  if (r.error) throw new Error("stage7 session: " + r.error);
+  // count round-trips as a number, the Map survives with its list, and a
+  // missing key reads as Unit (()).
+  if (fakeDom["#log"].text !== "4 open 2 true")
+    throw new Error("state round-trip wrong: " + fakeDom["#log"].text);
+  console.log("stage 7: session state ok");
 }
 console.log("final dom:", JSON.stringify(fakeDom));
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");
