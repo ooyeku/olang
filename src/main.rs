@@ -84,12 +84,12 @@ fn run() -> i32 {
     // A binary produced by `olang build` carries its program appended
     // after the runtime. Run that and nothing else — checked before any
     // CLI parsing, so the bundled tool's own arguments reach it intact.
-    if let Some(source) = embedded_program() {
+    if let Some(bundle) = embedded_program() {
         let logger = init_logger();
         let _ = initialize_parallelization(None);
         set_parallel_threshold(10_000);
         miette::set_panic_hook();
-        return run_embedded(&source, logger);
+        return run_embedded(bundle, logger);
     }
 
     let cli = Cli::parse();
@@ -680,11 +680,29 @@ fn show_suggestion(suggestion: &ErrorSuggestion) {
 /// Trailer marking an `olang build` executable. The program is appended
 /// to the runtime as `[source bytes][source len: u64 LE][MAGIC: 8]`, so
 /// a build never touches a linker — a byte copy and an append suffice.
+/// Rung A bundle: raw olang source appended, parsed at startup.
 const OLANG_BUNDLE_MAGIC: &[u8; 8] = b"oLaNgBnd";
+/// Rung B bundle: the *parsed* AST appended alongside the source, so a
+/// built tool deserializes its program at startup instead of re-parsing it
+/// (deserialize is ~20× faster than the parser for a real program). The
+/// source travels too, only so runtime error snippets still render.
+const OLANG_AST_MAGIC: &[u8; 8] = b"oLaNgAsT";
 
-/// If this executable was produced by `olang build`, return the olang
-/// source appended to it. `None` for the plain `olang` binary.
-fn embedded_program() -> Option<String> {
+/// A program bundled into an `olang build` executable.
+enum Bundle {
+    /// Rung A: just the source (older bundles, or a fallback).
+    Source(String),
+    /// Rung B: the pre-parsed AST, with the source kept for error rendering.
+    Ast {
+        program: Box<olang::ast::Program>,
+        source: String,
+    },
+}
+
+/// If this executable was produced by `olang build`, return the program
+/// appended to it — the pre-parsed AST (rung B) when present, else the raw
+/// source (rung A). `None` for the plain `olang` binary.
+fn embedded_program() -> Option<Bundle> {
     use std::io::{Read, Seek, SeekFrom};
     let exe = std::env::current_exe().ok()?;
     let mut f = std::fs::File::open(&exe).ok()?;
@@ -692,29 +710,70 @@ fn embedded_program() -> Option<String> {
     if total < 16 {
         return None;
     }
-    f.seek(SeekFrom::End(-16)).ok()?;
-    let mut footer = [0u8; 16];
-    f.read_exact(&mut footer).ok()?;
-    if &footer[8..16] != OLANG_BUNDLE_MAGIC {
-        return None;
+    // The last 8 bytes are the format marker.
+    f.seek(SeekFrom::End(-8)).ok()?;
+    let mut magic = [0u8; 8];
+    f.read_exact(&mut magic).ok()?;
+
+    // Rung B: [source][ast_json][source_len u64][ast_len u64][AST_MAGIC].
+    if &magic == OLANG_AST_MAGIC {
+        if total < 24 {
+            return None;
+        }
+        f.seek(SeekFrom::End(-24)).ok()?;
+        let mut lens = [0u8; 16];
+        f.read_exact(&mut lens).ok()?;
+        let source_len = u64::from_le_bytes(lens[0..8].try_into().ok()?);
+        let ast_len = u64::from_le_bytes(lens[8..16].try_into().ok()?);
+        if source_len == 0 || ast_len == 0 || source_len + ast_len + 24 > total {
+            return None;
+        }
+        f.seek(SeekFrom::End(-(24 + ast_len as i64 + source_len as i64)))
+            .ok()?;
+        let mut source_buf = vec![0u8; source_len as usize];
+        f.read_exact(&mut source_buf).ok()?;
+        let mut ast_buf = vec![0u8; ast_len as usize];
+        f.read_exact(&mut ast_buf).ok()?;
+        let source = String::from_utf8(source_buf).ok()?;
+        let program: olang::ast::Program = serde_json::from_slice(&ast_buf).ok()?;
+        return Some(Bundle::Ast {
+            program: Box::new(program),
+            source,
+        });
     }
-    let src_len = u64::from_le_bytes(footer[0..8].try_into().ok()?);
-    if src_len == 0 || src_len + 16 > total {
-        return None;
+
+    // Rung A: [source][source_len u64][BUNDLE_MAGIC].
+    if &magic == OLANG_BUNDLE_MAGIC {
+        f.seek(SeekFrom::End(-16)).ok()?;
+        let mut footer = [0u8; 16];
+        f.read_exact(&mut footer).ok()?;
+        let src_len = u64::from_le_bytes(footer[0..8].try_into().ok()?);
+        if src_len == 0 || src_len + 16 > total {
+            return None;
+        }
+        f.seek(SeekFrom::End(-(16 + src_len as i64))).ok()?;
+        let mut buf = vec![0u8; src_len as usize];
+        f.read_exact(&mut buf).ok()?;
+        return Some(Bundle::Source(String::from_utf8(buf).ok()?));
     }
-    f.seek(SeekFrom::End(-(16 + src_len as i64))).ok()?;
-    let mut buf = vec![0u8; src_len as usize];
-    f.read_exact(&mut buf).ok()?;
-    String::from_utf8(buf).ok()
+
+    None
 }
 
 /// Run a bundled program. Its argv is the whole process argv, so the
 /// tool's own flags reach `os.args()` / `cli.args()` exactly as they
-/// would for a normal script.
-fn run_embedded(source: &str, logger: &Logger) -> i32 {
+/// would for a normal script. A rung-B bundle runs its pre-parsed AST
+/// directly; a rung-A bundle parses its source first.
+fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
     olang::stdlib::os::set_script_args(std::env::args().collect());
     let path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("program"));
-    match execute_source(source, &path, false, false, false, None, logger) {
+    let result = match bundle {
+        Bundle::Ast { program, source } => {
+            execute_program(*program, &source, &path, false, false, false, None, logger)
+        }
+        Bundle::Source(source) => execute_source(&source, &path, false, false, false, None, logger),
+    };
+    match result {
         Ok(()) => 0,
         Err(_) => 1,
     }
@@ -755,9 +814,13 @@ fn build_executable(args: &[String]) -> anyhow::Result<String> {
     let source_path = source_path
         .ok_or_else(|| anyhow::anyhow!("usage: olang build <program.ol> [-o output]"))?;
     let src = std::fs::read_to_string(&source_path)?;
-    OlangParser::new()
+    // Parse-check up front (a broken program is never shipped) and keep the
+    // AST: the built binary embeds it so startup skips the parser (rung B).
+    let program = OlangParser::new()
         .parse(&src)
         .map_err(|e| anyhow::anyhow!("{} does not parse:\n{}", source_path, e))?;
+    let ast_json =
+        serde_json::to_vec(&program).map_err(|e| anyhow::anyhow!("serialize AST: {}", e))?;
 
     let output = output.unwrap_or_else(|| {
         PathBuf::from(&source_path)
@@ -770,10 +833,15 @@ fn build_executable(args: &[String]) -> anyhow::Result<String> {
     std::fs::copy(&exe, &output)?;
     {
         use std::io::Write;
+        // Rung B footer: [source][ast_json][source_len][ast_len][AST_MAGIC].
+        // The source travels only so runtime error snippets still render;
+        // startup deserializes the AST and never re-parses.
         let mut f = std::fs::OpenOptions::new().append(true).open(&output)?;
         f.write_all(src.as_bytes())?;
+        f.write_all(&ast_json)?;
         f.write_all(&(src.len() as u64).to_le_bytes())?;
-        f.write_all(OLANG_BUNDLE_MAGIC)?;
+        f.write_all(&(ast_json.len() as u64).to_le_bytes())?;
+        f.write_all(OLANG_AST_MAGIC)?;
         f.flush()?;
     }
     #[cfg(unix)]
@@ -812,8 +880,33 @@ fn execute_source(
     ovm_tier: Option<u32>,
     logger: &Logger,
 ) -> anyhow::Result<()> {
-    let parser = OlangParser::new();
+    let program = match OlangParser::new().parse(source) {
+        Ok(program) => program,
+        Err(e) => {
+            show_file_parse_error(&e, file_path, source);
+            return Err(anyhow::anyhow!("Parse failed"));
+        }
+    };
+    execute_program(
+        program, source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, logger,
+    )
+}
 
+/// Run an already-parsed program. `source` is retained only for error
+/// snippets (parse is already done). This is the shared tail of running a
+/// file and running a bundle whose AST was embedded by `olang build`, so a
+/// built tool never re-parses at startup.
+#[allow(clippy::too_many_arguments)]
+fn execute_program(
+    program: olang::ast::Program,
+    source: &str,
+    file_path: &PathBuf,
+    verbose: bool,
+    no_ovm: bool,
+    ovm_stats: bool,
+    ovm_tier: Option<u32>,
+    logger: &Logger,
+) -> anyhow::Result<()> {
     // Get absolute path for module resolution
     let absolute_path = if file_path.is_absolute() {
         file_path.clone()
@@ -865,36 +958,30 @@ fn execute_source(
         }
     }
 
-    match parser.parse(source) {
-        Ok(ast) => match interpreter.eval_program(ast) {
-            Ok(result) => {
-                if verbose {
-                    logger.info("main", &format!("Result: {:?}", result));
-                }
-                if ovm_stats {
-                    match interpreter.bytecode_tier_stats() {
-                        Some(tier) => println!(
-                            "Bytecode tier: {} promoted, {} rejected, {} bytecode calls, {} instructions, {} native calls",
-                            tier.promoted,
-                            tier.rejected,
-                            tier.bytecode_calls,
-                            tier.instructions_executed,
-                            tier.jit_native_calls
-                        ),
-                        None => println!("Bytecode tier: disabled (--no-ovm)"),
-                    }
-                }
-                Ok(())
+    match interpreter.eval_program(program) {
+        Ok(result) => {
+            if verbose {
+                logger.info("main", &format!("Result: {:?}", result));
             }
-            Err(e) => {
-                let location = interpreter.take_error_location();
-                show_classic_interpreter_error(&e, file_path, &interpreter, location, source);
-                Err(anyhow::anyhow!("Execution failed"))
+            if ovm_stats {
+                match interpreter.bytecode_tier_stats() {
+                    Some(tier) => println!(
+                        "Bytecode tier: {} promoted, {} rejected, {} bytecode calls, {} instructions, {} native calls",
+                        tier.promoted,
+                        tier.rejected,
+                        tier.bytecode_calls,
+                        tier.instructions_executed,
+                        tier.jit_native_calls
+                    ),
+                    None => println!("Bytecode tier: disabled (--no-ovm)"),
+                }
             }
-        },
+            Ok(())
+        }
         Err(e) => {
-            show_file_parse_error(&e, file_path, source);
-            Err(anyhow::anyhow!("Parse failed"))
+            let location = interpreter.take_error_location();
+            show_classic_interpreter_error(&e, file_path, &interpreter, location, source);
+            Err(anyhow::anyhow!("Execution failed"))
         }
     }
 }

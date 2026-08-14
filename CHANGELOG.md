@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`olang build` embeds the parsed AST, not just source (rung B).** A
+  built standalone now carries its program's *pre-parsed* AST and
+  deserializes it at startup instead of re-running the parser —
+  deserialize is ~20× faster than parsing (a 400-function tool's startup
+  parse of ~12 ms becomes ~0.6 ms, ~10 ms off cold start). The source is
+  bundled too, only so runtime error snippets still render; bundles built
+  before this (raw source, `oLaNgBnd`) still run. The AST round-trip is
+  lossless across the language (enums, structs, closures, patterns,
+  recursion), verified against the interpreter. Rung B of `olang build`
+  (Toolsmith T4).
+
 ### Fixed
 
 - **Name-colliding functions now promote to the bytecode tier (viz

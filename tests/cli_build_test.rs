@@ -65,6 +65,69 @@ match cli.parse(spec, cli.args()) {
 }
 
 #[test]
+fn build_roundtrips_rich_language_features() {
+    // `olang build` embeds the *parsed* AST (rung B) and the built tool
+    // deserializes it at startup instead of re-parsing. This is only sound
+    // if the serde round-trip is lossless across the language, so exercise a
+    // spread — enums with payloads and patterns, structs, closures capturing
+    // a variable, higher-order builtins, recursion, and string work — and
+    // confirm the standalone produces exactly what the interpreter does.
+    let dir = tmp("rich");
+    let src = dir.join("rich.ol");
+    std::fs::write(
+        &src,
+        r#"
+type Shape = enum { Circle(Float), Rect(Float, Float) }
+fn area(s) = match s {
+    Circle(r) => 3.14 * r * r,
+    Rect(w, h) => w * h
+}
+fn fact(n) = if n <= 1 => 1 else => n * fact(n - 1)
+let shapes = [Circle(2.0), Rect(3.0, 4.0)]
+let areas = map(shapes, (s) => area(s))
+let bump = 10
+let bumped = map([1, 2, 3], (x) => x + bump)
+let total = sum(bumped)
+println("areas=" + show(areas))
+println("fact6=" + show(fact(6)) + " total=" + show(total))
+"#,
+    )
+    .unwrap();
+    let out = dir.join("rich");
+
+    let build = Command::new(olang_bin())
+        .args(["build", src.to_str().unwrap(), "-o", out.to_str().unwrap()])
+        .output()
+        .expect("run olang build");
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // The standalone (deserialized AST) matches the interpreter run of the
+    // same source, line for line.
+    let bundled = Command::new(&out).output().expect("run tool");
+    let interpreted = Command::new(olang_bin())
+        .arg(src.to_str().unwrap())
+        .output()
+        .expect("run source");
+    assert!(bundled.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&bundled.stdout),
+        String::from_utf8_lossy(&interpreted.stdout),
+        "bundled AST diverged from the interpreter"
+    );
+    assert!(
+        String::from_utf8_lossy(&bundled.stdout).contains("fact6=720"),
+        "stdout: {}",
+        String::from_utf8_lossy(&bundled.stdout)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn build_rejects_a_program_that_does_not_parse() {
     let dir = tmp("parse");
     let src = dir.join("broken.ol");
