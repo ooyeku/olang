@@ -5,7 +5,11 @@
 // is live: a draw-list rebuilt every frame. As the viz stack grows,
 // new capabilities land here first.
 
+use viz
+
 fn o(title) = #{ "theme": "dark", "responsive": true, "title": title }
+fn spec(s, title) =
+    map_set(map_set(map_set(s, "title", title), "theme", "dark"), "responsive", true)
 fn card(id, svg) = dom.set_html(dom.query("#" + id), svg)
 fn jitter(s) = (random.random() + random.random() + random.random() - 1.5) * s
 
@@ -71,6 +75,50 @@ card("g-box", plot.box([
 card("g-clt", plot.hist(ods.series(map(range(0, 3000), (i) =>
     random.random() + random.random() + random.random() + random.random())),
     36, o("central limit: sum of 4 uniforms")))
+
+// ── ensemble forecast: three marks layered over shared scales ────────
+let forecast = map(range(0, 30), (d) => {
+    let x = to_float(d)
+    let mid = 12.0 + 6.0 * math.sin(x * 0.35) + x * 0.15
+    #{ "day": d, "hi": mid + 2.5 + jitter(0.4), "mid": mid, "obs": mid + jitter(1.6) }
+})
+card("g-layers", viz.chart(spec(#{ "data": forecast, "layers": [
+    #{ "mark": "area", "x": "day", "y": "hi", "label": "envelope" },
+    #{ "mark": "line", "x": "day", "y": "mid", "label": "forecast" },
+    #{ "mark": "point", "x": "day", "y": "obs", "label": "observed" }
+] }, "ensemble forecast (viz layers)")))
+
+// ── three species: one scatter spec, color does the splitting ────────
+fn cluster(n, mx, my, sd, name) = map(range(0, n), (i) =>
+    #{ "x": mx + jitter(sd), "y": my + jitter(sd), "species": name })
+let blobs = concat(concat(
+    cluster(90, 2.0, 3.0, 0.9, "adelie"),
+    cluster(90, 5.5, 5.5, 1.1, "gentoo")),
+    cluster(90, 4.0, 1.5, 0.8, "chinstrap"))
+card("g-species", viz.chart(spec(#{ "data": blobs, "mark": "point",
+    "x": "x", "y": "y", "color": "species" }, "clusters (color encoding)")))
+
+// ── a strange attractor: the same grammar, compiled to canvas ────────
+// 4,000 points would drown a DOM in SVG nodes; viz.draw takes the
+// identical spec shape and emits one draw-list instead.
+let a = 0.0 - 2.0
+let b = 0.0 - 2.0
+let c = 0.0 - 1.2
+let d = 2.0
+let mut ax = 0.1
+let mut ay = 0.1
+let mut pts = []
+let mut n = 0
+while n < 4000 {
+    let nx = math.sin(a * ay) - math.cos(b * ax)
+    let ny = math.sin(c * ax) - math.cos(d * ay)
+    ax = nx
+    ay = ny
+    pts = pts + [#{ "x": ax, "y": ay }]
+    n = n + 1
+}
+viz.draw(dom.query("#g-attractor"),
+    #{ "data": pts, "mark": "point", "x": "x", "y": "y" })
 
 // ── the live piece: rose curves morphing, one draw-list per frame ────
 let stage = dom.query("#g-live")

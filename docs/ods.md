@@ -503,6 +503,7 @@ which is also why the whole stack runs in the browser build.
 | `plot.scatter(x, y, opts)` | one point cloud |
 | `plot.area(x, y, opts)` | a line with the region beneath it filled |
 | `plot.lines(x, pairs, opts)` | several lines with a legend; `pairs` is `[[label, y], ...]` (up to 8) |
+| `plot.xy(entries, opts)` | layered marks over shared scales; each entry is `[label, mark, x, y]` with mark `"line"`, `"area"`, or `"scatter"` |
 | `plot.bar(labels, values, opts)` | one bar per category; `labels` is a Series or list |
 | `plot.bars(labels, pairs, opts)` | grouped (side-by-side) bars, one group per category |
 | `plot.stacked(labels, pairs, opts)` | stacked bars — non-negative values only (a negative part misleads) |
@@ -550,6 +551,36 @@ analytics that way (one `dom.fetch_json`, then frames and charts),
 and `/gallery.html` is the showcase: computed art and statistical
 pieces, every one rendered by `plot`. See
 [olang in the Browser](wasm.md#the-dom-module).
+
+### The `viz` grammar
+
+One level up from the chart functions sits `use viz` — an embedded
+olang package where a chart is a *value*: a spec map holding data,
+a mark, and column-name encodings. Data is records (a list of maps —
+what `dom.fetch_json` or `ods.to_records` delivers) or a Frame;
+`color` names a column whose distinct values split the rows into one
+series per value; bar marks sum rows sharing a category (`"stack":
+true` stacks them); `layers` lists several xy marks over shared
+scales. `viz.chart(spec)` compiles a spec to plot SVG — pure and
+testable natively — and `viz.draw(canvas, spec)` compiles the same xy
+specs to a [canvas draw-list](wasm.md#graphics-the-draw-list) instead,
+for point counts that would drown a DOM in SVG nodes:
+
+```olang
+use viz
+let rows = [
+    #{ "day": 1, "value": 3.0, "kind": "a" }, #{ "day": 2, "value": 5.0, "kind": "a" },
+    #{ "day": 1, "value": 2.0, "kind": "b" }, #{ "day": 2, "value": 6.0, "kind": "b" }
+]
+let svg = viz.chart(#{ "data": rows, "mark": "line",
+    "x": "day", "y": "value", "color": "kind" })
+println(to_string(str.contains(svg, "<svg")))
+```
+
+Marks: `line`, `area`, `scatter`/`point` (layerable,
+color-splittable), `bar`, `hist` (with `bins`), and `box` (one box
+per distinct `x`). Options (`title`, `x_label`, `y_label`, `width`,
+`height`, `theme`, `responsive`) ride in the spec itself.
 
 ## The stack and the language
 

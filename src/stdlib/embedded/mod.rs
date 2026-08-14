@@ -13,6 +13,7 @@ const MODULES: &[(&str, &str)] = &[
     ("colx", include_str!("colx.ol")),
     ("mathx", include_str!("mathx.ol")),
     ("ui", include_str!("ui.ol")),
+    ("viz", include_str!("viz.ol")),
 ];
 
 /// The olang source of an embedded module, if one is registered under `name`.

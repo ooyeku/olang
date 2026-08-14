@@ -381,10 +381,14 @@ Charts take the other road: the [data stack](ods.md) runs in this
 build, and [`plot`](ods.md#plot--charts-as-svg-text) renders charts as
 SVG *text* — so `dom.set_html(el, plot.line(...))` is a complete
 rendering pipeline, with `theme: "dark"` and `responsive: true` making
-the output drop into a page unstyled. `/charts.html` draws live
-tracker analytics that way (`fetch_json` → `ods.frame_from_records` →
-charts), and `/gallery.html` is the standing showcase — draw-lists for
-motion, plot for statements.
+the output drop into a page unstyled. One level up, the
+[`viz` grammar](ods.md#the-viz-grammar) makes a chart a value: a spec
+map of data, mark, and column encodings that compiles to plot SVG —
+or, via `viz.draw(canvas, spec)`, to a draw-list for point counts SVG
+can't carry. `/charts.html` draws live tracker analytics that way
+(`fetch_json` delivers records, records are what specs eat), and
+`/gallery.html` is the standing showcase — draw-lists for motion,
+plot and viz for statements.
 
 ## Declarative views: the `ui` module
 

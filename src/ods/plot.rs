@@ -23,6 +23,7 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("line", 3),
     ("scatter", 3),
     ("lines", 3),
+    ("xy", 2),
     ("area", 3),
     ("bar", 3),
     ("bars", 3),
@@ -301,11 +302,11 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                 _ => XyKind::Scatter,
             };
             render_xy(
-                kind,
                 &[XySeries {
                     label: String::new(),
                     xs,
                     ys,
+                    kind,
                 }],
                 &opts,
             )
@@ -318,9 +319,72 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
             let mut series = Vec::new();
             for (label, y) in want_pairs(func, &args[1])? {
                 let (xs, ys) = xy_points(func, x, y)?;
-                series.push(XySeries { label, xs, ys });
+                series.push(XySeries {
+                    label,
+                    xs,
+                    ys,
+                    kind: XyKind::Line,
+                });
             }
-            render_xy(XyKind::Line, &series, &opts).map_err(e)?
+            render_xy(&series, &opts).map_err(e)?
+        }
+        "xy" => {
+            // plot.xy([[label, mark, x, y], ...], opts) — layered marks
+            // over shared scales; each entry carries its own x.
+            let opts = parse_options(&args[1])?;
+            let entries = match &args[0] {
+                Value::List(items) => items,
+                other => {
+                    return Err(format!(
+                        "plot.xy expects a list of [label, mark, x, y] entries, got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            let mut series = Vec::new();
+            for entry in entries.iter() {
+                let (label, mark, x, y) = match entry {
+                    Value::List(p) if p.len() == 4 => {
+                        match (&p[0], &p[1], series_of(&p[2]), series_of(&p[3])) {
+                            (Value::String(l), Value::String(m), Some(x), Some(y)) => {
+                                (l.as_ref().clone(), m.as_ref().clone(), x, y)
+                            }
+                            _ => {
+                                return Err(
+                                    "plot.xy: each entry is [label (String), mark (String), \
+                                     x (Series), y (Series)]"
+                                        .to_string(),
+                                );
+                            }
+                        }
+                    }
+                    other => {
+                        return Err(format!(
+                            "plot.xy: each entry is [label, mark, x, y], got {}",
+                            other.type_name()
+                        ));
+                    }
+                };
+                let kind = match mark.as_str() {
+                    "line" => XyKind::Line,
+                    "area" => XyKind::Area,
+                    "scatter" | "point" => XyKind::Scatter,
+                    other => {
+                        return Err(format!(
+                            "plot.xy: mark must be \"line\", \"area\", or \"scatter\", got \"{}\"",
+                            other
+                        ));
+                    }
+                };
+                let (xs, ys) = xy_points(func, x, y)?;
+                series.push(XySeries {
+                    label,
+                    xs,
+                    ys,
+                    kind,
+                });
+            }
+            render_xy(&series, &opts).map_err(e)?
         }
         "bar" => {
             let labels = want_labels(func, &args[0])?;

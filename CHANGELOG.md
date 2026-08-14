@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   pages, and `responsive: true` drops the fixed pixel size so the SVG
   fills its container while the viewBox keeps the aspect ratio.
   Stacked bars refuse negative values; box plots drop nulls.
+- **The `viz` grammar — charts as values.** `use viz`, an embedded
+  olang package: a chart is a spec map holding data (records or a
+  Frame), a mark, and column-name encodings. `color` splits rows into
+  series, bar marks aggregate rows sharing a category (`"stack": true`
+  stacks), `layers` composes marks over shared scales, and
+  `viz.chart(spec)` compiles to plot SVG — pure, natively tested.
+  `viz.draw(canvas, spec)` compiles the same xy specs to a canvas
+  draw-list for point counts SVG can't carry. Underneath, `plot.xy`
+  is new: layered mixed marks (line/area/scatter, each with its own
+  x) in one document over shared scales.
 - **The data stack meets the page.** Two new pages in the example app:
   `/charts.html` — live tracker analytics (one `dom.fetch_json`, then
   `ods.frame_from_records`, frames, and plot SVG landed with

@@ -1018,13 +1018,20 @@ workflow and how to read p-values and `r2` honestly.
 Charts render to complete standalone SVG documents as strings — write
 one with `fs.write_file`, serve it over `http`, or land it on a page
 with `dom.set_html`. `plot.line`, `plot.scatter`, `plot.area`,
-`plot.lines` (multi-series with legend), `plot.bar`, `plot.bars`
-(grouped), `plot.stacked`, `plot.hist`, `plot.heatmap`, and `plot.box`
-take Series data plus one options map (`title`, `x_label`, `y_label`,
-`width`, `height`, `theme` — `"dark"` re-tunes every color for a dark
-surface — and `responsive`, which sizes the SVG to its container;
-unknown keys are errors). Defaults follow a colorblind-validated
-palette, so a chart is presentable with `#{}`.
+`plot.lines` (multi-series with legend), `plot.xy` (layered marks over
+shared scales), `plot.bar`, `plot.bars` (grouped), `plot.stacked`,
+`plot.hist`, `plot.heatmap`, and `plot.box` take Series data plus one
+options map (`title`, `x_label`, `y_label`, `width`, `height`, `theme`
+— `"dark"` re-tunes every color for a dark surface — and `responsive`,
+which sizes the SVG to its container; unknown keys are errors).
+Defaults follow a colorblind-validated palette, so a chart is
+presentable with `#{}`.
+
+One level up, **`use viz`** (an embedded olang package) makes a chart
+a *value*: a spec map with data (records or a Frame), a mark, and
+column-name encodings — `color` splits series, `layers` composes
+marks, and `viz.draw` compiles the same specs to canvas draw-lists in
+the browser. See [the Data Stack](ods.md#the-viz-grammar).
 
 ```olang
 let x = ods.linspace(0.0, 6.28, 50)

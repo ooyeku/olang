@@ -133,18 +133,21 @@ pub enum XyKind {
 }
 
 /// One xy series; points are pre-cleaned by the caller (no NaN/null).
+/// `kind` is per-series so layered charts (an area under a line under
+/// markers) render into one document with shared scales.
 #[derive(Clone, Debug)]
 pub struct XySeries {
     pub label: String,
     pub xs: Vec<f64>,
     pub ys: Vec<f64>,
+    pub kind: XyKind,
 }
 
 // ---------------------------------------------------------------------
 // Public renderers
 // ---------------------------------------------------------------------
 
-pub fn render_xy(kind: XyKind, series: &[XySeries], opts: &PlotOptions) -> Result<String> {
+pub fn render_xy(series: &[XySeries], opts: &PlotOptions) -> Result<String> {
     if series.is_empty() || series.iter().all(|s| s.xs.is_empty()) {
         return Err(OdsError::InvalidArgument(
             "plot: no data points to draw".to_string(),
@@ -182,13 +185,13 @@ pub fn render_xy(kind: XyKind, series: &[XySeries], opts: &PlotOptions) -> Resul
                 .zip(&s.ys)
                 .map(|(&x, &y)| (geo.px(x, x_lo, x_hi), geo.py(y, y_lo, y_hi)))
                 .collect();
-        match kind {
+        match s.kind {
             XyKind::Line | XyKind::Area => {
                 let mut d = String::new();
                 for (j, (x, y)) in pts.iter().enumerate() {
                     let _ = write!(d, "{}{:.2},{:.2}", if j == 0 { "M" } else { " L" }, x, y);
                 }
-                if kind == XyKind::Area {
+                if s.kind == XyKind::Area {
                     // Fill to the plot floor; translucent so stacked
                     // series stay readable, the line carries the value.
                     let floor = geo.top + geo.plot_h;
@@ -914,11 +917,11 @@ mod tests {
     #[test]
     fn line_svg_structure() {
         let s = render_xy(
-            XyKind::Line,
             &[XySeries {
                 label: String::new(),
                 xs: vec![0.0, 1.0, 2.0],
                 ys: vec![1.0, 3.0, 2.0],
+                kind: XyKind::Line,
             }],
             &opts(),
         )
@@ -935,11 +938,11 @@ mod tests {
     #[test]
     fn scatter_marker_count_and_legend_rules() {
         let one = render_xy(
-            XyKind::Scatter,
             &[XySeries {
                 label: "a".to_string(),
                 xs: vec![1.0, 2.0],
                 ys: vec![1.0, 2.0],
+                kind: XyKind::Scatter,
             }],
             &PlotOptions::default(),
         )
@@ -949,17 +952,18 @@ mod tests {
         assert_eq!(one.matches("rx=\"2\"").count(), 0);
 
         let two = render_xy(
-            XyKind::Line,
             &[
                 XySeries {
                     label: "alpha".to_string(),
                     xs: vec![0.0, 1.0],
                     ys: vec![0.0, 1.0],
+                    kind: XyKind::Line,
                 },
                 XySeries {
                     label: "beta".to_string(),
                     xs: vec![0.0, 1.0],
                     ys: vec![1.0, 0.0],
+                    kind: XyKind::Line,
                 },
             ],
             &PlotOptions::default(),
@@ -992,31 +996,33 @@ mod tests {
 
     #[test]
     fn errors_and_limits() {
-        assert!(render_xy(XyKind::Line, &[], &PlotOptions::default()).is_err());
+        assert!(render_xy(&[], &PlotOptions::default()).is_err());
         let too_many: Vec<XySeries> = (0..9)
             .map(|i| XySeries {
                 label: format!("s{}", i),
                 xs: vec![0.0],
                 ys: vec![0.0],
+                kind: XyKind::Line,
             })
             .collect();
-        assert!(render_xy(XyKind::Line, &too_many, &PlotOptions::default()).is_err());
+        assert!(render_xy(&too_many, &PlotOptions::default()).is_err());
         let bad = XySeries {
             label: String::new(),
             xs: vec![0.0, 1.0],
             ys: vec![0.0],
+            kind: XyKind::Line,
         };
-        assert!(render_xy(XyKind::Line, &[bad], &PlotOptions::default()).is_err());
+        assert!(render_xy(&[bad], &PlotOptions::default()).is_err());
     }
 
     #[test]
     fn dark_theme_and_responsive_sizing() {
         let dark = render_xy(
-            XyKind::Line,
             &[XySeries {
                 label: String::new(),
                 xs: vec![0.0, 1.0],
                 ys: vec![0.0, 1.0],
+                kind: XyKind::Line,
             }],
             &PlotOptions {
                 theme: Theme::Dark,
@@ -1040,11 +1046,11 @@ mod tests {
     #[test]
     fn area_fills_below_the_line() {
         let s = render_xy(
-            XyKind::Area,
             &[XySeries {
                 label: String::new(),
                 xs: vec![0.0, 1.0, 2.0],
                 ys: vec![1.0, 3.0, 2.0],
+                kind: XyKind::Area,
             }],
             &PlotOptions::default(),
         )
