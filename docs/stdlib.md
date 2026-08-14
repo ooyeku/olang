@@ -33,6 +33,7 @@ Part of [the olang book](README.md) ·
 - [`base64` — base64](#base64--base64)
 - [`fs` — file system](#fs--file-system)
 - [`os` — operating system](#os--operating-system)
+- [`proc` — child processes and pipelines](#proc--child-processes-and-pipelines)
 - [`cli` — command-line argument parsing](#cli--command-line-argument-parsing)
 - [`term` — the terminal toolkit](#term--the-terminal-toolkit)
 - [`http` — HTTP](#http--http)
@@ -692,6 +693,7 @@ else.
 | Environment | `get_env` `set_env` `remove_env` `has_env` `list_env` |
 | Directories | `cwd` `chdir` `home_dir` `temp_dir` |
 | System | `hostname` `username` `os_type` `arch` `family` `path_separator` |
+| Signals | `on_interrupt()` — trap Ctrl-C (SIGINT) instead of terminating; `interrupted()` — has it been pressed? (`Ok(bool)`); `reset_interrupt()` — clear the flag |
 
 `os.exec` runs an external program to completion and returns
 `Ok({ code, stdout, stderr })` — or `Err` if it could not be launched at
@@ -707,6 +709,64 @@ let r = unwrap(os.exec("git", ["status", "--short"], #{ "cwd": target }))
 if r.code == 0 => print(r.stdout)
 else => println("git failed: " + r.stderr)
 ```
+
+For a long-running loop or server, `os.on_interrupt()` traps Ctrl-C so it
+sets a flag instead of killing the process; poll it to shut down cleanly:
+
+```olang no-run
+unwrap(os.on_interrupt())
+while os.interrupted() == false {
+    serve_one_request()
+}
+println("draining and exiting")
+```
+
+## `proc` — child processes and pipelines
+
+Where `os.exec` runs a command to completion and hands back its whole
+output, `proc` keeps the child *live*: feed its stdin, read its stdout a
+line at a time, wait for its exit code, or kill it. It is the primitive
+for streaming filters and long-running tools. Handles are `Process`
+values into a process-wide registry (the same pattern as `chan`); stdout
+and stderr are drained on background threads, so a chatty child never
+deadlocks against a caller reading only one stream. Native-only.
+
+| Group | Functions |
+|---|---|
+| Spawn | `spawn(program, args)` / `spawn(program, args, #{ cwd, env })` → `Ok(Process)` |
+| Input | `write(p, s)` · `write_line(p, s)` · `close_stdin(p)` (signals EOF) |
+| Output | `read_line(p)` → `Ok(line)` \| `Err("eof")`; `read_all(p)` → the rest of stdout; `stderr(p)` → all stderr (complete after exit) |
+| Lifecycle | `wait(p)` → `Ok(#{ code })` · `kill(p)` · `pid(p)` |
+| Pipeline | `pipeline(stages)` / `pipeline(stages, #{ cwd, env, stdin })` |
+
+```olang no-run
+// Stream a filter: feed lines in, read matches back out.
+let p = unwrap(proc.spawn("grep", ["olang"]))
+proc.write_line(p, "olang rules")
+proc.write_line(p, "nope")
+proc.close_stdin(p)
+println(unwrap(proc.read_line(p)))     // "olang rules"
+println(show(unwrap(proc.wait(p)).code))
+```
+
+`proc.pipeline` chains commands the way the shell's `a | b | c` does —
+each stage is a list `[program, ...args]`, and each one's stdout is wired
+to the next one's stdin. It returns `Ok(#{ code, stdout, stderr, codes })`:
+the last stage's stdout, all stderr concatenated, the final exit code, and
+the per-stage codes list. `opts.stdin` feeds the first stage.
+
+```olang no-run
+let r = unwrap(proc.pipeline([
+    ["printf", "one\ntwo\nfour\n"],
+    ["grep", "o"],
+    ["wc", "-l"]
+]))
+println(str.trim(r.stdout))    // "3"
+println(show(r.codes))         // [0, 0, 0]
+```
+
+The [`watch` example](../examples/watch/) is the flagship: it streams a
+command's output, runs pipelines, and shuts down gracefully on Ctrl-C.
 
 ## `cli` — command-line argument parsing
 

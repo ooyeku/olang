@@ -20,6 +20,8 @@ pub mod json;
 pub mod math;
 #[cfg(feature = "native")]
 pub mod os;
+#[cfg(feature = "native")]
+pub mod proc;
 pub mod random;
 pub mod regex_mod;
 pub mod string;
@@ -46,6 +48,8 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("math".to_string(), math::create_math_module());
     #[cfg(feature = "native")]
     stdlib.insert("os".to_string(), os::create_os_module());
+    #[cfg(feature = "native")]
+    stdlib.insert("proc".to_string(), proc::create_proc_module());
     stdlib.insert("random".to_string(), random::create_random_module());
     stdlib.insert("testing".to_string(), testing::create_testing_module());
     stdlib.insert("str".to_string(), string::create_string_module());

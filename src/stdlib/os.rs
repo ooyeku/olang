@@ -94,6 +94,22 @@ pub fn create_os_module() -> Value {
         create_builtin_function("read_line", 0),
     );
 
+    // SIGINT (Ctrl-C) handling: install a handler that records the
+    // interrupt instead of terminating, then poll it in a loop for a
+    // graceful shutdown.
+    module.insert(
+        "on_interrupt".to_string(),
+        create_builtin_function("on_interrupt", 0),
+    );
+    module.insert(
+        "interrupted".to_string(),
+        create_builtin_function("interrupted", 0),
+    );
+    module.insert(
+        "reset_interrupt".to_string(),
+        create_builtin_function("reset_interrupt", 0),
+    );
+
     Value::Struct {
         type_name: "Module".to_string(),
         fields: module,
@@ -136,6 +152,9 @@ pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "read_line" => os_read_line(args),
         "is_tty" => os_is_tty(args),
         "flush" => os_flush(args),
+        "on_interrupt" => os_on_interrupt(args),
+        "interrupted" => os_interrupted(args),
+        "reset_interrupt" => os_reset_interrupt(args),
         _ => Err(format!("Unknown os function: {}", name).into()),
     }
 }
@@ -791,6 +810,69 @@ fn os_flush(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
     use std::io::Write;
     let _ = std::io::stdout().flush();
+    Ok(Value::Ok(Box::new(Value::Unit)))
+}
+
+/// Set once an interrupt (SIGINT / Ctrl-C) has been seen, and cleared by
+/// `reset_interrupt`. The handler only flips this flag, so a long-running
+/// loop can notice it and shut down cleanly instead of being killed.
+static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The OS handler can be installed only once per process; remember that we
+/// have, so `on_interrupt` is idempotent.
+static HANDLER_INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `os.on_interrupt()` — install a Ctrl-C (SIGINT) handler that records
+/// the interrupt instead of terminating the process, and clear any prior
+/// interrupt. After this, `os.interrupted()` reports whether Ctrl-C has
+/// been pressed, so a server or long-running loop can drain and exit
+/// gracefully. Idempotent. Returns `Ok(Unit)`.
+fn os_on_interrupt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "on_interrupt expects 0 arguments, got {}",
+            args.len()
+        ))))));
+    }
+    use std::sync::atomic::Ordering;
+    if !HANDLER_INSTALLED.swap(true, Ordering::SeqCst)
+        && let Err(e) = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst))
+    {
+        // Rare — e.g. another handler was installed outside olang.
+        HANDLER_INSTALLED.store(false, Ordering::SeqCst);
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "on_interrupt: could not install handler: {}",
+            e
+        ))))));
+    }
+    INTERRUPTED.store(false, Ordering::SeqCst);
+    Ok(Value::Ok(Box::new(Value::Unit)))
+}
+
+/// `os.interrupted()` — whether Ctrl-C has been pressed since the last
+/// `on_interrupt`/`reset_interrupt`. The poll a graceful loop checks:
+/// `while os.interrupted() == false { ... }`.
+fn os_interrupted(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "interrupted expects 0 arguments, got {}",
+            args.len()
+        ))))));
+    }
+    Ok(Value::Ok(Box::new(Value::Boolean(
+        INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst),
+    ))))
+}
+
+/// `os.reset_interrupt()` — clear the interrupt flag, so a supervisor can
+/// arm for the next Ctrl-C after handling one. Returns `Ok(Unit)`.
+fn os_reset_interrupt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "reset_interrupt expects 0 arguments, got {}",
+            args.len()
+        ))))));
+    }
+    INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
     Ok(Value::Ok(Box::new(Value::Unit)))
 }
 

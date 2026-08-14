@@ -33,6 +33,7 @@ native = [
     "dep:cranelift-frontend",
     "dep:cranelift-jit",
     "dep:cranelift-module",
+    "dep:ctrlc",
     "olang-ods/parallel",
 ]
 
@@ -111,6 +112,11 @@ cranelift-codegen = { version = "0.134.3", optional = true }
 cranelift-frontend = { version = "0.134.3", optional = true }
 cranelift-jit = { version = "0.134.3", optional = true }
 cranelift-module = { version = "0.134.3", optional = true }
+
+# SIGINT (Ctrl-C) handling for `os.on_interrupt` — cross-platform, sets a
+# flag a long-running loop polls for graceful shutdown. Native-only: the
+# playground has no signals.
+ctrlc = { version = "3.4", optional = true }
 
 # Optional: For better debugging and development
 tracing = "0.1"

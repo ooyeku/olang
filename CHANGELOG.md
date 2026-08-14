@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`proc` — child processes, streaming I/O, and pipelines.** A new
+  native module for driving processes beyond `os.exec`'s run-to-
+  completion model. `proc.spawn(program, args)` returns a live `Process`
+  handle you feed with `write`/`write_line`/`close_stdin`, read a line at
+  a time with `read_line` (`read_all` for the rest), and finish with
+  `wait` (→ `#{ code }`) or `kill`. stdout and stderr are drained on
+  background threads, so a child that floods one stream never deadlocks a
+  caller reading the other. `proc.pipeline(stages)` chains commands the
+  way the shell's `a | b | c` does — each stage's stdout wired to the
+  next one's stdin — and returns `#{ code, stdout, stderr, codes }` with
+  every stage's exit code. Lane T3 of the **Toolsmith campaign**.
+
+- **`os.on_interrupt` — graceful Ctrl-C for long-running tools.**
+  `os.on_interrupt()` traps SIGINT so it sets a flag instead of killing
+  the process; `os.interrupted()` polls it (`while os.interrupted() ==
+  false { ... }`) and `os.reset_interrupt()` clears it, so a server or
+  watch loop can drain and exit cleanly.
+
+- **`examples/watch` — the process-story dogfood.** A `watch(1)`-style
+  tool that reruns a command on an interval and streams its output, or
+  runs a pipeline with `--pipe`, until Ctrl-C — exercising `proc`
+  streaming, `proc.pipeline`, and `os` signal handling through the `cli`
+  + `term` toolkit.
+
 - **`olang test --coverage` — line coverage from the test runner.**
   `--coverage` reports covered/total executable lines per file plus an
   overall figure; `--coverage-lines` additionally lists each file's

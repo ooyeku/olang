@@ -698,6 +698,16 @@ impl BuiltinFunctions {
             });
         }
 
+        // Handle proc functions (child processes + pipelines)
+        #[cfg(feature = "native")]
+        if let Some(proc_function) = name.strip_prefix("proc.") {
+            return crate::stdlib::proc::call_proc_function(proc_function, arguments).map_err(
+                |e| InterpreterError::RuntimeError {
+                    message: e.to_string(),
+                },
+            );
+        }
+
         // Handle crypto functions
         if let Some(crypto_function) = name.strip_prefix("crypto.") {
             // Remove "crypto." prefix
