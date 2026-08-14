@@ -5304,6 +5304,9 @@ impl BytecodeCompiler {
             // variables resolve identically in both tiers
             closure: std::sync::Arc::new(captured.clone()),
             param_bounds: Vec::new(),
+            // The bytecode tier isn't instrumented for coverage (that runs
+            // on the interpreter), so no def_file is threaded here.
+            def_file: None,
         };
 
         if runtime_captures.is_empty() && self_name.is_none() {

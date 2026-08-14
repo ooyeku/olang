@@ -535,6 +535,7 @@ mod tests {
             param_bounds: Vec::new(),
             param_checks: Vec::new(),
             return_check: None,
+            def_file: None,
         }
     }
 
@@ -653,6 +654,7 @@ mod tests {
             param_bounds: Vec::new(),
             param_checks: Vec::new(),
             return_check: None,
+            def_file: None,
         };
 
         match tier.try_call(&func, &[Value::Integer(5)]) {
@@ -689,6 +691,7 @@ mod tests {
             param_bounds: Vec::new(),
             param_checks: Vec::new(),
             return_check: None,
+            def_file: None,
         };
 
         for _ in 0..5 {
@@ -751,6 +754,7 @@ mod tests {
             param_bounds: Vec::new(),
             param_checks: Vec::new(),
             return_check: None,
+            def_file: None,
         };
 
         match tier.try_call(&func, &[Value::Integer(1), Value::Integer(0)]) {

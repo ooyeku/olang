@@ -51,6 +51,35 @@ Conventions that work well: name dedicated suites `*_test.ol`, or keep a
 `test` block next to the code it guards (the markdown example self-checks
 its conversion contract this way).
 
+### Coverage
+
+`--coverage` adds a line-coverage report after the run — which lines your
+tests actually executed, per file:
+
+```bash
+olang test --coverage           # summary per file + overall
+olang test --coverage-lines     # also list each file's uncovered lines
+```
+
+```text
+────────────────────────────────────────
+  coverage
+    calc.ol         71%  5/7
+    calc_test.ol   100%  3/3
+    total           80%  8/10
+```
+
+Coverage is a **report, not a gate**: it never changes the exit code, so a
+green suite with thin coverage still passes. It is attributed to the file
+the code *lives in* — a helper defined in one file and exercised by a test
+in another is credited to the helper's file, not the test's. A line counts
+as executable when it carries a statement (the same thing the runtime
+records when it runs), so a fully-exercised file reads exactly 100%.
+
+Under `--coverage` the runner executes on the interpreter tier rather than
+the bytecode tier, so a coverage run is slower than a plain `olang test` —
+run it when you want the report, not on every save.
+
 ## `olang fmt`
 
 A conservative formatter for whitespace hygiene:

@@ -56,12 +56,7 @@ fn parse_decl(line: &str) -> Option<(String, String, String, bool)> {
         ));
     }
     if let Some(r) = rest.strip_prefix("error ") {
-        let name: String = r
-            .split([' ', '{'])
-            .next()
-            .unwrap_or(r)
-            .trim()
-            .to_string();
+        let name: String = r.split([' ', '{']).next().unwrap_or(r).trim().to_string();
         return Some((
             "error".into(),
             name.clone(),
@@ -70,12 +65,7 @@ fn parse_decl(line: &str) -> Option<(String, String, String, bool)> {
         ));
     }
     if let Some(r) = rest.strip_prefix("trait ") {
-        let name: String = r
-            .split([' ', '{'])
-            .next()
-            .unwrap_or(r)
-            .trim()
-            .to_string();
+        let name: String = r.split([' ', '{']).next().unwrap_or(r).trim().to_string();
         return Some((
             "trait".into(),
             name.clone(),
@@ -84,12 +74,7 @@ fn parse_decl(line: &str) -> Option<(String, String, String, bool)> {
         ));
     }
     if let Some(r) = rest.strip_prefix("let ") {
-        let name: String = r
-            .split([' ', '='])
-            .next()
-            .unwrap_or(r)
-            .trim()
-            .to_string();
+        let name: String = r.split([' ', '=']).next().unwrap_or(r).trim().to_string();
         return Some(("value".into(), name.clone(), name, shared));
     }
     None

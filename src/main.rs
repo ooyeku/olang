@@ -164,12 +164,18 @@ fn run() -> i32 {
                 // Files under the runner get a bare argv — a program that
                 // branches on os.args() takes its no-argument path.
                 olang::stdlib::os::set_script_args(vec!["olang-test".to_string()]);
+                // `--coverage` reports line coverage; `--coverage-lines`
+                // additionally lists each file's uncovered lines (and implies
+                // `--coverage`). The path is the first non-flag argument.
+                let show_missing = cli.script_args.iter().any(|a| a == "--coverage-lines");
+                let coverage = show_missing || cli.script_args.iter().any(|a| a == "--coverage");
                 let target = cli
                     .script_args
-                    .first()
+                    .iter()
+                    .find(|a| !a.starts_with("--"))
                     .map(PathBuf::from)
                     .unwrap_or_else(|| PathBuf::from("."));
-                return olang::tools::test_runner::run(&target);
+                return olang::tools::test_runner::run(&target, coverage, show_missing);
             }
             "lsp" => {
                 return match olang::tools::lsp::run() {

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`olang test --coverage` — line coverage from the test runner.**
+  `--coverage` reports covered/total executable lines per file plus an
+  overall figure; `--coverage-lines` additionally lists each file's
+  uncovered ranges. Coverage is a report, never a gate — it leaves the
+  exit code untouched. It is attributed to the file the code *lives in*:
+  function values now carry a `def_file` that the interpreter pushes and
+  pops across calls, so a helper defined in one file and exercised by a
+  test in another is credited to the helper's file, not the test's. The
+  executable-line denominator is derived from the parsed AST (the same
+  statements the runtime records), so a fully-exercised file reads
+  exactly 100%. Runs on the interpreter tier so the statement-level hook
+  sees every line. Lane T7 of the **Toolsmith campaign** — the last piece
+  of a credible test story.
+
 ## [0.57.0] - 2026-08-14
 
 ### Added

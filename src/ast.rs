@@ -635,6 +635,13 @@ pub struct Function {
     /// Runtime check for the declared return type, if checkable.
     #[serde(default)]
     pub return_check: Option<FieldTypeCheck>,
+    /// The source file this function was defined in, if known — set at
+    /// declaration from the interpreter's current module path. Used by
+    /// `olang test --coverage` to attribute executed lines to the file
+    /// that owns the code, even when a test in one file calls into
+    /// another. `None` for reconstructed values and dynamic contexts.
+    #[serde(default)]
+    pub def_file: Option<String>,
 }
 
 /// Built-in function

@@ -147,6 +147,16 @@ pub struct Interpreter {
     test_mode: bool,
     test_results: Vec<TestOutcome>,
 
+    /// Line-coverage recording (`olang test --coverage`). When `Some`,
+    /// every executed located statement records its line under the file
+    /// that owns the code (the enclosing function's `def_file`, or the
+    /// current module at top level). `coverage_file_stack` tracks that
+    /// owning file across calls: `call_function` pushes the callee's
+    /// `def_file` and pops it on return, so a test in one file that calls
+    /// into another attributes each line to the file it actually lives in.
+    coverage: Option<HashMap<String, std::collections::BTreeSet<u32>>>,
+    coverage_file_stack: Vec<Option<String>>,
+
     /// Declared struct types: name -> field names. Construction of a
     /// declared struct validates its field set; an undeclared struct-literal
     /// name is an error.
@@ -218,6 +228,8 @@ impl Interpreter {
             unit_variant_names: HashSet::new(),
             test_mode: false,
             test_results: Vec::new(),
+            coverage: None,
+            coverage_file_stack: Vec::new(),
             struct_defs: HashMap::new(),
             struct_field_checks: HashMap::new(),
             dependency_map: HashMap::new(),
@@ -385,6 +397,19 @@ impl Interpreter {
                 // where it happened — capture it once, together with the
                 // call stack, for the top-level reporter.
                 self.stmt_span_stack.push((*line, *column));
+                // Coverage: tally this line under the file that owns the code
+                // — the innermost call frame's def_file, or the current
+                // module at top level. Cheap `is_some` guard when off.
+                if self.coverage.is_some() {
+                    let file = self
+                        .coverage_file_stack
+                        .last()
+                        .and_then(|o| o.clone())
+                        .or_else(|| self.current_module_path.clone());
+                    if let (Some(cov), Some(f)) = (self.coverage.as_mut(), file) {
+                        cov.entry(f).or_default().insert(*line);
+                    }
+                }
                 let result = self.eval_statement(stmt);
                 if let Err(e) = &result
                     && self.pending_error_location.is_none()
@@ -435,6 +460,7 @@ impl Interpreter {
                     body: Arc::new(body.clone()),
                     closure: Arc::new(closure.clone()),
                     param_bounds: Vec::new(),
+                    def_file: self.current_module_path.clone(),
                 };
                 if let Some(tier) = self.bytecode_tier.as_mut() {
                     tier.note_trait_default(
@@ -469,6 +495,7 @@ impl Interpreter {
                 body: Arc::new(method.body.clone()),
                 closure: Arc::new(closure.clone()),
                 param_bounds: Vec::new(),
+                def_file: self.current_module_path.clone(),
             };
             // Tell the tier this method body exists under its bare name. A
             // method dispatched by receiver type (`s.area()`) reaches the tier
@@ -808,6 +835,7 @@ impl Interpreter {
             param_bounds,
             param_checks,
             return_check,
+            def_file: self.current_module_path.clone(),
         };
 
         // Let the bytecode tier know this function exists, so a promoted
@@ -935,6 +963,7 @@ impl Interpreter {
                     body: Arc::new(resolved_body),
                     closure: Arc::new(closure),
                     param_bounds: Vec::new(),
+                    def_file: self.current_module_path.clone(),
                 }))
             }
             Expr::Pipeline { left, right } => {
@@ -1345,6 +1374,7 @@ impl Interpreter {
                     body: Arc::new((**body).clone()),
                     closure: Arc::new(closure),
                     param_bounds: Vec::new(),
+                    def_file: self.current_module_path.clone(),
                 };
 
                 // Return a function that when called returns a promise
@@ -1612,6 +1642,7 @@ impl Interpreter {
             body: Arc::new(async_func_decl.body),
             closure: Arc::new(closure),
             param_bounds: Vec::new(),
+            def_file: self.current_module_path.clone(),
         };
 
         let function_value = Value::Function(function);
@@ -1813,6 +1844,13 @@ impl Interpreter {
                     new_env.define_local(param.name.clone(), value);
                 }
 
+                // Coverage: while this body runs, lines belong to the file
+                // the function was defined in, not the caller's file.
+                let track_coverage = self.coverage.is_some();
+                if track_coverage {
+                    self.coverage_file_stack.push(func.def_file.clone());
+                }
+
                 // MEMORY OPTIMIZED: Use scoped evaluation instead of environment replacement
                 let result = match self.eval_expr_with_env(&func.body, new_env) {
                     // `?` hit an Err inside this body: the function returns
@@ -1822,6 +1860,10 @@ impl Interpreter {
                     Err(InterpreterError::ReturnSignal(v)) => Ok(v),
                     other => other,
                 };
+
+                if track_coverage {
+                    self.coverage_file_stack.pop();
+                }
 
                 // Enforce the declared return type on whatever the body
                 // produced (explicit return or final expression alike).
@@ -1971,6 +2013,9 @@ impl Interpreter {
             unit_variant_names: self.unit_variant_names.clone(),
             test_mode: false,
             test_results: Vec::new(),
+            // Coverage is single-threaded: worker clones don't record.
+            coverage: None,
+            coverage_file_stack: Vec::new(),
             struct_defs: self.struct_defs.clone(),
             struct_field_checks: self.struct_field_checks.clone(),
             dependency_map: self.dependency_map.clone(),
@@ -3066,6 +3111,20 @@ impl Interpreter {
     /// The outcomes of every `test` block run so far, clearing the record.
     pub fn take_test_results(&mut self) -> Vec<TestOutcome> {
         std::mem::take(&mut self.test_results)
+    }
+
+    /// Turn on line-coverage recording. Every executed located statement is
+    /// tallied under the file that owns the code. Enable this *instead of*
+    /// the bytecode tier: coverage is instrumented on the AST walk, so a
+    /// promoted function would run past the hook unrecorded.
+    pub fn enable_coverage(&mut self) {
+        self.coverage = Some(HashMap::new());
+    }
+
+    /// The recorded coverage so far — file path -> the set of line numbers
+    /// executed in it — clearing the record.
+    pub fn take_coverage(&mut self) -> Option<HashMap<String, std::collections::BTreeSet<u32>>> {
+        self.coverage.take()
     }
 }
 

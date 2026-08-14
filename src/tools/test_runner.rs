@@ -11,10 +11,15 @@
 use crate::ast::Statement;
 use crate::{Interpreter, Parser};
 use colored::*;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-pub fn run(path: &Path) -> i32 {
+pub fn run(path: &Path, coverage: bool, show_missing: bool) -> i32 {
     let started = std::time::Instant::now();
+
+    // Aggregated coverage across every test file: source path -> the set of
+    // lines executed in it. Empty (and left untouched) unless `--coverage`.
+    let mut coverage_hits: HashMap<String, BTreeSet<u32>> = HashMap::new();
 
     // A path the user named that doesn't exist is a mistake, not "no tests":
     // reporting success for a typo'd path lets CI pass over nothing.
@@ -61,10 +66,17 @@ pub fn run(path: &Path) -> i32 {
 
         let mut interpreter = Interpreter::new();
         interpreter.enable_test_mode();
-        // Run tests through the bytecode tier, exactly as `olang <file>` does
-        // by default — so tests execute at production speed and exercise the
-        // tier that actually ships (a promotion threshold of 1, the default).
-        interpreter.enable_bytecode_tier(1, false);
+        if coverage {
+            // Coverage instruments the AST walk (a promoted function would
+            // run past the hook unrecorded), so run on the interpreter tier
+            // — the semantic oracle — instead of the bytecode tier.
+            interpreter.enable_coverage();
+        } else {
+            // Run tests through the bytecode tier, exactly as `olang <file>`
+            // does by default — so tests execute at production speed and
+            // exercise the tier that ships (promotion threshold 1, default).
+            interpreter.enable_bytecode_tier(1, false);
+        }
         let absolute = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
         interpreter.set_current_file(&absolute);
 
@@ -86,6 +98,15 @@ pub fn run(path: &Path) -> i32 {
             let _ = std::env::set_current_dir(cwd);
         }
         let results = interpreter.take_test_results();
+
+        // Fold this file's recorded lines into the run-wide tally. Keyed by
+        // the file that owns each line, so a helper defined in one file and
+        // exercised by a test in another lands under the file it lives in.
+        if let Some(hits) = interpreter.take_coverage() {
+            for (file, lines) in hits {
+                coverage_hits.entry(file).or_default().extend(lines);
+            }
+        }
 
         for outcome in &results {
             match &outcome.error {
@@ -129,11 +150,19 @@ pub fn run(path: &Path) -> i32 {
         if test_files == 1 { "" } else { "s" },
         elapsed
     );
-    if total_failed + file_errors + parse_errors > 0 {
+    let failed = total_failed + file_errors + parse_errors > 0;
+    if failed {
         println!("{}", summary.red().bold());
-        1
     } else {
         println!("{}", summary.green());
-        0
     }
+
+    // Coverage is a report, not a gate: it never changes the exit code, so
+    // a green suite with thin coverage still passes (and can be tightened
+    // later). `--coverage-lines` additionally lists the uncovered lines.
+    if coverage {
+        super::coverage::print_report(&coverage_hits, show_missing);
+    }
+
+    if failed { 1 } else { 0 }
 }

@@ -635,6 +635,20 @@ impl Interpreter {
 
             // Process all statements in the module
             for statement in &program.statements {
+                // Coverage: a module's top-level statements execute right
+                // here, at load. Record each one under the module's own path
+                // (set just above) — the share/use dispatch below unwraps
+                // past the `Located` hook that normally does this, so without
+                // this a loaded module's declaration lines would read as
+                // never-run even though loading executed them.
+                if self.coverage.is_some()
+                    && let crate::ast::Statement::Located { line, .. } = statement
+                {
+                    let owner = self.current_module_path.clone();
+                    if let (Some(cov), Some(owner)) = (self.coverage.as_mut(), owner) {
+                        cov.entry(owner).or_default().insert(*line);
+                    }
+                }
                 match statement.unwrapped() {
                     crate::ast::Statement::ShareDecl(share_decl) => {
                         match share_decl {

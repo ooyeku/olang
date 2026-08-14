@@ -1289,6 +1289,7 @@ impl OvmValue {
                     body: c.template.body.clone(),
                     closure: Arc::new(closure_map),
                     param_bounds: Vec::new(),
+                    def_file: c.template.def_file.clone(),
                 }))
             }
             ValueData::Function(_) => {
