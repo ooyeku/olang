@@ -1,7 +1,8 @@
 # Tooling
 
 The developer tools shipped inside the `olang` binary: the test runner,
-the formatter, the static checker, and the benchmark harness. (Package
+the formatter, the static checker, the benchmark harness, the reference
+generator (`olang doc`), and the bundler (`olang build`). (Package
 commands live in `otc` —
 see [Packages](packages.md); the language server has
 [its own chapter](editors.md).)
@@ -190,6 +191,34 @@ distribute it.
 [`examples/greet.ol`](../examples/greet.ol) is a self-contained tool
 built exactly this way — `cli` for its arguments, `term` for color, and
 nothing external.
+
+## `olang doc`
+
+Generate an API reference from doc comments:
+
+```bash
+olang doc src/                    # → doc.html (themed, browsable)
+olang doc lib/ -o api.html        # choose the output file
+olang doc lib/ --md > API.md      # Markdown to stdout instead
+```
+
+The convention is source-level, and every doc comment is already a
+valid olang comment: `//!` at the top of a file documents the module,
+and `///` lines directly above a declaration document it. `olang doc`
+scans the `.ol` files at or below each path, pairs each `///` block
+with the declaration that follows (`fn`, `type`, `error`, `trait`,
+`let` — `share` items carry a badge), and renders them. Only documented
+declarations appear, so the reference reports exactly what has been
+written down and nothing else.
+
+```olang
+/// Greet someone by name, returning the greeting.
+share fn greet(name) = "Hello, " + name
+```
+
+The embedded packages carry these comments, so `olang doc
+src/stdlib/embedded/cli.ol src/stdlib/embedded/term.ol` regenerates
+their reference from source rather than by hand.
 
 ## `olang --watch`
 

@@ -215,6 +215,28 @@ fn run() -> i32 {
                     }
                 };
             }
+            "doc" => {
+                // olang doc [paths] [-o out.html] [--md]
+                let mut output = PathBuf::from("doc.html");
+                let mut markdown = false;
+                let mut paths: Vec<PathBuf> = Vec::new();
+                let mut it = cli.script_args.iter();
+                while let Some(a) = it.next() {
+                    match a.as_str() {
+                        "--md" | "--markdown" => markdown = true,
+                        "-o" | "--output" => {
+                            if let Some(o) = it.next() {
+                                output = PathBuf::from(o);
+                            }
+                        }
+                        other => paths.push(PathBuf::from(other)),
+                    }
+                }
+                if paths.is_empty() {
+                    paths.push(PathBuf::from("."));
+                }
+                return olang::tools::doc::run(&paths, &output, markdown);
+            }
             _ => {}
         }
     }

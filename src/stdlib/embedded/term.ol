@@ -15,7 +15,7 @@
 
 fn has(name) = unwrap_or(os.has_env(name), false)
 
-// Whether styled output should be emitted right now.
+/// Whether styled output should be emitted right now.
 share fn color() =
     has("CLICOLOR_FORCE") || (unwrap_or(os.is_tty(), false) && has("NO_COLOR") == false)
 
@@ -26,19 +26,32 @@ fn wrap(codes, s) = if color() => ESC + codes + "m" + s + RESET else => s
 
 // ── named colors and attributes ────────────────────────────────────────
 
+/// Wrap `s` in black.
 share fn black(s) = wrap("30", s)
+/// Wrap `s` in red.
 share fn red(s) = wrap("31", s)
+/// Wrap `s` in green.
 share fn green(s) = wrap("32", s)
+/// Wrap `s` in yellow.
 share fn yellow(s) = wrap("33", s)
+/// Wrap `s` in blue.
 share fn blue(s) = wrap("34", s)
+/// Wrap `s` in magenta.
 share fn magenta(s) = wrap("35", s)
+/// Wrap `s` in cyan.
 share fn cyan(s) = wrap("36", s)
+/// Wrap `s` in white.
 share fn white(s) = wrap("37", s)
+/// Wrap `s` in gray.
 share fn gray(s) = wrap("90", s)
 
+/// Bold `s`.
 share fn bold(s) = wrap("1", s)
+/// Dim `s`.
 share fn dim(s) = wrap("2", s)
+/// Italicize `s`.
 share fn italic(s) = wrap("3", s)
+/// Underline `s`.
 share fn underline(s) = wrap("4", s)
 
 // ── general style: term.style(s, #{ "fg": "red", "bg": "blue", ... }) ──
@@ -55,6 +68,7 @@ fn bg_code(name) = {
 }
 fn flag(opts, key) = if map_has_key(opts, key) => map_get(opts, key) else => false
 
+/// Style `s` with `opts`: `fg`, `bg`, `bold`, `dim`, `italic`, `underline`.
 share fn style(s, opts) = {
     let mut codes = []
     if map_has_key(opts, "fg") => { codes = codes + [fg_code(map_get(opts, "fg"))] }
@@ -68,16 +82,16 @@ share fn style(s, opts) = {
 
 // ── structure ──────────────────────────────────────────────────────────
 
-// A horizontal rule of box-drawing dashes.
+/// A horizontal rule of box-drawing dashes.
 share fn rule(width) = str.repeat("─", width)
 
 // Replace element `i` of a list (the width scan grows column widths).
 fn with_at(xs, i, v) = map(range(0, len(xs)), (j) => if j == i => v else => xs[j])
 
-// An aligned table. `headers` is a list of column titles (bold);
-// `rows` is a list of rows, each a list of cell strings. Columns are
-// padded to their widest plain cell — style cells *after* tabulating,
-// or the escape bytes throw the alignment off.
+/// An aligned table. `headers` is a list of column titles (bold);
+/// `rows` is a list of rows, each a list of cell strings. Columns are
+/// padded to their widest plain cell — style cells *after* tabulating,
+/// or the escape bytes throw the alignment off.
 share fn table(headers, rows) = {
     let ncols = len(headers)
     let mut widths = map(headers, (h) => str.length(h))
@@ -111,9 +125,9 @@ share fn table(headers, rows) = {
 
 // ── progress ───────────────────────────────────────────────────────────
 
-// A progress bar for a fraction in [0, 1]: "[████████░░░░]  67%". Print
-// it with a leading "\r" and `os.flush()` in your loop to redraw in
-// place; print a newline when done.
+/// A progress bar for a fraction in [0, 1]: "[████████░░░░]  67%". Print
+/// it with a leading "\r" and `os.flush()` in your loop to redraw in
+/// place; print a newline when done.
 share fn bar(fraction, width) = {
     let f = if fraction < 0.0 => 0.0 else => (if fraction > 1.0 => 1.0 else => fraction)
     let filled = to_int(f * to_float(width))
@@ -129,17 +143,17 @@ fn ask(question) = {
     str.trim_end(unwrap_or(os.read_line(), ""))
 }
 
-// Prompt for a line of input.
+/// Prompt for a line of input.
 share fn prompt(question) = ask(question)
 
-// Yes/no question; anything starting with y/Y is true, else false.
+/// Yes/no question; anything starting with y/Y is true, else false.
 share fn confirm(question) = {
     let answer = ask(question + " [y/N]")
     str.starts_with(str.to_lower(answer), "y")
 }
 
-// A numbered menu; returns Ok(chosen option string) or Err on a bad
-// choice. Options are printed 1..N.
+/// A numbered menu; returns Ok(chosen option string) or Err on a bad
+/// choice. Options are printed 1..N.
 share fn select(question, options) = {
     println(question)
     let mut i = 0

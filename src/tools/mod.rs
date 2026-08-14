@@ -4,6 +4,7 @@
 
 pub mod bench; // `olang bench` — reproducible timings with baseline compare
 pub mod check; // `olang check` — provable annotation violations, pre-run
+pub mod doc; // `olang doc` — API reference from /// comments
 pub mod fmt;
 #[cfg(feature = "native")]
 pub mod lsp; // `olang lsp` — the language server over stdio

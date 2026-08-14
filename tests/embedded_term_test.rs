@@ -33,43 +33,36 @@ fn assert_all_true(source: &str, n: usize) {
 #[test]
 fn styling_gates_on_env() {
     // Force-on: color functions wrap with the right SGR codes and reset.
-    // Then NO_COLOR wins even when forced-adjacent — and with neither
-    // set, a piped test stdout yields plain text.
+    // Then, with neither set, a piped test stdout yields plain text —
+    // and the structure helpers render correctly with color off.
+    //
+    // Everything runs in ONE program (one thread), sequentially: styling
+    // gates on process-global env (`CLICOLOR_FORCE`/`NO_COLOR`), which a
+    // second parallel test mutating the same vars would race against.
     assert_all_true(
         r##"use term
 os.set_env("CLICOLOR_FORCE", "1")
 os.remove_env("NO_COLOR")
 let r = term.red("x")
 let s = term.style("y", #{ "fg": "yellow", "bg": "blue", "bold": true })
-let on = [
-    str.contains(r, "\x1b[31m") && str.contains(r, "x") && str.contains(r, "\x1b[0m"),
-    str.contains(s, "\x1b[33;44;1m"),
-    term.color() == true
-]
 os.remove_env("CLICOLOR_FORCE")
-// No force, not a TTY (piped) → styling off, plain passthrough.
-let off = [ term.red("x") == "x", term.color() == false ]
-concat(on, off)"##,
-        5,
-    );
-}
-
-#[test]
-fn structure_rule_table_bar() {
-    assert_all_true(
-        r##"use term
-os.remove_env("CLICOLOR_FORCE")
+// Color off now (piped, not a TTY): plain passthrough, and the
+// structure helpers produce clean aligned output.
+let plain_red = term.red("x")
+let colored_off = term.color()
 let t = term.table(["name", "n"], [["ada", "128"], ["evelyn", "1"]])
 let lines = str.lines(t)
 [
+    str.contains(r, "\x1b[31m") && str.contains(r, "x") && str.contains(r, "\x1b[0m"),
+    str.contains(s, "\x1b[33;44;1m"),
+    plain_red == "x",
+    colored_off == false,
     str.length(term.rule(10)) == str.length("──────────"),
-    // header line pads "name" to the width of "evelyn" (6) + gap.
     str.starts_with(lines[0], "name  "),
     str.contains(lines[1], "ada   ") && str.contains(lines[1], "128"),
-    // bar: 0.5 of 20 → 10 filled blocks, 10 empty, and a percentage.
     str.contains(term.bar(0.5, 20), "50%"),
     str.contains(term.bar(1.0, 10), "100%")
 ]"##,
-        5,
+        9,
     );
 }

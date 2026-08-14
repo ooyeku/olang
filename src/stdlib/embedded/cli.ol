@@ -26,7 +26,7 @@
 //       }
 //   }
 
-// The program's own arguments, with the program path (argv[0]) dropped.
+/// The program's own arguments, with the program path (argv[0]) dropped.
 share fn args() = skip(unwrap_or(os.args(), []), 1)
 
 // ── spec accessors ─────────────────────────────────────────────────────
@@ -178,6 +178,7 @@ fn parse_core(spec, argv) = {
 
 // ── public parse: dispatches subcommands, else parses directly ─────────
 
+/// Parse `argv` against `spec`; `Ok(values)` (a map incl. `help`) or `Err(message)`.
 share fn parse(spec, argv) = {
     let cmds = cmds_of(spec)
     if len(cmds) == 0 => parse_core(spec, argv)
@@ -202,6 +203,7 @@ share fn parse(spec, argv) = {
 
 fn pad(s, w) = str.pad_end(s, w, " ")
 
+/// Render the usage/help text for `spec` as a string.
 share fn help(spec) = {
     let name = opt(spec, "name", "program")
     let about = opt(spec, "about", "")

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`olang doc` — API reference from doc comments.** A new subcommand
+  that scans `.ol` files for a source-level doc convention — `//!` for a
+  module note, `///` above a declaration for its docs (both already
+  valid olang comments) — and renders a browsable, suite-themed HTML
+  page (or Markdown with `--md`). Only documented declarations appear.
+  The `cli` and `term` packages now carry `///` docs, so their reference
+  regenerates from source. Lane T6 of the **Toolsmith campaign** — the
+  "maintain" layer.
+
 - **`olang build` — standalone single-file executables.** `olang build
   prog.ol -o tool` bundles a program into a self-contained binary that
   runs with no olang installed. No C compiler or linker: `build` copies
