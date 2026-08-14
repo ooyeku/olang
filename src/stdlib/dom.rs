@@ -43,6 +43,7 @@ pub fn create_dom_module() -> Value {
         ("on_frame", 1),
         // Graphics
         ("draw", 2),
+        ("draw_points", 4),
         // Structure ordering
         ("insert_before", 3),
         // Routing and storage

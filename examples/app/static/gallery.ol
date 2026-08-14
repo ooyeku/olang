@@ -136,6 +136,29 @@ while n < 4000 {
 viz.draw(dom.query("#g-attractor"),
     #{ "data": pts, "mark": "point", "x": "x", "y": "y" })
 
+// ── thirty thousand points at frame rate: the binary bulk path ───────
+// The curtain is computed ONCE as two Series; every frame re-sends the
+// same packed f64 buffer with a new affine + color. No JSON, no
+// per-point olang work — dom.draw_points is one memcpy and one native
+// loop per frame.
+let curtain_t = map(range(0, 30000), (i) => to_float(i) * 0.0021)
+let curtain_x = ods.series(map(curtain_t, (t) => math.sin(t * 3.01)))
+let curtain_y = ods.series(map(curtain_t, (t) => math.sin(t * 3.97 + 1.57)))
+let big = dom.query("#g-big")
+let big_hud = dom.query("#g-big-hud")
+dom.on_frame((f) => {
+    let tt = time.monotonic_ms() / 1000.0
+    dom.draw(big, [#{ "op": "clear", "color": "rgba(11,14,20,0.5)" }])
+    dom.draw_points(big, curtain_x, curtain_y, #{
+        "mode": "points", "size": 1.0, "alpha": 0.6,
+        "color": "hsl(" + show(165.0 + 45.0 * math.sin(tt * 0.4)) + " 70% 62%)",
+        "sx": 500.0 * (1.0 + 0.1 * math.sin(tt * 0.6)),
+        "sy": 165.0 * (1.0 + 0.1 * math.cos(tt * 0.8)),
+        "tx": 560.0, "ty": 190.0 })
+    dom.set_text(big_hud, "30,000 points · " +
+        show(to_int(math.round(1000.0 / math.max(map_get(f, "delta"), 1.0)))) + " fps")
+})
+
 // ── the live piece: rose curves morphing, one draw-list per frame ────
 let stage = dom.query("#g-live")
 let cx = 560.0

@@ -160,6 +160,13 @@ unsafe extern "C" {
     fn host_dom_clear_interval(timer_id: i64);
     fn host_dom_request_frame(callback_id: i64);
     fn host_dom_draw(handle: i64, ptr: *const u8, len: usize);
+    fn host_dom_draw_points(
+        handle: i64,
+        pts: *const f64,
+        n: usize,
+        style_ptr: *const u8,
+        style_len: usize,
+    );
     fn host_dom_on_frame(callback_id: i64);
     /// before == 0 appends at the end.
     fn host_dom_insert_before(parent: i64, child: i64, before: i64);
@@ -414,6 +421,81 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
                 _ => return Err("dom.draw: ops must be a list of draw operations".into()),
             };
             unsafe { host_dom_draw(handle(el)?, json.as_ptr(), json.len()) };
+            Ok(Value::Unit)
+        }
+        ("draw_points", [el, xs, ys, style]) => {
+            fn points_f64(v: &Value) -> Result<Vec<Option<f64>>, String> {
+                use olang_ods::Scalar;
+                if let Some(s) = crate::ods::series_of(v) {
+                    return (0..s.len())
+                        .map(|i| match s.scalar_at(i) {
+                            Scalar::F64(f) => Ok(Some(f)),
+                            Scalar::I64(n) => Ok(Some(n as f64)),
+                            Scalar::Null => Ok(None),
+                            _ => Err("dom.draw_points: coordinates must be numeric".to_string()),
+                        })
+                        .collect();
+                }
+                match v {
+                    Value::List(items) => items
+                        .iter()
+                        .map(|it| match it {
+                            Value::Float(f) => Ok(Some(*f)),
+                            Value::Integer(n) => Ok(Some(*n as f64)),
+                            Value::Unit => Ok(None),
+                            other => Err(format!(
+                                "dom.draw_points: coordinates must be numeric, got {}",
+                                other.type_name()
+                            )),
+                        })
+                        .collect(),
+                    other => Err(format!(
+                        "dom.draw_points: coordinates must be a Series or list, got {}",
+                        other.type_name()
+                    )),
+                }
+            }
+            // The bulk path: coordinates cross as ONE packed f64 buffer
+            // the page reads as a zero-copy typed-array view — no JSON,
+            // no per-point boundary cost. Series are the fast lane;
+            // plain lists work too. Nulls drop pairwise, like plot.
+            let xv = points_f64(xs)?;
+            let yv = points_f64(ys)?;
+            if xv.len() != yv.len() {
+                return Err(format!(
+                    "dom.draw_points: x and y lengths differ ({} vs {})",
+                    xv.len(),
+                    yv.len()
+                )
+                .into());
+            }
+            let mut packed = Vec::with_capacity(xv.len() * 2);
+            for i in 0..xv.len() {
+                match (xv[i], yv[i]) {
+                    (Some(x), Some(y)) => {
+                        packed.push(x);
+                        packed.push(y);
+                    }
+                    _ => {}
+                }
+            }
+            let style_json =
+                match crate::stdlib::json::call_json_function("stringify", vec![style.clone()]) {
+                    Ok(Value::Ok(inner)) => match *inner {
+                        Value::String(s) => s.as_ref().clone(),
+                        other => format!("{}", other),
+                    },
+                    _ => return Err("dom.draw_points: style must be a map".into()),
+                };
+            unsafe {
+                host_dom_draw_points(
+                    handle(el)?,
+                    packed.as_ptr(),
+                    packed.len() / 2,
+                    style_json.as_ptr(),
+                    style_json.len(),
+                )
+            };
             Ok(Value::Unit)
         }
         ("on_frame", [callback]) => {

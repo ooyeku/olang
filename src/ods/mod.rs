@@ -14,7 +14,7 @@ mod series;
 mod stats;
 
 pub use frame::OdsFrame;
-pub use series::{OdsSeries, make_series_value};
+pub use series::{OdsSeries, make_series_value, series_of};
 
 use crate::ast::{BinaryOp, BuiltinFunction, Value};
 use crate::native::{NativeHandle, NativeObject, OvmModule};

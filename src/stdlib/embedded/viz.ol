@@ -68,32 +68,46 @@ fn norm_mark(m) = if m == "point" => "scatter" else => m
 // ── xy compilation (shared by chart and draw) ──────────────────────────
 // An entry is [label, mark, xs (list), ys (list)].
 
-fn layer_entries(layer, fallback_records) = {
-    let records = if map_has_key(layer, "data") => records_of(map_get(layer, "data"))
-        else => fallback_records
+// Entry columns are lists on the record path and Series on the
+// columnar path — downstream code accepts either.
+fn layer_entries(layer, fallback_data) = {
+    let d = if map_has_key(layer, "data") => map_get(layer, "data")
+        else => fallback_data
     let x = map_get(layer, "x")
     let y = map_get(layer, "y")
     let mark = norm_mark(opt(layer, "mark", "line"))
-    if map_has_key(layer, "color") => {
-        let c = map_get(layer, "color")
-        map(groups(records, c), (g) => {
-            let rows = filter(records, (r) => map_get(r, c) == g)
-            [to_label(g), mark, col(rows, x), col(rows, y)]
-        })
-    } else => [[to_label(opt(layer, "label", y)), mark, col(records, x), col(records, y)]]
+    if map_has_key(layer, "color") || typeof(d) == "List" => {
+        let records = records_of(d)
+        if map_has_key(layer, "color") => {
+            let c = map_get(layer, "color")
+            map(groups(records, c), (g) => {
+                let rows = filter(records, (r) => map_get(r, c) == g)
+                [to_label(g), mark, col(rows, x), col(rows, y)]
+            })
+        } else => [[to_label(opt(layer, "label", y)), mark, col(records, x), col(records, y)]]
+    } else => {
+        // A Frame with no color split: columns come out as Series —
+        // no per-row conversion, the fast lane for large data.
+        [[to_label(opt(layer, "label", y)), mark, ods.column(d, x), ods.column(d, y)]]
+    }
 }
 
 fn xy_entries(spec) = {
-    let records = if map_has_key(spec, "data") => records_of(map_get(spec, "data"))
+    let data = if map_has_key(spec, "data") => map_get(spec, "data")
         else => []
     let layers = if map_has_key(spec, "layers") => map_get(spec, "layers")
         else => [spec]
     let mut entries = []
     for layer in layers {
-        entries = concat(entries, layer_entries(layer, records))
+        entries = concat(entries, layer_entries(layer, data))
     }
     entries
 }
+
+fn as_series(v) = if typeof(v) == "List" => ods.series(v) else => v
+fn as_list(v) = if typeof(v) == "List" => v else => ods.to_list(v)
+fn vmin(v) = if typeof(v) == "List" => to_float(min(v)) else => ods.min(v)
+fn vmax(v) = if typeof(v) == "List" => to_float(max(v)) else => ods.max(v)
 
 // ── the SVG target ─────────────────────────────────────────────────────
 
@@ -102,7 +116,7 @@ share fn chart(spec) = {
     let o = plot_opts(spec)
     if map_has_key(spec, "layers") || mark == "line" || mark == "area" || mark == "scatter" => {
         plot.xy(map(xy_entries(spec), (en) =>
-            [en[0], en[1], ods.series(en[2]), ods.series(en[3])]), o)
+            [en[0], en[1], as_series(en[2]), as_series(en[3])]), o)
     } else => {
         let records = records_of(map_get(spec, "data"))
         if mark == "hist" => plot.hist(
@@ -140,9 +154,6 @@ share fn chart(spec) = {
 let palette = ["#5aa9e6", "#f0854a", "#3ddc97", "#f5c542",
                "#ef8bb0", "#58c458", "#8b7ae0", "#ef6b73"]
 
-fn lo_of(vals) = min(vals)
-fn hi_of(vals) = max(vals)
-
 // Axis labels round to two decimals — full float precision on a
 // canvas label is noise.
 fn fmt(v) = show(math.round(to_float(v) * 100.0) / 100.0)
@@ -151,16 +162,10 @@ share fn draw(el, spec) = {
     let w = to_float(unwrap(str.parse_int(dom.get_attr(el, "width"))))
     let h = to_float(unwrap(str.parse_int(dom.get_attr(el, "height"))))
     let entries = xy_entries(spec)
-    let mut all_x = []
-    let mut all_y = []
-    for en in entries {
-        all_x = concat(all_x, en[2])
-        all_y = concat(all_y, en[3])
-    }
-    let x0 = to_float(lo_of(all_x))
-    let x1 = to_float(hi_of(all_x))
-    let y0 = to_float(lo_of(all_y))
-    let y1 = to_float(hi_of(all_y))
+    let x0 = min(map(entries, (en) => vmin(en[2])))
+    let x1 = max(map(entries, (en) => vmax(en[2])))
+    let y0 = min(map(entries, (en) => vmin(en[3])))
+    let y1 = max(map(entries, (en) => vmax(en[3])))
     let xspan = if x1 > x0 => x1 - x0 else => 1.0
     let yspan = if y1 > y0 => y1 - y0 else => 1.0
     let left = 48.0
@@ -193,29 +198,43 @@ share fn draw(el, spec) = {
         gi = gi + 1
     }
 
+    // Areas still ride the draw-list (they need a closed filled
+    // path); everything else goes point-first below.
     let mut i = 0
     for en in entries {
-        let color = palette[i % len(palette)]
-        let mark = en[1]
-        let pts = map(range(0, len(en[2])), (j) => [px(en[2][j]), py(en[3][j])])
-        if mark == "scatter" => {
-            for p in pts {
-                ops = ops + [#{ "op": "circle", "x": p[0], "y": p[1], "r": 2.0,
-                                "fill": color }]
-            }
-        } else => {
-            if mark == "area" => {
-                let closed = concat(pts, [[px(en[2][len(en[2]) - 1]), top + ph],
-                                          [px(en[2][0]), top + ph]])
-                ops = ops + [#{ "op": "path", "points": closed, "close": true,
-                                "fill": "rgba(90,169,230,0.18)" }]
-            }
-            ops = ops + [#{ "op": "path", "points": pts, "close": false,
-                            "stroke": color, "line_width": 1.5 }]
+        if en[1] == "area" => {
+            let xs = as_list(en[2])
+            let ys = as_list(en[3])
+            let pts = map(range(0, len(xs)), (j) => [px(xs[j]), py(ys[j])])
+            let closed = concat(pts, [[px(xs[len(xs) - 1]), top + ph],
+                                      [px(xs[0]), top + ph]])
+            ops = ops + [#{ "op": "path", "points": closed, "close": true,
+                            "fill": "rgba(90,169,230,0.18)" }]
         }
         i = i + 1
     }
     dom.draw(el, ops)
+
+    // Marks cross as ONE packed f64 buffer per series — dom.draw_points
+    // applies the data→pixel affine host-side, so the olang side does
+    // no per-point work at all. This is what makes 50,000-point
+    // scatters redraw at frame rate.
+    let sx = pw / xspan
+    let sy = 0.0 - ph / yspan
+    let tx = left - x0 * sx
+    let ty = top + ph + y0 * (ph / yspan)
+    let mut j = 0
+    for en in entries {
+        let color = palette[j % len(palette)]
+        if en[1] == "scatter" => {
+            dom.draw_points(el, en[2], en[3], #{ "mode": "points", "size": 2.5,
+                "color": color, "sx": sx, "sy": sy, "tx": tx, "ty": ty })
+        } else => {
+            dom.draw_points(el, en[2], en[3], #{ "mode": "path", "size": 1.5,
+                "color": color, "sx": sx, "sy": sy, "tx": tx, "ty": ty })
+        }
+        j = j + 1
+    }
 }
 
 // ── interactivity ──────────────────────────────────────────────────────

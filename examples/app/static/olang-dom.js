@@ -267,6 +267,37 @@
       // they are inert (the worker harness implements the live versions).
       host_dom_post: () => {},
       host_dom_on_message: () => {},
+      // The bulk point path: one packed f64 buffer, read as a
+      // zero-copy typed-array view; an optional affine (sx,sy,tx,ty)
+      // maps data coordinates to pixels host-side.
+      host_dom_draw_points: (h, ptr, n, sp, sl) => {
+        const el = elements[Number(h)];
+        const ctx = (el.__olangCtx ??= el.getContext("2d"));
+        if (!ctx) return;
+        const style = JSON.parse(readStr(sp, sl));
+        const pts = new Float64Array(ex.memory.buffer, Number(ptr), n * 2);
+        const sx = style.sx ?? 1, sy = style.sy ?? 1;
+        const tx = style.tx ?? 0, ty = style.ty ?? 0;
+        const color = style.color ?? "#5aa9e6";
+        if (style.alpha != null) ctx.globalAlpha = style.alpha;
+        if (style.mode === "path") {
+          ctx.beginPath();
+          for (let i = 0; i < n; i++) {
+            const x = pts[2 * i] * sx + tx, y = pts[2 * i + 1] * sy + ty;
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = color;
+          ctx.lineWidth = style.size ?? 1;
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = color;
+          const r = style.size ?? 1.5;
+          for (let i = 0; i < n; i++) {
+            ctx.fillRect(pts[2 * i] * sx + tx - r / 2, pts[2 * i + 1] * sy + ty - r / 2, r, r);
+          }
+        }
+        if (style.alpha != null) ctx.globalAlpha = 1;
+      },
       // The draw-list: one JSON scene per call, replayed onto Canvas 2D.
       host_dom_draw: (h, ptr, len) => {
         const el = elements[Number(h)];

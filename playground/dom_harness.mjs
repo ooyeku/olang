@@ -234,6 +234,14 @@ const imports = {
     host_dom_draw: (h, ptr, len) => {
       (node(h).drawn ??= []).push(JSON.parse(readStr(ptr, len)));
     },
+    host_dom_draw_points: (h, ptr, n, sp, sl) => {
+      const pts = new Float64Array(ex.memory.buffer, Number(ptr), n * 2);
+      (node(h).points ??= []).push({
+        n,
+        style: JSON.parse(readStr(sp, sl)),
+        head: Array.from(pts.slice(0, 6)),
+      });
+    },
     host_dom_worker_spawn: (ptr, len) => {
       const source = fakeWorkerSources[readStr(ptr, len)];
       if (source == null) return 0n;
@@ -601,6 +609,36 @@ println("viz wired")
   if (fakeDom["#btn"].text !== "brushed 2.0-6.0")
     throw new Error("brush range wrong: " + fakeDom["#btn"].text);
   console.log("stage 5: viz interactivity ok");
+}
+// ── stage 6: the bulk point path — packed f64, zero-copy, null-safe ──
+const prog10 = `
+let missing = map_get(#{}, "absent")
+dom.draw_points(dom.query("#btn"), ods.series([0.0, 1.0, 2.0]), ods.series([5.0, 6.0, 7.0]),
+    #{ "mode": "points", "size": 2.0, "sx": 10.0, "tx": 3.0 })
+dom.draw_points(dom.query("#btn"), [1.5, 2.5], [4.0, 8.0], #{ "mode": "path", "color": "#fff" })
+dom.draw_points(dom.query("#btn"), ods.series([1.0, missing, 3.0]), ods.series([9.0, 9.5, 10.0]), #{})
+println("points sent")
+`;
+{
+  const enc10 = new TextEncoder().encode(prog10);
+  const p10 = ex.olang_alloc(enc10.length);
+  mem().set(enc10, p10);
+  const r = result(ex.olang_session_start(p10, enc10.length));
+  ex.olang_dealloc(p10, enc10.length);
+  if (r.error) throw new Error("stage6 session: " + r.error);
+  const calls = node(2).points;
+  if (!calls || calls.length !== 3) throw new Error("draw_points calls missing");
+  const [a, b, c] = calls;
+  if (a.n !== 3 || JSON.stringify(a.head) !== "[0,5,1,6,2,7]")
+    throw new Error("series pack wrong: " + JSON.stringify(a));
+  if (a.style.sx !== 10 || a.style.tx !== 3 || a.style.mode !== "points")
+    throw new Error("style lost: " + JSON.stringify(a.style));
+  if (b.n !== 2 || JSON.stringify(b.head) !== "[1.5,4,2.5,8]" || b.style.mode !== "path")
+    throw new Error("list pack wrong: " + JSON.stringify(b));
+  // The null pair dropped: 3 in, 2 out.
+  if (c.n !== 2 || JSON.stringify(c.head) !== "[1,9,3,10]")
+    throw new Error("null drop wrong: " + JSON.stringify(c));
+  console.log("stage 6: bulk point path ok");
 }
 console.log("final dom:", JSON.stringify(fakeDom));
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");

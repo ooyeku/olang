@@ -563,8 +563,13 @@ series per value; bar marks sum rows sharing a category (`"stack":
 true` stacks them); `layers` lists several xy marks over shared
 scales. `viz.chart(spec)` compiles a spec to plot SVG — pure and
 testable natively — and `viz.draw(canvas, spec)` compiles the same xy
-specs to a [canvas draw-list](wasm.md#graphics-the-draw-list) instead,
-for point counts that would drown a DOM in SVG nodes:
+specs to canvas instead, for point counts that would drown a DOM in
+SVG nodes. On the canvas target, point and line marks ride
+[`dom.draw_points`](wasm.md#graphics-the-draw-list) — one packed
+binary buffer per series with the data→pixel affine applied host-side
+— and a spec whose data is a **Frame** (with no `color` split) keeps
+its columns as Series end to end, so a 50,000-row frame renders with
+no per-row olang work at all:
 
 ```olang
 use viz

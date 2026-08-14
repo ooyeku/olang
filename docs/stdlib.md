@@ -847,6 +847,7 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.request_frame(fn)` | one animation frame; re-arm inside the handler for a loop |
 | `dom.on_frame(fn)` | the persistent animation loop: register once, called every frame with a millisecond `delta` |
 | `dom.draw(canvas, ops)` | replay a draw-list onto a canvas — the whole scene crosses the boundary once |
+| `dom.draw_points(canvas, xs, ys, style)` | the bulk path: coordinates cross as one packed binary buffer (Series or lists; nulls drop pairwise); style takes `mode` (`"points"`/`"path"`), `color`, `size`, `alpha`, and an affine `sx`/`sy`/`tx`/`ty` applied host-side |
 | `dom.insert_before(parent, child, before)` | position a child (`0` appends) |
 | `dom.push_state(path)` / `dom.location()` | SPA navigation; location is a Map of `path` and `query` |
 | `dom.on_route(fn)` | the back/forward listener — a `route` event Map with `path` and `query` |

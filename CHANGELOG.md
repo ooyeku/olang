@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   draw-list for point counts SVG can't carry. Underneath, `plot.xy`
   is new: layered mixed marks (line/area/scatter, each with its own
   x) in one document over shared scales.
+- **The binary bulk path — big data at frame rate.**
+  `dom.draw_points(canvas, xs, ys, style)`: coordinates cross the wasm
+  boundary as ONE packed f64 buffer the page reads as a zero-copy
+  typed-array view — no JSON, no per-point cost. Series are the fast
+  lane (the data stack feeds the graphics pipeline directly); plain
+  lists work too; nulls drop pairwise. Styles: points or path mode,
+  color, size, alpha, and a host-side affine (sx/sy/tx/ty) — so
+  animation re-sends the same buffer with new transform parameters and
+  olang does zero per-point work per frame. `viz.draw` compiles point
+  and line marks onto this path, and specs whose data is a Frame keep
+  columns as Series end to end. The gallery finale animates a
+  30,000-point Lissajous curtain at ~120 fps.
 - **Interactive charts — hover, click-to-filter, brush.** With
   `"interactive": true` (plot option and viz spec key), marks carry
   their datum as `data-*` attributes: scatter points, bars and stacked

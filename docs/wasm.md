@@ -362,6 +362,20 @@ The ops: `clear` (with a color for motion trails, without to wipe),
 `text`, and the transforms `save` / `restore` / `translate` / `rotate`
 / `scale`. Fill and stroke take any CSS color.
 
+Past a few thousand points, JSON itself becomes the cost — so bulk
+data has its own lane. `dom.draw_points(canvas, xs, ys, style)` packs
+the coordinates into **one binary f64 buffer** the page reads as a
+zero-copy typed-array view: no serialization, no per-point boundary
+crossing. `xs`/`ys` are ods Series (the fast lane — the data stack
+feeds the graphics pipeline directly) or plain lists; nulls drop
+pairwise. The style map picks `mode` (`"points"` or `"path"`),
+`color`, `size`, `alpha` — and an affine `sx`/`sy`/`tx`/`ty` applied
+*host-side*, which is the trick that makes animation cheap: compute
+the data once, and every frame just re-sends the same buffer with new
+transform parameters. The gallery's finale animates 30,000 points at
+frame rate this way, and `viz.draw` compiles its point and line marks
+onto this path automatically.
+
 The frame loop has two speeds. `dom.request_frame(fn)` is one-shot —
 re-arm it inside the handler if you want another. `dom.on_frame(fn)`
 is the persistent loop: register once at boot, and the handler runs
