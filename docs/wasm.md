@@ -388,6 +388,17 @@ state (closures capture by value), animation state lives in the DOM
 like everything else — the orbits demo keeps its bodies as JSON in a
 hidden input, loading and saving each frame.
 
+The host keeps the loop honest about power. All `on_frame` handlers
+share one animation loop capped near 60fps (a 120Hz ProMotion display
+doubles fill rate for no visible gain in a data animation), and
+`dom.draw` / `dom.draw_points` skip painting entirely for a canvas
+that is scrolled out of the viewport — the handler still runs (your
+simulation time advances), but an offscreen canvas costs the GPU
+nothing. A canvas can also trade retina sharpness for fill rate with
+`data-olang-dpr="1.5"` (or `"1"`) in its markup: a per-frame animated
+piece rarely needs a full devicePixelRatio backing store, and the
+pixel cost falls with the square of the ratio.
+
 See it whole in [`examples/app/static/orbit.ol`](../examples/app/static/orbit.ol),
 served at `/orbit.html`: five bodies orbiting on trails, and a click
 adds a new one at the clicked radius — structured event coordinates,

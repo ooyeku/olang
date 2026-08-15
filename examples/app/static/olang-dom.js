@@ -20,10 +20,15 @@
 
   // Canvas contexts render at devicePixelRatio: the backing store
   // scales up once and the context pre-scales, so every draw call keeps
-  // working in design units while the pixels stay retina-crisp.
+  // working in design units while the pixels stay retina-crisp. The
+  // ratio is capped at 2, and a canvas can opt down with
+  // data-olang-dpr="1.5" — for a per-frame animated piece, a smaller
+  // backing store cuts GPU fill rate quadratically and motion hides
+  // the softness.
   function ctx2d(el) {
     if (!el.__olangCtx) {
-      const dpr = window.devicePixelRatio || 1;
+      const attr = parseFloat(el.dataset && el.dataset.olangDpr);
+      const dpr = attr > 0 ? attr : Math.min(window.devicePixelRatio || 1, 2);
       const w = el.width, h = el.height;
       if (!el.style.width) {
         el.style.width = w + "px";
@@ -37,9 +42,29 @@
       if (el.__olangCtx && dpr !== 1) el.__olangCtx.scale(dpr, dpr);
       el.__olangW = w;
       el.__olangH = h;
+      watchVisibility(el);
     }
     return el.__olangCtx;
   }
+
+  // Offscreen canvases don't paint. An IntersectionObserver tracks
+  // whether each draw target is actually in the viewport; draw and
+  // draw_points become no-ops for one that isn't. A page can animate
+  // several heavy canvases and only ever pay for what's on screen —
+  // scrolled away, the GPU cost is zero. (Feature-detected: in a
+  // headless host without IntersectionObserver everything counts as
+  // visible.)
+  let visObserver = null;
+  function watchVisibility(el) {
+    if (typeof IntersectionObserver === "undefined") return;
+    if (!visObserver) {
+      visObserver = new IntersectionObserver((entries) => {
+        for (const e of entries) e.target.__olangOffscreen = !e.isIntersecting;
+      });
+    }
+    visObserver.observe(el);
+  }
+  const canPaint = (el) => !el.__olangOffscreen;
 
   // Element handles: index into this array (0 reserved = not found).
   const elements = [null];
@@ -108,6 +133,9 @@
   // Web Workers: each handle is a second olang instance off the main
   // thread, bridged over postMessage. Values cross as JSON both ways.
   const workers = [null];
+
+  // dom.on_frame callback ids, all serviced by one shared rAF loop.
+  const frameCallbacks = [];
 
   const imports = {
     env: {
@@ -256,15 +284,27 @@
       host_dom_state_set: (kp, kl, vp, vl) => {
         sessionState[readStr(kp, kl)] = readStr(vp, vl);
       },
+      // All frame callbacks share ONE rAF loop, throttled to ~60fps.
+      // Per-callback chains on a 120Hz display doubled every cost for
+      // no visible gain — these are data animations, not games — and
+      // N callbacks meant N interleaved rAF timers. The 14ms floor
+      // passes every tick on a 60Hz display and every second tick on
+      // ProMotion's 120Hz.
       host_dom_on_frame: (id) => {
-        const cb = Number(id);
-        let last = performance.now();
-        const tick = (now) => {
-          dispatchJson(cb, { type: "frame", delta: now - last });
-          last = now;
+        frameCallbacks.push(Number(id));
+        if (frameCallbacks.length === 1) {
+          let last = performance.now();
+          const tick = (now) => {
+            if (now - last >= 14) {
+              const delta = now - last;
+              last = now;
+              for (const cb of frameCallbacks)
+                dispatchJson(cb, { type: "frame", delta });
+            }
+            requestAnimationFrame(tick);
+          };
           requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
+        }
       },
       host_dom_worker_spawn: (ptr, len) => {
         const path = readStr(ptr, len);
@@ -305,7 +345,7 @@
       host_dom_draw_points: (h, ptr, n, sp, sl) => {
         const el = elements[Number(h)];
         const ctx = ctx2d(el);
-        if (!ctx) return;
+        if (!ctx || !canPaint(el)) return;
         const style = JSON.parse(readStr(sp, sl));
         const pts = new Float64Array(ex.memory.buffer, Number(ptr), n * 2);
         const sx = style.sx ?? 1, sy = style.sy ?? 1;
@@ -340,7 +380,7 @@
       host_dom_draw: (h, ptr, len) => {
         const el = elements[Number(h)];
         const ctx = ctx2d(el);
-        if (!ctx) return;
+        if (!ctx || !canPaint(el)) return;
         const paint = (op, fillStroke) => {
           if (op.fill != null) { ctx.fillStyle = op.fill; fillStroke.fill(); }
           if (op.stroke != null) {

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The gallery no longer eats the GPU.** The browser host ran one
+  unthrottled requestAnimationFrame chain per `dom.on_frame` handler and
+  painted every animated canvas on every tick, visible or not — on a
+  120Hz retina display the gallery's three live pieces (12,500-star
+  galaxy, 50,000-point curtain, rose curves) repainted ~4.25MP of
+  devicePixelRatio-2 backing store 120 times a second, two of them
+  under semi-transparent full-surface clears (~0.5 Gpix/s of clears
+  plus ~7.5M point-quads/s), pinning the GPU near 80%. Three host-side
+  fixes in `olang-dom.js`, no olang code changes:
+  - All `on_frame` handlers now share one animation loop capped near
+    60fps — data animations gain nothing from 120Hz.
+  - `dom.draw`/`dom.draw_points` skip painting for a canvas outside
+    the viewport (IntersectionObserver, feature-detected): handlers
+    keep running, offscreen canvases cost the GPU nothing, and
+    painting resumes the frame after the canvas scrolls back in.
+  - A canvas can trade retina backing for fill rate with
+    `data-olang-dpr` in its markup; the gallery's three animated
+    canvases run at 1.5 (44% fewer pixels each), stills keep full
+    sharpness. devicePixelRatio is also capped at 2.
+  Together: roughly 2x from the frame cap, ~1.8x from the smaller
+  backing stores, and near-total savings for whatever isn't on
+  screen — with three pieces and at most one in view, an order of
+  magnitude less GPU work in normal browsing.
+
 ## [0.58.0] - 2026-08-14
 
 ### Added
