@@ -275,6 +275,48 @@ never the watcher. Changes are detected by polling every `.ol` file at
 or below the script's directory (module edits trigger reruns too); a
 save landing mid-run queues an immediate rerun. Ctrl+C stops both.
 
+## `olang --record` and `olang replay` — the Open Timeline
+
+Record a run's nondeterministic inputs to a portable trace, then replay
+the run bit-for-bit — anywhere, any time:
+
+```bash
+olang --record bug.olt program.ol   # run, logging every nondeterministic input
+olang replay bug.olt                # re-run: identical, from the trace alone
+```
+
+A program can only observe nondeterminism through a small, explicit set
+of stdlib calls — `random.*`, the clocks in `time`, the
+environment/stdin/`exec` surface of `os`, filesystem reads, `http`, and
+the seeded-random parts of `crypto`. `--record` performs each such call
+for real and logs its result in order; `replay` intercepts the same
+calls and returns the logged results instead. Because olang programs are
+deterministic given their inputs (immutable values, capture-by-value
+closures, a seeded RNG), reproducing the inputs reproduces the entire
+run — the same random rolls, the same timestamps, the same environment,
+down to the last digit.
+
+The `.olt` trace **embeds the program source**, so it is self-contained:
+replay works from a directory where the program does not exist, on
+another machine, months later. A bug report becomes a file. And a
+*crashed* run records too — the trace is written on the way down — so the
+failure replays exactly, as many times as you need to understand it.
+
+Replay is honest about drift. If the program's sequence of
+nondeterministic calls no longer matches the trace — the code changed,
+or a new source of nondeterminism appeared — replay stops at the exact
+point and says so, rather than silently producing a different run. A
+clean replay is a proof that the recorded inputs fully determined the
+run.
+
+Two boundaries worth knowing. Record/replay runs on the interpreter tier
+(the one dispatch point that sees every builtin), so a recorded run
+forgoes the bytecode tier — a debugging tool, not a hot path. And v1
+records a single thread of effects: a program using `spawn`/`par` for
+observable concurrency is outside the model. (Roadmap: `replay --why`,
+which carries value provenance during replay to answer "where did this
+number come from?" — a chain back to the recorded inputs.)
+
 ## The examples harness
 
 `examples/run_all.ol` — a test harness written *in olang* — runs every

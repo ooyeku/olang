@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The Open Timeline — record, replay, deterministic re-execution.**
+  `olang --record trace.olt program.ol` logs a run's nondeterministic
+  inputs — `random.*`, the `time` clocks, the environment/stdin/`exec`
+  surface of `os`, filesystem reads, `http`, and seeded-random `crypto` —
+  and `olang replay trace.olt` re-runs the program serving each of those
+  calls from the log, reproducing the run bit-for-bit: the same random
+  rolls, timestamps, and environment, to the last digit. It works because
+  olang programs are deterministic given their inputs (immutable values,
+  capture-by-value closures, a seeded RNG), so reproducing the inputs
+  reproduces the whole run. The `.olt` trace embeds the program source,
+  so a trace is a portable, self-contained reproduction — replay works
+  from a machine where the program does not exist, and a *crashed* run
+  records on the way down, so the failure replays exactly. Divergence is
+  detected: if the program's effect sequence no longer matches the trace,
+  replay stops at the exact point and says so. Runs on the interpreter
+  tier (the one choke point that sees every builtin), single-threaded in
+  v1; `replay --why` (value provenance) is a recorded roadmap rung.
+  Pinned by an integration suite (reproduction, portability, crash
+  capture, divergence).
+
 - **The transparent binary + capability manifests — "Open by
   construction."** Two halves of one identity feature for a language
   named *Open*:

@@ -48,7 +48,7 @@ run_all.ol`.
 | **[Internals](internals.md)** | The implementation as a design study: why an interpreter is the authority, the fail-closed refusal ladder, how promotion/inference/deopt work, the value model, modules, how to add things |
 | **[The OVM](ovm.md)** | The bytecode and JIT tiers in depth: the register machine's design, the JIT whitelist and specialization, measured performance, deliberate refusals |
 | **[Stability](stability.md)** | What is stable, what is experimental, and how the language evolves from here |
-| **[Tooling](tooling.md)** | The command-line toolbox: `olang test` (runner, with `--coverage`), `olang fmt` (formatter), `olang check` (static checker), `olang build` (standalone single-file executables), `olang doc` (API docs from `///` comments), and `olang bench` (reproducible timings) |
+| **[Tooling](tooling.md)** | The command-line toolbox: `olang test` (runner, with `--coverage`), `olang fmt` (formatter), `olang check` (static checker), `olang build` (standalone single-file executables), `olang doc` (API docs from `///` comments), `olang bench` (reproducible timings), and the Open Timeline (`--record` / `replay` for deterministic re-execution) |
 | **[Roadmap](roadmap.md)** | Development history and direction — where decisions, verdicts, and deferred work are recorded |
 
 ## Reading order

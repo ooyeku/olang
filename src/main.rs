@@ -64,6 +64,11 @@ struct Cli {
     #[arg(long, value_name = "CAPS")]
     deny: Option<String>,
 
+    /// Record this run's nondeterministic inputs to a portable .olt trace.
+    /// Replay it bit-for-bit later with `olang replay <trace>`.
+    #[arg(long, value_name = "TRACE.olt")]
+    record: Option<String>,
+
     /// Arguments passed through to the program, readable via `os.args()`.
     /// Everything after the file name (or after `--`) is the script's argv.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -244,6 +249,11 @@ fn run() -> i32 {
             "inspect" => {
                 return inspect_binary(&cli.script_args);
             }
+            "replay" => {
+                // `olang replay <trace.olt> [-- args]` — re-run the recorded
+                // program, serving every nondeterministic call from the log.
+                return run_replay(&cli.script_args, logger);
+            }
             "doc" => {
                 // olang doc [paths] [-o out.html] [--md]
                 let mut output = PathBuf::from("doc.html");
@@ -313,6 +323,23 @@ fn run() -> i32 {
             }
         };
 
+        // --record builds a recording timeline over the program source.
+        let timeline = match &cli.record {
+            Some(out) => match std::fs::read_to_string(&file_path) {
+                Ok(src) => Some(olang::timeline::Timeline::record(
+                    PathBuf::from(out),
+                    file_path.to_string_lossy().to_string(),
+                    src.clone(),
+                    sha256_hex(src.as_bytes()),
+                )),
+                Err(e) => {
+                    eprintln!("olang --record: cannot read {}: {}", file_path.display(), e);
+                    return 1;
+                }
+            },
+            None => None,
+        };
+
         // Execute file in batch mode
         if let Err(e) = execute_file(
             &file_path,
@@ -321,6 +348,7 @@ fn run() -> i32 {
             cli.ovm_stats,
             cli.ovm_tier,
             deny,
+            timeline,
             logger,
         ) {
             logger.error("main", &format!("Error executing file: {}", e));
@@ -917,12 +945,12 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
                 (None, d) => d,
             };
             execute_program(
-                *program, &source, &path, false, false, false, None, effective, logger,
+                *program, &source, &path, false, false, false, None, effective, None, logger,
             )
         }
-        Bundle::Source(source) => {
-            execute_source(&source, &path, false, false, false, None, deny, logger)
-        }
+        Bundle::Source(source) => execute_source(
+            &source, &path, false, false, false, None, deny, None, logger,
+        ),
     };
     match result {
         Ok(()) => 0,
@@ -1277,12 +1305,13 @@ fn execute_file(
     ovm_stats: bool,
     ovm_tier: Option<u32>,
     deny: Option<olang::caps::Caps>,
+    timeline: Option<olang::timeline::Timeline>,
     logger: &Logger,
 ) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file_path)
         .map_err(|e| anyhow::anyhow!("cannot read '{}': {}", file_path.display(), e))?;
     execute_source(
-        &source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, deny, logger,
+        &source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, deny, timeline, logger,
     )
 }
 
@@ -1298,6 +1327,7 @@ fn execute_source(
     ovm_stats: bool,
     ovm_tier: Option<u32>,
     deny: Option<olang::caps::Caps>,
+    timeline: Option<olang::timeline::Timeline>,
     logger: &Logger,
 ) -> anyhow::Result<()> {
     let program = match OlangParser::new().parse(source) {
@@ -1308,7 +1338,7 @@ fn execute_source(
         }
     };
     execute_program(
-        program, source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, deny, logger,
+        program, source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, deny, timeline, logger,
     )
 }
 
@@ -1326,6 +1356,7 @@ fn execute_program(
     ovm_stats: bool,
     ovm_tier: Option<u32>,
     deny: Option<olang::caps::Caps>,
+    timeline: Option<olang::timeline::Timeline>,
     logger: &Logger,
 ) -> anyhow::Result<()> {
     // Get absolute path for module resolution
@@ -1410,6 +1441,32 @@ fn execute_program(
         });
     }
 
+    // The Open Timeline: record or replay this run's nondeterministic
+    // inputs. Attaching a timeline forces the interpreter tier.
+    let recording = timeline
+        .as_ref()
+        .map(|t| t.mode() == olang::timeline::Mode::Record)
+        .unwrap_or(false);
+    if let Some(t) = timeline {
+        interpreter.set_timeline(t);
+    }
+
+    // Whatever happens, a recorded trace is written — a crashed run is
+    // exactly the run you want to replay.
+    let write_trace = |interp: &mut olang::interpreter::Interpreter, logger: &Logger| {
+        if let Some(t) = interp.take_timeline() {
+            match t.finish() {
+                Ok(Some(path)) => eprintln!(
+                    "olang: recorded {} event(s) to {}",
+                    t.total_events(),
+                    path.display()
+                ),
+                Ok(None) => {}
+                Err(e) => logger.warn("main", &format!("could not write trace: {}", e)),
+            }
+        }
+    };
+
     match interpreter.eval_program(program) {
         Ok(result) => {
             if verbose {
@@ -1428,15 +1485,91 @@ fn execute_program(
                     None => println!("Bytecode tier: disabled (--no-ovm)"),
                 }
             }
+            if recording {
+                write_trace(&mut interpreter, logger);
+            }
             Ok(())
         }
         Err(e) => {
+            if recording {
+                write_trace(&mut interpreter, logger);
+            }
             let location = interpreter.take_error_location();
             show_classic_interpreter_error(&e, file_path, &interpreter, location, source);
             Err(anyhow::anyhow!("Execution failed"))
         }
     }
 }
+
+/// `olang replay <trace.olt>` — re-run the program embedded in a trace,
+/// serving every recorded nondeterministic call from the log. A clean
+/// finish means the run was fully determined by the recorded inputs; a
+/// divergence means the program changed or has uncaptured nondeterminism.
+fn run_replay(args: &[String], logger: &Logger) -> i32 {
+    let Some(trace_path) = args.iter().find(|a| !a.starts_with('-')) else {
+        eprintln!("usage: olang replay <trace.olt> [-- program args]");
+        return 2;
+    };
+    let trace = match olang::timeline::Timeline::load_trace(std::path::Path::new(trace_path)) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("olang replay: {}", e);
+            return 1;
+        }
+    };
+    // Warn (do not refuse) if the source changed since recording: a
+    // divergence will pinpoint where, which is more useful than a hard stop.
+    let live_sha = sha256_hex(trace.source.as_bytes());
+    if live_sha != trace.program_sha256 {
+        logger.warn(
+            "replay",
+            "the trace's recorded checksum does not match its embedded source",
+        );
+    }
+    // The replayed program's argv is its own; recorded os.args() results
+    // replay from the log regardless, so this only shapes any live reads.
+    let mut argv = vec![trace.program_path.clone()];
+    argv.extend(
+        args.iter()
+            .skip_while(|a| *a != trace_path && !a.starts_with('-'))
+            .filter(|a| a.as_str() != trace_path.as_str())
+            .cloned(),
+    );
+    olang::stdlib::os::set_script_args(argv);
+
+    let program = match OlangParser::new().parse(&trace.source) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("olang replay: the trace's source no longer parses: {}", e);
+            return 1;
+        }
+    };
+    let events = trace.events.len();
+    let timeline = olang::timeline::Timeline::replay(trace.clone());
+    let path = PathBuf::from(&trace.program_path);
+    match execute_program(
+        program,
+        &trace.source,
+        &path,
+        false,
+        false,
+        false,
+        None,
+        None,
+        Some(timeline),
+        logger,
+    ) {
+        Ok(()) => {
+            eprintln!(
+                "olang replay: clean — {} recorded event(s) reproduced",
+                events
+            );
+            0
+        }
+        Err(_) => 1,
+    }
+}
+
 fn start_repl(verbose: bool, no_ovm: bool, _logger: &Logger) -> anyhow::Result<()> {
     // One REPL: the interpreter with the bytecode tier enabled by default;
     // --no-ovm gives the pure tree-walker.

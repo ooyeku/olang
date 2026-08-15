@@ -32,6 +32,7 @@ pub mod repl;
 pub mod resolve;
 pub mod stdlib;
 pub mod test_framework;
+pub mod timeline;
 pub mod tools;
 pub mod version;
 

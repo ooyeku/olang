@@ -163,6 +163,12 @@ pub struct Interpreter {
     /// kept live so gated builtin calls attribute to the package whose
     /// code made them.
     caps: Option<std::sync::Arc<crate::caps::CapTable>>,
+
+    /// The Open Timeline (`--record` / `olang replay`). When present,
+    /// every nondeterministic builtin call is logged (record) or served
+    /// from the log (replay). Like capabilities, it runs on the
+    /// interpreter tier so the one dispatch choke point sees every call.
+    timeline: Option<crate::timeline::Timeline>,
     /// Canonicalized-path memo for capability attribution (def_file
     /// strings -> real paths), so the gate never repeats a syscall.
     caps_path_cache: HashMap<String, std::path::PathBuf>,
@@ -242,6 +248,7 @@ impl Interpreter {
             coverage_file_stack: Vec::new(),
             caps: None,
             caps_path_cache: HashMap::new(),
+            timeline: None,
             struct_defs: HashMap::new(),
             struct_field_checks: HashMap::new(),
             dependency_map: HashMap::new(),
@@ -2034,6 +2041,9 @@ impl Interpreter {
             // Capabilities follow the code onto every thread.
             caps: self.caps.clone(),
             caps_path_cache: HashMap::new(),
+            // The timeline does not span worker threads (v1 records a
+            // single thread of effects); workers run live.
+            timeline: None,
             struct_defs: self.struct_defs.clone(),
             struct_field_checks: self.struct_field_checks.clone(),
             dependency_map: self.dependency_map.clone(),
@@ -3148,6 +3158,60 @@ impl Interpreter {
     /// Install a capability table. Every subsequent gated builtin call
     /// (fs/http/db/proc and the environment surface of os) is checked
     /// against the grant of the package whose code makes the call.
+    /// Attach a timeline (record or replay). Like capabilities, this
+    /// forces the interpreter tier: the timeline must observe every
+    /// nondeterministic builtin, and the bytecode tier bridges some through
+    /// a throwaway interpreter that carries no timeline.
+    pub fn set_timeline(&mut self, timeline: crate::timeline::Timeline) {
+        self.timeline = Some(timeline);
+        self.bytecode_tier = None;
+    }
+
+    /// Called from builtin dispatch for every nondeterministic op.
+    /// - Replay: returns Some(Ok(recorded value)) — the real call is
+    ///   skipped entirely — or Some(Err(divergence message)).
+    /// - Record: returns None (the caller performs the real call and then
+    ///   calls `timeline_record`).
+    /// - No timeline, or a deterministic op: returns None.
+    pub fn timeline_replay(&mut self, op: &str) -> Option<Result<Value, String>> {
+        let timeline = self.timeline.as_mut()?;
+        if !crate::timeline::Timeline::is_recorded(op) {
+            return None;
+        }
+        if timeline.mode() != crate::timeline::Mode::Replay {
+            return None;
+        }
+        Some(
+            timeline
+                .replay_next(op)
+                .map_err(|d| format!("timeline: {}", d)),
+        )
+    }
+
+    /// Record the result of a nondeterministic op after it ran (record
+    /// mode only; a no-op otherwise).
+    pub fn timeline_record(&mut self, op: &str, result: &Value) {
+        if let Some(timeline) = self.timeline.as_mut()
+            && timeline.mode() == crate::timeline::Mode::Record
+            && crate::timeline::Timeline::is_recorded(op)
+        {
+            timeline.record_result(op, result);
+        }
+    }
+
+    /// Whether a timeline is attached in record mode.
+    pub fn timeline_recording(&self) -> bool {
+        self.timeline
+            .as_ref()
+            .map(|t| t.mode() == crate::timeline::Mode::Record)
+            .unwrap_or(false)
+    }
+
+    /// Take the timeline back out (to write the trace at end of run).
+    pub fn take_timeline(&mut self) -> Option<crate::timeline::Timeline> {
+        self.timeline.take()
+    }
+
     pub fn set_capabilities(&mut self, table: crate::caps::CapTable) {
         self.caps = Some(std::sync::Arc::new(table));
         // Enforcement runs on the semantic-oracle tier: the interpreter's

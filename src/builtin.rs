@@ -558,6 +558,31 @@ impl BuiltinFunctions {
             return Err(InterpreterError::RuntimeError { message });
         }
 
+        // The Open Timeline: in replay mode a recorded nondeterministic
+        // call returns its logged result and the real effect is skipped;
+        // in record mode the real call runs and its result is logged just
+        // below. One branch when no timeline is attached.
+        match interpreter.timeline_replay(name) {
+            Some(Ok(value)) => return Ok(value),
+            Some(Err(message)) => return Err(InterpreterError::RuntimeError { message }),
+            None => {}
+        }
+        let timeline_active = interpreter.timeline_recording();
+        if timeline_active {
+            let result = Self::call_internal_inner(builtins, name, arguments, interpreter)?;
+            interpreter.timeline_record(name, &result);
+            return Ok(result);
+        }
+
+        Self::call_internal_inner(builtins, name, arguments, interpreter)
+    }
+
+    fn call_internal_inner(
+        builtins: &BuiltinFunctions,
+        name: &str,
+        arguments: Vec<Value>,
+        interpreter: &mut crate::interpreter::Interpreter,
+    ) -> Result<Value, InterpreterError> {
         // Handle filesystem functions
         #[cfg(feature = "native")]
         if let Some(fs_function) = name.strip_prefix("fs.") {

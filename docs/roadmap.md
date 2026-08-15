@@ -399,3 +399,27 @@ Sequencing: A1→A2 first (reach), A3 (cliffs), A4 (speed), A5–A6
 the JIT reach idiomatic programs; A4 is projected to close roughly half
 the remaining gap to the JS engines on allocation-heavy code, which is
 where olang currently pays most.
+
+## The openness campaign — what "Open Language" means, mechanically
+
+olang stabilized its syntax early, on purpose. The unclaimed prize on
+that decision is that *openness can be a mechanical fact, not a slogan* —
+made real at three layers: open artifacts (a binary you can read and
+bound), open execution (a run you can replay), and open code (the
+grammar as a data format you can program against). Two layers have
+shipped; the table records what remains.
+
+| # | Lane | What ships | Status |
+|---|---|---|---|
+| O1 | **The transparent binary + capabilities** — a built binary carries its own source, manifest, lockfile, and checksum (`olang inspect`), and a `[capabilities]` manifest gates the effectful stdlib surface with per-dependency attenuation. You cannot ship an olang program as a black box, and nothing you install can exceed its manifest | **landed (0.58+)** — `olang inspect`, `[capabilities]`, per-dependency attenuation, `--deny`; enforced at the module boundary on the interpreter tier |
+| O2 | **The Open Timeline** — `--record` logs a run's nondeterministic inputs; `olang replay` reproduces it bit-for-bit from a portable, source-embedding `.olt` trace. Deterministic execution + immutable values + a small effect boundary make record/replay sound by construction | **landed (0.58+)** — record/replay for `random`/`time`/`os`/`fs`/`http`/`crypto`, portable traces, crash capture, divergence detection; interpreter-tier, single-thread |
+| O3 | **`replay --why` — value provenance** — during replay, the interpreter (the semantic oracle) carries where each value came from, answering "this 4162.85 is line 212's revenue + line 208's total, which came from …" as a chain back to the recorded inputs. Time-travel debugging's payoff: not just *what* happened, but *why this number* | not started |
+| O4 | **Timeline reach** — extend the recorded set to `db` reads (a replay stub handle serving recorded query results) and `chan`/thread interleavings (a recorded schedule), so a fully database-backed or concurrent program replays end to end | not started |
+| O5 | **The Open AST — the grammar as a stable public data format** — a `meta` module exposes the parsed program as ordinary olang values (the enums the checker already matches on), so linters, codemods, and code generators are written *in olang*: `olang check --rules team.ol` runs a project's own rules; a rename walks the AST, not grep. The frozen syntax is what lets the AST shapes be frozen and published | not started |
+
+The through-line: **open code, open artifacts, open execution.** No
+incumbent can follow all three — Python cannot freeze its AST, Go will
+not embed source, and no mainstream runtime is deterministic enough to
+promise replay. Each lane grows out of a decision olang already made
+(early syntax stability, immutable values, a clean effect boundary)
+rather than a system it would have to invent.
