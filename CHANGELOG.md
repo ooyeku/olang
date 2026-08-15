@@ -51,6 +51,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
+- **Record/replay no longer silently misapplies recorded values (openness
+  soundness pass S4).** Two fixes make single-threaded replay sound. (1) Map
+  iteration is now deterministic: `map_keys`/`map_values` iterate in
+  key-sorted order (matching `entries`), so a `HashMap`'s
+  process-randomized order can no longer make a record run and a replay run
+  visit a map in different orders — which previously served one call's
+  recorded result to a different call with no divergence raised. (2) The
+  trace now records a fingerprint of each recorded call's arguments (trace
+  format 2), and replay raises a divergence when a recorded op is invoked
+  with different arguments than recorded. v1 traces replay without the
+  argument check. Map iteration determinism also benefits any program that
+  hashes or serializes iterated output.
+
 - **`meta.parse` now emits every AST child, so project lints no longer
   silently miss code (openness soundness pass S5).** The conversion dropped
   children exactly where calls hide — `match` arms, `await`/`assert*`,

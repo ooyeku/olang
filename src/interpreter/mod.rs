@@ -3189,29 +3189,31 @@ impl Interpreter {
     /// - Record: returns None (the caller performs the real call and then
     ///   calls `timeline_record`).
     /// - No timeline, or a deterministic op: returns None.
-    pub fn timeline_replay(&mut self, op: &str) -> Option<Result<Value, String>> {
-        let timeline = self.timeline.as_mut()?;
+    pub fn timeline_replay(&mut self, op: &str, args: &[Value]) -> Option<Result<Value, String>> {
         if !crate::timeline::Timeline::is_recorded(op) {
             return None;
         }
+        // Fingerprint only when a recorded op is actually being replayed.
+        let fp = crate::timeline::Timeline::fingerprint(args);
+        let timeline = self.timeline.as_mut()?;
         if timeline.mode() != crate::timeline::Mode::Replay {
             return None;
         }
         Some(
             timeline
-                .replay_next(op)
+                .replay_next(op, &fp)
                 .map_err(|d| format!("timeline: {}", d)),
         )
     }
 
     /// Record the result of a nondeterministic op after it ran (record
     /// mode only; a no-op otherwise).
-    pub fn timeline_record(&mut self, op: &str, result: &Value) {
+    pub fn timeline_record(&mut self, op: &str, args_fp: &str, result: &Value) {
         if let Some(timeline) = self.timeline.as_mut()
             && timeline.mode() == crate::timeline::Mode::Record
             && crate::timeline::Timeline::is_recorded(op)
         {
-            timeline.record_result(op, result);
+            timeline.record_result(op, args_fp, result);
         }
     }
 

@@ -572,15 +572,22 @@ impl BuiltinFunctions {
         // call returns its logged result and the real effect is skipped;
         // in record mode the real call runs and its result is logged just
         // below. One branch when no timeline is attached.
-        match interpreter.timeline_replay(name) {
+        match interpreter.timeline_replay(name, &arguments) {
             Some(Ok(value)) => return Ok(value),
             Some(Err(message)) => return Err(InterpreterError::RuntimeError { message }),
             None => {}
         }
         let timeline_active = interpreter.timeline_recording();
         if timeline_active {
+            // Fingerprint the arguments before they are consumed, but only
+            // for a recorded op (record mode is opt-in, so this is cheap).
+            let args_fp = if crate::timeline::Timeline::is_recorded(name) {
+                crate::timeline::Timeline::fingerprint(&arguments)
+            } else {
+                String::new()
+            };
             let result = Self::call_internal_inner(builtins, name, arguments, interpreter)?;
-            interpreter.timeline_record(name, &result);
+            interpreter.timeline_record(name, &args_fp, &result);
             return Ok(result);
         }
 
@@ -2753,8 +2760,15 @@ impl BuiltinFunctions {
             }
         };
 
-        let keys: Vec<Value> = map
-            .keys()
+        // Sorted by key: map iteration order must be deterministic — a
+        // `HashMap`'s native order is process-randomized, which silently
+        // breaks record/replay (values applied in a different order) and any
+        // program that hashes or serializes iterated output. `entries` and
+        // `map_values` sort identically, so the three agree elementwise.
+        let mut keys: Vec<&String> = map.keys().collect();
+        keys.sort();
+        let keys: Vec<Value> = keys
+            .into_iter()
             .map(|k| Value::String(std::sync::Arc::new(k.clone())))
             .collect();
 
@@ -2778,7 +2792,14 @@ impl BuiltinFunctions {
             }
         };
 
-        let values: Vec<Value> = map.values().cloned().collect();
+        // Sorted by key, matching `map_keys`/`entries`, so iteration order is
+        // deterministic and the three accessors correspond elementwise.
+        let mut keys: Vec<&String> = map.keys().collect();
+        keys.sort();
+        let values: Vec<Value> = keys
+            .into_iter()
+            .map(|k| map.get(k).cloned().unwrap_or(Value::Unit))
+            .collect();
 
         Ok(Value::List(std::sync::Arc::from(values)))
     }

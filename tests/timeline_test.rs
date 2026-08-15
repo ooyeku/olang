@@ -167,3 +167,41 @@ fn replay_detects_divergence() {
     );
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// S4: replay detects a *changed argument*, not only a changed op. Record a
+/// call to `os.get_env("HOME")`, then rewrite the trace's embedded source to
+/// call `os.get_env("PATH")` — same op, different argument — and confirm
+/// replay refuses instead of serving HOME's recorded value for PATH.
+#[test]
+fn replay_detects_a_changed_argument() {
+    let ws = workspace("argdiv");
+    write(
+        &ws.join("p.ol"),
+        "let v = os.get_env(\"HOME\")\nprintln(\"ok\")\n",
+    );
+    let rec = Command::new(olang())
+        .current_dir(&ws)
+        .args(["--record", "t.olt", "p.ol"])
+        .output()
+        .unwrap();
+    assert!(rec.status.success(), "record failed");
+
+    let text = std::fs::read_to_string(ws.join("t.olt")).unwrap();
+    let mut trace: serde_json::Value = serde_json::from_str(&text).unwrap();
+    trace["source"] =
+        serde_json::Value::String("let v = os.get_env(\"PATH\")\nprintln(\"ok\")\n".into());
+    std::fs::write(ws.join("t.olt"), serde_json::to_string(&trace).unwrap()).unwrap();
+
+    let replay = Command::new(olang())
+        .current_dir(&ws)
+        .args(["replay", "t.olt"])
+        .output()
+        .unwrap();
+    assert!(!replay.status.success(), "an argument change must diverge");
+    assert!(
+        String::from_utf8_lossy(&replay.stderr).contains("different arguments"),
+        "expected an argument-divergence report, got: {}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}

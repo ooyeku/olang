@@ -351,11 +351,13 @@ another machine, months later. A bug report becomes a file. And a
 failure replays exactly, as many times as you need to understand it.
 
 Replay is honest about drift. If the program's sequence of
-nondeterministic calls no longer matches the trace — the code changed,
-or a new source of nondeterminism appeared — replay stops at the exact
-point and says so, rather than silently producing a different run. A
-clean replay is a proof that the recorded inputs fully determined the
-run.
+nondeterministic calls no longer matches the trace — a *different* call,
+or the *same* call with *different arguments* — replay stops at the exact
+point and says so, rather than silently producing a different run. The
+trace records a fingerprint of each call's arguments for that check, and
+map iteration order is deterministic (sorted by key), so the two never
+disagree by accident. A clean replay is a proof that the recorded inputs
+fully determined the run.
 
 Two boundaries worth knowing. Record/replay runs on the interpreter tier
 (the one dispatch point that sees every builtin), so a recorded run

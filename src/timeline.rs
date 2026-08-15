@@ -28,8 +28,11 @@
 use crate::ast::Value;
 use serde::{Deserialize, Serialize};
 
-/// The current trace format version.
-pub const TRACE_FORMAT: u32 = 1;
+/// The current trace format version. v2 adds `Event.args` — a fingerprint
+/// of each recorded call's arguments, so replay detects an
+/// argument-level divergence instead of silently serving one call's result
+/// to another call of the same op.
+pub const TRACE_FORMAT: u32 = 2;
 
 /// One recorded nondeterministic result, in program call order.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +41,11 @@ pub struct Event {
     pub seq: u64,
     /// The fully-qualified builtin that produced it (e.g. "time.now_ms").
     pub op: String,
+    /// A deterministic fingerprint of the call's arguments (see
+    /// [`Timeline::fingerprint`]). Empty on v1 traces, where it is not
+    /// compared — so old traces still replay, just without argument checks.
+    #[serde(default)]
+    pub args: String,
     /// The result value, serialized. Recorded ops only ever return data,
     /// so this always round-trips.
     pub result: Value,
@@ -78,6 +86,10 @@ pub enum Divergence {
         recorded: String,
         actual: String,
     },
+    /// The program called the recorded op, but with different arguments —
+    /// so the recorded result belongs to a different call. Without this
+    /// check the wrong value would be served silently.
+    ArgMismatch { seq: u64, op: String },
 }
 
 impl std::fmt::Display for Divergence {
@@ -96,6 +108,11 @@ impl std::fmt::Display for Divergence {
                 f,
                 "replay diverged at event {}: the trace recorded '{}' here, but the program called '{}' — the program's sequence of effects changed since it was recorded",
                 seq, recorded, actual
+            ),
+            Divergence::ArgMismatch { seq, op } => write!(
+                f,
+                "replay diverged at event {}: '{}' was called with different arguments than the trace recorded — the recorded result belongs to a different call, so replaying it would be wrong",
+                seq, op
             ),
         }
     }
@@ -207,22 +224,40 @@ impl Timeline {
         )
     }
 
-    /// Record mode: after a real call, log its result. Silently ignores a
-    /// result that does not round-trip (a curated op should never produce
-    /// one, but a lossy log entry must never corrupt replay).
-    pub fn record_result(&mut self, op: &str, result: &Value) {
+    /// A deterministic fingerprint of a recorded call's arguments, so replay
+    /// can tell two calls of the same op apart. Canonical: map and struct
+    /// fields are emitted in sorted-key order (a `HashMap`'s native order is
+    /// process-randomized and would make the fingerprint unstable), then the
+    /// whole rendering is hashed for a compact, collision-resistant tag.
+    pub fn fingerprint(args: &[Value]) -> String {
+        use sha2::{Digest, Sha256};
+        let mut rendered = String::new();
+        for a in args {
+            canon(a, &mut rendered);
+            rendered.push('\u{1f}'); // unit separator between arguments
+        }
+        let mut h = Sha256::new();
+        h.update(rendered.as_bytes());
+        format!("{:x}", h.finalize())[..16].to_string()
+    }
+
+    /// Record mode: after a real call, log its arguments' fingerprint and its
+    /// result, in call order.
+    pub fn record_result(&mut self, op: &str, args_fp: &str, result: &Value) {
         let seq = self.cursor as u64;
         self.cursor += 1;
         self.events.push(Event {
             seq,
             op: op.to_string(),
+            args: args_fp.to_string(),
             result: result.clone(),
         });
     }
 
     /// Replay mode: return the recorded result for the next call, or a
-    /// divergence if the program has stepped off the recorded path.
-    pub fn replay_next(&mut self, op: &str) -> Result<Value, Divergence> {
+    /// divergence if the program has stepped off the recorded path — a
+    /// different op, or the same op with different arguments.
+    pub fn replay_next(&mut self, op: &str, args_fp: &str) -> Result<Value, Divergence> {
         let seq = self.cursor as u64;
         let Some(event) = self.events.get(self.cursor) else {
             return Err(Divergence::RanOut {
@@ -235,6 +270,14 @@ impl Timeline {
                 seq,
                 recorded: event.op.clone(),
                 actual: op.to_string(),
+            });
+        }
+        // Argument check, skipped on v1 traces (empty fingerprint) for
+        // backward compatibility.
+        if !event.args.is_empty() && event.args != args_fp {
+            return Err(Divergence::ArgMismatch {
+                seq,
+                op: op.to_string(),
             });
         }
         self.cursor += 1;
@@ -293,6 +336,57 @@ impl Timeline {
     }
 }
 
+/// Render a value deterministically for [`Timeline::fingerprint`]: maps and
+/// structs in sorted-key order (so a randomized `HashMap` order can't make
+/// the fingerprint unstable), lists and tuples in order, scalars via their
+/// display form.
+fn canon(v: &Value, out: &mut String) {
+    match v {
+        Value::Map(m) => {
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            out.push('{');
+            for k in keys {
+                out.push_str(k);
+                out.push(':');
+                canon(m.get(k).unwrap_or(&Value::Unit), out);
+                out.push(',');
+            }
+            out.push('}');
+        }
+        Value::Struct { type_name, fields } => {
+            out.push_str(type_name);
+            let mut keys: Vec<&String> = fields.keys().collect();
+            keys.sort();
+            out.push('{');
+            for k in keys {
+                out.push_str(k);
+                out.push(':');
+                canon(fields.get(k).unwrap_or(&Value::Unit), out);
+                out.push(',');
+            }
+            out.push('}');
+        }
+        Value::List(items) => {
+            out.push('[');
+            for it in items.iter() {
+                canon(it, out);
+                out.push(',');
+            }
+            out.push(']');
+        }
+        Value::Tuple(items) => {
+            out.push('(');
+            for it in items.iter() {
+                canon(it, out);
+                out.push(',');
+            }
+            out.push(')');
+        }
+        other => out.push_str(&other.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,10 +418,13 @@ mod tests {
             "source".into(),
             "sha".into(),
         );
-        rec.record_result("random.random", &Value::Float(0.4172));
-        rec.record_result("time.now_ms", &Value::Integer(1_723_800_000_000));
+        let no_args = Timeline::fingerprint(&[]);
+        rec.record_result("random.random", &no_args, &Value::Float(0.4172));
+        rec.record_result("time.now_ms", &no_args, &Value::Integer(1_723_800_000_000));
+        let home_fp = Timeline::fingerprint(&[Value::String(Arc::new("HOME".into()))]);
         rec.record_result(
             "os.get_env",
+            &home_fp,
             &Value::String(Arc::new("/home/ada".to_string())),
         );
 
@@ -342,45 +439,93 @@ mod tests {
         };
         let mut rep = Timeline::replay(trace);
         assert_eq!(
-            rep.replay_next("random.random").unwrap(),
+            rep.replay_next("random.random", &no_args).unwrap(),
             Value::Float(0.4172)
         );
         assert_eq!(
-            rep.replay_next("time.now_ms").unwrap(),
+            rep.replay_next("time.now_ms", &no_args).unwrap(),
             Value::Integer(1_723_800_000_000)
         );
         assert_eq!(
-            rep.replay_next("os.get_env").unwrap(),
+            rep.replay_next("os.get_env", &home_fp).unwrap(),
             Value::String(Arc::new("/home/ada".to_string()))
         );
     }
 
     #[test]
     fn replay_detects_divergence() {
-        let trace = Trace {
+        let event = |op: &str, args: &str, result: Value| Event {
+            seq: 0,
+            op: op.into(),
+            args: args.into(),
+            result,
+        };
+        let trace = |ev: Vec<Event>| Trace {
             format: TRACE_FORMAT,
             olang_version: "test".into(),
             program_path: "p.ol".into(),
             program_sha256: "sha".into(),
             source: "source".into(),
-            events: vec![Event {
-                seq: 0,
-                op: "random.random".into(),
-                result: Value::Float(0.5),
-            }],
+            events: ev,
         };
+        let no_args = Timeline::fingerprint(&[]);
+
         // A different op at seq 0 → OpMismatch.
-        let mut rep = Timeline::replay(trace.clone());
+        let mut rep = Timeline::replay(trace(vec![event(
+            "random.random",
+            &no_args,
+            Value::Float(0.5),
+        )]));
         assert!(matches!(
-            rep.replay_next("time.now_ms"),
+            rep.replay_next("time.now_ms", &no_args),
             Err(Divergence::OpMismatch { .. })
         ));
-        // One event, consumed, then another call → RanOut.
-        let mut rep2 = Timeline::replay(trace);
-        assert!(rep2.replay_next("random.random").is_ok());
+
+        // Same op, different arguments → ArgMismatch (the silent-wrong-replay
+        // bug this check closes).
+        let path_a = Timeline::fingerprint(&[Value::String(Arc::new("a.txt".into()))]);
+        let path_b = Timeline::fingerprint(&[Value::String(Arc::new("b.txt".into()))]);
+        let mut rep_args = Timeline::replay(trace(vec![event(
+            "fs.read_file",
+            &path_a,
+            Value::String(Arc::new("A".into())),
+        )]));
         assert!(matches!(
-            rep2.replay_next("random.random"),
+            rep_args.replay_next("fs.read_file", &path_b),
+            Err(Divergence::ArgMismatch { .. })
+        ));
+
+        // One event, consumed, then another call → RanOut.
+        let mut rep2 = Timeline::replay(trace(vec![event(
+            "random.random",
+            &no_args,
+            Value::Float(0.5),
+        )]));
+        assert!(rep2.replay_next("random.random", &no_args).is_ok());
+        assert!(matches!(
+            rep2.replay_next("random.random", &no_args),
             Err(Divergence::RanOut { .. })
         ));
+    }
+
+    #[test]
+    fn fingerprint_is_deterministic_across_map_order() {
+        use std::collections::HashMap;
+        // Two maps with the same entries inserted in different orders must
+        // fingerprint identically (sorted-key canonicalization).
+        let mut a = HashMap::new();
+        a.insert("x".to_string(), Value::Integer(1));
+        a.insert("y".to_string(), Value::Integer(2));
+        let mut b = HashMap::new();
+        b.insert("y".to_string(), Value::Integer(2));
+        b.insert("x".to_string(), Value::Integer(1));
+        let fa = Timeline::fingerprint(&[Value::Map(Arc::new(a))]);
+        let fb = Timeline::fingerprint(&[Value::Map(Arc::new(b))]);
+        assert_eq!(fa, fb);
+        // Different contents fingerprint differently.
+        let mut c = HashMap::new();
+        c.insert("x".to_string(), Value::Integer(9));
+        let fc = Timeline::fingerprint(&[Value::Map(Arc::new(c))]);
+        assert_ne!(fa, fc);
     }
 }
