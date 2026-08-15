@@ -254,3 +254,81 @@ verify` re-checks everything the lock pins on demand (path dependencies
 report drift informationally — editing one is normal development). Pin
 git dependencies by `rev` (not just `tag`) when you need the source to be
 immutable, since a tag can be moved and a rev cannot.
+
+## Capabilities
+
+A package declares what it is allowed to touch. The `[capabilities]`
+block in `olang.toml` gates the effectful stdlib surface — `fs`,
+`http` (as `net`), `db`, `proc`, and the environment functions of
+`os` — at the module boundary; pure computation is never gated.
+
+```toml
+[capabilities]
+fs = "read"        # false | "read" | true
+net = false
+proc = false
+db = true
+env = true
+```
+
+Absent, capabilities are wide open — a program with no manifest, or a
+manifest with no `[capabilities]`, runs unrestricted, so this is
+opt-in and never breaks existing code. A denied call is a runtime
+error naming the capability, the call, and the grant that refused it.
+
+**Per-dependency attenuation** is the part no mainstream ecosystem
+has. A dependency can be granted *less* than the app, never more:
+
+```toml
+[capabilities.dependencies.leftpad]
+fs = false         # this dependency cannot touch the filesystem,
+net = false        # even if a future version tries to
+```
+
+Enforcement is by *attribution*: when code that lives in `leftpad`'s
+directory calls a gated builtin, `leftpad`'s grant applies — the
+intersection of the app's capabilities and the attenuation. A
+supply-chain compromise that adds `fs`/`net` behaviour to a dependency
+that was never granted it dies at the gate rather than shipping. A
+named attenuation for a package that is not actually a dependency is
+an error, so a typo can never silently grant nothing to the wrong
+name.
+
+`--deny` restricts any run further, on top of any manifest, from the
+command line (also read from `OLANG_DENY`):
+
+```bash
+olang --deny net,fs-write program.ol   # remove network + write access
+```
+
+Capabilities are enforced on the interpreter tier: because the
+interpreter's call stack is what attributes a gated call to the
+package that made it, a capability-restricted run steps the bytecode
+tier aside (like `par for`, this is interpreter-owned). Unrestricted
+runs keep the full tier. Cross-tier capability attribution — keeping
+native speed under a manifest — is a recorded roadmap item.
+
+## The transparent binary
+
+An `olang build` executable is **open by construction**: it carries
+its own complete source, its `olang.toml` and `olang.lock`, a sha256 of
+the source, and its capability manifest — extractable and verifiable
+with `olang inspect`, no external context required.
+
+```bash
+olang inspect ./tool             # a summary: version, checksum, caps
+olang inspect ./tool --source    # print the exact embedded source
+olang inspect ./tool --manifest  # print the embedded olang.toml
+olang inspect ./tool --caps      # the resolved capability grant
+olang inspect ./tool --verify    # recompute the checksum; nonzero on mismatch
+olang inspect ./tool -o dir/     # extract source + manifest + lockfile
+```
+
+You cannot ship an olang program as a black box: every binary can be
+opened, diffed against the repo it claims to come from, and audited
+for what it is allowed to do — *before* you run it. It doubles as a
+built-in software bill of materials (exact sources and dependency
+versions, for the next supply-chain CVE) and as the answer to "what
+version, with which patches, is this?" — the binary contains the
+answer. A built binary enforces the capability manifest it carries, so
+a sealed tool stays sealed wherever it runs.

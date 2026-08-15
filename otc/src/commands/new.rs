@@ -35,6 +35,7 @@ pub fn execute(name: String, lib: bool, verbose: bool) -> Result<()> {
             license: None,
         },
         dependencies: Default::default(),
+        capabilities: None,
     };
     manifest
         .save(root)

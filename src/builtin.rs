@@ -551,6 +551,13 @@ impl BuiltinFunctions {
         arguments: Vec<Value>,
         interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
+        // The capability gate: one branch when no manifest is loaded;
+        // otherwise the effectful modules check the caller's grant before
+        // dispatch. Purity is never gated — see caps::check.
+        if let Some(message) = interpreter.capability_denial(name) {
+            return Err(InterpreterError::RuntimeError { message });
+        }
+
         // Handle filesystem functions
         #[cfg(feature = "native")]
         if let Some(fs_function) = name.strip_prefix("fs.") {

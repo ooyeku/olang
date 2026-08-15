@@ -16,6 +16,10 @@ pub struct Manifest {
     pub package: PackageMeta,
     #[serde(default)]
     pub dependencies: BTreeMap<String, Dependency>,
+    /// The `[capabilities]` block: what this package (and, attenuated,
+    /// each dependency) is allowed to touch. Absent = full capability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<crate::caps::CapsConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

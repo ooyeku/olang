@@ -81,6 +81,17 @@ the global builtins.
 
 ### Experimental — may change or be completed
 
+- **Capabilities and the transparent binary.** The `[capabilities]`
+  manifest, per-dependency attenuation, `--deny`, and `olang inspect`
+  are new: the model (opt-in restriction, shrink-only attenuation,
+  gate at the effectful-module boundary, source-carrying binaries) is
+  settled, but the gated surface may grow (new modules), the bundle
+  format may gain fields, and capability enforcement currently runs on
+  the interpreter tier — a capability-restricted run forgoes the
+  bytecode tier for sound attribution. Unrestricted runs are
+  unaffected; a program with no manifest keeps full capability and full
+  speed.
+
 - `http.serve` — the request/response API (the `HttpRequest` fields, string
   and response-struct returns) is settled and integration-tested; the
   *execution model* (bounded worker pool, blocking caller, localhost-only)

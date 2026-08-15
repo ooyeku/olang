@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The transparent binary + capability manifests — "Open by
+  construction."** Two halves of one identity feature for a language
+  named *Open*:
+  - `olang inspect <binary>` reads the transparency record out of any
+    `olang build` executable: its exact source (`--source`), its
+    `olang.toml` and `olang.lock` (`--manifest`/`--lockfile`), a sha256
+    of the source verified on demand (`--verify`, nonzero on mismatch),
+    the capability grant (`--caps`), or the whole paper trail extracted
+    to a directory (`-o dir/`). A built binary already embedded its
+    source (for error snippets); this turns that into a guarantee — you
+    cannot ship an olang program as a black box. It doubles as a
+    built-in SBOM and as the answer to "what version, which patches?".
+  - `[capabilities]` in `olang.toml` gates the effectful stdlib surface
+    (`fs`, `http` as `net`, `db`, `proc`, the environment functions of
+    `os`) at the module boundary; pure computation is never gated.
+    Absent = wide open, so it is opt-in and never breaks existing code.
+    The novel part is **per-dependency attenuation**: a dependency can
+    be granted *less* than the app, never more, enforced by attributing
+    each gated call to the package whose code made it — a supply-chain
+    compromise that adds `fs`/`net` behaviour to a dependency that was
+    never granted it dies at the gate. `--deny` (and `OLANG_DENY`)
+    restrict any run from the command line, and a built binary enforces
+    the manifest it carries. Enforcement runs on the interpreter tier
+    (the call stack is what attributes a call): a capability-restricted
+    run steps the bytecode tier aside, like `par for`; unrestricted runs
+    keep full speed. Pinned by an integration suite covering manifest
+    grants, attenuation, `--deny`, ghost-dependency refusal, and the
+    build → inspect → enforce round-trip.
+
+
+
+### Added
+
 - **`examples/demo` — Harborline, the consolidated flagship example.**
   The 23 loose scripts at the top of `examples/` are consolidated into
   one coherent, long-running system: a harbor-operations simulator with

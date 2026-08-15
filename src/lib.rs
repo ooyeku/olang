@@ -13,6 +13,7 @@ pub mod analyze;
 pub mod ast;
 pub mod async_runtime;
 pub mod builtin;
+pub mod caps;
 pub mod clock;
 pub mod help;
 pub mod interpreter;

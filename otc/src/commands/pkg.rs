@@ -133,6 +133,7 @@ fn init(name: Option<String>) -> anyhow::Result<()> {
             license: None,
         },
         dependencies: Default::default(),
+        capabilities: None,
     };
     manifest.save(&cwd).map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Created olang.toml for '{}'", name);

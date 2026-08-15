@@ -225,6 +225,15 @@ distribute it.
 built exactly this way — `cli` for its arguments, `term` for color, and
 nothing external.
 
+Every built binary is also **transparent by construction**: it embeds
+its exact source, its `olang.toml` and `olang.lock`, a sha256 of the
+source, and its capability manifest. `olang inspect` reads them back —
+`--source` prints the source, `--verify` checks the checksum (nonzero
+on mismatch), `--caps` shows the capability grant, `-o dir/` extracts
+the whole paper trail. You cannot ship an olang program as a black box.
+See [Capabilities and the transparent binary](packages.md#capabilities)
+for the whole model.
+
 ## `olang doc`
 
 Generate an API reference from doc comments:

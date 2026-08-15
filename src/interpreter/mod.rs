@@ -157,6 +157,16 @@ pub struct Interpreter {
     coverage: Option<HashMap<String, std::collections::BTreeSet<u32>>>,
     coverage_file_stack: Vec<Option<String>>,
 
+    /// Capability enforcement (`[capabilities]` in olang.toml, embedded
+    /// bundle manifests, or `--deny`). None = everything allowed, and the
+    /// gate costs a single branch. When Some, `coverage_file_stack` is
+    /// kept live so gated builtin calls attribute to the package whose
+    /// code made them.
+    caps: Option<std::sync::Arc<crate::caps::CapTable>>,
+    /// Canonicalized-path memo for capability attribution (def_file
+    /// strings -> real paths), so the gate never repeats a syscall.
+    caps_path_cache: HashMap<String, std::path::PathBuf>,
+
     /// Declared struct types: name -> field names. Construction of a
     /// declared struct validates its field set; an undeclared struct-literal
     /// name is an error.
@@ -230,6 +240,8 @@ impl Interpreter {
             test_results: Vec::new(),
             coverage: None,
             coverage_file_stack: Vec::new(),
+            caps: None,
+            caps_path_cache: HashMap::new(),
             struct_defs: HashMap::new(),
             struct_field_checks: HashMap::new(),
             dependency_map: HashMap::new(),
@@ -1846,7 +1858,10 @@ impl Interpreter {
 
                 // Coverage: while this body runs, lines belong to the file
                 // the function was defined in, not the caller's file.
-                let track_coverage = self.coverage.is_some();
+                // Capability enforcement rides the same stack — a gated
+                // builtin call is attributed to the file (and so the
+                // package) of the function that made it.
+                let track_coverage = self.coverage.is_some() || self.caps.is_some();
                 if track_coverage {
                     self.coverage_file_stack.push(func.def_file.clone());
                 }
@@ -2016,6 +2031,9 @@ impl Interpreter {
             // Coverage is single-threaded: worker clones don't record.
             coverage: None,
             coverage_file_stack: Vec::new(),
+            // Capabilities follow the code onto every thread.
+            caps: self.caps.clone(),
+            caps_path_cache: HashMap::new(),
             struct_defs: self.struct_defs.clone(),
             struct_field_checks: self.struct_field_checks.clone(),
             dependency_map: self.dependency_map.clone(),
@@ -3127,6 +3145,66 @@ impl Interpreter {
 
     /// Turn on test-runner mode: `test` blocks record outcomes (readable via
     /// `take_test_results`) and execution continues past failing blocks.
+    /// Install a capability table. Every subsequent gated builtin call
+    /// (fs/http/db/proc and the environment surface of os) is checked
+    /// against the grant of the package whose code makes the call.
+    pub fn set_capabilities(&mut self, table: crate::caps::CapTable) {
+        self.caps = Some(std::sync::Arc::new(table));
+        // Enforcement runs on the semantic-oracle tier: the interpreter's
+        // call stack is what attributes a gated builtin to the package
+        // that invoked it, and only the interpreter path funnels every
+        // builtin through the one gate. A promoted function bridges some
+        // builtins through a throwaway interpreter that carries no call
+        // stack, so it could not attribute (or even see) the call. Rather
+        // than enforce partially, a capability-restricted run steps the
+        // bytecode tier aside — like `par for`, this construct is
+        // interpreter-owned. Unrestricted runs (no manifest, no --deny)
+        // keep the full tier. (Roadmap: cross-tier capability attribution
+        // so restricted runs keep native speed.)
+        self.bytecode_tier = None;
+    }
+
+    /// The capability gate, called from builtin dispatch. None = allowed.
+    /// Some(message) = denied, with the message naming the capability,
+    /// the call, and the package whose grant refused it.
+    pub fn capability_denial(&mut self, full_name: &str) -> Option<String> {
+        let table = self.caps.clone()?;
+        let def_file = self
+            .coverage_file_stack
+            .last()
+            .and_then(|f| f.as_deref())
+            .or(self.current_module_path.as_deref())
+            .map(|s| s.to_string());
+        // Attribution compares real paths: canonicalize once per distinct
+        // def_file and memoize.
+        let canon = def_file.as_ref().map(|f| {
+            self.caps_path_cache
+                .entry(f.clone())
+                .or_insert_with(|| {
+                    std::fs::canonicalize(f).unwrap_or_else(|_| std::path::PathBuf::from(f))
+                })
+                .clone()
+        });
+        let (caps, package) = table.caps_for(canon.as_deref());
+        let denied = crate::caps::check(caps, full_name)?;
+        Some(match package {
+            Some(pkg) => format!(
+                "capability '{}' denied: {} requires it, and dependency '{}' is granted {} (olang.toml [capabilities.dependencies.{}])",
+                denied,
+                full_name,
+                pkg,
+                caps.summary(),
+                pkg
+            ),
+            None => format!(
+                "capability '{}' denied: {} requires it, and this program is granted {} ([capabilities] manifest or --deny)",
+                denied,
+                full_name,
+                caps.summary()
+            ),
+        })
+    }
+
     pub fn enable_test_mode(&mut self) {
         self.test_mode = true;
     }
