@@ -92,7 +92,21 @@ fn run() -> i32 {
         return run_embedded(bundle, logger);
     }
 
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+
+    // `olang run x.ol` — muscle memory from cargo/go/deno. There is no
+    // `run` subcommand (the file is the first positional), so treat `run`
+    // as an alias: shift to the next argument — unless a real file named
+    // `run` exists, which stays runnable like any other file.
+    if cli.file.as_deref() == Some(std::path::Path::new("run"))
+        && !std::path::Path::new("run").exists()
+    {
+        if cli.script_args.is_empty() {
+            eprintln!("olang: no file named 'run' and no file given — usage: olang <file.ol>");
+            return 1;
+        }
+        cli.file = Some(PathBuf::from(cli.script_args.remove(0)));
+    }
 
     // Initialize logger
     let logger = init_logger();
@@ -862,7 +876,8 @@ fn execute_file(
     ovm_tier: Option<u32>,
     logger: &Logger,
 ) -> anyhow::Result<()> {
-    let source = std::fs::read_to_string(file_path)?;
+    let source = std::fs::read_to_string(file_path)
+        .map_err(|e| anyhow::anyhow!("cannot read '{}': {}", file_path.display(), e))?;
     execute_source(
         &source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, logger,
     )

@@ -2900,20 +2900,22 @@ impl BytecodeVm {
                 BinaryOp::GreaterThanEqual => OvmValue::new_boolean(a >= b),
                 _ => {
                     return Err(BytecodeError::TypeError(format!(
-                        "Unsupported operation: {:?}",
-                        op
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
                     )));
                 }
             },
-            (ValueData::Float(a), ValueData::Float(b)) => {
-                self.execute_float_binary_op(*a, *b, op)?
-            }
-            (ValueData::Integer(a), ValueData::Float(b)) => {
-                self.execute_float_binary_op(*a as f64, *b, op)?
-            }
-            (ValueData::Float(a), ValueData::Integer(b)) => {
-                self.execute_float_binary_op(*a, *b as f64, op)?
-            }
+            (ValueData::Float(a), ValueData::Float(b)) => self
+                .execute_float_binary_op(*a, *b, op.clone())
+                .map_err(|e| Self::name_operand_types(e, op, left, right))?,
+            (ValueData::Integer(a), ValueData::Float(b)) => self
+                .execute_float_binary_op(*a as f64, *b, op.clone())
+                .map_err(|e| Self::name_operand_types(e, op, left, right))?,
+            (ValueData::Float(a), ValueData::Integer(b)) => self
+                .execute_float_binary_op(*a, *b as f64, op.clone())
+                .map_err(|e| Self::name_operand_types(e, op, left, right))?,
             (ValueData::String(a), ValueData::String(b)) => match op {
                 BinaryOp::Add => OvmValue::new_string(format!("{}{}", a, b)),
                 BinaryOp::Equal => OvmValue::new_boolean(a == b),
@@ -2924,8 +2926,10 @@ impl BytecodeVm {
                 BinaryOp::GreaterThanEqual => OvmValue::new_boolean(a >= b),
                 _ => {
                     return Err(BytecodeError::TypeError(format!(
-                        "Unsupported operation: {:?}",
-                        op
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
                     )));
                 }
             },
@@ -2936,8 +2940,10 @@ impl BytecodeVm {
                 BinaryOp::Or => OvmValue::new_boolean(*a || *b),
                 _ => {
                     return Err(BytecodeError::TypeError(format!(
-                        "Unsupported operation: {:?}",
-                        op
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
                     )));
                 }
             },
@@ -2971,8 +2977,10 @@ impl BytecodeVm {
                 BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
                 _ => {
                     return Err(BytecodeError::TypeError(format!(
-                        "Unsupported operation: {:?}",
-                        op
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
                     )));
                 }
             },
@@ -2983,10 +2991,40 @@ impl BytecodeVm {
                     items.extend(b.iter().cloned());
                     OvmValue::new_list(items)
                 }
+                // Deep structural equality, mirroring the interpreter's
+                // List/List arms (Value's derived PartialEq).
+                BinaryOp::Equal => OvmValue::new_boolean(Self::pattern_eq(left, right)),
+                BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
                 _ => {
                     return Err(BytecodeError::TypeError(format!(
-                        "Unsupported operation: {:?}",
-                        op
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
+                    )));
+                }
+            },
+            (ValueData::Tuple(_), ValueData::Tuple(_)) => match op {
+                BinaryOp::Equal => OvmValue::new_boolean(Self::pattern_eq(left, right)),
+                BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
+                    )));
+                }
+            },
+            (ValueData::Unit, ValueData::Unit) => match op {
+                BinaryOp::Equal => OvmValue::new_boolean(true),
+                BinaryOp::NotEqual => OvmValue::new_boolean(false),
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
                     )));
                 }
             },
@@ -3001,6 +3039,28 @@ impl BytecodeVm {
         };
 
         Ok(result)
+    }
+
+    /// Rewrite the float helper's typeless unsupported-op error into the
+    /// interpreter's uniform message, naming the real operand types (so a
+    /// mixed Int/Float pair reports "Int and Float", not "Float and Float").
+    fn name_operand_types(
+        e: BytecodeError,
+        op: BinaryOp,
+        left: &OvmValue,
+        right: &OvmValue,
+    ) -> BytecodeError {
+        match e {
+            BytecodeError::TypeError(msg) if msg.starts_with("Unsupported operation") => {
+                BytecodeError::TypeError(format!(
+                    "Invalid binary operation: cannot apply '{}' to {} and {}",
+                    op.symbol(),
+                    left.type_name(),
+                    right.type_name()
+                ))
+            }
+            other => other,
+        }
     }
 
     /// Float arithmetic shared by the Float/Float and mixed Int/Float paths,
@@ -3074,9 +3134,11 @@ impl BytecodeVm {
         use crate::ovm::value::ValueData;
         match (&left.data, &right.data) {
             (ValueData::Boolean(a), ValueData::Boolean(b)) => Ok(OvmValue::new_boolean(*a && *b)),
-            _ => Err(BytecodeError::TypeError(
-                "Invalid binary operation".to_string(),
-            )),
+            _ => Err(BytecodeError::TypeError(format!(
+                "Invalid binary operation: cannot apply '&&' to {} and {}",
+                left.type_name(),
+                right.type_name()
+            ))),
         }
     }
 
@@ -3089,9 +3151,11 @@ impl BytecodeVm {
         use crate::ovm::value::ValueData;
         match (&left.data, &right.data) {
             (ValueData::Boolean(a), ValueData::Boolean(b)) => Ok(OvmValue::new_boolean(*a || *b)),
-            _ => Err(BytecodeError::TypeError(
-                "Invalid binary operation".to_string(),
-            )),
+            _ => Err(BytecodeError::TypeError(format!(
+                "Invalid binary operation: cannot apply '||' to {} and {}",
+                left.type_name(),
+                right.type_name()
+            ))),
         }
     }
 
@@ -3839,12 +3903,17 @@ impl BytecodeVm {
             (ValueData::Boolean(x), ValueData::Boolean(y)) => x == y,
             (ValueData::String(x), ValueData::String(y)) => x == y,
             (ValueData::Unit, ValueData::Unit) => true,
-            // Enums and structs compare structurally, as the interpreter's
-            // Value equality does; conversion is exact so comparing the AST
-            // forms is the same relation.
+            // Enums, structs, and collections compare structurally, as the
+            // interpreter's Value equality does (its arms use Value's derived
+            // PartialEq); conversion is exact so comparing the AST forms is
+            // the same relation. Note this keeps the interpreter's asymmetry:
+            // 1 == 1.0 is true (scalar arms above), but [1] == [1.0] is false
+            // (Value's structural equality distinguishes element kinds).
             (ValueData::Enum(_), ValueData::Enum(_))
             | (ValueData::Struct(_), ValueData::Struct(_))
-            | (ValueData::Map(_), ValueData::Map(_)) => match (a.to_ast(), b.to_ast()) {
+            | (ValueData::Map(_), ValueData::Map(_))
+            | (ValueData::List(_), ValueData::List(_))
+            | (ValueData::Tuple(_), ValueData::Tuple(_)) => match (a.to_ast(), b.to_ast()) {
                 (Ok(x), Ok(y)) => x == y,
                 _ => false,
             },

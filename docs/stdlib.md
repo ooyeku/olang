@@ -448,7 +448,7 @@ name (all cells are strings — convert explicitly).
 | `csv.add_row` `csv.add_column` | build tables |
 | `csv.filter_rows` `csv.sort_by_column` | table operations |
 | `csv.to_json(rows, with_headers)` | parsed rows → JSON text (`with_headers`: treat row 0 as column names) |
-| `csv.from_json(json, headers)` | JSON text + header list → CSV text |
+| `csv.from_json(json, headers)` | JSON text + header list → CSV rows (headers first) |
 
 ```olang
 let raw = "name,score\nada,99\nbob,82"

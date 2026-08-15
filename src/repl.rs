@@ -867,28 +867,45 @@ impl Repl {
                             println!("{}", self.help_system.format_contextual_help(&context));
                         }
                         _ => {
-                            if self.help_system.has_function(topic) {
+                            // Exact function name first (`:help proc.spawn`, `:help len`).
+                            // A bare module name (`proc`) is deliberately NOT matched
+                            // here — has_exact_function skips fuzzy matching so the
+                            // module-listing branch below can run instead of resolving
+                            // to a single arbitrary member.
+                            if self.help_system.has_exact_function(topic) {
                                 println!("{}", self.help_system.show_function_help(topic));
-                            } else if self.help_system.has_category(topic) {
-                                println!("{}", self.help_system.show_category(topic));
-                            } else if let Some(members) = self.interpreter.module_members(topic) {
-                                // An imported/bound module — list its functions
-                                // so packages and embedded modules are
-                                // discoverable via help.
-                                self.show_module_help(topic, &members);
                             } else {
-                                // Try advanced search if direct lookup fails
-                                let results = self.help_system.search(topic, None);
-                                if !results.is_empty() {
-                                    println!(
-                                        "{}",
-                                        self.help_system.format_search_results(&results)
-                                    );
+                                let module_fns = self.help_system.functions_in_module(topic);
+                                if !module_fns.is_empty() {
+                                    // A documented module/namespace — list every member.
+                                    // Module names are all-lowercase; echo the canonical
+                                    // form, not the user's casing (`:help STATS` must
+                                    // not advertise `STATS.<fn>(...)`).
+                                    self.show_module_help(&topic.to_lowercase(), &module_fns);
+                                } else if let Some(members) = self.interpreter.module_members(topic)
+                                {
+                                    // An imported/bound module with no static docs —
+                                    // list its functions from the live environment.
+                                    self.show_module_help(topic, &members);
+                                } else if self.help_system.has_category(topic) {
+                                    println!("{}", self.help_system.show_category(topic));
+                                } else if self.help_system.has_function(topic) {
+                                    // Fuzzy function match as a last resort (typos).
+                                    println!("{}", self.help_system.show_function_help(topic));
                                 } else {
-                                    println!(
-                                        "No help found for '{}'. Try 'help search {}' for advanced search.",
-                                        topic, topic
-                                    );
+                                    // Try advanced search if direct lookup fails
+                                    let results = self.help_system.search(topic, None);
+                                    if !results.is_empty() {
+                                        println!(
+                                            "{}",
+                                            self.help_system.format_search_results(&results)
+                                        );
+                                    } else {
+                                        println!(
+                                            "No help found for '{}'. Try 'help search {}' for advanced search.",
+                                            topic, topic
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -1045,14 +1062,32 @@ impl Repl {
                     let expr = parts[1..].join(" ");
                     match self.parser.parse(&expr) {
                         Ok(program) => {
-                            if let Some(_stmt) = program.statements.first() {
-                                // For now, just evaluate and show the type of the result
-                                match self.eval_line(&expr) {
-                                    Ok(value) => {
-                                        println!("{} : {}", expr, Self::deep_type_of(&value));
+                            if let Some(stmt) = program.statements.first() {
+                                // `:type` evaluates its argument to learn the
+                                // runtime type — refuse inputs that would
+                                // mutate the session (a `let` or an
+                                // assignment), so a type query never changes
+                                // what it inspects.
+                                let mutates = match stmt.unwrapped() {
+                                    crate::ast::Statement::LetDecl(_) => true,
+                                    crate::ast::Statement::Expression(e) => {
+                                        matches!(e, crate::ast::Expr::Assignment { .. })
                                     }
-                                    Err(e) => {
-                                        println!("Type check failed: {}", e);
+                                    _ => false,
+                                };
+                                if mutates {
+                                    println!(
+                                        "`:type` evaluates its argument and won't run a binding or assignment.\nQuery the value instead: `:type {}`",
+                                        expr.split('=').next_back().unwrap_or(&expr).trim()
+                                    );
+                                } else {
+                                    match self.eval_line(&expr) {
+                                        Ok(value) => {
+                                            println!("{} : {}", expr, Self::deep_type_of(&value));
+                                        }
+                                        Err(e) => {
+                                            println!("Type check failed: {}", e);
+                                        }
                                     }
                                 }
                             }
@@ -1419,51 +1454,38 @@ impl Repl {
             }
             ":search" => {
                 if parts.len() > 1 {
-                    let query = parts[1..].join(" ");
-
-                    // Parse advanced search options
+                    // Parse advanced search options token-wise: pull out
+                    // `category:X`/`returns:X`/`limit:N` filters, keep the
+                    // rest as the query. Token-wise extraction (rather than
+                    // string replacement against the original query) means
+                    // combined filters compose, `limit:05` parses, and a bad
+                    // limit is reported instead of silently polluting the
+                    // query text.
                     let mut filters = SearchFilters::default();
-                    let mut search_query = query.clone();
-
-                    // Check for category filter
-                    if query.contains("category:")
-                        && let Some(category_part) = query.split("category:").nth(1)
-                    {
-                        let category = category_part.split_whitespace().next().unwrap_or("");
-                        filters.category = Some(category.to_string());
-                        search_query = query
-                            .replace(&format!("category:{}", category), "")
-                            .trim()
-                            .to_string();
+                    let mut query_words: Vec<&str> = Vec::new();
+                    for token in &parts[1..] {
+                        if let Some(category) = token.strip_prefix("category:") {
+                            filters.category = Some(category.to_string());
+                        } else if let Some(return_type) = token.strip_prefix("returns:") {
+                            filters.return_type = Some(return_type.to_string());
+                        } else if let Some(limit) = token.strip_prefix("limit:") {
+                            match limit.parse::<usize>() {
+                                Ok(n) => filters.max_results = n,
+                                Err(_) => {
+                                    println!(
+                                        "Invalid limit '{}' — expected a number, e.g. limit:5",
+                                        limit
+                                    );
+                                    return Ok(());
+                                }
+                            }
+                        } else {
+                            query_words.push(token);
+                        }
                     }
-
-                    // Check for return type filter
-                    if query.contains("returns:")
-                        && let Some(return_part) = query.split("returns:").nth(1)
-                    {
-                        let return_type = return_part.split_whitespace().next().unwrap_or("");
-                        filters.return_type = Some(return_type.to_string());
-                        search_query = query
-                            .replace(&format!("returns:{}", return_type), "")
-                            .trim()
-                            .to_string();
-                    }
-
-                    // Check for max results filter
-                    if query.contains("limit:")
-                        && let Some(limit_part) = query.split("limit:").nth(1)
-                        && let Ok(limit) = limit_part
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or("")
-                            .parse::<usize>()
-                    {
-                        filters.max_results = limit;
-                        search_query = query
-                            .replace(&format!("limit:{}", limit), "")
-                            .trim()
-                            .to_string();
-                    }
+                    // Quotes carry no meaning to the matcher; the usage
+                    // examples show quoted phrases, so strip them.
+                    let search_query = query_words.join(" ").replace('"', "");
 
                     let results = self.help_system.search(&search_query, Some(filters));
                     println!("{}", self.help_system.format_search_results(&results));
@@ -1923,12 +1945,32 @@ impl Repl {
         let mut bracket_count = 0;
         let mut in_string = false;
         let mut escape_next = false;
+        let mut prev_slash = false;
+        let mut in_comment = false;
 
         for ch in line.chars() {
-            if escape_next {
-                escape_next = false;
+            if in_comment {
+                if ch == '\n' {
+                    in_comment = false;
+                }
                 continue;
             }
+            if escape_next {
+                escape_next = false;
+                prev_slash = false;
+                continue;
+            }
+
+            // A `//` outside a string starts a comment: nothing up to the end
+            // of the line can open or close a bracket.
+            if ch == '/' && !in_string {
+                if prev_slash {
+                    in_comment = true;
+                }
+                prev_slash = !prev_slash;
+                continue;
+            }
+            prev_slash = false;
 
             match ch {
                 '"' if !in_string => in_string = true,
@@ -2988,7 +3030,19 @@ impl Repl {
                 std::io::stdout().flush().unwrap();
 
                 let mut input = String::new();
-                std::io::stdin().read_line(&mut input).unwrap();
+                // EOF (Ok(0)) or a read error must end the tutorial: with a
+                // closed/piped stdin, re-prompting would spin forever.
+                match std::io::stdin().read_line(&mut input) {
+                    Ok(0) | Err(_) => {
+                        println!(
+                            "{}Input closed — exiting tutorial.{}",
+                            Colors::YELLOW,
+                            Colors::RESET
+                        );
+                        return Ok(());
+                    }
+                    Ok(_) => {}
+                }
                 let input = input.trim();
 
                 match input {
@@ -3079,7 +3133,7 @@ impl Repl {
                         println!("{}Moving to next step...{}", Colors::CYAN, Colors::RESET);
                         break;
                     }
-                    "q" => {
+                    "q" | "quit" | "exit" => {
                         println!(
                             "{}Exiting tutorial. Progress saved.{}",
                             Colors::YELLOW,
@@ -3241,5 +3295,22 @@ mod tests {
         assert!(!ReplHelper::in_string_literal("fs.read(\"abc\")"));
         assert!(ReplHelper::in_string_literal("x = \"a\\\"b"));
         assert!(!ReplHelper::in_string_literal("let x = 1"));
+    }
+
+    #[test]
+    fn incomplete_expression_ignores_brackets_in_comments() {
+        let repl = Repl::new(false).expect("repl");
+        // A bracket inside a `//` comment must not trigger multiline mode.
+        assert!(!repl.is_incomplete_expression("1 + 1 // {"));
+        assert!(!repl.is_incomplete_expression("f() // ( [ {"));
+        // Real open brackets still do.
+        assert!(repl.is_incomplete_expression("if x {"));
+        assert!(repl.is_incomplete_expression("[1, 2,"));
+        // `//` inside a string is content, not a comment.
+        assert!(repl.is_incomplete_expression("\"http://x\" + ("));
+        assert!(!repl.is_incomplete_expression("\"http://x\""));
+        // Division doesn't start a comment.
+        assert!(repl.is_incomplete_expression("(1 / 2"));
+        assert!(!repl.is_incomplete_expression("1 / 2"));
     }
 }

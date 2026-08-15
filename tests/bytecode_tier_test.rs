@@ -149,6 +149,67 @@ fn w(c) = { let mut n = 0
 }
 
 #[test]
+fn collection_equality_agrees_across_tiers() {
+    // The bytecode VM had no ==/!= arms for top-level List, Tuple, or Unit
+    // operands, so `f(a, b) = a == b` worked interpreted but raised
+    // "Unsupported operation: Equal" once promoted. All three now compare
+    // structurally, exactly like the interpreter's Value equality — including
+    // its asymmetry: 1 == 1.0 is true but [1] == [1.0] is false.
+    let src = r#"
+fn eq(a, b) = a == b
+fn ne(a, b) = a != b
+fn unit(x) = { let n = 0
+    while n > 0 { n } }
+[ eq([1, 2], [1, 2]), eq([1, 2], [1, 3]), eq([], []),
+  ne([1], [2]), eq([1], [1.0]),
+  eq((1, 2), (1, 2)), ne((1, 2), (1, 3)),
+  eq([(1, 2)], [(1, 2)]),
+  eq(unit(1), unit(2)), ne(unit(1), unit(2)) ]
+"#;
+    assert_tier_transparent(src);
+    assert_eq!(
+        eval(src, Some(2)).unwrap(),
+        Value::List(
+            vec![
+                Value::Boolean(true),  // [1,2] == [1,2]
+                Value::Boolean(false), // [1,2] == [1,3]
+                Value::Boolean(true),  // [] == []
+                Value::Boolean(true),  // [1] != [2]
+                Value::Boolean(false), // [1] == [1.0] — structural, not coercing
+                Value::Boolean(true),  // (1,2) == (1,2)
+                Value::Boolean(true),  // (1,2) != (1,3)
+                Value::Boolean(true),  // [(1,2)] == [(1,2)]
+                Value::Boolean(true),  // Unit == Unit
+                Value::Boolean(false), // Unit != Unit
+            ]
+            .into()
+        )
+    );
+}
+
+#[test]
+fn unsupported_binary_op_error_text_matches_interpreter() {
+    // Same failure, same words: a promoted function raising a binary-op type
+    // error must produce the interpreter's message ("Invalid binary
+    // operation: cannot apply '<' to List and List"), not the VM-internal
+    // "Unsupported operation: LessThan".
+    for src in [
+        "fn f(a, b) = a < b\nf([1, 2], [1, 3])",
+        "fn f(a, b) = a - b\nf(\"a\", \"b\")",
+        "fn f(a, b) = a && b\nf(1, 2)",
+        "fn f(a, b) = a || b\nf(1.0, 2)",
+        "fn f(a, b) = a < b\nf(false, true)",
+    ] {
+        let interpreted = eval(src, None).unwrap_err();
+        let promoted = eval(src, Some(2)).unwrap_err();
+        assert_eq!(
+            interpreted, promoted,
+            "error text diverged across tiers for: {src}"
+        );
+    }
+}
+
+#[test]
 fn function_colliding_with_an_embedded_package_helper_still_promotes() {
     // `viz` defines a PRIVATE `col`. A user `col` of the same name used to
     // make the tier mark the name ambiguous and refuse to tier it — so the

@@ -1470,12 +1470,1886 @@ impl HelpSystem {
         // === Result Type Functions ===
         self.add_result_functions();
 
+        // === Modules the hand-written blocks above never covered ===
+        // (proc, chan, time, toml, ods, stats, plot, dom, and the embedded
+        // packages cli/term/ui/viz/dash), plus recent additions to os/str.
+        self.add_process_and_concurrency_docs();
+        self.add_time_and_encoding_docs();
+        self.add_data_stack_docs();
+        self.add_browser_and_toolkit_docs();
+        self.add_recent_stdlib_additions();
+        self.add_stdlib_coverage_gaps();
+        self.add_embedded_utility_docs();
+
         // Build category index
         self.build_category_index();
     }
 
     fn add_function(&mut self, function: FunctionDoc) {
         self.functions.insert(function.name.clone(), function);
+    }
+
+    /// Compact registration for a stdlib/module function: name, one-line
+    /// syntax, return type, category (the module name), and a one-line
+    /// description. Parameters/examples/see-also are left empty — the
+    /// syntax and description carry the signal, and this keeps hundreds of
+    /// module functions documented without a 13-line literal each.
+    fn doc(
+        &mut self,
+        name: &str,
+        syntax: &str,
+        return_type: &str,
+        category: &str,
+        description: &str,
+    ) {
+        self.add_function(FunctionDoc {
+            name: name.to_string(),
+            description: description.to_string(),
+            syntax: syntax.to_string(),
+            parameters: Vec::new(),
+            return_type: return_type.to_string(),
+            examples: Vec::new(),
+            category: category.to_string(),
+            see_also: Vec::new(),
+        });
+    }
+
+    fn add_process_and_concurrency_docs(&mut self) {
+        // --- proc ---
+        self.doc(
+            "proc.spawn",
+            "proc.spawn(program, args, opts?)",
+            "Result",
+            "proc",
+            "start a child with piped stdin/stdout/stderr and return a live Process handle",
+        );
+        self.doc(
+            "proc.write",
+            "proc.write(p, s)",
+            "Result",
+            "proc",
+            "write a string to the child's stdin",
+        );
+        self.doc(
+            "proc.write_line",
+            "proc.write_line(p, s)",
+            "Result",
+            "proc",
+            "write a string plus a newline to the child's stdin",
+        );
+        self.doc(
+            "proc.close_stdin",
+            "proc.close_stdin(p)",
+            "Result",
+            "proc",
+            "close the child's stdin, signalling end-of-input (idempotent)",
+        );
+        self.doc(
+            "proc.read_line",
+            "proc.read_line(p)",
+            "Result",
+            "proc",
+            "the next line of the child's stdout, or Err(\"eof\") once stdout closes",
+        );
+        self.doc(
+            "proc.read_all",
+            "proc.read_all(p)",
+            "Result",
+            "proc",
+            "the rest of the child's stdout as one string",
+        );
+        self.doc(
+            "proc.stderr",
+            "proc.stderr(p)",
+            "Result",
+            "proc",
+            "everything the child has written to stderr (complete after exit)",
+        );
+        self.doc(
+            "proc.wait",
+            "proc.wait(p)",
+            "Result",
+            "proc",
+            "block until the child exits, returning Ok(#{ code })",
+        );
+        self.doc(
+            "proc.kill",
+            "proc.kill(p)",
+            "Result",
+            "proc",
+            "terminate the child immediately (SIGKILL)",
+        );
+        self.doc(
+            "proc.pid",
+            "proc.pid(p)",
+            "Result",
+            "proc",
+            "the child's OS process id",
+        );
+        self.doc(
+            "proc.pipeline",
+            "proc.pipeline(stages, opts?)",
+            "Result",
+            "proc",
+            "run a chain of commands wired stdout-to-stdin, the shell's a | b | c",
+        );
+
+        // --- chan ---
+        self.doc(
+            "chan.new",
+            "chan.new()",
+            "Channel",
+            "chan",
+            "make an unbounded channel",
+        );
+        self.doc(
+            "chan.bounded",
+            "chan.bounded(n)",
+            "Channel",
+            "chan",
+            "make a channel holding at most n in-flight messages (0 is a rendezvous channel)",
+        );
+        self.doc(
+            "chan.send",
+            "chan.send(c, v)",
+            "Result",
+            "chan",
+            "send a value; Ok(()), or Err when the channel is closed",
+        );
+        self.doc(
+            "chan.recv",
+            "chan.recv(c)",
+            "Result",
+            "chan",
+            "block for a message; Ok(value), or Err when closed and drained",
+        );
+        self.doc(
+            "chan.try_recv",
+            "chan.try_recv(c)",
+            "Result",
+            "chan",
+            "Ok(value), Err(\"channel is empty\"), or Err(\"channel is closed\")",
+        );
+        self.doc(
+            "chan.recv_timeout",
+            "chan.recv_timeout(c, ms)",
+            "Result",
+            "chan",
+            "like recv, plus Err(\"timed out\") after ms milliseconds",
+        );
+        self.doc(
+            "chan.close",
+            "chan.close(c)",
+            "Unit",
+            "chan",
+            "close the sending side (idempotent); queued messages still drain",
+        );
+    }
+
+    fn add_time_and_encoding_docs(&mut self) {
+        // --- time ---
+        self.doc(
+            "time.now_ms",
+            "time.now_ms()",
+            "Int",
+            "time",
+            "milliseconds since the Unix epoch",
+        );
+        self.doc(
+            "time.monotonic_ms",
+            "time.monotonic_ms()",
+            "Int",
+            "time",
+            "monotonic milliseconds (never goes backwards) — the clock for durations",
+        );
+        self.doc(
+            "time.sleep",
+            "time.sleep(ms)",
+            "Unit",
+            "time",
+            "block for ms milliseconds",
+        );
+
+        // --- toml ---
+        self.doc(
+            "toml.parse",
+            "toml.parse(text)",
+            "Result",
+            "toml",
+            "parse a TOML document into a Map (tables → Maps, arrays → Lists, datetimes → strings)",
+        );
+        self.doc(
+            "toml.stringify",
+            "toml.stringify(value)",
+            "Result",
+            "toml",
+            "render a Map (or struct-like value) as pretty TOML",
+        );
+        self.doc(
+            "toml.validate",
+            "toml.validate(text)",
+            "Bool",
+            "toml",
+            "does the text parse as TOML?",
+        );
+    }
+
+    fn add_data_stack_docs(&mut self) {
+        // --- ods ---
+        self.doc(
+            "ods.series",
+            "ods.series(list|range)",
+            "Series",
+            "ods",
+            "build a typed, null-aware Series from a list or range",
+        );
+        self.doc(
+            "ods.zeros",
+            "ods.zeros(n)",
+            "Series",
+            "ods",
+            "a Series of n float zeros",
+        );
+        self.doc(
+            "ods.linspace",
+            "ods.linspace(a, b, n)",
+            "Series",
+            "ods",
+            "n evenly spaced floats from a to b, inclusive",
+        );
+        self.doc("ods.map", "ods.map(s, fn)", "Series", "ods", "apply a math.* unary function (named as a String, like \"sin\") over the whole column in one kernel pass");
+        self.doc(
+            "ods.eq",
+            "ods.eq(a, b)",
+            "Series",
+            "ods",
+            "elementwise equality mask between two Series",
+        );
+        self.doc(
+            "ods.ne",
+            "ods.ne(a, b)",
+            "Series",
+            "ods",
+            "elementwise inequality mask between two Series",
+        );
+        self.doc(
+            "ods.is_null",
+            "ods.is_null(s)",
+            "Series",
+            "ods",
+            "a Bool mask marking the null positions of s",
+        );
+        self.doc(
+            "ods.fill_null",
+            "ods.fill_null(s, v)",
+            "Series",
+            "ods",
+            "replace every null in s with v",
+        );
+        self.doc(
+            "ods.null_count",
+            "ods.null_count(s)",
+            "Int",
+            "ods",
+            "how many values in s are null",
+        );
+        self.doc(
+            "ods.sum",
+            "ods.sum(s)",
+            "Value",
+            "ods",
+            "sum of s, skipping nulls",
+        );
+        self.doc(
+            "ods.mean",
+            "ods.mean(s)",
+            "Float",
+            "ods",
+            "arithmetic mean of s, skipping nulls",
+        );
+        self.doc(
+            "ods.var",
+            "ods.var(s)",
+            "Float",
+            "ods",
+            "sample variance of s, skipping nulls",
+        );
+        self.doc(
+            "ods.std",
+            "ods.std(s)",
+            "Float",
+            "ods",
+            "sample standard deviation of s, skipping nulls",
+        );
+        self.doc(
+            "ods.min",
+            "ods.min(s)",
+            "Value",
+            "ods",
+            "smallest non-null value in s",
+        );
+        self.doc(
+            "ods.max",
+            "ods.max(s)",
+            "Value",
+            "ods",
+            "largest non-null value in s",
+        );
+        self.doc(
+            "ods.quantile",
+            "ods.quantile(s, q)",
+            "Float",
+            "ods",
+            "the q-quantile of s (q in [0, 1]), skipping nulls",
+        );
+        self.doc(
+            "ods.cumsum",
+            "ods.cumsum(s)",
+            "Series",
+            "ods",
+            "running cumulative sum of s",
+        );
+        self.doc(
+            "ods.dot",
+            "ods.dot(a, b)",
+            "Float",
+            "ods",
+            "dot product of two numeric Series",
+        );
+        self.doc(
+            "ods.sort",
+            "ods.sort(s)",
+            "Series",
+            "ods",
+            "s sorted ascending, nulls last",
+        );
+        self.doc(
+            "ods.argsort",
+            "ods.argsort(s)",
+            "Series",
+            "ods",
+            "the indices that would sort s",
+        );
+        self.doc(
+            "ods.take",
+            "ods.take(s, idx)",
+            "Series",
+            "ods",
+            "gather elements (or Frame rows) at the integer indices in idx",
+        );
+        self.doc(
+            "ods.get",
+            "ods.get(s, i)",
+            "Value",
+            "ods",
+            "the element at index i (negative counts from the end)",
+        );
+        self.doc(
+            "ods.to_list",
+            "ods.to_list(s)",
+            "List",
+            "ods",
+            "s as a language list, with nulls turned into ()",
+        );
+        self.doc(
+            "ods.len",
+            "ods.len(s)",
+            "Int",
+            "ods",
+            "number of elements in s",
+        );
+        self.doc(
+            "ods.frame",
+            "ods.frame(columns)",
+            "Frame",
+            "ods",
+            "build a Frame from [name, values] column pairs",
+        );
+        self.doc(
+            "ods.frame_from_records",
+            "ods.frame_from_records(records)",
+            "Frame",
+            "ods",
+            "build a Frame from a list of record maps",
+        );
+        self.doc(
+            "ods.read_csv",
+            "ods.read_csv(text)",
+            "Frame",
+            "ods",
+            "parse CSV text into a Frame, inferring column types (a parse failure raises)",
+        );
+        self.doc(
+            "ods.columns",
+            "ods.columns(f)",
+            "List",
+            "ods",
+            "the column names of f",
+        );
+        self.doc(
+            "ods.column",
+            "ods.column(f, name)",
+            "Series",
+            "ods",
+            "the named column of f as a Series",
+        );
+        self.doc(
+            "ods.n_rows",
+            "ods.n_rows(f)",
+            "Int",
+            "ods",
+            "number of rows in f",
+        );
+        self.doc(
+            "ods.n_cols",
+            "ods.n_cols(f)",
+            "Int",
+            "ods",
+            "number of columns in f",
+        );
+        self.doc(
+            "ods.head",
+            "ods.head(f, n)",
+            "Frame",
+            "ods",
+            "the first n rows of f",
+        );
+        self.doc(
+            "ods.to_records",
+            "ods.to_records(f)",
+            "List",
+            "ods",
+            "f as a list of per-row record maps",
+        );
+        self.doc(
+            "ods.select",
+            "ods.select(f, names)",
+            "Frame",
+            "ods",
+            "a Frame keeping only the named columns",
+        );
+        self.doc(
+            "ods.with_column",
+            "ods.with_column(f, name, series)",
+            "Frame",
+            "ods",
+            "f with a column added or replaced",
+        );
+        self.doc(
+            "ods.filter",
+            "ods.filter(f, mask)",
+            "Frame",
+            "ods",
+            "keep the rows (or Series elements) where the Bool mask is true",
+        );
+        self.doc(
+            "ods.sort_by",
+            "ods.sort_by(f, name, descending)",
+            "Frame",
+            "ods",
+            "f sorted by the named column, descending when true",
+        );
+        self.doc(
+            "ods.group_by",
+            "ods.group_by(f, key, aggs)",
+            "Frame",
+            "ods",
+            "group rows by key and reduce each group with the given aggregations",
+        );
+        self.doc(
+            "ods.join",
+            "ods.join(a, b, on_a, on_b)",
+            "Frame",
+            "ods",
+            "inner hash join of a and b on one key column from each side",
+        );
+        self.doc(
+            "ods.join_left",
+            "ods.join_left(a, b, on_a, on_b)",
+            "Frame",
+            "ods",
+            "left join keeping every row of a, filling unmatched right columns with nulls",
+        );
+
+        // --- stats ---
+        self.doc(
+            "stats.describe",
+            "stats.describe(s)",
+            "Map",
+            "stats",
+            "count, null count, mean, std, min, quartiles, and max of s in one map",
+        );
+        self.doc(
+            "stats.corr",
+            "stats.corr(a, b)",
+            "Float",
+            "stats",
+            "Pearson correlation of a and b over pairwise-complete rows",
+        );
+        self.doc(
+            "stats.cov",
+            "stats.cov(a, b)",
+            "Float",
+            "stats",
+            "sample covariance of a and b over pairwise-complete rows",
+        );
+        self.doc("stats.t_test", "stats.t_test(a, b)", "Map", "stats", "t-test: Welch's two-sample when b is a Series, one-sample against mean b when b is a number");
+        self.doc(
+            "stats.chi2_test",
+            "stats.chi2_test(obs, exp)",
+            "Map",
+            "stats",
+            "chi-square goodness-of-fit test of observed against expected counts",
+        );
+        self.doc("stats.lm", "stats.lm(y, x)", "Map", "stats", "OLS regression of y on regressor(s) x, returning coefficients, standard errors, t-stats, p-values, and r2");
+        self.doc(
+            "stats.norm.pdf",
+            "stats.norm.pdf(x, mean, std)",
+            "Float",
+            "stats",
+            "normal probability density at x",
+        );
+        self.doc(
+            "stats.norm.cdf",
+            "stats.norm.cdf(x, mean, std)",
+            "Float",
+            "stats",
+            "normal cumulative probability at x",
+        );
+        self.doc(
+            "stats.norm.ppf",
+            "stats.norm.ppf(p, mean, std)",
+            "Float",
+            "stats",
+            "normal quantile (inverse CDF) for probability p",
+        );
+        self.doc(
+            "stats.norm.sample",
+            "stats.norm.sample(n, mean, std)",
+            "Series",
+            "stats",
+            "n normal draws from the random module's seeded stream",
+        );
+        self.doc(
+            "stats.t.pdf",
+            "stats.t.pdf(x, df)",
+            "Float",
+            "stats",
+            "Student's t probability density at x",
+        );
+        self.doc(
+            "stats.t.cdf",
+            "stats.t.cdf(x, df)",
+            "Float",
+            "stats",
+            "Student's t cumulative probability at x",
+        );
+        self.doc(
+            "stats.t.ppf",
+            "stats.t.ppf(p, df)",
+            "Float",
+            "stats",
+            "Student's t quantile (inverse CDF) for probability p",
+        );
+        self.doc(
+            "stats.t.sample",
+            "stats.t.sample(n, df)",
+            "Series",
+            "stats",
+            "n Student's t draws from the seeded stream",
+        );
+        self.doc(
+            "stats.chi2.pdf",
+            "stats.chi2.pdf(x, df)",
+            "Float",
+            "stats",
+            "chi-square probability density at x",
+        );
+        self.doc(
+            "stats.chi2.cdf",
+            "stats.chi2.cdf(x, df)",
+            "Float",
+            "stats",
+            "chi-square cumulative probability at x",
+        );
+        self.doc(
+            "stats.chi2.ppf",
+            "stats.chi2.ppf(p, df)",
+            "Float",
+            "stats",
+            "chi-square quantile (inverse CDF) for probability p",
+        );
+        self.doc(
+            "stats.chi2.sample",
+            "stats.chi2.sample(n, df)",
+            "Series",
+            "stats",
+            "n chi-square draws from the seeded stream",
+        );
+        self.doc(
+            "stats.f.pdf",
+            "stats.f.pdf(x, d1, d2)",
+            "Float",
+            "stats",
+            "F-distribution probability density at x",
+        );
+        self.doc(
+            "stats.f.cdf",
+            "stats.f.cdf(x, d1, d2)",
+            "Float",
+            "stats",
+            "F-distribution cumulative probability at x",
+        );
+        self.doc(
+            "stats.f.ppf",
+            "stats.f.ppf(p, d1, d2)",
+            "Float",
+            "stats",
+            "F-distribution quantile (inverse CDF) for probability p",
+        );
+        self.doc(
+            "stats.f.sample",
+            "stats.f.sample(n, d1, d2)",
+            "Series",
+            "stats",
+            "n F-distribution draws from the seeded stream",
+        );
+
+        // --- plot ---
+        self.doc(
+            "plot.line",
+            "plot.line(x, y, opts)",
+            "String",
+            "plot",
+            "a line chart of y against x, as a standalone SVG string",
+        );
+        self.doc(
+            "plot.scatter",
+            "plot.scatter(x, y, opts)",
+            "String",
+            "plot",
+            "a scatter plot of y against x, as an SVG string",
+        );
+        self.doc(
+            "plot.area",
+            "plot.area(x, y, opts)",
+            "String",
+            "plot",
+            "an area chart of y against x, as an SVG string",
+        );
+        self.doc(
+            "plot.lines",
+            "plot.lines(x, series, opts)",
+            "String",
+            "plot",
+            "a multi-series line chart with legend from [label, y] pairs sharing x",
+        );
+        self.doc(
+            "plot.xy",
+            "plot.xy(layers, opts)",
+            "String",
+            "plot",
+            "layered marks over shared scales from [label, mark, x, y] entries",
+        );
+        self.doc(
+            "plot.bar",
+            "plot.bar(labels, values, opts)",
+            "String",
+            "plot",
+            "a bar chart of values against labels, as an SVG string",
+        );
+        self.doc(
+            "plot.bars",
+            "plot.bars(labels, series, opts)",
+            "String",
+            "plot",
+            "a grouped bar chart from [label, values] series sharing the category labels",
+        );
+        self.doc(
+            "plot.stacked",
+            "plot.stacked(labels, series, opts)",
+            "String",
+            "plot",
+            "a stacked bar chart from [label, values] series sharing the category labels",
+        );
+        self.doc(
+            "plot.hist",
+            "plot.hist(s, bins, opts)",
+            "String",
+            "plot",
+            "a histogram of s over the given number of bins, as an SVG string",
+        );
+        self.doc(
+            "plot.heatmap",
+            "plot.heatmap(x_labels, y_labels, rows, opts)",
+            "String",
+            "plot",
+            "a heatmap of the row-major value grid, as an SVG string",
+        );
+        self.doc(
+            "plot.box",
+            "plot.box(series, opts)",
+            "String",
+            "plot",
+            "box-and-whisker plots from [label, values] series, nulls dropped",
+        );
+        self.doc("plot.ramp", "plot.ramp(scale, t)", "String", "plot", "one color at position t in [0, 1] from a named ramp (auto, ocean, ember, thermal, diverging)");
+    }
+
+    fn add_browser_and_toolkit_docs(&mut self) {
+        // --- dom ---
+        self.doc(
+            "dom.query",
+            "dom.query(sel)",
+            "Node",
+            "dom",
+            "First element matching a CSS selector — an error if none matches.",
+        );
+        self.doc(
+            "dom.set_text",
+            "dom.set_text(el, s)",
+            "Unit",
+            "dom",
+            "Write an element's text content.",
+        );
+        self.doc(
+            "dom.get_text",
+            "dom.get_text(el)",
+            "String",
+            "dom",
+            "Read an element's text content.",
+        );
+        self.doc(
+            "dom.set_html",
+            "dom.set_html(el, html)",
+            "Unit",
+            "dom",
+            "Replace an element's inner HTML — the render primitive.",
+        );
+        self.doc(
+            "dom.value",
+            "dom.value(el)",
+            "String",
+            "dom",
+            "Read a form control's value.",
+        );
+        self.doc(
+            "dom.set_value",
+            "dom.set_value(el, s)",
+            "Unit",
+            "dom",
+            "Write a form control's value.",
+        );
+        self.doc(
+            "dom.on",
+            "dom.on(el, event, handler)",
+            "Unit",
+            "dom",
+            "Attach an event handler; the handler receives a structured event Map.",
+        );
+        self.doc(
+            "dom.fetch",
+            "dom.fetch(method, path, body, callback)",
+            "Unit",
+            "dom",
+            "Asynchronous HTTP from the page — the callback receives the response text.",
+        );
+        self.doc(
+            "dom.focus",
+            "dom.focus(el)",
+            "Unit",
+            "dom",
+            "Focus an element.",
+        );
+        self.doc(
+            "dom.set_class",
+            "dom.set_class(el, c)",
+            "Unit",
+            "dom",
+            "Replace an element's class list wholesale.",
+        );
+        self.doc(
+            "dom.get_attr",
+            "dom.get_attr(el, name)",
+            "String",
+            "dom",
+            "Read an element's attribute value.",
+        );
+        self.doc(
+            "dom.set_attr",
+            "dom.set_attr(el, name, v)",
+            "Unit",
+            "dom",
+            "Set an element's attribute.",
+        );
+        self.doc(
+            "dom.remove_attr",
+            "dom.remove_attr(el, name)",
+            "Unit",
+            "dom",
+            "Remove an element's attribute.",
+        );
+        self.doc(
+            "dom.class_add",
+            "dom.class_add(el, c)",
+            "Unit",
+            "dom",
+            "Add a class to an element's class list.",
+        );
+        self.doc(
+            "dom.class_remove",
+            "dom.class_remove(el, c)",
+            "Unit",
+            "dom",
+            "Remove a class from an element's class list.",
+        );
+        self.doc(
+            "dom.class_toggle",
+            "dom.class_toggle(el, c)",
+            "Unit",
+            "dom",
+            "Toggle a class on an element's class list.",
+        );
+        self.doc(
+            "dom.set_style",
+            "dom.set_style(el, prop, v)",
+            "Unit",
+            "dom",
+            "Set one CSS style property on an element.",
+        );
+        self.doc(
+            "dom.measure",
+            "dom.measure(el)",
+            "Map",
+            "dom",
+            "Bounding rect as a Map: x, y, width, height.",
+        );
+        self.doc(
+            "dom.create",
+            "dom.create(tag)",
+            "Node",
+            "dom",
+            "Create a detached element of the given tag.",
+        );
+        self.doc(
+            "dom.append",
+            "dom.append(parent, child)",
+            "Unit",
+            "dom",
+            "Append a child element to a parent.",
+        );
+        self.doc(
+            "dom.remove",
+            "dom.remove(el)",
+            "Unit",
+            "dom",
+            "Remove an element from the document.",
+        );
+        self.doc(
+            "dom.scroll_into_view",
+            "dom.scroll_into_view(el)",
+            "Unit",
+            "dom",
+            "Scroll an element into view.",
+        );
+        self.doc(
+            "dom.set_timeout",
+            "dom.set_timeout(ms, fn)",
+            "Unit",
+            "dom",
+            "Run a function once after a delay in milliseconds.",
+        );
+        self.doc(
+            "dom.set_interval",
+            "dom.set_interval(ms, fn)",
+            "Timer",
+            "dom",
+            "Run a function repeatedly every ms milliseconds; returns a timer handle.",
+        );
+        self.doc(
+            "dom.clear_interval",
+            "dom.clear_interval(t)",
+            "Unit",
+            "dom",
+            "Cancel an interval timer by its handle.",
+        );
+        self.doc(
+            "dom.request_frame",
+            "dom.request_frame(fn)",
+            "Unit",
+            "dom",
+            "Schedule one animation frame; re-arm inside the handler for a loop.",
+        );
+        self.doc(
+            "dom.on_frame",
+            "dom.on_frame(fn)",
+            "Unit",
+            "dom",
+            "Register the persistent animation loop, called every frame with a millisecond delta.",
+        );
+        self.doc(
+            "dom.draw",
+            "dom.draw(canvas, ops)",
+            "Unit",
+            "dom",
+            "Replay a draw-list onto a canvas — the whole scene crosses the boundary once.",
+        );
+        self.doc("dom.draw_points", "dom.draw_points(canvas, xs, ys, style)", "Unit", "dom", "Bulk point/path plotting; coordinates cross as one packed binary buffer with a host-side affine.");
+        self.doc(
+            "dom.insert_before",
+            "dom.insert_before(parent, child, before)",
+            "Unit",
+            "dom",
+            "Position a child before another node (0 appends).",
+        );
+        self.doc(
+            "dom.push_state",
+            "dom.push_state(path)",
+            "Unit",
+            "dom",
+            "Push an SPA navigation entry for the given path.",
+        );
+        self.doc(
+            "dom.location",
+            "dom.location()",
+            "Map",
+            "dom",
+            "The current location as a Map of path and query.",
+        );
+        self.doc(
+            "dom.on_route",
+            "dom.on_route(fn)",
+            "Unit",
+            "dom",
+            "Register the back/forward listener — a route event Map with path and query.",
+        );
+        self.doc(
+            "dom.storage_get",
+            "dom.storage_get(k)",
+            "String",
+            "dom",
+            "Read a localStorage value (missing keys read as \"\").",
+        );
+        self.doc(
+            "dom.storage_set",
+            "dom.storage_set(k, v)",
+            "Unit",
+            "dom",
+            "Write a localStorage value.",
+        );
+        self.doc(
+            "dom.state_get",
+            "dom.state_get(k)",
+            "Value",
+            "dom",
+            "Read from the page-lifetime session state store (missing keys read as Unit).",
+        );
+        self.doc(
+            "dom.state_set",
+            "dom.state_set(k, v)",
+            "Unit",
+            "dom",
+            "Write to the page-lifetime session state store (a Map/list round-trips).",
+        );
+        self.doc(
+            "dom.storage_remove",
+            "dom.storage_remove(k)",
+            "Unit",
+            "dom",
+            "Remove a localStorage key.",
+        );
+        self.doc(
+            "dom.worker",
+            "dom.worker(path)",
+            "Worker",
+            "dom",
+            "Boot a second olang program in a Web Worker; returns a worker handle.",
+        );
+        self.doc(
+            "dom.worker_send",
+            "dom.worker_send(w, value)",
+            "Unit",
+            "dom",
+            "Send a value to a worker.",
+        );
+        self.doc(
+            "dom.worker_on",
+            "dom.worker_on(w, handler)",
+            "Unit",
+            "dom",
+            "Receive values from a worker.",
+        );
+        self.doc(
+            "dom.worker_close",
+            "dom.worker_close(w)",
+            "Unit",
+            "dom",
+            "Terminate a worker.",
+        );
+        self.doc(
+            "dom.post",
+            "dom.post(value)",
+            "Unit",
+            "dom",
+            "Worker-side mirror: post a value to the page.",
+        );
+        self.doc(
+            "dom.on_message",
+            "dom.on_message(handler)",
+            "Unit",
+            "dom",
+            "Worker-side mirror: receive values from the page.",
+        );
+        self.doc(
+            "dom.fetch_json",
+            "dom.fetch_json(method, path, body, callback)",
+            "Unit",
+            "dom",
+            "Like dom.fetch, but the callback receives the parsed value directly.",
+        );
+
+        // --- cli ---
+        self.doc(
+            "cli.args",
+            "cli.args()",
+            "List",
+            "cli",
+            "The program's own arguments, with the program path (argv[0]) dropped.",
+        );
+        self.doc(
+            "cli.parse",
+            "cli.parse(spec, argv)",
+            "Result",
+            "cli",
+            "Parse argv against spec; Ok(values) (a map incl. help) or Err(message).",
+        );
+        self.doc(
+            "cli.help",
+            "cli.help(spec)",
+            "String",
+            "cli",
+            "Render the usage/help text for spec as a string.",
+        );
+
+        // --- term ---
+        self.doc(
+            "term.color",
+            "term.color()",
+            "Bool",
+            "term",
+            "Whether styled output should be emitted right now.",
+        );
+        self.doc(
+            "term.black",
+            "term.black(s)",
+            "String",
+            "term",
+            "Wrap s in black.",
+        );
+        self.doc(
+            "term.red",
+            "term.red(s)",
+            "String",
+            "term",
+            "Wrap s in red.",
+        );
+        self.doc(
+            "term.green",
+            "term.green(s)",
+            "String",
+            "term",
+            "Wrap s in green.",
+        );
+        self.doc(
+            "term.yellow",
+            "term.yellow(s)",
+            "String",
+            "term",
+            "Wrap s in yellow.",
+        );
+        self.doc(
+            "term.blue",
+            "term.blue(s)",
+            "String",
+            "term",
+            "Wrap s in blue.",
+        );
+        self.doc(
+            "term.magenta",
+            "term.magenta(s)",
+            "String",
+            "term",
+            "Wrap s in magenta.",
+        );
+        self.doc(
+            "term.cyan",
+            "term.cyan(s)",
+            "String",
+            "term",
+            "Wrap s in cyan.",
+        );
+        self.doc(
+            "term.white",
+            "term.white(s)",
+            "String",
+            "term",
+            "Wrap s in white.",
+        );
+        self.doc(
+            "term.gray",
+            "term.gray(s)",
+            "String",
+            "term",
+            "Wrap s in gray.",
+        );
+        self.doc("term.bold", "term.bold(s)", "String", "term", "Bold s.");
+        self.doc("term.dim", "term.dim(s)", "String", "term", "Dim s.");
+        self.doc(
+            "term.italic",
+            "term.italic(s)",
+            "String",
+            "term",
+            "Italicize s.",
+        );
+        self.doc(
+            "term.underline",
+            "term.underline(s)",
+            "String",
+            "term",
+            "Underline s.",
+        );
+        self.doc(
+            "term.style",
+            "term.style(s, opts)",
+            "String",
+            "term",
+            "Style s with opts: fg, bg, bold, dim, italic, underline.",
+        );
+        self.doc(
+            "term.rule",
+            "term.rule(width)",
+            "String",
+            "term",
+            "A horizontal rule of box-drawing dashes.",
+        );
+        self.doc(
+            "term.visible_len",
+            "term.visible_len(s)",
+            "Int",
+            "term",
+            "The visible screen width of s, with ANSI styling escapes discounted.",
+        );
+        self.doc(
+            "term.table",
+            "term.table(headers, rows)",
+            "String",
+            "term",
+            "An aligned table; columns pad to their widest cell by visible width.",
+        );
+        self.doc(
+            "term.bar",
+            "term.bar(fraction, width)",
+            "String",
+            "term",
+            "A progress bar for a fraction in [0, 1].",
+        );
+        self.doc(
+            "term.prompt",
+            "term.prompt(question)",
+            "String",
+            "term",
+            "Prompt for a line of input.",
+        );
+        self.doc(
+            "term.confirm",
+            "term.confirm(question)",
+            "Bool",
+            "term",
+            "Yes/no question; anything starting with y/Y is true, else false.",
+        );
+        self.doc(
+            "term.select",
+            "term.select(question, options)",
+            "Result",
+            "term",
+            "A numbered menu; returns Ok(chosen option string) or Err on a bad choice.",
+        );
+
+        // --- ui ---
+        self.doc("ui.h", "ui.h(tag, attrs, children)", "Node", "ui", "Build a virtual node — a tag, an attribute map, and a list of child nodes or text strings.");
+        self.doc(
+            "ui.hk",
+            "ui.hk(key, tag, attrs, children)",
+            "Node",
+            "ui",
+            "Like h, plus a stable reconciliation key for keyed lists.",
+        );
+        self.doc(
+            "ui.esc",
+            "ui.esc(s)",
+            "String",
+            "ui",
+            "HTML-escape a string (&amp; &lt; &gt; \" to entities).",
+        );
+        self.doc(
+            "ui.html",
+            "ui.html(node)",
+            "String",
+            "ui",
+            "Render a node tree to an HTML string — pure, testable without a browser.",
+        );
+        self.doc(
+            "ui.render",
+            "ui.render(el, children)",
+            "Unit",
+            "ui",
+            "Mount and reconcile a keyed child list into a live DOM element (browser only).",
+        );
+
+        // --- viz ---
+        self.doc(
+            "viz.chart",
+            "viz.chart(spec)",
+            "String",
+            "viz",
+            "Compile a chart spec to plot SVG — pure, testable anywhere.",
+        );
+        self.doc("viz.draw", "viz.draw(el, spec)", "Unit", "viz", "Compile the same xy specs to a canvas draw-list, for data too big to render as SVG nodes.");
+        self.doc("viz.tooltip", "viz.tooltip(el)", "Unit", "viz", "Attach a hover tooltip to a chart container: hovering an interactive mark shows its datum.");
+        self.doc("viz.on_mark", "viz.on_mark(el, event, handler)", "Unit", "viz", "Delegated mark events: the handler fires only for an interactive mark and receives its data map.");
+        self.doc("viz.brush", "viz.brush(el, handler)", "Unit", "viz", "Horizontal brush; the handler receives #{ from, to } as fractions of the element's width.");
+
+        // --- dash ---
+        self.doc(
+            "dash.kpi",
+            "dash.kpi(label, value, note)",
+            "String",
+            "dash",
+            "A KPI tile: the number big, the label above, a note below (\"\" omits it).",
+        );
+        self.doc(
+            "dash.stat",
+            "dash.stat(label, value, note, accent)",
+            "String",
+            "dash",
+            "A KPI tile with its own accent color for the value.",
+        );
+        self.doc(
+            "dash.card",
+            "dash.card(title, inner)",
+            "String",
+            "dash",
+            "A card: a titled panel around arbitrary (unescaped) inner HTML.",
+        );
+        self.doc(
+            "dash.half",
+            "dash.half(title, inner)",
+            "String",
+            "dash",
+            "A card that spans two grid columns — the chart-friendly width.",
+        );
+        self.doc(
+            "dash.wide",
+            "dash.wide(title, inner)",
+            "String",
+            "dash",
+            "A card that spans the full grid width.",
+        );
+        self.doc(
+            "dash.grid",
+            "dash.grid(cards, columns)",
+            "String",
+            "dash",
+            "The grid: cards flow into columns columns; dash-wide cards break out to full width.",
+        );
+        self.doc(
+            "dash.styles",
+            "dash.styles()",
+            "String",
+            "dash",
+            "The kit's stylesheet — prepend once to the mount's HTML and the classes just work.",
+        );
+    }
+
+    fn add_recent_stdlib_additions(&mut self) {
+        // os — input, terminal, and signals (previously undocumented)
+        self.doc(
+            "os.stdin",
+            "os.stdin()",
+            "Result",
+            "os",
+            "read all of standard input to end-of-file as one string",
+        );
+        self.doc(
+            "os.stdin_lines",
+            "os.stdin_lines()",
+            "Result",
+            "os",
+            "all of standard input as a list of lines, endings stripped",
+        );
+        self.doc(
+            "os.read_line",
+            "os.read_line()",
+            "Result",
+            "os",
+            "one line from stdin as Ok(line), or Err(\"eof\") at end-of-input",
+        );
+        self.doc("os.exec", "os.exec(program, args, opts?)", "Result", "os", "run a program to completion, returning Ok(#{ code, stdout, stderr }); opts sets cwd/stdin/env");
+        self.doc(
+            "os.is_tty",
+            "os.is_tty()",
+            "Result",
+            "os",
+            "whether standard output is a terminal (Ok(bool))",
+        );
+        self.doc("os.flush", "os.flush()", "Result", "os", "flush buffered standard output — needed to show a progress bar drawn with a leading carriage return");
+        self.doc(
+            "os.on_interrupt",
+            "os.on_interrupt()",
+            "Result",
+            "os",
+            "trap Ctrl-C (SIGINT) so it sets a flag instead of terminating — for graceful shutdown",
+        );
+        self.doc(
+            "os.interrupted",
+            "os.interrupted()",
+            "Result",
+            "os",
+            "whether Ctrl-C has been pressed since on_interrupt/reset_interrupt (Ok(bool))",
+        );
+        self.doc(
+            "os.reset_interrupt",
+            "os.reset_interrupt()",
+            "Result",
+            "os",
+            "clear the interrupt flag, arming for the next Ctrl-C",
+        );
+
+        // str — the format helper
+        self.doc("str.fmt", "str.fmt(template, ...)", "String", "str", "fill {} placeholders in a template with the display form of each argument ({{ and }} escape; a placeholder/argument count mismatch raises)");
+    }
+
+    fn add_stdlib_coverage_gaps(&mut self) {
+        // --- math: the trig/hyperbolic/exp/log family and integer helpers ---
+        // (math.sin already has a rich entry with examples; don't overwrite it.)
+        self.doc(
+            "math.tan",
+            "math.tan(radians)",
+            "Float",
+            "math",
+            "tangent of an angle in radians",
+        );
+        self.doc(
+            "math.asin",
+            "math.asin(x)",
+            "Float",
+            "math",
+            "arc sine of x, result in radians",
+        );
+        self.doc(
+            "math.acos",
+            "math.acos(x)",
+            "Float",
+            "math",
+            "arc cosine of x, result in radians",
+        );
+        self.doc(
+            "math.atan",
+            "math.atan(x)",
+            "Float",
+            "math",
+            "arc tangent of x, result in radians",
+        );
+        self.doc(
+            "math.atan2",
+            "math.atan2(y, x)",
+            "Float",
+            "math",
+            "angle of the point (x, y) from the positive x-axis, in radians (quadrant-correct)",
+        );
+        self.doc(
+            "math.sinh",
+            "math.sinh(x)",
+            "Float",
+            "math",
+            "hyperbolic sine of x",
+        );
+        self.doc(
+            "math.cosh",
+            "math.cosh(x)",
+            "Float",
+            "math",
+            "hyperbolic cosine of x",
+        );
+        self.doc(
+            "math.tanh",
+            "math.tanh(x)",
+            "Float",
+            "math",
+            "hyperbolic tangent of x",
+        );
+        self.doc(
+            "math.exp",
+            "math.exp(x)",
+            "Float",
+            "math",
+            "e raised to the power x",
+        );
+        self.doc(
+            "math.exp2",
+            "math.exp2(x)",
+            "Float",
+            "math",
+            "2 raised to the power x",
+        );
+        self.doc(
+            "math.log",
+            "math.log(x, base)",
+            "Float",
+            "math",
+            "logarithm of x in the given base",
+        );
+        self.doc(
+            "math.log2",
+            "math.log2(x)",
+            "Float",
+            "math",
+            "base-2 logarithm of x",
+        );
+        self.doc(
+            "math.cbrt",
+            "math.cbrt(x)",
+            "Float",
+            "math",
+            "cube root of x",
+        );
+        self.doc(
+            "math.trunc",
+            "math.trunc(x)",
+            "Float",
+            "math",
+            "x with its fractional part removed (rounded toward zero)",
+        );
+        self.doc(
+            "math.fract",
+            "math.fract(x)",
+            "Float",
+            "math",
+            "the fractional part of x (x minus its truncation)",
+        );
+        self.doc(
+            "math.sign",
+            "math.sign(x)",
+            "Int",
+            "math",
+            "-1, 0, or 1 according to the sign of x",
+        );
+        self.doc(
+            "math.gcd",
+            "math.gcd(a, b)",
+            "Int",
+            "math",
+            "greatest common divisor of two integers",
+        );
+        self.doc(
+            "math.lcm",
+            "math.lcm(a, b)",
+            "Int",
+            "math",
+            "least common multiple of two integers",
+        );
+
+        // --- fs: path helpers and directory walking ---
+        self.doc(
+            "fs.join",
+            "fs.join(segments)",
+            "String",
+            "fs",
+            "join a list of path segments with the platform separator — pure, no disk access",
+        );
+        self.doc(
+            "fs.basename",
+            "fs.basename(path)",
+            "String",
+            "fs",
+            "the final component of a path",
+        );
+        self.doc(
+            "fs.dirname",
+            "fs.dirname(path)",
+            "String",
+            "fs",
+            "the directory portion of a path",
+        );
+        self.doc(
+            "fs.ext",
+            "fs.ext(path)",
+            "String",
+            "fs",
+            "the file extension of a path, without the dot",
+        );
+        self.doc(
+            "fs.abs_path",
+            "fs.abs_path(path)",
+            "Result",
+            "fs",
+            "resolve a path to an absolute path against the current directory",
+        );
+        self.doc(
+            "fs.walk",
+            "fs.walk(dir)",
+            "Result",
+            "fs",
+            "every file below a directory, recursively (Ok(list of paths))",
+        );
+        self.doc(
+            "fs.glob",
+            "fs.glob(pattern)",
+            "Result",
+            "fs",
+            "paths matching a glob where * matches within a segment and ** across segments",
+        );
+
+        // --- csv: the mutating builder verbs and JSON bridge ---
+        self.doc(
+            "csv.add_row",
+            "csv.add_row(csv, row)",
+            "Result",
+            "csv",
+            "a copy of csv with one row (a list of cells) appended",
+        );
+        self.doc(
+            "csv.add_column",
+            "csv.add_column(csv, values, name)",
+            "Result",
+            "csv",
+            "a copy of csv with a column appended: values[0] is a header-row placeholder, name is the header",
+        );
+        self.doc(
+            "csv.set_cell",
+            "csv.set_cell(csv, row, col, value)",
+            "Result",
+            "csv",
+            "a copy of csv with one cell replaced",
+        );
+        self.doc(
+            "csv.set_headers",
+            "csv.set_headers(csv, headers)",
+            "Result",
+            "csv",
+            "a copy of csv with its header row set",
+        );
+        self.doc(
+            "csv.filter_rows",
+            "csv.filter_rows(csv, col_index, value)",
+            "Result",
+            "csv",
+            "keep only the rows whose column at integer index col_index equals the string value",
+        );
+        self.doc(
+            "csv.sort_by_column",
+            "csv.sort_by_column(csv, col_index, ascending)",
+            "Result",
+            "csv",
+            "a copy of csv sorted by the column at col_index — ascending when true, descending when false",
+        );
+        self.doc(
+            "csv.to_json",
+            "csv.to_json(rows, with_headers)",
+            "Result",
+            "csv",
+            "parsed rows to JSON text (with_headers treats row 0 as column names)",
+        );
+        self.doc(
+            "csv.from_json",
+            "csv.from_json(json, headers)",
+            "Result",
+            "csv",
+            "JSON text plus a header list to CSV rows (a list of string-lists, headers first)",
+        );
+
+        // --- db: transactions ---
+        self.doc(
+            "db.begin",
+            "db.begin(conn)",
+            "Result",
+            "db",
+            "begin a transaction on the connection",
+        );
+        self.doc(
+            "db.commit",
+            "db.commit(conn)",
+            "Result",
+            "db",
+            "commit the open transaction",
+        );
+        self.doc(
+            "db.rollback",
+            "db.rollback(conn)",
+            "Result",
+            "db",
+            "roll back the open transaction",
+        );
+
+        // --- random: remaining generators ---
+        self.doc(
+            "random.gauss",
+            "random.gauss(mean, std)",
+            "Float",
+            "random",
+            "a normally distributed draw with the given mean and standard deviation",
+        );
+        self.doc(
+            "random.randstr_alnum",
+            "random.randstr_alnum(n)",
+            "String",
+            "random",
+            "a random alphanumeric string of length n",
+        );
+    }
+
+    fn add_embedded_utility_docs(&mut self) {
+        // --- colx: the full collections toolkit (use colx) ---
+        self.doc(
+            "colx.unique",
+            "colx.unique(xs)",
+            "List",
+            "colx",
+            "the distinct elements of xs, first occurrence wins, order preserved",
+        );
+        self.doc(
+            "colx.partition",
+            "colx.partition(xs, pred)",
+            "Tuple",
+            "colx",
+            "split xs into a (matching, non-matching) tuple by a predicate",
+        );
+        self.doc(
+            "colx.sum_by",
+            "colx.sum_by(xs, f)",
+            "Number",
+            "colx",
+            "the sum of f(x) over every element of xs",
+        );
+        self.doc(
+            "colx.all",
+            "colx.all(xs, pred)",
+            "Bool",
+            "colx",
+            "does pred hold for every element of xs?",
+        );
+        self.doc(
+            "colx.any",
+            "colx.any(xs, pred)",
+            "Bool",
+            "colx",
+            "does pred hold for at least one element of xs?",
+        );
+        self.doc(
+            "colx.count_by",
+            "colx.count_by(xs, key_fn)",
+            "Map",
+            "colx",
+            "a map from key_fn(x) to how many elements share that key",
+        );
+        self.doc(
+            "colx.take_while",
+            "colx.take_while(xs, pred)",
+            "List",
+            "colx",
+            "the leading run of elements satisfying pred",
+        );
+        self.doc(
+            "colx.drop_while",
+            "colx.drop_while(xs, pred)",
+            "List",
+            "colx",
+            "xs with the leading run satisfying pred removed",
+        );
+        self.doc(
+            "colx.flat_map",
+            "colx.flat_map(xs, f)",
+            "List",
+            "colx",
+            "map f over xs and concatenate the resulting lists",
+        );
+        self.doc(
+            "colx.frequencies",
+            "colx.frequencies(xs)",
+            "Map",
+            "colx",
+            "a map from each distinct element to how often it occurs",
+        );
+        self.doc(
+            "colx.last",
+            "colx.last(xs)",
+            "Value",
+            "colx",
+            "the last element of xs",
+        );
+        self.doc(
+            "colx.min_by",
+            "colx.min_by(xs, key_fn)",
+            "Value",
+            "colx",
+            "the element with the smallest key_fn(x)",
+        );
+        self.doc(
+            "colx.max_by",
+            "colx.max_by(xs, key_fn)",
+            "Value",
+            "colx",
+            "the element with the largest key_fn(x)",
+        );
+        self.doc(
+            "colx.sort_by",
+            "colx.sort_by(xs, key_fn)",
+            "List",
+            "colx",
+            "xs sorted ascending by key_fn(x)",
+        );
+        self.doc(
+            "colx.window",
+            "colx.window(xs, size)",
+            "List",
+            "colx",
+            "every contiguous sublist of the given size (a sliding window)",
+        );
+        self.doc(
+            "colx.zip_with",
+            "colx.zip_with(a, b, f)",
+            "List",
+            "colx",
+            "combine two lists elementwise with f, stopping at the shorter",
+        );
+
+        // --- mathx: math in olang source (use mathx) ---
+        self.doc(
+            "mathx.PI",
+            "mathx.PI",
+            "Float",
+            "mathx",
+            "the constant pi (3.14159…)",
+        );
+        self.doc(
+            "mathx.E",
+            "mathx.E",
+            "Float",
+            "mathx",
+            "Euler's number e (2.71828…)",
+        );
+        self.doc(
+            "mathx.TAU",
+            "mathx.TAU",
+            "Float",
+            "mathx",
+            "the constant tau, 2*pi (6.28318…)",
+        );
+        self.doc(
+            "mathx.abs",
+            "mathx.abs(x)",
+            "Number",
+            "mathx",
+            "the absolute value of x",
+        );
+        self.doc(
+            "mathx.sign",
+            "mathx.sign(x)",
+            "Int",
+            "mathx",
+            "-1, 0, or 1 according to the sign of x",
+        );
+        self.doc(
+            "mathx.min",
+            "mathx.min(a, b)",
+            "Number",
+            "mathx",
+            "the smaller of a and b",
+        );
+        self.doc(
+            "mathx.max",
+            "mathx.max(a, b)",
+            "Number",
+            "mathx",
+            "the larger of a and b",
+        );
+        self.doc(
+            "mathx.gcd",
+            "mathx.gcd(a, b)",
+            "Int",
+            "mathx",
+            "greatest common divisor of two integers",
+        );
+        self.doc(
+            "mathx.lcm",
+            "mathx.lcm(a, b)",
+            "Int",
+            "mathx",
+            "least common multiple of two integers",
+        );
+        self.doc(
+            "mathx.factorial",
+            "mathx.factorial(n)",
+            "Int",
+            "mathx",
+            "n! — the product of 1..n",
+        );
+        self.doc(
+            "mathx.trunc",
+            "mathx.trunc(x)",
+            "Float",
+            "mathx",
+            "x with its fractional part removed (toward zero)",
+        );
+        self.doc(
+            "mathx.floor",
+            "mathx.floor(x)",
+            "Float",
+            "mathx",
+            "the largest whole number not greater than x",
+        );
+        self.doc(
+            "mathx.ceil",
+            "mathx.ceil(x)",
+            "Float",
+            "mathx",
+            "the smallest whole number not less than x",
+        );
+        self.doc(
+            "mathx.round",
+            "mathx.round(x)",
+            "Float",
+            "mathx",
+            "x rounded to the nearest whole number, halves away from zero",
+        );
+        self.doc(
+            "mathx.fract",
+            "mathx.fract(x)",
+            "Float",
+            "mathx",
+            "the fractional part of x (x minus its truncation)",
+        );
+        self.doc(
+            "mathx.radians",
+            "mathx.radians(deg)",
+            "Float",
+            "mathx",
+            "degrees converted to radians",
+        );
+        self.doc(
+            "mathx.degrees",
+            "mathx.degrees(rad)",
+            "Float",
+            "mathx",
+            "radians converted to degrees",
+        );
+        self.doc(
+            "mathx.sqrt",
+            "mathx.sqrt(x)",
+            "Float",
+            "mathx",
+            "the square root of x (Newton's method)",
+        );
     }
 
     /// Add filesystem function documentation
@@ -6038,6 +7912,33 @@ For function-specific syntax, use: {}:help <function_name>{}",
         }
     }
 
+    /// Exact (case-insensitive) function-name match, with no fuzzy fallback.
+    /// `:help <topic>` uses this so a bare module name like `proc` is not
+    /// fuzzily resolved to a single member (`proc.write_line`) before the
+    /// module-listing branch gets a chance to run.
+    pub fn has_exact_function(&self, name: &str) -> bool {
+        let name_lower = name.to_lowercase();
+        self.functions
+            .keys()
+            .any(|k| k.to_lowercase() == name_lower)
+    }
+
+    /// The short names of every documented function under `module.` — i.e.
+    /// `proc` → `["spawn", "write", …]`. Empty when nothing is namespaced
+    /// under that prefix. Drives the `:help <module>` listing uniformly for
+    /// native modules, embedded packages, and nested namespaces (`stats.norm`).
+    pub fn functions_in_module(&self, module: &str) -> Vec<String> {
+        let prefix = format!("{}.", module.to_lowercase());
+        let mut names: Vec<String> = self
+            .functions
+            .keys()
+            .filter(|k| k.to_lowercase().starts_with(&prefix))
+            .map(|k| k[prefix.len()..].to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
     /// Find function by name with case-insensitive and fuzzy matching
     pub fn find_function_by_name(&self, name: &str) -> Option<&FunctionDoc> {
         let name_lower = name.to_lowercase();
@@ -6275,5 +8176,77 @@ For function-specific syntax, use: {}:help <function_name>{}",
 impl fmt::Display for HelpSystem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.show_overview())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_function_lookup_has_no_fuzzy_fallback() {
+        let h = HelpSystem::new();
+        assert!(h.has_exact_function("proc.spawn"));
+        assert!(h.has_exact_function("PROC.SPAWN")); // case-insensitive
+        // A bare module name must NOT resolve as a function — that's what
+        // routes `:help proc` to the module listing instead of one member.
+        assert!(!h.has_exact_function("proc"));
+        assert!(!h.has_exact_function("stats"));
+    }
+
+    #[test]
+    fn module_listing_covers_every_stdlib_module() {
+        let h = HelpSystem::new();
+        for (module, min_fns) in [
+            ("proc", 11),
+            ("chan", 7),
+            ("time", 3),
+            ("toml", 3),
+            ("ods", 40),
+            ("stats", 22),
+            ("plot", 12),
+            ("dom", 45),
+            ("cli", 3),
+            ("term", 22),
+            ("ui", 5),
+            ("viz", 5),
+            ("dash", 7),
+            ("colx", 16),
+            ("mathx", 18),
+            ("str", 30),
+            ("math", 34),
+            ("fs", 23),
+            ("csv", 18),
+            ("db", 8),
+            ("random", 14),
+            ("os", 20),
+        ] {
+            let fns = h.functions_in_module(module);
+            assert!(
+                fns.len() >= min_fns,
+                "expected >= {} documented functions under `{}.`, got {}: {:?}",
+                min_fns,
+                module,
+                fns.len(),
+                fns
+            );
+        }
+        // Nested namespaces list too.
+        assert_eq!(h.functions_in_module("stats.norm").len(), 4);
+        // And unknown prefixes are empty, not an error.
+        assert!(h.functions_in_module("nosuchmodule").is_empty());
+    }
+
+    #[test]
+    fn no_terse_entry_shadows_a_rich_one() {
+        // Guard against a compact doc() call overwriting a full FunctionDoc
+        // (this happened to math.sin once): entries with examples must keep
+        // them.
+        let h = HelpSystem::new();
+        let sin = h.find_function_by_name("math.sin").expect("math.sin");
+        assert!(
+            !sin.examples.is_empty(),
+            "math.sin lost its rich entry (examples are gone)"
+        );
     }
 }
