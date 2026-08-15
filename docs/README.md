@@ -1,6 +1,14 @@
 # The olang Book
 
-The complete documentation for olang: a minimal, expressive language with
+The complete documentation for **olang — the Open Language**. olang means
+the word literally, at three layers: **open code** (a program's structure
+is a stable, public data format you read with `meta.parse`), **open
+artifacts** (a compiled binary carries its own source and declares what it
+may touch — `olang inspect`, capabilities), and **open execution** (any
+run records and replays bit-for-bit — the Open Timeline). No other
+language offers all three; [the Openness chapter](openness.md) is the map.
+
+Under that identity, olang is a minimal, expressive language with
 first-class functions, pipelines, pattern matching, and a built-in data
 stack, implemented in Rust with a three-tier runtime — a tree-walking
 interpreter (the semantic authority), a bytecode VM, and a Cranelift JIT
@@ -17,6 +25,7 @@ the implementation.
 
 | Chapter | What it covers |
 |---|---|
+| **[Openness](openness.md)** | What *Open Language* means, mechanically — open code (`meta.parse`), open artifacts (`olang inspect` + capabilities), open execution (record/replay). olang's defining identity, and the map to where each pillar is documented |
 | **[A Tour of olang](tour.md)** | The language, taught by building one small program end-to-end — from a list of strings to a parallel statistical report |
 | **[The Language Reference](language.md)** | Every construct, precisely: values and mutability, evaluation order, operators, control flow, pattern matching, functions and closure semantics, types, traits, errors, concurrency, modules, testing |
 | **[Common Pitfalls](pitfalls.md)** | The sharp edges collected in one place — missing map keys, integer division, operator-precedence surprises, closure capture, truthiness, indexing, and the other behaviors that trip up newcomers, each with the idiom that avoids it |
@@ -53,9 +62,11 @@ run_all.ol`.
 
 ## Reading order
 
-New to olang? **Tour → Language Reference** (skim, then keep as reference)
-**→ examples/**, with [Common Pitfalls](pitfalls.md) close at hand for the
-behaviors that surprise. Ready to build something real?
+Want to know what makes olang *olang*? Start with
+[Openness](openness.md) — the three-pillar identity — then the Tour.
+New to the language itself? **Tour → Language Reference** (skim, then keep
+as reference) **→ examples/**, with [Common Pitfalls](pitfalls.md) close
+at hand for the behaviors that surprise. Ready to build something real?
 [Building Robust Systems](demo.md) walks the flagship example's
 architecture pattern by pattern. Building something specific? Go straight to the
 [stdlib](stdlib.md) chapter for your domain — data work has its own

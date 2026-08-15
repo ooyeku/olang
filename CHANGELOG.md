@@ -300,6 +300,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Documentation
 
+- **The docs are centered on the Open Language identity.** A new
+  [Openness chapter](docs/openness.md) — now the book's opening chapter —
+  states the three-pillar identity (open code, open artifacts, open
+  execution), why it is uniquely possible for olang, and maps each pillar
+  to its detailed home. The book landing, the repo README, and the
+  website hero/metadata all lead with it; the Cargo package description
+  follows. The name `olang` is unchanged — it already stands for *Open
+  Language*.
+
 - **New chapter: [Common Pitfalls](docs/pitfalls.md).** The language's
   sharp edges collected in one place with the idiom that avoids each —
   missing map keys returning Unit, integer division, the `&&`/`||` and

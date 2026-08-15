@@ -9,30 +9,33 @@
   }
 </script>
 
-<svelte:head><title>olang — a batteries-included functional language</title></svelte:head>
+<svelte:head><title>olang — the Open Language</title></svelte:head>
 
 <section class="hero">
   <div class="container">
     <div>
       <h1><img src="/brand/logo.svg" alt="olang" /></h1>
       <p class="lede">
-        A batteries-included dynamic functional language: pipelines, pattern
-        matching, algebraic data types, <b>Result</b>-based errors — with a
-        built-in data stack, real no-GIL parallelism, and a three-tier runtime
-        where every tier must agree with the interpreter exactly, or refuse.
+        <b>The Open Language.</b> A program's structure is a public data format
+        (<code>meta.parse</code>); a compiled binary carries its own source and
+        declares what it may touch (<code>olang inspect</code>, capabilities);
+        any run records and replays bit-for-bit. Batteries-included and
+        functional underneath — pipelines, pattern matching, a built-in data
+        stack, no-GIL parallelism, a three-tier runtime that always agrees with
+        the interpreter or refuses.
       </p>
       <dl class="spec">
         <div>
-          <dt>runtime</dt>
-          <dd>interpreter → bytecode VM → Cranelift JIT; falling back is always correct</dd>
+          <dt>open code</dt>
+          <dd><code>meta.parse(src)</code> — the program as walkable data; linters and codemods in olang</dd>
         </div>
         <div>
-          <dt>parallelism</dt>
-          <dd><code>spawn</code> on OS threads; <code>par_map</code> and <code>par for</code> fan across every core — no GIL</dd>
+          <dt>open artifacts</dt>
+          <dd><code>olang inspect ./tool</code> — source, checksum, and per-dependency capabilities; no black boxes</dd>
         </div>
         <div>
-          <dt>data stack</dt>
-          <dd><code>ods.series([12.5, 8.0, 15.25]) * 1.07 |&gt; ods.mean</code> — in every build, no import</dd>
+          <dt>open execution</dt>
+          <dd><code>olang --record bug.olt</code> then <code>replay</code> — deterministic, portable, to the last digit</dd>
         </div>
         <div>
           <dt>playground</dt>

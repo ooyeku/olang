@@ -130,6 +130,11 @@ fn types_chapter_examples_work() {
 }
 
 #[test]
+fn openness_chapter_examples_work() {
+    run_doc_file("docs/openness.md", include_str!("../docs/openness.md"));
+}
+
+#[test]
 fn ods_chapter_examples_work() {
     run_doc_file("docs/ods.md", include_str!("../docs/ods.md"));
 }

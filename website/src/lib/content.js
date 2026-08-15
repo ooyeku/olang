@@ -51,6 +51,7 @@ export async function highlight(code, lang = 'olang') {
 // ── the book ───────────────────────────────────────────────────────────
 // Chapter order mirrors docs/README.md's reading order.
 export const BOOK = [
+  { slug: 'openness', file: 'openness.md', title: 'Openness' },
   { slug: 'tour', file: 'tour.md', title: 'The Tour' },
   { slug: 'language', file: 'language.md', title: 'The Language' },
   { slug: 'pitfalls', file: 'pitfalls.md', title: 'Common Pitfalls' },

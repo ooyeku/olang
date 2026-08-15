@@ -2,12 +2,32 @@
   <img src="branding/banner.svg" alt="olang — pipelines, pattern matching, batteries included" width="840">
 </p>
 
-A batteries-included dynamic functional language: pipelines, pattern
-matching, algebraic data types, immutable values, `Result`-based errors —
-with a built-in data stack (Series, Frames, statistical inference, SVG
-charts), real no-GIL parallelism, a source-based package manager, and a
-three-tier runtime — interpreter → bytecode VM → native JIT — where every
-tier below the interpreter must agree with it exactly or refuse.
+**olang is the Open Language** — and it means the word literally, at three
+layers no other language offers together:
+
+- **Open code** — a program's own structure is a stable, public data
+  format your olang code reads and transforms (`meta.parse`), so linters
+  and codemods are olang scripts, not compiler changes.
+- **Open artifacts** — a compiled binary carries its own source and a
+  checksum, and declares exactly what it may touch (`olang inspect`,
+  per-dependency capabilities): never a black box, never a silent
+  over-reacher.
+- **Open execution** — any run records and replays bit-for-bit, anywhere
+  (`olang --record` / `replay`): a bug report becomes a file.
+
+These fall out of decisions olang already made — early-stabilized syntax,
+immutable values, a small explicit effect boundary — and an incumbent
+cannot follow (Python can't freeze its AST; Go won't embed source; no
+mainstream runtime is deterministic enough to promise replay). See
+**[Openness](docs/openness.md)** for the whole story.
+
+Under that identity, olang is a batteries-included dynamic functional
+language: pipelines, pattern matching, algebraic data types, immutable
+values, `Result`-based errors — with a built-in data stack (Series,
+Frames, statistical inference, SVG charts), real no-GIL parallelism, a
+source-based package manager, and a three-tier runtime — interpreter →
+bytecode VM → native JIT — where every tier below the interpreter must
+agree with it exactly or refuse.
 
 ```olang
 type Shape = enum { Circle(Float), Rect(Float, Float) }
