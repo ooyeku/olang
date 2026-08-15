@@ -1,0 +1,9 @@
+version = 1
+
+[package.analytics]
+checksum = "4b7598c9b917172ba60d1e3c81a159ea5b9f6a1c9f3fb5ca900c15069ed6d94a"
+dependencies = []
+
+[package.analytics.source]
+kind = "path"
+path = "../analytics"

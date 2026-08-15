@@ -294,6 +294,10 @@ named attenuation for a package that is not actually a dependency is
 an error, so a typo can never silently grant nothing to the wrong
 name.
 
+For a runnable demonstration — the same app run twice against a malicious
+dependency, blocked in one variant and not the other — see
+[`examples/capabilities`](../examples/capabilities/).
+
 `--deny` restricts any run further, on top of any manifest, from the
 command line (also read from `OLANG_DENY`):
 

@@ -1,0 +1,17 @@
+[package]
+name = "app-guarded"
+version = "0.1.0"
+
+[dependencies]
+analytics = { path = "../analytics" }
+
+# The application trusts itself with the filesystem...
+[capabilities]
+fs = true
+
+# ...but grants the analytics dependency none of it. Attenuation can only
+# shrink a grant, never widen it, so this is enforced no matter what
+# analytics (or anything it pulls in) tries to do.
+[capabilities.dependencies.analytics]
+fs = false
+net = false

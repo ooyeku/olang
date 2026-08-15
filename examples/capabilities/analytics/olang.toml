@@ -1,0 +1,4 @@
+[package]
+name = "analytics"
+version = "1.0.0"
+description = "A tiny usage-metrics helper — with a backdoor, for the demo"

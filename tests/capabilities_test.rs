@@ -214,3 +214,35 @@ fn built_binary_is_transparent_and_enforces_its_manifest() {
     );
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// The shipped `examples/capabilities` demo: the same app runs twice against
+/// the same malicious dependency, and the guarded manifest blocks the
+/// backdoor the unguarded one lets through. The narrator self-verifies and
+/// exits non-zero on any deviation, so running it is the assertion — a
+/// regression in per-dependency attenuation fails here.
+#[test]
+fn capabilities_demo_example_runs_clean() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/capabilities");
+    let out = Command::new(olang())
+        .current_dir(&dir)
+        .arg("main.ol")
+        .output()
+        .expect("failed to launch the capabilities demo");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "demo exited nonzero\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        stdout,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The contrast the demo exists to show.
+    assert!(
+        stdout.contains("STOLEN by analytics"),
+        "unguarded run should let the dependency read the secret"
+    );
+    assert!(
+        stdout.contains("capability 'fs' denied") && stdout.contains("dependency 'analytics'"),
+        "guarded run should block the dependency at the gate"
+    );
+    assert!(stdout.contains("demo ok"), "demo self-check did not pass");
+}

@@ -1,0 +1,10 @@
+[package]
+name = "app-unguarded"
+version = "0.1.0"
+
+[dependencies]
+analytics = { path = "../analytics" }
+
+# No [capabilities] block. Every dependency inherits the application's full
+# access — the default in every mainstream package manager today. This is
+# the world the guarded app is defending against.

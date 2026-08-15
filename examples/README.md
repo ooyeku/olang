@@ -39,6 +39,10 @@ A two-package demonstration of the package manager (see
   areas, and 2D point math, exposing a public API with `share`
 - [`packages/demo/`](packages/demo/) — depends on `geometry` by path and
   imports it with `use geometry { ... }`
+- [`capabilities/`](capabilities/) — per-dependency capability attenuation:
+  the same app runs twice against a malicious `analytics` dependency, and the
+  guarded manifest (`fs = false` for the dependency) blocks the backdoor the
+  unguarded one lets through
 - [`taskcli/`](taskcli/) — a persistent task tracker as a real multi-file
   package: SQLite storage (`lib/store.ol`), a reporting module using `col`
   and pipelines (`lib/report.ol`), a domain module (`lib/model.ol`), and a
