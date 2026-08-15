@@ -484,8 +484,8 @@ opportunistic).
 | # | Sev | Finding | Fix | Status |
 |---|---|---|---|---|
 | S1 | Critical | A built binary passes `inspect --verify` while executing an AST that is not its source — the digest covered source+manifest+lockfile, not the executed AST | Bind the AST into the digest (bundle format 3); `--verify`/`--against` also assert `parse(embedded source) == embedded AST` so `--source` is honest | **landed (0.59)** |
-| S2 | High | `db` is a latent filesystem capability: with `fs=false, db=true`, `db.open("/path")` (CREATE) or `ATTACH DATABASE` creates/writes arbitrary files | Gate the file-path argument of `db.open`/ATTACH under `fs` | planned |
-| S3 | High | `net` is a latent file-read capability: with `fs=false, net=true`, an `http.serve` handler returning `body_file` reads any local file | Gate `body_file` reads under `fs` | planned |
+| S2 | High | `db` is a latent filesystem capability: with `fs=false, db=true`, `db.open("/path")` (CREATE) or `ATTACH DATABASE` creates/writes arbitrary files | Gate the file-path argument of `db.open`/ATTACH under `fs` | **landed (0.59)** — a filesystem sub-gate at dispatch: `db.open` on a file needs `fs=true`, an in-memory db needs none, and a SQL `ATTACH` token requires `fs` |
+| S3 | High | `net` is a latent file-read capability: with `fs=false, net=true`, an `http.serve` handler returning `body_file` reads any local file | Gate `body_file` reads under `fs` | **landed (0.59)** — the serve response builder refuses `body_file` (403) unless the app's grant permits `fs` read |
 | S4 | High | Timeline replays recorded values into the wrong slots under map iteration — `HashMap` order is process-randomized and replay matches op-name+position only (arguments never stored) — with **no divergence raised** | Deterministic map iteration order; record and compare call arguments in the trace | planned |
 | S5 | High | `meta.parse` drops children exactly where calls hide (`match` arms, `await`/`assert*`, `map`/struct/object/template literals), so a lint over the node list silently misses code | Emit all children in the conversion; add a completeness self-check; document any deliberate summary nodes | planned |
 | S6 | Med | Timeline omits whole nondeterminism channels (`db.*`, `proc.*`, `crypto.random_bytes`/`encrypt_*`) and machine-identity `os.*` (`arch`/`os_type`/`args`/`cwd`), breaking replay and the cross-machine portability claim (`os.args` also has a doc-vs-code mismatch) | Extend the recorded set; fix the `os.args` note | planned |
@@ -494,11 +494,13 @@ opportunistic).
 | S9 | Low | A symlinked dependency file can resolve outside its dep dir, so attribution falls back to the **wider app grant** | Fail-closed on an unresolvable / out-of-dir `def_file` instead of defaulting to the app grant | planned |
 | S10 | Low | Batch hardening: `record_result` claims a round-trip guard it lacks (NaN/Inf → JSON `null` → wrong replay); `os.exit` ungated (any code can abort the host); `BundleMeta.format` never validated; malformed rule findings silently dropped | Each addressed in a cleanup rung | planned |
 
-**Honest-status note:** until S2/S3 land, `fs=false` does **not** confine
-the filesystem when `db` or `net` is granted; until S4/S6 land, the
-record/replay "bit-for-bit, portable, divergence-detected" guarantee holds
-only for single-threaded, map-iteration-free programs over the recorded
-set. The docs should state these bounds rather than the unqualified claim.
+**Honest-status note:** with S1–S3 landed, the transparent binary
+authenticates the program it runs and `fs=false` now confines the
+filesystem even when `db`/`net` is granted. The remaining known bound is
+the timeline: until S4/S6 land, the record/replay "bit-for-bit, portable,
+divergence-detected" guarantee holds only for single-threaded,
+map-iteration-free programs over the recorded set — the docs state this
+bound rather than the unqualified claim.
 
 ## The data-pipeline campaign (0.60.0) — the flagship niche
 

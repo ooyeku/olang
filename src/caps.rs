@@ -100,6 +100,74 @@ impl Caps {
     }
 }
 
+impl FsCap {
+    fn rank(self) -> u8 {
+        match self {
+            FsCap::None => 0,
+            FsCap::Read => 1,
+            FsCap::Full => 2,
+        }
+    }
+    /// Does this grant permit an operation that needs at least `needed`?
+    /// (`Full` ⊇ `Read` ⊇ `None`.)
+    pub fn allows(self, needed: FsCap) -> bool {
+        self.rank() >= needed.rank()
+    }
+    /// The manifest word for this level.
+    pub fn word(self) -> &'static str {
+        match self {
+            FsCap::None => "false",
+            FsCap::Read => "\"read\"",
+            FsCap::Full => "true",
+        }
+    }
+}
+
+/// True for a SQLite path that opens no file (in-memory / temporary), so
+/// `db.open` on it touches no filesystem.
+fn is_in_memory_db(path: &str) -> bool {
+    let p = path.trim();
+    p.is_empty() || p == ":memory:" || p.starts_with("file::memory:") || p.contains("mode=memory")
+}
+
+/// True if a SQL string runs an `ATTACH` statement — which reaches the
+/// filesystem (`ATTACH '/path' AS x`) regardless of the `db` grant. Matched
+/// as a token, not a substring, so a column like `attachment` never trips.
+fn has_attach(sql: &str) -> bool {
+    sql.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|tok| tok.eq_ignore_ascii_case("attach"))
+}
+
+/// The filesystem level a builtin call implies from its *argument*,
+/// independent of the call's own module capability. Some effectful modules
+/// take a filesystem path: `db.open` on a file creates/writes it, and a
+/// `db` query that runs `ATTACH` reads/writes an arbitrary file. Without
+/// this, `db` (and, for served files, `net`) would each be a latent
+/// filesystem capability — a program with `fs = false` could still touch
+/// the disk through them. `arg` is the call's relevant string argument (the
+/// path for `db.open`, the SQL for `db.execute`/`db.query`/`db.query_one`).
+/// Returns the required `fs` level, or None when the call touches no file.
+pub fn implied_fs(full_name: &str, arg: Option<&str>) -> Option<FsCap> {
+    let arg = arg?;
+    match full_name {
+        "db.open" => {
+            if is_in_memory_db(arg) {
+                None
+            } else {
+                Some(FsCap::Full) // opening a file db can create and write it
+            }
+        }
+        "db.execute" | "db.query" | "db.query_one" => {
+            if has_attach(arg) {
+                Some(FsCap::Full)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// A capability value as written in TOML: `true`, `false`, or a level
 /// string like `"read"`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -580,6 +648,40 @@ mod tests {
             ..Default::default()
         };
         assert!(CapTable::build(&bad, &dirs).is_err());
+    }
+
+    #[test]
+    fn implied_fs_confines_db_to_the_filesystem_grant() {
+        // A file database implies a full-fs effect (open can create/write).
+        assert_eq!(implied_fs("db.open", Some("/tmp/x.db")), Some(FsCap::Full));
+        // In-memory / temporary databases touch no file.
+        assert_eq!(implied_fs("db.open", Some(":memory:")), None);
+        assert_eq!(implied_fs("db.open", Some("")), None);
+        assert_eq!(
+            implied_fs("db.open", Some("file::memory:?cache=shared")),
+            None
+        );
+        // ATTACH in SQL reaches the filesystem; a benign query does not.
+        assert_eq!(
+            implied_fs("db.execute", Some("ATTACH DATABASE '/x' AS e")),
+            Some(FsCap::Full)
+        );
+        assert_eq!(
+            implied_fs("db.query", Some("attach '/x' as e")),
+            Some(FsCap::Full)
+        );
+        assert_eq!(implied_fs("db.execute", Some("SELECT * FROM t")), None);
+        // A column named `attachment` is a token, not `ATTACH` — no trip.
+        assert_eq!(
+            implied_fs("db.query", Some("SELECT attachment FROM t")),
+            None
+        );
+        // Non-db calls imply nothing here.
+        assert_eq!(implied_fs("fs.read_file", Some("/x")), None);
+        // The level ordering used by the gate.
+        assert!(FsCap::Full.allows(FsCap::Read));
+        assert!(!FsCap::Read.allows(FsCap::Full));
+        assert!(!FsCap::None.allows(FsCap::Read));
     }
 
     #[test]

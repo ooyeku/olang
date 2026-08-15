@@ -25,6 +25,71 @@ fn write(path: &std::path::Path, s: &str) {
     std::fs::write(path, s).unwrap();
 }
 
+/// S2: `db` must not be a latent filesystem capability. With `db=true,
+/// fs=false`, opening a *file* database (which can create/write it) and
+/// running `ATTACH` (which reaches an arbitrary path) are both denied,
+/// while an in-memory database — which touches no file — is allowed.
+#[test]
+fn db_is_not_a_latent_filesystem_capability() {
+    let ws = workspace("dbfs");
+    write(
+        &ws.join("olang.toml"),
+        "[package]\nname = \"t\"\nversion = \"1.0.0\"\n\n[capabilities]\ndb = true\nfs = false\n",
+    );
+
+    // A file database is denied under fs=false.
+    write(
+        &ws.join("file.ol"),
+        "unwrap(db.open(\"/tmp/olang_caps_evil.db\"))\n",
+    );
+    let file = Command::new(olang())
+        .current_dir(&ws)
+        .arg("file.ol")
+        .output()
+        .unwrap();
+    assert!(!file.status.success(), "file db.open must be denied");
+    assert!(
+        String::from_utf8_lossy(&file.stderr).contains("capability 'fs' denied"),
+        "stderr: {}",
+        String::from_utf8_lossy(&file.stderr)
+    );
+
+    // ATTACH from an in-memory db is denied too.
+    write(
+        &ws.join("attach.ol"),
+        "let c = unwrap(db.open(\":memory:\"))\nunwrap(db.execute(c, \"ATTACH DATABASE '/tmp/olang_caps_evil.db' AS e\"))\n",
+    );
+    let attach = Command::new(olang())
+        .current_dir(&ws)
+        .arg("attach.ol")
+        .output()
+        .unwrap();
+    assert!(!attach.status.success(), "ATTACH must be denied");
+    assert!(
+        String::from_utf8_lossy(&attach.stderr).contains("capability 'fs' denied"),
+        "stderr: {}",
+        String::from_utf8_lossy(&attach.stderr)
+    );
+
+    // An in-memory database touches no file — allowed.
+    write(
+        &ws.join("mem.ol"),
+        "unwrap(db.open(\":memory:\"))\nprintln(\"ok\")\n",
+    );
+    let mem = Command::new(olang())
+        .current_dir(&ws)
+        .arg("mem.ol")
+        .output()
+        .unwrap();
+    assert!(
+        mem.status.success(),
+        "in-memory db should be allowed: {}",
+        String::from_utf8_lossy(&mem.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
 #[test]
 fn manifest_grant_denies_writes_under_fs_read() {
     let ws = workspace("fsread");

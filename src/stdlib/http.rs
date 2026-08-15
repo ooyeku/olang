@@ -654,7 +654,7 @@ fn response_bytes(
 /// Turn whatever the handler returned into response bytes. A response struct
 /// (from `http.response`/`response_with_headers`, or any struct-like value
 /// with `status`/`body`/`headers` fields) is honored; a bare string is a 200.
-fn render_handler_result(value: &Value, keep_alive: bool) -> Vec<u8> {
+fn render_handler_result(value: &Value, keep_alive: bool, fs: crate::caps::FsCap) -> Vec<u8> {
     match value {
         Value::String(s) => response_bytes(200, s, &[], keep_alive),
         Value::Struct { fields, .. } => {
@@ -685,6 +685,16 @@ fn render_handler_result(value: &Value, keep_alive: bool) -> Vec<u8> {
             // (olang strings cannot carry arbitrary bytes; wasm artifacts
             // and images can). Takes precedence over `body` when present.
             if let Some(Value::String(path)) = fields.get("body_file") {
+                // `body_file` reads a file: confine it under `fs`, so `net`
+                // (which gates `http`) is not a latent file-read capability.
+                if !fs.allows(crate::caps::FsCap::Read) {
+                    return response_bytes(
+                        403,
+                        "body_file: capability 'fs' denied (this program cannot read files)",
+                        &[],
+                        keep_alive,
+                    );
+                }
                 return match std::fs::read(path.as_str()) {
                     Ok(bytes) => response_raw_bytes(status, &bytes, &headers, keep_alive),
                     Err(e) => {
@@ -858,8 +868,9 @@ fn serve_connection(
                 let keep_alive =
                     !client_wants_close && served + 1 < config.max_requests_per_connection;
                 let request_value = request_to_value(&req, &remote_addr);
+                let fs_grant = interpreter.effective_fs();
                 let bytes = match interpreter.call_function(handler.clone(), vec![request_value]) {
-                    Ok(result) => render_handler_result(&result, keep_alive),
+                    Ok(result) => render_handler_result(&result, keep_alive, fs_grant),
                     Err(error) => {
                         crate::log::get_logger().error(
                             "http",
@@ -1518,7 +1529,12 @@ mod tests {
 
     #[test]
     fn test_render_handler_result_bare_string_is_200() {
-        let text = String::from_utf8(render_handler_result(&string_val("hi"), false)).unwrap();
+        let text = String::from_utf8(render_handler_result(
+            &string_val("hi"),
+            false,
+            crate::caps::FsCap::Full,
+        ))
+        .unwrap();
         assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(text.ends_with("hi"));
     }
@@ -1526,9 +1542,49 @@ mod tests {
     #[test]
     fn test_render_handler_result_uses_response_struct() {
         let resp = http_response(vec![int_val(201), string_val("made")]).unwrap();
-        let text = String::from_utf8(render_handler_result(&resp, false)).unwrap();
+        let text = String::from_utf8(render_handler_result(
+            &resp,
+            false,
+            crate::caps::FsCap::Full,
+        ))
+        .unwrap();
         assert!(text.starts_with("HTTP/1.1 201 Created\r\n"));
         assert!(text.ends_with("made"));
+    }
+
+    /// S3: `body_file` reads a file, so `net` (which gates `http`) must not
+    /// be a latent file-read capability. Under `fs = None` the read is
+    /// refused with a 403 instead of serving the file's bytes.
+    #[test]
+    fn test_body_file_denied_without_fs() {
+        let mut fields = HashMap::new();
+        fields.insert("status".to_string(), int_val(200));
+        fields.insert("body_file".to_string(), string_val("/etc/hostname"));
+        let resp = Value::Struct {
+            type_name: "Response".to_string(),
+            fields,
+        };
+        // fs = None: denied.
+        let denied = String::from_utf8(render_handler_result(
+            &resp,
+            false,
+            crate::caps::FsCap::None,
+        ))
+        .unwrap();
+        assert!(
+            denied.starts_with("HTTP/1.1 403"),
+            "expected 403, got: {denied}"
+        );
+        assert!(denied.contains("capability 'fs' denied"));
+        // fs = Read: the read is permitted (the file may or may not exist,
+        // but the capability gate does not refuse it).
+        let allowed = String::from_utf8(render_handler_result(
+            &resp,
+            false,
+            crate::caps::FsCap::Read,
+        ))
+        .unwrap();
+        assert!(!allowed.contains("capability 'fs' denied"));
     }
 
     #[test]

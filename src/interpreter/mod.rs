@@ -3269,10 +3269,12 @@ impl Interpreter {
         self.caps_trace.take()
     }
 
-    /// The capability gate, called from builtin dispatch. None = allowed.
-    /// Some(message) = denied, with the message naming the capability,
-    /// the call, and the package whose grant refused it.
-    pub fn capability_denial(&mut self, full_name: &str) -> Option<String> {
+    /// The capability set governing the currently-executing code, and the
+    /// attenuated dependency (if any) that code belongs to. None when no
+    /// capabilities are active (the gate then costs a single branch).
+    /// Attribution is by the executing function's `def_file`, compared as a
+    /// canonicalized (memoized) real path.
+    fn current_caps(&mut self) -> Option<(crate::caps::Caps, Option<String>)> {
         let table = self.caps.clone()?;
         let def_file = self
             .coverage_file_stack
@@ -3280,8 +3282,6 @@ impl Interpreter {
             .and_then(|f| f.as_deref())
             .or(self.current_module_path.as_deref())
             .map(|s| s.to_string());
-        // Attribution compares real paths: canonicalize once per distinct
-        // def_file and memoize.
         let canon = def_file.as_ref().map(|f| {
             self.caps_path_cache
                 .entry(f.clone())
@@ -3291,7 +3291,15 @@ impl Interpreter {
                 .clone()
         });
         let (caps, package) = table.caps_for(canon.as_deref());
-        let denied = crate::caps::check(caps, full_name)?;
+        Some((*caps, package.map(|s| s.to_string())))
+    }
+
+    /// The capability gate, called from builtin dispatch. None = allowed.
+    /// Some(message) = denied, with the message naming the capability,
+    /// the call, and the package whose grant refused it.
+    pub fn capability_denial(&mut self, full_name: &str) -> Option<String> {
+        let (caps, package) = self.current_caps()?;
+        let denied = crate::caps::check(&caps, full_name)?;
         Some(match package {
             Some(pkg) => format!(
                 "capability '{}' denied: {} requires it, and dependency '{}' is granted {} (olang.toml [capabilities.dependencies.{}])",
@@ -3308,6 +3316,56 @@ impl Interpreter {
                 caps.summary()
             ),
         })
+    }
+
+    /// The filesystem sub-gate: some effectful builtins take a path argument
+    /// and touch the filesystem beyond their own module capability
+    /// (`db.open` on a file, a `db` query running `ATTACH`). This confines
+    /// that effect under `fs`, so `db` is not a latent filesystem
+    /// capability. Called from builtin dispatch alongside `capability_denial`;
+    /// a no-op (one branch) when no capabilities are active.
+    pub fn implied_fs_denial(&mut self, full_name: &str, args: &[Value]) -> Option<String> {
+        self.caps.as_ref()?;
+        let relevant = match full_name {
+            "db.open" => args.first(),
+            "db.execute" | "db.query" | "db.query_one" => args.get(1),
+            _ => return None,
+        };
+        let path = match relevant {
+            Some(Value::String(s)) => Some(s.as_str().to_string()),
+            _ => None,
+        };
+        let needed = crate::caps::implied_fs(full_name, path.as_deref())?;
+        let (caps, package) = self.current_caps()?;
+        if caps.fs.allows(needed) {
+            return None;
+        }
+        Some(match package {
+            Some(pkg) => format!(
+                "capability 'fs' denied: {} reaches the filesystem (needs fs={}), and dependency '{}' is granted {} (olang.toml [capabilities.dependencies.{}])",
+                full_name,
+                needed.word(),
+                pkg,
+                caps.summary(),
+                pkg
+            ),
+            None => format!(
+                "capability 'fs' denied: {} reaches the filesystem (needs fs={}), and this program is granted {} ([capabilities] manifest or --deny)",
+                full_name,
+                needed.word(),
+                caps.summary()
+            ),
+        })
+    }
+
+    /// The application's filesystem grant (or `Full` when no capabilities are
+    /// active). Used where an effect happens outside the dispatch gate — the
+    /// `http.serve` response builder reading a `body_file`.
+    pub fn effective_fs(&self) -> crate::caps::FsCap {
+        self.caps
+            .as_ref()
+            .map(|t| t.app.fs)
+            .unwrap_or(crate::caps::FsCap::Full)
     }
 
     pub fn enable_test_mode(&mut self) {

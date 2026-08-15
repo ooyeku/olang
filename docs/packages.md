@@ -285,6 +285,13 @@ fs = false         # this dependency cannot touch the filesystem,
 net = false        # even if a future version tries to
 ```
 
+File access that happens *through* another module is confined under `fs`
+too, so `db` and `net` are not latent filesystem capabilities: opening a
+file-backed database (`db.open` on a path, or a `db` query that runs
+`ATTACH`) requires `fs`, and an `http.serve` handler that returns a
+`body_file` is refused unless the program may read files. An in-memory
+database (`:memory:`) needs no `fs`.
+
 Enforcement is by *attribution*: when code that lives in `leftpad`'s
 directory calls a gated builtin, `leftpad`'s grant applies — the
 intersection of the app's capabilities and the attenuation. A

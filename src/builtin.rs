@@ -557,6 +557,12 @@ impl BuiltinFunctions {
         if let Some(message) = interpreter.capability_denial(name) {
             return Err(InterpreterError::RuntimeError { message });
         }
+        // The filesystem sub-gate: a `db.open` on a file, or a `db` query
+        // running `ATTACH`, touches the filesystem and must satisfy `fs`
+        // too — otherwise `db` would be a latent filesystem capability.
+        if let Some(message) = interpreter.implied_fs_denial(name, &arguments) {
+            return Err(InterpreterError::RuntimeError { message });
+        }
         // --trace-caps: record the demand this call makes, so a profile of
         // exercised capabilities can be reported at end of run. A no-op
         // unless profiling is on.

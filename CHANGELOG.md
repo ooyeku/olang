@@ -51,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
+- **`db` and `net` are no longer latent filesystem capabilities (openness
+  soundness pass S2/S3).** A filesystem sub-gate now confines file access
+  that happens *through* other modules: `db.open` on a file path requires
+  `fs` (an in-memory `:memory:` database needs none), a `db` query running
+  `ATTACH` requires `fs`, and an `http.serve` handler returning `body_file`
+  is refused (403) unless the program's grant permits `fs` read. Previously
+  a program with `fs = false` could still create/write arbitrary files via
+  `db.open`/`ATTACH` or read any file via `body_file`. Now `fs = false`
+  actually confines the filesystem even when `db` or `net` is granted.
+
 - **The transparency checksum now binds the executed AST, closing a
   critical integrity hole (openness soundness pass S1).** A built binary
   runs its embedded **AST**, not its source (the source is only shown for
