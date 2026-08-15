@@ -373,6 +373,23 @@ pub struct JitCache {
 // owning (single-threaded) VM. Function pointers are plain code addresses.
 unsafe impl Send for JitCache {}
 
+impl Drop for JitCache {
+    fn drop(&mut self) {
+        // Cranelift's `JITModule` does NOT release its mmap'd executable
+        // pages on a normal drop — `free_memory` must be called explicitly,
+        // or every module leaks its compiled code. This is acute for a
+        // program that `spawn`s a worker pool per tick: each worker clones
+        // the interpreter, JIT-compiles its own copy of the hot functions,
+        // and — without this — leaked the code pages when it finished (the
+        // per-tick soak leak). Safe here: the cache owns the module and
+        // every function pointer into it lives in `self.table`, which is
+        // dropped alongside, so no dangling pointer can outlive the free.
+        if let Some(module) = self.module.take() {
+            unsafe { module.free_memory() }
+        }
+    }
+}
+
 impl std::fmt::Debug for JitCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("JitCache")

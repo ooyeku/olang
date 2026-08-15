@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two real per-tick memory leaks in the concurrency path, found by
+  soak-testing.** A program that opened a channel or `spawn`ed a worker
+  pool every tick (Harborline's crew loop is the canonical shape) grew
+  memory without bound:
+  - *Channels were pinned in a process-wide registry that `close` never
+    removed* — every channel ever created leaked its entry. Channels are
+    now `Value::Native` handles that own the channel by `Arc`, so the last
+    handle drop frees it; there is no registry to leak. (`leaks`: 20 000
+    channels went from ~47 MB to a flat ~14 MB.)
+  - *The `spawn` registry kept every completed task's memoized result
+    forever.* A promise now carries a drop-guard shared by its clones;
+    when the last clone drops — the last place that could still `await`
+    the task — the registry entry is removed. Double-await (a tested
+    guarantee) and fan-out-then-collect both keep working. (`leaks`:
+    64 000 spawns went from linear growth to flat.)
+
+  Together these cut Harborline's real per-tick growth by ~65 %, and
+  `leaks` now reports zero. Two defensive hardenings landed alongside:
+  the bytecode tier's hot-mirror `Vec` (indexed by a global function id)
+  is capped so a short-lived VM can't size it to the global high-water,
+  and `JitCache` now frees its Cranelift module's executable pages on
+  drop (Cranelift does not do this automatically). A residual RSS climb
+  under extreme thread churn (tens of thousands of fresh OS threads) is
+  reclaimable — `leaks` clean, malloc heap flat — and is a macOS
+  thread-VM characteristic best addressed by pooling worker threads,
+  tracked with the runtime's memory work.
+
+
 ## [0.58.0] - 2026-08-15
 
 ### Added

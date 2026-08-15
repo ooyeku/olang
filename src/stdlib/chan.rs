@@ -8,15 +8,19 @@
 //! Everything fallible speaks Result, so `?` and `match` drive the
 //! control flow.
 //!
-//! Handles are `Channel { id }` structs into a process-wide registry,
-//! the same pattern as `spawn`'s task registry and `db`'s connections —
-//! a handle crosses the spawn boundary as plain data.
+//! A handle is a `Value::Native` that *owns* the channel through an `Arc`,
+//! so the channel lives exactly as long as some olang value references it
+//! and is freed when the last handle drops — a program that opens a
+//! channel per tick does not accumulate them. Cloning a handle (including
+//! across the `spawn` boundary) shares the one underlying channel by
+//! reference count; no process-wide registry, so nothing to leak.
 
 use crate::ast::Value;
+use crate::native::{NativeHandle, NativeObject};
+use std::any::Any;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 /// One channel's two ends. The sender is cloned out of its lock before
 /// use so a blocking bounded send never holds it; the receiver stays
@@ -42,11 +46,38 @@ impl Tx {
     }
 }
 
-static NEXT_ID: AtomicI64 = AtomicI64::new(1);
-static CHANNELS: OnceLock<Mutex<HashMap<i64, Arc<Chan>>>> = OnceLock::new();
+/// The native handle wrapping a channel. Owning the `Arc<Chan>` here — in
+/// the olang value itself — is what makes channel lifetime reference-counted
+/// rather than registry-pinned.
+struct ChanObject(Arc<Chan>);
 
-fn channels() -> &'static Mutex<HashMap<i64, Arc<Chan>>> {
-    CHANNELS.get_or_init(|| Mutex::new(HashMap::new()))
+impl std::fmt::Debug for ChanObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<channel>")
+    }
+}
+
+impl NativeObject for ChanObject {
+    fn module(&self) -> &'static str {
+        "chan"
+    }
+    fn type_name(&self) -> &'static str {
+        "Channel"
+    }
+    fn display(&self) -> String {
+        "<channel>".to_string()
+    }
+    fn native_eq(&self, other: &dyn NativeObject) -> bool {
+        // Identity: two handles are equal iff they carry the same channel.
+        other
+            .as_any()
+            .downcast_ref::<ChanObject>()
+            .map(|o| Arc::ptr_eq(&self.0, &o.0))
+            .unwrap_or(false)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 pub fn create_chan_module() -> Value {
@@ -90,13 +121,8 @@ pub fn call_chan_function(
     }
 }
 
-fn handle(id: i64) -> Value {
-    let mut fields = HashMap::new();
-    fields.insert("id".to_string(), Value::Integer(id));
-    Value::Struct {
-        type_name: "Channel".to_string(),
-        fields,
-    }
+fn handle(chan: Arc<Chan>) -> Value {
+    Value::Native(NativeHandle::new(ChanObject(chan)))
 }
 
 fn err(msg: impl Into<String>) -> Value {
@@ -107,39 +133,30 @@ fn ok(v: Value) -> Value {
     Value::Ok(Box::new(v))
 }
 
-/// Pull the registry entry back out of a `Channel { id }` handle.
+/// Pull the shared `Arc<Chan>` back out of a channel handle.
 fn chan_of(value: &Value) -> Result<Arc<Chan>, Box<dyn std::error::Error>> {
-    let id = match value {
-        Value::Struct { type_name, fields } if type_name == "Channel" => match fields.get("id") {
-            Some(Value::Integer(id)) => *id,
-            _ => return Err("chan: malformed channel handle".into()),
-        },
-        other => {
-            return Err(format!(
-                "chan: expected a channel (from chan.new), got {}",
-                other.type_name()
+    match value {
+        Value::Native(h) => match h.0.as_any().downcast_ref::<ChanObject>() {
+            Some(obj) => Ok(obj.0.clone()),
+            None => Err(format!(
+                "chan: expected a channel (from chan.new), got a {} handle",
+                h.0.type_name()
             )
-            .into());
-        }
-    };
-    channels()
-        .lock()
-        .unwrap()
-        .get(&id)
-        .cloned()
-        .ok_or_else(|| "chan: unknown channel handle".into())
+            .into()),
+        },
+        other => Err(format!(
+            "chan: expected a channel (from chan.new), got {}",
+            other.type_name()
+        )
+        .into()),
+    }
 }
 
 fn register(tx: Tx, rx: Receiver<Value>) -> Value {
-    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    channels().lock().unwrap().insert(
-        id,
-        Arc::new(Chan {
-            tx: Mutex::new(Some(tx)),
-            rx: Mutex::new(rx),
-        }),
-    );
-    handle(id)
+    handle(Arc::new(Chan {
+        tx: Mutex::new(Some(tx)),
+        rx: Mutex::new(rx),
+    }))
 }
 
 fn chan_new(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

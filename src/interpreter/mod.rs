@@ -1448,6 +1448,7 @@ impl Interpreter {
                                         error: None,
                                         resolve_at_epoch_ms: Some(deadline),
                                         task_id: None,
+                                        guard: None,
                                     })
                                 }
                                 Value::Integer(_) => Err(InterpreterError::RuntimeError {
@@ -1507,6 +1508,7 @@ impl Interpreter {
                         error: None,
                         resolve_at_epoch_ms: None,
                         task_id: None,
+                        guard: None,
                     });
                 }
 
@@ -1550,6 +1552,9 @@ impl Interpreter {
                     error: None,
                     resolve_at_epoch_ms: None,
                     task_id: Some(task_id),
+                    guard: Some(std::sync::Arc::new(
+                        crate::interpreter::spawn_registry::SpawnGuard::new(task_id),
+                    )),
                 })
             }
 
@@ -3302,7 +3307,7 @@ pub struct TestOutcome {
     pub error: Option<String>,
 }
 
-mod spawn_registry;
+pub(crate) mod spawn_registry;
 
 mod module_cache;
 pub use module_cache::{

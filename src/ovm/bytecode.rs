@@ -23,7 +23,14 @@ pub struct BytecodeVm {
     // Arc-wrapped so a call clones a pointer, not the instruction vector
     bytecode_cache: Arc<RwLock<HashMap<FunctionId, Arc<CompiledBytecode>>>>,
     /// Lock-free mirror of the cache for the call path, indexed directly by
-    /// FunctionId (ids are small dense integers) - no hashing per call. Sound
+    /// FunctionId, BOUNDED to `HOT_CAP` slots. Ids come from a global
+    /// monotonic counter, so a program that compiles functions in many
+    /// short-lived VMs (a `spawn`ed worker pool per tick) would otherwise
+    /// size this Vec to the global high-water — a worker minting id 96_000
+    /// allocating 96_000 slots for its two functions (the per-tick soak
+    /// leak). Above the cap, calls fall through to `bytecode_cache`; the
+    /// mirror still covers every function a normal program actually runs
+    /// hot (its ids are assigned early, well under the cap). Sound
     /// because ids come from a global monotonic counter and are never reused:
     /// an entry, once cached, can never refer to different bytecode.
     bytecode_hot: Vec<Option<Arc<CompiledBytecode>>>,
@@ -1278,10 +1285,7 @@ impl BytecodeVm {
                 self.compiler.self_call = None;
                 let lambda_bytecode = Arc::new(compiled?);
                 let idx = lambda_id.index();
-                if self.bytecode_hot.len() <= idx {
-                    self.bytecode_hot.resize(idx + 1, None);
-                }
-                self.bytecode_hot[idx] = Some(lambda_bytecode.clone());
+                self.mirror_hot(idx, &lambda_bytecode);
                 #[cfg(feature = "native")]
                 self.jit.try_compile(lambda_id, &lambda_bytecode);
                 if let Ok(mut cache) = self.bytecode_cache.write() {
@@ -1292,10 +1296,7 @@ impl BytecodeVm {
 
         let bytecode = Arc::new(bytecode);
         let idx = func_id.index();
-        if self.bytecode_hot.len() <= idx {
-            self.bytecode_hot.resize(idx + 1, None);
-        }
-        self.bytecode_hot[idx] = Some(bytecode.clone());
+        self.mirror_hot(idx, &bytecode);
         #[cfg(feature = "native")]
         self.jit.try_compile(func_id, &bytecode);
         if let Ok(mut cache) = self.bytecode_cache.write() {
@@ -1304,6 +1305,22 @@ impl BytecodeVm {
 
         self.stats.compilation_time += start_time.elapsed();
         Ok(())
+    }
+
+    /// The bytecode-hot mirror is capped: only ids below `HOT_CAP` are
+    /// mirrored in the Vec, so a short-lived VM (a spawned worker) never
+    /// sizes it to the global FunctionId high-water. Above the cap, the
+    /// shared `bytecode_cache` HashMap serves the function — correct, just
+    /// one hash per call for the rare high-id function.
+    fn mirror_hot(&mut self, idx: usize, bytecode: &Arc<CompiledBytecode>) {
+        const HOT_CAP: usize = 8192;
+        if idx >= HOT_CAP {
+            return;
+        }
+        if self.bytecode_hot.len() <= idx {
+            self.bytecode_hot.resize(idx + 1, None);
+        }
+        self.bytecode_hot[idx] = Some(bytecode.clone());
     }
 
     /// Execute function with bytecode
@@ -1325,10 +1342,7 @@ impl BytecodeVm {
                     .ok()
                     .and_then(|cache| cache.get(&func_id).cloned())
                     .ok_or(BytecodeError::FunctionNotFound(func_id))?;
-                if self.bytecode_hot.len() <= idx {
-                    self.bytecode_hot.resize(idx + 1, None);
-                }
-                self.bytecode_hot[idx] = Some(fetched.clone());
+                self.mirror_hot(idx, &fetched);
                 Ok(fetched)
             }
         }
@@ -1486,10 +1500,7 @@ impl BytecodeVm {
                     .ok()
                     .and_then(|cache| cache.get(&func_id).cloned())
                     .ok_or_else(|| BytecodeError::FunctionNotFound(func_id))?;
-                if self.bytecode_hot.len() <= idx {
-                    self.bytecode_hot.resize(idx + 1, None);
-                }
-                self.bytecode_hot[idx] = Some(fetched.clone());
+                self.mirror_hot(idx, &fetched);
                 fetched
             }
         };

@@ -20,22 +20,67 @@ fn tasks() -> &'static Mutex<HashMap<u64, TaskSlot>> {
     TASKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub(super) fn next_id() -> u64 {
+pub(crate) fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-pub(super) fn register(id: u64, handle: JoinHandle<Result<Value, String>>) {
+pub(crate) fn register(id: u64, handle: JoinHandle<Result<Value, String>>) {
     tasks()
         .lock()
         .unwrap()
         .insert(id, TaskSlot::Running(handle));
 }
 
+/// Held by a spawn-backed `Promise` value (behind an `Arc`, so all clones
+/// of the promise share one). When the last clone is dropped — the last
+/// place that could still `await` this task is gone — its `Drop` removes
+/// the registry entry. That makes reclamation *exact*: a completed task's
+/// memoized result lives exactly as long as a promise can still ask for
+/// it, and no longer, so a program that spawns a worker pool every tick
+/// does not accumulate `Done` entries forever (the per-tick leak this
+/// fixes).
+#[derive(Debug)]
+pub struct SpawnGuard {
+    id: u64,
+}
+
+impl SpawnGuard {
+    pub fn new(id: u64) -> Self {
+        SpawnGuard { id }
+    }
+}
+
+// Two guards are equal iff they watch the same task — but each spawn makes
+// exactly one guard (shared by Arc), so this only ever compares a promise
+// to a clone of itself. Keeps `Value`'s derived `PartialEq` honest.
+impl PartialEq for SpawnGuard {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Drop for SpawnGuard {
+    fn drop(&mut self) {
+        forget(self.id);
+    }
+}
+
+/// Drop a task's registry entry. A `Running` handle is dropped, which
+/// detaches its thread (it finishes on its own and the OS reaps it — a
+/// dropped-before-await spawn is fire-and-forget); a `Done` result is
+/// freed. Only ever called from `SpawnGuard::drop`, when no promise can
+/// still await the task, so this never races an in-flight join.
+fn forget(id: u64) {
+    if let Some(map) = TASKS.get() {
+        map.lock().unwrap().remove(&id);
+    }
+}
+
 /// Join the task (or return its memoized result). Returns `None` for an
 /// unknown id. The registry lock is never held across the join itself —
 /// a spawned task may await other tasks, and holding the lock while
 /// blocking would deadlock.
-pub(super) fn join(id: u64) -> Option<Result<Value, String>> {
+pub(crate) fn join(id: u64) -> Option<Result<Value, String>> {
     loop {
         let handle = {
             let mut map = tasks().lock().unwrap();

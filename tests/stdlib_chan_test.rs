@@ -208,3 +208,31 @@ fn misuse_errors_speak_plainly() {
         err
     );
 }
+
+/// A program that opens and drops many channels must not grow memory —
+/// the channel handle owns its channel by Arc, so the last drop frees it.
+/// (Regression: channels used to be pinned in a process-wide registry that
+/// `close` never removed, leaking every channel ever created.)
+#[test]
+fn channels_are_reclaimed_when_the_handle_drops() {
+    use olang::{Interpreter, Parser};
+    // 5000 channels, each opened, used, closed, and dropped. Correctness
+    // proxy for the leak fix: this completes and the checksum is right;
+    // the memory behaviour is verified by the soak harness in the repo.
+    let src = "\
+let mut total = 0
+for i in range(0, 5000) {
+    let c = chan.bounded(2)
+    unwrap(chan.send(c, i))
+    total = total + unwrap(chan.recv(c))
+    chan.close(c)
+}
+total
+";
+    let program = Parser::new().parse(src).expect("parse");
+    let mut interp = Interpreter::new();
+    interp.enable_bytecode_tier(1, false);
+    let result = interp.eval_program(program).expect("run");
+    // sum 0..5000
+    assert_eq!(format!("{}", result), "12497500");
+}

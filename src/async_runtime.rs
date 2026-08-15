@@ -69,6 +69,7 @@ impl AsyncRuntime {
             resolve_at_epoch_ms: None,
             error: None,
             task_id: None,
+            guard: None,
         };
 
         let promise_arc = Arc::new(Mutex::new(promise.clone()));
@@ -254,6 +255,7 @@ impl AsyncRuntime {
             error: None,
             resolve_at_epoch_ms: None,
             task_id: None,
+            guard: None,
         }
     }
 
@@ -265,6 +267,7 @@ impl AsyncRuntime {
             resolve_at_epoch_ms: None,
             error: Some(Box::new(error)),
             task_id: None,
+            guard: None,
         }
     }
 

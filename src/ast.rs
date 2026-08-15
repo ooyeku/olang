@@ -588,6 +588,13 @@ pub enum Value {
         /// awaited more than once).
         #[serde(default)]
         task_id: Option<u64>,
+        /// For `spawn`: a drop-guard shared by every clone of this promise.
+        /// When the last clone is dropped, the task's registry entry is
+        /// removed — so per-tick worker pools don't accumulate completed
+        /// tasks forever. Not serialized (a live thread doesn't cross a
+        /// wire); a deserialized promise carries None and is inert.
+        #[serde(skip)]
+        guard: Option<std::sync::Arc<crate::interpreter::spawn_registry::SpawnGuard>>,
     },
 
     // Type information for exported types
