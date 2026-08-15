@@ -59,6 +59,7 @@ export const BOOK = [
   { slug: 'ods', file: 'ods.md', title: 'The Data Stack' },
   { slug: 'wasm', file: 'wasm.md', title: 'olang in the Browser' },
   { slug: 'packages', file: 'packages.md', title: 'Packages' },
+  { slug: 'demo', file: 'demo.md', title: 'Building Robust Systems' },
   { slug: 'editors', file: 'editors.md', title: 'Editors' },
   { slug: 'internals', file: 'internals.md', title: 'Internals' },
   { slug: 'ovm', file: 'ovm.md', title: 'The OVM' },

@@ -1,53 +1,81 @@
-//! The curated example programs must run — top to bottom, without error —
-//! under the default execution model (interpreter + bytecode tier). This
-//! keeps the showcase honest: a language change that breaks an example is a
-//! CI failure, not a discovery a reader makes.
+//! The consolidated example system — examples/demo, "Harborline" — must
+//! stay healthy: every module parses, and a bounded, deterministic soak
+//! run completes with its invariants intact. A language change that breaks
+//! the demo is a CI failure, not a discovery a reader makes.
+//!
+//! (The full example sweep, including every package under examples/, runs
+//! via `examples/run_all.ol`; this test pins the flagship.)
 
-use olang::{Interpreter, Parser};
+use olang::Parser;
 
-fn run_example(path: &str, source: &str) {
-    // Run on a large-stack thread, matching how the `olang` binary executes
-    // programs (main.rs spawns a 256 MB interpreter thread). The tree-walker
-    // recurses in Rust per AST node, so deep olang recursion needs the same
-    // headroom the real binary gives it — the default 2 MB test-thread stack
-    // is far smaller than production.
-    let path = path.to_string();
-    let source = source.to_string();
-    std::thread::Builder::new()
-        .stack_size(256 * 1024 * 1024)
-        .spawn(move || {
-            let parser = Parser::new();
-            let program = parser
-                .parse(&source)
-                .unwrap_or_else(|e| panic!("{} failed to PARSE: {}", path, e));
-
-            let mut interpreter = Interpreter::new();
-            interpreter.enable_bytecode_tier(1, false);
-            interpreter
-                .eval_program(program)
-                .unwrap_or_else(|e| panic!("{} failed to RUN: {}", path, e));
-        })
-        .expect("failed to spawn example thread")
-        .join()
-        .expect("example program panicked");
+fn parses(path: &str, source: &str) {
+    Parser::new()
+        .parse(source)
+        .unwrap_or_else(|e| panic!("{} failed to PARSE: {}", path, e));
 }
 
-macro_rules! example_test {
+macro_rules! parse_test {
     ($name:ident, $file:literal) => {
         #[test]
         fn $name() {
-            run_example(
-                concat!("examples/", $file),
-                include_str!(concat!("../examples/", $file)),
+            parses(
+                concat!("examples/demo/", $file),
+                include_str!(concat!("../examples/demo/", $file)),
             );
         }
     };
 }
 
-example_test!(language_tour, "01_language_tour.ol");
-example_test!(data_pipeline, "02_data_pipeline.ol");
-example_test!(algorithms, "03_algorithms.ol");
-example_test!(stdlib_showcase, "04_stdlib_showcase.ol");
-example_test!(text_processing, "05_text_processing.ol");
-example_test!(database, "06_database.ol");
-example_test!(algebraic_types, "07_algebraic_types.ol");
+parse_test!(demo_main_parses, "main.ol");
+parse_test!(demo_prelude_parses, "lib/prelude.ol");
+parse_test!(demo_cargo_parses, "lib/cargo.ol");
+parse_test!(demo_vessels_parses, "lib/vessels.ol");
+parse_test!(demo_schedule_parses, "lib/schedule.ol");
+parse_test!(demo_ledger_parses, "lib/ledger.ol");
+parse_test!(demo_metrics_parses, "lib/metrics.ol");
+parse_test!(demo_manifest_parses, "lib/manifest.ol");
+parse_test!(demo_report_parses, "lib/report.ol");
+parse_test!(demo_signing_parses, "lib/signing.ol");
+parse_test!(demo_workers_parses, "lib/workers.ol");
+parse_test!(demo_console_parses, "lib/console.ol");
+
+/// Two bounded, deterministic simulated days, end to end: arrivals,
+/// berthing, threaded unloading, tariff settlement, the signed digest
+/// chain, and the daily invariant checks — exit 0 means every invariant
+/// held. Runs the real binary, exactly as a user would.
+#[test]
+fn demo_soak_runs_clean() {
+    let demo_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/demo");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
+        .current_dir(&demo_dir)
+        .args([
+            "main.ol", "--ticks", "48", "--fast", "--quiet", "--seed", "7",
+        ])
+        .output()
+        .expect("failed to launch the demo");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "demo exited nonzero\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("all invariants held"),
+        "missing invariant verdict\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("HARBORLINE SHUTDOWN"),
+        "missing shutdown summary\n{}",
+        stdout
+    );
+    // Deterministic under a fixed seed: the run always serves the same
+    // number of vessels for the same voyage.
+    assert!(
+        stdout.contains("vessels served: 16"),
+        "seeded run drifted\n{}",
+        stdout
+    );
+}

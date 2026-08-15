@@ -44,6 +44,14 @@ for e in entries {
     }
 }
 
+// Per-target arguments: a long-running-by-design program gets a bounded,
+// deterministic invocation under the harness. Everything else runs bare.
+let harness_args = #{
+    "demo/": ["--ticks", "48", "--fast", "--quiet", "--seed", "7"]
+}
+fn args_for(label) =
+    if map_has_key(harness_args, label) => map_get(harness_args, label) else => []
+
 let runnable = targets |> filter((t) => !contains(long_running, t.label))
 for t in targets {
     if contains(long_running, t.label) =>
@@ -71,7 +79,7 @@ let mut failed = 0
 for t in targets {
     // Each program runs from its own directory (the exec cwd option), so
     // relative imports and file reads resolve.
-    match os.exec(olang, [t.file], #{ "cwd": t.dir }) {
+    match os.exec(olang, concat([t.file], args_for(t.label)), #{ "cwd": t.dir }) {
         Ok(r) => if r.code == 0 => {
             passed = passed + 1
             println("  ✓ pass   " + t.label)

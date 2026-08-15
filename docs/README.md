@@ -25,13 +25,18 @@ the implementation.
 | **[The Data Stack](ods.md)** | `ods`, `stats`, and `plot` in depth: why columns beat rows (measured), every Series and Frame verb, a complete inference workflow, charts as SVG text, the stack's performance characteristics, and the design record — how it was built, benchmarked against NumPy/scipy/Polars, and why it evaluates eagerly |
 | **[olang in the Browser](wasm.md)** | The same language end to end: the WebAssembly build, the `dom` module, structured events, canvas draw-lists, the `ui` view layer, routing and storage, Web Workers, and a guided reading of four complete olang frontends |
 | **[Packages](packages.md)** | Scaffolding projects and libraries, manifests, dependencies, the lockfile model, versioning, the registry |
+| **[Building Robust Systems](demo.md)** | `examples/demo` — Harborline, the long-running harbor simulator — read as a design study: state threading, ADTs that make illegal states unrepresentable, Result discipline, testable concurrency, self-auditing invariants, and determinism as a feature |
 
-Complete worked programs live in [`examples/`](../examples/) — a task CLI,
-a log analyzer, a template engine, a regex engine, a parser combinator
-library, a state-machine engine, a JSON Schema validator, a small Lisp
-interpreter written in olang (`minilisp/`), a full-stack issue tracker
-whose frontend is olang in the browser (`app/`), a Frame-based data
-pipeline (`dataproc/`), a parallel statistical study on the data stack
+Complete worked programs live in [`examples/`](../examples/). The
+flagship is [`demo/`](../examples/demo/) — **Harborline**, a
+long-running harbor-operations simulator with eleven library modules,
+built to soak-test the language and documented as
+[its own chapter](demo.md). Around it: a task CLI, a log analyzer, a
+template engine, a regex engine, a parser combinator library, a
+state-machine engine, a JSON Schema validator, a small Lisp interpreter
+written in olang (`minilisp/`), a full-stack issue tracker whose
+frontend is olang in the browser (`app/`), a Frame-based data pipeline
+(`dataproc/`), a parallel statistical study on the data stack
 (`statlab/`), and more. Run them all with `cd examples && olang
 run_all.ol`.
 
@@ -50,7 +55,9 @@ run_all.ol`.
 
 New to olang? **Tour → Language Reference** (skim, then keep as reference)
 **→ examples/**, with [Common Pitfalls](pitfalls.md) close at hand for the
-behaviors that surprise. Building something specific? Go straight to the
+behaviors that surprise. Ready to build something real?
+[Building Robust Systems](demo.md) walks the flagship example's
+architecture pattern by pattern. Building something specific? Go straight to the
 [stdlib](stdlib.md) chapter for your domain — data work has its own
 chapter in [The Data Stack](ods.md), and frontends in
 [olang in the Browser](wasm.md). Adding type annotations to a program?

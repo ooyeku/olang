@@ -139,7 +139,13 @@ tables: [docs/internals.md](docs/internals.md),
 
 ## Examples
 
-[`examples/`](examples/) holds real programs — a task CLI, log analyzer,
+[`examples/`](examples/) holds real programs. The flagship is
+[`demo/`](examples/demo/) — **Harborline**, a long-running
+harbor-operations simulator (threaded unload crews over channels,
+SQLite ledger, tariff expression trees, an RSA-signed hmac digest
+chain, daily self-checked invariants) built to genuinely soak-test the
+language; [docs/demo.md](docs/demo.md) reads it as a design study for
+robust olang systems. Alongside it — a task CLI, log analyzer,
 template engine, workflow engine, parser combinators, a regex engine, a
 JSON Schema validator, a markdown converter, an HTTP notes API, a small
 Lisp interpreter written in olang (`minilisp/`), a full-stack issue

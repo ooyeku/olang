@@ -1,0 +1,14 @@
+# Harborline configuration — the simulation's dials.
+# main.ol validates every field at boot and refuses to start on nonsense.
+
+[harbor]
+berths = 5              # quay positions; the last one is the sealed berth
+crews = 3               # unload worker threads
+arrival_chance = 0.45   # probability a vessel appears each tick (hour)
+tick_ms = 150           # pacing between ticks (ignored under --fast)
+
+[rates]                 # the published tariff schedule
+container = 2.5         # per TEU
+reefer_power = 1.25     # per TEU, on top of the container leg
+bulk = 1.1              # per tonne
+hazmat_step = 0.4       # surcharge factor per IMO class

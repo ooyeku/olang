@@ -1,0 +1,4 @@
+[package]
+name = "harborline"
+version = "1.0.0"
+description = "A long-running harbor-operations simulator — the consolidated olang example system"

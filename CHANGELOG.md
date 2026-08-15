@@ -7,7 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`examples/demo` — Harborline, the consolidated flagship example.**
+  The 23 loose scripts at the top of `examples/` are consolidated into
+  one coherent, long-running system: a harbor-operations simulator with
+  eleven library modules (domain ADTs and tariff expression trees, a
+  BST scheduler with a tide model, a SQLite ledger, threaded unload
+  crews over channels, fold-based analytics cross-checked against the
+  stats module, template/regex/JSON/CSV text handling, an RSA-signed
+  hmac digest chain, and a term dashboard). It runs forever by default
+  with graceful Ctrl-C shutdown, is deterministic under `--seed`,
+  bounded under `--ticks`, writes no files unless `--out` is given, and
+  checks world-vs-ledger invariants every simulated day with the
+  testing module — a soak test for the language, not a demonstration.
+  95 assertions of module self-tests run via `olang test .`; the
+  harness runs it bounded; `tests/example_programs_test.rs` pins a
+  deterministic end-to-end run. Documented as a new book chapter,
+  [Building Robust Systems](docs/demo.md).
+
 ### Fixed
+
+- **Building the demo flushed out four latent bugs, all fixed:**
+  - *Bytecode tier: a capturing lambda inherited its enclosing
+    function's parameter annotations*, applied positionally to
+    [own params..., captures...] — so a lambda capturing an annotated
+    `String` parameter failed with "expects Int, got String" once
+    compiled, while the interpreter ran fine. Lambdas now carry their
+    own checks; pinned by a differential test.
+  - *"Aggressive memory management" cleared the module cache mid-load.*
+    A >10-element list literal in a module body triggered a cleanup
+    that dropped the loader's in-flight placeholder entries — the
+    anchors for relative `use` resolution — so the next import in the
+    importing file failed with "Cannot find module". The cache is now
+    left alone while a module load is in flight.
+  - *`olang test` reported ✓ over failing assertions.* A test block was
+    only marked failed if it raised; `testing.assert_*` results (which
+    tally rather than raise) were never consulted, so a block full of
+    failing assertions passed. The runner now charges each block with
+    the assertion failures that occurred inside it.
+  - *`otc deps` and `otc unused` were blind to every declaration* —
+    they matched AST statements without unwrapping the `Located` span
+    wrapper introduced by the error-experience overhaul, so `deps`
+    always printed "No dependencies found" and `unused` scanned
+    nothing. Both now match through the wrapper.
+- **`embedded_term_test` no longer fails when run from a real
+  terminal.** The test assumed a test binary's stdout is a pipe, but
+  `cargo test` leaves the fd a tty when run interactively; the color-off
+  leg is now forced explicitly with `NO_COLOR`.
 
 - **The gallery no longer eats the GPU.** The browser host ran one
   unthrottled requestAnimationFrame chain per `dom.on_frame` handler and
