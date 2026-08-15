@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-08-15
+
 ### Added
 
 - **The Open Timeline — record, replay, deterministic re-execution.**
@@ -57,11 +59,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     keep full speed. Pinned by an integration suite covering manifest
     grants, attenuation, `--deny`, ghost-dependency refusal, and the
     build → inspect → enforce round-trip.
-
-
-
-### Added
-
 - **`examples/demo` — Harborline, the consolidated flagship example.**
   The 23 loose scripts at the top of `examples/` are consolidated into
   one coherent, long-running system: a harbor-operations simulator with
@@ -78,6 +75,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   harness runs it bounded; `tests/example_programs_test.rs` pins a
   deterministic end-to-end run. Documented as a new book chapter,
   [Building Robust Systems](docs/demo.md).
+- **Every builtin and stdlib symbol is documented in the REPL's `:help`.**
+  Fifteen modules had no coverage at all (`proc`, `chan`, `time`, `toml`,
+  `ods`, `stats`, `plot`, `dom`, `cli`, `term`, `ui`, `viz`, `dash`,
+  `colx`, `mathx`) and several "covered" modules had gaps (`math`'s
+  trig/log family, `fs` path helpers, `csv` builder verbs, `db`
+  transactions, `random.gauss`, the `os` signal/tty/stdin functions,
+  `str.fmt`). All ~270 registered functions now resolve, verified by
+  diffing every registration site against the help index; a unit test
+  pins per-module minimum counts so new modules can't silently ship
+  undocumented.
+- **`:help <module>` lists the module's functions.** A bare module name
+  (`:help proc`, `:help stats`) previously fuzzy-matched to one arbitrary
+  member; it now shows the full member listing, including nested
+  namespaces (`:help stats.norm`). Exact function lookup, category
+  lookup, and typo fuzzy-matching are unchanged, in that order.
+- **`olang run file.ol` works.** There is no `run` subcommand (the file
+  is the first positional), but the muscle memory from `cargo run`/`go
+  run` is real: a first argument literally `run` that names no existing
+  file now shifts to the next argument, with script argv preserved.
+
+- **The package manager's trust model is now enforced, not aspirational.**
+  Three `otc pkg` hardenings:
+  - *Checksums are verified, everywhere content arrives.* Every install —
+    fresh resolve or lockfile replay — re-checks fetched git/registry
+    sources against the recorded sha256 and fails hard on a mismatch;
+    a registry release's published checksum is enforced at fetch time.
+    Previously checksums were recorded but never re-checked. Path
+    dependencies stay exempt on install (editing one is development, not
+    tampering). New `otc pkg verify` re-checks everything the lock pins
+    on demand.
+  - *The registry index is append-only.* `otc pkg publish` used to
+    silently replace an already-published version's rev/checksum — the
+    exact history rewrite the checksum exists to catch. Republishing an
+    existing version is now an error; `--force` remains as a deliberate
+    escape hatch.
+  - *`otc pkg add` validates before writing.* A `--path` must exist, a
+    `--version` must parse (and, with a registry configured, be
+    satisfiable), conflicting source flags are an error instead of a
+    silent precedence pick, `--tag` without `--git` is rejected, and
+    changing an existing dependency's source requires `--force`. Typos
+    now surface at add time, not as an opaque failure at the next
+    install.
+- **`proc` — child processes, streaming I/O, and pipelines.** A new
+  native module for driving processes beyond `os.exec`'s run-to-
+  completion model. `proc.spawn(program, args)` returns a live `Process`
+  handle you feed with `write`/`write_line`/`close_stdin`, read a line at
+  a time with `read_line` (`read_all` for the rest), and finish with
+  `wait` (→ `#{ code }`) or `kill`. stdout and stderr are drained on
+  background threads, so a child that floods one stream never deadlocks a
+  caller reading the other. `proc.pipeline(stages)` chains commands the
+  way the shell's `a | b | c` does — each stage's stdout wired to the
+  next one's stdin — and returns `#{ code, stdout, stderr, codes }` with
+  every stage's exit code. Lane T3 of the **Toolsmith campaign**.
+
+- **`os.on_interrupt` — graceful Ctrl-C for long-running tools.**
+  `os.on_interrupt()` traps SIGINT so it sets a flag instead of killing
+  the process; `os.interrupted()` polls it (`while os.interrupted() ==
+  false { ... }`) and `os.reset_interrupt()` clears it, so a server or
+  watch loop can drain and exit cleanly.
+
+- **`examples/watch` — the process-story dogfood.** A `watch(1)`-style
+  tool that reruns a command on an interval and streams its output, or
+  runs a pipeline with `--pipe`, until Ctrl-C — exercising `proc`
+  streaming, `proc.pipeline`, and `os` signal handling through the `cli`
+  + `term` toolkit.
+
+- **`olang test --coverage` — line coverage from the test runner.**
+  `--coverage` reports covered/total executable lines per file plus an
+  overall figure; `--coverage-lines` additionally lists each file's
+  uncovered ranges. Coverage is a report, never a gate — it leaves the
+  exit code untouched. It is attributed to the file the code *lives in*:
+  function values now carry a `def_file` that the interpreter pushes and
+  pops across calls, so a helper defined in one file and exercised by a
+  test in another is credited to the helper's file, not the test's. The
+  executable-line denominator is derived from the parsed AST (the same
+  statements the runtime records), so a fully-exercised file reads
+  exactly 100%. Runs on the interpreter tier so the statement-level hook
+  sees every line. Lane T7 of the **Toolsmith campaign** — the last piece
+  of a credible test story.
 
 ### Fixed
 
@@ -132,56 +208,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   backing stores, and near-total savings for whatever isn't on
   screen — with three pieces and at most one in view, an order of
   magnitude less GPU work in normal browsing.
-
-## [0.58.0] - 2026-08-14
-
-### Added
-
-- **Every builtin and stdlib symbol is documented in the REPL's `:help`.**
-  Fifteen modules had no coverage at all (`proc`, `chan`, `time`, `toml`,
-  `ods`, `stats`, `plot`, `dom`, `cli`, `term`, `ui`, `viz`, `dash`,
-  `colx`, `mathx`) and several "covered" modules had gaps (`math`'s
-  trig/log family, `fs` path helpers, `csv` builder verbs, `db`
-  transactions, `random.gauss`, the `os` signal/tty/stdin functions,
-  `str.fmt`). All ~270 registered functions now resolve, verified by
-  diffing every registration site against the help index; a unit test
-  pins per-module minimum counts so new modules can't silently ship
-  undocumented.
-- **`:help <module>` lists the module's functions.** A bare module name
-  (`:help proc`, `:help stats`) previously fuzzy-matched to one arbitrary
-  member; it now shows the full member listing, including nested
-  namespaces (`:help stats.norm`). Exact function lookup, category
-  lookup, and typo fuzzy-matching are unchanged, in that order.
-- **`olang run file.ol` works.** There is no `run` subcommand (the file
-  is the first positional), but the muscle memory from `cargo run`/`go
-  run` is real: a first argument literally `run` that names no existing
-  file now shifts to the next argument, with script argv preserved.
-
-- **The package manager's trust model is now enforced, not aspirational.**
-  Three `otc pkg` hardenings:
-  - *Checksums are verified, everywhere content arrives.* Every install —
-    fresh resolve or lockfile replay — re-checks fetched git/registry
-    sources against the recorded sha256 and fails hard on a mismatch;
-    a registry release's published checksum is enforced at fetch time.
-    Previously checksums were recorded but never re-checked. Path
-    dependencies stay exempt on install (editing one is development, not
-    tampering). New `otc pkg verify` re-checks everything the lock pins
-    on demand.
-  - *The registry index is append-only.* `otc pkg publish` used to
-    silently replace an already-published version's rev/checksum — the
-    exact history rewrite the checksum exists to catch. Republishing an
-    existing version is now an error; `--force` remains as a deliberate
-    escape hatch.
-  - *`otc pkg add` validates before writing.* A `--path` must exist, a
-    `--version` must parse (and, with a registry configured, be
-    satisfiable), conflicting source flags are an error instead of a
-    silent precedence pick, `--tag` without `--git` is rejected, and
-    changing an existing dependency's source requires `--force`. Typos
-    now surface at add time, not as an opaque failure at the next
-    install.
-
-### Fixed
-
 - **List, tuple, and Unit equality now work in promoted functions.** The
   bytecode VM had no `==`/`!=` arms for top-level List, Tuple, or Unit
   operands, so a function like `fn is_empty(xs) = xs == []` returned the
@@ -237,9 +263,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   surfaced a real latent bug — `examples/03_algorithms.ol`'s
   closure-over-a-map memoization never actually memoized; it is rewritten
   to thread the cache, the correct olang idiom.
-
-### Fixed
-
 - **Empty-collection truthiness now agrees across tiers.** A promoted
   (bytecode-tier) function used an incomplete condition test that treated
   an empty string, list, tuple, or range as *truthy* — so `if xs => …` or
@@ -248,6 +271,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   them as falsy, like `0`/`false`/Unit). The tier's `is_truthy` now
   mirrors the interpreter's `to_boolean` exactly, pinned by a differential
   test. Found while writing the new Common Pitfalls chapter.
+- **Name-colliding functions now promote to the bytecode tier (viz
+  finding #3).** The tier dispatches `CallNamed` by name and marked any
+  name shared by two distinct function bodies "ambiguous", never tiering
+  it. Because embedded packages register their *private* helpers (`viz`'s
+  `col`, `opt`, `groups`, `distinct`, `fmt`, …) into the global name
+  space, any program reusing one of those common names — a data app, the
+  chart gallery — silently ran that function, and its hot `map`/`filter`
+  loop, on the interpreter. An ambiguous name is now dispatched **by body
+  identity** (compiled under its own closure, keyed on the body pointer),
+  so the correct body runs on the tier. A `use viz` program mapping a
+  field-accessor lambda over records went **~1480 ms → ~170 ms native
+  (~8.6×)** and **~1480 ms → ~140 ms in the wasm playground (~10×)**;
+  results are identical on both tiers.
 
 ### Documentation
 
@@ -277,25 +313,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   lossless across the language (enums, structs, closures, patterns,
   recursion), verified against the interpreter. Rung B of `olang build`
   (Toolsmith T4).
-
-### Fixed
-
-- **Name-colliding functions now promote to the bytecode tier (viz
-  finding #3).** The tier dispatches `CallNamed` by name and marked any
-  name shared by two distinct function bodies "ambiguous", never tiering
-  it. Because embedded packages register their *private* helpers (`viz`'s
-  `col`, `opt`, `groups`, `distinct`, `fmt`, …) into the global name
-  space, any program reusing one of those common names — a data app, the
-  chart gallery — silently ran that function, and its hot `map`/`filter`
-  loop, on the interpreter. An ambiguous name is now dispatched **by body
-  identity** (compiled under its own closure, keyed on the body pointer),
-  so the correct body runs on the tier. A `use viz` program mapping a
-  field-accessor lambda over records went **~1480 ms → ~170 ms native
-  (~8.6×)** and **~1480 ms → ~140 ms in the wasm playground (~10×)**;
-  results are identical on both tiers.
-
-### Changed
-
 - **Faster `map`/`filter` on the bytecode tier.** The native `map`/
   `filter` loop now fetches the callee's bytecode and validates its arity
   and parameter checks once, before the element loop, instead of on every
@@ -312,46 +329,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   each file uses `cli`+`term` dropped from ~111ms to ~44ms (2.5×), and
   the playground's repeat runs skip embedded parsing entirely. Lane T5 of
   the **Toolsmith campaign**.
-
-### Added
-
-- **`proc` — child processes, streaming I/O, and pipelines.** A new
-  native module for driving processes beyond `os.exec`'s run-to-
-  completion model. `proc.spawn(program, args)` returns a live `Process`
-  handle you feed with `write`/`write_line`/`close_stdin`, read a line at
-  a time with `read_line` (`read_all` for the rest), and finish with
-  `wait` (→ `#{ code }`) or `kill`. stdout and stderr are drained on
-  background threads, so a child that floods one stream never deadlocks a
-  caller reading the other. `proc.pipeline(stages)` chains commands the
-  way the shell's `a | b | c` does — each stage's stdout wired to the
-  next one's stdin — and returns `#{ code, stdout, stderr, codes }` with
-  every stage's exit code. Lane T3 of the **Toolsmith campaign**.
-
-- **`os.on_interrupt` — graceful Ctrl-C for long-running tools.**
-  `os.on_interrupt()` traps SIGINT so it sets a flag instead of killing
-  the process; `os.interrupted()` polls it (`while os.interrupted() ==
-  false { ... }`) and `os.reset_interrupt()` clears it, so a server or
-  watch loop can drain and exit cleanly.
-
-- **`examples/watch` — the process-story dogfood.** A `watch(1)`-style
-  tool that reruns a command on an interval and streams its output, or
-  runs a pipeline with `--pipe`, until Ctrl-C — exercising `proc`
-  streaming, `proc.pipeline`, and `os` signal handling through the `cli`
-  + `term` toolkit.
-
-- **`olang test --coverage` — line coverage from the test runner.**
-  `--coverage` reports covered/total executable lines per file plus an
-  overall figure; `--coverage-lines` additionally lists each file's
-  uncovered ranges. Coverage is a report, never a gate — it leaves the
-  exit code untouched. It is attributed to the file the code *lives in*:
-  function values now carry a `def_file` that the interpreter pushes and
-  pops across calls, so a helper defined in one file and exercised by a
-  test in another is credited to the helper's file, not the test's. The
-  executable-line denominator is derived from the parsed AST (the same
-  statements the runtime records), so a fully-exercised file reads
-  exactly 100%. Runs on the interpreter tier so the statement-level hook
-  sees every line. Lane T7 of the **Toolsmith campaign** — the last piece
-  of a credible test story.
 
 ## [0.57.0] - 2026-08-14
 
