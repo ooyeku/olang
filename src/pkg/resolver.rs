@@ -175,6 +175,7 @@ mod tests {
                     checksum: None,
                     dependencies: deps,
                 },
+                false,
             )
             .unwrap();
         }
@@ -188,6 +189,7 @@ mod tests {
                     checksum: None,
                     dependencies: Default::default(),
                 },
+                false,
             )
             .unwrap();
         }
@@ -249,6 +251,7 @@ mod tests {
                     checksum: None,
                     dependencies: Default::default(),
                 },
+                false,
             )
             .unwrap();
         }

@@ -9,6 +9,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Every builtin and stdlib symbol is documented in the REPL's `:help`.**
+  Fifteen modules had no coverage at all (`proc`, `chan`, `time`, `toml`,
+  `ods`, `stats`, `plot`, `dom`, `cli`, `term`, `ui`, `viz`, `dash`,
+  `colx`, `mathx`) and several "covered" modules had gaps (`math`'s
+  trig/log family, `fs` path helpers, `csv` builder verbs, `db`
+  transactions, `random.gauss`, the `os` signal/tty/stdin functions,
+  `str.fmt`). All ~270 registered functions now resolve, verified by
+  diffing every registration site against the help index; a unit test
+  pins per-module minimum counts so new modules can't silently ship
+  undocumented.
+- **`:help <module>` lists the module's functions.** A bare module name
+  (`:help proc`, `:help stats`) previously fuzzy-matched to one arbitrary
+  member; it now shows the full member listing, including nested
+  namespaces (`:help stats.norm`). Exact function lookup, category
+  lookup, and typo fuzzy-matching are unchanged, in that order.
+- **`olang run file.ol` works.** There is no `run` subcommand (the file
+  is the first positional), but the muscle memory from `cargo run`/`go
+  run` is real: a first argument literally `run` that names no existing
+  file now shifts to the next argument, with script argv preserved.
+
+- **The package manager's trust model is now enforced, not aspirational.**
+  Three `otc pkg` hardenings:
+  - *Checksums are verified, everywhere content arrives.* Every install —
+    fresh resolve or lockfile replay — re-checks fetched git/registry
+    sources against the recorded sha256 and fails hard on a mismatch;
+    a registry release's published checksum is enforced at fetch time.
+    Previously checksums were recorded but never re-checked. Path
+    dependencies stay exempt on install (editing one is development, not
+    tampering). New `otc pkg verify` re-checks everything the lock pins
+    on demand.
+  - *The registry index is append-only.* `otc pkg publish` used to
+    silently replace an already-published version's rev/checksum — the
+    exact history rewrite the checksum exists to catch. Republishing an
+    existing version is now an error; `--force` remains as a deliberate
+    escape hatch.
+  - *`otc pkg add` validates before writing.* A `--path` must exist, a
+    `--version` must parse (and, with a registry configured, be
+    satisfiable), conflicting source flags are an error instead of a
+    silent precedence pick, `--tag` without `--git` is rejected, and
+    changing an existing dependency's source requires `--force`. Typos
+    now surface at add time, not as an opaque failure at the next
+    install.
+
+### Fixed
+
+- **List, tuple, and Unit equality now work in promoted functions.** The
+  bytecode VM had no `==`/`!=` arms for top-level List, Tuple, or Unit
+  operands, so a function like `fn is_empty(xs) = xs == []` returned the
+  right answer interpreted but raised "Unsupported operation: Equal" once
+  it got hot enough to promote — a hard tier disagreement. All three now
+  compare structurally, exactly mirroring the interpreter (including the
+  deliberate asymmetry that `1 == 1.0` is true but `[1] == [1.0]` is
+  false). Pinned by a differential test.
+- **Binary-op type errors read the same on every tier.** A promoted
+  function raising e.g. `[1] < [2]` said "Unsupported operation:
+  LessThan" while the interpreter said "Invalid binary operation: cannot
+  apply '<' to List and List"; `1 && 2` produced a bare "Invalid binary
+  operation" with no detail. The VM now emits the interpreter's message,
+  naming the operator and both operand types (mixed Int/Float pairs
+  report their real types). Pinned by an error-text differential test.
+- **REPL: a `//` comment containing a bracket no longer traps the session
+  in multiline mode.** `1 + 1 // {` used to buffer forever (swallowing
+  even `quit`) until a manual `:end`; bracket counting now stops at a
+  comment, while `//` inside a string still counts as content.
+- **REPL: `:type` no longer mutates the session.** `:type n = n + 1`
+  executed the assignment it was asked about; a binding or assignment is
+  now refused with a pointer to query the value instead.
+- **REPL: interactive tutorials exit on EOF.** With a closed or piped
+  stdin, `:tutorial_run` re-prompted forever at 100% CPU; end-of-input
+  now ends the tutorial (and `quit`/`exit` work alongside `q`).
+- **REPL: `:search` filters compose and validate.** Combined filters
+  (`category:X limit:N`) previously cancelled each other, `limit:05`
+  or an invalid `limit:` silently returned zero results, and the quoted
+  phrases the usage examples themselves suggest never matched. Filters
+  are now parsed token-wise, a bad limit is reported, and quotes are
+  stripped.
+- **REPL: `:help STATS` no longer advertises calls in casing the language
+  rejects** — module listings echo the canonical lowercase name.
+- **A missing script file is named in the error.** `olang nope.ol` said
+  only "No such file or directory"; it now says which path it couldn't
+  read.
+- **Help accuracy: eight `:help` entries corrected against the
+  implementation** — `csv.sort_by_column`'s boolean is *ascending* (the
+  doc said descending), `csv.add_column` takes `(csv, values, name)` not
+  `(csv, name, values)`, `csv.filter_rows` takes an integer column index,
+  `csv.from_json` returns rows not CSV text (book table fixed to match),
+  `str.fmt` and `ods.read_csv` return bare values not `Result`,
+  `colx.partition` returns a tuple, and `plot.ramp` also accepts `auto`.
+
 - **`olang check` warns on dead assignment to a captured binding.**
   Assigning to a variable captured from an enclosing scope inside a
   closure or function has no effect — capture is by value, so the write

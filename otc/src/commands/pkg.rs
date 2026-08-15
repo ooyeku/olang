@@ -35,6 +35,9 @@ pub enum PkgCommand {
         /// Registry version requirement (--version "^1.0")
         #[arg(long = "version")]
         version_req: Option<String>,
+        /// Replace an existing dependency's source
+        #[arg(long)]
+        force: bool,
     },
     /// Remove a dependency from olang.toml
     Remove {
@@ -53,6 +56,9 @@ pub enum PkgCommand {
     Update,
     /// Show the resolved dependency tree
     Tree,
+    /// Re-check every locked dependency's content against its recorded
+    /// checksum (tamper detection; does not modify the lockfile)
+    Verify,
     /// Publish a release into a registry index
     Publish {
         /// Registry index directory
@@ -64,6 +70,10 @@ pub enum PkgCommand {
         /// Exact commit for this release
         #[arg(long)]
         rev: String,
+        /// Rewrite an already-published version (releases are append-only
+        /// by default)
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -77,12 +87,19 @@ impl PkgCommand {
                 git,
                 tag,
                 version_req,
-            } => add(name, path, git, tag, version_req),
+                force,
+            } => add_at(&project_root()?, name, path, git, tag, version_req, *force),
             PkgCommand::Remove { name } => remove(name),
             PkgCommand::Install { frozen } => do_install(*frozen, false, verbose),
             PkgCommand::Update => do_install(false, true, verbose),
             PkgCommand::Tree => tree(),
-            PkgCommand::Publish { registry, git, rev } => publish(registry, git, rev),
+            PkgCommand::Verify => verify(),
+            PkgCommand::Publish {
+                registry,
+                git,
+                rev,
+                force,
+            } => publish(registry, git, rev, *force),
         }
     }
 }
@@ -122,35 +139,118 @@ fn init(name: Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn add(
+fn add_at(
+    root: &Path,
     name: &str,
     path: &Option<String>,
     git: &Option<String>,
     tag: &Option<String>,
     version_req: &Option<String>,
+    force: bool,
 ) -> anyhow::Result<()> {
-    let root = project_root()?;
-    let mut manifest = Manifest::load(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let mut manifest = Manifest::load(root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
+    // Exactly one source kind; a stray flag is a mistake, not noise —
+    // `--path x --git y` used to silently take the path and drop the git.
+    let sources_given = [path.is_some(), git.is_some(), version_req.is_some()]
+        .iter()
+        .filter(|b| **b)
+        .count();
+    if sources_given == 0 {
+        anyhow::bail!("specify one of --path, --git, or --version");
+    }
+    if sources_given > 1 {
+        anyhow::bail!("--path, --git, and --version are mutually exclusive; give exactly one");
+    }
+    if tag.is_some() && git.is_none() {
+        anyhow::bail!("--tag only applies to a --git dependency");
+    }
+
+    // Changing an existing dependency's source is deliberate, not a default.
+    if let Some(existing) = manifest.dependencies.get(name)
+        && !force
+    {
+        anyhow::bail!(
+            "'{}' is already a dependency ({}); pass --force to change its source",
+            name,
+            describe_dependency(existing)
+        );
+    }
+
+    // Validate at add time, so a typo surfaces here — not as an opaque
+    // failure at the next install.
     let dep = if let Some(p) = path {
+        let dir = if Path::new(p).is_absolute() {
+            PathBuf::from(p)
+        } else {
+            root.join(p)
+        };
+        if !dir.is_dir() {
+            anyhow::bail!(
+                "path dependency '{}' points at '{}' ({}), which is not a directory",
+                name,
+                p,
+                dir.display()
+            );
+        }
         Dependency::Path { path: p.clone() }
     } else if let Some(g) = git {
+        if g.trim().is_empty() || g.chars().any(char::is_whitespace) {
+            anyhow::bail!("'{}' is not a plausible git URL", g);
+        }
         Dependency::Git {
             git: g.clone(),
             tag: tag.clone(),
             rev: None,
             branch: None,
         }
-    } else if let Some(v) = version_req {
-        Dependency::Registry(v.clone())
     } else {
-        anyhow::bail!("specify one of --path, --git, or --version");
+        let v = version_req.as_ref().unwrap();
+        let req = semver::VersionReq::parse(v)
+            .map_err(|e| anyhow::anyhow!("'{}' is not a valid version requirement: {}", v, e))?;
+        // With a registry configured, confirm the package exists and some
+        // published version satisfies the requirement. Without one, the
+        // check has to wait for install.
+        if let Some(reg_root) = registry_from_env() {
+            let reg = Registry::at(&reg_root);
+            let entry = reg
+                .entry(name)
+                .map_err(|e| anyhow::anyhow!("registry check failed for '{}': {}", name, e))?;
+            if !entry.releases.iter().any(|r| req.matches(&r.version)) {
+                let available: Vec<String> = entry
+                    .releases
+                    .iter()
+                    .map(|r| r.version.to_string())
+                    .collect();
+                anyhow::bail!(
+                    "no published version of '{}' satisfies '{}' (available: {})",
+                    name,
+                    v,
+                    available.join(", ")
+                );
+            }
+        } else {
+            println!(
+                "note: no registry configured (OLANG_REGISTRY unset) — '{}' will be checked at install",
+                name
+            );
+        }
+        Dependency::Registry(v.clone())
     };
 
     manifest.dependencies.insert(name.to_string(), dep);
-    manifest.save(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    manifest.save(root).map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Added dependency '{}'", name);
     Ok(())
+}
+
+fn describe_dependency(dep: &Dependency) -> String {
+    match dep {
+        Dependency::Path { path } => format!("path {}", path),
+        Dependency::Git { git, .. } => format!("git {}", git),
+        Dependency::Registry(req) => format!("registry {}", req),
+        Dependency::RegistryExplicit { .. } => "registry".to_string(),
+    }
 }
 
 fn remove(name: &str) -> anyhow::Result<()> {
@@ -234,7 +334,60 @@ fn describe_source(source: &LockedSource) -> String {
     }
 }
 
-fn publish(registry: &str, git: &str, rev: &str) -> anyhow::Result<()> {
+fn verify() -> anyhow::Result<()> {
+    let root = project_root()?;
+    let opts = InstallOptions {
+        registry: registry_from_env(),
+        ..Default::default()
+    };
+    let report = olang::pkg::verify(&root, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
+    if report.is_empty() {
+        println!("nothing locked to verify (run 'otc pkg install' first)");
+        return Ok(());
+    }
+    let mut tampered = 0usize;
+    for (name, source, status) in &report {
+        use olang::pkg::VerifyStatus;
+        let is_path = matches!(source, LockedSource::Path { .. });
+        match status {
+            VerifyStatus::Ok => println!("  ok        {} {}", name, describe_source(source)),
+            VerifyStatus::NoChecksum => {
+                println!("  -         {} (no checksum recorded)", name)
+            }
+            VerifyStatus::Mismatch { .. } if is_path => {
+                // Editing a path dependency is normal development, not
+                // tampering — report it, don't fail on it.
+                println!(
+                    "  modified  {} {} (path dep — informational)",
+                    name,
+                    describe_source(source)
+                )
+            }
+            VerifyStatus::Mismatch { expected, actual } => {
+                tampered += 1;
+                println!(
+                    "  MISMATCH  {} {}\n            expected {}\n            got      {}",
+                    name,
+                    describe_source(source),
+                    expected,
+                    actual
+                )
+            }
+        }
+    }
+    if tampered > 0 {
+        anyhow::bail!(
+            "{} fetched dependenc{} do{} not match the lockfile",
+            tampered,
+            if tampered == 1 { "y" } else { "ies" },
+            if tampered == 1 { "es" } else { "" }
+        );
+    }
+    println!("all locked content verified");
+    Ok(())
+}
+
+fn publish(registry: &str, git: &str, rev: &str, force: bool) -> anyhow::Result<()> {
     let root = project_root()?;
     let manifest = Manifest::load(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let checksum = olang::pkg::cache::checksum_dir(&root).ok();
@@ -256,6 +409,7 @@ fn publish(registry: &str, git: &str, rev: &str) -> anyhow::Result<()> {
             checksum,
             dependencies,
         },
+        force,
     )
     .map_err(|e| anyhow::anyhow!("{}", e))?;
     println!(

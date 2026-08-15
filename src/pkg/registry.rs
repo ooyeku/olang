@@ -44,6 +44,7 @@ pub enum RegistryError {
     Io(std::io::Error),
     Parse(String),
     NotFound(String),
+    AlreadyPublished { name: String, version: String },
 }
 
 impl std::fmt::Display for RegistryError {
@@ -52,6 +53,11 @@ impl std::fmt::Display for RegistryError {
             RegistryError::Io(e) => write!(f, "{}", e),
             RegistryError::Parse(e) => write!(f, "invalid index entry: {}", e),
             RegistryError::NotFound(n) => write!(f, "package '{}' not found in registry", n),
+            RegistryError::AlreadyPublished { name, version } => write!(
+                f,
+                "{}@{} is already published — releases are append-only; bump the version, or pass --force to deliberately rewrite it",
+                name, version
+            ),
         }
     }
 }
@@ -93,10 +99,29 @@ impl Registry {
     }
 
     /// Publish (append) a release into the index, creating the entry if new.
-    pub fn publish(&self, name: &str, release: Release) -> Result<(), RegistryError> {
+    /// Add a release to the index. Releases are append-only: publishing a
+    /// version that already exists is an error unless `overwrite` is set —
+    /// silently replacing a published release's rev/checksum is exactly the
+    /// history rewrite the checksum field exists to catch.
+    pub fn publish(
+        &self,
+        name: &str,
+        release: Release,
+        overwrite: bool,
+    ) -> Result<(), RegistryError> {
         std::fs::create_dir_all(&self.root).map_err(RegistryError::Io)?;
         let mut entry = self.entry(name).unwrap_or_default();
-        // Replace an existing same-version release, else append.
+        if let Some(existing) = entry.releases.iter().find(|r| r.version == release.version) {
+            if !overwrite {
+                return Err(RegistryError::AlreadyPublished {
+                    name: name.to_string(),
+                    version: release.version.to_string(),
+                });
+            }
+            // An explicit overwrite of identical content is a no-op; of
+            // different content, a deliberate history rewrite.
+            let _ = existing;
+        }
         entry.releases.retain(|r| r.version != release.version);
         entry.releases.push(release);
         entry.releases.sort_by(|a, b| a.version.cmp(&b.version));

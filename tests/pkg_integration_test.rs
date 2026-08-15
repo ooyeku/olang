@@ -451,3 +451,110 @@ fn install_fails_on_a_path_dependency_that_does_not_exist() {
     );
     let _ = fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn publishing_the_same_version_twice_is_rejected() {
+    use olang::pkg::registry::{Registry, Release};
+    let ws = workspace("pubdup");
+    let reg = Registry::at(ws.join("registry"));
+    let rel = |rev: &str| Release {
+        version: semver::Version::new(1, 0, 0),
+        git: "somewhere".into(),
+        rev: rev.into(),
+        checksum: None,
+        dependencies: Default::default(),
+    };
+    reg.publish("thing", rel("aaaa"), false)
+        .expect("first publish");
+    // Same version again: append-only, refused — and the index keeps the
+    // original release untouched.
+    let err = reg.publish("thing", rel("bbbb"), false).unwrap_err();
+    assert!(
+        err.to_string().contains("append-only"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(reg.entry("thing").unwrap().releases[0].rev, "aaaa");
+    // An explicit overwrite is a deliberate act and allowed.
+    reg.publish("thing", rel("bbbb"), true)
+        .expect("forced publish");
+    assert_eq!(reg.entry("thing").unwrap().releases[0].rev, "bbbb");
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn install_rejects_a_tampered_registry_release() {
+    use olang::pkg::registry::{Registry, Release};
+    let ws = workspace("tampered_release");
+    let repo = git_lib(&ws, "share fn answer() = 41\n");
+    let rev = {
+        let out = std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let reg_dir = ws.join("registry");
+    let reg = Registry::at(&reg_dir);
+    let release = |checksum: Option<String>| Release {
+        version: semver::Version::new(1, 0, 0),
+        git: repo.display().to_string(),
+        rev: rev.clone(),
+        checksum,
+        dependencies: Default::default(),
+    };
+    // The index claims a checksum the source does not have.
+    reg.publish("gitlib", release(Some("deadbeef".into())), false)
+        .unwrap();
+
+    let app = ws.join("app");
+    write(
+        &app.join("olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngitlib = \"^1.0\"\n",
+    );
+    let opts = InstallOptions {
+        registry: Some(reg_dir.clone()),
+        ..Default::default()
+    };
+    let err = install(&app, &opts).expect_err("tampered release must not install");
+    assert!(
+        err.to_string().contains("checksum mismatch"),
+        "unexpected error: {err}"
+    );
+
+    // With the true checksum published, the same install succeeds.
+    let real = olang::pkg::cache::checksum_dir(&repo).unwrap();
+    reg.publish("gitlib", release(Some(real)), true).unwrap();
+    install(&app, &opts).expect("install with the correct checksum");
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn verify_flags_edited_locked_content() {
+    use olang::pkg::{VerifyStatus, verify};
+    let ws = workspace("verify_drift");
+    let app = scaffold(&ws);
+    install(&app, &InstallOptions::default()).expect("install");
+
+    // Fresh from install, everything matches its recorded checksum.
+    let report = verify(&app, &InstallOptions::default()).expect("verify");
+    assert!(!report.is_empty());
+    assert!(
+        report.iter().all(|(_, _, s)| *s == VerifyStatus::Ok),
+        "expected all Ok, got {report:?}"
+    );
+
+    // Edit the dependency's source: verify must see the drift.
+    write(
+        &ws.join("mathlib/index.ol"),
+        "share fn square(x) = x + 1\nshare fn cube(x) = x\n",
+    );
+    let report = verify(&app, &InstallOptions::default()).expect("verify after edit");
+    assert!(
+        report
+            .iter()
+            .any(|(n, _, s)| n == "mathlib" && matches!(s, VerifyStatus::Mismatch { .. })),
+        "expected mathlib mismatch, got {report:?}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}

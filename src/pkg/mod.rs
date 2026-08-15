@@ -116,6 +116,7 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
         let git_ref = cache::GitRef::Rev(release.rev.clone());
         let fetched =
             cache::fetch_git(&release.git, &git_ref).map_err(|e| PkgError::Fetch(e.to_string()))?;
+        verify_checksum(name, release.checksum.as_deref(), &fetched.dir)?;
         dep_map.insert(name.clone(), fetched.dir.clone());
         lock.package.insert(
             name.clone(),
@@ -226,6 +227,7 @@ fn resolve_dependency(
                 .map_err(|e| PkgError::Registry(e.to_string()))?;
             let fetched = cache::fetch_git(&release.git, &cache::GitRef::Rev(release.rev.clone()))
                 .map_err(|e| PkgError::Fetch(e.to_string()))?;
+            verify_checksum(name, release.checksum.as_deref(), &fetched.dir)?;
             Ok((
                 fetched.dir.clone(),
                 LockedPackage {
@@ -337,36 +339,130 @@ fn replay_lock(
     // drift off the lock.
     let mut map = DependencyMap::new();
     for (name, locked) in &lock.package {
-        let dir = match &locked.source {
-            LockedSource::Path { path } => normalize(root, path),
-            LockedSource::Git { git, rev, .. } => {
-                cache::fetch_git(git, &cache::GitRef::Rev(rev.clone()))
-                    .map_err(|e| PkgError::Fetch(e.to_string()))?
-                    .dir
-            }
-            LockedSource::Registry { .. } => {
-                let version = locked.version.as_deref().ok_or_else(|| {
-                    PkgError::Lock(format!("locked registry package '{}' has no version", name))
-                })?;
-                let version =
-                    semver::Version::parse(version).map_err(|e| PkgError::Lock(e.to_string()))?;
-                let reg_root = options.registry.clone().ok_or_else(|| {
-                    PkgError::Registry(
-                        "lockfile pins registry packages but no registry is configured".into(),
-                    )
-                })?;
-                let reg = registry::Registry::at(&reg_root);
-                let release = reg
-                    .release(name, &version)
-                    .map_err(|e| PkgError::Registry(e.to_string()))?;
-                cache::fetch_git(&release.git, &cache::GitRef::Rev(release.rev.clone()))
-                    .map_err(|e| PkgError::Fetch(e.to_string()))?
-                    .dir
-            }
-        };
+        let dir = locked_dir(root, name, locked, options)?;
+        // Fetched sources must still match the checksum the lock recorded —
+        // this is where the trust model's tamper detection actually bites.
+        // Path deps are exempt: editing one is normal development.
+        if !matches!(locked.source, LockedSource::Path { .. }) {
+            verify_checksum(name, locked.checksum.as_deref(), &dir)?;
+        }
         map.insert(name.clone(), dir);
     }
     Ok(Some(map))
+}
+
+/// Produce the on-disk directory a lock entry pins, fetching if needed.
+fn locked_dir(
+    root: &Path,
+    name: &str,
+    locked: &LockedPackage,
+    options: &InstallOptions,
+) -> Result<PathBuf, PkgError> {
+    match &locked.source {
+        LockedSource::Path { path } => Ok(normalize(root, path)),
+        LockedSource::Git { git, rev, .. } => {
+            Ok(cache::fetch_git(git, &cache::GitRef::Rev(rev.clone()))
+                .map_err(|e| PkgError::Fetch(e.to_string()))?
+                .dir)
+        }
+        LockedSource::Registry { .. } => {
+            let version = locked.version.as_deref().ok_or_else(|| {
+                PkgError::Lock(format!("locked registry package '{}' has no version", name))
+            })?;
+            let version =
+                semver::Version::parse(version).map_err(|e| PkgError::Lock(e.to_string()))?;
+            let reg_root = options.registry.clone().ok_or_else(|| {
+                PkgError::Registry(
+                    "lockfile pins registry packages but no registry is configured".into(),
+                )
+            })?;
+            let reg = registry::Registry::at(&reg_root);
+            let release = reg
+                .release(name, &version)
+                .map_err(|e| PkgError::Registry(e.to_string()))?;
+            Ok(
+                cache::fetch_git(&release.git, &cache::GitRef::Rev(release.rev.clone()))
+                    .map_err(|e| PkgError::Fetch(e.to_string()))?
+                    .dir,
+            )
+        }
+    }
+}
+
+/// Compare a directory's content checksum against an expected value. A
+/// missing expectation passes (old lockfiles and path deps have none); a
+/// mismatch is an error naming both sums.
+fn verify_checksum(name: &str, expected: Option<&str>, dir: &Path) -> Result<(), PkgError> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let actual = cache::checksum_dir(dir).map_err(|e| {
+        PkgError::Fetch(format!(
+            "cannot checksum '{}' at {}: {}",
+            name,
+            dir.display(),
+            e
+        ))
+    })?;
+    if actual != expected {
+        return Err(PkgError::Fetch(format!(
+            "checksum mismatch for '{}': the fetched source at {} does not match what was recorded (expected {}, got {}) — the upstream content changed after it was locked/published",
+            name,
+            dir.display(),
+            expected,
+            actual
+        )));
+    }
+    Ok(())
+}
+
+/// How one lock entry fared under `verify`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum VerifyStatus {
+    /// Content matches the recorded checksum.
+    Ok,
+    /// Content differs. For git/registry sources this is tampering or an
+    /// upstream rewrite; for a path dependency it usually just means the
+    /// package was edited since the last install.
+    Mismatch { expected: String, actual: String },
+    /// The lock entry carries no checksum to compare against.
+    NoChecksum,
+}
+
+/// Re-check every lock entry's content against its recorded checksum
+/// (`otc pkg verify`). Does not modify the lockfile.
+pub fn verify(
+    root: &Path,
+    options: &InstallOptions,
+) -> Result<Vec<(String, LockedSource, VerifyStatus)>, PkgError> {
+    let lock = Lockfile::load(root).map_err(PkgError::Lock)?;
+    let mut report = Vec::new();
+    for (name, locked) in &lock.package {
+        let dir = locked_dir(root, name, locked, options)?;
+        let status = match locked.checksum.as_deref() {
+            None => VerifyStatus::NoChecksum,
+            Some(expected) => {
+                let actual = cache::checksum_dir(&dir).map_err(|e| {
+                    PkgError::Fetch(format!(
+                        "cannot checksum '{}' at {}: {}",
+                        name,
+                        dir.display(),
+                        e
+                    ))
+                })?;
+                if actual == expected {
+                    VerifyStatus::Ok
+                } else {
+                    VerifyStatus::Mismatch {
+                        expected: expected.to_string(),
+                        actual,
+                    }
+                }
+            }
+        };
+        report.push((name.clone(), locked.source.clone(), status));
+    }
+    Ok(report)
 }
 
 /// The direct dependency names of a sub-package (for the lock graph), read

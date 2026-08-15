@@ -94,6 +94,7 @@ otc pkg install                    # fetch, replaying olang.lock when it covers 
 otc pkg install --frozen           # fail if resolution would rewrite the lock (CI)
 otc pkg update                     # re-resolve everything, rewrite the lock
 otc pkg tree                       # show the dependency graph with locked versions
+otc pkg verify                     # re-check locked content against its checksums
 otc pkg publish --registry PATH --git URL --rev COMMIT   # cut a release
 ```
 
@@ -101,6 +102,14 @@ Every `pkg` command except `init` finds the project root by walking up to
 the nearest `olang.toml`; `init` writes into the directory you are in.
 `otc pkg add` covers the common dependency forms — a git `rev` or
 `branch` pin is written into `olang.toml` by hand.
+
+`add` validates the dependency before writing it: a `--path` must name an
+existing directory, a `--version` must be a valid requirement (and, when a
+registry is configured, one some published version satisfies), and
+changing an existing dependency's source requires `--force` — so a typo
+surfaces at `add` time, not as an opaque failure at the next install.
+`publish` is append-only: a version that already exists in the index is
+refused (bump the version, or pass `--force` to deliberately rewrite it).
 
 You rarely need `otc pkg install` day to day: **running a file inside a
 package resolves dependencies automatically**. `olang main.ol` reads
@@ -235,8 +244,13 @@ Point installs at a registry with the `OLANG_REGISTRY` environment variable
 ## Trust model
 
 The first fetch of a git or registry dependency is trust-on-first-use.
-The lockfile records a sha256 checksum of each fetched source tree;
-checksums are recorded for auditability but are not yet re-verified on
-later installs — the commit pin is what fixes the content. Pin git
-dependencies by `rev` (not just `tag`) when you need the source to be
+From then on the checksums bite: the lockfile records a sha256 of each
+fetched source tree, and **every later install re-verifies fetched
+(git/registry) content against it** — a mismatch is a hard error, not a
+warning. A registry release's published checksum is likewise enforced at
+fetch time, and the registry index itself is append-only: `otc pkg
+publish` refuses to rewrite an already-published version. `otc pkg
+verify` re-checks everything the lock pins on demand (path dependencies
+report drift informationally — editing one is normal development). Pin
+git dependencies by `rev` (not just `tag`) when you need the source to be
 immutable, since a tag can be moved and a rev cannot.
