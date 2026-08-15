@@ -104,6 +104,11 @@ the global builtins.
   blocks scoped, and as of 0.50 `olang check` and the editor **warn**
   when code relies on the leak (advisory — nothing breaks). A future
   release may tighten the semantics.
+- Assigning to a variable *captured* from an enclosing scope inside a
+  closure or function has no effect (capture is by value — see
+  [Common Pitfalls](pitfalls.md)); `olang check` and the editor **warn**,
+  since the write is provably dead. Return the new value or thread the
+  state through instead.
 
 ### Reserved — parses today, semantics later
 

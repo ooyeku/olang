@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`olang check` warns on dead assignment to a captured binding.**
+  Assigning to a variable captured from an enclosing scope inside a
+  closure or function has no effect — capture is by value, so the write
+  hits the snapshot and the outer variable never changes. The checker now
+  flags it. It is provable (no false positives): the target is bound
+  strictly outside the current function boundary; params, locals, and
+  top-level reassignment are untouched. This is the language's sharpest
+  footgun, and the lint makes it loud instead of silent. Fixing it also
+  surfaced a real latent bug — `examples/03_algorithms.ol`'s
+  closure-over-a-map memoization never actually memoized; it is rewritten
+  to thread the cache, the correct olang idiom.
+
 ### Fixed
 
 - **Empty-collection truthiness now agrees across tiers.** A promoted

@@ -138,7 +138,9 @@ println(show(get()))    // 1, not 99 — the closure captured n's value
 
 This is load-bearing (it is what makes modules and tier promotion sound),
 so if you need shared mutable state, keep it in an explicit structure you
-pass around, not in a captured variable.
+pass around, not in a captured variable. **`olang check` warns** when a
+closure assigns to a captured binding, because the write is provably dead
+— so the tooling catches this one for you.
 
 ## Definition order: bodies resolve late, values resolve now
 

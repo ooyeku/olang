@@ -13,26 +13,24 @@ fn fib(n) = if n < 2 => n else => fib(n - 1) + fib(n - 2)
 println(`factorial(10) = ${factorial(10)}`)
 println(`fib(20) = ${fib(20)}`)
 
-// ── Memoization via a closure over a map ────────────────────────────
-// A stateful counter proves each input is computed once.
-fn make_memo_fib() = {
-    let cache = #{}
-    fn go(n) = {
-        if n < 2 => n
-        else => {
-            let key = to_string(n)
-            if map_has_key(cache, key) => map_get(cache, key)
-            else => {
-                let result = go(n - 1) + go(n - 2)
-                cache = map_set(cache, key, result)
-                result
-            }
-        }
+// ── Memoization by threading the cache ──────────────────────────────
+// olang closures capture by value, so a captured map can't be mutated in
+// place — `cache = map_set(...)` inside a closure writes to the snapshot
+// and is silently dead (`olang check` flags exactly this). The working
+// idiom is functional: pass the cache in and return the updated one
+// alongside the result, `[value, cache]`.
+fn memo_fib(n, cache) = {
+    let key = to_string(n)
+    if map_has_key(cache, key) => [map_get(cache, key), cache]
+    else => if n < 2 => [n, cache]
+    else => {
+        let a = memo_fib(n - 1, cache)
+        let b = memo_fib(n - 2, a[1])   // reuse the cache `a` built
+        let result = a[0] + b[0]
+        [result, map_set(b[1], key, result)]
     }
-    go
 }
-let mfib = make_memo_fib()
-println(`memoized fib(30) = ${mfib(30)}`)
+println(`memoized fib(30) = ${memo_fib(30, #{})[0]}`)
 
 // ── Quicksort: recursion + partition via filter ─────────────────────
 fn quicksort(xs) = {
