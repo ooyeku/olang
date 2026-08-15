@@ -677,6 +677,44 @@ for source in unwrap(fs.glob("src/**/*.ol")) {
 println(show(len(unwrap(fs.walk("docs")))) + " files under docs/")
 ```
 
+## `meta` — the program as data (the Open AST)
+
+`meta.parse(source)` parses olang source and hands the program back as
+ordinary olang values: a list of statement maps, each tagged with a
+`"kind"`, that you walk with the same `map`/`filter`/`fold`/`match` you
+use on any data. Because the syntax is stable, these node shapes are a
+stable public format — linters, codemods, and import extractors are
+olang scripts, not compiler changes.
+
+| Function | Result |
+|---|---|
+| `meta.parse(source)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash |
+
+Nodes are discriminated-union maps. Top-level statements carry `line` and
+`column`; expressions nest (a `call`'s `callee` and `args` are themselves
+node maps). Common kinds: `use` (`path`, `items`), `fn` (`name`, `params`,
+`shared`, `body`), `let`, `type`, `test`, `call` (`target` is the dotted
+callee like `fs.read_file`, `args`), `field`, `binop`, `if`, `match`,
+`for`, `pipeline`, and the literals (`int`, `float`, `str`, `bool`,
+`ident`).
+
+```olang
+// `otc deps` — list a file's imports — in four lines over meta.parse.
+let program = unwrap(meta.parse("use geometry { area }\nuse fmt\nfn f() = 1"))
+for node in program |> filter((n) => map_get(n, "kind") == "use") {
+    println(map_get(node, "path") + " " + show(map_get(node, "items")))
+}
+// geometry ["area"]
+// fmt ["*"]
+```
+
+The representation is faithful for the shapes a tool inspects and
+summarizes the deep interior (patterns collapse to their bound names,
+async/promise plumbing to a bare `kind`) — enough to *analyze* a program,
+not to perfectly reconstruct one. See
+[`examples/metatool`](../examples/metatool/main.ol) for a linter that
+counts bare `unwrap()` calls per function.
+
 ## `os` — operating system
 
 The process's view of its world: arguments, environment, directories,

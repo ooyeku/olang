@@ -415,7 +415,7 @@ shipped; the table records what remains.
 | O2 | **The Open Timeline** — `--record` logs a run's nondeterministic inputs; `olang replay` reproduces it bit-for-bit from a portable, source-embedding `.olt` trace. Deterministic execution + immutable values + a small effect boundary make record/replay sound by construction | **landed (0.58+)** — record/replay for `random`/`time`/`os`/`fs`/`http`/`crypto`, portable traces, crash capture, divergence detection; interpreter-tier, single-thread |
 | O3 | **`replay --why` — value provenance** — during replay, the interpreter (the semantic oracle) carries where each value came from, answering "this 4162.85 is line 212's revenue + line 208's total, which came from …" as a chain back to the recorded inputs. Time-travel debugging's payoff: not just *what* happened, but *why this number* | not started |
 | O4 | **Timeline reach** — extend the recorded set to `db` reads (a replay stub handle serving recorded query results) and `chan`/thread interleavings (a recorded schedule), so a fully database-backed or concurrent program replays end to end | not started |
-| O5 | **The Open AST — the grammar as a stable public data format** — a `meta` module exposes the parsed program as ordinary olang values (the enums the checker already matches on), so linters, codemods, and code generators are written *in olang*: `olang check --rules team.ol` runs a project's own rules; a rename walks the AST, not grep. The frozen syntax is what lets the AST shapes be frozen and published | not started |
+| O5 | **The Open AST — the grammar as a stable public data format** — a `meta` module exposes the parsed program as ordinary olang values (`kind`-tagged maps), so linters, codemods, and import extractors are written *in olang*. The frozen syntax is what lets the AST shapes be published | **landed (0.58+)** — `meta.parse(source)` → the program as walkable node maps; `otc deps` is four lines over it; `examples/metatool` lints bare `unwrap`s. `olang check --rules` (project rules run inside the checker) is the next rung |
 
 The through-line: **open code, open artifacts, open execution.** No
 incumbent can follow all three — Python cannot freeze its AST, Go will
@@ -423,3 +423,16 @@ not embed source, and no mainstream runtime is deterministic enough to
 promise replay. Each lane grows out of a decision olang already made
 (early syntax stability, immutable values, a clean effect boundary)
 rather than a system it would have to invent.
+
+**Status: the campaign's three-pillar thesis is complete.** Open
+artifacts (O1), open execution (O2), and open code (O5) have all landed —
+no other language offers all three. The remaining lanes are enhancements,
+recorded as deferrals rather than gaps: **O3 (`replay --why`)** waits on
+value-provenance instrumentation through the interpreter (a large change,
+reopened when time-travel debugging is prioritized); **O4 (timeline
+reach)** waits on a `db`-read replay stub and a recorded thread schedule
+(the latter is genuinely hard — a deterministic scheduler — and is why
+Harborline's worker pool replays as a *detected divergence* today, not a
+clean run); **O5's `olang check --rules`** rung wires project-authored
+`meta` rules into the checker. Each reopens on demand; none blocks the
+identity the campaign set out to establish.

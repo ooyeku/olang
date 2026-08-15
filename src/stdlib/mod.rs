@@ -18,6 +18,7 @@ pub mod fs;
 pub mod http;
 pub mod json;
 pub mod math;
+pub mod meta;
 #[cfg(feature = "native")]
 pub mod os;
 #[cfg(feature = "native")]
@@ -32,6 +33,7 @@ pub mod toml_mod;
 pub fn get_stdlib() -> HashMap<String, Value> {
     let mut stdlib = HashMap::new();
     stdlib.insert("base64".to_string(), base64::create_base64_module());
+    stdlib.insert("meta".to_string(), meta::create_meta_module());
     stdlib.insert("col".to_string(), collections::create_collections_module());
     stdlib.insert("crypto".to_string(), crypto::create_crypto_module());
     #[cfg(feature = "native")]

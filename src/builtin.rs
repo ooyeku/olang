@@ -692,6 +692,15 @@ impl BuiltinFunctions {
             );
         }
 
+        // Handle meta (Open AST) functions
+        if let Some(meta_function) = name.strip_prefix("meta.") {
+            return crate::stdlib::meta::call_meta_function(meta_function, arguments).map_err(
+                |e| InterpreterError::RuntimeError {
+                    message: e.to_string(),
+                },
+            );
+        }
+
         // Handle base64 functions
         if let Some(base64_function) = name.strip_prefix("base64.") {
             // Remove "base64." prefix

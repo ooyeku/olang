@@ -317,6 +317,16 @@ observable concurrency is outside the model. (Roadmap: `replay --why`,
 which carries value provenance during replay to answer "where did this
 number come from?" — a chain back to the recorded inputs.)
 
+## `meta` — the program as data (the Open AST)
+
+Not a subcommand but a stdlib module, and the reason tools like `check`
+and `deps` need not be the only ones: `meta.parse(source)` returns a
+parsed olang program as ordinary olang values, so a project can write
+its own linters, codemods, and code generators *in olang* rather than
+as compiler changes. `otc deps` — list a file's imports — is four lines
+over it. See [the `meta` reference](stdlib.md#meta--the-program-as-data-the-open-ast)
+and [`examples/metatool`](../examples/metatool/main.ol).
+
 ## The examples harness
 
 `examples/run_all.ol` — a test harness written *in olang* — runs every

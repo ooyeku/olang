@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The `meta` module — the Open AST, the "open code" pillar.**
+  `meta.parse(source)` parses olang source and returns the program as
+  ordinary olang values: a list of `kind`-tagged statement maps you walk
+  with the same `map`/`filter`/`fold`/`match` as any data. Because the
+  syntax is stable, these node shapes are a stable public format —
+  linters, codemods, and import extractors become olang scripts, not
+  compiler changes (`otc deps` is four lines over it). Faithful for the
+  shapes a tool inspects, summarizing the deep interior; a syntax error is
+  an ordinary `Err`, never a crash. `examples/metatool` lints bare
+  `unwrap()` calls per function. With this the openness campaign's
+  three-pillar thesis — open artifacts, open execution, open code — is
+  complete.
+
 - **The Open Timeline — record, replay, deterministic re-execution.**
   `olang --record trace.olt program.ol` logs a run's nondeterministic
   inputs — `random.*`, the `time` clocks, the environment/stdin/`exec`

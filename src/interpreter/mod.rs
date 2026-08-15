@@ -2540,6 +2540,7 @@ impl Interpreter {
                 | "base64"
                 | "os"
                 | "crypto"
+                | "meta"
         ) && matches!(value, Value::Struct { type_name, .. } if type_name == "Module")
     }
 
