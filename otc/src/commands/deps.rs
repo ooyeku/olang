@@ -34,7 +34,9 @@ fn analyze_dependencies(file_path: &Path) -> Result<Vec<String>> {
 
 fn extract_use_statements(ast: &olang::ast::Program, dependencies: &mut Vec<String>) {
     for statement in &ast.statements {
-        if let olang::ast::Statement::UseDecl(use_decl) = statement {
+        // Statements carry spans via the Located wrapper; match through it,
+        // or every `use` is invisible and the report is always empty.
+        if let olang::ast::Statement::UseDecl(use_decl) = statement.unwrapped() {
             let module_path = use_decl.path.join(".");
             dependencies.push(module_path);
         }

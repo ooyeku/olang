@@ -68,7 +68,9 @@ fn analyze_unused_functions(dir_path: &Path) -> Result<UnusedAnalysis> {
 
         let mut functions = Vec::new();
         for statement in &ast.statements {
-            match statement {
+            // Match through the Located span wrapper, or every declaration
+            // is invisible and the scan finds nothing.
+            match statement.unwrapped() {
                 olang::ast::Statement::ShareDecl(olang::ast::ShareDecl::Function(func)) => {
                     functions.push(func.name.clone());
                 }

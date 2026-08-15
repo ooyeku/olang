@@ -2112,17 +2112,25 @@ impl Interpreter {
 
     /// AGGRESSIVE MEMORY MANAGEMENT: Force garbage collection and cleanup
     pub fn force_memory_cleanup(&mut self) {
-        // Clear module cache to free large amounts of memory
-        self.clear_module_cache();
+        // Never touch the module cache while a module load is in flight:
+        // the loader pre-caches placeholder entries that anchor relative
+        // `use` resolution — a sibling import resolves against the
+        // placeholder's directory. Clearing mid-load orphaned the chain:
+        // a >10-element list literal in one module's body (this cleanup's
+        // trigger) was enough to make the NEXT import in the importing
+        // file fail with "Cannot find module".
+        if self.module_loading_stack.is_empty() {
+            // Clear module cache to free large amounts of memory
+            self.clear_module_cache();
+            // Perform intelligent cache cleanup to free memory
+            let _ = self.perform_intelligent_cache_cleanup();
+        }
 
         // Reset all memory tracking
         self.memory_allocations = 0;
 
         // Don't clear user environment - it breaks variable scoping
         // self.clear_user_environment();
-
-        // Perform intelligent cache cleanup to free memory
-        let _ = self.perform_intelligent_cache_cleanup();
     }
 
     fn eval_match(&mut self, value: Value, arms: &[MatchArm]) -> Result<Value, InterpreterError> {
@@ -3087,12 +3095,27 @@ impl Interpreter {
         }
 
         // Runner behavior (`olang test`): record the outcome and keep going,
-        // so one failing block doesn't hide the others.
+        // so one failing block doesn't hide the others. A block fails on a
+        // raised error OR on any testing.assert_* that returned Err inside
+        // it — asserts tally rather than raise, and a runner that only
+        // watched for raises reported ✓ over failing assertions.
+        let (_, failed_before) = crate::stdlib::testing::tally_snapshot();
         let mut error = None;
         for statement in &test_decl.body {
             if let Err(e) = self.eval_statement(statement) {
                 error = Some(e.to_string());
                 break;
+            }
+        }
+        if error.is_none() {
+            let (_, failed_after) = crate::stdlib::testing::tally_snapshot();
+            let failed = failed_after - failed_before;
+            if failed > 0 {
+                error = Some(format!(
+                    "{} assertion{} failed",
+                    failed,
+                    if failed == 1 { "" } else { "s" }
+                ));
             }
         }
         self.test_results.push(TestOutcome {

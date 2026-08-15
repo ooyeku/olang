@@ -48,12 +48,17 @@ let s = term.style("y", #{ "fg": "yellow", "bg": "blue", "bold": true })
 // Visible width discounts the styling escapes, so styled table cells align.
 let vis = term.visible_len(term.red("hi")) == 2 && term.visible_len("plain") == 5
 os.remove_env("CLICOLOR_FORCE")
-// Color off now (piped, not a TTY): plain passthrough, and the
-// structure helpers produce clean aligned output.
+// Force color OFF explicitly with NO_COLOR. Merely dropping the force
+// flag is not enough: under `cargo test` in a real terminal the process
+// stdout IS a tty (the harness captures at the library layer, not the
+// fd), so the tty leg of the gate would keep color on and this test
+// would fail exactly when a human runs it interactively.
+os.set_env("NO_COLOR", "1")
 let plain_red = term.red("x")
 let colored_off = term.color()
 let t = term.table(["name", "n"], [["ada", "128"], ["evelyn", "1"]])
 let lines = str.lines(t)
+os.remove_env("NO_COLOR")
 [
     str.contains(r, "\x1b[31m") && str.contains(r, "x") && str.contains(r, "\x1b[0m"),
     str.contains(s, "\x1b[33;44;1m"),

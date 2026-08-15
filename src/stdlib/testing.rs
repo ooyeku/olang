@@ -343,6 +343,12 @@ fn reset_tests(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(Value::Unit)
 }
 
+/// The raw (passed, failed) tally for this thread — used by the test
+/// runner to charge assertion failures to the block that made them.
+pub fn tally_snapshot() -> (i64, i64) {
+    TALLY.with(|t| *t.borrow())
+}
+
 /// Helper function to compare values for equality
 fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {

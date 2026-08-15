@@ -1251,6 +1251,18 @@ impl BytecodeVm {
             let pending = std::mem::take(&mut self.compiler.pending_lambdas);
             for (lambda_id, decl, lambda_closure, self_binding) in pending {
                 self.compiler.enclosing_closure = lambda_closure;
+                // Each lambda enforces ITS OWN annotations, not the
+                // enclosing function's. Without this reset the enclosing
+                // param_checks were stamped onto the lambda and applied
+                // positionally to [own params..., captures...] — a capture
+                // landing on an annotated slot failed with the wrong type
+                // ("parameter 'x' of <lambda> expects Int, got String").
+                // Capture parameters get None checks (they are environment,
+                // not caller arguments).
+                self.compiler.pending_param_checks =
+                    crate::ast::param_checks_of(&decl.parameters, &decl.type_params).into();
+                self.compiler.pending_return_check =
+                    crate::ast::return_check_of(decl.return_type.as_ref(), &decl.type_params);
                 // A named nested fn binds its own name through the
                 // self_call channel, which appends the body's own capture
                 // parameters to recursive calls.

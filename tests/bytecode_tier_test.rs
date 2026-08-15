@@ -188,6 +188,37 @@ fn unit(x) = { let n = 0
 }
 
 #[test]
+fn capturing_lambda_does_not_inherit_enclosing_annotations() {
+    // The bytecode compiler stamped the enclosing function's param_checks
+    // onto every lambda it queued, applied positionally to
+    // [own params..., captures...] — so a lambda capturing an annotated
+    // String parameter of `fn f(xs, id: Int, cs: String)` failed with
+    // "parameter 'cs' of <lambda> expects Int, got String" on the tier
+    // while the interpreter ran fine. Lambdas now carry their own checks.
+    let src = r#"
+fn f(xs, id: Int, cs: String) = map(xs, (b) => cs + show(b + id))
+f([1, 2], 3, "S")
+"#;
+    assert_tier_transparent(src);
+    assert_eq!(
+        eval(src, Some(1)).unwrap(),
+        Value::List(
+            vec![
+                Value::String("S4".to_string().into()),
+                Value::String("S5".to_string().into()),
+            ]
+            .into()
+        )
+    );
+    // A lambda's OWN annotations still bite, with the same message on
+    // both tiers.
+    let bad = "let g = (n: Int) => n + 1\ng(\"x\")";
+    let interpreted = eval(bad, None).unwrap_err();
+    let promoted = eval(bad, Some(1)).unwrap_err();
+    assert_eq!(interpreted, promoted);
+}
+
+#[test]
 fn unsupported_binary_op_error_text_matches_interpreter() {
     // Same failure, same words: a promoted function raising a binary-op type
     // error must produce the interpreter's message ("Invalid binary
