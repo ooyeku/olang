@@ -346,3 +346,56 @@ progress bar) that exercises `cli` + `term` + `fs` in one
 self-contained file, builds into a standalone binary with `olang
 build`, and documents itself with `olang doc`: the terminal
 counterpart of the tracker web suite.
+
+## The adaptive-engine campaign — from baseline JIT to feedback-driven
+
+The performance campaign closed with the OVM as a clean two-tier
+engine: a register bytecode VM and a type-specialized, call-graph-aware
+Cranelift JIT that puts fib(30) level with Node and Bun. What it is
+not, yet, is *adaptive*: compilation decisions come from a static
+whitelist and one entry-guarded specialization per function, not from
+observed behavior. The gap to the adaptive engines (V8, JSC, HotSpot)
+is now a known, well-trodden list — profiling feedback, OSR,
+polymorphic inline caches, speculation with side-exit deopt,
+feedback-driven inlining, background tiering — and olang starts with
+two structural advantages those engines never had: **values are
+immutable and acyclic**, so shapes cannot transition and an inline
+cache, once filled, is valid forever (no invalidation machinery, no
+write barriers); and **the VM is register-based**, so the state
+mapping that makes OSR and deopt hard in stack machines is "copy N
+registers".
+
+The Harborline soak (examples/demo) is this campaign's acceptance
+harness: a long-running, allocation-heavy, idiomatic program whose
+top-level tick loop the JIT currently never reaches at all.
+
+| # | Lane | What ships | Grounding | Expected | Status |
+|---|---|---|---|---|---|
+| A1 | **Profiling substrate** — compact feedback vectors on `CompiledBytecode`: per-site operand-kind masks, call-target ids, branch bias, loop trip counts. Recording is one OR in the dispatch loop; semantics-free by construction | Every later lane consumes feedback; the dispatch loop already touches every site. Adaptive means observed truth replacing static inference | Negligible overhead; the prerequisite for A2–A6 | not started |
+| A2 | **OSR — on-stack replacement** — back-edge counters; at threshold, compile the function with an OSR entry at the loop header and enter mid-loop by materializing the native frame from the register file | Promotion counts *calls*, so a hot loop in a once-called function — including the top level of every script, Harborline's own tick loop among them — never crosses to native. The register file makes the state map a table copy | Extends the JIT to the program class people actually write: top-level loops, long-running ticks, `main`-shaped scripts | not started |
+| A3 | **Polymorphic specialization + inline caches** — compiled variants keyed by argument-kind signature (bounded, then generic bytecode fallback) through a per-function dispatch table; per-site ICs for struct field access (monomorphic direct offset → polymorphic ≤4 shapes → megamorphic helper) and for HOF call sites (`map(f)` direct-calls a monomorphic `f`) | "One specialization per function" is the engine's biggest performance cliff — any polymorphic call site falls off native entirely. Interned, non-transitioning shapes mean ICs never invalidate, skipping the hard 40% of what ICs cost JS engines; the tier's identity dispatch (viz finding #3) already laid the HOF groundwork | Removes the cliffs; steadier native residency on mixed-shape code | not started |
+| A4 | **Feedback-driven inlining, then escape analysis** — inline hot monomorphic targets under a budget (generalizing the existing leaf inliner via A1's call feedback), unlocking SROA across call boundaries; lambdas inline into the native `map`/`filter` loops (pipeline fusion for free); then true escape analysis so non-escaping structs/lists in a compiled group become registers | The state-threading idiom the language itself teaches (one world record, `patch`/fold transitions — the Harborline architecture) allocates a record per transition; inline-then-scalarize turns those into register writes. This is where idiomatic olang currently pays most against the JS engines | The campaign's headline speedup on allocation-heavy idiomatic code; directly attacks the allocation pressure behind the runtime's memory heuristics | not started |
+| A5 | **Speculation with side-exit deopt** — compile assuming the feedback (never-overflowed adds unchecked+guard, never-taken branches pruned, stable list element kinds kept unboxed) with deopt metadata that transfers to bytecode at the exact program point on guard failure | Today's "deopt" is a guarded helper per operation; real side exits shrink code, free the register allocator, and make checked integer arithmetic nearly free on proven-safe sites. The register VM keeps the native-state→register-file map tractable | Real percentages on numeric work; smaller, better-allocated native code | not started |
+| A6 | **Background tiering + runtime co-design** — compile off-thread (Cranelift is thread-friendly) and swap code in via the function table so compilation never pauses execution; recompile at a higher budget once feedback stabilizes (baseline → optimizing); extend the borrowed-pointer discipline to refcount elision within compiled groups; expand the native builtin set (`fold`/`reduce` still bridge); revisit the parked NaN-boxing *for the JIT's internal representation only* once A2/A3 change its calculus; replace the aggressive-memory-management heuristics with real accounting (the Harborline leak hunt is the entry point) | Pauses and bridge round-trips are the residual tax; the NaN-box deferral was explicitly gated on new data, and an IC/OSR world is new data. The mid-load cache-clearing bug (0.58 fixes) showed the heuristics layer is the least principled part of the runtime | Pause-free compilation; a true two-tier JIT; the runtime's memory story on the same footing as its correctness story | not started |
+
+**The constitutional requirement.** Speculation adds an obligation the
+current harness does not cover: *deopt-path equivalence*. Before A5
+lands, the suite gains stress modes — a `--jit-stress` that randomly
+fails guards, forces OSR entries, and forces deopt at every side exit —
+and the entire differential suite runs under them (the V8
+`--stress-opt` playbook). "Tiers agree" must keep meaning something as
+the effective tier count grows; every lane extends the fail-closed
+ladder, never bypasses it.
+
+Explicitly rejected for this campaign: a **tracing JIT** (method-JIT +
+ICs fits the architecture and its differential-testing story; tracing
+would forfeit the oracle discipline for marginal gain on this workload
+profile), and a **tracing GC** (immutable acyclic values make
+refcounting correct, not merely convenient — A4 and A6 remove its cost
+where it matters instead).
+
+Sequencing: A1→A2 first (reach), A3 (cliffs), A4 (speed), A5–A6
+(polish into a production adaptive engine). Expected arc: A1–A2 make
+the JIT reach idiomatic programs; A4 is projected to close roughly half
+the remaining gap to the JS engines on allocation-heavy code, which is
+where olang currently pays most.

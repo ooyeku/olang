@@ -563,6 +563,13 @@ These are real boundaries, stated so you can predict them:
   throughput matters, the honest route is explicit vectorized
   operations — which is what [the ods data stack](stdlib.md#ods--series-and-frames)
   provides — rather than a speculative auto-vectorizer inside the VM.
+- **Adaptive optimization** — profiling feedback, on-stack replacement,
+  polymorphic inline caches, speculation with side-exit deopt,
+  feedback-driven inlining, background tiering. These are the planned
+  next arc, not accidental gaps: the staged plan (and what is
+  deliberately rejected — a tracing JIT, a tracing GC) is
+  [the adaptive-engine campaign](roadmap.md#the-adaptive-engine-campaign--from-baseline-jit-to-feedback-driven)
+  in the roadmap.
 
 ## Source map
 
