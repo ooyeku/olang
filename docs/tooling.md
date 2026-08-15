@@ -162,6 +162,40 @@ The same checker runs in the language server, so editors surface these
 as error squiggles while you type. Exit is non-zero when a violation or
 parse error is found, so `olang check` slots directly into CI.
 
+### Project rules
+
+Run project-specific lint rules, written in olang over the [meta
+AST](#meta--the-program-as-data-the-open-ast), alongside the built-in
+type checks:
+
+```bash
+olang check --rules rules.ol .
+```
+
+Define a rule as a top-level function whose name begins with `rule_`. The
+function takes one argument: the file's AST, flattened to a list of nodes.
+Each node is a map with at least a `kind` field and a `line` field. The
+function returns a list of findings. A finding is a message string or a
+map with `message` and `line` fields.
+
+```olang
+// rules.ol
+share fn rule_no_bare_unwrap(nodes) =
+    nodes
+      |> filter((n) => map_get(n, "kind") == "call" && map_get(n, "target") == "unwrap")
+      |> map((n) => #{ "message": "bare unwrap(): use match or ?", "line": map_get(n, "line") })
+```
+
+`olang check` runs each rule against every checked file except the rules
+file itself. It reports each finding with the file name, line number, and
+rule name. Findings count as problems, so any finding produces a non-zero
+exit.
+
+The command applies the following behaviors:
+
+- A rule that raises an error is reported with its name.
+- A rules file that defines no `rule_*` functions is an error.
+
 ## `olang bench`
 
 Reproducible timings for `.ol` programs, and a regression guard:
@@ -225,14 +259,25 @@ distribute it.
 built exactly this way — `cli` for its arguments, `term` for color, and
 nothing external.
 
-Every built binary is also **transparent by construction**: it embeds
-its exact source, its `olang.toml` and `olang.lock`, a sha256 of the
-source, and its capability manifest. `olang inspect` reads them back —
-`--source` prints the source, `--verify` checks the checksum (nonzero
-on mismatch), `--caps` shows the capability grant, `-o dir/` extracts
-the whole paper trail. You cannot ship an olang program as a black box.
-See [Capabilities and the transparent binary](packages.md#capabilities)
-for the whole model.
+A built binary also embeds its exact source, its `olang.toml` and
+`olang.lock`, its capability manifest, and a checksum over all of them.
+Use `olang inspect` to read and verify these files. `--source` prints the
+source, `--caps` prints the capability grant, and `-o dir/` extracts all
+embedded files. Two flags perform checks:
+
+```bash
+olang inspect ./tool --verify      # Verify the binary's checksum.
+olang inspect ./tool --against .   # Compare the binary to a source tree.
+```
+
+`--verify` recomputes the checksum. The checksum covers the source, the
+manifest, and the lockfile, so verification fails if the embedded
+capability grant is changed, not only if the code is changed. `--against
+<dir>` compares the embedded source, manifest, and lockfile to a checkout
+and reports each file as match, differ, or missing. It exits non-zero on
+any mismatch. Use `--against` to confirm that a binary was built from a
+specific source tree. For the full model, see [Capabilities and the
+transparent binary](packages.md#capabilities).
 
 ## `olang doc`
 

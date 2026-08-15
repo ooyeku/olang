@@ -411,11 +411,12 @@ shipped; the table records what remains.
 
 | # | Lane | What ships | Status |
 |---|---|---|---|
-| O1 | **The transparent binary + capabilities** — a built binary carries its own source, manifest, lockfile, and checksum (`olang inspect`), and a `[capabilities]` manifest gates the effectful stdlib surface with per-dependency attenuation. You cannot ship an olang program as a black box, and nothing you install can exceed its manifest | **landed (0.58+)** — `olang inspect`, `[capabilities]`, per-dependency attenuation, `--deny`; enforced at the module boundary on the interpreter tier |
+| O1 | **The transparent binary + capabilities** — a built binary carries its own source, manifest, lockfile, and checksum (`olang inspect`), and a `[capabilities]` manifest gates the effectful stdlib surface with per-dependency attenuation. A built program cannot be a black box, and a dependency cannot exceed its manifest | **landed (0.58+)** — `olang inspect`, `[capabilities]`, per-dependency attenuation, `--deny`; enforced at the module boundary on the interpreter tier. **0.59 hardening:** the checksum covers source, manifest, and lockfile, so `--verify` detects a widened grant; `inspect --against <dir>` compares a binary to a source tree; `run --trace-caps` reports the capabilities a run used and prints a least-privilege manifest |
 | O2 | **The Open Timeline** — `--record` logs a run's nondeterministic inputs; `olang replay` reproduces it bit-for-bit from a portable, source-embedding `.olt` trace. Deterministic execution + immutable values + a small effect boundary make record/replay sound by construction | **landed (0.58+)** — record/replay for `random`/`time`/`os`/`fs`/`http`/`crypto`, portable traces, crash capture, divergence detection; interpreter-tier, single-thread |
 | O3 | **`replay --why` — value provenance** — during replay, the interpreter (the semantic oracle) carries where each value came from, answering "this 4162.85 is line 212's revenue + line 208's total, which came from …" as a chain back to the recorded inputs. Time-travel debugging's payoff: not just *what* happened, but *why this number* | not started |
 | O4 | **Timeline reach** — extend the recorded set to `db` reads (a replay stub handle serving recorded query results) and `chan`/thread interleavings (a recorded schedule), so a fully database-backed or concurrent program replays end to end | not started |
-| O5 | **The Open AST — the grammar as a stable public data format** — a `meta` module exposes the parsed program as ordinary olang values (`kind`-tagged maps), so linters, codemods, and import extractors are written *in olang*. The frozen syntax is what lets the AST shapes be published | **landed (0.58+)** — `meta.parse(source)` → the program as walkable node maps; `otc deps` is four lines over it; `examples/metatool` lints bare `unwrap`s. `olang check --rules` (project rules run inside the checker) is the next rung |
+| O5 | **The Open AST — the grammar as a stable public data format** — a `meta` module exposes the parsed program as ordinary olang values (`kind`-tagged maps), so linters, codemods, and import extractors are written *in olang*. The frozen syntax is what lets the AST shapes be published | **landed (0.58+)** — `meta.parse(source)` → the program as walkable node maps; `otc deps` is four lines over it; `examples/metatool` lints bare `unwrap`s |
+| O6 | **`olang check --rules` — project lints in olang** — a repo defines `rule_*` functions over the meta AST; `olang check --rules rules.ol .` runs them beside the built-in checker with the same `file:line` reporting and fails on findings. Projects express their own invariants in olang, without a compiler change | **landed (0.59)** — the checker flattens each file's AST (nodes line-stamped), calls each `rule_*` function, and reports returned findings as problems (exit 1) |
 
 The through-line: **open code, open artifacts, open execution.** No
 incumbent can follow all three — Python cannot freeze its AST, Go will
@@ -424,15 +425,25 @@ promise replay. Each lane grows out of a decision olang already made
 (early syntax stability, immutable values, a clean effect boundary)
 rather than a system it would have to invent.
 
-**Status: the campaign's three-pillar thesis is complete.** Open
-artifacts (O1), open execution (O2), and open code (O5) have all landed —
-no other language offers all three. The remaining lanes are enhancements,
-recorded as deferrals rather than gaps: **O3 (`replay --why`)** waits on
-value-provenance instrumentation through the interpreter (a large change,
-reopened when time-travel debugging is prioritized); **O4 (timeline
-reach)** waits on a `db`-read replay stub and a recorded thread schedule
-(the latter is genuinely hard — a deterministic scheduler — and is why
-Harborline's worker pool replays as a *detected divergence* today, not a
-clean run); **O5's `olang check --rules`** rung wires project-authored
-`meta` rules into the checker. Each reopens on demand; none blocks the
-identity the campaign set out to establish.
+**Status: the three pillars are complete, and 0.59 hardened them.** Open
+artifacts (O1), open execution (O2), and open code (O5, O6) have landed.
+The 0.59 pass extended the artifact and code pillars:
+
+- The transparency checksum now covers the embedded capability grant, not
+  only the source, so `--verify` detects a tampered manifest.
+- `inspect --against` compares a binary to a source tree, answering
+  whether the binary was built from that tree.
+- `run --trace-caps` reports the capabilities a run used and prints a
+  least-privilege manifest.
+- `olang check --rules` (O6) runs project-defined rules over the meta AST
+  inside the checker.
+
+Two lanes remain, tracked as deferrals:
+
+- **O3 (`replay --why`)** requires value-provenance instrumentation in the
+  interpreter. The first, smaller step is effect provenance: record each
+  event's call stack so `--why` reports where an input was consumed.
+- **O4 (timeline reach)** has two parts: a `db`-read replay stub, which is
+  tractable, and a recorded thread schedule, which requires a
+  deterministic scheduler. The second part is why Harborline's worker pool
+  currently replays as a detected divergence rather than a clean run.

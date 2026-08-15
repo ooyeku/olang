@@ -315,6 +315,119 @@ pub fn check(caps: &Caps, full_name: &str) -> Option<&'static str> {
     None
 }
 
+/// A capability a builtin call exercises, for the `--trace-caps` profiler.
+/// Finer than the gate's yes/no verdict: `fs` splits read from write, so a
+/// suggested manifest can propose `fs = "read"` when nothing wrote. `Ord`
+/// so the used set collects into a stable, deduplicated `BTreeSet`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CapUse {
+    FsRead,
+    FsWrite,
+    Net,
+    Db,
+    Proc,
+    Env,
+}
+
+/// What capability the builtin `full_name` exercises, or None for a pure
+/// helper / benign call. This is the profiler's dual of `check`: `check`
+/// asks "does this grant permit the call?"; `required` asks "what would the
+/// call need?" — the two share the same purity predicates so they never
+/// disagree about what counts as an effect.
+pub fn required(full_name: &str) -> Option<CapUse> {
+    if let Some(f) = full_name.strip_prefix("fs.") {
+        if fs_pure(f) {
+            return None;
+        }
+        return Some(if fs_read_only(f) {
+            CapUse::FsRead
+        } else {
+            CapUse::FsWrite
+        });
+    }
+    if let Some(f) = full_name.strip_prefix("http.") {
+        if http_pure(f) {
+            return None;
+        }
+        return Some(CapUse::Net);
+    }
+    if full_name.starts_with("db.") {
+        return Some(CapUse::Db);
+    }
+    if full_name.starts_with("proc.") || full_name == "os.exec" {
+        return Some(CapUse::Proc);
+    }
+    if let Some(f) = full_name.strip_prefix("os.") {
+        if os_env_gated(f) {
+            return Some(CapUse::Env);
+        }
+        // chdir moves the fs cursor — a write-level fs demand.
+        if f == "chdir" {
+            return Some(CapUse::FsWrite);
+        }
+        return None;
+    }
+    None
+}
+
+/// Render a `--trace-caps` report from the set of capabilities a run
+/// exercised: a human summary plus a ready-to-paste least-privilege
+/// `[capabilities]` manifest. Every capability the program did *not* touch
+/// is pinned shut, so pasting the block can only tighten, never loosen.
+pub fn trace_report(used: &std::collections::BTreeSet<CapUse>) -> String {
+    let fs = if used.contains(&CapUse::FsWrite) {
+        FsCap::Full
+    } else if used.contains(&CapUse::FsRead) {
+        FsCap::Read
+    } else {
+        FsCap::None
+    };
+    let net = used.contains(&CapUse::Net);
+    let db = used.contains(&CapUse::Db);
+    let proc = used.contains(&CapUse::Proc);
+    let env = used.contains(&CapUse::Env);
+
+    let mut out = String::new();
+    out.push_str("\n── capability profile (--trace-caps) ──\n");
+    if used.is_empty() {
+        out.push_str("this program exercised no gated capabilities.\n");
+    } else {
+        let touched: Vec<&str> = [
+            (fs != FsCap::None).then_some(match fs {
+                FsCap::Full => "fs (read+write)",
+                _ => "fs (read)",
+            }),
+            net.then_some("net"),
+            db.then_some("db"),
+            proc.then_some("proc"),
+            env.then_some("env"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        out.push_str(&format!("exercised: {}\n", touched.join(", ")));
+    }
+    let fs_field = match fs {
+        FsCap::None => "false".to_string(),
+        FsCap::Read => "\"read\"".to_string(),
+        FsCap::Full => "true".to_string(),
+    };
+    out.push_str("\nsuggested least-privilege manifest:\n\n");
+    out.push_str("  [capabilities]\n");
+    out.push_str(&format!("  fs = {}\n", fs_field));
+    out.push_str(&format!("  net = {}\n", net));
+    out.push_str(&format!("  db = {}\n", db));
+    out.push_str(&format!("  proc = {}\n", proc));
+    out.push_str(&format!("  env = {}\n", env));
+    if proc {
+        out.push_str(
+            "\nnote: proc lets the program spawn other processes, which run outside olang's\n\
+             capability sandbox — grant it only to code you trust with the whole machine.\n",
+        );
+    }
+    out
+}
+
 /// Parse a `--deny` list ("fs,net" or "fs=read") into a restriction set
 /// to intersect with whatever the manifest grants.
 pub fn parse_deny(list: &str) -> Result<Caps, String> {
@@ -450,6 +563,47 @@ mod tests {
             ..Default::default()
         };
         assert!(CapTable::build(&bad, &dirs).is_err());
+    }
+
+    #[test]
+    fn required_classifies_the_effect_surface() {
+        assert_eq!(required("fs.read_file"), Some(CapUse::FsRead));
+        assert_eq!(required("fs.glob"), Some(CapUse::FsRead));
+        assert_eq!(required("fs.write_file"), Some(CapUse::FsWrite));
+        assert_eq!(required("os.chdir"), Some(CapUse::FsWrite));
+        assert_eq!(required("http.get"), Some(CapUse::Net));
+        assert_eq!(required("db.open"), Some(CapUse::Db));
+        assert_eq!(required("proc.spawn"), Some(CapUse::Proc));
+        assert_eq!(required("os.exec"), Some(CapUse::Proc));
+        assert_eq!(required("os.get_env"), Some(CapUse::Env));
+        // pure / benign: no demand
+        assert_eq!(required("fs.join"), None);
+        assert_eq!(required("http.parse_url"), None);
+        assert_eq!(required("os.args"), None);
+        assert_eq!(required("str.trim"), None);
+    }
+
+    #[test]
+    fn trace_report_suggests_a_shrink_only_manifest() {
+        // A read + net program suggests fs="read", net=true, the rest shut.
+        let used: std::collections::BTreeSet<CapUse> =
+            [CapUse::FsRead, CapUse::Net].into_iter().collect();
+        let report = trace_report(&used);
+        assert!(report.contains("fs = \"read\""));
+        assert!(report.contains("net = true"));
+        assert!(report.contains("db = false"));
+        assert!(report.contains("proc = false"));
+        // A write demand upgrades fs to true.
+        let w: std::collections::BTreeSet<CapUse> = [CapUse::FsWrite].into_iter().collect();
+        assert!(trace_report(&w).contains("fs = true"));
+        // proc carries the escape-hatch warning.
+        let p: std::collections::BTreeSet<CapUse> = [CapUse::Proc].into_iter().collect();
+        assert!(trace_report(&p).contains("outside olang's"));
+        // An empty run pins everything shut.
+        let empty = std::collections::BTreeSet::new();
+        let r = trace_report(&empty);
+        assert!(r.contains("no gated capabilities"));
+        assert!(r.contains("fs = false"));
     }
 
     #[test]

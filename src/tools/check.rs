@@ -22,14 +22,16 @@
 //! program still contains a provably false annotation either way.
 //! Everything unprovable stays silent; unannotated code is never judged.
 
-use crate::ast::{Argument, Expr, Program, Statement, TypeAnnotation, TypeDefinition};
+use crate::ast::{Argument, Expr, Program, Statement, TypeAnnotation, TypeDefinition, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-/// `olang check [paths]` — parse every `.ol` file and report provable
-/// annotation violations. Exit 0 when everything is clean (or unknowable),
-/// 1 when a violation or parse error is found.
-pub fn run(paths: &[PathBuf]) -> i32 {
+/// `olang check [paths] [--rules FILE]` — parse every `.ol` file and report
+/// provable annotation violations. With `--rules`, also run project-authored
+/// lints written in olang over the meta AST. Exit 0 when everything is clean
+/// (or unknowable), 1 when a violation, parse error, or rule finding appears.
+pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
     let mut files = Vec::new();
     for path in paths {
         if !path.exists() {
@@ -92,6 +94,13 @@ pub fn run(paths: &[PathBuf]) -> i32 {
         }
     }
 
+    // Project-authored lints: run the rules file's `rule_*` functions over
+    // each target file's meta AST. Findings count as problems (you opted
+    // into the rule, so a hit should gate).
+    if let Some(rules_path) = rules {
+        problems += run_rules(rules_path, &files);
+    }
+
     let warn_note = match warnings {
         0 => String::new(),
         1 => ", 1 warning".to_string(),
@@ -113,6 +122,185 @@ pub fn run(paths: &[PathBuf]) -> i32 {
             warn_note
         );
         1
+    }
+}
+
+/// `olang check --rules FILE`: run project-authored lints over every target
+/// file's meta AST. A rule is a top-level function named `rule_*` taking one
+/// argument — the flat list of every AST node in the file (each a map with
+/// at least `kind` and `line`) — and returning a list of findings. A finding
+/// is a string (its message) or a map `#{ "message": ..., "line": ... }`.
+/// Rules are olang, so "open code" (the meta module) becomes a first-class
+/// consumer: an org encodes its invariants in the same language it ships.
+/// Returns the number of findings (each counts as a problem).
+fn run_rules(rules_path: &Path, files: &[PathBuf]) -> usize {
+    // Load and run the rules program once; its `rule_*` functions stay live
+    // in the interpreter to be called per target file.
+    let source = match std::fs::read_to_string(rules_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "olang check --rules: cannot read {}: {}",
+                rules_path.display(),
+                e
+            );
+            return 1;
+        }
+    };
+    let program = match crate::parser::Parser::new().parse(&source) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!(
+                "olang check --rules: {} does not parse: {}",
+                rules_path.display(),
+                e
+            );
+            return 1;
+        }
+    };
+    let mut interp = crate::interpreter::Interpreter::new();
+    let abs = std::fs::canonicalize(rules_path).unwrap_or_else(|_| rules_path.to_path_buf());
+    interp.set_current_file(&abs);
+    if let Err(e) = interp.eval_program(program) {
+        eprintln!(
+            "olang check --rules: {} failed to load: {:?}",
+            rules_path.display(),
+            e
+        );
+        return 1;
+    }
+
+    // Collect the rule functions (name starts with `rule_`), stable order.
+    let mut rules: Vec<(String, Value)> = interp
+        .get_user_variables()
+        .into_iter()
+        .filter(|(name, v)| name.starts_with("rule_") && matches!(v, Value::Function(_)))
+        .map(|(name, v)| (name, v.clone()))
+        .collect();
+    rules.sort_by(|a, b| a.0.cmp(&b.0));
+    if rules.is_empty() {
+        eprintln!(
+            "olang check --rules: {} defines no rule_* functions",
+            rules_path.display()
+        );
+        return 1;
+    }
+
+    // Don't lint the rules file itself.
+    let rules_canon = abs;
+    let mut findings = 0usize;
+    for file in files {
+        let file_canon = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+        if file_canon == rules_canon {
+            continue;
+        }
+        let Ok(src) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        // Parse to the meta AST; a file that doesn't parse is already
+        // reported by the type-check pass, so skip it silently here.
+        let nodes = match crate::stdlib::meta::call_meta_function(
+            "parse",
+            vec![Value::String(Arc::new(src))],
+        ) {
+            Ok(Value::Ok(inner)) => match *inner {
+                Value::List(items) => (*items).clone(),
+                _ => continue,
+            },
+            _ => continue,
+        };
+        // Flatten to every node, each stamped with its nearest source line,
+        // so a rule is a plain filter with usable positions.
+        let flat = Value::List(Arc::new(flatten_ast(&nodes)));
+
+        for (name, func) in &rules {
+            match interp.call_function(func.clone(), vec![flat.clone()]) {
+                Ok(result) => {
+                    for (line, message) in rule_findings(&result) {
+                        findings += 1;
+                        if line > 0 {
+                            eprintln!("{}:{}: [{}] {}", file.display(), line, name, message);
+                        } else {
+                            eprintln!("{}: [{}] {}", file.display(), name, message);
+                        }
+                    }
+                }
+                Err(e) => {
+                    findings += 1;
+                    eprintln!(
+                        "{}: [{}] rule raised an error: {:?}",
+                        file.display(),
+                        name,
+                        e
+                    );
+                }
+            }
+        }
+    }
+    findings
+}
+
+/// Flatten the meta AST into a preorder list of every node, stamping each
+/// with the nearest enclosing source line so nested expression nodes (which
+/// the parser does not position) still report a usable location.
+fn flatten_ast(nodes: &[Value]) -> Vec<Value> {
+    let mut out = Vec::new();
+    for n in nodes {
+        flatten_into(n, 0, &mut out);
+    }
+    out
+}
+
+fn flatten_into(v: &Value, inherited_line: i64, out: &mut Vec<Value>) {
+    match v {
+        Value::Map(m) => {
+            let line = match m.get("line") {
+                Some(Value::Integer(l)) => *l,
+                _ => inherited_line,
+            };
+            if m.contains_key("kind") {
+                let mut node = (**m).clone();
+                node.entry("line".to_string())
+                    .or_insert(Value::Integer(line));
+                out.push(Value::Map(Arc::new(node)));
+            }
+            for val in m.values() {
+                flatten_into(val, line, out);
+            }
+        }
+        Value::List(items) => {
+            for it in items.iter() {
+                flatten_into(it, inherited_line, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Read a rule's return value into (line, message) findings. Accepts a list
+/// of strings, a list of `#{ message, line }` maps, or a mix; a bare string
+/// or map (a single finding) is accepted too. Anything else is no findings.
+fn rule_findings(result: &Value) -> Vec<(i64, String)> {
+    fn one(v: &Value) -> Option<(i64, String)> {
+        match v {
+            Value::String(s) => Some((0, s.to_string())),
+            Value::Map(m) => {
+                let message = match m.get("message").or_else(|| m.get("msg")) {
+                    Some(Value::String(s)) => s.to_string(),
+                    _ => return None,
+                };
+                let line = match m.get("line") {
+                    Some(Value::Integer(l)) => *l,
+                    _ => 0,
+                };
+                Some((line, message))
+            }
+            _ => None,
+        }
+    }
+    match result {
+        Value::List(items) => items.iter().filter_map(one).collect(),
+        other => one(other).into_iter().collect(),
     }
 }
 

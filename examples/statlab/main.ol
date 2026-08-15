@@ -81,7 +81,8 @@ let coef = map_get(fit, "coef")
 println("ols n=5000: b1=" + show(math.round(ods.get(coef, 1) * 100.0) / 100.0)
     + " b2=" + show(math.round(ods.get(coef, 2) * 100.0) / 100.0)
     + " b3=" + show(math.round(ods.get(coef, 3) * 100.0) / 100.0)
-    + " r2=" + show(math.round(map_get(fit, "r2") * 1000.0) / 1000.0))
+    + " r2=" + show(math.round(map_get(fit, "r2") * 1000.0) / 1000.0)
+    )
 
 // ── charts ──
 let null_svg = plot.hist(gaps, 30,

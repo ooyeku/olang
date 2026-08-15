@@ -557,6 +557,10 @@ impl BuiltinFunctions {
         if let Some(message) = interpreter.capability_denial(name) {
             return Err(InterpreterError::RuntimeError { message });
         }
+        // --trace-caps: record the demand this call makes, so a profile of
+        // exercised capabilities can be reported at end of run. A no-op
+        // unless profiling is on.
+        interpreter.record_caps_use(name);
 
         // The Open Timeline: in replay mode a recorded nondeterministic
         // call returns its logged result and the real effect is skipped;

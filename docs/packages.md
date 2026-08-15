@@ -301,34 +301,60 @@ command line (also read from `OLANG_DENY`):
 olang --deny net,fs-write program.ol   # remove network + write access
 ```
 
-Capabilities are enforced on the interpreter tier: because the
-interpreter's call stack is what attributes a gated call to the
-package that made it, a capability-restricted run steps the bytecode
-tier aside (like `par for`, this is interpreter-owned). Unrestricted
-runs keep the full tier. Cross-tier capability attribution — keeping
-native speed under a manifest — is a recorded roadmap item.
+To determine the minimal manifest for a program, run it with
+`--trace-caps`. This flag reports the capabilities the program used and
+prints a corresponding least-privilege `[capabilities]` block:
+
+```bash
+olang run --trace-caps program.ol
+# ── capability profile (--trace-caps) ──
+# exercised: fs (read), net
+#
+# suggested least-privilege manifest:
+#
+#   [capabilities]
+#   fs = "read"
+#   net = true
+#   db = false
+#   proc = false
+#   env = false
+```
+
+Capabilities the program did not use are set to their most restrictive
+value, so applying the generated block can only reduce access. The
+profiler runs on the interpreter tier and observes every effect.
+
+Capabilities are enforced on the interpreter tier. The interpreter's call
+stack attributes a gated call to the package that made it, so a
+capability-restricted run disables the bytecode tier, like `par for`.
+Unrestricted runs keep the bytecode tier. Cross-tier capability
+attribution, which would retain native speed under a manifest, is a
+roadmap item.
 
 ## The transparent binary
 
-An `olang build` executable is **open by construction**: it carries
-its own complete source, its `olang.toml` and `olang.lock`, a sha256 of
-the source, and its capability manifest — extractable and verifiable
-with `olang inspect`, no external context required.
+An `olang build` executable embeds its complete source, its `olang.toml`
+and `olang.lock`, its capability manifest, and a checksum over all of
+them. `olang inspect` reads and verifies these files without external
+context:
 
 ```bash
-olang inspect ./tool             # a summary: version, checksum, caps
-olang inspect ./tool --source    # print the exact embedded source
-olang inspect ./tool --manifest  # print the embedded olang.toml
-olang inspect ./tool --caps      # the resolved capability grant
-olang inspect ./tool --verify    # recompute the checksum; nonzero on mismatch
-olang inspect ./tool -o dir/     # extract source + manifest + lockfile
+olang inspect ./tool             # Print a summary: version, checksum, capabilities.
+olang inspect ./tool --source    # Print the embedded source.
+olang inspect ./tool --manifest  # Print the embedded olang.toml.
+olang inspect ./tool --caps      # Print the resolved capability grant.
+olang inspect ./tool --verify    # Verify the checksum.
+olang inspect ./tool --against . # Compare the binary to a source tree.
+olang inspect ./tool -o dir/     # Extract source, manifest, and lockfile.
 ```
 
-You cannot ship an olang program as a black box: every binary can be
-opened, diffed against the repo it claims to come from, and audited
-for what it is allowed to do — *before* you run it. It doubles as a
-built-in software bill of materials (exact sources and dependency
-versions, for the next supply-chain CVE) and as the answer to "what
-version, with which patches, is this?" — the binary contains the
-answer. A built binary enforces the capability manifest it carries, so
-a sealed tool stays sealed wherever it runs.
+The `--verify` checksum covers the source, the manifest, and the lockfile
+together, so verification fails if the embedded capability grant is
+changed, not only if the code is changed. `--against <dir>` compares the
+embedded source, manifest, and lockfile to a checkout and reports whether
+the binary was built from that source tree.
+
+A transparent binary serves two additional purposes. It is a software bill
+of materials, because it records its exact sources and dependency
+versions. It also enforces the capability manifest it carries, so a
+restricted tool remains restricted wherever it runs.

@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-08-15
+
+### Added
+
+- **`olang check --rules <rules.ol>`: project lint rules in olang (openness
+  lane O6).** A project defines lint functions named `rule_*` that take a
+  file's AST, flattened to a list of `kind`-tagged node maps each carrying
+  its nearest source `line`, and return findings (a message string or a
+  `#{ "message", "line" }` map). The checker runs these rules alongside the
+  built-in type checks and reports each finding with the file name, line,
+  and rule name. Findings count as problems, so a violation produces a
+  non-zero exit. A rules file that defines no `rule_*` functions is an
+  error, and a rule that raises an error is reported by name.
+
+- **`olang inspect <binary> --against <dir>`: provenance check.** Compares
+  the binary's embedded source, manifest, and lockfile to a checkout on
+  disk and reports each file as match, differ, or missing, exiting non-zero
+  on any mismatch. Where `--verify` checks internal consistency,
+  `--against` confirms that a binary was built from a specific source tree.
+
+- **`olang run --trace-caps`: capability profiler.** Reports the
+  capabilities a run used (`fs` as read or write, plus `net`, `db`, `proc`,
+  and `env`) and prints a least-privilege `[capabilities]` manifest with
+  every unused capability set to its most restrictive value. Runs on the
+  interpreter tier so every effect is observed, and reports even if the
+  program crashes.
+
+### Security
+
+- **The transparency checksum now covers the whole payload, not only the
+  source (openness lane O1, hardening).** `olang build` records a checksum
+  over the source, the embedded `olang.toml`, and the `olang.lock` (each
+  length-framed), and `olang inspect --verify` checks it. Previously the
+  checksum covered only the source, so the embedded capability manifest
+  could be edited in place to widen a grant without failing `--verify`.
+  Bundles built before this change carry no such checksum and fall back to
+  the source checksum, unchanged.
+
 ### Fixed
 
 - **Two real per-tick memory leaks in the concurrency path, found by
@@ -3146,5 +3184,6 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.59.0...HEAD
+[0.59.0]: https://github.com/ooyeku/olang/compare/v0.58.0...v0.59.0
 [0.23.0]: https://github.com/ooyeku/olang/releases/tag/v0.23.0

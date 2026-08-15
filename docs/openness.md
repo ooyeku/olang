@@ -1,33 +1,35 @@
-# Openness — what "Open Language" means, mechanically
+# Openness
 
-olang is the **Open Language** — and it means the word literally, at three
-layers, as mechanical facts rather than a slogan:
+olang makes three aspects of a program available as inspectable data: its
+code, its compiled artifacts, and its execution.
 
-- **Open code** — a program's own structure is a stable, public data
-  format your olang code can read and transform.
-- **Open artifacts** — a compiled binary carries its own source and
-  declares exactly what it is allowed to touch; it can be neither a black
-  box nor a silent over-reacher.
-- **Open execution** — any run can be recorded and replayed bit-for-bit,
-  anywhere.
+- **Open code:** `meta.parse` returns a program's syntax tree as olang
+  values.
+- **Open artifacts:** a compiled binary embeds its exact source and
+  declares the capabilities it is allowed to use.
+- **Open execution:** `olang --record` logs a run's nondeterministic
+  inputs, and `olang replay` reproduces the run from that log.
 
-No other language offers all three, and the reason is not ambition — it
-is that each one falls out of a decision olang already made. This chapter
-is the map; each pillar's mechanics live in its own chapter, linked below.
+Each capability follows from an existing design decision: a stable
+grammar, immutable values, and a small, explicit effect boundary. This
+page summarizes each capability and links to its reference.
 
-Part of [the olang book](README.md) · [Packages](packages.md) ·
-[Tooling](tooling.md) · [Standard Library](stdlib.md)
+Related pages: [Packages](packages.md), [Tooling](tooling.md),
+[Standard library](stdlib.md).
 
-## Open code — the program as data
+## Open code: the program as data
 
-Because olang [stabilized its syntax early](stability.md), the parse tree
-can be a stable public format. `meta.parse(source)` hands a program back
-as ordinary olang values — a list of `kind`-tagged maps you walk with the
-same `map`/`filter`/`fold`/`match` you use on any data. Linters, codemods,
-and import extractors become olang scripts, not compiler changes.
+olang's grammar is stable (see [Stability](stability.md)), so the parse
+tree is a supported data format. `meta.parse(source)` returns a program as
+a list of `kind`-tagged maps. Process these maps with the same `map`,
+`filter`, `fold`, and `match` operations you use on any other data. Use
+this format to write linters, codemods, and import extractors in olang
+instead of as compiler changes.
+
+The following example lists a file's imports:
 
 ```olang
-// `otc deps` — list a file's imports — in four lines.
+// List a file's imports.
 let program = unwrap(meta.parse("use geometry { area }\nuse fmt\nfn f() = 1"))
 for node in program |> filter((n) => map_get(n, "kind") == "use") {
     println(map_get(node, "path") + " " + show(map_get(node, "items")))
@@ -36,81 +38,70 @@ for node in program |> filter((n) => map_get(n, "kind") == "use") {
 // fmt ["*"]
 ```
 
-The full node vocabulary is in [the `meta`
-reference](stdlib.md#meta--the-program-as-data-the-open-ast); a linter
-that counts bare `unwrap()` calls is in
-[`examples/metatool`](../examples/metatool/main.ol). Python cannot promise
-this — its `ast` module breaks most releases, because its grammar is an
-internal detail that changes. olang's grammar is a commitment, so the
-shapes built on it can be too.
+For the full node vocabulary, see the [meta
+reference](stdlib.md#meta--the-program-as-data-the-open-ast). For a
+complete linter, see [examples/metatool](../examples/metatool/main.ol).
 
-## Open artifacts — the transparent binary
+The toolchain uses the same format. `olang check --rules` runs
+project-specific lint rules, written in olang over the meta AST, alongside
+the built-in type checker. See [Project rules](tooling.md#project-rules).
 
-`olang build` already embeds a program's complete source (so runtime
-errors render a snippet); openness turns that into a guarantee. A built
-binary carries its exact source, its `olang.toml` and `olang.lock`, a
-sha256 of the source, and its capability manifest — all extractable and
-verifiable with `olang inspect`:
+## Open artifacts: the transparent binary
+
+`olang build` embeds a program's complete source, its `olang.toml` and
+`olang.lock`, its capability manifest, and a checksum over all of them.
+Use `olang inspect` to read and verify these files:
 
 ```bash
-olang inspect ./tool             # a summary: version, checksum, capabilities
-olang inspect ./tool --source    # print the exact embedded source
-olang inspect ./tool --verify    # recompute the checksum; nonzero on tamper
-olang inspect ./tool -o dir/     # extract source + manifest + lockfile
+olang inspect ./tool --source     # Print the embedded source.
+olang inspect ./tool --verify     # Verify the checksum.
+olang inspect ./tool --against .  # Compare the binary to a source tree.
+olang inspect ./tool -o dir/      # Extract source, manifest, and lockfile.
 ```
 
-You cannot ship an olang program as a black box: every binary can be
-opened, diffed against the repo it claims to come from, and audited — and
-it doubles as a built-in software bill of materials.
+The checksum covers the source, the manifest, and the lockfile together,
+so `--verify` detects a change to the embedded capability grant as well as
+a change to the code. `--against <dir>` compares the embedded files to a
+checkout and reports whether the binary was built from that source tree.
 
-The other half is **capabilities**. A `[capabilities]` block in
-`olang.toml` gates the effectful stdlib surface (`fs`, `net`, `db`,
-`proc`, environment access) at the module boundary; pure computation is
-never gated, and absent, everything is allowed — so it is opt-in and never
-breaks existing code. The part no mainstream ecosystem has is
-**per-dependency attenuation**: a dependency can be granted *less* than
-the app, never more, so a supply-chain compromise that adds `fs`/`net`
-behaviour to a package that never had it dies at the gate. The mechanics
-are in [the Packages chapter](packages.md#capabilities).
+Capabilities restrict what a program can do. A `[capabilities]` block in
+`olang.toml` controls access to the effectful parts of the standard
+library: `fs`, `net`, `db`, `proc`, and environment access. Pure
+computation is never restricted. When no manifest is present, all
+capabilities are allowed, so existing code is unaffected. A dependency can
+be granted fewer capabilities than the application, but never more. For
+details, see [Capabilities](packages.md#capabilities).
 
-## Open execution — the timeline
+## Open execution: the timeline
 
-Because olang programs are deterministic given their inputs (immutable
-values, capture-by-value closures, a seeded RNG) and the only
-nondeterminism a program can observe is a small, explicit set of stdlib
-calls, a run can be recorded and reproduced exactly:
+olang programs are deterministic given their inputs. Values are immutable,
+closures capture by value, and the only observable nondeterminism comes
+from a small, fixed set of standard-library calls. As a result, a run can
+be recorded and reproduced exactly:
 
 ```bash
-olang --record bug.olt program.ol   # run, logging every nondeterministic input
-olang replay bug.olt                # re-run: identical, from the trace alone
+olang --record bug.olt program.ol   # Record the run's nondeterministic inputs.
+olang replay bug.olt                # Reproduce the run from the recording.
 ```
 
-Replay yields the same random rolls, the same timestamps, the same
-environment, to the last digit. The `.olt` trace embeds the program
-source, so it is portable — replay works from a machine where the program
-does not exist — and a *crashed* run records on the way down, so the
-failure replays exactly. A bug report becomes a file. Divergence is
-detected, not hidden: if the program's effect sequence no longer matches
-the trace, replay stops at the exact point and says so. The full model
-(and its boundaries) is in [the Tooling
-chapter](tooling.md#olang---record-and-olang-replay--the-open-timeline).
+Replay produces the same random values, timestamps, and environment as the
+original run. The `.olt` trace embeds the program source, so replay works
+on a machine that does not have the program. A run that crashes is still
+recorded, so the failure reproduces. If a program's sequence of effects no
+longer matches the trace, replay stops at that point and reports the
+divergence. For the full model, see [The Open
+Timeline](tooling.md#olang---record-and-olang-replay--the-open-timeline).
 
-## Why olang, and no one else
+## Design decisions
 
-The three pillars rest on four choices, each load-bearing:
+The three capabilities depend on four design decisions:
 
-| Choice | What it makes possible |
+| Decision | Capability it enables |
 |---|---|
-| **Syntax stabilized early** (a documented commitment) | The AST shapes can be frozen and published — *open code* |
-| **Immutable, acyclic values** | A recorded result can never be a live handle in disguise, and a state snapshot is a pointer clone — *open execution*, consistent zero-pause capture |
-| **A small, explicit effect boundary** (a handful of stdlib modules) | The one place to record inputs, and the one place to gate capabilities — *open execution* and *open artifacts* |
-| **Source-carrying binaries** | Nothing to reverse-engineer — *open artifacts* |
+| Stable syntax | The AST shapes are published as a data format (open code). |
+| Immutable, acyclic values | A recorded value is never a live handle, and a state snapshot is a pointer clone (open execution). |
+| A small, explicit effect boundary | A single place to record inputs and to enforce capabilities (open execution and open artifacts). |
+| Source-carrying binaries | No decompilation is required to read a binary (open artifacts). |
 
-An incumbent cannot follow: Python cannot freeze its AST, Go will not
-embed source, and no mainstream runtime is deterministic enough to promise
-replay. Openness is not a feature olang added; it is what olang *is* once
-those decisions are taken to their conclusion.
-
-The campaign that established these pillars — and the enhancements still
-open (value provenance in replay, project-authored checker rules) — is
-tracked as [the openness campaign](roadmap.md#the-openness-campaign--what-open-language-means-mechanically).
+For the roadmap and remaining work, see [the openness
+campaign](roadmap.md#the-openness-campaign--what-open-language-means-mechanically).

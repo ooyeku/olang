@@ -164,6 +164,12 @@ pub struct Interpreter {
     /// code made them.
     caps: Option<std::sync::Arc<crate::caps::CapTable>>,
 
+    /// `--trace-caps`: the set of capabilities this run has exercised so
+    /// far. When Some, every gated builtin call records its demand at the
+    /// dispatch choke point (independent of whether a manifest is loaded),
+    /// so the profiler can report a least-privilege grant at end of run.
+    caps_trace: Option<std::collections::BTreeSet<crate::caps::CapUse>>,
+
     /// The Open Timeline (`--record` / `olang replay`). When present,
     /// every nondeterministic builtin call is logged (record) or served
     /// from the log (replay). Like capabilities, it runs on the
@@ -247,6 +253,7 @@ impl Interpreter {
             coverage: None,
             coverage_file_stack: Vec::new(),
             caps: None,
+            caps_trace: None,
             caps_path_cache: HashMap::new(),
             timeline: None,
             struct_defs: HashMap::new(),
@@ -2045,6 +2052,9 @@ impl Interpreter {
             coverage_file_stack: Vec::new(),
             // Capabilities follow the code onto every thread.
             caps: self.caps.clone(),
+            // The profiler is single-threaded (like coverage / timeline);
+            // worker clones do not record.
+            caps_trace: None,
             caps_path_cache: HashMap::new(),
             // The timeline does not span worker threads (v1 records a
             // single thread of effects); workers run live.
@@ -3232,6 +3242,31 @@ impl Interpreter {
         // keep the full tier. (Roadmap: cross-tier capability attribution
         // so restricted runs keep native speed.)
         self.bytecode_tier = None;
+    }
+
+    /// Turn on `--trace-caps` profiling. Runs on the interpreter tier so
+    /// every effect passes the dispatch choke point (a promoted function
+    /// bridges some builtins past it), exactly like the gate and coverage.
+    pub fn enable_caps_trace(&mut self) {
+        self.caps_trace = Some(std::collections::BTreeSet::new());
+        self.bytecode_tier = None;
+    }
+
+    /// Record that `full_name` exercised a capability, if profiling is on.
+    /// Called from builtin dispatch alongside the gate; a no-op (one branch)
+    /// when `--trace-caps` is off.
+    pub fn record_caps_use(&mut self, full_name: &str) {
+        if let Some(set) = self.caps_trace.as_mut()
+            && let Some(u) = crate::caps::required(full_name)
+        {
+            set.insert(u);
+        }
+    }
+
+    /// Take the exercised-capability set back out (to print the profile at
+    /// end of run).
+    pub fn take_caps_trace(&mut self) -> Option<std::collections::BTreeSet<crate::caps::CapUse>> {
+        self.caps_trace.take()
     }
 
     /// The capability gate, called from builtin dispatch. None = allowed.

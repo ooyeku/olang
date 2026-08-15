@@ -13,7 +13,7 @@ let result = n
     |> take(100)
     |> println()
 
-let r = range(100)
+let r = range(1000)
 for i in r |> map((val) => val * val) {
     let take_count = random.randint(0, 100)
     let result = r |> map((val) => (val * val) / 0.2) |> reverse() |> take(take_count) |> sum()

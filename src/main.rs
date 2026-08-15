@@ -69,6 +69,12 @@ struct Cli {
     #[arg(long, value_name = "TRACE.olt")]
     record: Option<String>,
 
+    /// Report which capabilities the program actually exercised, then print
+    /// a suggested least-privilege [capabilities] manifest. Runs on the
+    /// interpreter tier so every effect is seen.
+    #[arg(long)]
+    trace_caps: bool,
+
     /// Arguments passed through to the program, readable via `os.args()`.
     /// Everything after the file name (or after `--`) is the script's argv.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -215,11 +221,27 @@ fn run() -> i32 {
                 return olang::tools::bench::run(&cli.script_args);
             }
             "check" => {
-                let mut paths: Vec<PathBuf> = cli.script_args.iter().map(PathBuf::from).collect();
+                // `--rules FILE` runs project-authored lints (olang functions
+                // over the meta AST) alongside the built-in type checker.
+                let mut rules: Option<PathBuf> = None;
+                let mut paths: Vec<PathBuf> = Vec::new();
+                let mut it = cli.script_args.iter();
+                while let Some(a) = it.next() {
+                    match a.as_str() {
+                        "--rules" => {
+                            rules = it.next().map(PathBuf::from);
+                            if rules.is_none() {
+                                eprintln!("olang check: --rules needs a rules file");
+                                return 2;
+                            }
+                        }
+                        other => paths.push(PathBuf::from(other)),
+                    }
+                }
                 if paths.is_empty() {
                     paths.push(PathBuf::from("."));
                 }
-                return olang::tools::check::run(&paths);
+                return olang::tools::check::run(&paths, rules.as_deref());
             }
             "fmt" => {
                 let check = cli.script_args.iter().any(|a| a == "--check");
@@ -349,6 +371,7 @@ fn run() -> i32 {
             cli.ovm_tier,
             deny,
             timeline,
+            cli.trace_caps,
             logger,
         ) {
             logger.error("main", &format!("Error executing file: {}", e));
@@ -784,8 +807,16 @@ struct BundleMeta {
     olang_version: String,
     /// The path the source was built from (basename context only).
     source_path: String,
-    /// sha256 (hex) of the embedded source bytes.
+    /// sha256 (hex) of the embedded source bytes alone. Kept for a
+    /// human-legible per-file checksum and for reading pre-`digest` bundles.
     sha256: String,
+    /// sha256 (hex) over the *whole* transparency payload —
+    /// source ‖ manifest ‖ lockfile, length-framed. This is what
+    /// `--verify` trusts: the source sha alone never covered the embedded
+    /// manifest, so a grant could be widened in place without detection.
+    /// Empty on pre-transparency-2 bundles (fall back to `sha256`).
+    #[serde(default)]
+    digest: String,
     /// The package's olang.toml, verbatim, when the source lived in one.
     #[serde(default)]
     manifest: Option<String>,
@@ -798,6 +829,26 @@ fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(bytes);
+    format!("{:x}", h.finalize())
+}
+
+/// The transparency digest: one sha256 over source, manifest, and lockfile
+/// together. Each part is length-framed (its byte length, then its bytes),
+/// so an empty manifest and an absent one hash distinctly and no
+/// concatenation boundary is ambiguous. This is what binds the embedded
+/// capability grant to the checksum — editing the manifest changes the
+/// digest, so `inspect --verify` catches a widened grant.
+fn payload_digest(source: &[u8], manifest: Option<&str>, lockfile: Option<&str>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for part in [
+        source,
+        manifest.unwrap_or("").as_bytes(),
+        lockfile.unwrap_or("").as_bytes(),
+    ] {
+        h.update((part.len() as u64).to_le_bytes());
+        h.update(part);
+    }
     format!("{:x}", h.finalize())
 }
 
@@ -945,11 +996,11 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
                 (None, d) => d,
             };
             execute_program(
-                *program, &source, &path, false, false, false, None, effective, None, logger,
+                *program, &source, &path, false, false, false, None, effective, None, false, logger,
             )
         }
         Bundle::Source(source) => execute_source(
-            &source, &path, false, false, false, None, deny, None, logger,
+            &source, &path, false, false, false, None, deny, None, false, logger,
         ),
     };
     match result {
@@ -966,7 +1017,8 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
 ///   --manifest          print the embedded olang.toml
 ///   --lockfile          print the embedded olang.lock
 ///   --caps              print the resolved capability grant
-///   --verify            recompute the source checksum; nonzero on mismatch
+///   --verify            recompute the payload digest; nonzero on mismatch
+///   --against DIR       prove the binary was built from the source in DIR
 ///   -o DIR              extract source/manifest/lockfile into DIR
 fn inspect_binary(args: &[String]) -> i32 {
     let mut target: Option<String> = None;
@@ -976,6 +1028,7 @@ fn inspect_binary(args: &[String]) -> i32 {
     let mut show_caps = false;
     let mut verify = false;
     let mut out_dir: Option<String> = None;
+    let mut against: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -989,6 +1042,14 @@ fn inspect_binary(args: &[String]) -> i32 {
                 out_dir = args.get(i).cloned();
                 if out_dir.is_none() {
                     eprintln!("olang inspect: -o needs a directory");
+                    return 2;
+                }
+            }
+            "--against" => {
+                i += 1;
+                against = args.get(i).cloned();
+                if against.is_none() {
+                    eprintln!("olang inspect: --against needs a source directory");
                     return 2;
                 }
             }
@@ -1006,7 +1067,7 @@ fn inspect_binary(args: &[String]) -> i32 {
     }
     let Some(target) = target else {
         eprintln!(
-            "usage: olang inspect <binary> [--source|--manifest|--lockfile|--caps|--verify|-o DIR]"
+            "usage: olang inspect <binary> [--source|--manifest|--lockfile|--caps|--verify|--against DIR|-o DIR]"
         );
         return 2;
     };
@@ -1090,6 +1151,14 @@ fn inspect_binary(args: &[String]) -> i32 {
         }
     }
 
+    // `--against DIR`: does this binary come from *that* source tree?
+    // `--verify` proves a binary is internally consistent; this proves it
+    // is the binary a given checkout builds — the provenance question.
+    // (For a git ref, check it out first, then point --against at it.)
+    if let Some(dir) = against {
+        return inspect_against(std::path::Path::new(&dir), &source, meta.as_deref());
+    }
+
     if let Some(dir) = out_dir {
         let dir = std::path::Path::new(&dir);
         if let Err(e) = std::fs::create_dir_all(dir) {
@@ -1131,16 +1200,41 @@ fn inspect_binary(args: &[String]) -> i32 {
             println!("  built with:   olang {}", m.olang_version);
             println!("  built from:   {}", m.source_path);
             println!("  source:       {} bytes", source.len());
-            let actual = sha256_hex(source.as_bytes());
-            let ok = actual == m.sha256;
+            let actual_src = sha256_hex(source.as_bytes());
+            let src_ok = actual_src == m.sha256;
             println!(
                 "  sha256:       {}  [{}]",
                 m.sha256,
-                if ok { "verified" } else { "MISMATCH" }
+                if src_ok { "verified" } else { "MISMATCH" }
             );
-            if !ok {
-                println!("  actual:       {}", actual);
+            if !src_ok {
+                println!("  actual:       {}", actual_src);
             }
+            // The payload digest is the authoritative check: it covers the
+            // manifest and lockfile too, so a widened grant cannot pass.
+            // Pre-transparency-2 bundles carry no digest — the source sha
+            // is the only verdict there.
+            let digest_ok = if m.digest.is_empty() {
+                true
+            } else {
+                let actual = payload_digest(
+                    source.as_bytes(),
+                    m.manifest.as_deref(),
+                    m.lockfile.as_deref(),
+                );
+                let ok = actual == m.digest;
+                println!(
+                    "  digest:       {}  [{}]",
+                    m.digest,
+                    if ok { "verified" } else { "MISMATCH" }
+                );
+                if !ok {
+                    println!("  actual:       {}", actual);
+                    println!("  digest covers source + manifest + lockfile");
+                }
+                ok
+            };
+            let ok = src_ok && digest_ok;
             println!(
                 "  manifest:     {}",
                 if m.manifest.is_some() {
@@ -1179,6 +1273,97 @@ fn inspect_binary(args: &[String]) -> i32 {
         }
     }
     0
+}
+
+/// `olang inspect <binary> --against <dir>` — prove the binary was built
+/// from the source tree in `dir`. Diffs the embedded source, manifest, and
+/// lockfile against the files on disk and reports each. Exit 0 iff every
+/// embedded artifact byte-matches its on-disk counterpart.
+fn inspect_against(dir: &std::path::Path, source: &str, meta: Option<&BundleMeta>) -> i32 {
+    if !dir.is_dir() {
+        eprintln!(
+            "olang inspect --against: {} is not a directory",
+            dir.display()
+        );
+        return 2;
+    }
+    let Some(meta) = meta else {
+        eprintln!(
+            "olang inspect --against: pre-transparency bundle carries no source path — rebuild with this olang first"
+        );
+        return 1;
+    };
+    println!("olang inspect: comparing against {}", dir.display());
+
+    // One artifact's verdict. `matched` is None when there is nothing to
+    // compare (not embedded, or absent on both sides); Some(false) is a
+    // real mismatch and fails the check.
+    let mut all_ok = true;
+    let mut any_compared = false;
+    let mut compare = |label: &str, embedded: Option<&str>, path: std::path::PathBuf| {
+        match embedded {
+            None => {} // not carried by this bundle — nothing to assert
+            Some(want) => match std::fs::read_to_string(&path) {
+                Ok(have) if have == want => {
+                    any_compared = true;
+                    println!("  {:<12} match   ({})", label, path.display());
+                }
+                Ok(_) => {
+                    any_compared = true;
+                    all_ok = false;
+                    println!("  {:<12} DIFFERS ({})", label, path.display());
+                }
+                Err(_) => {
+                    any_compared = true;
+                    all_ok = false;
+                    println!("  {:<12} MISSING ({})", label, path.display());
+                }
+            },
+        }
+    };
+
+    // The source lives at its recorded path relative to the checkout, with
+    // a basename fallback — for a build invoked with an absolute path (a
+    // relative join would ignore `dir` entirely) or from elsewhere in the
+    // tree.
+    let src_rel = std::path::Path::new(&meta.source_path);
+    let basename = src_rel
+        .file_name()
+        .unwrap_or(std::ffi::OsStr::new("program.ol"));
+    let src_path = {
+        let at_rel = dir.join(src_rel);
+        if !src_rel.is_absolute() && at_rel.is_file() {
+            at_rel
+        } else {
+            dir.join(basename)
+        }
+    };
+    compare("source", Some(source), src_path);
+    compare(
+        "olang.toml",
+        meta.manifest.as_deref(),
+        dir.join("olang.toml"),
+    );
+    compare(
+        "olang.lock",
+        meta.lockfile.as_deref(),
+        dir.join("olang.lock"),
+    );
+
+    if !any_compared {
+        eprintln!(
+            "olang inspect --against: nothing to compare — is {} the right source tree?",
+            dir.display()
+        );
+        return 1;
+    }
+    if all_ok {
+        println!("  → this binary matches the source tree");
+        0
+    } else {
+        println!("  → this binary does NOT match the source tree");
+        1
+    }
 }
 
 /// `olang build <program.ol> [-o output]` — copy this runtime and append
@@ -1259,10 +1444,15 @@ fn build_executable(args: &[String]) -> anyhow::Result<String> {
         }
     }
     let meta = BundleMeta {
-        format: 1,
+        format: 2,
         olang_version: olang::VERSION.to_string(),
         source_path: source_path.clone(),
         sha256: sha256_hex(src.as_bytes()),
+        digest: payload_digest(
+            src.as_bytes(),
+            manifest_text.as_deref(),
+            lockfile_text.as_deref(),
+        ),
         manifest: manifest_text,
         lockfile: lockfile_text,
     };
@@ -1306,12 +1496,14 @@ fn execute_file(
     ovm_tier: Option<u32>,
     deny: Option<olang::caps::Caps>,
     timeline: Option<olang::timeline::Timeline>,
+    trace_caps: bool,
     logger: &Logger,
 ) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file_path)
         .map_err(|e| anyhow::anyhow!("cannot read '{}': {}", file_path.display(), e))?;
     execute_source(
-        &source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, deny, timeline, logger,
+        &source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, deny, timeline, trace_caps,
+        logger,
     )
 }
 
@@ -1328,6 +1520,7 @@ fn execute_source(
     ovm_tier: Option<u32>,
     deny: Option<olang::caps::Caps>,
     timeline: Option<olang::timeline::Timeline>,
+    trace_caps: bool,
     logger: &Logger,
 ) -> anyhow::Result<()> {
     let program = match OlangParser::new().parse(source) {
@@ -1338,7 +1531,8 @@ fn execute_source(
         }
     };
     execute_program(
-        program, source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, deny, timeline, logger,
+        program, source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, deny, timeline,
+        trace_caps, logger,
     )
 }
 
@@ -1357,6 +1551,7 @@ fn execute_program(
     ovm_tier: Option<u32>,
     deny: Option<olang::caps::Caps>,
     timeline: Option<olang::timeline::Timeline>,
+    trace_caps: bool,
     logger: &Logger,
 ) -> anyhow::Result<()> {
     // Get absolute path for module resolution
@@ -1451,6 +1646,13 @@ fn execute_program(
         interpreter.set_timeline(t);
     }
 
+    // --trace-caps: record which capabilities the program exercises, so the
+    // author can write a least-privilege manifest instead of guessing. Like
+    // the gate, it observes at the dispatch choke point (interpreter tier).
+    if trace_caps {
+        interpreter.enable_caps_trace();
+    }
+
     // Whatever happens, a recorded trace is written — a crashed run is
     // exactly the run you want to replay.
     let write_trace = |interp: &mut olang::interpreter::Interpreter, logger: &Logger| {
@@ -1467,11 +1669,20 @@ fn execute_program(
         }
     };
 
+    // Print the capability profile after the run — a crashed run still
+    // reports what it touched before it died.
+    let report_caps = |interp: &mut olang::interpreter::Interpreter| {
+        if let Some(used) = interp.take_caps_trace() {
+            print!("{}", olang::caps::trace_report(&used));
+        }
+    };
+
     match interpreter.eval_program(program) {
         Ok(result) => {
             if verbose {
                 logger.info("main", &format!("Result: {:?}", result));
             }
+            report_caps(&mut interpreter);
             if ovm_stats {
                 match interpreter.bytecode_tier_stats() {
                     Some(tier) => println!(
@@ -1494,6 +1705,7 @@ fn execute_program(
             if recording {
                 write_trace(&mut interpreter, logger);
             }
+            report_caps(&mut interpreter);
             let location = interpreter.take_error_location();
             show_classic_interpreter_error(&e, file_path, &interpreter, location, source);
             Err(anyhow::anyhow!("Execution failed"))
@@ -1557,6 +1769,7 @@ fn run_replay(args: &[String], logger: &Logger) -> i32 {
         None,
         None,
         Some(timeline),
+        false,
         logger,
     ) {
         Ok(()) => {
