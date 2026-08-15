@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-08-14
+
 ### Added
 
 - **Every builtin and stdlib symbol is documented in the REPL's `:help`.**
