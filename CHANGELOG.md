@@ -51,6 +51,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
+- **`meta.parse` now emits every AST child, so project lints no longer
+  silently miss code (openness soundness pass S5).** The conversion dropped
+  children exactly where calls hide — `match` arms, `await`/`assert*`,
+  and `map`/struct/object/template literals collapsed to a summary node — so
+  a `check --rules` lint like "no bare `unwrap()`" returned clean on code
+  that had one inside a `match` arm. Every variant now emits its children
+  (`arms`, `entries`, `fields`, template `parts`, and the async/assertion
+  interiors), and the expression conversion is **exhaustive** (no
+  catch-all), so the compiler guarantees no variant is silently dropped and
+  a new one is a build error until it is handled.
+
 - **`db` and `net` are no longer latent filesystem capabilities (openness
   soundness pass S2/S3).** A filesystem sub-gate now confines file access
   that happens *through* other modules: `db.open` on a file path requires

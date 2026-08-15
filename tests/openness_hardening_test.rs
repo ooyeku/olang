@@ -226,6 +226,47 @@ fn trace_caps_profiles_and_suggests_a_minimal_manifest() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// S5: `meta.parse` emits every AST child, so a lint over the node tree
+/// sees calls hidden in match arms, `await`, map/struct literals, template
+/// interpolations, and assertions. Before the fix these positions collapsed
+/// to a summary node and a "no bare unwrap" rule returned clean on unsafe
+/// code.
+#[test]
+fn rules_see_calls_in_previously_dropped_positions() {
+    let dir = tmp("s5");
+    std::fs::write(
+        dir.join("rules.ol"),
+        "share fn rule_no_bare_unwrap(nodes) =\n    nodes\n      |> filter((n) => map_get(n, \"kind\") == \"call\" && map_get(n, \"target\") == \"unwrap\")\n      |> map((n) => #{ \"message\": \"bare unwrap()\", \"line\": map_get(n, \"line\") })\n",
+    )
+    .unwrap();
+    // Seven bare unwrap() calls, each in a position meta.parse used to drop:
+    // two match arms, a map literal, a template interpolation, an await, and
+    // both sides of an assert_eq.
+    std::fs::write(
+        dir.join("app.ol"),
+        "fn a(v) = match v {\n    1 => unwrap(z),\n    _ => unwrap(other)\n}\nfn b(v) = #{ \"k\": unwrap(danger) }\nfn d(v) = `val ${unwrap(sneaky)}`\nfn e(v) = await unwrap(promised)\nfn f(v) = assert_eq(unwrap(a), unwrap(b))\n",
+    )
+    .unwrap();
+
+    let out = Command::new(olang_bin())
+        .current_dir(&dir)
+        .args(["check", "app.ol", "--rules", "rules.ol"])
+        .output()
+        .expect("run check --rules");
+    let findings = String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter(|l| l.contains("[rule_no_bare_unwrap]"))
+        .count();
+    assert_eq!(
+        findings,
+        7,
+        "every hidden unwrap should be found; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// OM3: `--trace-caps --write` folds the suggested least-privilege
 /// `[capabilities]` block into the package's olang.toml, and never
 /// overwrites an existing one.

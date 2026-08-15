@@ -487,20 +487,21 @@ opportunistic).
 | S2 | High | `db` is a latent filesystem capability: with `fs=false, db=true`, `db.open("/path")` (CREATE) or `ATTACH DATABASE` creates/writes arbitrary files | Gate the file-path argument of `db.open`/ATTACH under `fs` | **landed (0.59)** — a filesystem sub-gate at dispatch: `db.open` on a file needs `fs=true`, an in-memory db needs none, and a SQL `ATTACH` token requires `fs` |
 | S3 | High | `net` is a latent file-read capability: with `fs=false, net=true`, an `http.serve` handler returning `body_file` reads any local file | Gate `body_file` reads under `fs` | **landed (0.59)** — the serve response builder refuses `body_file` (403) unless the app's grant permits `fs` read |
 | S4 | High | Timeline replays recorded values into the wrong slots under map iteration — `HashMap` order is process-randomized and replay matches op-name+position only (arguments never stored) — with **no divergence raised** | Deterministic map iteration order; record and compare call arguments in the trace | planned |
-| S5 | High | `meta.parse` drops children exactly where calls hide (`match` arms, `await`/`assert*`, `map`/struct/object/template literals), so a lint over the node list silently misses code | Emit all children in the conversion; add a completeness self-check; document any deliberate summary nodes | planned |
+| S5 | High | `meta.parse` drops children exactly where calls hide (`match` arms, `await`/`assert*`, `map`/struct/object/template literals), so a lint over the node list silently misses code | Emit all children in the conversion; add a completeness self-check; document any deliberate summary nodes | **landed (0.59)** — every dropped variant now emits its children (`arms`, `entries`, `fields`, template `parts`, `await`/`assert*` interiors); the `expr_to_value` match is **exhaustive** (no catch-all), so the compiler guarantees no variant is silently dropped and a new one is a build error until handled |
 | S6 | Med | Timeline omits whole nondeterminism channels (`db.*`, `proc.*`, `crypto.random_bytes`/`encrypt_*`) and machine-identity `os.*` (`arch`/`os_type`/`args`/`cwd`), breaking replay and the cross-machine portability claim (`os.args` also has a doc-vs-code mismatch) | Extend the recorded set; fix the `os.args` note | planned |
 | S7 | Med | `check --rules` runs the rules file with full capabilities at load time — a hostile `rules.ol` executes `fs`/`net`/`proc` before any rule runs | Run rules under a restrictive `CapTable` (the machinery exists); document the trust model | planned |
 | S8 | Low | `read_bundle` footer parsing does unchecked `u64` adds → panic / multi-exabyte allocation on a crafted binary (DoS of `inspect`) | `checked_add`/`try_into`, reject on overflow | planned |
 | S9 | Low | A symlinked dependency file can resolve outside its dep dir, so attribution falls back to the **wider app grant** | Fail-closed on an unresolvable / out-of-dir `def_file` instead of defaulting to the app grant | planned |
 | S10 | Low | Batch hardening: `record_result` claims a round-trip guard it lacks (NaN/Inf → JSON `null` → wrong replay); `os.exit` ungated (any code can abort the host); `BundleMeta.format` never validated; malformed rule findings silently dropped | Each addressed in a cleanup rung | planned |
 
-**Honest-status note:** with S1–S3 landed, the transparent binary
-authenticates the program it runs and `fs=false` now confines the
-filesystem even when `db`/`net` is granted. The remaining known bound is
-the timeline: until S4/S6 land, the record/replay "bit-for-bit, portable,
-divergence-detected" guarantee holds only for single-threaded,
-map-iteration-free programs over the recorded set — the docs state this
-bound rather than the unqualified claim.
+**Honest-status note:** with S1–S3 and S5 landed, the transparent binary
+authenticates the program it runs, `fs=false` now confines the filesystem
+even when `db`/`net` is granted, and a lint over the meta AST sees every
+node (no silent misses). The remaining known bound is the timeline: until
+S4/S6 land, the record/replay "bit-for-bit, portable, divergence-detected"
+guarantee holds only for single-threaded, map-iteration-free programs over
+the recorded set — the docs state this bound rather than the unqualified
+claim.
 
 ## The data-pipeline campaign (0.60.0) — the flagship niche
 

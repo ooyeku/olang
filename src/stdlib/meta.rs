@@ -14,16 +14,21 @@
 //! Nodes are discriminated-union maps (`#{ "kind": "call", ... }`), the
 //! shape olang already pattern-matches on. Statements carry `line`/
 //! `column` when the parser positioned them. Expressions nest: a call's
-//! `callee` and `args` are themselves node maps. The representation is
-//! faithful for the common shapes a tool inspects (declarations, calls,
-//! identifiers, literals, operators, control flow) and summarizes the
-//! deep interior (patterns collapse to their bound names, type
-//! annotations to their source text) — enough to *analyze* a program, not
-//! to perfectly reconstruct one.
+//! `callee` and `args`, a `match`'s `arms`, a map's `entries`, a struct's
+//! `fields`, and a template's `parts` are all themselves node maps. Every
+//! sub-expression is emitted — the `expr_to_value` match is exhaustive with
+//! no catch-all — so a tool that walks the node tree can never silently
+//! miss a call hidden in a subtree (a "no bare unwrap" lint sees an unwrap
+//! inside a `match` arm or `await`). What is *summarized*, not dropped, is
+//! non-expression detail: patterns collapse to their bound names and type
+//! annotations to source text. Faithful enough to *analyze* a program, not
+//! to perfectly reconstruct one. A new `Expr` variant is a build error here
+//! until it gets an arm — that compile-time check is the completeness
+//! guarantee.
 
 use crate::ast::{
-    Argument, Expr, FunctionDecl, LetDecl, Parameter, Pattern, ShareDecl, Statement, UseDecl,
-    UseItem, Value,
+    Argument, Expr, FieldValue, FunctionDecl, LetDecl, MatchArm, Parameter, Pattern, ShareDecl,
+    Statement, TemplatePart, UseDecl, UseItem, Value,
 };
 use std::collections::HashMap;
 
@@ -275,6 +280,7 @@ fn expr_to_value(e: &Expr) -> Value {
             ("kind", s("match")),
             ("value", expr_to_value(value)),
             ("arm_count", Value::Integer(arms.len() as i64)),
+            ("arms", list(arms.iter().map(arm_to_value).collect())),
         ]),
         Expr::Lambda {
             parameters, body, ..
@@ -303,6 +309,21 @@ fn expr_to_value(e: &Expr) -> Value {
         Expr::MapLiteral { entries } => map(vec![
             ("kind", s("map")),
             ("entry_count", Value::Integer(entries.len() as i64)),
+            (
+                "entries",
+                list(
+                    entries
+                        .iter()
+                        .map(|e| {
+                            map(vec![
+                                ("kind", s("entry")),
+                                ("key", expr_to_value(&e.key)),
+                                ("value", expr_to_value(&e.value)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
         ]),
         Expr::Index { object, index } => map(vec![
             ("kind", s("index")),
@@ -382,9 +403,32 @@ fn expr_to_value(e: &Expr) -> Value {
             }
             map(pairs)
         }
-        Expr::StructLiteral(sl) => map(vec![("kind", s("struct")), ("type", s(&sl.type_name))]),
-        Expr::AnonymousObject { .. } => map(vec![("kind", s("object"))]),
-        Expr::TemplateString { .. } => map(vec![("kind", s("template"))]),
+        Expr::StructLiteral(sl) => map(vec![
+            ("kind", s("struct")),
+            ("type", s(&sl.type_name)),
+            ("fields", fields_to_value(&sl.fields)),
+        ]),
+        Expr::AnonymousObject { fields } => map(vec![
+            ("kind", s("object")),
+            ("fields", fields_to_value(fields)),
+        ]),
+        Expr::TemplateString { parts } => map(vec![
+            ("kind", s("template")),
+            (
+                "parts",
+                list(
+                    parts
+                        .iter()
+                        .map(|p| match p {
+                            TemplatePart::Literal(t) => {
+                                map(vec![("kind", s("str")), ("value", s(t))])
+                            }
+                            TemplatePart::Interpolation(e) => expr_to_value(e),
+                        })
+                        .collect(),
+                ),
+            ),
+        ]),
         Expr::RawString(text) => map(vec![("kind", s("str")), ("value", s(text))]),
         Expr::BitwiseOp { left, right, .. } => map(vec![
             ("kind", s("binop")),
@@ -393,10 +437,54 @@ fn expr_to_value(e: &Expr) -> Value {
         ]),
         Expr::Spawn(inner) => map(vec![("kind", s("spawn")), ("value", expr_to_value(inner))]),
         Expr::Async { body, .. } => map(vec![("kind", s("async")), ("value", expr_to_value(body))]),
-        // The async/promise/assertion interior and any future variant:
-        // named generically, not detailed. A tool sees a node it can skip
-        // rather than a hole; this keeps `meta.parse` total.
-        _ => map(vec![("kind", s("expr"))]),
+        // Async, concurrency, and assertion interiors carry sub-expressions
+        // where calls hide (`await risky()`, `assert_eq(f(), g())`), so they
+        // are walked, not collapsed — a lint over the node tree must see them.
+        Expr::Await { expression } => map(vec![
+            ("kind", s("await")),
+            ("value", expr_to_value(expression)),
+        ]),
+        Expr::Promise { value, delay, .. } => {
+            let mut pairs = vec![("kind", s("promise")), ("value", expr_to_value(value))];
+            if let Some(d) = delay {
+                pairs.push(("delay", expr_to_value(d)));
+            }
+            map(pairs)
+        }
+        Expr::All(inner) => map(vec![("kind", s("all")), ("value", expr_to_value(inner))]),
+        Expr::Race(inner) => map(vec![("kind", s("race")), ("value", expr_to_value(inner))]),
+        Expr::Spread(inner) => map(vec![("kind", s("spread")), ("value", expr_to_value(inner))]),
+        Expr::Rest(inner) => map(vec![("kind", s("rest")), ("value", expr_to_value(inner))]),
+        Expr::AssertEq {
+            actual, expected, ..
+        } => map(vec![
+            ("kind", s("assert_eq")),
+            ("left", expr_to_value(actual)),
+            ("right", expr_to_value(expected)),
+        ]),
+        Expr::AssertNe {
+            actual, expected, ..
+        } => map(vec![
+            ("kind", s("assert_ne")),
+            ("left", expr_to_value(actual)),
+            ("right", expr_to_value(expected)),
+        ]),
+        Expr::Assert { condition, .. } => map(vec![
+            ("kind", s("assert")),
+            ("value", expr_to_value(condition)),
+        ]),
+        Expr::AssertTrue { expression, .. } => map(vec![
+            ("kind", s("assert_true")),
+            ("value", expr_to_value(expression)),
+        ]),
+        Expr::AssertFalse { expression, .. } => map(vec![
+            ("kind", s("assert_false")),
+            ("value", expr_to_value(expression)),
+        ]), // No catch-all: the match is exhaustive, so the *compiler* guarantees
+            // every expression variant is converted with its children — a lint
+            // over the node tree can never silently miss a call hidden in a
+            // subtree. A new `Expr` variant is a build error here until it gets
+            // an explicit arm, which is the intended completeness check.
     }
 }
 
@@ -409,6 +497,38 @@ fn arg_to_value(a: &Argument) -> Value {
             ("value", expr_to_value(value)),
         ]),
     }
+}
+
+/// One `match` arm as a node: the bound-name form of its pattern, its body
+/// expression, and its guard when present — so calls inside arm bodies and
+/// guards are visible to analysis.
+fn arm_to_value(a: &MatchArm) -> Value {
+    let mut pairs = vec![
+        ("kind", s("arm")),
+        ("pattern", s(&pattern_name(&a.pattern))),
+        ("body", expr_to_value(&a.expression)),
+    ];
+    if let Some(g) = &a.guard {
+        pairs.push(("guard", expr_to_value(g)));
+    }
+    map(pairs)
+}
+
+/// Struct-literal / anonymous-object fields as nodes, each with its value
+/// expression walked — so a call in a field initializer is not hidden.
+fn fields_to_value(fields: &[FieldValue]) -> Value {
+    list(
+        fields
+            .iter()
+            .map(|f| {
+                map(vec![
+                    ("kind", s("field_value")),
+                    ("name", s(&f.name)),
+                    ("value", expr_to_value(&f.value)),
+                ])
+            })
+            .collect(),
+    )
 }
 
 /// The dotted call target for a `Call` callee, when it is a plain name or

@@ -708,10 +708,13 @@ for node in program |> filter((n) => map_get(n, "kind") == "use") {
 // fmt ["*"]
 ```
 
-The representation is faithful for the shapes a tool inspects and
-summarizes the deep interior (patterns collapse to their bound names,
-async/promise plumbing to a bare `kind`) — enough to *analyze* a program,
-not to perfectly reconstruct one. See
+Every sub-expression is emitted — a `match`'s `arms`, a map's `entries`, a
+struct's `fields`, a template's `parts`, and the `await`/`assert` interiors
+are all walkable node maps — so a tool that filters the node tree cannot
+silently miss a call hidden in a subtree. What is summarized (not dropped)
+is non-expression detail: patterns collapse to their bound names, type
+annotations to source text. Enough to *analyze* a program, not to perfectly
+reconstruct one. See
 [`examples/metatool`](../examples/metatool/main.ol) for a linter that
 counts bare `unwrap()` calls per function.
 
