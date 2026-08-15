@@ -13,6 +13,18 @@
 //   olang main.ol
 
 let olang = unwrap(os.exe_path())
+
+// This demo runs its sub-apps in fresh olang subprocesses, so it needs the
+// olang interpreter. A built standalone binary (`olang build`) can only run
+// its own embedded program — pointing os.exec at itself would re-run this
+// narrator, not a sub-app — so bail cleanly instead of recursing.
+if !str.contains(fs.basename(olang), "olang") => {
+    println("This demo orchestrates olang subprocesses.")
+    println("Run it with the interpreter:  olang main.ol")
+    println("(it is not meant to be built into a standalone binary)")
+    os.exit(0)
+}
+
 let root = unwrap(os.cwd())
 
 fn run_variant(name) = {

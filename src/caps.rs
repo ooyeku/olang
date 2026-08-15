@@ -407,18 +407,13 @@ pub fn trace_report(used: &std::collections::BTreeSet<CapUse>) -> String {
         .collect();
         out.push_str(&format!("exercised: {}\n", touched.join(", ")));
     }
-    let fs_field = match fs {
-        FsCap::None => "false".to_string(),
-        FsCap::Read => "\"read\"".to_string(),
-        FsCap::Full => "true".to_string(),
-    };
     out.push_str("\nsuggested least-privilege manifest:\n\n");
-    out.push_str("  [capabilities]\n");
-    out.push_str(&format!("  fs = {}\n", fs_field));
-    out.push_str(&format!("  net = {}\n", net));
-    out.push_str(&format!("  db = {}\n", db));
-    out.push_str(&format!("  proc = {}\n", proc));
-    out.push_str(&format!("  env = {}\n", env));
+    // Indent the shared block for display.
+    for line in suggested_block(used).lines() {
+        out.push_str("  ");
+        out.push_str(line);
+        out.push('\n');
+    }
     if proc {
         out.push_str(
             "\nnote: proc lets the program spawn other processes, which run outside olang's\n\
@@ -426,6 +421,28 @@ pub fn trace_report(used: &std::collections::BTreeSet<CapUse>) -> String {
         );
     }
     out
+}
+
+/// The suggested least-privilege `[capabilities]` block a used-set implies,
+/// as TOML text ready to write into an olang.toml (no indentation). Every
+/// capability the run did not exercise is set to its most restrictive value,
+/// so applying the block can only tighten access.
+pub fn suggested_block(used: &std::collections::BTreeSet<CapUse>) -> String {
+    let fs = if used.contains(&CapUse::FsWrite) {
+        "true"
+    } else if used.contains(&CapUse::FsRead) {
+        "\"read\""
+    } else {
+        "false"
+    };
+    format!(
+        "[capabilities]\nfs = {}\nnet = {}\ndb = {}\nproc = {}\nenv = {}\n",
+        fs,
+        used.contains(&CapUse::Net),
+        used.contains(&CapUse::Db),
+        used.contains(&CapUse::Proc),
+        used.contains(&CapUse::Env),
+    )
 }
 
 /// Parse a `--deny` list ("fs,net" or "fs=read") into a restriction set
@@ -581,6 +598,26 @@ mod tests {
         assert_eq!(required("http.parse_url"), None);
         assert_eq!(required("os.args"), None);
         assert_eq!(required("str.trim"), None);
+    }
+
+    #[test]
+    fn suggested_block_is_valid_toml_and_shrink_only() {
+        let used: std::collections::BTreeSet<CapUse> =
+            [CapUse::FsRead, CapUse::Env].into_iter().collect();
+        let block = suggested_block(&used);
+        // Parses as a manifest capabilities table, and grants exactly the
+        // exercised set with everything else shut.
+        let manifest: crate::pkg::manifest::Manifest = crate::pkg::manifest::Manifest::from_toml(
+            &format!("[package]\nname = \"x\"\nversion = \"0.1.0\"\n\n{}", block),
+        )
+        .unwrap();
+        let caps = manifest.capabilities.unwrap().base.resolve().unwrap();
+        assert_eq!(caps.fs, FsCap::Read);
+        assert!(caps.env);
+        assert!(!caps.net && !caps.db && !caps.proc);
+        // A write demand upgrades fs to full.
+        let w: std::collections::BTreeSet<CapUse> = [CapUse::FsWrite].into_iter().collect();
+        assert!(suggested_block(&w).contains("fs = true"));
     }
 
     #[test]

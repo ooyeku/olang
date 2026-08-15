@@ -328,6 +328,23 @@ Capabilities the program did not use are set to their most restrictive
 value, so applying the generated block can only reduce access. The
 profiler runs on the interpreter tier and observes every effect.
 
+Add `--write` to fold the block directly into the package's `olang.toml`:
+
+```bash
+olang run --trace-caps --write program.ol
+```
+
+`--write` never overwrites an existing `[capabilities]` block, so a
+hand-tuned grant is left alone; if the program is not in a package it
+prints the block instead. To read the grant a package *declares* (the
+static counterpart to the observed profile), use `olang caps`:
+
+```bash
+olang caps                 # the current package's grant, and each dependency's
+olang caps path/to/pkg     # or a specific package directory
+olang caps ./tool          # a built binary (defers to inspect --caps)
+```
+
 Capabilities are enforced on the interpreter tier. The interpreter's call
 stack attributes a gated call to the package that made it, so a
 capability-restricted run disables the bytecode tier, like `par for`.
@@ -352,11 +369,15 @@ olang inspect ./tool --against . # Compare the binary to a source tree.
 olang inspect ./tool -o dir/     # Extract source, manifest, and lockfile.
 ```
 
-The `--verify` checksum covers the source, the manifest, and the lockfile
-together, so verification fails if the embedded capability grant is
-changed, not only if the code is changed. `--against <dir>` compares the
-embedded source, manifest, and lockfile to a checkout and reports whether
-the binary was built from that source tree.
+The `--verify` checksum covers the source, the compiled **AST** (the bytes
+that actually run), the manifest, and the lockfile — so verification fails
+if the executed program or the capability grant is changed, not only the
+source text. Both `--verify` and `--against` additionally confirm that the
+embedded source **parses to the AST that runs**, so `--source` is honest: a
+binary whose AST was swapped while its source was left clean is reported as
+`DIVERGES`. `--against <dir>` compares the embedded source, manifest, and
+lockfile to a checkout and reports whether the binary was built from that
+source tree.
 
 A transparent binary serves two additional purposes. It is a software bill
 of materials, because it records its exact sources and dependency

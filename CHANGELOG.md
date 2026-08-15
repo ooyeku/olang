@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`--trace-caps --write` and `olang caps` — frictionless capability
+  manifests (openness maturity lane OM3).** `olang run --trace-caps --write`
+  folds the suggested least-privilege `[capabilities]` block directly into
+  the package's `olang.toml`; it never overwrites an existing block, and
+  falls back to printing when the program is not in a package. `olang caps
+  [path]` prints the grant a package *declares* (base plus each dependency's
+  attenuation) — the static counterpart to the observed `--trace-caps`
+  profile — and defers to `inspect --caps` for a built binary.
+
+- **`examples/capabilities` — a runnable malicious-dependency demo.** The
+  same app runs twice against a third-party package with a backdoor: the
+  unguarded variant lets it read a local secret; the guarded variant grants
+  the dependency `fs = false`, so the identical read is refused at the gate
+  while the app's own read still works. Pinned by a Rust test.
+
 - **`olang check --rules <rules.ol>`: project lint rules in olang (openness
   lane O6).** A project defines lint functions named `rule_*` that take a
   file's AST, flattened to a list of `kind`-tagged node maps each carrying
@@ -36,14 +51,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
-- **The transparency checksum now covers the whole payload, not only the
-  source (openness lane O1, hardening).** `olang build` records a checksum
-  over the source, the embedded `olang.toml`, and the `olang.lock` (each
-  length-framed), and `olang inspect --verify` checks it. Previously the
-  checksum covered only the source, so the embedded capability manifest
-  could be edited in place to widen a grant without failing `--verify`.
-  Bundles built before this change carry no such checksum and fall back to
-  the source checksum, unchanged.
+- **The transparency checksum now binds the executed AST, closing a
+  critical integrity hole (openness soundness pass S1).** A built binary
+  runs its embedded **AST**, not its source (the source is only shown for
+  error snippets). The checksum previously covered source + manifest +
+  lockfile but **not** the AST, so an attacker could replace the AST with a
+  malicious program while leaving the source byte-identical: `inspect
+  --verify` passed, `--source` printed the clean source, and the binary
+  executed the swapped code. The digest is now `source ‖ AST ‖ manifest ‖
+  lockfile` (bundle format 3), and both `--verify` and `--against` also
+  assert that the embedded source parses to the embedded AST — so `--source`
+  is honest and a swapped AST is reported as `DIVERGES`. Found by an
+  adversarial audit and confirmed by a reconstructed attack; pinned by a
+  regression test. Format-2 bundles (0.59.0-dev) verify with the old digest;
+  rebuild to get AST binding.
+
+- **The transparency checksum covers the manifest and lockfile, not only
+  the source (openness lane O1a).** `olang build` records the checksum over
+  the source, the embedded `olang.toml`, and the `olang.lock`, so a grant
+  widened in place fails `--verify`. Bundles built before this carry no
+  such checksum and fall back to the source checksum.
 
 ### Fixed
 

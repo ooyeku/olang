@@ -271,13 +271,16 @@ olang inspect ./tool --against .   # Compare the binary to a source tree.
 ```
 
 `--verify` recomputes the checksum. The checksum covers the source, the
-manifest, and the lockfile, so verification fails if the embedded
-capability grant is changed, not only if the code is changed. `--against
-<dir>` compares the embedded source, manifest, and lockfile to a checkout
-and reports each file as match, differ, or missing. It exits non-zero on
-any mismatch. Use `--against` to confirm that a binary was built from a
-specific source tree. For the full model, see [Capabilities and the
-transparent binary](packages.md#capabilities).
+compiled AST (the bytes that execute), the manifest, and the lockfile, so
+verification fails if the running program or the capability grant is
+changed, not only the source text. `--verify` also checks that the source
+parses to the embedded AST, so `--source` reflects what actually runs.
+`--against <dir>` compares the embedded source, manifest, and lockfile to a
+checkout, reports each file as match/differ/missing, and confirms the
+embedded AST is what that source parses to — exiting non-zero on any
+mismatch. Use `--against` to confirm a binary was built from a specific
+source tree. For the full model, see [Capabilities and the transparent
+binary](packages.md#capabilities).
 
 ## `olang doc`
 

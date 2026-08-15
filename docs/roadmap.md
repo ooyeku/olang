@@ -447,3 +447,76 @@ Two lanes remain, tracked as deferrals:
   tractable, and a recorded thread schedule, which requires a
   deterministic scheduler. The second part is why Harborline's worker pool
   currently replays as a detected divergence rather than a clean run.
+
+## The openness maturity campaign (0.59.0) — simple and reliable, not larger
+
+The openness pillars are in place. This campaign adds no new openness
+surface; it makes the shipped features frictionless to adopt and
+trustworthy to depend on. The deferred lanes O3 and O4 stay deferred:
+maturing what people would actually use comes before extending reach.
+Targets **0.59.0** (the movable tag rolls forward as lanes land).
+
+| # | Lane | What it does | Status |
+|---|---|---|---|
+| OM1 | **Capabilities without the speed penalty** — cross-tier capability attribution, so a capability-restricted run keeps the bytecode and JIT tiers instead of dropping to the interpreter. Today safety and native speed are mutually exclusive; this removes the trade | not started |
+| OM2 | **Graceful capability failure** — a denied capability currently raises an uncatchable runtime error and stops the program. Give code a way to detect or recover (a catchable denial, or effectful builtins that return `Result` under a restricted grant), so a sandboxed program degrades instead of crashing | not started |
+| OM3 | **Zero-friction manifests** — `--trace-caps --write` authors or updates the `[capabilities]` block in place; `otc init` scaffolds a starter block; an `olang caps` view shows a program's effective grant. Writing a least-privilege manifest becomes one command, not a research task | **landed (0.59)** — `--trace-caps --write` folds the suggested block into `olang.toml` (never overwriting an existing one); `olang caps [path]` prints a package's declared grant with per-dependency attenuation. `otc init` scaffolding still open |
+| OM4 | **Real provenance (reproducible builds)** — make `olang build` byte-deterministic (canonical serialization, no timestamps) and add `build --reproducible-check`. This upgrades `inspect --verify` / `--against` from "the binary carries this source" to "this source produces this binary" — the claim provenance tooling actually needs | not started |
+
+Acceptance: the `examples/capabilities` demo runs under the JIT with no
+speed penalty (OM1); a restricted program handles a denial and continues
+(OM2); `--trace-caps --write` produces a working manifest (OM3); two
+independent builds of the same source are byte-identical (OM4).
+
+## The openness soundness pass (0.59.0) — audit findings
+
+A four-front adversarial audit (Aug 2026) of the openness pillars found
+real soundness gaps in every one. The *mechanisms* are sound (single
+enforcement gate, total `meta.parse`, clean replay skip); the recurring
+root cause is that each guarantee was checked against a **proxy** rather
+than the thing it claims — the checksum covered the source but the AST
+runs; the `fs` gate covers `fs.*` names but `db`/`net` also touch files;
+replay matches op-name+position but not arguments; a lint reads the emitted
+nodes but not all nodes are emitted. **S1 (critical) is fixed;** the rest
+are tracked here and share the OM campaign's 0.59.0 target (lows are
+opportunistic).
+
+| # | Sev | Finding | Fix | Status |
+|---|---|---|---|---|
+| S1 | Critical | A built binary passes `inspect --verify` while executing an AST that is not its source — the digest covered source+manifest+lockfile, not the executed AST | Bind the AST into the digest (bundle format 3); `--verify`/`--against` also assert `parse(embedded source) == embedded AST` so `--source` is honest | **landed (0.59)** |
+| S2 | High | `db` is a latent filesystem capability: with `fs=false, db=true`, `db.open("/path")` (CREATE) or `ATTACH DATABASE` creates/writes arbitrary files | Gate the file-path argument of `db.open`/ATTACH under `fs` | planned |
+| S3 | High | `net` is a latent file-read capability: with `fs=false, net=true`, an `http.serve` handler returning `body_file` reads any local file | Gate `body_file` reads under `fs` | planned |
+| S4 | High | Timeline replays recorded values into the wrong slots under map iteration — `HashMap` order is process-randomized and replay matches op-name+position only (arguments never stored) — with **no divergence raised** | Deterministic map iteration order; record and compare call arguments in the trace | planned |
+| S5 | High | `meta.parse` drops children exactly where calls hide (`match` arms, `await`/`assert*`, `map`/struct/object/template literals), so a lint over the node list silently misses code | Emit all children in the conversion; add a completeness self-check; document any deliberate summary nodes | planned |
+| S6 | Med | Timeline omits whole nondeterminism channels (`db.*`, `proc.*`, `crypto.random_bytes`/`encrypt_*`) and machine-identity `os.*` (`arch`/`os_type`/`args`/`cwd`), breaking replay and the cross-machine portability claim (`os.args` also has a doc-vs-code mismatch) | Extend the recorded set; fix the `os.args` note | planned |
+| S7 | Med | `check --rules` runs the rules file with full capabilities at load time — a hostile `rules.ol` executes `fs`/`net`/`proc` before any rule runs | Run rules under a restrictive `CapTable` (the machinery exists); document the trust model | planned |
+| S8 | Low | `read_bundle` footer parsing does unchecked `u64` adds → panic / multi-exabyte allocation on a crafted binary (DoS of `inspect`) | `checked_add`/`try_into`, reject on overflow | planned |
+| S9 | Low | A symlinked dependency file can resolve outside its dep dir, so attribution falls back to the **wider app grant** | Fail-closed on an unresolvable / out-of-dir `def_file` instead of defaulting to the app grant | planned |
+| S10 | Low | Batch hardening: `record_result` claims a round-trip guard it lacks (NaN/Inf → JSON `null` → wrong replay); `os.exit` ungated (any code can abort the host); `BundleMeta.format` never validated; malformed rule findings silently dropped | Each addressed in a cleanup rung | planned |
+
+**Honest-status note:** until S2/S3 land, `fs=false` does **not** confine
+the filesystem when `db` or `net` is granted; until S4/S6 land, the
+record/replay "bit-for-bit, portable, divergence-detected" guarantee holds
+only for single-threaded, map-iteration-free programs over the recorded
+set. The docs should state these bounds rather than the unqualified claim.
+
+## The data-pipeline campaign (0.60.0) — the flagship niche
+
+Targets **0.60.0**, after the openness maturity campaign lands.
+olang's differentiated surface is the `ods` data stack, `viz`, and no-GIL
+parallelism. This campaign commits to a positioning — **the
+batteries-included language for parallel data pipelines** — and builds the
+fraction that makes olang the obvious choice for that work. The data stack
+already has Series, Frames, `read_csv`, `group_by`, `join`, sorting, and
+null handling; the lanes below complete it, parallelize it, and prove it.
+
+| # | Lane | What it does | Status |
+|---|---|---|---|
+| DP1 | **Parallel by default** — partition `group_by`, `join`, and elementwise column operations across real threads, so a large transform uses every core with no ceremony. This is the concrete advantage over pandas (single-threaded under the GIL) and the reason the niche is winnable | not started |
+| DP2 | **IO breadth** — read CSV from files and as a stream (input larger than memory), plus JSON-lines and a columnar format; `to_csv` / write for output. The end-to-end "get data in, get results out" story | not started |
+| DP3 | **Verb completeness** — window functions, reshape (wide↔long / pivot), more join kinds and aggregations, and string/categorical column operations: the verbs a data task expects to find | not started |
+| DP4 | **A flagship and a benchmark** — a realistic ETL example wired to `viz` so exploration flows into a chart, plus a reproducible benchmark against pandas/polars that quantifies the multi-core win | not started |
+
+Acceptance: a multi-core `group_by` / `join` beats single-threaded pandas
+on a mid-size dataset (DP1, DP4); a streaming job processes input larger
+than memory (DP2); a flagship data example ships in `examples/` (DP4).

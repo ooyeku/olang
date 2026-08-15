@@ -75,6 +75,12 @@ struct Cli {
     #[arg(long)]
     trace_caps: bool,
 
+    /// With --trace-caps, write the suggested [capabilities] block into the
+    /// package's olang.toml instead of only printing it. Never overwrites an
+    /// existing [capabilities] block.
+    #[arg(long)]
+    write: bool,
+
     /// Arguments passed through to the program, readable via `os.args()`.
     /// Everything after the file name (or after `--`) is the script's argv.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -271,6 +277,9 @@ fn run() -> i32 {
             "inspect" => {
                 return inspect_binary(&cli.script_args);
             }
+            "caps" => {
+                return show_caps(&cli.script_args);
+            }
             "replay" => {
                 // `olang replay <trace.olt> [-- args]` — re-run the recorded
                 // program, serving every nondeterministic call from the log.
@@ -371,7 +380,11 @@ fn run() -> i32 {
             cli.ovm_tier,
             deny,
             timeline,
-            cli.trace_caps,
+            if cli.trace_caps {
+                Some(cli.write)
+            } else {
+                None
+            },
             logger,
         ) {
             logger.error("main", &format!("Error executing file: {}", e));
@@ -810,11 +823,11 @@ struct BundleMeta {
     /// sha256 (hex) of the embedded source bytes alone. Kept for a
     /// human-legible per-file checksum and for reading pre-`digest` bundles.
     sha256: String,
-    /// sha256 (hex) over the *whole* transparency payload —
-    /// source ‖ manifest ‖ lockfile, length-framed. This is what
-    /// `--verify` trusts: the source sha alone never covered the embedded
-    /// manifest, so a grant could be widened in place without detection.
-    /// Empty on pre-transparency-2 bundles (fall back to `sha256`).
+    /// sha256 (hex) over the *whole* transparency payload. Format 3:
+    /// source ‖ AST ‖ manifest ‖ lockfile — binds the executed AST, so a
+    /// swapped program is caught. Format 2: source ‖ manifest ‖ lockfile
+    /// (no AST; verified with `payload_digest_v2`). Empty on pre-digest
+    /// bundles (fall back to `sha256`). The `format` field selects which.
     #[serde(default)]
     digest: String,
     /// The package's olang.toml, verbatim, when the source lived in one.
@@ -832,24 +845,57 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", h.finalize())
 }
 
-/// The transparency digest: one sha256 over source, manifest, and lockfile
-/// together. Each part is length-framed (its byte length, then its bytes),
-/// so an empty manifest and an absent one hash distinctly and no
-/// concatenation boundary is ambiguous. This is what binds the embedded
-/// capability grant to the checksum — editing the manifest changes the
-/// digest, so `inspect --verify` catches a widened grant.
-fn payload_digest(source: &[u8], manifest: Option<&str>, lockfile: Option<&str>) -> String {
+/// Length-framed sha256 over a sequence of byte parts: each part's length
+/// (u64 LE) then its bytes, so no concatenation boundary is ambiguous and
+/// an empty part hashes distinctly from an absent one.
+fn digest_hex(parts: &[&[u8]]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
-    for part in [
-        source,
-        manifest.unwrap_or("").as_bytes(),
-        lockfile.unwrap_or("").as_bytes(),
-    ] {
+    for part in parts {
         h.update((part.len() as u64).to_le_bytes());
         h.update(part);
     }
     format!("{:x}", h.finalize())
+}
+
+/// The transparency digest (format 3): sha256 over the whole executed
+/// payload — source, the compiled **AST** (the bytes that actually run),
+/// the manifest, and the lockfile. Binding the AST is what makes
+/// `inspect --verify` catch a swapped program: the source is only *shown*,
+/// the AST is what *executes*, so a checksum over source alone left the
+/// running code unauthenticated.
+fn payload_digest(
+    source: &[u8],
+    ast: &[u8],
+    manifest: Option<&str>,
+    lockfile: Option<&str>,
+) -> String {
+    digest_hex(&[
+        source,
+        ast,
+        manifest.unwrap_or("").as_bytes(),
+        lockfile.unwrap_or("").as_bytes(),
+    ])
+}
+
+/// The pre-0.59-hardening digest layout (source ‖ manifest ‖ lockfile, no
+/// AST), kept so `--verify` still validates format-2 bundles built before
+/// the AST was bound in. New builds are format 3.
+fn payload_digest_v2(source: &[u8], manifest: Option<&str>, lockfile: Option<&str>) -> String {
+    digest_hex(&[
+        source,
+        manifest.unwrap_or("").as_bytes(),
+        lockfile.unwrap_or("").as_bytes(),
+    ])
+}
+
+/// Does the embedded source parse to exactly the AST the binary runs? A
+/// built binary executes its embedded AST, not its source, so this is the
+/// check that makes the printed source honest: the program a reviewer reads
+/// is the program that runs. A tamperer who swaps the AST but keeps the
+/// clean source fails here — forcing their code into the visible source.
+fn source_matches_ast(source: &str, program: &olang::ast::Program) -> bool {
+    matches!(OlangParser::new().parse(source), Ok(reparsed) if &reparsed == program)
 }
 
 /// A program bundled into an `olang build` executable.
@@ -857,10 +903,15 @@ enum Bundle {
     /// Rung A: just the source (older bundles, or a fallback).
     Source(String),
     /// Rung B: the pre-parsed AST, with the source kept for error rendering.
+    /// `ast_bytes` is the raw on-disk AST JSON — retained (not re-serialized)
+    /// so `inspect --verify` can hash exactly what executes; a re-serialize
+    /// could differ byte-for-byte for the same program (serde is not
+    /// canonical), which would make the digest lie.
     Ast {
         meta: Option<Box<BundleMeta>>,
         program: Box<olang::ast::Program>,
         source: String,
+        ast_bytes: Vec<u8>,
     },
 }
 
@@ -915,6 +966,7 @@ fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
             meta: Some(Box::new(meta)),
             program: Box::new(program),
             source,
+            ast_bytes: ast_buf,
         });
     }
 
@@ -943,6 +995,7 @@ fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
             meta: None,
             program: Box::new(program),
             source,
+            ast_bytes: ast_buf,
         });
     }
 
@@ -983,6 +1036,7 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
             meta,
             program,
             source,
+            ..
         } => {
             let manifest_caps = meta
                 .as_ref()
@@ -996,11 +1050,11 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
                 (None, d) => d,
             };
             execute_program(
-                *program, &source, &path, false, false, false, None, effective, None, false, logger,
+                *program, &source, &path, false, false, false, None, effective, None, None, logger,
             )
         }
         Bundle::Source(source) => execute_source(
-            &source, &path, false, false, false, None, deny, None, false, logger,
+            &source, &path, false, false, false, None, deny, None, None, logger,
         ),
     };
     match result {
@@ -1083,6 +1137,14 @@ fn inspect_binary(args: &[String]) -> i32 {
         Bundle::Ast { meta, source, .. } => (source.clone(), meta.clone()),
         Bundle::Source(source) => (source.clone(), None),
     };
+    // The executed program and its raw on-disk AST bytes, for the integrity
+    // checks. A rung-A source bundle has neither (its source IS what runs).
+    let (program, ast_bytes): (Option<&olang::ast::Program>, &[u8]) = match &bundle {
+        Bundle::Ast {
+            program, ast_bytes, ..
+        } => (Some(program.as_ref()), ast_bytes.as_slice()),
+        Bundle::Source(_) => (None, &[]),
+    };
 
     // Focused outputs print raw and exit, so they compose with pipes.
     if show_source {
@@ -1156,7 +1218,12 @@ fn inspect_binary(args: &[String]) -> i32 {
     // is the binary a given checkout builds — the provenance question.
     // (For a git ref, check it out first, then point --against at it.)
     if let Some(dir) = against {
-        return inspect_against(std::path::Path::new(&dir), &source, meta.as_deref());
+        return inspect_against(
+            std::path::Path::new(&dir),
+            &source,
+            meta.as_deref(),
+            program,
+        );
     }
 
     if let Some(dir) = out_dir {
@@ -1210,18 +1277,33 @@ fn inspect_binary(args: &[String]) -> i32 {
             if !src_ok {
                 println!("  actual:       {}", actual_src);
             }
-            // The payload digest is the authoritative check: it covers the
-            // manifest and lockfile too, so a widened grant cannot pass.
-            // Pre-transparency-2 bundles carry no digest — the source sha
-            // is the only verdict there.
+            // The payload digest is the authoritative integrity check.
+            // Format 3 binds the AST (what runs); format 2 covers only
+            // source+manifest+lockfile. Pre-digest bundles carry none — the
+            // source sha is the only verdict there.
             let digest_ok = if m.digest.is_empty() {
                 true
             } else {
-                let actual = payload_digest(
-                    source.as_bytes(),
-                    m.manifest.as_deref(),
-                    m.lockfile.as_deref(),
-                );
+                let (actual, covers) = if m.format >= 3 {
+                    (
+                        payload_digest(
+                            source.as_bytes(),
+                            ast_bytes,
+                            m.manifest.as_deref(),
+                            m.lockfile.as_deref(),
+                        ),
+                        "source + AST + manifest + lockfile",
+                    )
+                } else {
+                    (
+                        payload_digest_v2(
+                            source.as_bytes(),
+                            m.manifest.as_deref(),
+                            m.lockfile.as_deref(),
+                        ),
+                        "source + manifest + lockfile (format 2: AST unbound)",
+                    )
+                };
                 let ok = actual == m.digest;
                 println!(
                     "  digest:       {}  [{}]",
@@ -1230,11 +1312,30 @@ fn inspect_binary(args: &[String]) -> i32 {
                 );
                 if !ok {
                     println!("  actual:       {}", actual);
-                    println!("  digest covers source + manifest + lockfile");
+                    println!("  digest covers {}", covers);
                 }
                 ok
             };
-            let ok = src_ok && digest_ok;
+            // Source faithfulness: the embedded source must parse to the AST
+            // that runs. This is what makes `--source` honest — a binary
+            // whose AST was swapped while the source was kept clean fails
+            // here, even if the attacker recomputed the digest.
+            let faithful = match program {
+                Some(p) => {
+                    let ok = source_matches_ast(&source, p);
+                    println!(
+                        "  program:      {}",
+                        if ok {
+                            "source parses to the embedded AST  [faithful]"
+                        } else {
+                            "source does NOT match the executed AST  [DIVERGES]"
+                        }
+                    );
+                    ok
+                }
+                None => true,
+            };
+            let ok = src_ok && digest_ok && faithful;
             println!(
                 "  manifest:     {}",
                 if m.manifest.is_some() {
@@ -1279,7 +1380,12 @@ fn inspect_binary(args: &[String]) -> i32 {
 /// from the source tree in `dir`. Diffs the embedded source, manifest, and
 /// lockfile against the files on disk and reports each. Exit 0 iff every
 /// embedded artifact byte-matches its on-disk counterpart.
-fn inspect_against(dir: &std::path::Path, source: &str, meta: Option<&BundleMeta>) -> i32 {
+fn inspect_against(
+    dir: &std::path::Path,
+    source: &str,
+    meta: Option<&BundleMeta>,
+    program: Option<&olang::ast::Program>,
+) -> i32 {
     if !dir.is_dir() {
         eprintln!(
             "olang inspect --against: {} is not a directory",
@@ -1349,6 +1455,26 @@ fn inspect_against(dir: &std::path::Path, source: &str, meta: Option<&BundleMeta
         meta.lockfile.as_deref(),
         dir.join("olang.lock"),
     );
+
+    // Provenance is only meaningful if the binary actually runs the source
+    // we just diffed: the embedded AST must be what that source parses to.
+    // Without this, a matching source proves nothing — the executed AST
+    // could have been swapped.
+    if let Some(p) = program {
+        any_compared = true;
+        if source_matches_ast(source, p) {
+            println!(
+                "  {:<12} match   (executed AST == parse(source))",
+                "program"
+            );
+        } else {
+            all_ok = false;
+            println!(
+                "  {:<12} DIVERGES (binary runs an AST that is not this source)",
+                "program"
+            );
+        }
+    }
 
     if !any_compared {
         eprintln!(
@@ -1444,12 +1570,15 @@ fn build_executable(args: &[String]) -> anyhow::Result<String> {
         }
     }
     let meta = BundleMeta {
-        format: 2,
+        format: 3,
         olang_version: olang::VERSION.to_string(),
         source_path: source_path.clone(),
         sha256: sha256_hex(src.as_bytes()),
+        // The digest binds the AST — the bytes that actually execute — so a
+        // swapped program cannot pass `--verify` behind an intact source.
         digest: payload_digest(
             src.as_bytes(),
+            &ast_json,
             manifest_text.as_deref(),
             lockfile_text.as_deref(),
         ),
@@ -1487,6 +1616,111 @@ fn build_executable(args: &[String]) -> anyhow::Result<String> {
     Ok(output)
 }
 
+/// `olang caps [path]` — show the capability grant a program is *declared*
+/// to have, read from its `olang.toml` (base grant plus each dependency's
+/// attenuation). This is the static counterpart to the dynamic
+/// `--trace-caps` profiler: "what is this allowed to do" versus "what does
+/// it actually use". `path` is a package directory or a file inside one
+/// (default: the current directory); for a built binary it defers to
+/// `inspect --caps`.
+fn show_caps(args: &[String]) -> i32 {
+    let target = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .cloned()
+        .unwrap_or_else(|| ".".to_string());
+    let path = std::path::Path::new(&target);
+
+    // A built binary carries its own manifest — reuse the inspect reader.
+    if path.is_file() && read_bundle(path).is_some() {
+        return inspect_binary(&[target, "--caps".to_string()]);
+    }
+
+    let abs = std::fs::canonicalize(path)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(path));
+    let full = olang::caps::Caps::default().summary();
+    let Some(root) = olang::pkg::manifest::Manifest::find_root(&abs) else {
+        println!("{}  (no olang.toml — full capability)", full);
+        return 0;
+    };
+    let manifest = match olang::pkg::manifest::Manifest::load(&root) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("olang caps: {}", e);
+            return 1;
+        }
+    };
+    let Some(config) = manifest.capabilities else {
+        println!(
+            "{}  (no [capabilities] in {} — full capability)",
+            full,
+            root.join("olang.toml").display()
+        );
+        return 0;
+    };
+    match config.base.resolve() {
+        Ok(caps) => {
+            println!("package {}: {}", manifest.package.name, caps.summary());
+            for (name, spec) in &config.dependencies {
+                match spec.resolve() {
+                    Ok(dep) => {
+                        println!("  dependency {}: {}", name, dep.intersect(caps).summary())
+                    }
+                    Err(e) => println!("  dependency {}: invalid ({})", name, e),
+                }
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("olang caps: {}", e);
+            1
+        }
+    }
+}
+
+/// `--trace-caps --write`: fold the suggested least-privilege
+/// `[capabilities]` block into the package's olang.toml. Safe by
+/// construction: it never overwrites an existing `[capabilities]` block
+/// (a hand-tuned grant is left alone), and it prints the block instead of
+/// writing when the program is not in a package.
+fn write_caps_manifest(
+    script_path: &std::path::Path,
+    used: &std::collections::BTreeSet<olang::caps::CapUse>,
+) {
+    let block = olang::caps::suggested_block(used);
+    let Some(root) = olang::pkg::manifest::Manifest::find_root(script_path) else {
+        eprintln!("olang --write: not in a package (no olang.toml found); block not written");
+        return;
+    };
+    let toml_path = root.join("olang.toml");
+    let existing = std::fs::read_to_string(&toml_path).unwrap_or_default();
+    if existing
+        .lines()
+        .any(|l| l.trim_start().starts_with("[capabilities"))
+    {
+        eprintln!(
+            "olang --write: {} already has a [capabilities] block; left unchanged",
+            toml_path.display()
+        );
+        return;
+    }
+    // Append as a new top-level table — valid regardless of what precedes.
+    let sep = if existing.is_empty() || existing.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    let updated = format!("{}{}\n{}", existing, sep, block);
+    match std::fs::write(&toml_path, updated) {
+        Ok(()) => eprintln!("olang: wrote [capabilities] to {}", toml_path.display()),
+        Err(e) => eprintln!(
+            "olang --write: could not write {}: {}",
+            toml_path.display(),
+            e
+        ),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_file(
     file_path: &PathBuf,
@@ -1496,7 +1730,7 @@ fn execute_file(
     ovm_tier: Option<u32>,
     deny: Option<olang::caps::Caps>,
     timeline: Option<olang::timeline::Timeline>,
-    trace_caps: bool,
+    trace_caps: Option<bool>,
     logger: &Logger,
 ) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file_path)
@@ -1520,7 +1754,7 @@ fn execute_source(
     ovm_tier: Option<u32>,
     deny: Option<olang::caps::Caps>,
     timeline: Option<olang::timeline::Timeline>,
-    trace_caps: bool,
+    trace_caps: Option<bool>,
     logger: &Logger,
 ) -> anyhow::Result<()> {
     let program = match OlangParser::new().parse(source) {
@@ -1551,7 +1785,7 @@ fn execute_program(
     ovm_tier: Option<u32>,
     deny: Option<olang::caps::Caps>,
     timeline: Option<olang::timeline::Timeline>,
-    trace_caps: bool,
+    trace_caps: Option<bool>,
     logger: &Logger,
 ) -> anyhow::Result<()> {
     // Get absolute path for module resolution
@@ -1649,7 +1883,7 @@ fn execute_program(
     // --trace-caps: record which capabilities the program exercises, so the
     // author can write a least-privilege manifest instead of guessing. Like
     // the gate, it observes at the dispatch choke point (interpreter tier).
-    if trace_caps {
+    if trace_caps.is_some() {
         interpreter.enable_caps_trace();
     }
 
@@ -1670,10 +1904,15 @@ fn execute_program(
     };
 
     // Print the capability profile after the run — a crashed run still
-    // reports what it touched before it died.
+    // reports what it touched before it died. With --write, also fold the
+    // suggested block into the package's olang.toml.
+    let write_manifest = trace_caps == Some(true);
     let report_caps = |interp: &mut olang::interpreter::Interpreter| {
         if let Some(used) = interp.take_caps_trace() {
             print!("{}", olang::caps::trace_report(&used));
+            if write_manifest {
+                write_caps_manifest(&absolute_path, &used);
+            }
         }
     };
 
@@ -1769,7 +2008,7 @@ fn run_replay(args: &[String], logger: &Logger) -> i32 {
         None,
         None,
         Some(timeline),
-        false,
+        None,
         logger,
     ) {
         Ok(()) => {

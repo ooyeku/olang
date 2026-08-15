@@ -23,6 +23,11 @@ The two apps have identical code. Only the manifest differs.
 olang main.ol
 ```
 
+This demo runs its sub-apps in fresh olang subprocesses, so run it with the
+interpreter. It is not meant to be built into a standalone binary with
+`olang build` — a built binary can only run its own embedded program, so the
+narrator detects that case and exits with a note instead.
+
 The unguarded app lets `analytics` read `secret.txt`. The guarded app blocks
 the identical read at the capability gate, while the app's own file read
 still succeeds — the gate keys on which package makes a call, not on the

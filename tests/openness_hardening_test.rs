@@ -80,6 +80,81 @@ fn verify_catches_a_widened_capability_grant() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// C1 regression: the digest binds the executed AST, so a binary whose AST
+/// was swapped while its source was left clean fails `--verify` — on both
+/// the digest and the source-faithfulness check. Without the fix, `--verify`
+/// passed while `./binary` ran a different program than `--source` showed.
+#[test]
+fn verify_catches_a_swapped_ast() {
+    // Parse the transparent-binary footer:
+    // [source][ast][meta][src_len u64][ast_len u64][meta_len u64][8-byte magic].
+    fn regions(bytes: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+        assert_eq!(
+            &bytes[bytes.len() - 8..],
+            b"oLaNgMeT",
+            "not a format-3 bundle"
+        );
+        let lens = &bytes[bytes.len() - 32..bytes.len() - 8];
+        let u = |o: usize| u64::from_le_bytes(lens[o..o + 8].try_into().unwrap()) as usize;
+        let (sl, al, ml) = (u(0), u(8), u(16));
+        let payload = sl + al + ml;
+        let base = bytes.len() - 32 - payload;
+        let body = bytes[..base].to_vec();
+        let src = bytes[base..base + sl].to_vec();
+        let ast = bytes[base + sl..base + sl + al].to_vec();
+        let meta = bytes[base + sl + al..base + sl + al + ml].to_vec();
+        (body, src, ast, meta)
+    }
+
+    let dir = tmp("astswap");
+    std::fs::write(dir.join("safe.ol"), "print(\"SAFE\")\n").unwrap();
+    std::fs::write(dir.join("evil.ol"), "print(\"PWNED\")\n").unwrap();
+    for name in ["safe", "evil"] {
+        let s = Command::new(olang_bin())
+            .current_dir(&dir)
+            .args(["build", &format!("{name}.ol"), "-o", name])
+            .output()
+            .unwrap();
+        assert!(s.status.success(), "build {name} failed");
+    }
+
+    let (body, safe_src, _safe_ast, safe_meta) = regions(&std::fs::read(dir.join("safe")).unwrap());
+    let (_, _, evil_ast, _) = regions(&std::fs::read(dir.join("evil")).unwrap());
+
+    // Splice: safe runtime + safe SOURCE + safe META + EVIL AST.
+    let mut franken = body;
+    franken.extend_from_slice(&safe_src);
+    franken.extend_from_slice(&evil_ast);
+    franken.extend_from_slice(&safe_meta);
+    franken.extend_from_slice(&(safe_src.len() as u64).to_le_bytes());
+    franken.extend_from_slice(&(evil_ast.len() as u64).to_le_bytes());
+    franken.extend_from_slice(&(safe_meta.len() as u64).to_le_bytes());
+    franken.extend_from_slice(b"oLaNgMeT");
+    let fpath = dir.join("franken");
+    std::fs::write(&fpath, &franken).unwrap();
+
+    // --source still shows the clean source, but --verify must reject.
+    let src = Command::new(olang_bin())
+        .args(["inspect", fpath.to_str().unwrap(), "--source"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&src.stdout).contains("SAFE"));
+
+    let verify = Command::new(olang_bin())
+        .args(["inspect", fpath.to_str().unwrap(), "--verify"])
+        .output()
+        .unwrap();
+    assert!(!verify.status.success(), "a swapped AST must fail --verify");
+    let out = String::from_utf8_lossy(&verify.stdout);
+    assert!(out.contains("MISMATCH"), "digest should mismatch: {out}");
+    assert!(
+        out.contains("DIVERGES"),
+        "source should not match AST: {out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// O1b: `--against DIR` proves the binary was built from that source tree —
 /// match on the real tree, mismatch when the source differs.
 #[test]
@@ -149,6 +224,107 @@ fn trace_caps_profiles_and_suggests_a_minimal_manifest() {
     assert!(stdout.contains("fs = false"), "stdout: {}", stdout);
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// OM3: `--trace-caps --write` folds the suggested least-privilege
+/// `[capabilities]` block into the package's olang.toml, and never
+/// overwrites an existing one.
+#[test]
+fn trace_caps_write_authors_the_manifest() {
+    let dir = tmp("write");
+    std::fs::write(
+        dir.join("olang.toml"),
+        "[package]\nname = \"prof\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let src = dir.join("main.ol");
+    std::fs::write(&src, "let h = os.get_env(\"HOME\")\nprint(\"ok\")\n").unwrap();
+
+    // First run writes the block matching what the program used (env only).
+    let first = Command::new(olang_bin())
+        .current_dir(&dir)
+        .args(["--trace-caps", "--write", "main.ol"])
+        .output()
+        .expect("run --trace-caps --write");
+    assert!(first.status.success());
+    assert!(
+        String::from_utf8_lossy(&first.stderr).contains("wrote [capabilities]"),
+        "stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let toml = std::fs::read_to_string(dir.join("olang.toml")).unwrap();
+    assert!(toml.contains("[capabilities]"), "toml: {}", toml);
+    assert!(toml.contains("env = true"), "toml: {}", toml);
+    assert!(toml.contains("net = false"), "toml: {}", toml);
+
+    // Second run must not overwrite the hand-editable block.
+    let second = Command::new(olang_bin())
+        .current_dir(&dir)
+        .args(["--trace-caps", "--write", "main.ol"])
+        .output()
+        .expect("run --trace-caps --write again");
+    assert!(
+        String::from_utf8_lossy(&second.stderr).contains("already has a [capabilities] block"),
+        "stderr: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// OM3: `olang caps` shows the declared grant of a source package,
+/// including per-dependency attenuation — the static counterpart to
+/// `--trace-caps`.
+#[test]
+fn caps_shows_the_declared_grant() {
+    let dir = tmp("capsview");
+    std::fs::write(
+        dir.join("olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+         [capabilities]\nfs = true\n\n\
+         [capabilities.dependencies.lib]\nfs = false\nnet = false\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    std::fs::write(
+        dir.join("lib/olang.toml"),
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let out = Command::new(olang_bin())
+        .current_dir(&dir)
+        .arg("caps")
+        .output()
+        .expect("run olang caps");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("package app: fs=true"),
+        "stdout: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("dependency lib: fs=false net=false"),
+        "stdout: {}",
+        stdout
+    );
+
+    // A directory with no manifest reports full capability.
+    let bare = tmp("capsbare");
+    let none = Command::new(olang_bin())
+        .current_dir(&bare)
+        .arg("caps")
+        .output()
+        .expect("run olang caps bare");
+    assert!(
+        String::from_utf8_lossy(&none.stdout).contains("full capability"),
+        "stdout: {}",
+        String::from_utf8_lossy(&none.stdout)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&bare);
 }
 
 /// O6: `check --rules` runs project-authored lints over the meta AST and
