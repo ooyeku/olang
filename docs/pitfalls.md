@@ -158,6 +158,18 @@ record()
 println(to_string(cell.get(hits)))   // 2
 ```
 
+A `par for` body is refused for the same reason with a different remedy:
+each worker thread runs it against its own snapshot, and a cell made
+outside the loop is confined to the calling thread, so it cannot help
+there. Results come back as values from `par_map`, or over a channel.
+
+```olang no-run
+let mut tally = 0
+par for x in xs { tally = tally + 1 }   // refused: the write hits a snapshot
+
+let tally = sum(par_map(xs, (x) => 1)) // one value per item, then combine
+```
+
 ## Definition order: bodies resolve late, values resolve now
 
 A function *body* may call a function defined **later** in the file — call

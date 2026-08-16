@@ -382,6 +382,10 @@ functions capture by value — the outer 'tally' would not change. Return
 the new value, or hold the state in a cell
 ```
 
+A `par for` body is refused on the same grounds and says so in its own
+words, pointing at `par_map` and `chan` instead of a cell — a cell
+belongs to the thread that made it, so it cannot cross to a worker.
+
 This is not a limitation to route around; it is the design that makes
 "fan it across the cores" a safe, one-word decision. No worker can see
 another's writes, so there are no data races, no locks, and no

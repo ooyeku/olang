@@ -101,6 +101,16 @@ of what crossed to inspect, and a crossing-time check would have had to
 refuse any spawn with a cell merely in scope. `chan.send` is the one
 crossing that holds the value, and is checked there.
 
+S4's captured-write rule initially reached function and closure bodies
+only, leaving `par for` uncovered — its body also runs against a worker
+snapshot, so a write to an enclosing binding was silently dead, and
+worse, conditionally so: workers are clamped to the item count, so a
+one-item list took the sequential path and the write landed. The same
+loop answered `1` for `[1]` and `0` for `[1, 2]`. `par for` now opens
+the same boundary, with a message that points at `par_map` and `chan`
+rather than at a cell — a cell is confined to its creating thread and
+cannot cross into a worker.
+
 **S5 shipped in 0.63.0.** `async`, `await`, and the `Promise` API are
 gone; `spawn` returns a task handle that `task.join` collects. The
 deadline-based promise scheduler is deleted rather than repositioned, as

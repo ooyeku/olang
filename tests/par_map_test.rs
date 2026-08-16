@@ -203,6 +203,75 @@ fn par_map_workers_cannot_reach_a_cell_in_the_calling_thread() {
     assert!(e.contains("cell escaped its thread"), "{e}");
 }
 
+// ── `par for`: the loop form of the same boundary ─────────────────────
+
+#[test]
+fn par_for_cannot_write_a_binding_from_the_enclosing_scope() {
+    // `par for` fans a loop body across worker threads, each running
+    // against a clone of the interpreter — so a write to an outer binding
+    // lands on a clone and is dropped when the worker finishes.
+    //
+    // Until this was checked, the write was silently dead *and* the
+    // silence was conditional: workers are clamped to the item count, so a
+    // one-item list took the sequential path where the write really did
+    // land. The same loop gave 1 for `[1]` and 0 for `[1, 2]`. Both
+    // lengths are pinned here because the length is exactly what used to
+    // decide the answer.
+    for items in ["[1]", "[1, 2]", "[1, 2, 3, 4, 5, 6, 7, 8]"] {
+        let e = eval(
+            &format!("let mut tally = 0\npar for x in {items} {{ tally = tally + 1 }}\ntally\n"),
+            None,
+        )
+        .expect_err("a write across the par for boundary must be refused");
+        assert!(e.contains("cannot assign to 'tally'"), "{items}: {e}");
+        assert!(e.contains("par for"), "{items}: {e}");
+        // A cell is not offered as the fix here, unlike the closure case:
+        // one made outside the loop is confined to the calling thread, so
+        // a worker touching it would fail at runtime.
+        assert!(!e.contains("cell("), "{items}: {e}");
+        assert!(e.contains("par_map") || e.contains("chan"), "{items}: {e}");
+    }
+}
+
+#[test]
+fn par_for_reads_the_enclosing_scope_and_writes_its_own_locals() {
+    // Only the crossing is refused. Reading captured values is how the
+    // body gets its inputs, and a `let mut` declared inside the body is
+    // local to one iteration on one worker.
+    let src = r#"
+let factor = 10
+let c = chan.new()
+par for x in [1, 2, 3] {
+    let mut acc = 0
+    acc = acc + x * factor
+    chan.send(c, acc)
+}
+let mut total = 0
+for i in [1, 2, 3] { total = total + unwrap(chan.recv(c)) }
+show(total)
+"#;
+    for threshold in [None, Some(1)] {
+        assert_eq!(
+            eval(src, threshold).expect("should evaluate"),
+            Value::String(std::sync::Arc::new("60".to_string())),
+            "tier: {:?}",
+            threshold
+        );
+    }
+}
+
+#[test]
+fn a_plain_for_still_writes_through_to_the_enclosing_scope() {
+    // The boundary belongs to `par for` alone: a sequential `for` body
+    // runs in the caller's own environment, and accumulating in one is
+    // the ordinary idiom.
+    let src = "let mut total = 0\nfor x in [1, 2, 3] { total = total + x }\nshow(total)\n";
+    assert_eq!(
+        eval(src, None).expect("should evaluate"),
+        Value::String(std::sync::Arc::new("6".to_string()))
+    );
+}
+
 #[test]
 fn par_map_composes_with_pipelines_and_nested_use() {
     assert_parallel_agrees(

@@ -26,6 +26,19 @@ use crate::ast::{
 };
 use std::collections::HashMap;
 
+/// A construct whose body runs against a *snapshot* of the environment
+/// rather than the environment itself. A write inside one cannot reach a
+/// binding declared outside it — the write lands on the copy. Both kinds
+/// are refused, but the reason differs and so does the fix.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Boundary {
+    /// A function or lambda body. Closures capture by value at creation.
+    Function,
+    /// A `par for` body. Each worker thread clones the interpreter and
+    /// runs its chunk against that clone.
+    ParFor,
+}
+
 /// A scope or mutability violation, positioned at the enclosing statement.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScopeError {
@@ -45,7 +58,7 @@ pub type Predefined = HashMap<String, bool>;
 pub fn validate_program(program: &Program, predefined: &mut Predefined) -> Vec<ScopeError> {
     let mut v = Validator {
         scopes: vec![std::mem::take(predefined)],
-        fn_boundaries: Vec::new(),
+        boundaries: Vec::new(),
         errors: Vec::new(),
         line: 0,
         column: 0,
@@ -62,10 +75,11 @@ pub fn validate_program(program: &Program, predefined: &mut Predefined) -> Vec<S
 struct Validator {
     /// Innermost scope last. Each frame maps a name to its mutability.
     scopes: Vec<HashMap<String, bool>>,
-    /// Scope index at which each open function body begins, innermost last.
-    /// A binding found below the top of this stack lives outside the
-    /// current function, and is therefore captured by value.
-    fn_boundaries: Vec<usize>,
+    /// Scope index at which each open snapshot boundary begins, innermost
+    /// last, with the kind of construct that opened it. A binding found
+    /// below the top of this stack lives outside the boundary, so a write
+    /// to it reaches a snapshot rather than the binding.
+    boundaries: Vec<(usize, Boundary)>,
     errors: Vec<ScopeError>,
     /// Position of the statement being walked, used for error spans.
     line: u32,
@@ -98,13 +112,14 @@ impl Validator {
         self.scopes.iter().rposition(|s| s.contains_key(name))
     }
 
-    /// Is `name` bound strictly outside the innermost function body — i.e.
-    /// captured rather than local? Functions capture by value, so a write
-    /// to such a name cannot reach the original binding.
-    fn is_captured(&self, name: &str) -> bool {
-        match (self.fn_boundaries.last(), self.binding_scope(name)) {
-            (Some(&boundary), Some(index)) => index < boundary,
-            _ => false,
+    /// The snapshot boundary a write to `name` would have to cross, if
+    /// any. A binding declared below the innermost boundary lives outside
+    /// it, so the write cannot reach the original. A name bound at or
+    /// inside the boundary is local and writes to it are ordinary.
+    fn crossed_boundary(&self, name: &str) -> Option<Boundary> {
+        match (self.boundaries.last(), self.binding_scope(name)) {
+            (Some(&(at, kind)), Some(index)) if index < at => Some(kind),
+            _ => None,
         }
     }
 
@@ -230,12 +245,13 @@ impl Validator {
             }
         }
         self.push();
-        self.fn_boundaries.push(self.scopes.len() - 1);
+        self.boundaries
+            .push((self.scopes.len() - 1, Boundary::Function));
         for p in parameters {
             self.bind(&p.name, false);
         }
         self.expr(body);
-        self.fn_boundaries.pop();
+        self.boundaries.pop();
         self.pop();
     }
 
@@ -255,18 +271,31 @@ impl Validator {
                  with `let {target} = ...` to shadow it"
             )),
             // Declared `mut` and in scope — but a `mut` binding that lives
-            // outside this function is still unreachable from inside it.
-            // Functions and closures capture by value, so the write lands
-            // on the snapshot and the original never changes. Before cells
-            // existed there was nothing to point at and this was only a
-            // warning; now there is.
-            Some(true) if self.is_captured(target) => self.error(format!(
-                "cannot assign to '{target}': it is captured from an enclosing scope, \
-                 and functions capture by value — the outer '{target}' would not change. \
-                 Return the new value, or hold the state in a cell \
-                 (`let {target} = cell(...)`, then `cell.set({target}, ...)`)"
-            )),
-            Some(true) => {}
+            // outside a snapshot boundary is still unreachable from inside
+            // it: the write lands on the copy and the original never
+            // changes. Before cells existed there was nothing to point at
+            // and this was only a warning; now there is.
+            Some(true) => match self.crossed_boundary(target) {
+                None => {}
+                Some(Boundary::Function) => self.error(format!(
+                    "cannot assign to '{target}': it is captured from an enclosing scope, \
+                     and functions capture by value — the outer '{target}' would not change. \
+                     Return the new value, or hold the state in a cell \
+                     (`let {target} = cell(...)`, then `cell.set({target}, ...)`)"
+                )),
+                // A cell is deliberately *not* offered here: cells are
+                // confined to their creating thread, so one made outside
+                // the loop would be refused by a worker at runtime. The
+                // honest answer for `par for` is to produce a value per
+                // item and combine, or to stream results over a channel.
+                Some(Boundary::ParFor) => self.error(format!(
+                    "cannot assign to '{target}': `par for` runs its body on worker threads, \
+                     each against its own snapshot of the environment, so the write would be \
+                     discarded rather than reaching the outer '{target}'. Produce a value per \
+                     item and combine them — `sum(par_map(xs, (x) => ...))` — or send results \
+                     over a `chan`"
+                )),
+            },
         }
     }
 
@@ -296,11 +325,6 @@ impl Validator {
                 variable,
                 iterable,
                 body,
-            }
-            | Expr::ParForLoop {
-                variable,
-                iterable,
-                body,
             } => {
                 self.expr(iterable);
                 self.push();
@@ -308,6 +332,23 @@ impl Validator {
                 // assigning to it would be overwritten immediately.
                 self.bind(variable, false);
                 self.expr(body);
+                self.pop();
+            }
+
+            Expr::ParForLoop {
+                variable,
+                iterable,
+                body,
+            } => {
+                // The iterable is evaluated here, before the fan-out, so
+                // it sits outside the boundary.
+                self.expr(iterable);
+                self.push();
+                self.boundaries
+                    .push((self.scopes.len() - 1, Boundary::ParFor));
+                self.bind(variable, false);
+                self.expr(body);
+                self.boundaries.pop();
                 self.pop();
             }
 

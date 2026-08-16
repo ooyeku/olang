@@ -2,12 +2,12 @@
 // fleet in one program. It boots the API in a spawned task, waits for the
 // port, fans a fleet of client workers out across spawned threads (each
 // firing a burst of requests and timing them), merges the per-worker stats
-// after `await`, and checks the result against the server's own hit count.
+// after joining, and checks the result against the server's own hit count.
 //
 //   olang main.ol [clients] [requests_per_client] [server_workers]
 //
 // The point: exercise http.serve under genuine concurrent load, driven by
-// olang's own spawn/await — no external benchmark tool.
+// olang's own spawn and task.join — no external benchmark tool.
 
 use lib.server { make_server, server_hit_count }
 use lib.stats { empty_stats, record, merge }

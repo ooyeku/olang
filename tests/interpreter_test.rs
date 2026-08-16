@@ -28,16 +28,38 @@ fn run_program_expect_error(source: &str) -> String {
 
 #[test]
 fn par_for_runs_with_snapshot_semantics() {
-    // Effects into worker snapshots are not visible to the caller —
-    // exactly the spawn/par_map contract.
-    let result = run_program(
+    // Each worker runs the body against its own snapshot, so a write to
+    // an enclosing binding could never reach the caller. That used to
+    // simply produce 0 here; it is refused before the program runs now,
+    // because the old silence was also length-dependent — a one-item list
+    // took the sequential path and the write landed.
+    let err = run_program_expect_error(
         r#"
 let mut hits = 0
 par for i in 0..100 { hits = hits + 1 }
 hits
 "#,
     );
-    assert_eq!(result, "0");
+    assert!(err.contains("cannot assign to 'hits'"), "{err}");
+    assert!(err.contains("par for"), "{err}");
+
+    // What the loop can do: read the enclosing scope, write its own
+    // locals, and hand results back over a channel.
+    let result = run_program(
+        r#"
+let step = 2
+let c = chan.new()
+par for i in 0..100 {
+    let mut n = 0
+    n = n + step
+    chan.send(c, n)
+}
+let mut hits = 0
+for i in 0..100 { hits = hits + unwrap(chan.recv(c)) }
+hits
+"#,
+    );
+    assert_eq!(result, "200");
 }
 
 #[test]

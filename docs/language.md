@@ -350,6 +350,13 @@ closure reads captured values freely, and writes its own locals and
 parameters freely. Only a write that would cross the boundary outward
 is refused.
 
+The same rule governs a [`par for`](#par-for--parallel-iteration) body,
+for the same reason and with a different fix: each worker thread runs
+the body against its own snapshot of the environment, so a write to an
+enclosing binding is refused there too. A cell does not help across that
+boundary — cells are thread-confined — so results come back as values
+from `par_map` or over a channel.
+
 This is a deliberate design, not a missing feature, and three major
 pieces of the language rest on it:
 
@@ -846,12 +853,29 @@ the same tuple destructuring as `for`. `par` is not a reserved word; it
 only means something directly before `for`.
 
 Semantics match `spawn` and `par_map`: the body runs against worker
-snapshots, so mutating enclosing state is not visible to the caller —
-use `par for` for real per-element effects and heavy computation, and
-`par_map` when you want values back. If several iterations fail, the
-error reported is the one the sequential loop would have hit first.
-`break` and `return` cannot cross the parallel boundary; `continue`
-works within an iteration. The loop evaluates to Unit.
+snapshots. Reading an enclosing binding is how the body gets its inputs,
+but **assigning to one is refused before the program runs** — the write
+could only reach a snapshot. Use `par for` for real per-element effects
+and heavy computation; when you want values back, use `par_map`, or send
+them over a [channel](stdlib.md#chan--channels). A `let mut` declared
+inside the body is local to one iteration and is unaffected.
+
+If several iterations fail, the error reported is the one the sequential
+loop would have hit first. `break` and `return` cannot cross the parallel
+boundary; `continue` works within an iteration. The loop evaluates to
+Unit.
+
+```text
+cannot assign to 'tally': `par for` runs its body on worker threads, each
+against its own snapshot of the environment, so the write would be discarded
+rather than reaching the outer 'tally'. Produce a value per item and combine
+them — `sum(par_map(xs, (x) => ...))` — or send results over a `chan`
+```
+
+A [cell](stdlib.md#cell--mutable-locations) is deliberately not the
+answer here, unlike the closure case: cells are confined to the thread
+that created them, so one made outside the loop is unreachable from a
+worker.
 
 ```olang no-run
 par for (i, chunk) in enumerate(chunks) {

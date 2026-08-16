@@ -52,10 +52,10 @@ A two-package demonstration of the package manager (see
   pipelines (`lib/stats.ol`), and reads files with `fs` from `os.args()`
   (`main.ol`). Handles malformed lines, missing/empty files, and 2000-line
   logs
-- [`scheduler/`](scheduler/) — concurrent fan-out and timeouts with
-  `async`/`await` and `Promise.all`/`race`: four simulated fetches run
-  concurrently (total time = the slowest, not the sum), and each is raced
-  against a timeout budget
+- [`scheduler/`](scheduler/) — concurrent fan-out and timeouts on real
+  threads: four `spawn`ed fetches run concurrently and are collected with
+  `map(task.join)` (total time = the slowest, not the sum), then each is
+  given a budget with `task.join_timeout`
 - [`dataproc/`](dataproc/) — a CSV→Frame→aggregate→JSON pipeline on the ods
   data stack: `ods.read_csv` infers column types, revenue is one vectorized
   column multiply, revenue-by-region is a `group_by`, then a `json` report
@@ -136,14 +136,14 @@ A two-package demonstration of the package manager (see
   sequentially and fanned out across every core, asserts the answers
   are identical, and reports the measured speedup (~7× on an M-series,
   now that the JIT compiles the kernel natively on every worker);
-  then runs the same work through `par for` and demonstrates its
-  spawn-style snapshot semantics (effects fan out, shared state does
-  not). `test` blocks pin parallel == sequential and the snapshot rule
+  then runs the same work through `par for`, whose spawn-style snapshot
+  rule means results cross back over a `chan` rather than through shared
+  state. `test` blocks pin parallel == sequential and the snapshot rule
   on every run
 - [`pargrep/`](pargrep/) — parallel code search on real `spawn` threads:
   files are dealt into chunks, one worker thread per chunk searches with
-  `re` + `fs`, results merge after `await Promise.all`, and per-task
-  `try`/`catch` survives worker failure. Prints sequential-vs-parallel
+  `re` + `fs`, results merge through `map(task.join)`, and matching on
+  each join's `Err` survives worker failure. Prints sequential-vs-parallel
   timings and self-checks that both agree
 - [`ledger/`](ledger/) — a personal-finance web app run entirely by
   `olang main.ol`: a schema-migrated SQLite backend (money as integer

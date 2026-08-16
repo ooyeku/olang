@@ -17,6 +17,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   is down to fifteen words plus seven contextual ones. `let try = 3`,
   `row.catch`, and `fn await_all(ts)` all parse.
 
+### Fixed
+
+- **A `par for` body could not write to an enclosing binding, but nothing
+  said so (breaking).** 0.62 made an assignment across a capture boundary
+  an error, and the rule reached functions and closures but not `par for`
+  — whose body also runs against a worker's snapshot. The write was dead,
+  and *conditionally* dead: workers are clamped to the item count, so a
+  one-element list took the sequential path where the write really landed.
+  The same loop gave two different answers depending on the length of the
+  list it was given.
+
+  ```olang
+  let mut a = 0
+  par for x in [1] { a = a + 1 }        // a == 1
+  let mut b = 0
+  par for x in [1, 2] { b = b + 1 }     // b == 0
+  ```
+
+  `par for` now opens the same boundary as a function body, and the write
+  is refused before the program runs. The message differs from the closure
+  one because the remedy does: a cell is confined to its creating thread,
+  so one made outside the loop cannot help inside it.
+
+  ```text
+  cannot assign to 'tally': `par for` runs its body on worker threads, each
+  against its own snapshot of the environment, so the write would be discarded
+  rather than reaching the outer 'tally'. Produce a value per item and combine
+  them — `sum(par_map(xs, (x) => ...))` — or send results over a `chan`
+  ```
+
+  Reading an enclosing binding is unaffected — that is how the body gets
+  its inputs — and a `let mut` declared inside the body is local to one
+  iteration. `examples/parmap/` demonstrated the old dead write; it now
+  collects its results over a channel and cross-checks them against the
+  sequential total.
+
 ## [0.65.0] - 2026-08-16
 
 The error-model boundary (D8), and the last lane of Campaign 1's language

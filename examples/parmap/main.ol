@@ -73,12 +73,17 @@ par for block in blocks {
 let t4 = time.monotonic_ms()
 println("par for: " + show(t4 - t3) + "ms (same fan-out, as a loop)")
 
-// The snapshot rule, demonstrated: like spawn and par_map, each
-// iteration runs against a worker snapshot, so this write never lands
-// on our binding — values come back via par_map, never via shared state.
-let mut sink = 0
-par for block in blocks { sink = sink + 1 }
-println("sink after par for: " + show(sink) + " (snapshot semantics)")
+// The snapshot rule: like spawn and par_map, each iteration runs against
+// a worker's own clone of the environment. A write to an outer binding
+// would land on that clone, so `par for b in blocks { sink = sink + 1 }`
+// is refused before the program runs. Results cross the boundary by
+// channel — or come back as values from par_map.
+let counted = chan.new()
+par for block in blocks { chan.send(counted, count_primes(block)) }
+let mut tally = 0
+for i in blocks { tally = tally + unwrap(chan.recv(counted)) }
+chan.close(counted)
+println("primes via par for + chan: " + show(tally))
 
 test "par_map and par_filter agree with their sequential twins" {
     assert_eq(par_map([1, 2, 3], (x) => x * 2), map([1, 2, 3], (x) => x * 2))
@@ -89,9 +94,13 @@ test "par_map and par_filter agree with their sequential twins" {
 }
 
 test "par for honors the spawn/par_map snapshot model" {
-    let mut counter = 0
-    par for x in [1, 2, 3] { counter = counter + x }
-    assert_eq(counter, 0)                       // writes stay on worker snapshots
-    let squares = par_map(0..4, (x) => x * x)   // values come back via par_map
+    // A write to an outer binding is refused before the program runs, so
+    // the two ways across the boundary are a channel and par_map.
+    let c = chan.new()
+    par for x in [1, 2, 3] { chan.send(c, x) }
+    let mut got = 0
+    for i in [1, 2, 3] { got = got + unwrap(chan.recv(c)) }
+    assert_eq(got, 6)
+    let squares = par_map(0..4, (x) => x * x)
     assert_eq(squares, map(0..4, (x) => x * x))
 }

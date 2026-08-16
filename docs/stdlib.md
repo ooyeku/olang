@@ -204,7 +204,9 @@ would fail, the error reported is the one `map` would have hit first.
 For per-element *effects* rather than values, the language has a
 loop-construct twin:
 [`par for`](language.md#par-for--parallel-iteration) — the same
-fan-out and snapshot semantics, with an implicit barrier.
+fan-out and snapshot semantics, with an implicit barrier. Assigning to an
+enclosing binding from inside either one is refused before the program
+runs; values come back as results, or over a channel.
 
 ```olang
 fn weight(n) = {
