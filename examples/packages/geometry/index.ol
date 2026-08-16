@@ -26,8 +26,8 @@ share fn describe(shape) = shape.kind + " with area " + to_string(area(shape))
 
 // ── A private helper (not shared) — Newton's method for sqrt ────────
 fn sqrt_approx(n) = {
-    let guess = n / 2.0 + 1.0
-    let i = 0
+    let mut guess = n / 2.0 + 1.0
+    let mut i = 0
     while i < 20 {
         guess = (guess + n / guess) / 2.0
         i = i + 1

@@ -131,7 +131,7 @@ fn area(s) = match s {
 }
 fn total() = {
     let shapes = [Circle(2), Square(3), Empty, Circle(1)]
-    let acc = 0
+    let mut acc = 0
     for s in shapes {
         acc = acc + area(s)
     }

@@ -12,14 +12,14 @@
 // bash without nullglob). Raw tokens (single-quoted) skip all three.
 
 share fn parse_chains(tokens, last_code) = {
-    let chains = []
-    let stage = []          // token list for the stage being built
-    let stages = []         // completed stages of the current pipeline
-    let in_file = ""
-    let out_file = ""
-    let append = false
-    let redirect = ""       // pending redirect operator awaiting its target
-    let err = ""
+    let mut chains = []
+    let mut stage = []          // token list for the stage being built
+    let mut stages = []         // completed stages of the current pipeline
+    let mut in_file = ""
+    let mut out_file = ""
+    let mut append = false
+    let mut redirect = ""       // pending redirect operator awaiting its target
+    let mut err = ""
 
     for tok in tokens {
         if err == "" => {
@@ -116,16 +116,16 @@ share fn expand_one(tok, last_code) = {
 fn expand_vars(text, last_code) = {
     let cs = str.chars(text)
     let n = len(cs)
-    let out = ""
-    let i = 0
+    let mut out = ""
+    let mut i = 0
     while i < n {
         if cs[i] == "$" && i + 1 < n => {
             if cs[i + 1] == "?" => {
                 out = out + to_string(last_code)
                 i = i + 2
             } else => if cs[i + 1] == "{" => {
-                let name = ""
-                let j = i + 2
+                let mut name = ""
+                let mut j = i + 2
                 while j < n && cs[j] != "}" {
                     name = name + cs[j]
                     j = j + 1
@@ -138,8 +138,8 @@ fn expand_vars(text, last_code) = {
                     i = i + 1
                 }
             } else => if is_name_char(cs[i + 1]) => {
-                let name = ""
-                let j = i + 1
+                let mut name = ""
+                let mut j = i + 1
                 while j < n && is_name_char(cs[j]) {
                     name = name + cs[j]
                     j = j + 1

@@ -30,6 +30,7 @@ pub mod playground;
 #[cfg(feature = "native")]
 pub mod repl;
 pub mod resolve;
+pub mod scoping;
 pub mod stdlib;
 pub mod test_framework;
 pub mod timeline;

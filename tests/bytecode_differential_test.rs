@@ -219,8 +219,8 @@ fn recursion_fib() {
 fn while_loop_with_locals() {
     let src = r#"
 fn sum_to(n) = {
-    let total = 0
-    let i = 0
+    let mut total = 0
+    let mut i = 0
     while i <= n {
         total = total + i
         i = i + 1
@@ -237,7 +237,7 @@ fn sum_to(n) = {
 fn while_loop_never_entered() {
     let src = r#"
 fn keep_x(n) = {
-    let x = 42
+    let mut x = 42
     while n > 100 {
         x = 0
     }
@@ -361,7 +361,8 @@ fn function_valued_callees_compile_and_agree() {
 fn copy_then_mutate_source() {
     let src = r#"
 fn f(a) = {
-    let x = a
+    let mut a = a
+    let mut x = a
     a = a + 100
     x
 }
@@ -373,7 +374,7 @@ fn f(a) = {
 fn mutate_copy_leaves_source() {
     let src = r#"
 fn f(a) = {
-    let x = a
+    let mut x = a
     x = x + 100
     a
 }
@@ -385,6 +386,8 @@ fn f(a) = {
 fn assignment_to_parameter() {
     let src = r#"
 fn f(a, b) = {
+    let mut a = a
+    let mut b = b
     a = a + b
     b = b * 2
     a + b
@@ -397,7 +400,7 @@ fn f(a, b) = {
 fn self_referential_assignment() {
     let src = r#"
 fn f(n) = {
-    let acc = n
+    let mut acc = n
     acc = acc + acc
     acc = acc * acc
     acc
@@ -410,8 +413,8 @@ fn f(n) = {
 fn chained_copies() {
     let src = r#"
 fn f(a) = {
-    let x = a
-    let y = x
+    let mut x = a
+    let mut y = x
     let z = y
     x = 1
     y = 2
@@ -422,11 +425,49 @@ fn f(a) = {
 }
 
 #[test]
+fn nested_block_shadowing_does_not_leak() {
+    // 0.61: a block scopes its bindings. The inner `let x` shadows only
+    // for the block, so `f` returns the outer 1 — and the bytecode tier
+    // must agree, which it only does if the compiler restores its
+    // name->register map when the block ends.
+    let src = r#"
+fn f(a) = {
+    let mut x = 1
+    { let x = 2
+      x }
+    x
+}
+"#;
+    assert_same(src, "f", &ints(&[0]));
+}
+
+#[test]
+fn a_loop_body_binding_is_fresh_each_pass() {
+    // The body binds `step` every iteration; scoping it must not change
+    // the accumulated result on either tier.
+    let src = r#"
+fn f(n) = {
+    let mut total = 0
+    let mut i = 0
+    while i < n {
+        let step = i * 2
+        total = total + step
+        i = i + 1
+    }
+    total
+}
+"#;
+    for n in [0, 1, 7] {
+        assert_same(src, "f", &ints(&[n]));
+    }
+}
+
+#[test]
 fn shadowing_in_block() {
     let src = r#"
 fn f(a) = {
-    let x = a
-    let x = x + 1
+    let mut x = a
+    let mut x = x + 1
     x
 }
 "#;
@@ -437,6 +478,8 @@ fn f(a) = {
 fn swap_via_temporary() {
     let src = r#"
 fn f(a, b) = {
+    let mut a = a
+    let mut b = b
     let tmp = a
     a = b
     b = tmp
@@ -450,9 +493,9 @@ fn f(a, b) = {
 fn loop_carried_variables() {
     let src = r#"
 fn f(n) = {
-    let a = 0
-    let b = 1
-    let i = 0
+    let mut a = 0
+    let mut b = 1
+    let mut i = 0
     while i < n {
         let next = a + b
         a = b

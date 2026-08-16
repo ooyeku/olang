@@ -4960,10 +4960,20 @@ impl BytecodeCompiler {
             Expr::Block(statements) => {
                 // A block evaluates its statements in order; its value is the
                 // value of the last statement (Unit for an empty block).
+                //
+                // A block also scopes its bindings, exactly as the
+                // interpreter does: names bound inside are dropped at the
+                // end, so an inner `let x` shadows an outer `x` for the
+                // block and no longer after it. Restoring the name→register
+                // map is enough — every binding allocates a fresh register,
+                // so the outer name still points at its own untouched
+                // register.
+                let saved_locals = self.local_variables.clone();
                 let mut result_reg = None;
                 for statement in statements.iter() {
                     result_reg = Some(self.compile_statement(statement)?);
                 }
+                self.local_variables = saved_locals;
                 match result_reg {
                     Some(reg) => Ok(reg),
                     None => {

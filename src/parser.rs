@@ -439,9 +439,12 @@ impl Parser {
             message: "Missing pattern in let declaration".to_string(),
         })?;
 
-        // `let mut x = ...`: the mut marker documents intent — every binding
-        // is assignable — so it parses and is otherwise ignored.
+        // `let mut x = ...`: `mut` marks the binding assignable. Without it
+        // the binding is immutable and assigning to it is an error (a fresh
+        // `let` still shadows).
+        let mut mutable = false;
         if pattern_pair.as_rule() == Rule::mut_kw {
+            mutable = true;
             pattern_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
                 message: "Missing pattern after `mut` in let declaration".to_string(),
             })?;
@@ -471,6 +474,7 @@ impl Parser {
             type_annotation,
             value,
             name_span,
+            mutable,
         })
     }
 
@@ -2943,6 +2947,10 @@ impl Parser {
             Some(names) => Expr::Block(vec![
                 crate::ast::Statement::LetDecl(crate::ast::LetDecl {
                     name_span: None,
+                    // `for (a, b) in ...` destructures the loop item: the
+                    // names are loop bindings, immutable like the loop
+                    // variable itself.
+                    mutable: false,
                     pattern: crate::ast::Pattern::Tuple(
                         names
                             .into_iter()

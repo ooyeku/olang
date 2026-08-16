@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-08-16
+
+This release settles olang's scope and mutability rules. Three behaviors
+that had been advisory warnings since 0.50 are now enforced errors. This
+is the **second and final deliberate breaking change before 1.0** (the
+first was runtime type enforcement in 0.48.0); see the migration guide
+below.
+
+### Changed
+
+- **Every block scopes its bindings (breaking).** A `let` inside
+  `{ ... }` — a bare block, a loop body, an `if` branch, a `match` arm —
+  ends with that block. Previously a bare block's bindings leaked into
+  the enclosing scope, which meant a name's lifetime depended on which
+  construct happened to surround it. Function bodies, `for` variables,
+  and `match` arm bindings already scoped; blocks now agree with them,
+  and the rule is one sentence instead of a table of exceptions.
+
+  This also closed a real divergence between execution tiers. The
+  bytecode compiler kept a flat map of local variables with no scope
+  stack, so `let x = 1; { let x = 2 }; x` evaluated to `1` on the
+  interpreter and `2` on the bytecode tier. Both tiers now push and pop
+  a scope per binding block, and two differential tests pin the
+  agreement.
+
+- **Assignment is not a declaration (breaking).** `x = 1` where `x` was
+  never bound is an error rather than an implicit `let`. This is what
+  turns a mistyped name from a silently-created variable into a
+  refusal.
+
+- **`let mut` is enforced (breaking).** Assigning to a binding not
+  declared `mut` is an error. `mut` was parsed and then discarded — it
+  documented intent to the reader and promised nothing to the compiler.
+  It is now a guarantee, and a plain `let` genuinely means immutable.
+
+  Shadowing is unchanged and remains the recommended alternative: a
+  fresh `let` of the same name always works and produces a new binding
+  rather than a mutable one.
+
+- All three are checked by a single validation pass that runs **before**
+  the program executes, so a violation on a rarely-taken branch is
+  caught anyway and cannot differ between the interpreter, bytecode, and
+  JIT tiers. `olang check` and the language server report them in the
+  same words as `olang run`, with the same line and column.
+
+- `olang check` distinguishes these in its output: scope and mutability
+  violations are labeled "the program is refused before it runs" rather
+  than sharing the type checker's label.
+
+- `meta.parse` now reports a `let` declaration's mutability, so
+  project lints written against the AST can see it.
+
+### Migration
+
+Run `olang check .` — it lists every site with the exact fix in the
+message. The three rewrites:
+
+```olang
+// A binding you reassign now needs `mut`
+let mut total = 0
+for n in xs { total = total + n }
+
+// An assignment with no declaration becomes a declaration
+let count = 0            // was: count = 0
+
+// A block's binding, used after the block, moves out of the block
+let mut resolved = ""    // was: declared inside the `if`
+if ready => { resolved = compute() }
+```
+
+For a value you compute in stages, prefer shadowing over `mut`:
+
+```olang
+let raw = read_input()
+let raw = str.trim(raw)
+let raw = str.lower(raw)
+```
+
+The repository's own corpus — 97 example files, the embedded stdlib
+modules, and every runnable example in the book — is migrated in this
+release and checks clean.
+
 ## [0.60.0] - 2026-08-15
 
 ### Changed
@@ -3322,7 +3404,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.60.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.61.0...HEAD
+[0.61.0]: https://github.com/ooyeku/olang/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/ooyeku/olang/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/ooyeku/olang/compare/v0.58.0...v0.59.0
 [0.23.0]: https://github.com/ooyeku/olang/releases/tag/v0.23.0

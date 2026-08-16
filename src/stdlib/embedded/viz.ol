@@ -144,7 +144,7 @@ fn vmax(v) = if typeof(v) == "List" => to_float(max(v)) else => ods.max(v)
 
 share fn chart(spec) = {
     let mark = norm_mark(opt(spec, "mark", "line"))
-    let o = plot_opts(spec)
+    let mut o = plot_opts(spec)
     if map_has_key(spec, "layers") || mark == "line" || mark == "area" || mark == "scatter" => {
         plot.xy(map(xy_entries(spec), (en) =>
             if len(en) == 5 => [en[0], en[1], as_series(en[2]), as_series(en[3]), en[4]]
@@ -193,7 +193,7 @@ fn fmt(v) = show(math.round(to_float(v) * 100.0) / 100.0)
 share fn draw(el, spec) = {
     let w = to_float(unwrap(str.parse_int(dom.get_attr(el, "width"))))
     let h = to_float(unwrap(str.parse_int(dom.get_attr(el, "height"))))
-    let entries = xy_entries(spec)
+    let mut entries = xy_entries(spec)
     let x0 = min(map(entries, (en) => vmin(en[2])))
     let x1 = max(map(entries, (en) => vmax(en[2])))
     let y0 = min(map(entries, (en) => vmin(en[3])))

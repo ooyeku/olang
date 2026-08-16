@@ -46,6 +46,23 @@ declarations, traits and impls, `Result` +
 embedded olang modules (`colx`, `mathx`) and packages (`cli`, `term`, `ui`,
 `viz`, `dash`) follow the same append-mostly rule.
 
+**Scope and mutability settled in 0.61.0**, as the second and final
+deliberate breaking change before 1.0 (recorded in the CHANGELOG with a
+migration guide). Three rules that were advisory warnings in 0.50–0.60
+became enforced errors, checked statically before a program runs and
+therefore identical on every tier:
+
+- Every block scopes its bindings. A `let` inside `{ ... }`, a loop
+  body, an `if` branch, or a `match` arm ends with that block.
+- Assignment is not a declaration. `x = 1` for an unbound `x` is an
+  error; bindings are introduced by `let`.
+- `let` is immutable, `let mut` is not. Assigning to a binding not
+  declared `mut` is an error; shadowing with a fresh `let` is always
+  available.
+
+These rules are now part of the commitment above and will not change
+again.
+
 ### Stable in behavior, evolving in scope
 
 - **Async and concurrency** — the documented API (`async`/`await`,
@@ -109,14 +126,6 @@ embedded olang modules (`colx`, `mathx`) and packages (`cli`, `term`, `ui`,
   blocks (a builtin cannot re-enter the interpreter to run your
   function; the error says so).
 - The `--enable-parallel` / `set_parallel` evaluation modes
-- Assignment to an undeclared name (`x = 1` without `let`) creates a
-  binding, and as of 0.50 `olang check` and the editor **warn** about
-  it (advisory — nothing breaks, exit codes unchanged). Prefer `let`.
-- A bare block's `let` bindings currently remain visible after the
-  block ([language reference](language.md#scope)); write code as if
-  blocks scoped, and as of 0.50 `olang check` and the editor **warn**
-  when code relies on the leak (advisory — nothing breaks). A future
-  release may tighten the semantics.
 - Assigning to a variable *captured* from an enclosing scope inside a
   closure or function has no effect (capture is by value — see
   [Common pitfalls](pitfalls.md)); `olang check` and the editor **warn**,

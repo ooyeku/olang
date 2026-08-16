@@ -27,8 +27,8 @@ share fn gcd(a, b) = gcd_pos(abs(a), abs(b))
 share fn lcm(a, b) = if a == 0 || b == 0 => 0 else => abs(a * b) / gcd(a, b)
 
 share fn factorial(n) = {
-    let acc = 1
-    let i = 2
+    let mut acc = 1
+    let mut i = 2
     while i <= n {
         acc = acc * i
         i = i + 1
@@ -66,8 +66,8 @@ share fn sqrt(x) = {
     if x < 0.0 => 0.0 - 1.0
     else => if x == 0.0 => 0.0
     else => {
-        let guess = x
-        let i = 0
+        let mut guess = x
+        let mut i = 0
         while i < 60 {
             guess = (guess + x / guess) / 2.0
             i = i + 1

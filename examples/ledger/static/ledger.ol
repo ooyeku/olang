@@ -213,7 +213,7 @@ fn cents_to_f(cents) = to_float(cents) / 100.0
 
 // This month's expenses by category, summed on an ods Frame.
 fn render_cats_chart() = {
-    let recs = month_rows()
+    let mut recs = month_rows()
         |> filter((t) => map_get(t, "amount_cents") < 0)
         |> map((t) => #{ "category": map_get(t, "category"),
                          "dollars": cents_to_f(0 - map_get(t, "amount_cents")) })
@@ -258,7 +258,7 @@ fn render_budget_chart() = {
 
 // Six-month in/out trend over the whole fetched window.
 fn render_trend_chart() = {
-    let recs = txs() |> map((t) => {
+    let mut recs = txs() |> map((t) => {
         let cents = map_get(t, "amount_cents")
         #{ "month": month_of(map_get(t, "date")),
            "kind": if cents < 0 => "out" else => "in",

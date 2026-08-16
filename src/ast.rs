@@ -137,6 +137,13 @@ pub struct LetDecl {
     /// from source. Desugared/synthetic declarations carry None.
     #[serde(default)]
     pub name_span: Option<(u32, u32)>,
+    /// `let mut x = ...` — the binding may be reassigned. Plain `let`
+    /// bindings are immutable: assigning to one is an error (a fresh
+    /// `let` of the same name still shadows, which is the idiomatic way
+    /// to thread a value through a pipeline). Defaults to false so ASTs
+    /// serialized before 0.61 still deserialize.
+    #[serde(default)]
+    pub mutable: bool,
 }
 
 /// Function declaration for named/recursive functions

@@ -98,8 +98,9 @@ let m2 = map_set(m, "b", 2)      // a new map
 println(to_string(map_len(m)) + " then " + to_string(map_len(m2)))
 ```
 
-*Bindings* can be reassigned (`let mut` marks the intent), but the
-values they point at cannot be mutated in place. Programs therefore
+A binding declared `let mut` can be reassigned; a plain `let` cannot,
+and the values they point at cannot be mutated in place either. Programs
+therefore
 flow data through transformations rather than editing shared state —
 which is also, as a later stop shows, exactly what makes olang's
 parallelism safe.

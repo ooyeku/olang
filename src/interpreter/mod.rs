@@ -105,6 +105,12 @@ pub struct Interpreter {
     /// stale position.
     pending_error_location: Option<crate::ast::ErrorLocation>,
 
+    /// Top-level bindings this interpreter has seen, with their
+    /// mutability — the seed for validating the next program. A script is
+    /// one program, but a REPL session is many, and `let mut n = 0` on one
+    /// line must still authorize `n = 1` on the next.
+    scope_bindings: crate::scoping::Predefined,
+
     // MEMORY MONITORING: Track memory usage to prevent corruption
     memory_allocations: usize,
     max_memory_allocations: usize,
@@ -235,6 +241,7 @@ impl Interpreter {
             call_stack_names: Vec::new(),
             pending_error_location: None,
             pending_error_hint: None,
+            scope_bindings: crate::scoping::Predefined::new(),
 
             // MEMORY MONITORING: Initialize memory tracking
             memory_allocations: 0,
@@ -317,8 +324,29 @@ impl Interpreter {
         }
     }
 
-    /// Evaluate a program
+    /// Evaluate a program.
+    ///
+    /// Scoping and mutability are validated first, over the whole program:
+    /// a `let`-less first assignment or a write to a binding that is not
+    /// `mut` is refused before any statement runs, so a program either
+    /// obeys the rules everywhere or does nothing at all. The rules are
+    /// lexical, so this check is the same on every execution tier.
     pub fn eval_program(&mut self, program: Program) -> Result<Value, InterpreterError> {
+        let mut known = std::mem::take(&mut self.scope_bindings);
+        let scope_errors = crate::scoping::validate_program(&program, &mut known);
+        self.scope_bindings = known;
+        if let Some(first) = scope_errors.first() {
+            self.pending_error_location = Some(crate::ast::ErrorLocation {
+                line: first.line,
+                column: first.column,
+                call_stack: Vec::new(),
+                hint: None,
+            });
+            return Err(InterpreterError::RuntimeError {
+                message: first.message.clone(),
+            });
+        }
+
         let mut last_value = Value::Unit;
         for statement in &program.statements {
             // A fresh top-level statement gets a clean slate: any location
@@ -372,6 +400,22 @@ impl Interpreter {
                 | InterpreterError::ReturnSignal(_)
                 | InterpreterError::ErrPropagation(_)
         )
+    }
+
+    /// Does this statement introduce a name into the environment? A block
+    /// only needs its own frame when something inside it binds; type,
+    /// trait, and impl declarations register globally rather than in a
+    /// scope, so they do not count.
+    fn statement_binds(statement: &Statement) -> bool {
+        match statement {
+            Statement::Located { stmt, .. } => Self::statement_binds(stmt),
+            Statement::LetDecl(_)
+            | Statement::FunctionDecl(_)
+            | Statement::AsyncFunctionDecl(_)
+            | Statement::UseDecl(_)
+            | Statement::ShareDecl(_) => true,
+            _ => false,
+        }
     }
 
     /// Rank every visible binding by edit distance to `name` and offer
@@ -1052,6 +1096,28 @@ impl Interpreter {
                 }
             }
             Expr::Block(statements) => {
+                // A block scopes its bindings: a `let` inside one is gone at
+                // the closing brace, and may shadow an outer binding while it
+                // lasts. Blocks that declare nothing — the overwhelming
+                // majority, including most loop bodies — skip the frame
+                // entirely, so scoping costs nothing where nothing is bound.
+                if statements.iter().any(Self::statement_binds) {
+                    self.environment = Environment::with_parent(self.environment.clone());
+                    let mut result = Ok(Value::Unit);
+                    for statement in statements {
+                        result = self.eval_statement(statement);
+                        if result.is_err() {
+                            break;
+                        }
+                    }
+                    // Pop on every path: a `break`, `return`, or `?` leaves
+                    // through Err and must not strand the frame.
+                    if let Some(parent) = self.environment.parent.take() {
+                        self.environment =
+                            Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
+                    }
+                    return result;
+                }
                 let mut result = Value::Unit;
                 for statement in statements {
                     result = self.eval_statement(statement)?;
@@ -1968,6 +2034,7 @@ impl Interpreter {
             call_stack_names: Vec::new(),
             pending_error_location: None,
             pending_error_hint: None,
+            scope_bindings: self.scope_bindings.clone(),
             environment: self.environment.clone(),
             builtin_functions: self.builtin_functions.clone(),
             async_runtime: AsyncRuntime::new(),

@@ -63,7 +63,7 @@ let boot_gaps = par_map(range(0, 8), (chunk) => {
     }
     gaps
 })
-let gaps = ods.series(flatten(boot_gaps))
+let mut gaps = ods.series(flatten(boot_gaps))
 let ci_lo = ods.quantile(gaps, 0.025)
 let ci_hi = ods.quantile(gaps, 0.975)
 println("bootstrap 95% CI:  [" + show(math.round(ci_lo * 100.0) / 100.0)

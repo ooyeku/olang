@@ -222,17 +222,29 @@ fn name(c) = match c {
 println(name(Blue))   // other: Blue
 ```
 
-## Bare blocks do not create a scope
+## A block's bindings end with the block
 
-A `{ ... }` block used as an expression does **not** introduce a scope —
-a `let` inside it leaks to the enclosing scope. Function bodies, `match`
-arms, and loop bodies *do* scope. (The compiler warns about the leaky
-case, and this may tighten in a future release.)
+Every `{ ... }` introduces a scope, so a `let` inside one is not visible
+after it. The block still *evaluates* to its last expression — that is
+how you get the value out:
 
 ```olang
 let y = { let hidden = 41; hidden + 1 }
-println(show(y))        // 42 — but `hidden` is now visible out here too
+println(show(y))        // 42 — `hidden` itself is gone
 ```
+
+The trap is a name you meant to keep. Declare it before the block, and
+declare it `mut` if the block writes to it:
+
+```olang
+let mut label = "unknown"
+if true => { label = "ready" }
+println(label)          // ready
+```
+
+Writing `if true => { let label = "ready" }` instead would bind and
+discard a fresh `label`, and reading it afterward is an error rather
+than a silent wrong answer.
 
 ## `os.args()` includes the program path
 
@@ -273,9 +285,15 @@ A few things that are easy to forget rather than truly surprising:
 - **Escapes work in string literals** — `\n`, `\t`, `\"`, `\\`, and
   `\x1b` for control characters (handy for terminal color) — but **not in
   character literals**: `'\n'` is a parse error, use `"\n"`.
-- **`let` bindings can be reassigned** and re-declared (shadowed) freely;
-  `mut` documents intent but the interpreter does not require it for
-  reassignment. See [the mutability model](language.md#the-mutability-model).
+- **Assignment is not a declaration, and plain `let` is immutable.**
+  `x = 1` for an unbound `x` is an error, and so is assigning to a
+  binding that was not declared `let mut`. Re-declaring (shadowing) with
+  a fresh `let` is always allowed and is usually the better fix. See
+  [the mutability model](language.md#the-mutability-model).
+- **A block's bindings end with the block.** A `let` inside `{ ... }`,
+  a loop body, an `if` branch, or a `match` arm is not visible
+  afterward. Declare the name before the block — `let mut` if the block
+  needs to write to it. See [Scope](language.md#scope).
 
 ---
 

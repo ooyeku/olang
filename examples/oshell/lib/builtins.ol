@@ -86,7 +86,7 @@ fn bi_ls(state, args) = {
             let visible = if all => sort(names)
                 else => sort(names |> filter((n) => !str.starts_with(n, ".")))
             if long => {
-                let lines = visible |> map((n) => {
+                let mut lines = visible |> map((n) => {
                     let p = if target == "." => n else => target + "/" + n
                     match fs.file_info(p) {
                         Ok(info) => {
@@ -112,8 +112,8 @@ fn contains(xs, x) = len(xs |> filter((v) => v == x)) > 0
 fn bi_cat(state, args, input) = {
     if len(args) == 0 => done(state, input, 0)
     else => {
-        let out = ""
-        let code = 0
+        let mut out = ""
+        let mut code = 0
         for f in args {
             match fs.read_file(f) {
                 Ok(text) => { out = out + text },
@@ -133,15 +133,15 @@ fn bi_echo(state, args) = {
 }
 
 fn bi_headtail(state, args, input, is_head) = {
-    let count = 10
-    let rest = args
+    let mut count = 10
+    let mut rest = args
     if len(args) >= 2 && args[0] == "-n" => {
         count = unwrap_or(str.parse_int(args[1]), 10)
         rest = tail(tail(args))
     }
     let text = if len(rest) > 0 => match fs.read_file(rest[0]) { Ok(t) => t, Err(e) => "" }
         else => input
-    let lines = str.lines(text)
+    let mut lines = str.lines(text)
     let n = len(lines)
     let keep = if is_head => lines |> take_n(count)
         else => lines |> drop_n(if n > count => n - count else => 0)
@@ -149,8 +149,8 @@ fn bi_headtail(state, args, input, is_head) = {
 }
 
 fn take_n(xs, n) = {
-    let out = []
-    let i = 0
+    let mut out = []
+    let mut i = 0
     while i < len(xs) && i < n {
         out = out + [xs[i]]
         i = i + 1
@@ -159,8 +159,8 @@ fn take_n(xs, n) = {
 }
 
 fn drop_n(xs, n) = {
-    let out = []
-    let i = n
+    let mut out = []
+    let mut i = n
     while i < len(xs) {
         out = out + [xs[i]]
         i = i + 1
@@ -193,7 +193,7 @@ fn bi_wc(state, args, input) = {
 fn bi_env(state) = {
     match os.list_env() {
         Ok(pairs) => {
-            let lines = sort(map_keys(pairs)) |> map((k) => k + "=" + map_get(pairs, k))
+            let mut lines = sort(map_keys(pairs)) |> map((k) => k + "=" + map_get(pairs, k))
             done(state, joined_lines(lines), 0)
         },
         Err(e) => fail(state, "env: " + e)
@@ -203,7 +203,7 @@ fn bi_env(state) = {
 fn bi_export(state, args) = {
     if len(args) == 0 => fail(state, "export: usage: export NAME=value")
     else => {
-        let code = 0
+        let mut code = 0
         for spec in args {
             let eq = str.index_of(spec, "=")
             if eq > 0 => {
@@ -222,7 +222,7 @@ fn bi_unset(state, args) = {
 
 fn bi_alias(state, args) = {
     if len(args) == 0 => {
-        let lines = sort(map_keys(state.aliases))
+        let mut lines = sort(map_keys(state.aliases))
             |> map((k) => "alias " + k + "='" + map_get(state.aliases, k) + "'")
         done(state, joined_lines(lines), 0)
     } else => {
@@ -239,7 +239,7 @@ fn bi_alias(state, args) = {
 fn bi_unalias(state, args) = {
     if len(args) == 0 => fail(state, "unalias: usage: unalias name")
     else => {
-        let kept = #{}
+        let mut kept = #{}
         for k in map_keys(state.aliases) {
             if !contains(args, k) => {
                 kept = map_set(kept, k, map_get(state.aliases, k))
@@ -250,8 +250,8 @@ fn bi_unalias(state, args) = {
 }
 
 fn bi_history(state) = {
-    let lines = []
-    let i = 0
+    let mut lines = []
+    let mut i = 0
     while i < len(state.history) {
         lines = lines + [str.pad_start(to_string(i + 1), 5, " ") + "  " + state.history[i]]
         i = i + 1
@@ -282,7 +282,7 @@ share fn path_lookup(name) = {
         if unwrap_or(fs.exists(name), false) => Ok(name) else => Err("not found")
     } else => {
         let path = match os.get_env("PATH") { Ok(p) => p, Err(e) => "" }
-        let hit = ""
+        let mut hit = ""
         for dir in str.split(path, ":") {
             if hit == "" && dir != "" => {
                 let candidate = dir + "/" + name
@@ -299,8 +299,8 @@ fn bi_mkdir(state, args) = {
     let real = args |> filter((a) => a != "-p")
     if len(real) == 0 => fail(state, "mkdir: usage: mkdir [-p] dir")
     else => {
-        let code = 0
-        let out = ""
+        let mut code = 0
+        let mut out = ""
         for d in real {
             match fs.create_dir_all(d) {
                 Ok(v) => {},
@@ -319,8 +319,8 @@ fn bi_rm(state, args) = {
     let real = args |> filter((a) => !str.starts_with(a, "-"))
     if len(real) == 0 => fail(state, "rm: usage: rm [-r] path")
     else => {
-        let code = 0
-        let out = ""
+        let mut code = 0
+        let mut out = ""
         for p in real {
             let r = if unwrap_or(fs.is_dir(p), false) => {
                 if recursive => fs.remove_dir_all(p)
@@ -371,7 +371,7 @@ fn bi_sleep(state, args) = {
 }
 
 fn bi_exit(state, args) = {
-    let code = if len(args) > 0 => unwrap_or(str.parse_int(args[0]), 0) else => 0
+    let mut code = if len(args) > 0 => unwrap_or(str.parse_int(args[0]), 0) else => 0
     os.exit(code)
     done(state, "", code)
 }

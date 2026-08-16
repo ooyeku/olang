@@ -62,8 +62,8 @@ bump(41)
 fn loop_variable_shadows_function_local() {
     let src = r#"
 fn work() = {
-    let i = 100
-    let total = 0
+    let mut i = 100
+    let mut total = 0
     for i in 0..5 {
         total = total + i
     }
@@ -92,7 +92,7 @@ fn reference_through_nested_frames() {
     // function frame two hops out
     let src = r#"
 fn work(base) = {
-    let total = 0
+    let mut total = 0
     for i in 0..3 {
         total = total + match i % 2 {
             0 => base,
@@ -111,8 +111,8 @@ work(100)
 fn rebinding_in_loop_keeps_slot() {
     let src = r#"
 fn work(n) = {
-    let total = 0
-    let i = 0
+    let mut total = 0
+    let mut i = 0
     while i < n {
         let squared = i * i
         total = total + squared

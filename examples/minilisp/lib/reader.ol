@@ -89,7 +89,7 @@ fn read_list(tokens, i, acc) = {
 
 // Parse a whole program: a list of top-level forms.
 share fn read_program(src) = {
-    let tokens = tokenize(src)
+    let mut tokens = tokenize(src)
     let mut forms = []
     let mut i = 0
     let mut failure = ""

@@ -141,6 +141,8 @@ fn let_to_value(d: &LetDecl, shared: bool) -> Value {
         ("kind", s("let")),
         ("name", s(&pattern_name(&d.pattern))),
         ("shared", Value::Boolean(shared)),
+        // `let mut` — a lint that reasons about mutability needs this.
+        ("mutable", Value::Boolean(d.mutable)),
     ];
     if let Some(v) = &d.value {
         pairs.push(("value", expr_to_value(v)));

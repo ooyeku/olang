@@ -18,7 +18,7 @@ fn len(pat) = str.length(pat)
 
 // alt = concat ('|' concat)*
 fn parse_alt(pat, pos) = {
-    let first = parse_concat(pat, pos)
+    let mut first = parse_concat(pat, pos)
     let mut node = first.node
     let mut p = first.pos
     while (p < len(pat)) && (at(pat, p) == "|") {

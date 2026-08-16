@@ -164,9 +164,9 @@ println(typeof(c) + " " + c)
 
 ## Variables and assignment
 
-`let` binds a name to a value. `let mut` is accepted and marks intent — but
-note that **every olang binding is assignable**; `mut` is documentation for
-the reader, not a permission for the compiler:
+`let` binds a name to a value. A plain `let` binding is **immutable**:
+assigning to it is an error. Add `mut` when the name must be
+reassigned:
 
 ```olang
 let fixed = 10
@@ -175,15 +175,44 @@ counter = counter + 1
 println(to_string(fixed + counter))
 ```
 
+Assignment is not a declaration. A bare `counter = 1` for a name that
+was never bound is an error, not an implicit `let` — the two mistakes
+this rules out (a typo silently creating a new variable, and a write
+that was meant to update something else) are among the most expensive
+in a dynamic language. Both errors are reported before the program
+runs, so they cannot hide behind a branch that only executes in
+production:
+
+```text
+cannot assign to 'total': it is not declared in this scope. Declare it
+first with `let total = ...`, or `let mut total = ...` if it needs to change
+```
+
+```text
+cannot assign to 'n': it is not declared mutable. Declare it with
+`let mut n = ...`, or bind a new value with `let n = ...` to shadow it
+```
+
+The second message names the alternative deliberately. Shadowing — a
+fresh `let` of the same name — is always available and is often the
+better answer, because it produces a new binding rather than a mutable
+one:
+
+```olang
+let raw = "  42 "
+let raw = str.trim(raw)     // a new binding, not a mutation
+println(raw)
+```
+
 ### The mutability model
 
 It is worth being precise about what assignment does, because olang
-separates two things that many languages fuse: *bindings* are mutable,
-*values* are not.
+separates two things that many languages fuse: *bindings* are
+reassignable when declared `mut`, *values* are never mutable.
 
 - A **binding** is a name-to-value association. Assignment (`counter =
-  counter + 1`) points the name at a different value. This is always
-  allowed.
+  counter + 1`) points the name at a different value. This is allowed
+  when the binding was declared `let mut`.
 - A **value** — a list, map, struct, string — is immutable. No
   operation modifies a value in place; operations like `map_set`,
   list `+`, and `str.replace` build and return *new* values, sharing
@@ -244,13 +273,10 @@ println(to_string(x + y))
 
 ### Scope
 
-Function bodies (including lambdas and nested `fn`s), `match` arms, and
-`for` bodies introduce fresh scopes: a `let` inside them — and a `for`
-loop's iteration variable — is gone when they end. A bare block
-expression, by contrast, does **not** currently fence its bindings: a
-`let` made inside `{ ... }` remains visible after the block. Write code
-as if blocks scoped (the tooling assumes it, and a future release may
-tighten the rule); when you need real encapsulation, use a function.
+Every block introduces a scope. A `let` inside a block — a function or
+lambda body, a `match` arm, a loop body, an `if` branch, or a bare
+`{ ... }` — is gone when the block ends, as is a `for` loop's iteration
+variable. Referring to such a name afterward is an error.
 
 ```olang
 fn f() = {
@@ -262,6 +288,23 @@ println(to_string(f()))
 for i in 0..3 { }      // i is scoped to the loop
 let msg = match 1 { n => "arm bindings are scoped too" }
 println(msg)
+
+{
+    let staged = 10    // scoped to this block
+    println(to_string(staged))
+}
+```
+
+Reading `staged` after that block is an error: `'staged' is not in scope
+here`. Assignment reaches outward, though — a block may write to a
+mutable binding declared outside it, which is how a loop accumulates:
+
+```olang
+let mut total = 0
+for n in [1, 2, 3] {
+    total = total + n   // `total` is declared outside, and is `mut`
+}
+println(to_string(total))
 ```
 
 Shadowing is allowed and idiomatic: a new `let` for the same name binds
@@ -687,6 +730,11 @@ let result = {
 }
 println(to_string(result))
 ```
+
+`a` and `b` are gone after the block; `result` is what survives. That is
+the idiom for a multi-step computation whose intermediates should not
+outlive it — a block is the smallest unit of encapsulation the language
+has, smaller than a function and free of a call.
 
 ### `while`
 
@@ -1512,7 +1560,7 @@ Each, in one line:
 | Keyword | Meaning |
 |---|---|
 | `fn` | Declare a function (`fn name(params) = expr`) |
-| `let` | Bind a name; `let mut` marks intended mutability |
+| `let` | Bind a name; `let mut` makes the binding reassignable |
 | `type` | Declare a `struct` or `enum` type |
 | `if` / `else` | Conditional *expression* — `if cond => a else => b` |
 | `match` | Pattern-match an expression over arms |

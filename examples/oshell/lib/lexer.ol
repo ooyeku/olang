@@ -15,13 +15,13 @@
 share fn tokenize(line) = {
     let cs = str.chars(line)
     let n = len(cs)
-    let tokens = []
-    let cur = ""
-    let has_cur = false
-    let saw_single = false
-    let err = ""
-    let done = false
-    let i = 0
+    let mut tokens = []
+    let mut cur = ""
+    let mut has_cur = false
+    let mut saw_single = false
+    let mut err = ""
+    let mut done = false
+    let mut i = 0
 
     while i < n && err == "" && !done {
         let c = cs[i]
@@ -53,7 +53,7 @@ share fn tokenize(line) = {
                 i = i + 1
             }
         } else => if c == "'" => {
-            let closed = false
+            let mut closed = false
             i = i + 1
             while i < n && !closed {
                 if cs[i] == "'" => { closed = true } else => { cur = cur + cs[i] }
@@ -63,7 +63,7 @@ share fn tokenize(line) = {
             has_cur = true
             saw_single = true
         } else => if c == "\"" => {
-            let closed = false
+            let mut closed = false
             i = i + 1
             while i < n && !closed {
                 let d = cs[i]

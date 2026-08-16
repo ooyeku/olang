@@ -18,7 +18,7 @@ use lib.builtins { is_builtin, run, path_lookup }
 fn stage_argv(state, stage_tokens) = {
     // Alias expansion (one level) on the leading word, then token
     // expansion: $VAR, ~, globs — each token can splice several words.
-    let toks = stage_tokens
+    let mut toks = stage_tokens
     if len(toks) > 0 && toks[0].q == "w" && map_has_key(state.aliases, toks[0].t) => {
         let value = map_get(state.aliases, toks[0].t)
         match tokenize(value) {
@@ -63,9 +63,9 @@ fn run_pipeline(state, link) = {
         }
     } else => ""
 
-    let s = state
-    let out = input
-    let code = 0
+    let mut s = state
+    let mut out = input
+    let mut code = 0
     for stage in link.pipe {
         let argv = stage_argv(s, stage)
         let r = run_stage(s, argv, out)
@@ -102,9 +102,9 @@ fn run_line(state, line) = {
                 { aliases: state.aliases, history: state.history, last: 2 }
             },
             Ok(chains) => {
-                let s = state
-                let skip_until_or = false
-                let skip_until_and = false
+                let mut s = state
+                let mut skip_until_or = false
+                let mut skip_until_and = false
                 for link in chains {
                     // Sequencing: run this link unless a previous && failed
                     // (skip to after ;) or a previous || succeeded.
@@ -159,8 +159,8 @@ if interactive => {
     println("oshell 1.0 — a Unix-like shell written in olang. 'help' lists builtins; ctrl-d exits.")
 }
 
-let state = { aliases: #{}, history: load_history(), last: 0 }
-let running = true
+let mut state = { aliases: #{}, history: load_history(), last: 0 }
+let mut running = true
 while running {
     print(prompt_text())
     match os.read_line() {

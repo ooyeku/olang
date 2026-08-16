@@ -16,8 +16,11 @@
 //!
 //! - A function call creates one frame holding, in push order: the
 //!   function's own name (if named), then its parameters, then every
-//!   `let`/binding executed directly in the body (function-level scoping —
-//!   blocks and `if`/`while` do not create environments).
+//!   `let`/binding executed directly in the body.
+//! - A block that binds anything creates a child frame (depth +1) for the
+//!   duration of the block; a block that binds nothing runs in the
+//!   enclosing frame and adds no depth. This mirrors the evaluator's
+//!   `statement_binds` test exactly — the two must not drift.
 //! - `for` loops, `match` arms, and `try/catch` catch blocks each create a
 //!   child frame (depth +1) for the duration of their body.
 //!
@@ -159,12 +162,25 @@ impl Resolver {
             // Already resolved (shouldn't occur on parse output; identity)
             Expr::LocalRef { .. } | Expr::LocalAssign { .. } => expr.clone(),
 
-            Expr::Block(statements) => Expr::Block(
-                statements
+            // A block that binds gets its own frame, exactly as the
+            // evaluator gives it one (`Interpreter::statement_binds`). A
+            // block that binds nothing runs in the enclosing frame, and
+            // opening one here would put every inner reference one hop
+            // too deep.
+            Expr::Block(statements) => {
+                let binds = statements.iter().any(Self::statement_binds);
+                if binds {
+                    self.frames.push(Scope::new());
+                }
+                let resolved = statements
                     .iter()
                     .map(|statement| self.resolve_statement(statement))
-                    .collect(),
-            ),
+                    .collect();
+                if binds {
+                    self.frames.pop();
+                }
+                Expr::Block(resolved)
+            }
 
             Expr::If {
                 condition,
@@ -419,6 +435,21 @@ impl Resolver {
                 Statement::FunctionDecl(decl.clone())
             }
             other => other.clone(),
+        }
+    }
+
+    /// Does this statement introduce a binding? Must agree exactly with
+    /// `Interpreter::statement_binds`, which decides whether the evaluator
+    /// opens a frame for the block containing it.
+    fn statement_binds(statement: &Statement) -> bool {
+        match statement {
+            Statement::Located { stmt, .. } => Self::statement_binds(stmt),
+            Statement::LetDecl(_)
+            | Statement::FunctionDecl(_)
+            | Statement::AsyncFunctionDecl(_)
+            | Statement::UseDecl(_)
+            | Statement::ShareDecl(_) => true,
+            _ => false,
         }
     }
 

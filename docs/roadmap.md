@@ -73,16 +73,25 @@ Two further points follow from these decisions:
 
 ## Campaign 1 — the semantics release
 
-Implements D1–D5, D7, and D8 as one release. This campaign touches every
-layer — grammar, interpreter, OVM, JIT, checker, formatter, language server —
-because the tiers must agree on the new semantics exactly as they agree on
-the current ones.
+Implements D1–D5, D7, and D8. This campaign touches every layer — grammar,
+interpreter, OVM, JIT, checker, formatter, language server — because the
+tiers must agree on the new semantics exactly as they agree on the current
+ones.
+
+**S1–S3 shipped in 0.61.0.** Scope and mutability are settled: every block
+scopes its bindings, assignment is not a declaration, and `let mut` is a
+guarantee rather than a comment. All three are enforced by one validation
+pass that runs before execution, which is what makes the three tiers agree
+by construction rather than by testing. The one tier divergence the work
+uncovered — the bytecode compiler's flat local-variable map, which
+disagreed with the interpreter on nested shadowing — is fixed and pinned
+by differential tests. The remaining lanes (S4–S8) are unchanged.
 
 | Lane | Work | Status |
 |---|---|---|
-| S1 — lexical scoping | Blocks introduce a scope: `let` bindings are dropped at the closing brace, shadowing is permitted, and the environment model in the interpreter and both compiled tiers is updated together. The 0.50 scope-leak warning becomes an error. | planned |
-| S2 — required `let` | Assignment to an undeclared name is an error naming the variable and suggesting `let`. The 0.50 advisory warning becomes the error. | planned |
-| S3 — enforced `mut` | Reassignment of a non-`mut` binding is an error. The checker and language server list every site to migrate; the corpus is migrated in the same change. | planned |
+| S1 — lexical scoping | Blocks introduce a scope: `let` bindings are dropped at the closing brace, shadowing is permitted, and the environment model in the interpreter and both compiled tiers is updated together. The 0.50 scope-leak warning becomes an error. | **shipped 0.61.0** |
+| S2 — required `let` | Assignment to an undeclared name is an error naming the variable and suggesting `let`. The 0.50 advisory warning becomes the error. | **shipped 0.61.0** |
+| S3 — enforced `mut` | Reassignment of a non-`mut` binding is an error. The checker and language server list every site to migrate; the corpus is migrated in the same change. | **shipped 0.61.0** |
 | S4 — the cell | `cell(v)`, `get(c)`, `set(c, v)`, `update(c, f)`. Cells are values with identity confined to their creating thread: capturing one in `spawn`/`par_*` or sending one through a channel is an error at the boundary. Dead captured-variable writes become errors pointing to `cell`. Timeline recording is unaffected because cell mutation is deterministic within a thread. | planned |
 | S5 — remove async | `async`, `await`, and the `Promise` API are removed from the grammar, interpreter, and tiers. The promotion holdout list shrinks accordingly. Programs using `Promise.delay/all/race` migrate to `time`, `chan`, and `spawn` patterns; the book's concurrency sections are rewritten around the single model. | planned |
 | S6 — stdlib conventions audit | Every builtin and module function is audited once: infallible operations return their value directly (`os.args`, `os.arch`, and the other host-introspection calls are the known cases); contextual keywords free `share` and any other colliding identifiers; `fs.join` becomes variadic; the definitive before/after table is recorded in the CHANGELOG. | planned |

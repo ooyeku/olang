@@ -77,6 +77,8 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
             let offset = byte_offset_of(&source, d.line as usize, d.column as usize);
             let label = if d.warning {
                 "advisory — the program still runs"
+            } else if d.scope {
+                "the program is refused before it runs"
             } else if d.runtime {
                 "this would fail at runtime"
             } else {
@@ -400,6 +402,11 @@ pub struct CheckDiagnostic {
     /// True for advisory findings (style/pitfall warnings): reported and
     /// surfaced as warnings, never a non-zero exit on their own.
     pub warning: bool,
+    /// True for scope and mutability violations, which the same validator
+    /// raises before execution — the program is refused, not attempted.
+    /// Only the rendered label distinguishes them; they gate like any
+    /// other problem.
+    pub scope: bool,
 }
 
 /// The checker's knowledge of a type, structurally deep where the source
@@ -797,6 +804,26 @@ pub fn check_program_with_context(context: &[&Program], program: &Program) -> Ve
     for stmt in &program.statements {
         checker.check_statement(stmt, (0, 0));
     }
+
+    // Scope and mutability come from the same validator the interpreter
+    // runs before execution, so `olang check` and `olang run` report the
+    // same violations in the same words. Names the context modules bring
+    // in seed it, so a cross-file binding is not mistaken for undeclared.
+    let mut predefined = crate::scoping::Predefined::new();
+    for p in context {
+        let _ = crate::scoping::validate_program(p, &mut predefined);
+    }
+    for e in crate::scoping::validate_program(program, &mut predefined) {
+        checker.out.push(CheckDiagnostic {
+            line: e.line,
+            column: e.column,
+            message: e.message,
+            runtime: false,
+            warning: false,
+            scope: true,
+        });
+    }
+
     checker.out
 }
 
@@ -1179,6 +1206,7 @@ impl Checker {
             message,
             runtime,
             warning: false,
+            scope: false,
         });
     }
 
@@ -1189,6 +1217,7 @@ impl Checker {
             message,
             runtime: false,
             warning: true,
+            scope: false,
         });
     }
 
@@ -1691,30 +1720,10 @@ impl Checker {
                         ),
                     );
                 }
-                // Stability has long said assignment-to-undeclared "may
-                // warn in a future release"; this is the release. Advisory
-                // only — the runtime still creates the binding.
-                if !self.bound(target) {
-                    if self.leaked.iter().any(|l| l.contains(target)) {
-                        if self.warned_leaks.insert(target.clone()) {
-                            self.warn(
-                                span,
-                                format!(
-                                    "'{}' is declared inside a block and is only visible here because blocks don't scope yet — declare it before the block",
-                                    target
-                                ),
-                            );
-                        }
-                    } else {
-                        self.warn(
-                            span,
-                            format!(
-                                "assignment to undeclared name '{}' creates a binding — declare it with `let {} = ...`",
-                                target, target
-                            ),
-                        );
-                    }
-                }
+                // Whether the target is declared, and whether it is `mut`,
+                // is decided by the scope validator (src/scoping.rs) — the
+                // same one the interpreter runs — so the two never disagree
+                // about an assignment.
                 let ty = self.infer(value);
                 let target = target.clone();
                 self.bind(&target, ty);
@@ -1825,17 +1834,19 @@ impl Checker {
                 self.pop_scope(Merge::Construct);
             }
             Expr::Identifier(name) | Expr::LocalRef { name, .. } => {
-                // Using a name that only exists because a block leaked it:
-                // the book says to write as if blocks scoped, and a future
-                // release may tighten this. Advisory, once per name.
+                // A name that was declared inside a block is gone once the
+                // block ends. Reading it is an error at runtime ("undefined
+                // variable"); reporting it here names the cause instead,
+                // once per name.
                 if !self.bound(name)
                     && self.leaked.iter().any(|l| l.contains(name))
                     && self.warned_leaks.insert(name.clone())
                 {
-                    self.warn(
+                    self.diag(
                         span,
+                        false,
                         format!(
-                            "'{}' is declared inside a block and is only visible here because blocks don't scope yet — declare it before the block",
+                            "'{}' is not in scope here: it is declared inside a block, and a block's bindings end with the block — declare it before the block",
                             name
                         ),
                     );
@@ -2119,28 +2130,41 @@ mod tests {
         assert!(check("fn f(x: Int) = x\nlet v = if true => \"a\" else => 1\nf(v)\n").is_empty());
     }
 
-    // ── 0.50 arc: undeclared-assignment warning ────────────────────────
+    // ── 0.61: `let` is required, and `mut` is a guarantee ──────────────
 
     #[test]
-    fn undeclared_assignment_warns_declared_does_not() {
+    fn assignment_without_a_declaration_is_an_error() {
         let d = check("count = 1\n");
-        assert_eq!(d.len(), 1);
-        assert!(d[0].warning, "advisory, not an error");
-        assert!(
-            d[0].message
-                .contains("assignment to undeclared name 'count'")
-        );
-        // Declared names, loop vars, params, and valueless lets are quiet.
-        assert!(check("let ok = 1\nok = 2\n").is_empty());
-        assert!(check("let pending\npending = 1\n").is_empty());
-        assert!(check("fn f(x) = { x = x + 1\n x }\n").is_empty());
-        assert!(check("for x in [1] { x = x + 1 }\n").is_empty());
-        // One warning per name: the first assignment binds it.
-        assert_eq!(check("n = 1\nn = 2\n").len(), 1);
-        // The assigned value's type flows onward.
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(!d[0].warning, "an error, not an advisory");
+        assert!(d[0].message.contains("cannot assign to 'count'"));
+        assert!(d[0].message.contains("not declared in this scope"));
+        // A `mut` declaration authorizes assignment; a valueless one too.
+        assert!(check("let mut ok = 1\nok = 2\n").is_empty());
+        assert!(check("let mut pending\npending = 1\n").is_empty());
+    }
+
+    #[test]
+    fn assigning_a_binding_that_is_not_mut_is_an_error() {
+        let d = check("let n = 1\nn = 2\n");
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(!d[0].warning);
+        assert!(d[0].message.contains("not declared mutable"));
+        // Parameters and loop variables are immutable.
+        let d = check("fn f(x) = { x = x + 1\n x }\n");
+        assert_eq!(d.len(), 1, "{d:?}");
+        let d = check("for x in [1] { x = x + 1 }\n");
+        assert_eq!(d.len(), 1, "{d:?}");
+        // Shadowing with a fresh `let` needs no `mut` — the pipeline idiom.
+        assert!(check("let t = \" a \"\nlet t = str.trim(t)\nprintln(t)\n").is_empty());
+    }
+
+    #[test]
+    fn a_rejected_assignment_still_reports_the_type_violation() {
+        // The scope error and the type error are independent findings.
         let d = check("fn f(x: Int) = x\ns = \"str\"\nf(s)\n");
-        assert_eq!(d.len(), 2, "warning plus the type violation: {:?}", d);
-        assert!(d.iter().any(|x| x.warning));
+        assert_eq!(d.len(), 2, "scope error plus type violation: {:?}", d);
+        assert!(d.iter().any(|x| x.message.contains("cannot assign to 's'")));
         assert!(
             d.iter()
                 .any(|x| !x.warning && x.message.contains("expects Int, got String"))
@@ -2174,21 +2198,21 @@ mod tests {
         );
     }
 
-    // ── 0.50 arc: block-scoping warning ────────────────────────────────
+    // ── 0.61: blocks scope their bindings ──────────────────────────────
 
     #[test]
-    fn using_a_block_leaked_binding_warns_once() {
+    fn using_a_block_scoped_binding_after_the_block_is_an_error() {
         let d = check(
             "{\n    let inner = 1\n}\nprintln(to_string(inner))\nprintln(to_string(inner))\n",
         );
         assert_eq!(d.len(), 1, "once per name: {:?}", d);
-        assert!(d[0].warning);
-        assert!(d[0].message.contains("'inner' is declared inside a block"));
-        // Assignment to a leaked name draws the block warning, not the
-        // undeclared-assignment one.
+        assert!(!d[0].warning, "an error, not an advisory");
+        assert!(d[0].message.contains("'inner' is not in scope here"));
+        // Assigning to one reports it as undeclared — which it is, once the
+        // block has ended.
         let d = check("{\n    let n = 1\n}\nn = 2\n");
-        assert_eq!(d.len(), 1);
-        assert!(d[0].message.contains("declared inside a block"));
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].message.contains("cannot assign to 'n'"));
     }
 
     #[test]
@@ -2207,30 +2231,33 @@ mod tests {
     #[test]
     fn capture_lint_has_no_false_positives() {
         // A local declared inside the closure is live.
-        assert!(check("let f = () => { let n = 0; n = n + 1; n }\nf()\n").is_empty());
-        // A parameter is inside the boundary — reassigning it is live.
-        assert!(check("let g = (x) => { x = x + 1; x }\ng(1)\n").is_empty());
+        assert!(check("let f = () => { let mut n = 0; n = n + 1; n }\nf()\n").is_empty());
+        // A mutable shadow of a parameter is inside the boundary, so
+        // writing it is live.
+        assert!(check("let g = (x) => { let mut x = x; x = x + 1; x }\ng(1)\n").is_empty());
         // Top-level reassignment captures nothing.
         assert!(check("let mut x = 0\nx = 5\nprintln(to_string(x))\n").is_empty());
         // Shadowing the captured name with a local `let` first is fine.
         assert!(
-            check("let mut c = 0\nfn f() = { let c = 0\n    c = c + 1\n    c }\nf()\n").is_empty()
+            check("let mut c = 0\nfn f() = { let mut c = 0\n    c = c + 1\n    c }\nf()\n")
+                .is_empty()
         );
         // Reading a captured binding (not assigning) is always fine.
         assert!(check("let base = 10\nlet add = (x) => x + base\nadd(5)\n").is_empty());
     }
 
     #[test]
-    fn block_leaks_stop_at_function_boundaries() {
-        // A leak inside one function must not taint another.
+    fn block_scopes_stop_at_function_boundaries() {
+        // A block inside one function must not taint another.
         assert!(check("fn a() = {\n    { let x = 1 }\n    0\n}\nfn b(x) = x\nb(1)\n").is_empty());
-        // Declaring before the block is the fix and stays silent.
+        // Declaring before the block is the fix, and assigning an outer
+        // `mut` binding from inside a block stays legal.
         assert!(
-            check("let outer = 0\n{\n    outer = 1\n}\nprintln(to_string(outer))\n").is_empty()
+            check("let mut outer = 0\n{\n    outer = 1\n}\nprintln(to_string(outer))\n").is_empty()
         );
-        // Nested blocks leak transitively.
+        // A binding from a nested block is out of scope outside both.
         let d = check("{\n    { let deep = 1 }\n}\nprintln(to_string(deep))\n");
-        assert_eq!(d.len(), 1);
+        assert_eq!(d.len(), 1, "{d:?}");
     }
 
     // ── 0.50 arc: literal types ────────────────────────────────────────

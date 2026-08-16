@@ -46,8 +46,8 @@ share fn accel_y(bi, bodies) = {
 // Advance every body one timestep (semi-implicit Euler). Building the new
 // bodies is O(n); the two `accel` calls per body are the O(n^2) work.
 share fn step(bodies, dt) = bodies |> map((bi) => {
-    let ax = accel_x(bi, bodies)
-    let ay = accel_y(bi, bodies)
+    let mut ax = accel_x(bi, bodies)
+    let mut ay = accel_y(bi, bodies)
     let nvx = bi.vx + ax * dt
     let nvy = bi.vy + ay * dt
     Body { x: bi.x + nvx * dt, y: bi.y + nvy * dt, vx: nvx, vy: nvy, mass: bi.mass }

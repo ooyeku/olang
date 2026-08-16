@@ -125,6 +125,7 @@ fn empty_collection_truthiness_agrees_across_tiers() {
     let src = r#"
 fn t(c) = if c => 1 else => 0
 fn w(c) = { let mut n = 0
+    let mut c = c
     while c { n = n + 1; c = false }
     n }
 [ t(""), t([]), t("x"), t([1]), t(0), t(5), w([]), w([9]) ]
@@ -272,8 +273,8 @@ total
 fn loop_heavy_function_is_transparent() {
     let src = r#"
 fn sum_to(n) = {
-    let total = 0
-    let i = 0
+    let mut total = 0
+    let mut i = 0
     while i <= n {
         total = total + i
         i = i + 1
@@ -295,7 +296,7 @@ fn functions_using_globals_now_promote_and_agree() {
     // a baked constant — sound because the interpreter installs exactly that
     // closure as the call environment, and closures are snapshots.
     let src = r#"
-let base = 100
+let mut base = 100
 fn offset(n) = n + base
 offset(1) + offset(2) + offset(3)
 "#;
@@ -328,7 +329,7 @@ fn baked_function_values_survive_redefinition_of_the_name() {
     let src = r#"
 fn helper(x) = x + 1
 fn go(xs) = xs |> map(helper) |> sum
-let xs = [10, 20, 30]
+let mut xs = [10, 20, 30]
 let before = go(xs) + go(xs)
 fn helper(x) = x + 1000
 before + go(xs)
@@ -387,7 +388,7 @@ fn maps_cross_the_boundary_and_compare_structurally() {
 fn make(n) = #{"x": n, "y": n * 2}
 make(1)
 make(2)
-let a = make(5)
+let mut a = make(5)
 let b = #{"y": 10, "x": 5}
 if a == b => 1 else => 0
 "#;
@@ -630,8 +631,8 @@ fn square(n) = n * n
 fn clamp(n) = if n > 10 => n % 10 else => n
 fn poly(n) = square(clamp(n)) + clamp(n)
 fn run(limit) = {
-    let total = 0
-    let i = 0
+    let mut total = 0
+    let mut i = 0
     while i < limit {
         total = total + poly(i)
         i = i + 1
@@ -674,7 +675,7 @@ describe(1) + describe(22) + describe(333)
 fn list_builtins_agree() {
     let src = r#"
 fn work(n) = {
-    let xs = range(0, n)
+    let mut xs = range(0, n)
     sum(xs) + len(xs) + head(reverse(xs))
 }
 work(5) + work(10) + work(20)
@@ -724,7 +725,7 @@ first([])
 fn for_over_range_agrees() {
     let src = r#"
 fn total(n) = {
-    let acc = 0
+    let mut acc = 0
     for i in 0..n {
         acc = acc + i
     }
@@ -743,7 +744,7 @@ total(10) + total(100) + total(1000)
 fn for_over_inclusive_range_agrees() {
     let src = r#"
 fn total(n) = {
-    let acc = 0
+    let mut acc = 0
     for i in 0..=n {
         acc = acc + i
     }
@@ -758,7 +759,7 @@ total(10) + total(100)
 fn for_over_empty_and_reversed_ranges() {
     let src = r#"
 fn total(a, b) = {
-    let acc = 0
+    let mut acc = 0
     for i in a..b {
         acc = acc + i
     }
@@ -773,7 +774,7 @@ total(5, 5) + total(10, 1) + total(0, 3)
 fn for_over_list_agrees() {
     let src = r#"
 fn total(xs) = {
-    let acc = 0
+    let mut acc = 0
     for x in xs {
         acc = acc + x
     }
@@ -788,7 +789,7 @@ total([1, 2, 3]) + total([]) + total([10, 20])
 fn break_exits_the_loop() {
     let src = r#"
 fn first_big(n) = {
-    let found = 0
+    let mut found = 0
     for i in 0..n {
         if i * i > 50 => {
             found = i
@@ -806,7 +807,7 @@ first_big(100) + first_big(3)
 fn continue_skips_iterations() {
     let src = r#"
 fn odds(n) = {
-    let acc = 0
+    let mut acc = 0
     for i in 0..n {
         if i % 2 == 0 => continue
         acc = acc + i
@@ -822,8 +823,8 @@ odds(10) + odds(21)
 fn break_and_continue_in_while_loops() {
     let src = r#"
 fn work(n) = {
-    let acc = 0
-    let i = 0
+    let mut acc = 0
+    let mut i = 0
     while true {
         i = i + 1
         if i > n => break
@@ -842,7 +843,7 @@ fn nested_loops_with_break() {
     // break must exit only the innermost loop
     let src = r#"
 fn grid(n) = {
-    let acc = 0
+    let mut acc = 0
     for i in 0..n {
         for j in 0..n {
             if j > i => break
@@ -985,7 +986,7 @@ unwrap_or_zero(Ok(5)) + unwrap_or_zero(Err("x")) + unwrap_or_zero(Ok(7))
 fn match_inside_a_loop_agrees() {
     let src = r#"
 fn tally(n) = {
-    let acc = 0
+    let mut acc = 0
     for i in 0..n {
         acc = acc + match i % 3 {
             0 => 10,
@@ -1126,7 +1127,7 @@ pick(Ok(50)) + pick(Ok(1)) + pick(Err("e"))
 fn destructuring_in_a_loop_agrees() {
     let src = r#"
 fn sum_oks(xs) = {
-    let total = 0
+    let mut total = 0
     for x in xs {
         total = total + match x {
             Ok(v) => v,
@@ -1181,7 +1182,7 @@ fn value(r) = match r {
     Err(e) => 0
 }
 fn run(limit) = {
-    let total = 0
+    let mut total = 0
     for i in 0..limit {
         total = total + value(Ok(i))
     }
@@ -1346,7 +1347,7 @@ sum(outer([1, 2])) + sum(outer([3]))
 #[test]
 fn lambda_referencing_a_global_constant_agrees() {
     let src = r#"
-let factor = 7
+let mut factor = 7
 fn scale(xs) = map(xs, (x) => x * factor)
 sum(scale([1, 2, 3])) + sum(scale([4, 5]))
 "#;
@@ -1360,7 +1361,7 @@ fn global_mutation_after_declaration_agrees() {
     // layers the closure over the call-site chain, so the reassigned value
     // never wins inside `scale` either way.
     let src = r#"
-let factor = 7
+let mut factor = 7
 fn scale(xs) = map(xs, (x) => x * factor)
 factor = 100
 sum(scale([1, 2, 3]))
@@ -1457,7 +1458,7 @@ fn lambda_free_var_assigned_by_enclosing_fn_falls_back() {
     // it, so the interpreter's lambda would capture the runtime value — the
     // declaration-time snapshot cannot represent that.
     let src = r#"
-let acc = 1
+let mut acc = 1
 fn f(xs) = {
     acc = 5
     map(xs, (x) => x * acc)
@@ -1931,7 +1932,7 @@ fn binary_search(xs, target) = {
     }
     go(0, len(xs))
 }
-let xs = [1, 3, 5, 7, 9, 11]
+let mut xs = [1, 3, 5, 7, 9, 11]
 binary_search(xs, 7) * 100 + binary_search(xs, 4) + binary_search(xs, 11)
 "#;
     assert!(promotion_count(src, 2) >= 1, "binary_search should promote");
@@ -1964,7 +1965,7 @@ go([1, 2, 3])
 fn tuple_expressions_and_let_destructuring_promote() {
     let src = r#"
 fn pairs(n) = {
-    let t = (n, n * 2, "x")
+    let mut t = (n, n * 2, "x")
     let (a, b, s) = t
     a + b + len(s)
 }
@@ -2089,7 +2090,7 @@ fn interleaved_native_loops_and_recursion_agree() {
     let src = r#"
 fn fact(n) = if n <= 1 => 1 else => n * fact(n - 1)
 fn go(xs, k) = xs |> map((x) => fact(x % 6) + x * k) |> sum
-let xs = range(0, 200)
+let mut xs = range(0, 200)
 let mut t = 0
 for i in 0..20 { t = t + go(xs, i) }
 t
@@ -2170,7 +2171,7 @@ fn opt_map(o, f) = match o {
 }
 fn unwrap_or_zero(o) = match o { SomeV(x) => x, NoneV => 0 }
 fn go(n) = {
-    let a = opt_map(SomeV(n), (x) => x * 2)
+    let mut a = opt_map(SomeV(n), (x) => x * 2)
     let b = opt_map(NoneV, (x) => x * 2)
     unwrap_or_zero(a) + unwrap_or_zero(b)
 }
@@ -2378,7 +2379,7 @@ type Opt = enum { SomeV(Int), NoneV }
 fn wrap(n) = if n > 0 => SomeV(n) else => NoneV
 wrap(1)
 wrap(2)
-let a = wrap(5)
+let mut a = wrap(5)
 let b = wrap(0 - 1)
 match a { SomeV(x) => x, NoneV => 0 } + match b { SomeV(x) => x, NoneV => 100 }
 "#;
@@ -2620,13 +2621,13 @@ fn native_map_filter_sum_agree_with_the_interpreter() {
     let src = r#"
 let scale = 7
 fn go(xs) = {
-    let a = xs |> map((x) => x + 1) |> sum
+    let mut a = xs |> map((x) => x + 1) |> sum
     let b = xs |> filter((x) => x > 25) |> sum
     let c = xs |> map((x) => x * scale) |> sum
     let d = xs |> map((x) => x * 0.5) |> sum
     a + b + c + d
 }
-let xs = range(0, 60)
+let mut xs = range(0, 60)
 let mut t = 0.0
 for i in 0..10 { t = t + go(xs) }
 t
@@ -2642,7 +2643,7 @@ fn native_filter_keeps_only_exact_boolean_true() {
     // filter that used truthiness instead would keep every nonzero int.
     let src = r#"
 fn go(xs) = xs |> filter((x) => x) |> len
-let xs = range(1, 50)
+let mut xs = range(1, 50)
 let mut t = 0
 for i in 0..10 { t = t + go(xs) }
 t
@@ -2659,7 +2660,7 @@ fn go(xs) = {
     let lens = tagged |> map((s) => len(s)) |> sum
     lens + len(tagged)
 }
-let xs = ["a", "bc", "def"]
+let mut xs = ["a", "bc", "def"]
 let mut t = 0
 for i in 0..10 { t = t + go(xs) }
 t
@@ -2710,7 +2711,7 @@ fn native_map_propagates_element_errors_like_the_interpreter() {
     assert_tier_transparent(
         r#"
 fn go(xs) = xs |> map((x) => 100 / (25 - x)) |> len
-let xs = range(0, 50)
+let mut xs = range(0, 50)
 go([1, 2, 3])
 go([1, 2, 3])
 go(xs)
@@ -2726,7 +2727,7 @@ fn unary_negation_and_not_promote_and_agree() {
     // the whole function and left it on the interpreter.
     let src = r#"
 fn mix(n, f, b) = {
-    let a = -n
+    let mut a = -n
     let c = -f
     let d = !b
     let e = --n
@@ -2830,7 +2831,7 @@ fn total(xs) = {
     for i in 0..500 { s = s + first(xs) }
     s
 }
-let xs = [7, 8, 9]
+let mut xs = [7, 8, 9]
 total(xs) + total(xs)
 "#,
     );
@@ -2865,7 +2866,7 @@ fn sum_all(xs) = {
     for x in xs { s = s + x }
     s
 }
-let base = [1, 2, 3, 4]
+let mut base = [1, 2, 3, 4]
 let doubled = base |> map((x) => x * 2)
 let mut acc = 0
 for i in 0..100 { acc = acc + sum_all(base) + sum_all(doubled) }
