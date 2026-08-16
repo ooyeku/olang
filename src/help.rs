@@ -1481,6 +1481,9 @@ impl HelpSystem {
         self.add_stdlib_coverage_gaps();
         self.add_embedded_utility_docs();
 
+        // === meta — the program as data (the Open AST) ===
+        self.add_meta_functions();
+
         // Build category index
         self.build_category_index();
     }
@@ -1511,6 +1514,28 @@ impl HelpSystem {
             examples: Vec::new(),
             category: category.to_string(),
             see_also: Vec::new(),
+        });
+    }
+
+    /// The `meta` module: the program as data (the Open AST).
+    fn add_meta_functions(&mut self) {
+        self.add_function(FunctionDoc {
+            name: "meta.parse".to_string(),
+            description: "Parse olang source into its syntax tree as ordinary olang values: a list of kind-tagged node maps. The AST shapes are a stable, documented format, so linters, codemods, and import extractors are written in olang rather than as compiler changes. Read nodes with map_get; every node carries a \"kind\" key and a \"line\" number.".to_string(),
+            syntax: "meta.parse(source)".to_string(),
+            parameters: vec!["source: String - olang source text to parse".to_string()],
+            return_type: "Result<List<Map>, Error>".to_string(),
+            examples: vec![
+                "let prog = unwrap(meta.parse(\"use fmt\\nfn f() = 1\"))".to_string(),
+                "prog |> filter((n) => map_get(n, \"kind\") == \"use\")  // the imports".to_string(),
+                "meta.parse(\"fn (\")  // Err(parse error text)".to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec![
+                "json.parse".to_string(),
+                "map_get".to_string(),
+                "map_has_key".to_string(),
+            ],
         });
     }
 
