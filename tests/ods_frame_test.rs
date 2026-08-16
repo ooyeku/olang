@@ -481,7 +481,7 @@ chan.send(chan.new(), r)
         p = path.to_string_lossy()
     );
     let err = eval(&src, None).expect_err("a reader must not cross a channel");
-    assert!(err.contains("CsvReader"), "{err}");
+    assert!(err.contains("Reader"), "{err}");
     assert!(err.contains("cannot be sent"), "{err}");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
@@ -652,6 +652,214 @@ fn the_default_head_agrees_across_tiers() {
         r#"
 let f = ods.frame_from_records([#{ "n": 1 }, #{ "n": 2 }, #{ "n": 3 }])
 ods.n_rows(ods.head(f))
+"#,
+    )
+    .expect("tier agreement");
+}
+
+// ── JSON lines ────────────────────────────────────────────────────────
+
+/// A JSON-lines file of `n` records, and its path.
+fn big_jsonl(tag: &str, n: usize) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("olang_jsonl_{}_{}", tag, std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("data.jsonl");
+    let mut text = String::new();
+    for i in 0..n {
+        text.push_str(&format!(
+            "{{\"id\": {}, \"region\": \"{}\", \"amount\": {}}}\n",
+            i,
+            ["east", "west"][i % 2],
+            (i % 7) + 1
+        ));
+    }
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+#[test]
+fn json_lines_become_a_frame() {
+    // Columns are the union of the keys, so a record missing one is a
+    // null rather than an error — the same rule frame_from_records uses,
+    // because this is that function with a parser in front of it.
+    let text = "{\"name\": \"ada\", \"score\": 99}\n\
+                {\"name\": \"bob\", \"score\": 87, \"note\": \"late\"}\n";
+    let out = eval(
+        &format!(
+            "let f = unwrap(ods.read_jsonl({:?}))\nshow([ods.columns(f), \
+             [ods.n_rows(f), ods.null_count(ods.column(f, \"note\"))]])",
+            text
+        ),
+        None,
+    )
+    .expect("read_jsonl");
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"name\", \"note\", \"score\"], [2, 1]]\"".to_string()
+    );
+}
+
+#[test]
+fn blank_lines_are_skipped_rather_than_refused() {
+    // A trailing newline is how nearly every writer finishes the format;
+    // refusing it would make the common file the failing case.
+    let out = eval(
+        "ods.n_rows(unwrap(ods.read_jsonl(\"{\\\"a\\\": 1}\\n\\n{\\\"a\\\": 2}\\n\\n\")))",
+        None,
+    )
+    .expect("blank lines");
+    assert_eq!(out.to_string(), "2".to_string());
+}
+
+#[test]
+fn a_frame_round_trips_through_json_lines() {
+    // to_jsonl omits nulls rather than writing them, which is what makes
+    // the round trip land on the same Frame: read_jsonl turns a missing
+    // key into a null, so writing `null` would be a second way to say the
+    // same thing.
+    let out = eval(
+        r#"
+let f = unwrap(ods.read_jsonl("{\"a\": 1, \"b\": \"x\"}\n{\"a\": 2}\n"))
+show(unwrap(ods.read_jsonl(ods.to_jsonl(f))) == f)
+"#,
+        None,
+    )
+    .expect("round trip");
+    assert_eq!(out.to_string(), "\"true\"".to_string());
+}
+
+#[test]
+fn a_non_object_line_names_the_line_number() {
+    // On a million-line file the line number is the whole diagnostic.
+    let out = eval(
+        "match ods.read_jsonl(\"{\\\"a\\\": 1}\\n[1, 2]\\n\") { Err(e) => e, v => \"LEAKED\" }",
+        None,
+    )
+    .expect("refusal");
+    let text = out.to_string();
+    assert!(text.contains("line 2"), "{text}");
+    assert!(text.contains("must be a JSON object"), "{text}");
+}
+
+#[test]
+fn malformed_json_is_an_err_not_a_raise() {
+    // The caller chose the file, so its contents are input, not a bug.
+    let out = eval("show(is_err(ods.read_jsonl(\"{oops\\n\")))", None).expect("no raise");
+    assert_eq!(out.to_string(), "\"true\"".to_string());
+    let out = eval(
+        "show(is_err(ods.read_jsonl_file(\"/nope/missing.jsonl\")))",
+        None,
+    )
+    .expect("no raise");
+    assert_eq!(out.to_string(), "\"true\"".to_string());
+}
+
+#[test]
+fn streaming_json_lines_matches_reading_them_whole() {
+    let path = big_jsonl("agree", 2500);
+    let src = format!(
+        r#"
+let r = unwrap(ods.open_jsonl("{p}"))
+let mut total = 0
+let mut rows = 0
+loop {{
+    let chunk = unwrap(ods.next_chunk(r, 300))
+    let n = ods.n_rows(chunk)
+    if n == 0 => break
+    total = total + ods.sum(ods.column(chunk, "amount"))
+    rows = rows + n
+}}
+let whole = unwrap(ods.read_jsonl_file("{p}"))
+show([rows, ods.rows_read(r), total == ods.sum(ods.column(whole, "amount")), ods.at_end(r)])
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("stream");
+    assert_eq!(out.to_string(), "\"[2500, 2500, true, true]\"".to_string());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn the_last_json_lines_chunk_still_carries_the_columns() {
+    // JSON lines have no header, so the reader remembers the columns the
+    // earlier chunks established. Without that, the empty chunk that ends
+    // the loop would come back with none and every pipeline written
+    // against a chunk would need a special case for its last iteration.
+    let path = big_jsonl("tail", 20);
+    let src = format!(
+        r#"
+let r = unwrap(ods.open_jsonl("{p}"))
+let full = unwrap(ods.next_chunk(r, 20))
+let empty = unwrap(ods.next_chunk(r, 20))
+show([ods.columns(empty) == ods.columns(full), [ods.n_rows(empty), ods.n_cols(empty)]])
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("tail");
+    assert_eq!(out.to_string(), "\"[true, [0, 3]]\"".to_string());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn one_set_of_verbs_drives_both_formats() {
+    // The point of a single Reader type: after the `open_`, nothing in
+    // the loop names the format. This test is the same source text twice
+    // with only the opener changed.
+    let csv = big_csv("both", 40);
+    let jsonl = big_jsonl("both", 40);
+    let drive = |open: &str| {
+        format!(
+            r#"
+let r = unwrap({open})
+let mut rows = 0
+loop {{
+    let c = unwrap(ods.next_chunk(r, 15))
+    if ods.n_rows(c) == 0 => break
+    rows = rows + ods.n_rows(c)
+}}
+show([rows, ods.rows_read(r)])
+"#
+        )
+    };
+    let from_csv = eval(
+        &drive(&format!("ods.open_csv(\"{}\")", csv.to_string_lossy())),
+        None,
+    )
+    .expect("csv");
+    let from_jsonl = eval(
+        &drive(&format!("ods.open_jsonl(\"{}\")", jsonl.to_string_lossy())),
+        None,
+    )
+    .expect("jsonl");
+    assert_eq!(from_csv, from_jsonl);
+    assert_eq!(from_csv.to_string(), "\"[40, 40]\"".to_string());
+    let _ = std::fs::remove_dir_all(csv.parent().unwrap());
+    let _ = std::fs::remove_dir_all(jsonl.parent().unwrap());
+}
+
+#[test]
+fn a_json_lines_reader_is_confined_like_every_other_reader() {
+    // Written for free: confinement lives on the NativeObject trait, so
+    // the second reader inherited both boundaries from the first.
+    let path = big_jsonl("conf", 50);
+    let src = format!(
+        r#"
+let r = unwrap(ods.open_jsonl("{p}"))
+match task.join(spawn ods.next_chunk(r, 5)) {{ Err(e) => "refused", v => "LEAKED" }}
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("confinement");
+    assert_eq!(out.to_string(), "\"refused\"".to_string());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn json_lines_io_agrees_across_tiers() {
+    assert_tier_transparent(
+        r#"
+let f = unwrap(ods.read_jsonl("{\"n\": 1}\n{\"n\": 2}\n"))
+ods.to_jsonl(f)
 "#,
     )
     .expect("tier agreement");

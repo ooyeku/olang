@@ -406,14 +406,19 @@ pub fn required(full_name: &str) -> Option<CapUse> {
     if full_name.starts_with("db.") {
         return Some(CapUse::Db);
     }
-    // The data stack is pure except where it touches files. Those two
+    // The data stack is pure except where it touches files. Those calls
     // demand `fs` at the matching level, so a program granted `db` and
     // `net` but not `fs` cannot read a CSV off disk through `ods` — the
-    // latent-capability hole `db.open` had before it was gated.
-    if full_name == "ods.read_csv_file" || full_name == "ods.open_csv" {
+    // latent-capability hole `db.open` had before it was gated. Every new
+    // reader or writer belongs in one of these two lists; the parsers
+    // that take text (`read_csv`, `read_jsonl`) stay pure and ungated.
+    if matches!(
+        full_name,
+        "ods.read_csv_file" | "ods.open_csv" | "ods.read_jsonl_file" | "ods.open_jsonl"
+    ) {
         return Some(CapUse::FsRead);
     }
-    if full_name == "ods.write_csv" {
+    if matches!(full_name, "ods.write_csv" | "ods.write_jsonl") {
         return Some(CapUse::FsWrite);
     }
     if full_name.starts_with("proc.") || full_name == "os.exec" {
@@ -689,12 +694,17 @@ mod tests {
         // ods is pure except at the two points it touches the filesystem
         assert_eq!(required("ods.read_csv_file"), Some(CapUse::FsRead));
         assert_eq!(required("ods.open_csv"), Some(CapUse::FsRead));
+        assert_eq!(required("ods.read_jsonl_file"), Some(CapUse::FsRead));
+        assert_eq!(required("ods.open_jsonl"), Some(CapUse::FsRead));
+        // The text parsers reach nothing and stay ungated.
+        assert_eq!(required("ods.read_jsonl"), None);
         // `next_chunk` reads from a handle already obtained under a grant,
         // the way a Unix read(2) needs no fresh permission for an open fd.
         // Acquisition is the gate; the handle carries the authority, and
         // passing one to a dependency is deliberate delegation.
         assert_eq!(required("ods.next_chunk"), None);
         assert_eq!(required("ods.write_csv"), Some(CapUse::FsWrite));
+        assert_eq!(required("ods.write_jsonl"), Some(CapUse::FsWrite));
         assert_eq!(required("ods.read_csv"), None);
         assert_eq!(required("ods.to_csv"), None);
         assert_eq!(required("ods.group_by"), None);

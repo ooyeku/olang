@@ -189,11 +189,11 @@ the corpus if Campaign 1 lands first.
 | Lane | Work | Status |
 |---|---|---|
 | DP1c — parallel group keys | Parallelize the group-identification pass of `group_by`, which now dominates its runtime; the aggregation pass is already parallel. | planned |
-| DP2 — IO breadth | Read CSV from files and as a bounded-memory stream; JSON-lines input; a columnar interchange format; `to_csv` and file output. The end-to-end input-to-output story. | **file IO and streaming shipped**; JSON-lines and the columnar format remain |
+| DP2 — IO breadth | Read CSV from files and as a bounded-memory stream; JSON-lines input; a columnar interchange format; `to_csv` and file output. The end-to-end input-to-output story. | **file IO, streaming, and JSON lines shipped**; the columnar format remains |
 | DP3 — verb completeness | Window functions, reshape (wide/long, pivot), additional join kinds and aggregations, and string and categorical column operations. | planned |
 | DP4 — flagship and benchmark | A realistic end-to-end ETL example wired to `plot`, and a reproducible benchmark against pandas and Polars with methodology and hardware documented in [The data stack](ods.md). | planned |
 
-**DP2's file IO and streaming shipped.** `ods.read_csv_file`,
+**DP2's file IO, streaming, and JSON lines shipped.** `ods.read_csv_file`,
 `ods.to_csv`, and `ods.write_csv` close the loop the chapter described but
 the stack could not finish, and `ods.open_csv` / `ods.next_chunk` process
 a file larger than memory: measured over a 1M-row CSV, the whole-file read
@@ -211,6 +211,14 @@ empty Frame — which needs no closure and so needs no exception. Second, a
 fold taking an olang lambda could not live in `ods` at all as the module
 boundary stands: `OvmModule::dispatch` receives `(func, args)` and no
 interpreter, which is precisely what lets both tiers dispatch identically.
+
+JSON lines followed, and the lane's own design was what made it small:
+`read_jsonl`, `read_jsonl_file`, `to_jsonl`, `write_jsonl`, and
+`open_jsonl`, the last of which is driven by *the same* `next_chunk` /
+`rows_read` / `at_end` verbs as the CSV reader. Both formats share one
+`Reader` type, so a streaming loop names its format once, at the `open_`,
+and a function taking a reader takes either. A 300,000-row JSON lines
+file streams at 30.6MB against 471MB read whole.
 
 The reader is therefore a `NativeObject` holding its own file position —
 the mechanism `cell` and `task` already use — and, holding mutable state,

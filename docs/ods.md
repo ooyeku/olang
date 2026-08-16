@@ -402,6 +402,56 @@ loop {
 `ods.open_csv` reaches the filesystem, so like `read_csv_file` it demands
 the `fs` capability at read level.
 
+### JSON lines
+
+The other format a data pipeline meets constantly is JSON lines: one JSON
+object per line, which is what log shippers, event queues, and export
+jobs emit. `ods.read_jsonl` parses the text and `ods.read_jsonl_file`
+reads it from disk. Columns are the union of the keys, and a record
+missing one gets a null — the same rule as `frame_from_records`, because
+this is that function with a parser in front of it:
+
+```olang
+let f = unwrap(ods.read_jsonl("{\"name\": \"ada\", \"score\": 99}\n{\"name\": \"bob\"}\n"))
+println(to_string(ods.columns(f)))                            // [name, score]
+println(to_string(ods.null_count(ods.column(f, "score"))))    // 1
+```
+
+Blank lines are skipped, because a trailing newline is how nearly every
+writer finishes the format. A malformed line, or one holding something
+other than an object, is an `Err` naming the line number — on a
+million-line file that number is the whole diagnostic.
+
+`ods.to_jsonl` serializes a Frame back, one object per row. It omits
+nulls rather than writing them, which is what makes the round trip land
+on the same Frame: `read_jsonl` turns a missing key into a null, so
+writing `null` would be a second spelling of the same thing.
+`ods.write_jsonl` writes it to a file and demands `fs` at write level.
+
+`ods.open_jsonl` streams it, and this is where the shape of the reader
+earns itself — it is driven by *the same three verbs*:
+
+```olang no-run
+let r = unwrap(ods.open_jsonl("events.jsonl"))
+let mut total = 0.0
+loop {
+    let chunk = unwrap(ods.next_chunk(r, 50000))
+    if ods.n_rows(chunk) == 0 => break
+    total = total + ods.sum(ods.column(chunk, "amount"))
+}
+```
+
+That is the CSV loop with one word changed. Nothing after the `open_`
+names the format, `ods.rows_read` and `ods.at_end` work on either, and a
+function that takes a reader takes both. Streaming a 300,000-row JSON
+lines file peaks at 30.6MB against 471MB for reading it whole.
+
+JSON lines carry no header, so a reader remembers the columns its earlier
+chunks established and hands them back on the empty chunk that ends the
+loop — which keeps the promise the CSV reader makes from its header, and
+means a pipeline written against a chunk needs no special case for its
+last iteration.
+
 ### Looking at one
 
 Printing a Frame prints a table. This is the first thing an exploratory

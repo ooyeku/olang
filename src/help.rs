@@ -1960,7 +1960,7 @@ impl HelpSystem {
         self.doc(
             "ods.open_csv",
             "ods.open_csv(path)",
-            "Result<CsvReader, Error>",
+            "Result<Reader, Error>",
             "ods",
             "open a CSV file for streaming: the reader holds its position, so a file larger than memory is read one chunk at a time. Requires the fs capability at read level; the reader is confined to the thread that opened it",
         );
@@ -1969,7 +1969,7 @@ impl HelpSystem {
             "ods.next_chunk(reader, rows)",
             "Result<Frame, Error>",
             "ods",
-            "pull up to `rows` more rows as a Frame; the Frame is empty when the file is exhausted, which is how a streaming loop ends",
+            "pull up to `rows` more rows as a Frame; the Frame is empty when the file is exhausted, which is how a streaming loop ends. Works on any reader, from open_csv or open_jsonl alike",
         );
         self.doc(
             "ods.rows_read",
@@ -1984,6 +1984,41 @@ impl HelpSystem {
             "Bool",
             "ods",
             "whether the reader has reached the end of its file",
+        );
+        self.doc(
+            "ods.open_jsonl",
+            "ods.open_jsonl(path)",
+            "Result<Reader, Error>",
+            "ods",
+            "open a JSON-lines file for streaming, driven by the same next_chunk/rows_read/at_end verbs as open_csv. Requires the fs capability at read level; the reader is confined to the thread that opened it",
+        );
+        self.doc(
+            "ods.read_jsonl",
+            "ods.read_jsonl(text)",
+            "Result<Frame, Error>",
+            "ods",
+            "parse JSON-lines text (one JSON object per line) into a Frame; columns are the union of the keys and a missing key is a null. Blank lines are skipped; a malformed or non-object line is an Err naming the line number",
+        );
+        self.doc(
+            "ods.read_jsonl_file",
+            "ods.read_jsonl_file(path)",
+            "Result<Frame, Error>",
+            "ods",
+            "read a JSON-lines file into a Frame. Requires the fs capability at read level",
+        );
+        self.doc(
+            "ods.to_jsonl",
+            "ods.to_jsonl(f)",
+            "String",
+            "ods",
+            "serialize a Frame as JSON-lines text, one object per row; nulls are omitted rather than written, so it round-trips through read_jsonl",
+        );
+        self.doc(
+            "ods.write_jsonl",
+            "ods.write_jsonl(f, path)",
+            "Result<Unit, Error>",
+            "ods",
+            "write a Frame to a JSON-lines file. Requires the fs capability at write level",
         );
         self.doc(
             "ods.to_csv",

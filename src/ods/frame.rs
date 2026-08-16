@@ -67,12 +67,17 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("frame", 1),
     ("read_csv", 1),
     ("read_csv_file", 1),
+    ("read_jsonl", 1),
+    ("read_jsonl_file", 1),
     ("open_csv", 1),
+    ("open_jsonl", 1),
     ("next_chunk", 2),
     ("rows_read", 1),
     ("at_end", 1),
     ("to_csv", 1),
     ("write_csv", 2),
+    ("to_jsonl", 1),
+    ("write_jsonl", 2),
     ("frame_from_records", 1),
     ("to_records", 1),
     ("columns", 1),
@@ -257,9 +262,24 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
                 },
             }
         }
+        "read_jsonl" => {
+            let text = want_string(func, &args, 0)?;
+            read_jsonl(&text)
+        }
+        "read_jsonl_file" => {
+            let path = want_string(func, &args, 0)?;
+            match std::fs::read_to_string(&path) {
+                Err(err) => Ok(open_error("read_jsonl_file", &path, err)),
+                Ok(text) => read_jsonl(&text),
+            }
+        }
         "open_csv" => {
             let path = want_string(func, &args, 0)?;
             open_csv(&path)
+        }
+        "open_jsonl" => {
+            let path = want_string(func, &args, 0)?;
+            open_jsonl(&path)
         }
         "next_chunk" => {
             let r = reader_of(func, &args)?;
@@ -275,7 +295,7 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
             let st = r
                 .state
                 .lock()
-                .map_err(|_| "csv reader is unusable".to_string())?;
+                .map_err(|_| "reader is unusable".to_string())?;
             Ok(Value::Integer(st.delivered as i64))
         }
         "at_end" => {
@@ -284,7 +304,7 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
             let st = r
                 .state
                 .lock()
-                .map_err(|_| "csv reader is unusable".to_string())?;
+                .map_err(|_| "reader is unusable".to_string())?;
             Ok(Value::Boolean(st.done))
         }
         // Serialization cannot fail — every Scalar has a text form — so it
@@ -302,6 +322,18 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
                     "ods.write_csv: {}: {}",
                     path, err
                 )))))),
+            }
+        }
+        "to_jsonl" => {
+            let f = want_frame(func, &args, 0)?;
+            Ok(Value::String(Arc::new(to_jsonl(f))))
+        }
+        "write_jsonl" => {
+            let f = want_frame(func, &args, 0)?;
+            let path = want_string(func, &args, 1)?;
+            match std::fs::write(&path, to_jsonl(f)) {
+                Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
+                Err(err) => Ok(open_error("write_jsonl", &path, err)),
             }
         }
         "frame_from_records" => {
@@ -595,6 +627,79 @@ fn infer_column(raw: Vec<String>) -> Series {
 /// becomes a Frame: columns are the sorted union of keys, missing keys
 /// are null.
 fn frame_from_records(records: &[Value]) -> Result<Value, String> {
+    records_to_frame(records).map(OdsFrame::into_value)
+}
+
+/// One JSON-lines line: a single JSON object, which is one row.
+fn parse_jsonl_line(line: &str) -> Result<Value, String> {
+    match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(serde_json::Value::Object(obj)) => Ok(crate::stdlib::json::json_to_olang_value(
+            serde_json::Value::Object(obj),
+        )),
+        // A row has named fields; a bare array or number has none, so
+        // there is no honest column to put it in.
+        Ok(other) => Err(format!(
+            "each line must be a JSON object, got {}",
+            match other {
+                serde_json::Value::Array(_) => "an array",
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "a boolean",
+                serde_json::Value::Number(_) => "a number",
+                _ => "a string",
+            }
+        )),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+/// JSON-lines text: one JSON object per line, blank lines skipped.
+fn read_jsonl(text: &str) -> Result<Value, String> {
+    let mut records = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match parse_jsonl_line(line) {
+            Ok(rec) => records.push(rec),
+            // The line number is the whole diagnostic for a large file.
+            Err(msg) => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                    "ods.read_jsonl: line {}: {}",
+                    i + 1,
+                    msg
+                ))))));
+            }
+        }
+    }
+    records_to_frame(&records).map(|f| Value::Ok(Box::new(OdsFrame::into_value(f))))
+}
+
+/// A Frame as JSON-lines text: one object per row, nulls omitted rather
+/// than written as `null`, which is what makes the output round-trip
+/// through `read_jsonl` to the same Frame.
+fn to_jsonl(frame: &Frame) -> String {
+    let mut out = String::new();
+    for row in 0..frame.n_rows() {
+        let mut obj = serde_json::Map::new();
+        for (name, col) in frame.names().iter().zip(frame.columns()) {
+            let cell = match col.scalar_at(row) {
+                Scalar::Null => continue,
+                Scalar::F64(x) => serde_json::Number::from_f64(x)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null),
+                Scalar::I64(x) => serde_json::Value::Number(x.into()),
+                Scalar::Bool(b) => serde_json::Value::Bool(b),
+                Scalar::Str(s) => serde_json::Value::String(s.to_string()),
+            };
+            obj.insert(name.clone(), cell);
+        }
+        out.push_str(&serde_json::Value::Object(obj).to_string());
+        out.push('\n');
+    }
+    out
+}
+
+fn records_to_frame(records: &[Value]) -> Result<Frame, String> {
     // json.parse yields objects as structs (type "JsonObject"); literal
     // maps arrive as maps. Accept both record shapes.
     fn record_fields(rec: &Value) -> Result<Vec<(&String, &Value)>, String> {
@@ -629,10 +734,10 @@ fn frame_from_records(records: &[Value]) -> Result<Value, String> {
         let col = series_from_list(&cells).map_err(|err| format!("column '{}': {}", name, err))?;
         pairs.push((name, col));
     }
-    Frame::new(pairs).map(OdsFrame::into_value).map_err(e)
+    Frame::new(pairs).map_err(e)
 }
 
-// ── streaming CSV ─────────────────────────────────────────────────────
+// ── streaming ─────────────────────────────────────────────────────
 //
 // A bounded-memory reader: it holds an open file and its position, and
 // hands back one Frame per call. Reading a file larger than memory is
@@ -653,48 +758,82 @@ fn frame_from_records(records: &[Value]) -> Result<Value, String> {
 // a mutable location — the file position — and the guarantee that no two
 // threads reach one of those is what makes olang's parallelism lock-free.
 
-/// An open CSV file, its header, and its position.
+/// An open file, its position, and whatever the format needs to keep.
+///
+/// One type covers both formats so that `next_chunk`, `rows_read`, and
+/// `at_end` are the *same* three verbs whatever was opened — a program
+/// that streams a CSV reads identically to one that streams JSON lines,
+/// and neither has to name its source again after `open_`.
 ///
 /// The mutex is uncontended by construction (only the owning thread ever
 /// reaches it) and exists to satisfy the `Send + Sync` every `Value` must
 /// have.
-struct CsvReader {
+struct RowReader {
     path: String,
     owner: std::thread::ThreadId,
     owner_label: String,
-    state: std::sync::Mutex<CsvReaderState>,
+    state: std::sync::Mutex<ReaderState>,
 }
 
-struct CsvReaderState {
-    headers: Vec<String>,
-    records: csv::StringRecordsIntoIter<std::io::BufReader<std::fs::File>>,
+struct ReaderState {
+    source: Source,
     /// Rows handed out so far, for `ods.rows_read`.
     delivered: usize,
     done: bool,
 }
 
-impl std::fmt::Debug for CsvReader {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "<csv reader {}>", self.path)
+/// Where the rows come from. The two arms differ only in how a batch of
+/// rows becomes a Frame; everything around them is shared.
+enum Source {
+    Csv {
+        headers: Vec<String>,
+        records: csv::StringRecordsIntoIter<std::io::BufReader<std::fs::File>>,
+    },
+    Jsonl {
+        lines: std::io::Lines<std::io::BufReader<std::fs::File>>,
+        /// Columns seen so far. JSON lines carry no header, so without
+        /// this the empty chunk that ends the loop would come back with
+        /// no columns and a pipeline written against a chunk would need
+        /// a special case for its last iteration.
+        columns: Vec<String>,
+    },
+}
+
+impl Source {
+    fn label(&self) -> &'static str {
+        match self {
+            Source::Csv { .. } => "csv",
+            Source::Jsonl { .. } => "jsonl",
+        }
     }
 }
 
-impl NativeObject for CsvReader {
+impl std::fmt::Debug for RowReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display())
+    }
+}
+
+impl NativeObject for RowReader {
     fn module(&self) -> &'static str {
         "ods"
     }
     fn type_name(&self) -> &'static str {
-        "CsvReader"
+        "Reader"
     }
     fn display(&self) -> String {
-        format!("<csv reader {}>", self.path)
+        let (kind, at) = match self.state.lock() {
+            Ok(st) => (st.source.label(), st.delivered),
+            Err(_) => ("?", 0),
+        };
+        format!("<{} reader {} @ row {}>", kind, self.path, at)
     }
     fn native_eq(&self, other: &dyn NativeObject) -> bool {
         // Identity, like a cell: two readers over the same path are two
         // distinct positions and are not interchangeable.
         other
             .as_any()
-            .downcast_ref::<CsvReader>()
+            .downcast_ref::<RowReader>()
             .is_some_and(|o| std::ptr::eq(self, o))
     }
     fn as_any(&self) -> &dyn Any {
@@ -705,13 +844,13 @@ impl NativeObject for CsvReader {
     }
 }
 
-impl CsvReader {
+impl RowReader {
     fn own_thread(&self) -> Result<(), String> {
         if std::thread::current().id() == self.owner {
             return Ok(());
         }
         Err(format!(
-            "csv reader escaped its thread: this reader was opened on {} and \
+            "reader escaped its thread: this reader was opened on {} and \
              cannot be read from {}. A reader holds a file position, which is \
              mutable state — open one per thread, or send the rows through a \
              channel",
@@ -725,67 +864,98 @@ impl CsvReader {
     }
 }
 
-fn reader_of<'a>(func: &str, args: &'a [Value]) -> Result<&'a CsvReader, String> {
+fn reader_of<'a>(func: &str, args: &'a [Value]) -> Result<&'a RowReader, String> {
     match args.first() {
         Some(Value::Native(h)) => {
             h.0.as_any()
-                .downcast_ref::<CsvReader>()
-                .ok_or_else(|| format!("ods.{}: argument 1 must be a CsvReader", func))
+                .downcast_ref::<RowReader>()
+                .ok_or_else(|| format!("ods.{}: argument 1 must be a Reader", func))
         }
         other => Err(format!(
-            "ods.{}: argument 1 must be a CsvReader, got {}",
+            "ods.{}: argument 1 must be a Reader (from ods.open_csv or \
+             ods.open_jsonl), got {}",
             func,
             other.map(|v| v.type_name()).unwrap_or_default()
         )),
     }
 }
 
-fn open_csv(path: &str) -> Result<Value, String> {
-    let file = match std::fs::File::open(path) {
-        Ok(f) => f,
-        Err(err) => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                "ods.open_csv: {}: {}",
-                path, err
-            ))))));
-        }
-    };
-    let mut rdr = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .from_reader(std::io::BufReader::new(file));
-    let headers: Vec<String> = match rdr.headers() {
-        Ok(h) => h.iter().map(|s| s.to_string()).collect(),
-        Err(err) => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                "ods.open_csv: {}: {}",
-                path, err
-            ))))));
-        }
-    };
-    let reader = CsvReader {
+/// The thread label used in confinement messages, computed once at open
+/// time because the *owning* thread's name is what a later error needs.
+fn thread_label() -> String {
+    match std::thread::current().name() {
+        Some("main") => "the main thread".to_string(),
+        Some(name) => format!("thread '{}'", name),
+        None => "an unnamed thread".to_string(),
+    }
+}
+
+fn open_error(func: &str, path: &str, err: impl std::fmt::Display) -> Value {
+    Value::Err(Box::new(Value::String(Arc::new(format!(
+        "ods.{}: {}: {}",
+        func, path, err
+    )))))
+}
+
+fn into_reader(path: &str, source: Source) -> Value {
+    let reader = RowReader {
         path: path.to_string(),
         owner: std::thread::current().id(),
-        owner_label: match std::thread::current().name() {
-            Some("main") => "the main thread".to_string(),
-            Some(name) => format!("thread '{}'", name),
-            None => "an unnamed thread".to_string(),
-        },
-        state: std::sync::Mutex::new(CsvReaderState {
-            headers,
-            records: rdr.into_records(),
+        owner_label: thread_label(),
+        state: std::sync::Mutex::new(ReaderState {
+            source,
             delivered: 0,
             done: false,
         }),
     };
-    Ok(Value::Ok(Box::new(Value::Native(NativeHandle::new(
-        reader,
-    )))))
+    Value::Ok(Box::new(Value::Native(NativeHandle::new(reader))))
 }
 
-/// Pull up to `n` rows. The Frame always carries the file's columns, so a
-/// pipeline written against it keeps working on the final short chunk and
-/// on the empty one that ends the loop.
-fn next_chunk(reader: &CsvReader, n: usize) -> Result<Value, String> {
+fn open_csv(path: &str) -> Result<Value, String> {
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(err) => return Ok(open_error("open_csv", path, err)),
+    };
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(std::io::BufReader::new(file));
+    // The header is read eagerly so that an unreadable file fails at
+    // `open_csv` rather than at the first `next_chunk`, where the caller
+    // has already committed to a loop.
+    let headers: Vec<String> = match rdr.headers() {
+        Ok(h) => h.iter().map(|s| s.to_string()).collect(),
+        Err(err) => return Ok(open_error("open_csv", path, err)),
+    };
+    Ok(into_reader(
+        path,
+        Source::Csv {
+            headers,
+            records: rdr.into_records(),
+        },
+    ))
+}
+
+fn open_jsonl(path: &str) -> Result<Value, String> {
+    use std::io::BufRead;
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(err) => return Ok(open_error("open_jsonl", path, err)),
+    };
+    // Unlike CSV there is no header to validate here: JSON lines carry
+    // their own keys, so the columns are whatever the chunk contains.
+    Ok(into_reader(
+        path,
+        Source::Jsonl {
+            lines: std::io::BufReader::new(file).lines(),
+            columns: Vec::new(),
+        },
+    ))
+}
+
+/// Pull up to `n` rows. The Frame always carries the source's columns, so
+/// a pipeline written against it keeps working on the final short chunk
+/// and on the empty one that ends the loop.
+fn next_chunk(reader: &RowReader, n: usize) -> Result<Value, String> {
     reader.own_thread()?;
     if n == 0 {
         return Err(
@@ -797,44 +967,89 @@ fn next_chunk(reader: &CsvReader, n: usize) -> Result<Value, String> {
     let mut st = reader
         .state
         .lock()
-        .map_err(|_| "csv reader is unusable: the thread reading it panicked".to_string())?;
+        .map_err(|_| "reader is unusable: the thread reading it panicked".to_string())?;
+    let path = reader.path.clone();
 
-    let mut cells: Vec<Vec<String>> = vec![Vec::new(); st.headers.len()];
-    let mut taken = 0;
-    while taken < n {
-        match st.records.next() {
-            None => {
-                st.done = true;
-                break;
-            }
-            Some(Err(err)) => {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                    "ods.next_chunk: {}: {}",
-                    reader.path, err
-                ))))));
-            }
-            Some(Ok(record)) => {
-                for (c, cell) in cells.iter_mut().enumerate() {
-                    cell.push(record.get(c).unwrap_or("").to_string());
+    let (frame, taken, exhausted) = match &mut st.source {
+        Source::Csv { headers, records } => {
+            let mut cells: Vec<Vec<String>> = vec![Vec::new(); headers.len()];
+            let mut taken = 0;
+            let mut done = false;
+            while taken < n {
+                match records.next() {
+                    None => {
+                        done = true;
+                        break;
+                    }
+                    Some(Err(err)) => {
+                        return Ok(open_error("next_chunk", &path, err));
+                    }
+                    Some(Ok(record)) => {
+                        for (c, cell) in cells.iter_mut().enumerate() {
+                            cell.push(record.get(c).unwrap_or("").to_string());
+                        }
+                        taken += 1;
+                    }
                 }
-                taken += 1;
             }
+            // Each chunk infers its own column types, which is the price
+            // of not reading the file twice: a column that is all-Int in
+            // one chunk and has a decimal in the next comes back Int then
+            // Float. Callers that need one type across the whole file
+            // should say so with a cast.
+            let pairs = headers
+                .iter()
+                .cloned()
+                .zip(cells)
+                .map(|(name, raw)| (name, infer_column(raw)))
+                .collect();
+            (Frame::new(pairs).map_err(e)?, taken, done)
         }
-    }
+        Source::Jsonl { lines, columns } => {
+            let mut records = Vec::with_capacity(n);
+            let mut done = false;
+            while records.len() < n {
+                match lines.next() {
+                    None => {
+                        done = true;
+                        break;
+                    }
+                    Some(Err(err)) => return Ok(open_error("next_chunk", &path, err)),
+                    Some(Ok(line)) => {
+                        // Blank lines are skipped rather than refused: a
+                        // trailing newline is how most writers finish a
+                        // JSON-lines file, and refusing it would make the
+                        // common file the failing case.
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        match parse_jsonl_line(&line) {
+                            Ok(record) => records.push(record),
+                            Err(msg) => {
+                                return Ok(open_error("next_chunk", &path, msg));
+                            }
+                        }
+                    }
+                }
+            }
+            let taken = records.len();
+            let frame = if records.is_empty() {
+                // Nothing left to infer from, so reuse the schema the
+                // earlier chunks established.
+                let pairs = columns
+                    .iter()
+                    .map(|name| (name.clone(), infer_column(Vec::new())))
+                    .collect();
+                Frame::new(pairs).map_err(e)?
+            } else {
+                let frame = records_to_frame(&records)?;
+                columns.clone_from(&frame.names().to_vec());
+                frame
+            };
+            (frame, taken, done)
+        }
+    };
     st.delivered += taken;
-
-    // Each chunk infers its own column types, which is the price of not
-    // reading the file twice: a column that is all-Int in one chunk and
-    // has a decimal in the next comes back Int then Float. Callers that
-    // need one type across the whole file should say so with a cast.
-    let pairs = st
-        .headers
-        .iter()
-        .cloned()
-        .zip(cells)
-        .map(|(name, raw)| (name, infer_column(raw)))
-        .collect();
-    Frame::new(pairs)
-        .map(|f| Value::Ok(Box::new(OdsFrame::into_value(f))))
-        .map_err(e)
+    st.done = st.done || exhausted;
+    Ok(Value::Ok(Box::new(OdsFrame::into_value(frame))))
 }

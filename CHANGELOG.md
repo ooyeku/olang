@@ -37,6 +37,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`ods.head(f)` defaults to 10 rows.** The verb typed most often at the
   REPL was the one that raised most often, because it demanded a count.
 
+- **`ods` reads and writes JSON lines (Campaign 2, DP2).** One JSON
+  object per line is what log shippers, event queues, and export jobs
+  emit, and the stack could not read any of it.
+
+  | | |
+  |---|---|
+  | `ods.read_jsonl(text)` | parse JSON-lines text → `Result<Frame>` |
+  | `ods.read_jsonl_file(path)` | read a file → `Result<Frame>` |
+  | `ods.open_jsonl(path)` | stream a file → `Result<Reader>` |
+  | `ods.to_jsonl(f)` | serialize a Frame → `String` |
+  | `ods.write_jsonl(f, path)` | write a Frame → `Result<Unit>` |
+
+  Columns are the union of the keys and a missing key is a null — the
+  same rule as `frame_from_records`, because this is that function with a
+  parser in front of it. Blank lines are skipped, since a trailing
+  newline is how nearly every writer ends the format. A malformed or
+  non-object line is an `Err` naming the line number, which on a
+  million-line file is the whole diagnostic. `to_jsonl` omits nulls
+  rather than writing them, so a Frame round-trips through `read_jsonl`
+  to itself.
+
+  **The streaming reader is now one type over both formats.** `open_csv`
+  and `open_jsonl` both return a `Reader`, and `next_chunk`, `rows_read`,
+  and `at_end` drive either — a streaming loop names its format once, at
+  the `open_`, and a function that takes a reader takes both. A
+  300,000-row JSON lines file streams at 30.6MB against 471MB read whole.
+  JSON lines carry no header, so a reader remembers the columns its
+  earlier chunks established and returns them on the empty chunk that
+  ends the loop, keeping the promise the CSV reader makes from its
+  header. The file-reaching calls demand `fs` at the matching level; the
+  text parser and serializer stay pure.
+
 - **`ods` streams files larger than memory (Campaign 2, DP2).**
   `read_csv_file` holds the whole table at once, which is the right shape
   until the file no longer fits. `ods.open_csv` returns a reader that
