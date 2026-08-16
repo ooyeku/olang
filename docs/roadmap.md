@@ -161,12 +161,23 @@ clean exit.
 | S5 — remove async | `async`, `await`, and the `Promise` API are removed from the interpreter and tiers. `spawn` returns a task handle collected by `task.join` / `task.join_timeout`. Programs using `Promise.delay/all/race` migrate to `time.sleep`, `map(task.join)`, and `chan`; the book's concurrency chapter is rewritten around the single model. | **shipped 0.63.0** |
 | S6 — stdlib conventions audit | Every builtin and module function audited once against one rule: infallible operations return their value, handleable failure returns `Result`, and misuse raises. Seven declaration keywords freed as identifiers; `fs.join` variadic; the definitive before/after table recorded in the CHANGELOG. | **shipped 0.64.0** |
 | S7 — error-model boundary | `try`/`catch` removed (it was `Result` sugar, not recovery, with zero corpus uses). A discarded `Result` in statement position draws an advisory warning — the real hole, since a failed write read exactly like a successful one. The book's error chapter is rewritten around Result-primary with recovery documented as structural. | **shipped 0.65.0** |
-| S8 — migration | The release ships with a migration guide. `olang check` reports every site the release breaks (its 0.50 warnings are the census); the repository corpus is migrated in the release itself as the proof of the guide. | planned |
+| S8 — migration | The release ships with a migration guide. `olang check` reports every site the release breaks (its 0.50 warnings are the census); the repository corpus is migrated in the release itself as the proof of the guide. | **shipped across 0.61–0.65** |
+
+**S8 was never a separate release.** It planned one migration guide at the
+end of the campaign, on the assumption the breaks would land together. They
+did not: S1–S7 shipped as five releases, each carrying its own migration
+section and migrating the corpus in the same commit as the break. By the
+time S8 came up its deliverable existed five times over, for an audience
+that does not exist — there is no olang outside this repository. It is
+recorded as shipped rather than left planned, because a lane that can never
+have work is a lie about the plan.
 
 Acceptance: all gates green under the new semantics (workspace tests, doc
 examples, the example harness, tier-agreement suites); the CHANGELOG
 documents every break with its rationale and migration; no advisory warning
 remains for behavior that no longer exists.
+
+**Campaign 1 is complete.**
 
 ## Campaign 2 — data-pipeline completion
 
@@ -196,7 +207,39 @@ that trade.
 |---|---|---|
 | C1 — builtin-boundary enforcement | Capability checks move to the single dispatch point that all tiers share. Each compiled function carries its source-package provenance; OVM frames expose it; JIT code reaches builtins through helpers that pass through the same dispatch. The restriction that disables the bytecode tier under a capability manifest is then removed. | planned |
 | C2 — attribution hardening | Package roots are canonicalized so symlinks cannot confuse attribution; `os.exit` and remaining ungated process-affecting calls are brought under the `proc` gate; bundle-format fields are validated on read. | planned |
-| C3 — denial and the error model | A capability denial is a runtime error recoverable at a `catch` boundary, consistent with D8, so a sandboxed program can degrade deliberately rather than only abort. | planned |
+| C3 — denial and the error model | A denial keeps stopping the program, and a `caps` module lets a program ask what it was granted (`caps.allowed("fs")`, `caps.granted()`) so it can choose a different path *before* attempting the call. Degradation becomes a branch the program takes deliberately, not an error it recovers from. | planned |
+
+**C3 was respecified after 0.65.** It read "a capability denial is a
+runtime error recoverable at a `catch` boundary, consistent with D8" —
+written before the lane that removed `catch` and corrected D8. Rewriting
+it against the settled error model changed the answer rather than the
+wording.
+
+The tempting fix is to make a denial an `Err`, since every gated function
+(`fs.read_file`, `http.get`, `db.query`) already returns `Result` and a
+denial would slot straight in. That is the wrong shape. A `Result`
+communicates a failure the caller might reasonably handle — the file was
+missing, the host was unreachable — and the caller's usual reply is a
+default: `unwrap_or(fs.read_file(p), "")`. A denial is not that. It is a
+statement about what this program is *permitted* to do, which no retry or
+fallback value can change, and burying it in the `Err` channel means the
+one line written to tolerate a missing file also silently tolerates the
+sandbox. That is exactly the hole 0.64 closed by making misuse raise
+rather than return `Err`, and calling a capability the program was told it
+may not call is misuse of the same kind.
+
+So a denial stops the program, as it does today. What is missing is not
+recovery but *introspection*: there is no way for a program to ask what it
+was granted, so "degrade deliberately" is impossible to write. A `caps`
+module supplies it, and degradation becomes an ordinary branch:
+
+```olang no-run
+let report = if caps.allowed("net") => fetch_live()
+             else => read_cached()
+```
+
+This also folds in the separately-tracked OM2 lane ("graceful capability
+failure"), which described the same problem from the other side.
 
 Acceptance: a capability-restricted run matches the unrestricted run's tier
 behavior and speed; the capability test suite passes on every tier; the

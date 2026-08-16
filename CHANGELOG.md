@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **The bytecode tier's value model drops six unreachable variants.** 0.63
+  deleted `async`/`await`/`Promise` from the grammar, parser, AST, and
+  interpreter and stopped there: `ValueData` still carried `Promise`, and
+  beside it `Thunk`, `Stream`, `LazyList`, `CompiledFunction`, and
+  `OptimizedValue` — a lazy-evaluation and self-optimization scheme that
+  no code ever constructed. Nothing failed when they were left behind,
+  which is why they survived four releases.
+
+  Gone with them: their object structs, the twelve supporting types that
+  existed only as their fields (`GeneratorFunction`, `TransformationChain`,
+  `OptimizationData`, `TypeFeedback`, `GcMap`, and so on), `PromiseState`,
+  the VM's `PromiseError`, and the six dead lazy-evaluation variants of
+  `InterpreterError`. `FunctionObject` loses its `optimization_data` field,
+  which was written by `Default` and never read. `src/ovm/nanbox.rs` — 309
+  lines marked "not yet wired", imported by nothing — is deleted too.
+
+  Behavior is unchanged: no construction site existed, so no program could
+  reach any of it. `fib(30)` still runs in 4 ms. This is a Rust-API break
+  for anything embedding olang as a library, and 320 fewer lines in the
+  file every tier value passes through.
+
 ### Changed
 
 - **`async`, `await`, `try`, `catch`, and `Promise` are ordinary

@@ -1147,7 +1147,6 @@ impl BytecodeVm {
             ValueData::Unit => "Unit",
             ValueData::Enum(e) => &e.type_name,
             ValueData::Map(_) => "Map",
-            ValueData::Promise(_) => "Promise",
             // Never constructed by compiled code; a failed lookup falls to
             // the field-access error, which is what the interpreter's
             // generic path produces too.

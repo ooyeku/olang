@@ -1,5 +1,6 @@
-/// The registry of `spawn`ed background threads. `await` joins through here;
-/// results are memoized so a cloned promise value can be awaited repeatedly.
+/// The registry of `spawn`ed background threads. `task.join` collects
+/// through here; results are memoized so a cloned task handle can be
+/// joined more than once.
 use crate::ast::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,11 +32,11 @@ pub(crate) fn register(id: u64, handle: JoinHandle<Result<Value, String>>) {
         .insert(id, TaskSlot::Running(handle));
 }
 
-/// Held by a spawn-backed `Promise` value (behind an `Arc`, so all clones
-/// of the promise share one). When the last clone is dropped — the last
-/// place that could still `await` this task is gone — its `Drop` removes
+/// Held by a `Task` handle (behind an `Arc`, so all clones of the handle
+/// share one). When the last clone is dropped — the last place that could
+/// still join this task is gone — its `Drop` removes
 /// the registry entry. That makes reclamation *exact*: a completed task's
-/// memoized result lives exactly as long as a promise can still ask for
+/// memoized result lives exactly as long as a handle can still ask for
 /// it, and no longer, so a program that spawns a worker pool every tick
 /// does not accumulate `Done` entries forever (the per-tick leak this
 /// fixes).
@@ -51,7 +52,7 @@ impl SpawnGuard {
 }
 
 // Two guards are equal iff they watch the same task — but each spawn makes
-// exactly one guard (shared by Arc), so this only ever compares a promise
+// exactly one guard (shared by Arc), so this only ever compares a task
 // to a clone of itself. Keeps `Value`'s derived `PartialEq` honest.
 impl PartialEq for SpawnGuard {
     fn eq(&self, other: &Self) -> bool {
@@ -67,9 +68,9 @@ impl Drop for SpawnGuard {
 
 /// Drop a task's registry entry. A `Running` handle is dropped, which
 /// detaches its thread (it finishes on its own and the OS reaps it — a
-/// dropped-before-await spawn is fire-and-forget); a `Done` result is
-/// freed. Only ever called from `SpawnGuard::drop`, when no promise can
-/// still await the task, so this never races an in-flight join.
+/// dropped-before-join spawn is fire-and-forget); a `Done` result is
+/// freed. Only ever called from `SpawnGuard::drop`, when no handle can
+/// still join the task, so this never races an in-flight join.
 fn forget(id: u64) {
     if let Some(map) = TASKS.get() {
         map.lock().unwrap().remove(&id);

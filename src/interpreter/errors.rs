@@ -32,26 +32,6 @@ pub enum InterpreterError {
     #[error("'?' propagated an Err outside of a function")]
     ErrPropagation(Value),
 
-    // Enhanced lazy evaluation error types
-    #[error("Lazy evaluation error: {message}")]
-    LazyEvaluationError { message: String },
-    #[error("Lazy evaluation timeout: operation exceeded {timeout_ms}ms")]
-    LazyEvaluationTimeout { timeout_ms: u64 },
-    #[error("Circular dependency detected in lazy evaluation: {cycle}")]
-    CircularDependency { cycle: String },
-    #[error("Memory limit exceeded during lazy evaluation: {current_mb}MB > {limit_mb}MB")]
-    MemoryLimitExceeded { current_mb: usize, limit_mb: usize },
-    #[error("Thread safety violation in lazy evaluation: {details}")]
-    ThreadSafetyViolation { details: String },
-    #[error("Lazy evaluation recovery failed: {original_error}")]
-    RecoveryFailed { original_error: String },
-    #[error("Force evaluation failed: {reason}")]
-    ForceEvaluationFailed { reason: String },
-    #[error("Lazy thunk corrupted: {thunk_id}")]
-    ThunkCorrupted { thunk_id: String },
-    #[error("Lazy evaluation chain too deep: {depth} > {max_depth}")]
-    EvaluationChainTooDeep { depth: usize, max_depth: usize },
-
     // Feature 7: Circular dependency detection
     #[error("Circular dependency detected: {cycle_path}")]
     CircularDependencyDetected { cycle_path: String },

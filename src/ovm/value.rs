@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
-use std::sync::{Arc, Mutex};
 
 use crate::ast::{Expr, Value};
 
@@ -58,16 +58,6 @@ pub enum TypeTag {
 
     // Special types
     Builtin = 20,
-    Promise = 21,
-
-    // Lazy types
-    Thunk = 30,
-    Stream = 31,
-    LazyList = 32,
-
-    // Compiled representations
-    CompiledFunction = 40,
-    OptimizedValue = 41,
 
     // Error types
     Error = 50,
@@ -119,18 +109,6 @@ pub enum ValueData {
     Range(Arc<RangeObject>),
     Builtin(Arc<BuiltinObject>),
 
-    // Lazy values
-    Thunk(Arc<ThunkObject>),
-    Stream(Arc<StreamObject>),
-    LazyList(Arc<LazyListObject>),
-
-    // Async values
-    Promise(Arc<PromiseObject>),
-
-    // Compiled representations
-    CompiledFunction(Arc<CompiledFunctionObject>),
-    OptimizedValue(Arc<OptimizedValueObject>),
-
     // Error handling
     Error(Arc<ErrorObject>),
     /// Ok/Err behind one Arc so the variant is pointer-sized — the
@@ -152,7 +130,6 @@ pub struct FunctionObject {
     pub closure: HashMap<String, OvmValue>,
     pub compilation_tier: ExecutionTier,
     pub call_count: AtomicU32,
-    pub optimization_data: OptimizationData,
 }
 
 /// An enum value in the OVM: mirrors `Value::Enum` exactly.
@@ -434,194 +411,12 @@ impl BuiltinObject {
     }
 }
 
-/// Thunk object for lazy evaluation
-#[derive(Debug)]
-pub struct ThunkObject {
-    pub expression: Expr,
-    pub environment: HashMap<String, OvmValue>,
-    pub memoized_value: Mutex<Option<OvmValue>>,
-    pub computation_cost: ComputationCost,
-    pub dependencies: Vec<Arc<OvmValue>>,
-}
-
-/// Stream object for lazy sequences
-#[derive(Debug)]
-pub struct StreamObject {
-    pub generator: Mutex<GeneratorFunction>,
-    pub buffer: Mutex<Vec<OvmValue>>,
-    pub buffer_position: Mutex<usize>,
-    pub is_infinite: bool,
-    pub chunk_size: usize,
-}
-
-/// Lazy list object
-#[derive(Debug)]
-pub struct LazyListObject {
-    pub source: Box<OvmValue>,
-    pub transformation: TransformationChain,
-    pub materialized_prefix: Mutex<Vec<OvmValue>>,
-    pub materialization_point: Mutex<usize>,
-}
-
-/// Promise object for async operations
-#[derive(Debug)]
-pub struct PromiseObject {
-    pub state: PromiseState,
-    pub value: Option<Box<OvmValue>>,
-    pub error: Option<Box<OvmValue>>,
-    pub callbacks: Vec<CallbackFunction>,
-}
-
-/// Compiled function object
-#[derive(Debug)]
-pub struct CompiledFunctionObject {
-    pub original_function: Arc<FunctionObject>,
-    /// Address of native code (stored as usize so OvmValue stays Send/Sync)
-    pub compiled_code: usize,
-    pub code_size: usize,
-    pub optimization_level: OptimizationLevel,
-    pub deoptimization_count: AtomicU32,
-    pub gc_map: GcMap,
-}
-
-/// Optimized value object for specialized representations
-#[derive(Debug)]
-pub struct OptimizedValueObject {
-    pub original_value: Box<OvmValue>,
-    pub optimized_representation: OptimizedRepresentation,
-    pub optimization_metadata: OptimizationMetadata,
-}
-
 /// Error object
 #[derive(Debug, Clone)]
 pub struct ErrorObject {
     pub message: String,
     pub error_type: String,
     pub stack_trace: Vec<String>,
-}
-
-/// Supporting types and enums
-
-#[derive(Debug, Clone, Copy)]
-pub enum PromiseState {
-    Pending,
-    Resolved,
-    Rejected,
-}
-
-#[derive(Debug)]
-pub enum GeneratorFunction {
-    Range {
-        start: i64,
-        end: i64,
-        step: i64,
-    },
-    Map {
-        source: Box<OvmValue>,
-        function: Arc<FunctionObject>,
-    },
-    Filter {
-        source: Box<OvmValue>,
-        predicate: Arc<FunctionObject>,
-    },
-    Custom {
-        function: Arc<FunctionObject>,
-    },
-}
-
-#[derive(Debug)]
-pub enum TransformationChain {
-    Identity,
-    Map(Arc<FunctionObject>),
-    Filter(Arc<FunctionObject>),
-    Chain(Box<TransformationChain>, Box<TransformationChain>),
-}
-
-#[derive(Debug)]
-pub struct CallbackFunction {
-    pub function: Arc<FunctionObject>,
-    pub is_error_handler: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum OptimizationLevel {
-    None,
-    Basic,
-    Aggressive,
-}
-
-#[derive(Debug)]
-pub struct OptimizationData {
-    pub inline_cache: Vec<InlineCacheEntry>,
-    pub type_feedback: TypeFeedback,
-    pub call_site_data: Vec<CallSiteData>,
-}
-
-#[derive(Debug)]
-pub struct InlineCacheEntry {
-    pub call_site_id: u32,
-    pub target_function: Arc<FunctionObject>,
-    pub hit_count: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct TypeFeedback {
-    pub observed_types: Vec<TypeTag>,
-    pub type_stability: f64,
-}
-
-#[derive(Debug, Clone)]
-pub struct CallSiteData {
-    pub call_count: u32,
-    pub average_execution_time: std::time::Duration,
-    pub memory_allocations: u64,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ComputationCost {
-    Trivial,
-    Light,
-    Medium,
-    Heavy,
-    Unknown,
-}
-
-#[derive(Debug, Clone)]
-pub struct GcMap {
-    pub root_offsets: Vec<usize>,
-    pub safepoint_offsets: Vec<usize>,
-}
-
-#[derive(Debug)]
-pub enum OptimizedRepresentation {
-    PackedArray(Vec<i64>),                 // For homogeneous integer arrays
-    BitSet(Vec<u64>),                      // For boolean arrays
-    SparseArray(HashMap<usize, OvmValue>), // For sparse arrays
-    String(String),                        // For optimized string representation
-}
-
-#[derive(Debug, Clone)]
-pub struct OptimizationMetadata {
-    pub optimization_type: OptimizationType,
-    pub memory_savings: usize,
-    pub access_pattern: AccessPattern,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum OptimizationType {
-    MemoryLayout,
-    AccessPattern,
-    TypeSpecialization,
-    ComputationMemoization,
-}
-
-#[derive(Debug, Clone)]
-pub enum AccessPattern {
-    Sequential,
-    Random,
-    Sparse,
-    ReadOnly,
-    WriteHeavy,
 }
 
 /// Runtime error type
@@ -647,9 +442,6 @@ pub enum RuntimeError {
 
     #[error("Lazy evaluation error: {message}")]
     LazyError { message: String },
-
-    #[error("Promise error: {message}")]
-    PromiseError { message: String },
 
     #[error("Concurrency error: {0}")]
     ConcurrencyError(String),
@@ -713,12 +505,6 @@ impl PartialEq for OvmValue {
             (ValueData::Map(a), ValueData::Map(b)) => Arc::ptr_eq(a, b),
             (ValueData::Struct(a), ValueData::Struct(b)) => Arc::ptr_eq(a, b),
             (ValueData::Builtin(a), ValueData::Builtin(b)) => Arc::ptr_eq(a, b),
-            (ValueData::Promise(a), ValueData::Promise(b)) => Arc::ptr_eq(a, b),
-            (ValueData::Thunk(a), ValueData::Thunk(b)) => Arc::ptr_eq(a, b),
-            (ValueData::LazyList(a), ValueData::LazyList(b)) => Arc::ptr_eq(a, b),
-            (ValueData::Stream(a), ValueData::Stream(b)) => Arc::ptr_eq(a, b),
-            (ValueData::CompiledFunction(a), ValueData::CompiledFunction(b)) => Arc::ptr_eq(a, b),
-            (ValueData::OptimizedValue(a), ValueData::OptimizedValue(b)) => Arc::ptr_eq(a, b),
             (ValueData::Error(a), ValueData::Error(b)) => Arc::ptr_eq(a, b),
 
             // Different types are never equal
@@ -733,7 +519,7 @@ impl OvmValue {
     /// Runtime type name, spelled exactly as `crate::ast::Value::type_name`
     /// so a struct field-type check compares the same strings on either
     /// tier: `Int`, `Float`, `Bool`, `String`, `List`, `Map`, `Tuple`,
-    /// `Function`, `Range`, `Result`, `Unit`, `Promise`, or a struct/enum's
+    /// `Function`, `Range`, `Result`, `Unit`, or a struct/enum's
     /// declared type name.
     pub fn type_name(&self) -> &str {
         match &self.data {
@@ -741,21 +527,18 @@ impl OvmValue {
             ValueData::Float(_) => "Float",
             ValueData::Boolean(_) => "Bool",
             ValueData::String(_) => "String",
-            ValueData::List(_) | ValueData::LazyList(_) | ValueData::Stream(_) => "List",
+            ValueData::List(_) => "List",
             ValueData::Map(_) => "Map",
             ValueData::Tuple(_) => "Tuple",
-            ValueData::Function(_)
-            | ValueData::AstFunction(_)
-            | ValueData::Closure(_)
-            | ValueData::CompiledFunction(_) => "Function",
+            ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
+                "Function"
+            }
             ValueData::Builtin(_) => "Builtin",
             ValueData::Struct(s) => &s.shape.type_name,
             ValueData::Enum(e) => &e.type_name,
             ValueData::Range(_) => "Range",
             ValueData::Result(_) => "Result",
             ValueData::Unit => "Unit",
-            ValueData::Promise(_) => "Promise",
-            ValueData::Thunk(_) | ValueData::OptimizedValue(_) => "Value",
             ValueData::Error(_) => "Error",
             ValueData::Native(handle) => handle.0.type_name(),
         }
@@ -848,12 +631,6 @@ impl OvmValue {
             ValueData::Struct(p) => ValueData::Struct(p.clone()),
             ValueData::Range(p) => ValueData::Range(p.clone()),
             ValueData::Builtin(p) => ValueData::Builtin(p.clone()),
-            ValueData::Thunk(p) => ValueData::Thunk(p.clone()),
-            ValueData::Stream(p) => ValueData::Stream(p.clone()),
-            ValueData::LazyList(p) => ValueData::LazyList(p.clone()),
-            ValueData::Promise(p) => ValueData::Promise(p.clone()),
-            ValueData::CompiledFunction(p) => ValueData::CompiledFunction(p.clone()),
-            ValueData::OptimizedValue(p) => ValueData::OptimizedValue(p.clone()),
             ValueData::Error(p) => ValueData::Error(p.clone()),
             ValueData::Result(p) => ValueData::Result(p.clone()),
         };
@@ -869,24 +646,18 @@ impl OvmValue {
             ValueData::Boolean(_) => TypeTag::Boolean,
             ValueData::Unit => TypeTag::Unit,
             ValueData::String(_) => TypeTag::String,
-            ValueData::List(_) | ValueData::LazyList(_) => TypeTag::List,
+            ValueData::List(_) => TypeTag::List,
             ValueData::Tuple(_) => TypeTag::Tuple,
-            ValueData::Function(_)
-            | ValueData::AstFunction(_)
-            | ValueData::Closure(_)
-            | ValueData::CompiledFunction(_) => TypeTag::Function,
+            ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
+                TypeTag::Function
+            }
             ValueData::Range(_) => TypeTag::Range,
             ValueData::Builtin(_) => TypeTag::Builtin,
-            ValueData::Promise(_) => TypeTag::Promise,
-            ValueData::Thunk(_) => TypeTag::Thunk,
-            ValueData::Stream(_) => TypeTag::Stream,
             ValueData::Native(_) => TypeTag::Native,
             ValueData::Result(_) => TypeTag::Result,
-            ValueData::Enum(_)
-            | ValueData::Map(_)
-            | ValueData::Struct(_)
-            | ValueData::OptimizedValue(_)
-            | ValueData::Error(_) => TypeTag::Struct,
+            ValueData::Enum(_) | ValueData::Map(_) | ValueData::Struct(_) | ValueData::Error(_) => {
+                TypeTag::Struct
+            }
         }
     }
 
@@ -1125,9 +896,6 @@ impl OvmValue {
                 ValueData::Map(m) => m.len() * 64,
                 ValueData::Struct(_) => std::mem::size_of::<StructObject>(),
                 ValueData::Range(_) => std::mem::size_of::<RangeObject>(),
-                ValueData::Promise(_) => std::mem::size_of::<PromiseObject>(),
-                ValueData::Thunk(_) => std::mem::size_of::<ThunkObject>(),
-                ValueData::LazyList(_) => std::mem::size_of::<LazyListObject>(),
                 _ => 0,
             };
 
@@ -1289,30 +1057,6 @@ impl OvmValue {
                 // Builtins return unit for now
                 Ok(Value::Unit)
             }
-            ValueData::Thunk(_) => {
-                // Thunks return unit for now
-                Ok(Value::Unit)
-            }
-            ValueData::Stream(_) => {
-                // Streams return unit for now
-                Ok(Value::Unit)
-            }
-            ValueData::LazyList(_) => {
-                // Lazy lists return unit for now
-                Ok(Value::Unit)
-            }
-            ValueData::Promise(_) => {
-                // Promises return unit for now
-                Ok(Value::Unit)
-            }
-            ValueData::CompiledFunction(_) => {
-                // Compiled functions return unit for now
-                Ok(Value::Unit)
-            }
-            ValueData::OptimizedValue(_) => {
-                // Optimized values return unit for now
-                Ok(Value::Unit)
-            }
             ValueData::Error(gc_ptr) => Ok(Value::Err(Box::new(Value::String(
                 std::sync::Arc::new(gc_ptr.message.clone()),
             )))),
@@ -1373,12 +1117,6 @@ impl fmt::Display for OvmValue {
                 }
             }
             ValueData::Builtin(_) => write!(f, "<builtin>"),
-            ValueData::Thunk(_) => write!(f, "<thunk>"),
-            ValueData::Stream(_) => write!(f, "<stream>"),
-            ValueData::LazyList(_) => write!(f, "<lazy-list>"),
-            ValueData::Promise(_) => write!(f, "<promise>"),
-            ValueData::CompiledFunction(_) => write!(f, "<compiled-function>"),
-            ValueData::OptimizedValue(_) => write!(f, "<optimized-value>"),
             ValueData::Error(_) => write!(f, "<error>"),
             ValueData::Result(_) => write!(f, "<result>"),
         }
@@ -1392,19 +1130,6 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<OvmValue>()
 };
-
-impl Default for OptimizationData {
-    fn default() -> Self {
-        Self {
-            inline_cache: Vec::new(),
-            type_feedback: TypeFeedback {
-                observed_types: Vec::new(),
-                type_stability: 0.0,
-            },
-            call_site_data: Vec::new(),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
