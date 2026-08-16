@@ -1,41 +1,40 @@
-# The olang Language Reference
+# Language reference
 
-This is the complete reference for the olang language: every construct, its
-syntax, and its behavior, each with a runnable example. Code blocks marked
-`olang` are executed by the test suite (`tests/doc_examples_test.rs`) on every
-change — what you read here is what the interpreter actually does.
+Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
+[Standard library reference](stdlib.md) ·
+[Packages and dependencies](packages.md) ·
+[Architecture and internals](internals.md) ·
+[Stability and compatibility](stability.md)
 
-Part of [the olang book](README.md) ·
-[Tour](tour.md) · [Standard Library](stdlib.md) · [Packages](packages.md) ·
-[Internals](internals.md) · [Stability](stability.md)
+This chapter is the complete reference for the olang language: every
+construct, its syntax, and its behavior, each with a runnable example. Code
+blocks marked `olang` are executed by the test suite
+(`tests/doc_examples_test.rs`) on every change, so the reference stays
+consistent with the interpreter.
 
----
+## Table of contents
 
-## Table of Contents
-
-1. [Source Structure](#source-structure)
-2. [Values and Runtime Types](#values-and-runtime-types)
+1. [Source structure](#source-structure)
+2. [Values and runtime types](#values-and-runtime-types)
 3. [Literals](#literals)
-4. [Variables and Assignment](#variables-and-assignment)
-5. [Operators and Precedence](#operators-and-precedence)
+4. [Variables and assignment](#variables-and-assignment)
+5. [Operators and precedence](#operators-and-precedence)
 6. [Strings](#strings)
 7. [Collections](#collections)
-8. [Control Flow](#control-flow)
-9. [Pattern Matching](#pattern-matching)
+8. [Control flow](#control-flow)
+9. [Pattern matching](#pattern-matching)
 10. [Functions](#functions)
 11. [Pipelines](#pipelines)
-12. [User-Defined Types](#user-defined-types)
+12. [User-defined types](#user-defined-types)
 13. [Traits](#traits)
-14. [Error Handling](#error-handling)
-15. [Async and Concurrency](#async-and-concurrency)
-16. [Modules and Sharing](#modules-and-sharing)
+14. [Error handling](#error-handling)
+15. [Async and concurrency](#async-and-concurrency)
+16. [Modules and sharing](#modules-and-sharing)
 17. [Testing](#testing)
-18. [Type Annotations](#type-annotations)
-19. [Appendix: Keywords and Grammar](#appendix-keywords-and-grammar)
+18. [Type annotations](#type-annotations)
+19. [Appendix: keywords and grammar](#appendix-keywords-and-grammar)
 
----
-
-## Source Structure
+## Source structure
 
 An olang program is a sequence of statements. **Newlines separate
 statements** — there is no required terminator. A semicolon `;` is accepted
@@ -60,7 +59,7 @@ underscores: `total`, `user_name`, `isValid2`. Identifiers cannot be
 olang is expression-oriented: `if`, `match`, blocks, and function bodies all
 produce values.
 
-## Values and Runtime Types
+## Values and runtime types
 
 olang is dynamically typed at runtime. Every value has a type name that
 `typeof` reports:
@@ -163,7 +162,7 @@ let c = 'x'
 println(typeof(c) + " " + c)
 ```
 
-## Variables and Assignment
+## Variables and assignment
 
 `let` binds a name to a value. `let mut` is accepted and marks intent — but
 note that **every olang binding is assignable**; `mut` is documentation for
@@ -278,11 +277,10 @@ println(text)
 
 ### Closures capture by value
 
-A lambda (or nested `fn`) closes over the bindings it references — and
-it captures them **by value**: the closure carries a snapshot of the
-environment as it was at the moment the closure was created. Two rules
-follow, and both are worth internalizing early because they shape how
-olang programs are structured.
+A lambda (or nested `fn`) closes over the bindings it references, and it
+captures them **by value**: the closure carries a snapshot of the environment
+as it was at the moment the closure was created. Two rules follow from this,
+and both affect how olang programs are structured.
 
 **Rule one: later rebinding does not reach into a closure.**
 
@@ -366,7 +364,7 @@ one large frameworks arrive at deliberately. The
 [dom chapter](stdlib.md#dom--the-browser) develops this pattern in
 full with a working application.
 
-## Operators and Precedence
+## Operators and precedence
 
 From loosest to tightest binding:
 
@@ -649,7 +647,7 @@ map keys are arbitrary strings accessed with `map_get`. A `{ ... }` with
 **Disambiguation note:** `{ ... }` containing statements is a
 [block](#blocks-are-expressions); `{ name: expr }` is an object literal.
 
-## Control Flow
+## Control flow
 
 ### `if` expressions
 
@@ -777,7 +775,7 @@ let first_big_square = loop {
 println(to_string(first_big_square))   // 64
 ```
 
-## Pattern Matching
+## Pattern matching
 
 `match` tests a value against arms in order; the first matching pattern's
 expression is the result. Arms are separated by commas (a trailing comma is
@@ -1007,7 +1005,7 @@ fn add(a, b) = a + b
 println(to_string(5 |> add(3)))
 ```
 
-## User-Defined Types
+## User-defined types
 
 ### Structs
 
@@ -1145,7 +1143,7 @@ println(to_string(implements(P {}, "Show")))
 Field access wins over methods: if a struct has a field `value`, `x.value`
 is the field even if a trait method of the same name exists.
 
-## Error Handling
+## Error handling
 
 olang uses `Result` values, not exceptions. `Ok(v)` carries a success,
 `Err(e)` an error; functions that can fail return one of the two.
@@ -1270,7 +1268,7 @@ statements inside block bodies pinpoint the failing statement, while a
 single-expression function body (`fn f(x) = ...`) attributes the error
 to the nearest enclosing located statement — its call site.
 
-## Async and Concurrency
+## Async and concurrency
 
 olang has two concurrency mechanisms, both explicit:
 
@@ -1352,7 +1350,7 @@ let results = jobs |> map((j) => try { await j } catch (e) { -1 })
 println(to_string(results))   // [0, -1, 20]
 ```
 
-## Modules and Sharing
+## Modules and sharing
 
 A module is a `.ol` file. `share` marks what a module exports; `use` imports
 from another module. These examples are `no-run` because they need multiple
@@ -1455,7 +1453,7 @@ assertion *functions* that return `Result` values for building custom
 harnesses — see the [stdlib reference](stdlib.md#testing--assertions)
 for the distinction.
 
-## Type Annotations
+## Type annotations
 
 This section is the annotation *grammar* reference;
 [the Types chapter](types.md) tells the whole gradual-typing story —
@@ -1499,7 +1497,7 @@ names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions,
 (`"open" | "done"` is a lightweight enum), generic applications
 `Name<T>`, `()` unit, and (reserved) intersection forms.
 
-## Appendix: Keywords and Grammar
+## Appendix: keywords and grammar
 
 Reserved keywords — not usable as identifiers:
 

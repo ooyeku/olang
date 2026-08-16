@@ -1,14 +1,13 @@
-# Common Pitfalls
+# Common pitfalls
 
-olang is small and its rules are consistent, but a handful of behaviors
-surprise newcomers — especially people arriving from Rust, Python, or
-JavaScript, each of whom expects something olang does differently. This
-chapter collects those sharp edges in one place. Every one is deliberate;
-each entry shows the surprise and then the idiom that avoids it.
+Part of [the olang book](README.md) · [Language reference](language.md).
 
-If you read nothing else, read the first three: missing map keys, integer
-division, and the two operator-precedence surprises account for most
-first-day confusion.
+A small number of olang behaviors commonly surprise newcomers, particularly
+programmers arriving from Rust, Python, or JavaScript, where the equivalent
+construct behaves differently. This chapter collects those behaviors in one
+place. Each is intentional; each entry describes the behavior and the idiom
+that works with it. The first three — missing map keys, integer division, and
+the two operator-precedence rules — account for most early confusion.
 
 ## Missing map keys return Unit, not a Result
 

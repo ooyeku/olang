@@ -1,23 +1,20 @@
-# Types
+# Types and gradual typing
 
-olang is **gradually typed**. Code without annotations is fully dynamic —
-no checks, no cost, no judgment — and every annotation you do write is a
-promise the toolchain keeps, twice: the **runtime** enforces it at its
-boundary on every execution tier, and the **static checker** (`olang
-check`, and the language server in your editor) reports violations it can
-prove before the program runs. This chapter is the complete story: what
-annotations mean, exactly where they are enforced, what the checker
+Part of [the olang book](README.md) · [Language reference](language.md) ·
+[Command-line tooling](tooling.md) · [Stability and compatibility](stability.md)
+
+olang is gradually typed. Code without annotations is fully dynamic and
+carries no runtime type checks. Every annotation that is written is enforced
+in two places: the runtime enforces it at its boundary on every execution
+tier, and the static checker (`olang check`, and the language server in an
+editor) reports violations it can prove before the program runs. This chapter
+describes what annotations mean, where they are enforced, what the checker
 proves, and how to adopt types incrementally.
 
-Every plain `olang` block here is executed by the test suite on every
-change; blocks marked `no-run` show programs that deliberately fail.
+Every plain `olang` block in this chapter is executed by the test suite;
+blocks marked `no-run` show programs that fail deliberately.
 
-Part of [the olang book](README.md) ·
-[Language](language.md) · [Tooling](tooling.md) · [Stability](stability.md)
-
----
-
-## Table of Contents
+## Table of contents
 
 - [The idea: annotations are promises](#the-idea-annotations-are-promises)
 - [The three rules](#the-three-rules)
@@ -30,16 +27,16 @@ Part of [the olang book](README.md) ·
 
 ## The idea: annotations are promises
 
-A dynamic language earns its keep in exploration: you write `fn area(w,
-h) = w * h` and move on. The cost arrives later, when a wrong value
-crosses half the program before anything notices. Static languages fix
-that by making you declare everything up front — and charge you for it on
-every line.
+A dynamically typed language allows a program to run without declaring the
+types of values. This is convenient during exploration, but it defers the
+detection of type errors to runtime, sometimes far from the cause. A
+statically typed language detects those errors before the program runs, at
+the cost of requiring annotations throughout.
 
-olang takes the gradual position: **the author chooses, per site.**
-Unannotated code behaves exactly as it always has. An annotation,
-wherever it appears, changes the contract — from documentation to
-enforcement:
+olang takes a gradual position: the author chooses, at each site, whether to
+annotate. Unannotated code behaves as it does in any dynamically typed
+language. An annotation, wherever it appears, changes the contract from
+documentation to enforcement:
 
 ```olang
 fn label(n: Int) -> String = "#" + to_string(n)
