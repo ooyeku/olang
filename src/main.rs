@@ -286,6 +286,10 @@ const INTERPRETER_STACK_SIZE: usize = 256 * 1024 * 1024;
 
 fn main() {
     let exit_code = std::thread::Builder::new()
+        // Named, because it is the thread every program starts on and
+        // diagnostics that name a thread (cell confinement) should call it
+        // what the user would call it.
+        .name("main".to_string())
         .stack_size(INTERPRETER_STACK_SIZE)
         .spawn(run)
         .expect("failed to spawn interpreter thread")

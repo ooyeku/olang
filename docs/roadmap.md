@@ -85,14 +85,29 @@ pass that runs before execution, which is what makes the three tiers agree
 by construction rather than by testing. The one tier divergence the work
 uncovered — the bytecode compiler's flat local-variable map, which
 disagreed with the interpreter on nested shadowing — is fixed and pinned
-by differential tests. The remaining lanes (S4–S8) are unchanged.
+by differential tests.
+
+**S4 shipped in 0.62.0.** The mutability model is complete: plain `let`
+is immutable, `let mut` is a reassignable binding, and `cell` is a
+mutable *location*. Two decisions departed from D4's wording and are
+recorded here as amendments. First, the operations are namespaced
+(`cell.get`/`cell.set`/`cell.update`) rather than global `get`/`set`/
+`update`, because three of the most common identifiers in any program
+are too much to spend; `cell(v)` remains the constructor because the
+module is callable. Second, confinement is enforced at *access* rather
+than at the thread crossing: `spawn` and `par_map` snapshot the whole
+environment rather than an enumerated capture list, so there is no list
+of what crossed to inspect, and a crossing-time check would have had to
+refuse any spawn with a cell merely in scope. `chan.send` is the one
+crossing that holds the value, and is checked there. The remaining
+lanes (S5–S8) are unchanged.
 
 | Lane | Work | Status |
 |---|---|---|
 | S1 — lexical scoping | Blocks introduce a scope: `let` bindings are dropped at the closing brace, shadowing is permitted, and the environment model in the interpreter and both compiled tiers is updated together. The 0.50 scope-leak warning becomes an error. | **shipped 0.61.0** |
 | S2 — required `let` | Assignment to an undeclared name is an error naming the variable and suggesting `let`. The 0.50 advisory warning becomes the error. | **shipped 0.61.0** |
 | S3 — enforced `mut` | Reassignment of a non-`mut` binding is an error. The checker and language server list every site to migrate; the corpus is migrated in the same change. | **shipped 0.61.0** |
-| S4 — the cell | `cell(v)`, `get(c)`, `set(c, v)`, `update(c, f)`. Cells are values with identity confined to their creating thread: capturing one in `spawn`/`par_*` or sending one through a channel is an error at the boundary. Dead captured-variable writes become errors pointing to `cell`. Timeline recording is unaffected because cell mutation is deterministic within a thread. | planned |
+| S4 — the cell | `cell(v)`, `cell.get(c)`, `cell.set(c, v)`, `cell.update(c, f)`. Cells are values with identity confined to their creating thread: reading or writing one from another thread is an error, and `chan.send` refuses to send one. Dead captured-variable writes became errors pointing to `cell`. Timeline recording is unaffected because cell mutation is deterministic within a thread. | **shipped 0.62.0** |
 | S5 — remove async | `async`, `await`, and the `Promise` API are removed from the grammar, interpreter, and tiers. The promotion holdout list shrinks accordingly. Programs using `Promise.delay/all/race` migrate to `time`, `chan`, and `spawn` patterns; the book's concurrency sections are rewritten around the single model. | planned |
 | S6 — stdlib conventions audit | Every builtin and module function is audited once: infallible operations return their value directly (`os.args`, `os.arch`, and the other host-introspection calls are the known cases); contextual keywords free `share` and any other colliding identifiers; `fs.join` becomes variadic; the definitive before/after table is recorded in the CHANGELOG. | planned |
 | S7 — error-model boundary | The `catch`-for-control-flow checker warning lands, and the book's error-handling chapter is rewritten around the Result-primary model with `catch` documented for boundary recovery only. | planned |

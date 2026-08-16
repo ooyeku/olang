@@ -334,20 +334,21 @@ let base = 99                 // rebinding does not affect the closure
 println(to_string(add_base(5)))   // 15
 ```
 
-**Rule two: assignment inside a closure writes to the closure's own
-snapshot, never back to the enclosing scope** — and the snapshot is
-restored on each call, so a closure cannot accumulate hidden state:
+**Rule two: a closure cannot assign to a binding it captured.** Since
+the write could only ever reach the closure's own snapshot, it is
+rejected rather than performed:
 
-```olang
-let mut clicks = 0
-let record = () => {
-    clicks = clicks + 1    // updates this call's copy only
-    clicks
-}
-println(to_string(record()))   // 1
-println(to_string(record()))   // 1 — each call starts from the snapshot
-println(to_string(clicks))     // 0 — the outer binding never moved
+```text
+cannot assign to 'clicks': it is captured from an enclosing scope, and
+functions capture by value — the outer 'clicks' would not change. Return
+the new value, or hold the state in a cell (`let clicks = cell(...)`,
+then `cell.set(clicks, ...)`)
 ```
+
+The rule is about the *binding*, not about closures being read-only: a
+closure reads captured values freely, and writes its own locals and
+parameters freely. Only a write that would cross the boundary outward
+is refused.
 
 This is a deliberate design, not a missing feature, and three major
 pieces of the language rest on it:
@@ -406,6 +407,71 @@ architecture that falls out (event → request → re-render) is the same
 one large frameworks arrive at deliberately. The
 [dom chapter](stdlib.md#dom--the-browser) develops this pattern in
 full with a working application.
+
+### Cells: the one mutable location
+
+Returning the new value is the right answer most of the time. It is a
+poor one when the state is updated from deep inside a call chain, or
+from a callback whose signature you do not control — threading an
+accumulator through six functions that have no other interest in it
+obscures what each of them is for.
+
+A **cell** is the escape hatch: a value whose contents can be replaced
+in place.
+
+```olang
+let total = cell(0)
+let add = (n) => cell.update(total, (t) => t + n)
+for n in [1, 2, 3, 4] { add(n) }
+println(to_string(cell.get(total)))   // 10
+```
+
+`cell(v)` makes one; `cell.get(c)` reads it; `cell.set(c, v)` replaces
+the contents; `cell.update(c, f)` applies `f` to the current value,
+stores the result, and returns it. (`cell(v)` and `cell.new(v)` are the
+same function — the module is callable, so the common case reads as a
+noun.)
+
+A cell is a *location*, not a value. Two cells holding equal contents
+are not equal, and binding one to a second name aliases the same
+location rather than copying it:
+
+```olang
+let a = cell(1)
+let b = a
+cell.set(b, 5)
+println(to_string(cell.get(a)))       // 5 — one location, two names
+println(to_string(cell(1) == cell(1)))  // false — different locations
+```
+
+**A cell belongs to the thread that created it.** Reading or writing
+one from another thread is an error, and sending one through a channel
+is refused at the send. This is what keeps the guarantee that made
+capture-by-value worth its cost in the first place: two threads still
+cannot reach the same mutable location, so the absence of data races
+remains structural rather than a matter of discipline. A cell created
+*inside* a task, and used only there, is perfectly ordinary — the rule
+is about crossing, not about tasks.
+
+```olang
+let readings = cell([])
+let task = spawn {
+    // A cell made in here belongs in here.
+    let local = cell(0)
+    for n in [1, 2, 3] { cell.update(local, (t) => t + n) }
+    cell.get(local)
+}
+cell.set(readings, [await task])
+println(to_string(cell.get(readings)))   // [6]
+```
+
+Finally, `cell.update(c, f)` refuses re-entrant access: touching the
+same cell from inside `f` is an error rather than a write that `f`'s
+return value would silently overwrite. Compute the new value from the
+argument instead.
+
+Reach for a cell when the alternative is genuinely worse. Most olang
+programs need none.
 
 ## Operators and precedence
 
@@ -1571,7 +1637,7 @@ Each, in one line:
 | `return` | Return early from a function |
 | `true` / `false` | Boolean literals |
 | `async` / `await` | Declare an async function/lambda; await a promise |
-| `try` / `catch` | Catch a raised error (`try { … } catch e { … }`) |
+| `try` / `catch` | Catch a raised error (`try { … } catch (e) { … }`) |
 | `error` | Declare a named error type with fields |
 | `share` | Export a declaration from a module |
 | `use` | Import from another module or package |

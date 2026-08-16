@@ -2011,6 +2011,23 @@ impl Interpreter {
                     variant_data: crate::ast::EnumVariantData::Tuple(arguments),
                 })
             }
+            // A module that exports `new` is callable, and calling it *is*
+            // calling `new`: `cell(0)` is `cell.new(0)`. Constructing one
+            // kind of value is the module's whole purpose in that case, so
+            // the shorter spelling costs no clarity — and the long form
+            // stays available and means exactly the same thing.
+            Value::Struct {
+                ref type_name,
+                ref fields,
+            } if type_name == "Module" => match fields.get("new") {
+                Some(constructor) => {
+                    let constructor = constructor.clone();
+                    self.call_function(constructor, arguments)
+                }
+                None => Err(InterpreterError::TypeError {
+                    message: "Cannot call a module that has no `new`".to_string(),
+                }),
+            },
             _ => Err(InterpreterError::TypeError {
                 message: "Cannot call non-function value".to_string(),
             }),

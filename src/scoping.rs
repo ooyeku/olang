@@ -45,6 +45,7 @@ pub type Predefined = HashMap<String, bool>;
 pub fn validate_program(program: &Program, predefined: &mut Predefined) -> Vec<ScopeError> {
     let mut v = Validator {
         scopes: vec![std::mem::take(predefined)],
+        fn_boundaries: Vec::new(),
         errors: Vec::new(),
         line: 0,
         column: 0,
@@ -61,6 +62,10 @@ pub fn validate_program(program: &Program, predefined: &mut Predefined) -> Vec<S
 struct Validator {
     /// Innermost scope last. Each frame maps a name to its mutability.
     scopes: Vec<HashMap<String, bool>>,
+    /// Scope index at which each open function body begins, innermost last.
+    /// A binding found below the top of this stack lives outside the
+    /// current function, and is therefore captured by value.
+    fn_boundaries: Vec<usize>,
     errors: Vec<ScopeError>,
     /// Position of the statement being walked, used for error spans.
     line: u32,
@@ -85,6 +90,22 @@ impl Validator {
     /// Mutability of the innermost binding of `name`, if any.
     fn lookup(&self, name: &str) -> Option<bool> {
         self.scopes.iter().rev().find_map(|s| s.get(name).copied())
+    }
+
+    /// Index of the innermost scope binding `name` (nearest wins, so a
+    /// local shadows a captured outer binding).
+    fn binding_scope(&self, name: &str) -> Option<usize> {
+        self.scopes.iter().rposition(|s| s.contains_key(name))
+    }
+
+    /// Is `name` bound strictly outside the innermost function body — i.e.
+    /// captured rather than local? Functions capture by value, so a write
+    /// to such a name cannot reach the original binding.
+    fn is_captured(&self, name: &str) -> bool {
+        match (self.fn_boundaries.last(), self.binding_scope(name)) {
+            (Some(&boundary), Some(index)) => index < boundary,
+            _ => false,
+        }
     }
 
     fn error(&mut self, message: String) {
@@ -206,14 +227,20 @@ impl Validator {
     /// are immutable: assigning to one changes only the callee's copy, so
     /// the useful form is a local `let mut`.
     fn function_body(&mut self, parameters: &[crate::ast::Parameter], body: &Expr) {
-        self.push();
+        // Default-value expressions are evaluated at the call site, in the
+        // caller's scope, so they are walked before the boundary opens.
         for p in parameters {
             if let Some(default) = &p.default_value {
                 self.expr(default);
             }
+        }
+        self.push();
+        self.fn_boundaries.push(self.scopes.len() - 1);
+        for p in parameters {
             self.bind(&p.name, false);
         }
         self.expr(body);
+        self.fn_boundaries.pop();
         self.pop();
     }
 
@@ -231,6 +258,18 @@ impl Validator {
                 "cannot assign to '{target}': it is not declared mutable. \
                  Declare it with `let mut {target} = ...`, or bind a new value \
                  with `let {target} = ...` to shadow it"
+            )),
+            // Declared `mut` and in scope — but a `mut` binding that lives
+            // outside this function is still unreachable from inside it.
+            // Functions and closures capture by value, so the write lands
+            // on the snapshot and the original never changes. Before cells
+            // existed there was nothing to point at and this was only a
+            // warning; now there is.
+            Some(true) if self.is_captured(target) => self.error(format!(
+                "cannot assign to '{target}': it is captured from an enclosing scope, \
+                 and functions capture by value — the outer '{target}' would not change. \
+                 Return the new value, or hold the state in a cell \
+                 (`let {target} = cell(...)`, then `cell.set({target}, ...)`)"
             )),
             Some(true) => {}
         }

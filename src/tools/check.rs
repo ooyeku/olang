@@ -882,13 +882,6 @@ struct Checker {
     /// scoped, and using a leaked name draws an advisory warning.
     leaked: Vec<std::collections::HashSet<String>>,
     warned_leaks: std::collections::HashSet<String>,
-    /// Scope index of the innermost function/lambda body currently open (a
-    /// stack, one entry per nested function). A binding found at a scope
-    /// index *below* the top of this stack lives in an enclosing scope —
-    /// i.e. it is *captured*. Assigning to a captured binding inside a
-    /// closure is provably dead: functions capture by value, so the write
-    /// hits the snapshot and never reaches the outer variable.
-    fn_scope_depths: Vec<usize>,
     out: Vec<CheckDiagnostic>,
 }
 
@@ -1226,12 +1219,6 @@ impl Checker {
         self.scopes.iter().any(|s| s.contains_key(name)) || self.sigs.contains_key(name)
     }
 
-    /// The index of the innermost scope that binds `name`, if any (nearest
-    /// enclosing wins, so a local shadows a captured outer binding).
-    fn binding_scope(&self, name: &str) -> Option<usize> {
-        self.scopes.iter().rposition(|s| s.contains_key(name))
-    }
-
     // ── inference: conservative, Unknown-biased ────────────────────────
 
     fn infer(&self, expr: &Expr) -> SType {
@@ -1549,7 +1536,6 @@ impl Checker {
                 // Body scope: parameter annotations are trusted (runtime
                 // enforces them at every call).
                 self.push_scope();
-                self.fn_scope_depths.push(self.scopes.len() - 1);
                 for p in &f.parameters {
                     let ty = p
                         .type_annotation
@@ -1568,7 +1554,6 @@ impl Checker {
                 {
                     self.check_against(&f.body, &ret, span, &format!("return value of {}", f.name));
                 }
-                self.fn_scope_depths.pop();
                 self.pop_scope(Merge::Function);
             }
             // `share` wraps a declaration; check what it wraps.
@@ -1700,28 +1685,9 @@ impl Checker {
             Expr::UnaryOp { operand, .. } => self.check_expr(operand, span),
             Expr::Assignment { target, value } => {
                 self.check_expr(value, span);
-                // Dead write to a captured binding: inside a closure/function,
-                // assigning to a name bound in an *enclosing* scope has no
-                // effect — capture is by value, so the outer variable never
-                // sees it. This is the language's sharpest footgun, and it is
-                // provable (no false positives): the target is bound strictly
-                // outside the current function boundary, and no reassignment
-                // can bridge that. Params and locals (bound at or inside the
-                // boundary) are untouched.
-                if let Some(&boundary) = self.fn_scope_depths.last()
-                    && let Some(idx) = self.binding_scope(target)
-                    && idx < boundary
-                {
-                    self.warn(
-                        span,
-                        format!(
-                            "assignment to '{}' has no effect: '{}' is captured from an enclosing scope, and closures capture by value — the outer '{}' is unchanged. Return the new value, or keep the state in a passed-in structure",
-                            target, target, target
-                        ),
-                    );
-                }
-                // Whether the target is declared, and whether it is `mut`,
-                // is decided by the scope validator (src/scoping.rs) — the
+                // Whether the target is declared, whether it is `mut`, and
+                // whether it is captured from an enclosing scope are all
+                // decided by the scope validator (src/scoping.rs) — the
                 // same one the interpreter runs — so the two never disagree
                 // about an assignment.
                 let ty = self.infer(value);
@@ -1777,7 +1743,6 @@ impl Checker {
                 parameters, body, ..
             } => {
                 self.push_scope();
-                self.fn_scope_depths.push(self.scopes.len() - 1);
                 for p in parameters {
                     let ty = p
                         .type_annotation
@@ -1787,7 +1752,6 @@ impl Checker {
                     self.bind(&p.name.clone(), ty);
                 }
                 self.check_expr(body, span);
-                self.fn_scope_depths.pop();
                 self.pop_scope(Merge::Function);
             }
 
@@ -2216,16 +2180,25 @@ mod tests {
     }
 
     #[test]
-    fn assigning_a_captured_binding_inside_a_closure_warns() {
+    fn assigning_a_captured_binding_inside_a_closure_is_an_error() {
         // The classic footgun: capture is by value, so the write is dead.
+        // An error, not a warning, since 0.62 — `cell` is the alternative
+        // the message points at.
         let d = check("let mut c = 0\nlet inc = () => { c = c + 1; c }\ninc()\n");
-        assert_eq!(d.len(), 1, "{:?}", d);
-        assert!(d[0].warning);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(!d[0].warning);
+        assert!(d[0].scope);
         assert!(d[0].message.contains("captured from an enclosing scope"));
+        assert!(d[0].message.contains("cell"));
         // A named nested function captures by value too.
         let d = check("let mut g = 0\nfn f() = { g = 5; g }\nf()\n");
-        assert_eq!(d.len(), 1);
-        assert!(d[0].message.contains("has no effect"));
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(!d[0].warning);
+        // Holding the state in a cell is the fix, and it checks clean.
+        assert!(
+            check("let c = cell(0)\nlet inc = () => cell.update(c, (n) => n + 1)\ninc()\n")
+                .is_empty()
+        );
     }
 
     #[test]

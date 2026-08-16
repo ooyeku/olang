@@ -691,6 +691,12 @@ impl BuiltinFunctions {
             );
         }
 
+        // Handle cell functions. Takes the interpreter because
+        // `cell.update` applies a caller-supplied function.
+        if let Some(cell_function) = name.strip_prefix("cell.") {
+            return crate::stdlib::cell::call_cell_function(cell_function, arguments, interpreter);
+        }
+
         // Handle chan functions
         if let Some(chan_function) = name.strip_prefix("chan.") {
             return crate::stdlib::chan::call_chan_function(chan_function, arguments).map_err(

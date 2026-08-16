@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-08-16
+
+Completes the mutability model 0.61.0 began. Plain `let` is an immutable
+binding, `let mut` is a reassignable one, and this release adds the third
+thing: a mutable *location*.
+
+### Added
+
+- **`cell` — the one mutable location.** `cell(v)` makes one;
+  `cell.get(c)` reads it; `cell.set(c, v)` replaces the contents;
+  `cell.update(c, f)` applies `f` to the current value, stores the
+  result, and returns it. `cell.new(v)` is the same function as
+  `cell(v)` — the module is callable, so the constructor reads as a
+  noun while the operations stay namespaced.
+
+  Values are immutable and closures capture by value, which is what
+  makes `spawn` and `par_map` safe without locks. The case that model
+  handles badly is state updated from deep inside a call chain or from
+  a callback whose signature is fixed; threading an accumulator through
+  functions that have no other interest in it is the honest workaround
+  and often a poor one. A cell is the escape hatch, deliberately
+  narrow. A cell is a location, not a value: two cells with equal
+  contents are not equal, and binding one to a second name aliases it.
+
+- **Cells are confined to the thread that created them.** Reading or
+  writing a cell from another thread is an error naming both threads,
+  and `chan.send` refuses to send one — including one nested inside a
+  list, map, struct field, or `Result`. The no-shared-mutable-state
+  guarantee that makes olang's parallelism lock-free is preserved
+  exactly: two threads still cannot reach one mutable location. A cell
+  created inside a task and used only there is unremarkable; the rule
+  concerns crossing, not tasks.
+
+  Confinement is checked on *access* rather than at the thread
+  boundary, because `spawn` and `par_map` snapshot the whole
+  environment rather than an enumerated capture list — there is no list
+  of what crossed to inspect, and a crossing-time check would have had
+  to refuse any `spawn` with a cell merely in scope. Checking on use is
+  both sound and precise. `chan.send` is the one crossing that holds
+  the value being sent, so it is checked there, at the mistake.
+
+- **`cell.update` refuses re-entrant access.** Touching the same cell
+  from inside its own update function is an error rather than a write
+  that the function's return value silently overwrites. The lock is
+  never held across the callback, so this is a diagnosable error, not a
+  deadlock, and the flag is cleared whether the callback returns or
+  raises.
+
+- Cells need no timeline recording: mutation is deterministic within a
+  thread and unreachable across threads, so a replayed run performs the
+  same mutations in the same order.
+
+### Changed
+
+- **Assigning to a captured binding is an error (breaking).** Inside a
+  closure or nested function, assigning to a name bound in an enclosing
+  scope was a dead write — capture is by value, so it reached the
+  snapshot and never the original — and had been an advisory warning
+  since 0.51. It is now refused before the program runs, and the
+  message points at `cell`:
+
+  ```text
+  cannot assign to 'total': it is captured from an enclosing scope, and
+  functions capture by value — the outer 'total' would not change. Return
+  the new value, or hold the state in a cell (`let total = cell(...)`,
+  then `cell.set(total, ...)`)
+  ```
+
+  The warning only became fair once there was an alternative to name,
+  which is why it lands with `cell` rather than before it. The check
+  moved into the same pre-execution validator as the 0.61.0 rules, so
+  the runtime, `olang check`, and the editor now agree on it — before,
+  only `olang check` reported it and the program still ran. No file in
+  the repository corpus was affected.
+
+- Calling a module value invokes its `new`, so `cell(0)` and
+  `cell.new(0)` are one function. This is a general rule, not a special
+  case: a module whose purpose is constructing one kind of value may be
+  called directly.
+
+### Fixed
+
+- The language reference's keyword table wrote `catch e { … }`; the
+  syntax is `catch (e) { … }`, as every runnable example in the book
+  already had it.
+
 ## [0.61.0] - 2026-08-16
 
 This release settles olang's scope and mutability rules. Three behaviors
@@ -3404,7 +3490,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.61.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.62.0...HEAD
+[0.62.0]: https://github.com/ooyeku/olang/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/ooyeku/olang/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/ooyeku/olang/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/ooyeku/olang/compare/v0.58.0...v0.59.0

@@ -26,6 +26,7 @@ a file system, a network, or a browser.
 - [`re` — regular expressions](#re--regular-expressions)
 - [`dates` — dates and times](#dates--dates-and-times)
 - [`time` — clocks and sleeping](#time--clocks-and-sleeping)
+- [`cell` — mutable locations](#cell--mutable-locations)
 - [`chan` — channels](#chan--channels)
 - [`random` — randomness](#random--randomness)
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
@@ -523,6 +524,55 @@ let t0 = time.monotonic_ms()
 time.sleep(25)
 println(show(time.monotonic_ms() - t0 >= 20))   // true
 ```
+
+## `cell` — mutable locations
+
+A cell holds a value that can be replaced in place. It is the language's
+only mutable location, and exists for the case that returning the new
+value handles badly: state updated from deep in a call chain, or from a
+callback whose signature you do not control. The
+[language reference](language.md#cells-the-one-mutable-location) covers
+the model; this is the API.
+
+| Function | Returns |
+|---|---|
+| `cell(v)` / `cell.new(v)` | a new cell holding `v` (the module is callable, so both spellings are the same function) |
+| `cell.get(c)` | the current value |
+| `cell.set(c, v)` | `()` — replaces the contents |
+| `cell.update(c, f)` | the new value, after applying `f` to the current one and storing the result |
+
+None of these return `Result`: there is no expected failure to report.
+They raise on misuse — reading a cell from a thread that does not own
+it, or touching a cell from inside its own `cell.update`.
+
+```olang
+let seen = cell(#{})
+fn remember(word) = {
+    let counts = cell.get(seen)
+    let n = if map_has_key(counts, word) => map_get(counts, word) else => 0
+    cell.set(seen, map_set(counts, word, n + 1))
+    n + 1
+}
+for w in ["ok", "err", "ok", "ok"] { remember(w) }
+println(to_string(map_get(cell.get(seen), "ok")))   // 3
+```
+
+**Confinement.** A cell belongs to the thread that created it. Reading
+or writing it from another thread raises, and `chan.send` refuses to
+send one (including one nested inside a list, map, struct, or `Result`)
+— the language's no-shared-mutable-state guarantee is what makes
+`spawn` and `par_map` lock-free, and cells do not weaken it. Send the
+*contents* instead:
+
+```olang
+let ch = chan.new()
+let c = cell(11)
+chan.send(ch, cell.get(c))
+println(show(chan.recv(ch)))   // Ok(11)
+```
+
+A cell created inside a task and used only there is unremarkable; the
+rule concerns crossing, not tasks.
 
 ## `chan` — channels
 

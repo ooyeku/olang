@@ -1620,6 +1620,36 @@ impl HelpSystem {
         );
 
         // --- chan ---
+        // cell — the one mutable location, confined to its creating thread.
+        self.doc(
+            "cell.new",
+            "cell(v) / cell.new(v)",
+            "Cell",
+            "cell",
+            "make a cell holding v; the module is callable, so cell(0) is cell.new(0)",
+        );
+        self.doc(
+            "cell.get",
+            "cell.get(c)",
+            "Any",
+            "cell",
+            "read the cell's current value",
+        );
+        self.doc(
+            "cell.set",
+            "cell.set(c, v)",
+            "Unit",
+            "cell",
+            "replace the cell's value",
+        );
+        self.doc(
+            "cell.update",
+            "cell.update(c, f)",
+            "Any",
+            "cell",
+            "apply f to the current value, store the result, and return it",
+        );
+
         self.doc(
             "chan.new",
             "chan.new()",

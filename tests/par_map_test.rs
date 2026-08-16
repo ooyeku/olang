@@ -162,24 +162,45 @@ fn par_map_arity_is_checked() {
 }
 
 #[test]
-fn par_map_has_snapshot_semantics_for_globals() {
-    // The documented difference from map: the function runs against worker
-    // clones (spawn semantics), so an assignment to enclosing mutable state
-    // is invisible to the caller. Pin it so a change here is deliberate.
+fn par_map_reads_enclosing_state_but_cannot_write_it() {
+    // The documented difference from `map`: the function runs against
+    // worker clones (spawn semantics). Reading captured state is fine and
+    // sees the caller's values...
     let src = r#"
-let mut hits = 0
-let out = par_map([1, 2, 3], (x) => { hits = hits + 1; x })
-show(out) + " hits=" + show(hits)
+let factor = 10
+let out = par_map([1, 2, 3], (x) => x * factor)
+show(out)
 "#;
     for threshold in [None, Some(1)] {
         let result = eval(src, threshold).expect("should evaluate");
         assert_eq!(
             result,
-            Value::String(std::sync::Arc::new("[1, 2, 3] hits=0".to_string())),
+            Value::String(std::sync::Arc::new("[10, 20, 30]".to_string())),
             "tier: {:?}",
             threshold
         );
     }
+    // ...but writing it is refused before the program runs, since the
+    // write could only ever land on a worker's snapshot.
+    let e = eval(
+        "let mut hits = 0\npar_map([1, 2], (x) => { hits = hits + 1; x })\n",
+        None,
+    )
+    .expect_err("assigning captured state must be refused");
+    assert!(e.contains("captured from an enclosing scope"), "{e}");
+}
+
+#[test]
+fn par_map_workers_cannot_reach_a_cell_in_the_calling_thread() {
+    // A cell is the sanctioned way to hold mutable state, and confinement
+    // is what stops it from becoming the shared-mutable-state hole that
+    // par_map's whole lock-free design depends on not existing.
+    let e = eval(
+        "let hits = cell(0)\npar_map([1, 2], (x) => cell.update(hits, (n) => n + 1))\n",
+        None,
+    )
+    .expect_err("a worker must not reach the caller's cell");
+    assert!(e.contains("cell escaped its thread"), "{e}");
 }
 
 #[test]

@@ -135,11 +135,28 @@ n = 99
 println(show(get()))    // 1, not 99 — the closure captured n's value
 ```
 
-This is load-bearing (it is what makes modules and tier promotion sound),
-so if you need shared mutable state, keep it in an explicit structure you
-pass around, not in a captured variable. **`olang check` warns** when a
-closure assigns to a captured binding, because the write is provably dead
-— so the tooling catches this one for you.
+This is load-bearing — it is what makes modules, safe parallelism, and
+tier promotion sound. So *assigning* to a captured binding from inside a
+closure is an error, not a silent no-op: the write could only reach the
+closure's own snapshot, so the program is refused before it runs.
+
+```text
+cannot assign to 'n': it is captured from an enclosing scope, and functions
+capture by value — the outer 'n' would not change. Return the new value, or
+hold the state in a cell (`let n = cell(...)`, then `cell.set(n, ...)`)
+```
+
+Return the new value where you can. Where you cannot — state updated
+from deep in a call chain, or from a callback whose shape is fixed —
+use a [cell](stdlib.md#cell--mutable-locations):
+
+```olang
+let hits = cell(0)
+let record = () => cell.update(hits, (n) => n + 1)
+record()
+record()
+println(to_string(cell.get(hits)))   // 2
+```
 
 ## Definition order: bodies resolve late, values resolve now
 

@@ -60,6 +60,12 @@ therefore identical on every tier:
   declared `mut` is an error; shadowing with a fresh `let` is always
   available.
 
+0.62.0 completed the model with a fourth rule and the primitive that
+makes it livable: assigning to a binding *captured* from an enclosing
+scope is an error (the write could only reach the closure's snapshot),
+and [`cell`](stdlib.md#cell--mutable-locations) is the one mutable
+location, confined to the thread that created it.
+
 These rules are now part of the commitment above and will not change
 again.
 
@@ -126,11 +132,11 @@ again.
   blocks (a builtin cannot re-enter the interpreter to run your
   function; the error says so).
 - The `--enable-parallel` / `set_parallel` evaluation modes
-- Assigning to a variable *captured* from an enclosing scope inside a
-  closure or function has no effect (capture is by value — see
-  [Common pitfalls](pitfalls.md)); `olang check` and the editor **warn**,
-  since the write is provably dead. Return the new value or thread the
-  state through instead.
+- The `cell` module is new as of 0.62: the model (one mutable location,
+  confined to its creating thread, refused at `chan.send`, re-entrant
+  `cell.update` rejected) is settled and covered by the scope and
+  mutability commitment above, but it is the newest surface in the
+  language and the least exercised by real programs.
 
 ### Reserved — parses today, semantics later
 

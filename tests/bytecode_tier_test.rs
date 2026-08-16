@@ -553,17 +553,18 @@ d(1) + d(2) + d(3)
 
 #[test]
 fn caller_is_rejected_when_helper_cannot_compile() {
-    // `bump` ASSIGNS a global, which the tier will never compile (writes
-    // need the interpreter's environment), so neither it nor its caller
-    // may be promoted — but the program must still produce the right
-    // answer. (This test has burned through two previous "uncompilable"
-    // features — a global read, then a map literal — as each became
-    // compilable; global assignment is the durable choice.)
+    // `bump` uses `try`/`catch`, which the tier does not compile, so
+    // neither it nor its caller may be promoted — but the program must
+    // still produce the right answer. (This test has burned through three
+    // previous "uncompilable" features — a global read, a map literal,
+    // then assignment to a global, which 0.62 made illegal outright. If
+    // `try` ever compiles, pick another construct rather than deleting
+    // the test: what it guards is that an uncompilable *callee* keeps its
+    // caller interpreted.)
     let src = r#"
-let mut counter = 0
 fn bump(n) = {
-    counter = counter + n
-    counter
+    let r = try { Ok(n) } catch (e) { 0 }
+    r + 0
 }
 fn label(n) = bump(n) + 1
 label(1) + label(2)
@@ -1453,19 +1454,42 @@ total([1, 2, 3], 10) + total([1, 2], 5)
 }
 
 #[test]
-fn lambda_free_var_assigned_by_enclosing_fn_falls_back() {
-    // `acc` is a global in the closure, but the enclosing function assigns
-    // it, so the interpreter's lambda would capture the runtime value — the
-    // declaration-time snapshot cannot represent that.
+fn a_lambda_capturing_a_reassigned_local_agrees() {
+    // This used to assign a *global* from inside `f` and assert the tier
+    // refused to promote it. 0.62 made that construct illegal outright
+    // (the write could only reach the closure's snapshot), so what remains
+    // to test is the legal shape: a local reassigned before the lambda is
+    // built. The lambda must capture the value at creation — 5, not 1 —
+    // on both tiers.
     let src = r#"
-let mut acc = 1
 fn f(xs) = {
+    let mut acc = 1
     acc = 5
     map(xs, (x) => x * acc)
 }
-sum(f([1, 2]))
+sum(f([1, 2])) + sum(f([3]))
 "#;
-    assert_eq!(promotion_count(src, 1), 0);
+    assert_eq!(eval(src, None).unwrap(), Value::Integer(30));
+    assert_tier_transparent(src);
+}
+
+#[test]
+fn a_cell_written_from_a_promoted_function_stays_one_location() {
+    // The modern replacement for the assign-a-global shape. Unlike that
+    // one, this compiles: a cell handle crosses the tier boundary as a
+    // shared `Arc`, so the promoted function writes the same location the
+    // interpreter did on its earlier calls.
+    let src = r#"
+let store = cell(0)
+fn bump(n) = {
+    cell.set(store, cell.get(store) + n)
+    cell.get(store)
+}
+fn label(n) = bump(n) + 1
+label(1) + label(2) + cell.get(store)
+"#;
+    // 2 + 4 + 3
+    assert_eq!(eval(src, None).unwrap(), Value::Integer(9));
     assert_tier_transparent(src);
 }
 
