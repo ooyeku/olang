@@ -9,7 +9,7 @@
 use super::series::{make_series_value, scalar_to_value, series_from_list, series_of};
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
-use olang_ods::{AggOp, AggSpec, Frame, JoinHow, Series};
+use olang_ods::{AggOp, AggSpec, Frame, JoinHow, Scalar, Series};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -78,6 +78,9 @@ pub fn frame_of(value: &Value) -> Option<&Frame> {
 pub const FUNCTIONS: &[(&str, usize)] = &[
     ("frame", 1),
     ("read_csv", 1),
+    ("read_csv_file", 1),
+    ("to_csv", 1),
+    ("write_csv", 2),
     ("frame_from_records", 1),
     ("to_records", 1),
     ("columns", 1),
@@ -206,6 +209,46 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
         "read_csv" => {
             let text = want_string(func, &args, 0)?;
             read_csv(&text)
+        }
+        // The file-reading twin. Gated under `fs` (see caps::required):
+        // without that, `ods` would be a latent filesystem capability, the
+        // same hole `db.open` had before 0.60.
+        "read_csv_file" => {
+            let path = want_string(func, &args, 0)?;
+            match std::fs::read_to_string(&path) {
+                // A missing or unreadable file is a failure the caller can
+                // handle, so it is a Result rather than a raise — the 0.64
+                // rule. A malformed CSV *inside* a readable file is also a
+                // Result, for the same reason: the caller chose the file.
+                Err(err) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                    "ods.read_csv_file: {}: {}",
+                    path, err
+                )))))),
+                Ok(text) => match read_csv(&text) {
+                    Ok(frame) => Ok(Value::Ok(Box::new(frame))),
+                    Err(msg) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                        "{} (reading {})",
+                        msg, path
+                    )))))),
+                },
+            }
+        }
+        // Serialization cannot fail — every Scalar has a text form — so it
+        // returns the string outright.
+        "to_csv" => {
+            let f = want_frame(func, &args, 0)?;
+            Ok(Value::String(Arc::new(to_csv(f))))
+        }
+        "write_csv" => {
+            let f = want_frame(func, &args, 0)?;
+            let path = want_string(func, &args, 1)?;
+            match std::fs::write(&path, to_csv(f)) {
+                Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
+                Err(err) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                    "ods.write_csv: {}: {}",
+                    path, err
+                )))))),
+            }
         }
         "frame_from_records" => {
             let records = match &args[0] {
@@ -430,6 +473,39 @@ fn read_csv(text: &str) -> Result<Value, String> {
         .map(|(name, raw)| (name, infer_column(raw)))
         .collect();
     Frame::new(pairs).map(OdsFrame::into_value).map_err(e)
+}
+
+/// Serialize a Frame as CSV with a header row.
+///
+/// Round-trips through `read_csv`: a null becomes an empty cell, which is
+/// exactly what `read_csv` reads back as null, and floats use the same
+/// `format_float` the rest of the language prints with, so a value shown
+/// in a REPL and a value written to a file agree.
+fn to_csv(f: &Frame) -> String {
+    let mut w = csv::WriterBuilder::new().from_writer(Vec::new());
+    // `csv` only fails here on an IO error from the sink, and the sink is
+    // an in-memory Vec — so these writes cannot fail in practice. Errors
+    // are still threaded rather than unwrapped, and collapse to whatever
+    // was serialized before the (impossible) failure.
+    let _ = w.write_record(f.names());
+    let cols = f.columns();
+    let mut record: Vec<String> = Vec::with_capacity(cols.len());
+    for row in 0..f.n_rows() {
+        record.clear();
+        for col in cols {
+            record.push(match col.scalar_at(row) {
+                Scalar::Null => String::new(),
+                Scalar::I64(v) => v.to_string(),
+                Scalar::F64(v) => crate::ast::format_float(v),
+                Scalar::Bool(v) => v.to_string(),
+                Scalar::Str(v) => v,
+            });
+        }
+        let _ = w.write_record(&record);
+    }
+    w.into_inner()
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .unwrap_or_default()
 }
 
 fn infer_column(raw: Vec<String>) -> Series {

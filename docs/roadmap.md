@@ -189,9 +189,32 @@ the corpus if Campaign 1 lands first.
 | Lane | Work | Status |
 |---|---|---|
 | DP1c — parallel group keys | Parallelize the group-identification pass of `group_by`, which now dominates its runtime; the aggregation pass is already parallel. | planned |
-| DP2 — IO breadth | Read CSV from files and as a bounded-memory stream; JSON-lines input; a columnar interchange format; `to_csv` and file output. The end-to-end input-to-output story. | planned |
+| DP2 — IO breadth | Read CSV from files and as a bounded-memory stream; JSON-lines input; a columnar interchange format; `to_csv` and file output. The end-to-end input-to-output story. | **file IO shipped**; streaming, JSON-lines, and the columnar format remain |
 | DP3 — verb completeness | Window functions, reshape (wide/long, pivot), additional join kinds and aggregations, and string and categorical column operations. | planned |
 | DP4 — flagship and benchmark | A realistic end-to-end ETL example wired to `plot`, and a reproducible benchmark against pandas and Polars with methodology and hardware documented in [The data stack](ods.md). | planned |
+
+**DP2's first half shipped.** `ods.read_csv_file`, `ods.to_csv`, and
+`ods.write_csv` close the loop the chapter described but the stack could
+not finish. Both file-touching calls demand `fs`; every other `ods`
+function stays pure, which is what keeps the module from becoming a
+filesystem capability by the back door.
+
+Two findings shaped what remains. First, the streaming reader cannot take
+a callback: `(chunk) => { total = total + chunk }` is refused by 0.62's
+capture rule, because the accumulator is a captured write. The language's
+own semantics therefore pick a fold — or, better, a stateful reader
+handle, since a fold over chunks re-read from offset zero would be
+quadratic. Second, a fold taking an olang lambda cannot live in `ods` at
+all as the module boundary stands: `OvmModule::dispatch` receives
+`(func, args)` and no interpreter, which is precisely what lets both tiers
+dispatch identically. The streaming reader will be a `NativeObject` handle
+holding its own position — the mechanism `cell` and `task` already use —
+and, like a cell, will need to be confined to its creating thread.
+
+The columnar interchange format is settled as a native, self-describing
+olang format rather than Arrow or Parquet: no dependency, and the format
+is readable rather than a black box, which is the same argument the rest
+of the project makes. Arrow interop is logged as a post-1.0 candidate.
 
 Acceptance: a streaming job processes input larger than memory; the
 benchmark is reproducible from the repository; the flagship example ships in

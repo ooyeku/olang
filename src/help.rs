@@ -1951,6 +1951,27 @@ impl HelpSystem {
             "parse CSV text into a Frame, inferring column types (a parse failure raises)",
         );
         self.doc(
+            "ods.read_csv_file",
+            "ods.read_csv_file(path)",
+            "Result<Frame, Error>",
+            "ods",
+            "read a CSV file into a Frame, inferring column types. Requires the fs capability at read level; an unreadable file or malformed CSV is an Err",
+        );
+        self.doc(
+            "ods.to_csv",
+            "ods.to_csv(f)",
+            "String",
+            "ods",
+            "serialize a Frame as CSV text with a header row; nulls become empty cells, so it round-trips through read_csv",
+        );
+        self.doc(
+            "ods.write_csv",
+            "ods.write_csv(f, path)",
+            "Result<Unit, Error>",
+            "ods",
+            "write a Frame to a CSV file. Requires the fs capability at write level",
+        );
+        self.doc(
             "ods.columns",
             "ods.columns(f)",
             "List",

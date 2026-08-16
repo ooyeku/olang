@@ -345,42 +345,26 @@ fn os_env_gated(name: &str) -> bool {
 /// Anything not explicitly gated is allowed — capabilities restrict the
 /// effectful surface, not computation.
 pub fn check(caps: &Caps, full_name: &str) -> Option<&'static str> {
-    if let Some(f) = full_name.strip_prefix("fs.") {
-        if fs_pure(f) {
-            return None;
-        }
-        return match caps.fs {
+    // Defined *in terms of* `required`, not alongside it. These used to be
+    // two independent walks over the builtin surface that happened to
+    // agree, with a comment claiming they could not disagree — until a new
+    // gated function was added to one and not the other, and the gate
+    // silently allowed what the profiler was already reporting as an
+    // effect. One classification, two questions asked of it.
+    match required(full_name)? {
+        CapUse::FsRead => match caps.fs {
+            FsCap::Full | FsCap::Read => None,
+            FsCap::None => Some("fs"),
+        },
+        CapUse::FsWrite => match caps.fs {
             FsCap::Full => None,
-            FsCap::Read if fs_read_only(f) => None,
             _ => Some("fs"),
-        };
+        },
+        CapUse::Net => (!caps.net).then_some("net"),
+        CapUse::Db => (!caps.db).then_some("db"),
+        CapUse::Proc => (!caps.proc).then_some("proc"),
+        CapUse::Env => (!caps.env).then_some("env"),
     }
-    if let Some(f) = full_name.strip_prefix("http.") {
-        if http_pure(f) {
-            return None;
-        }
-        return if caps.net { None } else { Some("net") };
-    }
-    if full_name.starts_with("db.") {
-        return if caps.db { None } else { Some("db") };
-    }
-    if full_name.starts_with("proc.") || full_name == "os.exec" {
-        return if caps.proc { None } else { Some("proc") };
-    }
-    if let Some(f) = full_name.strip_prefix("os.") {
-        if os_env_gated(f) {
-            return if caps.env { None } else { Some("env") };
-        }
-        // chdir moves the filesystem cursor: full fs only.
-        if f == "chdir" {
-            return match caps.fs {
-                FsCap::Full => None,
-                _ => Some("fs"),
-            };
-        }
-        return None;
-    }
-    None
 }
 
 /// A capability a builtin call exercises, for the `--trace-caps` profiler.
@@ -421,6 +405,16 @@ pub fn required(full_name: &str) -> Option<CapUse> {
     }
     if full_name.starts_with("db.") {
         return Some(CapUse::Db);
+    }
+    // The data stack is pure except where it touches files. Those two
+    // demand `fs` at the matching level, so a program granted `db` and
+    // `net` but not `fs` cannot read a CSV off disk through `ods` — the
+    // latent-capability hole `db.open` had before it was gated.
+    if full_name == "ods.read_csv_file" {
+        return Some(CapUse::FsRead);
+    }
+    if full_name == "ods.write_csv" {
+        return Some(CapUse::FsWrite);
     }
     if full_name.starts_with("proc.") || full_name == "os.exec" {
         return Some(CapUse::Proc);
@@ -692,6 +686,12 @@ mod tests {
         assert_eq!(required("os.chdir"), Some(CapUse::FsWrite));
         assert_eq!(required("http.get"), Some(CapUse::Net));
         assert_eq!(required("db.open"), Some(CapUse::Db));
+        // ods is pure except at the two points it touches the filesystem
+        assert_eq!(required("ods.read_csv_file"), Some(CapUse::FsRead));
+        assert_eq!(required("ods.write_csv"), Some(CapUse::FsWrite));
+        assert_eq!(required("ods.read_csv"), None);
+        assert_eq!(required("ods.to_csv"), None);
+        assert_eq!(required("ods.group_by"), None);
         assert_eq!(required("proc.spawn"), Some(CapUse::Proc));
         assert_eq!(required("os.exec"), Some(CapUse::Proc));
         assert_eq!(required("os.get_env"), Some(CapUse::Env));

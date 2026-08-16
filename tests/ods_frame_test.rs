@@ -283,3 +283,91 @@ fn frame_error_paths() {
     let err = eval(r#"ods.column(ods.frame([["x", [1]]]), "y")"#, None).unwrap_err();
     assert!(err.contains("no column named"), "got: {}", err);
 }
+
+// ── DP2: the file IO surface ──────────────────────────────────────────
+//
+// The data chapter described an end-to-end story the stack could not
+// finish: it could read CSV *text* but had no way to reach a file, and no
+// way to write anything out at all.
+
+#[test]
+fn a_frame_round_trips_through_csv_text() {
+    // to_csv is the exact inverse of read_csv, which is the property that
+    // makes it worth having: nulls become empty cells, and empty cells
+    // read back as null.
+    let out = eval(
+        r#"
+let f = ods.frame_from_records([
+    #{ "name": "a", "n": 1, "x": 1.5, "ok": true },
+    #{ "name": "b", "n": 2, "x": 2.5, "ok": false },
+])
+let back = ods.read_csv(ods.to_csv(f))
+show([ods.n_rows(back), ods.n_cols(back)]) + " " + show(ods.sum(ods.column(back, "x")))
+"#,
+        None,
+    )
+    .expect("round-trip");
+    assert_eq!(out.to_string(), "\"[2, 4] 4.0\"".to_string());
+}
+
+#[test]
+fn csv_text_quotes_separators_and_quotes() {
+    // A value containing the delimiter or a quote has to survive, or the
+    // round-trip silently changes the column count.
+    let out = eval(
+        r#"
+let f = ods.frame_from_records([#{ "note": "a, b" }, #{ "note": "say \"hi\"" }])
+let back = ods.read_csv(ods.to_csv(f))
+show(ods.n_cols(back)) + " " + show(ods.to_records(back))
+"#,
+        None,
+    )
+    .expect("quoting");
+    let s = out.to_string();
+    assert!(s.contains("a, b"), "{s}");
+    assert!(s.contains("say \"hi\""), "{s}");
+    assert!(s.starts_with("\"1 "), "column count changed: {s}");
+}
+
+#[test]
+fn write_and_read_a_csv_file() {
+    let dir = std::env::temp_dir().join(format!("olang_dp2_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("out.csv");
+    let src = format!(
+        r#"
+let f = ods.frame_from_records([#{{ "k": "x", "v": 10 }}, #{{ "k": "y", "v": 32 }}])
+let w = ods.write_csv(f, "{p}")
+let back = unwrap(ods.read_csv_file("{p}"))
+show(is_ok(w)) + " " + show(ods.sum(ods.column(back, "v")))
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("file round-trip");
+    assert_eq!(out.to_string(), "\"true 42\"".to_string());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_missing_file_is_an_err_not_a_raise() {
+    // The 0.64 rule: a failure the caller could handle is a Result. A
+    // missing file is the caller's input, not their mistake.
+    let out = eval(
+        "show(is_err(ods.read_csv_file(\"/nope/definitely/missing.csv\")))\n",
+        None,
+    )
+    .expect("should not raise");
+    assert_eq!(out.to_string(), "\"true\"".to_string());
+}
+
+#[test]
+fn file_io_works_the_same_on_the_bytecode_tier() {
+    // The tier reaches these through the same dispatch, so it must agree.
+    assert_tier_transparent(
+        r#"
+let f = ods.frame_from_records([#{ "n": 1 }, #{ "n": 2 }, #{ "n": 3 }])
+ods.to_csv(f)
+"#,
+    )
+    .expect("tier agreement");
+}

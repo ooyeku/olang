@@ -1311,7 +1311,10 @@ are vectorized (`s * 2.0` runs one kernel over the whole column;
 `s > 2` yields a Bool mask for `ods.filter`), nulls propagate through
 arithmetic and are skipped by reductions, and the Frame verbs —
 `read_csv`, `select`, `with_column`, `filter`, `sort_by`, `group_by`,
-`join`, `to_records` — all chain with `|>`.
+`join`, `to_records` — all chain with `|>`. `read_csv_file` and
+`write_csv` reach the filesystem and are the module's only two calls that
+demand the `fs` capability; `to_csv` serializes to text without touching
+disk.
 
 ```olang
 let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,80.0,4\n")

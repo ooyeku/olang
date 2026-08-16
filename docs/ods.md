@@ -285,16 +285,48 @@ let f = ods.frame([
 println(to_string(ods.n_rows(f)) + " x " + to_string(ods.n_cols(f)))
 ```
 
-`ods.read_csv` parses CSV *text* — pair it with `fs.read_file` for a
-file on disk — inferring each column's type: all-integer columns
-become Int, numeric become Float, `true`/`false` become Bool, anything
-else String. Empty cells become nulls, not empty strings:
+`ods.read_csv` parses CSV *text*, inferring each column's type:
+all-integer columns become Int, numeric become Float, `true`/`false`
+become Bool, anything else String. Empty cells become nulls, not empty
+strings:
 
 ```olang
 let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,,4\n")
 println(to_string(ods.columns(sales)))
 println(to_string(ods.null_count(ods.column(sales, "amount"))))   // 1
 ```
+
+### Files in, files out
+
+`ods.read_csv_file` reads straight from disk, and `ods.write_csv` writes
+a Frame back. Both are the only two points in the whole data stack that
+touch the filesystem, so both demand the `fs`
+[capability](packages.md#capabilities) — read level to read, write level
+to write. Everything else in `ods` is pure and needs no grant, which is
+what stops `ods` from becoming a filesystem capability by the back door.
+
+Reading returns a `Result`, because a missing or malformed file is a
+failure the caller can handle:
+
+```olang no-run
+let sales = unwrap(ods.read_csv_file("sales.csv"))
+let by_region = ods.group_by(sales, ["region"], [["total", "sum", "amount"]])
+unwrap(ods.write_csv(by_region, "summary.csv"))
+```
+
+`ods.to_csv` is the serializer on its own, returning the text rather than
+writing it — for a Frame that is going into an HTTP response, a database,
+or a pipe rather than a file. It cannot fail, so it returns the string
+outright:
+
+```olang
+let f = ods.frame_from_records([#{ "k": "a", "v": 1 }, #{ "k": "b", "v": 2 }])
+print(ods.to_csv(f))
+```
+
+It is the exact inverse of `ods.read_csv`: a null becomes an empty cell,
+which is what `read_csv` reads back as null, and a value containing a
+comma or a quote is quoted so the column count survives the trip.
 
 And `ods.frame_from_records` takes a list of maps — exactly what
 `json.parse` yields for a JSON array of objects — with columns formed

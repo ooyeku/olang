@@ -343,7 +343,11 @@ fn a_promoted_function_is_still_gated() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&ok.stdout);
-    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
     assert!(stdout.contains("1 promoted"), "did not promote: {stdout}");
     assert!(
         stdout.contains("bytecode calls"),
@@ -380,7 +384,11 @@ fn a_restricted_run_keeps_the_tier() {
             .args(args)
             .output()
             .unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout)
             .lines()
             .find(|l| l.starts_with("Bytecode tier:"))
@@ -432,7 +440,10 @@ fn dependency_attenuation_survives_promotion() {
         .output()
         .unwrap();
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "the dependency's backdoor was allowed");
+    assert!(
+        !out.status.success(),
+        "the dependency's backdoor was allowed"
+    );
     assert!(err.contains("capability 'fs' denied"), "unexpected: {err}");
     assert!(
         err.contains("dependency 'lib'"),
@@ -466,6 +477,61 @@ fn the_caps_profiler_sees_effects_from_promoted_code() {
     assert!(
         text.contains("fs = \"read\""),
         "the profile missed the tier's effects: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// The data stack reaches the filesystem at exactly two points, and both
+/// are gated. Without this, granting a program `db` and `net` but not
+/// `fs` would still let it read any CSV on disk through `ods` — the
+/// latent-capability shape `db.open` had before it was gated.
+#[test]
+fn the_data_stack_is_not_a_latent_filesystem_capability() {
+    let ws = workspace("odsfs");
+    write(&ws.join("data.csv"), "k,v\na,1\nb,2\n");
+    write(
+        &ws.join("read.ol"),
+        "match ods.read_csv_file(\"data.csv\") { Ok(f) => println(\"READ\"), Err(e) => println(\"err\") }\n",
+    );
+    write(
+        &ws.join("write.ol"),
+        "let f = ods.frame_from_records([#{ \"a\": 1 }])\n\
+         match ods.write_csv(f, \"out.csv\") { Ok(v) => println(\"WROTE\"), Err(e) => println(\"err\") }\n",
+    );
+    // pure ods is never gated — computation is not an effect
+    write(
+        &ws.join("pure.ol"),
+        "let f = ods.read_csv(\"a,b\\n1,2\\n\")\nprintln(show(ods.n_rows(f)))\n",
+    );
+
+    let run = |args: &[&str]| {
+        Command::new(olang())
+            .current_dir(&ws)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    let denied = run(&["--deny", "fs", "read.ol"]);
+    assert!(!denied.status.success(), "ods read the file without fs");
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("capability 'fs' denied"),
+        "{}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
+
+    // write level: reading is allowed, writing is not
+    let read_ok = run(&["--deny", "fs-write", "read.ol"]);
+    assert!(String::from_utf8_lossy(&read_ok.stdout).contains("READ"));
+    let write_denied = run(&["--deny", "fs-write", "write.ol"]);
+    assert!(!write_denied.status.success(), "ods wrote without fs-write");
+
+    // and the pure surface keeps working with no filesystem grant at all
+    let pure = run(&["--deny", "fs", "pure.ol"]);
+    assert!(
+        pure.status.success() && String::from_utf8_lossy(&pure.stdout).contains('1'),
+        "pure ods was gated: {}",
+        String::from_utf8_lossy(&pure.stderr)
     );
     let _ = std::fs::remove_dir_all(&ws);
 }

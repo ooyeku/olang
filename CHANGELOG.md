@@ -7,7 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The data stack can reach files, and write them (Campaign 2, DP2 —
+  first half).** `ods` could parse CSV *text* and had no way to emit
+  anything at all, so the chapter described an end-to-end story the stack
+  could not finish. Three functions close the loop:
+
+  | | |
+  |---|---|
+  | `ods.read_csv_file(path)` | read a CSV file into a Frame → `Result` |
+  | `ods.to_csv(f)` | serialize a Frame to CSV text → `String` |
+  | `ods.write_csv(f, path)` | write a Frame to a file → `Result` |
+
+  `to_csv` is the exact inverse of `read_csv`: nulls become empty cells,
+  which is what `read_csv` reads back as null, and a value containing a
+  comma or a quote is quoted, so the column count survives a round trip.
+  It cannot fail, so it returns the string outright; the two that touch
+  the disk return `Result`, because a missing file is the caller's input
+  rather than their mistake.
+
+  **Both file-touching calls demand `fs`**, at read and write level
+  respectively — every other `ods` function stays pure and needs no
+  grant. Without that, `ods` would have become a filesystem capability by
+  the back door, which is the hole `db.open` had before 0.60.
+
 ### Changed
+
+- **`caps::check` is now defined in terms of `caps::required`.** They were
+  two independent walks over the builtin surface that happened to agree,
+  under a comment claiming they could not disagree. Adding the `ods` file
+  calls to `required` and not to `check` proved otherwise: `--trace-caps`
+  reported the read as an `fs` effect while `--deny fs` cheerfully allowed
+  it. One classification now answers both questions — "what would this
+  need?" and "does this grant permit it?" — so the drift is not
+  expressible.
 
 - **Capabilities no longer switch the bytecode tier off (Campaign 3, C1).**
   A `[capabilities]` manifest or a `--deny` flag used to force the whole
