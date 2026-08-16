@@ -9,17 +9,30 @@
 // is captured and shown only on failure; the run ends with a pass/fail
 // summary and a non-zero exit code if anything failed — so it works in CI.
 //
-// Run it from the examples/ directory:  olang run_all.ol
+// Run it from anywhere — `olang run_all.ol`, `olang run examples/run_all.ol`
+// from the repo root, all resolve the same set of examples.
 
 let olang = unwrap(os.exe_path())
-let root = unwrap(os.cwd())
+
+// Resolve everything against this script's own directory, not the current
+// working directory, so the discovered set (and the per-target labels the
+// harness args key off) is the same no matter where the runner is launched.
+// The script path is argv[0]; its directory, made absolute, is the base.
+let self_path = unwrap_or(os.args(), [""])[0]
+let self_dir = fs.dirname(self_path)
+let root =
+    if str.starts_with(self_dir, "/") => self_dir
+    else if self_dir == "" => unwrap(os.cwd())
+    else => unwrap(os.cwd()) + "/" + self_dir
 
 // Programs that block forever by design (servers) can't run under the
 // harness; list them here so the skip is visible, never silent.
 let long_running = ["webserver/", "app/"]
 
 // ── discover targets: each is { label, dir, file } ──
-let entries = sort(unwrap(fs.list_dir(".")))
+// Labels stay relative to `root` (e.g. "demo/"), which is what harness_args
+// keys on; dirs are absolute so os.exec's cwd resolves from anywhere.
+let entries = sort(unwrap(fs.list_dir(root)))
 let mut targets = []
 
 // Standalone scripts: top-level *.ol, minus this runner.
@@ -31,13 +44,13 @@ for e in entries {
 // Packages: a directory with a main.ol, looking one level deeper for nested
 // package roots like packages/demo.
 for e in entries {
-    if (!str.ends_with(e, ".ol")) && unwrap(fs.is_dir(e)) => {
-        if unwrap(fs.exists(e + "/main.ol")) =>
+    if (!str.ends_with(e, ".ol")) && unwrap(fs.is_dir(root + "/" + e)) => {
+        if unwrap(fs.exists(root + "/" + e + "/main.ol")) =>
             { targets = targets + [{ label: e + "/", dir: root + "/" + e, file: "main.ol" }] }
         else => {
-            for sub in sort(unwrap(fs.list_dir(e))) {
+            for sub in sort(unwrap(fs.list_dir(root + "/" + e))) {
                 let rel = e + "/" + sub
-                if unwrap(fs.is_dir(rel)) && unwrap(fs.exists(rel + "/main.ol")) =>
+                if unwrap(fs.is_dir(root + "/" + rel)) && unwrap(fs.exists(root + "/" + rel + "/main.ol")) =>
                     { targets = targets + [{ label: rel + "/", dir: root + "/" + rel, file: "main.ol" }] }
             }
         }
