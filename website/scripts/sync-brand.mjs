@@ -10,7 +10,8 @@ const out = join(here, '..', 'static', 'brand');
 
 mkdirSync(out, { recursive: true });
 for (const f of ['logo.svg', 'logo-light.svg', 'logo-mono.svg', 'wordmark.svg',
-  'mark.svg', 'mark-light.svg', 'banner.svg', 'favicon.svg', 'mascot.svg']) {
+  'wordmark-light.svg', 'mark.svg', 'mark-light.svg', 'mark-mono.svg',
+  'banner.svg', 'favicon.svg', 'mascot.svg', 'og.png']) {
   cpSync(join(branding, f), join(out, f));
 }
 cpSync(join(branding, 'mascot'), join(out, 'mascot'), { recursive: true });

@@ -23,13 +23,17 @@ AMBER = "#FBBF24"
 
 
 def stone(cx, cy, s=0.14):
-    """The o> stone — the single brand element Ollie carries."""
+    """The stone Ollie carries: the mark itself, on its own ink disc.
+
+    Geometry mirrors generate.py's mark exactly — ring at r=168 w=68, the
+    through-line 52 tall overhanging to x=+-222 — so the otter is never
+    holding a logo the project has stopped using.
+    """
     return [
         f'<g transform="translate({cx} {cy}) scale({s})">'
         f'<circle cx="0" cy="0" r="252" fill="{INK}"/>'
-        f'<circle cx="0" cy="0" r="168" fill="none" stroke="{TEAL}" stroke-width="76"/>'
-        f'<path d="M -42 -74 L 56 0 L -42 74" fill="none" stroke="{AMBER}" stroke-width="64" '
-        f'stroke-linecap="round" stroke-linejoin="round"/></g>'
+        f'<circle cx="0" cy="0" r="168" fill="none" stroke="{TEAL}" stroke-width="68"/>'
+        f'<rect x="-222" y="-26" width="444" height="52" rx="26" fill="{AMBER}"/></g>'
     ]
 
 

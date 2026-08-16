@@ -101,6 +101,51 @@ export const PALETTE = {
   op: '#9FB6C9'
 };
 
+/* The same roles at contrast levels that hold against paper. Darker
+   hues, because a colour tuned to glow on ink turns to pastel on white. */
+export const PALETTE_LIGHT = {
+  bg: '#F8FAFC',
+  plain: '#1E293B',
+  comment: '#64748B',
+  string: '#A16207',
+  escape: '#B45309',
+  number: '#0E7490',
+  keyword: '#0D9488',
+  const: '#0D9488',
+  type: '#0369A1',
+  fn: '#1E293B',
+  pipe: '#B45309',
+  arrow: '#B45309',
+  op: '#52708C'
+};
+
+function theme(name, p) {
+  return {
+    name,
+    type: name.endsWith('light') ? 'light' : 'dark',
+    colors: { 'editor.background': p.bg, 'editor.foreground': p.plain },
+    tokenColors: [
+      { scope: ['comment'], settings: { foreground: p.comment, fontStyle: 'italic' } },
+      { scope: ['string'], settings: { foreground: p.string } },
+      { scope: ['constant.character.escape', 'punctuation.definition.template-expression'],
+        settings: { foreground: p.escape } },
+      { scope: ['constant.numeric'], settings: { foreground: p.number } },
+      { scope: ['keyword.control', 'storage.type'], settings: { foreground: p.keyword } },
+      { scope: ['constant.language'], settings: { foreground: p.const, fontStyle: 'bold' } },
+      { scope: ['entity.name.type'], settings: { foreground: p.type } },
+      { scope: ['entity.name.function'], settings: { foreground: p.fn } },
+      { scope: ['keyword.operator.pipeline'], settings: { foreground: p.pipe, fontStyle: 'bold' } },
+      { scope: ['keyword.operator.arrow'], settings: { foreground: p.arrow } },
+      { scope: ['keyword.operator'], settings: { foreground: p.op } },
+      // non-olang languages (toml, json, bash) reuse the same family
+      { scope: ['support.type.property-name', 'entity.name.tag'], settings: { foreground: p.type } },
+      { scope: ['punctuation'], settings: { foreground: p.op } }
+    ]
+  };
+}
+
+export const olangThemeLight = theme('olang-light', PALETTE_LIGHT);
+
 export const olangTheme = {
   name: 'olang-dark',
   type: 'dark',

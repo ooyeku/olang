@@ -11,12 +11,14 @@
 // below are emitted as CSS custom properties from the same token colours
 // the book uses.
 
-import { PALETTE } from './olang-lang.js';
+import { PALETTE, PALETTE_LIGHT } from './olang-lang.js';
 
-/** The shared palette as CSS custom properties, for the editor's styles. */
-export const TOKEN_COLORS = Object.fromEntries(
-  Object.entries(PALETTE).map(([name, value]) => [`--tok-${name}`, value])
-);
+/** The shared palettes as CSS custom properties, for the editor's styles. */
+const vars = (p, suffix = '') =>
+  Object.fromEntries(Object.entries(p).map(([n, v]) => [`--tok-${n}${suffix}`, v]));
+
+export const TOKEN_COLORS = vars(PALETTE);
+export const TOKEN_COLORS_LIGHT = vars(PALETTE_LIGHT);
 
 // The fifteen reserved words, plus `in`, `spawn`, and `par` — which are
 // not reserved but only ever mean one thing where they appear.

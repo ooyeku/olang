@@ -5,8 +5,26 @@
     <link rel="icon" href="%sveltekit.assets%/brand/favicon.svg" />
     <link rel="apple-touch-icon" href="%sveltekit.assets%/brand/icons/icon-180.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="description" content="olang — the Open Language: open code (the program as data via meta.parse), open artifacts (source-carrying binaries + per-dependency capabilities), and open execution (deterministic record/replay). A batteries-included functional language with a built-in data stack, no-GIL parallelism, and a three-tier runtime." />
-    <meta name="theme-color" content="#0E1319" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0e1319" media="(prefers-color-scheme: dark)" />
+    <!--
+      Stamp the saved theme before the first paint. Anything later — a
+      module, an onMount — runs after the browser has already painted the
+      default palette, which is exactly the white flash this avoids. It is
+      inline and synchronous for that reason.
+    -->
+    <script>
+      try {
+        var t = localStorage.getItem('theme');
+        if (t === 'light' || t === 'dark') {
+          document.documentElement.setAttribute('data-theme', t);
+        }
+      } catch (e) {
+        /* private mode: fall through to the system preference */
+      }
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

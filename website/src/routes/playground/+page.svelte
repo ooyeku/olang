@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { highlightOlang, TOKEN_COLORS } from '$lib/olang-highlight.js';
+  import { highlightOlang, TOKEN_COLORS, TOKEN_COLORS_LIGHT } from '$lib/olang-highlight.js';
 
   const EXAMPLES = [
     {
@@ -428,9 +428,14 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
   $: gutter = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n');
   $: painted = highlightOlang(source);
 
-  const tokenStyle = Object.entries(TOKEN_COLORS)
-    .map(([k, v]) => `${k}:${v}`)
-    .join(';');
+  // Both palettes ride on the wrapper; the stylesheet below picks one by
+  // theme. Emitting only the active set would need the theme in component
+  // state, which is a second source of truth for something CSS already
+  // knows.
+  const tokenStyle = [
+    ...Object.entries(TOKEN_COLORS).map(([k, v]) => `${k}:${v}`),
+    ...Object.entries(TOKEN_COLORS_LIGHT).map(([k, v]) => `${k}-lt:${v}`),
+  ].join(';');
 
   function spawnWorker() {
     worker?.terminate();
@@ -709,7 +714,7 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     margin-bottom: 1.8rem;
   }
   .intro h1 {
-    color: var(--paper);
+    color: var(--text);
     font-family: var(--mono);
     font-size: 1.9rem;
     margin: 0 0 0.5rem;
@@ -725,9 +730,9 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     gap: 0.4rem;
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    background: var(--ink-2);
+    background: var(--bg-2);
     font-size: 0.82rem;
-    color: var(--slate);
+    color: var(--text-3);
     min-width: 21rem;
   }
   .sandbox span {
@@ -735,10 +740,10 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     font-size: 0.72rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--teal);
+    color: var(--accent);
     margin-right: 0.5rem;
   }
-  .sandbox code { font-family: var(--mono); color: var(--body); font-size: 0.92em; }
+  .sandbox code { font-family: var(--mono); color: var(--text-2); font-size: 0.92em; }
 
   @media (max-width: 900px) {
     .intro { grid-template-columns: 1fr; gap: 1.4rem; }
@@ -755,17 +760,17 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
   .toolbar .spacer { flex: 1 1 auto; }
   .picker select {
     background: var(--surface);
-    color: var(--paper);
-    border: 1px solid var(--line-bright);
+    color: var(--text);
+    border: 1px solid var(--line-strong);
     border-radius: var(--radius);
     font-family: var(--mono);
     font-size: 0.88rem;
     padding: 0.5rem 0.7rem;
     cursor: pointer;
   }
-  .picker select:hover { border-color: var(--slate); }
+  .picker select:hover { border-color: var(--text-3); }
   .run {
-    background: var(--teal);
+    background: var(--accent);
     color: #04211c;
     border: 1px solid transparent;
     border-radius: var(--radius);
@@ -776,13 +781,13 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     cursor: pointer;
     transition: background var(--fast) var(--ease);
   }
-  .run:hover:not(:disabled) { background: var(--teal-deep); }
+  .run:hover:not(:disabled) { background: var(--accent-strong); }
   .run:disabled { opacity: 0.5; cursor: progress; }
-  .run.stop { background: var(--rose); color: #2b0b0b; }
+  .run.stop { background: var(--danger); color: #2b0b0b; }
   .ghost {
     background: none;
-    border: 1px solid var(--line-bright);
-    color: var(--slate);
+    border: 1px solid var(--line-strong);
+    color: var(--text-3);
     border-radius: var(--radius);
     font-family: var(--mono);
     font-size: 0.8rem;
@@ -790,13 +795,13 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     cursor: pointer;
     transition: color var(--fast) var(--ease), border-color var(--fast) var(--ease);
   }
-  .ghost:hover { color: var(--teal); border-color: var(--teal-deep); }
-  .hint { font-family: var(--mono); font-size: 0.78rem; color: var(--slate-dim); }
+  .ghost:hover { color: var(--accent); border-color: var(--accent-strong); }
+  .hint { font-family: var(--mono); font-size: 0.78rem; color: var(--text-4); }
 
   .blurb {
     margin: 0 0 0.9rem;
     font-size: 0.88rem;
-    color: var(--slate);
+    color: var(--text-3);
   }
 
   .panes {
@@ -821,21 +826,21 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
   .editor-wrap {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    background: var(--ink-2);
+    background: var(--bg-2);
     border: 1px solid var(--line);
     border-radius: var(--radius);
     overflow: hidden;
     min-height: 0;
     transition: border-color var(--fast) var(--ease);
   }
-  .editor-wrap:focus-within { border-color: var(--teal-deep); }
+  .editor-wrap:focus-within { border-color: var(--accent-strong); }
 
   .gutter {
     margin: 0;
     padding: 1rem 0.7rem 1rem 1rem;
     overflow: hidden;
     text-align: right;
-    color: var(--slate-dim);
+    color: var(--text-4);
     background: rgba(0, 0, 0, 0.18);
     border-right: 1px solid var(--line);
     user-select: none;
@@ -878,7 +883,7 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     background: transparent;
     color: transparent;
     -webkit-text-fill-color: transparent;
-    caret-color: var(--paper);
+    caret-color: var(--text);
     resize: none;
     overflow: auto;
     scrollbar-gutter: stable;
@@ -898,6 +903,37 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
   .paint :global(.t-pipe) { color: var(--tok-pipe); font-weight: 700; }
   .paint :global(.t-arrow) { color: var(--tok-arrow); }
   .paint :global(.t-op) { color: var(--tok-op); }
+
+  /* light: the OS preference, unless the reader overrode it */
+  @media (prefers-color-scheme: light) {
+    :global(:root:not([data-theme='dark'])) .paint :global(.t-comment) { color: var(--tok-comment-lt); }
+    :global(:root:not([data-theme='dark'])) .paint :global(.t-string) { color: var(--tok-string-lt); }
+    :global(:root:not([data-theme='dark'])) .paint :global(.t-escape) { color: var(--tok-escape-lt); }
+    :global(:root:not([data-theme='dark'])) .paint :global(.t-number) { color: var(--tok-number-lt); }
+    :global(:root:not([data-theme='dark'])) .paint :global(.t-keyword) { color: var(--tok-keyword-lt); }
+    :global(:root:not([data-theme='dark'])) .paint :global(.t-const) { color: var(--tok-const-lt); }
+    :global(:root:not([data-theme='dark'])) .paint :global(.t-type) { color: var(--tok-type-lt); }
+    :global(:root:not([data-theme='dark'])) .paint :global(.t-fn) { color: var(--tok-fn-lt); }
+    :global(:root:not([data-theme='dark'])) .paint :global(.t-pipe) { color: var(--tok-pipe-lt); }
+    :global(:root:not([data-theme='dark'])) .paint :global(.t-arrow) { color: var(--tok-arrow-lt); }
+    :global(:root:not([data-theme='dark'])) .paint :global(.t-op) { color: var(--tok-op-lt); }
+  }
+  @media (prefers-color-scheme: light) {
+    :global(:root:not([data-theme='dark'])) .paint { color: var(--tok-plain-lt); }
+  }
+  :global(:root[data-theme='light']) .paint { color: var(--tok-plain-lt); }
+  /* and an explicit light pick, which wins in either OS scheme */
+  :global(:root[data-theme='light']) .paint :global(.t-comment) { color: var(--tok-comment-lt); }
+  :global(:root[data-theme='light']) .paint :global(.t-string) { color: var(--tok-string-lt); }
+  :global(:root[data-theme='light']) .paint :global(.t-escape) { color: var(--tok-escape-lt); }
+  :global(:root[data-theme='light']) .paint :global(.t-number) { color: var(--tok-number-lt); }
+  :global(:root[data-theme='light']) .paint :global(.t-keyword) { color: var(--tok-keyword-lt); }
+  :global(:root[data-theme='light']) .paint :global(.t-const) { color: var(--tok-const-lt); }
+  :global(:root[data-theme='light']) .paint :global(.t-type) { color: var(--tok-type-lt); }
+  :global(:root[data-theme='light']) .paint :global(.t-fn) { color: var(--tok-fn-lt); }
+  :global(:root[data-theme='light']) .paint :global(.t-pipe) { color: var(--tok-pipe-lt); }
+  :global(:root[data-theme='light']) .paint :global(.t-arrow) { color: var(--tok-arrow-lt); }
+  :global(:root[data-theme='light']) .paint :global(.t-op) { color: var(--tok-op-lt); }
 
   /* result */
   .result {
@@ -922,11 +958,11 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     text-transform: uppercase;
     letter-spacing: 0.1em;
   }
-  .result-head .title { color: var(--slate); }
+  .result-head .title { color: var(--text-3); }
   .status { letter-spacing: 0.06em; }
-  .status.ok { color: var(--teal); }
-  .status.bad { color: var(--rose); }
-  .status.busy { color: var(--slate); }
+  .status.ok { color: var(--accent); }
+  .status.bad { color: var(--danger); }
+  .status.busy { color: var(--text-3); }
   .result-body {
     flex: 1 1 auto;
     overflow: auto;
@@ -941,22 +977,22 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     word-break: break-word;
   }
   .result-body pre:last-child { margin-bottom: 0; }
-  .stdout { color: var(--paper); }
-  .value { color: var(--teal); }
-  .err, .crash { color: var(--rose); }
-  .placeholder { color: var(--slate-dim); margin: 0; font-family: var(--sans); font-size: 0.9rem; }
-  .placeholder b { color: var(--body); }
+  .stdout { color: var(--text); }
+  .value { color: var(--accent); }
+  .err, .crash { color: var(--danger); }
+  .placeholder { color: var(--text-4); margin: 0; font-family: var(--sans); font-size: 0.9rem; }
+  .placeholder b { color: var(--text-2); }
   .meta {
     display: flex;
     gap: 1rem;
     padding: 0.5rem 1.1rem;
     border-top: 1px solid var(--line);
-    color: var(--slate-dim);
+    color: var(--text-4);
     font-family: var(--mono);
     font-size: 0.74rem;
   }
 
-  .footnote { margin: 1.4rem 0 0; font-size: 0.85rem; color: var(--slate); }
+  .footnote { margin: 1.4rem 0 0; font-size: 0.85rem; color: var(--text-3); }
 
   .visually-hidden {
     position: absolute;

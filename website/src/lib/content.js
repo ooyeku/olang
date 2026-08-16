@@ -12,7 +12,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { marked } from 'marked';
 import { createHighlighter } from 'shiki';
-import { olangGrammar, olangTheme } from './olang-lang.js';
+import { olangGrammar, olangTheme, olangThemeLight } from './olang-lang.js';
 
 // Locate the repository root by walking up to Cargo.toml — robust no matter
 // where the bundler relocates this module (it runs at build time only).
@@ -34,7 +34,7 @@ export const GITHUB = 'https://github.com/ooyeku/olang';
 let highlighterPromise;
 function getHighlighter() {
   highlighterPromise ??= createHighlighter({
-    themes: [olangTheme],
+    themes: [olangTheme, olangThemeLight],
     langs: [olangGrammar, 'bash', 'toml', 'json', 'text']
   });
   return highlighterPromise;
@@ -45,7 +45,15 @@ const LANG_ALIASES = { olang: 'olang', ol: 'olang', bash: 'bash', sh: 'bash', sh
 export async function highlight(code, lang = 'olang') {
   const hl = await getHighlighter();
   const resolved = LANG_ALIASES[lang] ?? 'text';
-  return hl.codeToHtml(code.trimEnd(), { lang: resolved, theme: 'olang-dark' });
+  // Both themes, emitted as CSS custom properties rather than baked-in
+  // colours: the blocks are highlighted once at build time and pick their
+  // palette from the page's theme at read time.
+  return hl.codeToHtml(code.trimEnd(), {
+    lang: resolved,
+    themes: { light: 'olang-light', dark: 'olang-dark' },
+    defaultColor: false,
+    cssVariablePrefix: '--sh-'
+  });
 }
 
 // ── the book ───────────────────────────────────────────────────────────

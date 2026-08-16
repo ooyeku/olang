@@ -164,16 +164,16 @@
   /* The disclosure reuses the sidebar's link styling inside its body. */
   .book-menu :global(a) {
     display: block;
-    color: var(--body);
+    color: var(--text-2);
     padding: 0.34rem 0.75rem;
     border-left: 1px solid var(--line);
     font-size: 0.9rem;
   }
-  .book-menu :global(a:hover) { color: var(--paper); text-decoration: none; background: var(--surface); }
-  .book-menu :global(a.active) { color: var(--teal); border-left-color: var(--teal); background: var(--teal-dim); }
+  .book-menu :global(a:hover) { color: var(--text); text-decoration: none; background: var(--surface); }
+  .book-menu :global(a.active) { color: var(--accent); border-left-color: var(--accent); background: var(--accent-soft); }
   .book-menu :global(.part) {
     font-family: var(--mono);
-    color: var(--slate-dim);
+    color: var(--text-4);
     font-size: 0.68rem;
     text-transform: uppercase;
     letter-spacing: 0.1em;

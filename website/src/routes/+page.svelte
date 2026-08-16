@@ -14,7 +14,10 @@
 <section class="hero">
   <div class="container">
     <div>
-      <h1><img src="/brand/logo.svg" alt="olang" /></h1>
+      <h1>
+        <img class="logo-dark" src="/brand/logo.svg" alt="olang" width="208" height="82" />
+        <img class="logo-light" src="/brand/logo-light.svg" alt="olang" width="208" height="82" />
+      </h1>
       <p class="lede">
         <b>The Open Language.</b> A program's structure is a public data format
         (<code>meta.parse</code>); a compiled binary carries its own source and
