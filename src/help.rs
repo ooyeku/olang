@@ -2869,11 +2869,11 @@ impl HelpSystem {
         self.doc(
             "os.is_tty",
             "os.is_tty()",
-            "Result",
+            "Bool",
             "os",
             "whether standard output is a terminal (Ok(bool))",
         );
-        self.doc("os.flush", "os.flush()", "Result", "os", "flush buffered standard output — needed to show a progress bar drawn with a leading carriage return");
+        self.doc("os.flush", "os.flush()", "Unit", "os", "flush buffered standard output — needed to show a progress bar drawn with a leading carriage return");
         self.doc(
             "os.on_interrupt",
             "os.on_interrupt()",
@@ -2884,14 +2884,14 @@ impl HelpSystem {
         self.doc(
             "os.interrupted",
             "os.interrupted()",
-            "Result",
+            "Bool",
             "os",
             "whether Ctrl-C has been pressed since on_interrupt/reset_interrupt (Ok(bool))",
         );
         self.doc(
             "os.reset_interrupt",
             "os.reset_interrupt()",
-            "Result",
+            "Unit",
             "os",
             "clear the interrupt flag, arming for the next Ctrl-C",
         );
@@ -3085,7 +3085,7 @@ impl HelpSystem {
         self.doc(
             "csv.add_row",
             "csv.add_row(csv, row)",
-            "Result",
+            "CSV",
             "csv",
             "a copy of csv with one row (a list of cells) appended",
         );
@@ -3106,7 +3106,7 @@ impl HelpSystem {
         self.doc(
             "csv.set_headers",
             "csv.set_headers(csv, headers)",
-            "Result",
+            "CSV",
             "csv",
             "a copy of csv with its header row set",
         );
@@ -3120,7 +3120,7 @@ impl HelpSystem {
         self.doc(
             "csv.sort_by_column",
             "csv.sort_by_column(csv, col_index, ascending)",
-            "Result",
+            "CSV",
             "csv",
             "a copy of csv sorted by the column at col_index — ascending when true, descending when false",
         );
@@ -4448,7 +4448,7 @@ impl HelpSystem {
             description: "Decode a URL query string into a struct of parameters".to_string(),
             syntax: "http.decode_query(query_string)".to_string(),
             parameters: vec!["query_string: String - The query string to decode".to_string()],
-            return_type: "Result<QueryParams, Error>".to_string(),
+            return_type: "Map".to_string(),
             examples: vec![
                 "http.decode_query(\"name=John%20Doe&age=30&city=New%20York\")".to_string(),
                 "match http.decode_query(request.query) { Ok(params) => println(params.name); Err(e) => println(\"Invalid query\") }".to_string(),
@@ -6135,6 +6135,22 @@ For function-specific syntax, use: {}:help <function_name>{}",
         self.functions.keys().cloned().collect()
     }
 
+    /// Qualified names of every stdlib function documented as returning a
+    /// `Result` (`"fs.write_file"`, `"str.parse_int"`, ...).
+    ///
+    /// The checker uses this to spot a discarded failure. The help registry
+    /// is the right source: it already records each function's return type,
+    /// a coverage test keeps it complete for every callable module, and it
+    /// is the same text `:help` shows — so the lint and the documentation
+    /// cannot disagree about which functions can fail.
+    pub fn result_returning_functions(&self) -> std::collections::HashSet<String> {
+        self.functions
+            .values()
+            .filter(|d| d.return_type.starts_with("Result"))
+            .map(|d| d.name.clone())
+            .collect()
+    }
+
     /// Get all category names
     pub fn get_category_names(&self) -> Vec<String> {
         self.categories.keys().cloned().collect()
@@ -6235,7 +6251,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "csv_data: List<List<String>> - Parsed CSV data".to_string(),
                 "index: Int - Column index (0-based)".to_string(),
             ],
-            return_type: "Result<List<String>, Error>".to_string(),
+            return_type: "[String]".to_string(),
             examples: vec![
                 "csv.read_column(parsed_csv, 0)  // First column values".to_string(),
                 "csv.read_column(parsed_csv, 1)  // Second column values".to_string(),
@@ -6284,7 +6300,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Get the number of rows in CSV data".to_string(),
             syntax: "csv.row_count(csv_data)".to_string(),
             parameters: vec!["csv_data: List<List<String>> - Parsed CSV data".to_string()],
-            return_type: "Result<Int, Error>".to_string(),
+            return_type: "Int".to_string(),
             examples: vec!["csv.row_count(parsed_csv)  // Ok(5)  // 5 rows total".to_string()],
             category: "CSV".to_string(),
             see_also: vec!["csv.column_count".to_string(), "len".to_string()],
@@ -6790,7 +6806,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "var_name: String - The environment variable name".to_string(),
                 "value: String - The value to set".to_string(),
             ],
-            return_type: "Result<Unit, Error>".to_string(),
+            return_type: "Unit".to_string(),
             examples: vec![
                 "os.set_env(\"MY_VAR\", \"my_value\")  // Ok(Unit)".to_string(),
                 "os.set_env(\"LANG\", \"en_US.UTF-8\")".to_string(),
@@ -6804,7 +6820,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Remove an environment variable from the current process".to_string(),
             syntax: "os.remove_env(var_name)".to_string(),
             parameters: vec!["var_name: String - The environment variable name".to_string()],
-            return_type: "Result<Unit, Error>".to_string(),
+            return_type: "Unit".to_string(),
             examples: vec![
                 "os.remove_env(\"MY_VAR\")  // Ok(Unit)".to_string(),
                 "os.remove_env(\"TEMP_SETTING\")".to_string(),
@@ -6818,7 +6834,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Get all environment variables as a struct".to_string(),
             syntax: "os.list_env()".to_string(),
             parameters: vec![],
-            return_type: "Result<{String: String}, Error>".to_string(),
+            return_type: "Map".to_string(),
             examples: vec![
                 "os.list_env()  // Ok({ PATH: \"/usr/bin\", HOME: \"/home/user\", ... })"
                     .to_string(),
@@ -6834,7 +6850,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Check if an environment variable exists".to_string(),
             syntax: "os.has_env(var_name)".to_string(),
             parameters: vec!["var_name: String - The environment variable name".to_string()],
-            return_type: "Result<Bool, Error>".to_string(),
+            return_type: "Bool".to_string(),
             examples: vec![
                 "os.has_env(\"PATH\")  // Ok(true)".to_string(),
                 "os.has_env(\"NONEXISTENT\")  // Ok(false)".to_string(),
@@ -6863,7 +6879,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Get the current username".to_string(),
             syntax: "os.username()".to_string(),
             parameters: vec![],
-            return_type: "Result<String, Error>".to_string(),
+            return_type: "String".to_string(),
             examples: vec![
                 "os.username()  // Ok(\"johndoe\")".to_string(),
                 "println(\"Hello, \" + os.username())".to_string(),
@@ -6877,7 +6893,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Get the operating system type (linux, macos, windows, etc.)".to_string(),
             syntax: "os.os_type()".to_string(),
             parameters: vec![],
-            return_type: "Result<String, Error>".to_string(),
+            return_type: "String".to_string(),
             examples: vec![
                 "os.os_type()  // Ok(\"linux\") or Ok(\"macos\") or Ok(\"windows\")".to_string(),
                 "if os.os_type() == Ok(\"windows\") { println(\"Running on Windows\") }"
@@ -6892,7 +6908,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Get the system architecture (x86_64, aarch64, etc.)".to_string(),
             syntax: "os.arch()".to_string(),
             parameters: vec![],
-            return_type: "Result<String, Error>".to_string(),
+            return_type: "String".to_string(),
             examples: vec![
                 "os.arch()  // Ok(\"x86_64\") or Ok(\"aarch64\")".to_string(),
                 "println(\"Running on \" + os.arch() + \" architecture\")".to_string(),
@@ -6906,7 +6922,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Get the operating system family (unix, windows, wasm)".to_string(),
             syntax: "os.family()".to_string(),
             parameters: vec![],
-            return_type: "Result<String, Error>".to_string(),
+            return_type: "String".to_string(),
             examples: vec![
                 "os.family()  // Ok(\"unix\") or Ok(\"windows\")".to_string(),
                 "if os.family() == Ok(\"unix\") { println(\"Unix-like system\") }".to_string(),
@@ -6921,7 +6937,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Get the current process ID".to_string(),
             syntax: "os.pid()".to_string(),
             parameters: vec![],
-            return_type: "Result<Int, Error>".to_string(),
+            return_type: "Int".to_string(),
             examples: vec![
                 "os.pid()  // Ok(12345)".to_string(),
                 "println(\"Process ID: \" + to_string(os.pid()))".to_string(),
@@ -6935,7 +6951,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Get command line arguments as a list".to_string(),
             syntax: "os.args()".to_string(),
             parameters: vec![],
-            return_type: "Result<[String], Error>".to_string(),
+            return_type: "[String]".to_string(),
             examples: vec![
                 "os.args()  // Ok([\"program\", \"arg1\", \"arg2\"])".to_string(),
                 "match os.args() { Ok(args) => map(args, println); Err(e) => println(e) }"
@@ -6994,7 +7010,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Get the path separator for the current OS ('/' or '\\\\')".to_string(),
             syntax: "os.path_separator()".to_string(),
             parameters: vec![],
-            return_type: "Result<String, Error>".to_string(),
+            return_type: "String".to_string(),
             examples: vec![
                 "os.path_separator()  // Ok(\"/\") on Unix, Ok(\"\\\\\") on Windows".to_string(),
                 "let sep = os.path_separator(); let path = \"dir\" + sep + \"file.txt\""
@@ -7023,7 +7039,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Get the system temporary directory path".to_string(),
             syntax: "os.temp_dir()".to_string(),
             parameters: vec![],
-            return_type: "Result<String, Error>".to_string(),
+            return_type: "String".to_string(),
             examples: vec![
                 "os.temp_dir()  // Ok(\"/tmp\") or Ok(\"C:\\\\Temp\")".to_string(),
                 "let temp_file = os.temp_dir() + \"/myapp_\" + to_string(os.pid()) + \".tmp\""
@@ -7229,7 +7245,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Encode a string to hexadecimal representation".to_string(),
             syntax: "crypto.hex_encode(input)".to_string(),
             parameters: vec!["input: String - The string to encode".to_string()],
-            return_type: "Result<String, Error>".to_string(),
+            return_type: "String".to_string(),
             examples: vec![
                 "crypto.hex_encode(\"hello\")  // Ok(\"68656c6c6f\")".to_string(),
                 "crypto.hex_encode(\"ABC\")  // Ok(\"414243\")".to_string(),
@@ -7392,7 +7408,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             parameters: vec![
                 "key_pair: {private_key: String, public_key: String} - Key pair struct".to_string(),
             ],
-            return_type: "Result<String, Error>".to_string(),
+            return_type: "String".to_string(),
             examples: vec![
                 "let public_key = crypto.export_public_key(key_pair)  // Ok(\"-----BEGIN PUBLIC KEY-----\")".to_string(),
             ],
@@ -7552,7 +7568,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 .to_string(),
             syntax: "base64.validate(base64_string)".to_string(),
             parameters: vec!["base64_string: String - The base64 string to validate".to_string()],
-            return_type: "Result<String, Error>".to_string(),
+            return_type: "Bool".to_string(),
             examples: vec![
                 "base64.validate(\"aGVsbG8=\")  // Ok(\"hello\")".to_string(),
                 "base64.validate(\"invalid!!!\")  // Err(\"Invalid base64: ...\")".to_string(),

@@ -152,13 +152,12 @@ positional_arg = { expr }
 named_arg = { identifier ~ ":" ~ expr }
 
 // Try-catch expressions
-try_catch_expr = { "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block }
 
 // Postfix operators
 postfix_op = { "?" }
 
 // Primary expressions
-primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | match_expr | if_expr | try_catch_expr | struct_literal | anonymous_object | map_literal | literal | identifier | paren_expr | block }
+primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | try_catch_expr | match_expr | if_expr | struct_literal | anonymous_object | map_literal | literal | identifier | paren_expr | block }
 
 // Lambda functions
 lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ NL* ~ (block | expr) }
@@ -175,6 +174,10 @@ promise_method = { "resolve" | "reject" | "delay" }
 all_expr    = { "Promise" ~ "." ~ "all" ~ "(" ~ expr ~ ")" }
 race_expr   = { "Promise" ~ "." ~ "race" ~ "(" ~ expr ~ ")" }
 spawn_expr  = { "spawn" ~ call_expr }
+// Removed in 0.65. Kept solely so the parser can emit a migration error
+// naming `match` / `unwrap_or` instead of a bare syntax failure; the rule
+// and the two keywords go at 1.0. See `removed_try_catch` in parser.rs.
+try_catch_expr = { "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block }
 
 // Pattern matching
 match_expr  = { "match" ~ expr ~ "{" ~ NL* ~ match_arm+ ~ "}" }

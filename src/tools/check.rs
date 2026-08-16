@@ -845,6 +845,12 @@ struct Checker {
     /// scoped, and using a leaked name draws an advisory warning.
     leaked: Vec<std::collections::HashSet<String>>,
     warned_leaks: std::collections::HashSet<String>,
+    /// True while walking a block's final statement, which is the block's
+    /// value rather than a discarded expression.
+    in_tail_position: bool,
+    /// Qualified stdlib names documented as returning `Result`, from the
+    /// help registry. Populated lazily — most checks never need it.
+    fallible: std::collections::HashSet<String>,
     out: Vec<CheckDiagnostic>,
 }
 
@@ -1128,6 +1134,48 @@ impl Checker {
             warning: false,
             scope: false,
         });
+    }
+
+    /// A fallible call in statement position drops its failure on the
+    /// floor: nothing binds it, matches it, unwraps it, or returns it, so
+    /// a write that failed reads exactly like one that succeeded.
+    ///
+    /// Only *calls* count, and only in statement position — an expression
+    /// used for its value is by definition not discarded. `let _ = f(x)`
+    /// is the way to say the failure is deliberately ignored, and it does
+    /// not trip this because it is a declaration, not an expression
+    /// statement.
+    fn warn_discarded_result(&mut self, expr: &Expr, span: (u32, u32)) {
+        if self.in_tail_position {
+            return;
+        }
+        let Expr::Call { callee, .. } = expr else {
+            return;
+        };
+        // Only module calls (`fs.write_file`) have a documented return
+        // type to consult; a user function's is the checker's own business
+        // and is handled by the annotation rules.
+        let Expr::FieldAccess { object, field } = callee.as_ref() else {
+            return;
+        };
+        let Expr::Identifier(module) = object.as_ref() else {
+            return;
+        };
+        if self.fallible.is_empty() {
+            self.fallible = crate::help::HelpSystem::new().result_returning_functions();
+        }
+        let qualified = format!("{}.{}", module, field);
+        if !self.fallible.contains(&qualified) {
+            return;
+        }
+        self.warn(
+            span,
+            format!(
+                "the Result from {qualified} is discarded, so a failure here is invisible. \
+                 Bind it, match it, unwrap it to fail loudly, or write `let _ = ...` to say \
+                 the failure is deliberately ignored"
+            ),
+        );
     }
 
     fn warn(&mut self, span: (u32, u32), message: String) {
@@ -1415,7 +1463,14 @@ impl Checker {
             Statement::Located { line, column, stmt } => {
                 self.check_statement(stmt, (*line, *column));
             }
-            Statement::Expression(e) => self.check_expr(e, span),
+            Statement::Expression(e) => {
+                self.warn_discarded_result(e, span);
+                // Nested constructs start fresh: an expression *inside*
+                // this one is not in the enclosing block's tail slot.
+                let tail = std::mem::replace(&mut self.in_tail_position, false);
+                self.check_expr(e, span);
+                self.in_tail_position = tail;
+            }
             Statement::LetDecl(decl) => {
                 if decl.value.is_none() {
                     // `let pending` binds to Unit until assigned; track the
@@ -1624,9 +1679,17 @@ impl Checker {
             }
             Expr::Block(stmts) => {
                 self.push_scope();
-                for s in stmts {
+                // A block evaluates to its last statement, so that one is
+                // the block's value — and a function body's value is what
+                // the function returns. Treating it as a discard would
+                // flag `fn parse(b) = { json.parse(b) }`, which returns
+                // the Result perfectly well.
+                let last = stmts.len().saturating_sub(1);
+                for (i, s) in stmts.iter().enumerate() {
+                    self.in_tail_position = i == last;
                     self.check_statement(s, span);
                 }
+                self.in_tail_position = false;
                 self.pop_scope(Merge::Block);
             }
             Expr::If {
@@ -1707,17 +1770,6 @@ impl Checker {
                     self.check_expr(&arm.expression, span);
                     self.pop_scope(Merge::Construct);
                 }
-            }
-            Expr::TryCatch {
-                try_block,
-                catch_var,
-                catch_block,
-            } => {
-                self.check_expr(try_block, span);
-                self.push_scope();
-                self.bind(&catch_var.clone(), SType::Unknown);
-                self.check_expr(catch_block, span);
-                self.pop_scope(Merge::Construct);
             }
             Expr::Identifier(name) | Expr::LocalRef { name, .. } => {
                 // A name that was declared inside a block is gone once the

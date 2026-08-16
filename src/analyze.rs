@@ -442,14 +442,6 @@ impl Analyzer {
             Expr::ResultOk(expr) => self.analyze_expr(expr),
             Expr::ResultErr(expr) => self.analyze_expr(expr),
             Expr::Try(expr) => self.analyze_expr(expr),
-            Expr::TryCatch {
-                try_block,
-                catch_var: _,
-                catch_block,
-            } => {
-                self.analyze_expr(try_block)?;
-                self.analyze_expr(catch_block)
-            }
             Expr::Assignment { target, value } => {
                 // Analyze the value expression first
                 self.analyze_expr(value)?;
@@ -1270,14 +1262,6 @@ impl Analyzer {
             }
             Expr::Assignment { value, .. } => {
                 self.mark_expression_reachable(value, reachable);
-            }
-            Expr::TryCatch {
-                try_block,
-                catch_block,
-                ..
-            } => {
-                self.mark_expression_reachable(try_block, reachable);
-                self.mark_expression_reachable(catch_block, reachable);
             }
             Expr::Try(expr) => {
                 self.mark_expression_reachable(expr, reachable);

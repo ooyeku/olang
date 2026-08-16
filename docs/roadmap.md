@@ -42,7 +42,7 @@ choice among alternatives that were considered and rejected.
 | D5 | Concurrency model | `async`/`await` and the `Promise` API are removed. The concurrency model is threads (`spawn`), channels (`chan`), and data parallelism (`par_map`, `par_filter`, `par for`). The deadline-based Promise scheduler, which resembled asynchronous I/O without being it, is deleted rather than repositioned. |
 | D6 | Capabilities | Capability enforcement moves to the shared builtin-dispatch boundary with per-frame attribution, so a capability-restricted program runs at full speed on every tier. Capabilities graduate from a development-time audit mechanism to an enforced boundary at 1.0. |
 | D7 | Standard-library conventions | One full conventions audit lands in the same breaking release: operations that cannot fail stop returning `Result`; keywords that can be contextual (such as `share`) stop being reserved as identifiers; argument-shape irregularities (such as `fs.join` taking a list) are corrected. 1.0's API is the cleaned one, and there is exactly one migration. |
-| D8 | Error model | `Result` with `?` is the primary mechanism for expected fallibility. `try`/`catch` is retained with a narrow, documented role: recovering from runtime errors at coarse boundaries (supervisors, servers, task edges). Using `catch` for ordinary control flow becomes a checker warning. |
+| D8 | Error model | `Result` with `?` is the primary mechanism for expected fallibility. A runtime error is a bug and stops the program; recovery is *structural*, at the boundaries that already isolate a failing unit (a spawned task, an `http.serve` handler). **Amended in 0.65:** D8 originally kept `try`/`catch` for "recovering from runtime errors at coarse boundaries". It never did that — it destructured a `Result`, and a real runtime error inside a `try` block still aborted — and the boundaries it named already recover without it. `try`/`catch` was removed; the promised checker warning became a *discarded-Result* warning, which is where the actual hole was. |
 | D9 | 1.0 scope | 1.0 is a data-scripting release: the semantics release, the completed data-pipeline campaign, cross-tier capabilities, and a complete book. The browser stack, JIT breadth, the adaptive-engine campaign, and registry growth are frozen (maintenance only) until 1.0 ships. |
 
 Two further points follow from these decisions:
@@ -110,8 +110,8 @@ really a join. One amendment to D5's wording: `Promise.race` has no
 direct replacement. `task.join_timeout(t, ms)` bounds the *wait*, and
 the task keeps running, because an OS thread cannot be cancelled from
 outside without leaving what it touched in an unknown state. A general
-`race` would have implied the losers stopped. The remaining lanes
-(S7–S8) are unchanged.
+`race` would have implied the losers stopped. The remaining lane (S8) is
+unchanged.
 
 **S6 shipped in 0.64.0.** The conventions audit walked all 22 stdlib
 modules — 391 functions, 470 error sites — against one rule, and the
@@ -124,6 +124,24 @@ tiers mean something. Twenty-eight functions dropped `Result`, seven
 declaration keywords became ordinary identifiers, and `fs.join` went
 variadic while still accepting a list.
 
+**S7 shipped in 0.65.0.** The lane began by checking D8's premise and
+found it false twice over: `try`/`catch` did not recover runtime errors
+(a type error inside a `try` block still aborted — it only destructured
+`Result`s), and the "coarse boundaries" D8 named already recover without
+it, structurally, because `task.join` turns a failed task into `Err(e)`
+and `http.serve` logs a failing handler and returns 500. With zero uses
+across 97 corpus files, `try`/`catch` was removed rather than
+documented.
+
+The promised warning changed target accordingly. "Catch used for control
+flow" describes nothing once `catch` is gone; the real hole was that a
+discarded `Result` was invisible to both the runtime and the checker — a
+failed `fs.write_file` in statement position read exactly like a
+successful one. That is now an advisory warning, and turning it on found
+six live instances in the corpus, including `http.serve`'s bind failure
+being dropped in both flagship apps, which made a taken port look like a
+clean exit.
+
 | Lane | Work | Status |
 |---|---|---|
 | S1 — lexical scoping | Blocks introduce a scope: `let` bindings are dropped at the closing brace, shadowing is permitted, and the environment model in the interpreter and both compiled tiers is updated together. The 0.50 scope-leak warning becomes an error. | **shipped 0.61.0** |
@@ -132,7 +150,7 @@ variadic while still accepting a list.
 | S4 — the cell | `cell(v)`, `cell.get(c)`, `cell.set(c, v)`, `cell.update(c, f)`. Cells are values with identity confined to their creating thread: reading or writing one from another thread is an error, and `chan.send` refuses to send one. Dead captured-variable writes became errors pointing to `cell`. Timeline recording is unaffected because cell mutation is deterministic within a thread. | **shipped 0.62.0** |
 | S5 — remove async | `async`, `await`, and the `Promise` API are removed from the interpreter and tiers. `spawn` returns a task handle collected by `task.join` / `task.join_timeout`. Programs using `Promise.delay/all/race` migrate to `time.sleep`, `map(task.join)`, and `chan`; the book's concurrency chapter is rewritten around the single model. | **shipped 0.63.0** |
 | S6 — stdlib conventions audit | Every builtin and module function audited once against one rule: infallible operations return their value, handleable failure returns `Result`, and misuse raises. Seven declaration keywords freed as identifiers; `fs.join` variadic; the definitive before/after table recorded in the CHANGELOG. | **shipped 0.64.0** |
-| S7 — error-model boundary | The `catch`-for-control-flow checker warning lands, and the book's error-handling chapter is rewritten around the Result-primary model with `catch` documented for boundary recovery only. | planned |
+| S7 — error-model boundary | `try`/`catch` removed (it was `Result` sugar, not recovery, with zero corpus uses). A discarded `Result` in statement position draws an advisory warning — the real hole, since a failed write read exactly like a successful one. The book's error chapter is rewritten around Result-primary with recovery documented as structural. | **shipped 0.65.0** |
 | S8 — migration | The release ships with a migration guide. `olang check` reports every site the release breaks (its 0.50 warnings are the census); the repository corpus is migrated in the release itself as the proof of the guide. | planned |
 
 Acceptance: all gates green under the new semantics (workspace tests, doc

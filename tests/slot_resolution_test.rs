@@ -174,11 +174,13 @@ fact(6)
 }
 
 #[test]
-fn catch_variable_resolves_in_catch_frame() {
+fn match_arm_binding_resolves_in_its_own_frame() {
+    // Was written against `try`/`catch`, removed in 0.65; the property is
+    // the same for any construct that opens a frame for a binding.
     let src = r#"
 fn work(x) = {
     let fallback = 7
-    try { Err("boom") } catch (e) { fallback + x }
+    match Err("boom") { Err(e) => fallback + x, v => v }
 }
 work(1)
 "#;

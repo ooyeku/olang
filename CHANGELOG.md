@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.65.0] - 2026-08-16
+
+The error-model boundary (D8), and the last lane of Campaign 1's language
+work. The lane started by checking D8's own premise and found it wrong
+twice over.
+
+### Changed
+
+- **`try`/`catch` is removed (breaking).** D8 kept it for "recovering
+  from runtime errors at coarse boundaries". It never did that: it
+  destructured a `Result`, and a genuine runtime error inside a `try`
+  block still aborted the program. What it actually was is a third
+  spelling of something `match` and `unwrap_or` already say — and across
+  97 corpus files, including a shell, a load tester, and two fullstack
+  apps, it was used **zero times**.
+
+  ```olang
+  match f(x) { Ok(v) => v, Err(e) => fallback }   // the general form
+  unwrap_or(f(x), fallback)                       // when the fallback is a value
+  ```
+
+  The grammar still recognizes the old form so the error can name those
+  two rather than failing with "expected a statement". `try` and `catch`
+  stay reserved for this release and become ordinary identifiers at 1.0.
+
+- **Recovery is documented as structural, because that is what it is.**
+  The boundaries D8 named already recover, without any construct at the
+  failure site:
+
+  | Boundary | A runtime error inside it becomes |
+  |---|---|
+  | a spawned task | `Err(e)` from `task.join` |
+  | an `http.serve` handler | a logged 500; the server keeps serving |
+
+  Anywhere else a runtime error stops the program, which is what you want
+  from a bug — and what 0.61–0.64 spent four releases establishing.
+
+### Added
+
+- **A discarded `Result` draws an advisory warning.** This was the actual
+  hole in the error model. A fallible call in statement position dropped
+  its failure silently, and `olang check` reported the file clean:
+
+  ```olang
+  fs.write_file("/nope/x.txt", "data")   // failed
+  println("wrote it")                     // printed anyway
+  ```
+
+  ```text
+  warning: the Result from fs.write_file is discarded, so a failure here is
+  invisible. Bind it, match it, unwrap it to fail loudly, or write
+  `let _ = ...` to say the failure is deliberately ignored.
+  ```
+
+  It is advisory, not a gate: unlike the scope and mutability rules this
+  is a judgement about intent rather than a provable contradiction, and a
+  script that genuinely does not care whether a log write landed is not
+  wrong. A block's final statement is its value, so a function whose body
+  *is* the fallible call is not flagged.
+
+  The lint reads the help registry for which functions return `Result`,
+  so the diagnostic and `:help` cannot disagree about what can fail.
+
+### Fixed
+
+- **`http.serve`'s bind failure was silently discarded in both flagship
+  apps.** Starting `examples/app` or `examples/ledger` on a taken port
+  printed the startup banner and exited with status 0, as though it had
+  served. Found by the new warning on its first run over the corpus; both
+  now report the failure and exit non-zero.
+
+- **25 stale help entries from 0.64.** The conventions audit changed 28
+  functions to return values rather than `Result` but left their
+  documented return types behind, so `:help os.args` still said `Result`.
+  Also surfaced by the new lint, which flagged `os.args()` as a discarded
+  `Result` — using the help registry as the source of truth is what
+  forced the two back into agreement.
+
+### Migration
+
+`try { A } catch (e) { B }` becomes `match A { Ok(v) => v, Err(e) => B }`,
+or `unwrap_or(A, B)` when `B` is just a value. The corpus needed no
+changes — it never used the construct — so the migration here is entirely
+for code outside this repository.
+
 ## [0.64.0] - 2026-08-16
 
 The standard-library conventions audit (D7). Every module was walked once
@@ -3674,7 +3759,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.64.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.65.0...HEAD
+[0.65.0]: https://github.com/ooyeku/olang/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/ooyeku/olang/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/ooyeku/olang/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/ooyeku/olang/compare/v0.61.0...v0.62.0

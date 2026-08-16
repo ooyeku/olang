@@ -333,18 +333,6 @@ impl Validator {
                 }
             }
 
-            Expr::TryCatch {
-                try_block,
-                catch_var,
-                catch_block,
-            } => {
-                self.expr(try_block);
-                self.push();
-                self.bind(catch_var, false);
-                self.expr(catch_block);
-                self.pop();
-            }
-
             // ── plain recursion ──
             Expr::Call { callee, arguments } => {
                 self.expr(callee);

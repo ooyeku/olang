@@ -1184,38 +1184,6 @@ impl Interpreter {
                     }),
                 }
             }
-            Expr::TryCatch {
-                try_block,
-                catch_var,
-                catch_block,
-            } => {
-                let try_result = self.eval_expr(try_block)?;
-                match try_result {
-                    Value::Ok(inner) => Ok(*inner),
-                    Value::Err(err) => {
-                        // Create new scope for catch block with error variable
-                        let parent = self.environment.clone();
-                        self.environment = Environment::with_parent(parent);
-                        self.environment.define(catch_var.clone(), *err);
-
-                        let result = self.eval_expr(catch_block);
-
-                        // Restore parent environment
-                        if let Some(parent) = self.environment.parent.take() {
-                            self.environment =
-                                Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
-                        }
-
-                        result
-                    }
-                    // A non-Result value passes through unchanged: the try
-                    // block succeeded with a plain value. This is what makes
-                    // `try { await task } catch (e) { fallback }` work when
-                    // the task succeeds (await yields the bare value) as well
-                    // as when it fails (await yields Err).
-                    other => Ok(other),
-                }
-            }
             Expr::ForLoop {
                 variable,
                 iterable,

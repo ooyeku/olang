@@ -235,4 +235,10 @@ let routes = [
 fn app(req) = dispatch(routes, req)
 
 println("ledger db=" + db_path + (match os.get_env("LEDGER_TOKEN") { Ok(t) => " auth=on", Err(e) => " auth=off" }))
-http.serve(port, app)
+match http.serve(port, app) {
+    Err(e) => {
+        println("ledger: could not start on port " + show(port) + ": " + show(e))
+        os.exit(1)
+    },
+    Ok(v) => v
+}

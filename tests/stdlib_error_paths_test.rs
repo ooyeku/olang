@@ -579,23 +579,25 @@ fn test_edge_case_combinations() {
     let parser = Parser::new();
     let mut interpreter = Interpreter::new();
 
-    // Test combining multiple error-prone operations
+    // A chain of fallible steps, each handled where it happens. Was
+    // written against `try`/`catch` (removed in 0.65) and asserted
+    // nothing; now it checks that a bad parse short-circuits to the
+    // fallback without the later steps running.
     let source = r#"
-        let result = try {
-            let data = json.parse("invalid json");
-            let processed = data |> map((x) => x / 0);
-            fs.write_file("/invalid/path", processed);
-            "success"
-        } catch (e) {
-            "error handled"
-        };
-        result
+        match json.parse("invalid json") {
+            Err(e) => "error handled",
+            data => {
+                let _ = fs.write_file("/invalid/path", show(data))
+                "success"
+            }
+        }
     "#;
     let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program);
-
-    // Should handle cascading errors
-    assert!(result.is_ok() || result.is_err());
+    let result = interpreter
+        .eval_program(program)
+        .expect("a handled Err is a value, not a crash");
+    // The Value is a String, so its display form carries quotes.
+    assert_eq!(format!("{}", result), "\"error handled\"");
 }
 
 #[test]

@@ -323,7 +323,7 @@ println(`${len(readings)} parsed, ${bad} rejected`)
 ```
 
 For consuming a single `Result` there is a whole toolkit — `match` on
-`Ok(v)`/`Err(e)`, `unwrap_or(r, default)`, `try { ... } catch (e) { ... }` —
+`Ok(v)`/`Err(e)`, `unwrap_or(r, default)`, `match` on the two arms —
 and `error` declarations give failures structure beyond strings. The
 [language reference](language.md#error-handling) covers all of it.
 

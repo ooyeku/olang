@@ -172,7 +172,7 @@ while running {
             let trimmed = str.trim(line)
             if trimmed != "" => {
                 state = { aliases: state.aliases, history: state.history + [trimmed], last: state.last }
-                fs.append_file(hist_path(), trimmed + "\n")
+                let _ = fs.append_file(hist_path(), trimmed + "\n")   // history is best-effort
                 state = run_line(state, trimmed)
             }
         }

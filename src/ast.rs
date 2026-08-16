@@ -271,11 +271,6 @@ pub enum Expr {
     ResultOk(Box<Expr>),
     ResultErr(Box<Expr>),
     Try(Box<Expr>),
-    TryCatch {
-        try_block: Box<Expr>,
-        catch_var: String,
-        catch_block: Box<Expr>,
-    },
 
     // Loop constructs
     ForLoop {

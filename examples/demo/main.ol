@@ -299,7 +299,7 @@ fn close_day(w) = {
 // ledger — live rows plus the archived totals. A failure names itself
 // and fails the run.
 fn expect(label, cond: Bool) = {
-    testing.assert_true(cond)
+    let _ = testing.assert_true(cond)   // tallied; the report below is the signal
     if !cond => println(announce("alert", "INVARIANT: " + label))
     cond
 }

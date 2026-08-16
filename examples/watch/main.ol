@@ -49,7 +49,7 @@ fn stream_once(argv) = {
     match proc.spawn(argv[0], skip(argv, 1)) {
         Err(e) => { println(term.red("watch: ") + e); -1 },
         Ok(p) => {
-            proc.close_stdin(p)
+            let _ = proc.close_stdin(p)   // nothing to write; a close failure is moot
             let mut n = 0
             let mut running = true
             while running {

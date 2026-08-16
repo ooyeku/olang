@@ -247,6 +247,24 @@ fn removed_async(what: &str) -> ParseError {
     }
 }
 
+/// The error for `try`/`catch`, removed in 0.65.
+///
+/// It was never exception handling: a `try` block that hit a real runtime
+/// error still aborted the program. What it actually did was destructure a
+/// `Result` — the same job as `match` and `unwrap_or`, in a third spelling
+/// nobody reached for. The grammar still recognizes it so this message can
+/// point at the two that remain.
+fn removed_try_catch() -> ParseError {
+    ParseError::InvalidSyntax {
+        message: "`try`/`catch` was removed in 0.65. It handled a `Result`, \
+                  not a runtime error, so `match` and `unwrap_or` already say \
+                  it: `match f(x) { Ok(v) => v, Err(e) => fallback }`, or \
+                  `unwrap_or(f(x), fallback)` when the fallback is just a \
+                  value. See the migration guide in the CHANGELOG."
+            .to_string(),
+    }
+}
+
 pub struct Parser {
     suggestion_engine: ErrorSuggestionEngine,
 }
@@ -966,7 +984,7 @@ impl Parser {
             Rule::spawn_expr => self.build_spawn_expr(pair.into_inner()),
             Rule::match_expr => self.build_match_expr(pair.into_inner()),
             Rule::if_expr => self.build_if_expr(pair.into_inner()),
-            Rule::try_catch_expr => self.build_try_catch_expr(pair.into_inner()),
+            Rule::try_catch_expr => Err(removed_try_catch()),
             Rule::struct_literal => self.build_struct_literal(pair.into_inner()),
             Rule::anonymous_object => self.build_anonymous_object(pair.into_inner()),
             Rule::map_literal => self.build_map_literal(pair.into_inner()),
@@ -2879,24 +2897,6 @@ impl Parser {
         Ok(Expr::Assignment {
             target: identifier.as_str().to_string(),
             value: Box::new(self.build_expr(value.into_inner())?),
-        })
-    }
-
-    fn build_try_catch_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let try_block = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing try block".to_string(),
-        })?;
-        let catch_var = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing catch variable".to_string(),
-        })?;
-        let catch_block = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing catch block".to_string(),
-        })?;
-
-        Ok(Expr::TryCatch {
-            try_block: Box::new(self.build_block(try_block.into_inner())?),
-            catch_var: catch_var.as_str().to_string(),
-            catch_block: Box::new(self.build_block(catch_block.into_inner())?),
         })
     }
 

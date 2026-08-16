@@ -1304,20 +1304,36 @@ println(to_string(parse_both("2", "40")))
 println(to_string(is_err(parse_both("2", "oops"))))
 ```
 
-### `try` / `catch`
+### Where failure stops: the boundaries
 
-`try { ... } catch (e) { ... }` is expression-level sugar over a `Result`:
-`Ok` unwraps to its value, `Err` binds the error to `e` and evaluates the
-catch block, and **any other value passes through unchanged** (the try
-block simply succeeded). It does **not** catch runtime errors (an actual
-`1 / 0` still aborts) — it destructures Results.
+`Result` covers *expected* failure — the file that might be missing, the
+input that might be malformed. A **runtime error** is different: a type
+error, a failed assertion, a division by zero. Those are bugs, and olang
+does not offer a way to catch one mid-expression. `try`/`catch` used to
+look like that mechanism and was not (it destructured `Result`s); it was
+removed in 0.65, and `match` and `unwrap_or` say the same thing.
+
+What olang does have is **structural boundaries** — places where a
+failing unit is already isolated from the rest of the program, so the
+failure becomes a value on the far side without any construct at the
+failure site:
+
+| Boundary | A runtime error inside it becomes |
+|---|---|
+| a spawned task | `Err(e)` from [`task.join`](#spawn-and-taskjoin) |
+| an `http.serve` handler | a logged 500; the server keeps serving |
+| one `par_map` / `par_filter` element | the error propagates out of the call |
 
 ```olang
-fn risky(n) = if n > 0 => Ok(n * 2) else => Err("negative input")
-let a = try { risky(21) } catch (e) { 0 }
-let b = try { risky(-1) } catch (e) { 0 }
-println(to_string(a) + " " + to_string(b))
+fn risky(n) = if n > 2 => 1 + "not a number" else => n * 10
+let jobs = [spawn risky(1), spawn risky(9)]
+println(to_string(jobs |> map((j) => match task.join(j) { Err(e) => -1, v => v })))
 ```
+
+That is the whole recovery story, and it is deliberate. A supervisor
+recovers because the thing it supervises runs somewhere it can watch,
+not because it wrapped an expression in a handler. Anywhere else, a
+runtime error stops the program — which is what you want from a bug.
 
 ### `error` declarations
 
@@ -1702,7 +1718,7 @@ Each, in one line:
 | `return` | Return early from a function |
 | `true` / `false` | Boolean literals |
 | `async` / `await` | **Removed in 0.63.** Still reserved so the parser can point at `spawn` + `task.join`; freed at 1.0 |
-| `try` / `catch` | Catch a raised error (`try { … } catch (e) { … }`) |
+| `try` / `catch` | **Removed in 0.65.** Still reserved so the parser can point at `match` / `unwrap_or`; freed at 1.0 |
 | `error` | Declare a named error type with fields |
 | `share` | Export a declaration from a module |
 | `use` | Import from another module or package |

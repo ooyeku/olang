@@ -272,24 +272,6 @@ impl Resolver {
                 Expr::Match { value, arms }
             }
 
-            Expr::TryCatch {
-                try_block,
-                catch_var,
-                catch_block,
-            } => {
-                let try_block = Box::new(self.resolve_expr(try_block));
-                let mut scope = Scope::new();
-                scope.bind(catch_var);
-                self.frames.push(scope);
-                let catch_block = Box::new(self.resolve_expr(catch_block));
-                self.frames.pop();
-                Expr::TryCatch {
-                    try_block,
-                    catch_var: catch_var.clone(),
-                    catch_block,
-                }
-            }
-
             Expr::Lambda {
                 parameters,
                 body,

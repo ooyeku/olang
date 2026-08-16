@@ -271,7 +271,7 @@ fn export_csv(req, params) = {
 }
 
 fn backup(req, params) = {
-    fs.create_dir_all("backups")
+    let _ = fs.create_dir_all("backups")   // the write below reports a real failure
     let snapshot = { taken: dates.utc_now(), issues: all_issues(conn) }
     let name = "backups/tracker-" + show(time.now_ms()) + ".json"
     match fs.write_file(name, unwrap(json.stringify(snapshot))) {
@@ -327,4 +327,10 @@ let routes = [
 fn app(req) = dispatch(routes, req)
 
 println("tracker db=" + db_path + (match os.get_env("TRACKER_TOKEN") { Ok(t) => " auth=on", Err(e) => " auth=off" }))
-http.serve(port, app)
+match http.serve(port, app) {
+    Err(e) => {
+        println("tracker: could not start on port " + show(port) + ": " + show(e))
+        os.exit(1)
+    },
+    Ok(v) => v
+}

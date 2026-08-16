@@ -1,6 +1,6 @@
 [package]
 name = "olang"
-version = "0.64.0"
+version = "0.65.0"
 edition = "2024"
 authors = ["Ola Yeku <ooyeku@gmail.com>"]
 description = "olang — the Open Language: open code (meta.parse), open artifacts (inspectable binaries + capabilities), open execution (deterministic record/replay); a batteries-included functional language with a data stack, no-GIL parallelism, and a three-tier runtime"

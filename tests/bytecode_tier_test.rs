@@ -553,19 +553,19 @@ d(1) + d(2) + d(3)
 
 #[test]
 fn caller_is_rejected_when_helper_cannot_compile() {
-    // `bump` uses `try`/`catch`, which the tier does not compile, so
-    // neither it nor its caller may be promoted — but the program must
-    // still produce the right answer. (This test has burned through three
-    // previous "uncompilable" features — a global read, a map literal,
-    // then assignment to a global, which 0.62 made illegal outright. If
-    // `try` ever compiles, pick another construct rather than deleting
-    // the test: what it guards is that an uncompilable *callee* keeps its
-    // caller interpreted.)
+    // `bump` spawns, which the tier does not compile — a task needs the
+    // interpreter's own environment to clone — so neither it nor its
+    // caller may be promoted, yet the program must still produce the right
+    // answer. (This test has burned through four previous "uncompilable"
+    // features: a global read, a map literal, assignment to a global which
+    // 0.62 made illegal, and `try`/`catch` which 0.65 removed. `spawn` is
+    // the durable choice: compiling it would mean compiling the thread
+    // boundary. If it ever does compile, pick another construct rather
+    // than deleting the test — what it guards is that an uncompilable
+    // *callee* keeps its caller interpreted.)
     let src = r#"
-fn bump(n) = {
-    let r = try { Ok(n) } catch (e) { 0 }
-    r + 0
-}
+fn inner(n) = n
+fn bump(n) = task.join(spawn inner(n))
 fn label(n) = bump(n) + 1
 label(1) + label(2)
 "#;
@@ -3129,37 +3129,38 @@ f()"#,
     );
     assert_tier_transparent("1 + 2");
 
-    // A try/catch wrapped around the type error behaves identically on both
-    // tiers. olang's try/catch is Result-based — it unwraps a `Value::Err`,
-    // it does not trap a hard runtime type error — so the error propagates
-    // out of the try on every tier, and it does so transparently.
-    let try_catch = r#"fn bad() = "a" + 1
-try { bad() } catch (e) { "caught" }"#;
+    // A `match` around the type error behaves identically on both tiers:
+    // matching destructures a `Value::Err`, it does not trap a hard runtime
+    // type error, so the error propagates out on every tier — transparently.
+    // (This was written against `try`/`catch`, removed in 0.65 because it
+    // did exactly this and nothing more.)
+    let handled = r#"fn bad() = "a" + 1
+match bad() { Err(e) => "caught", v => v }"#;
     assert!(
-        eval(try_catch, None).is_err(),
-        "the type error propagates through try/catch in the interpreter"
+        eval(handled, None).is_err(),
+        "the type error propagates through the match in the interpreter"
     );
     assert!(
-        eval(try_catch, Some(2)).is_err(),
-        "the type error propagates through try/catch on the bytecode tier"
+        eval(handled, Some(2)).is_err(),
+        "the type error propagates through the match on the bytecode tier"
     );
-    assert_tier_transparent(try_catch);
+    assert_tier_transparent(handled);
 
-    // A try/catch that recovers a `Value::Err` — the shape try/catch is
-    // actually for — still works and stays tier-transparent.
+    // Recovering a `Value::Err` — the shape this is actually for — still
+    // works and stays tier-transparent.
     assert_eq!(
         eval(
             r#"fn safe() = Err("boom")
-try { safe() } catch (e) { "caught: " + e }"#,
+match safe() { Err(e) => "caught: " + e, v => v }"#,
             None
         )
         .unwrap(),
         Value::String(std::sync::Arc::new("caught: boom".to_string())),
-        "try/catch still unwraps a Value::Err"
+        "match still destructures a Value::Err"
     );
     assert_tier_transparent(
         r#"fn safe() = Err("boom")
-try { safe() } catch (e) { "caught: " + e }"#,
+match safe() { Err(e) => "caught: " + e, v => v }"#,
     );
 }
 
@@ -3169,9 +3170,10 @@ fn min_max_average_raise_on_empty_list_like_head() {
     // value otherwise — an inconsistent type that produced a misleading
     // downstream "type mismatch". They now raise, matching head/tail.
     assert_tier_transparent("to_string(min([3, 1, 2]))"); // non-empty still works
-    assert_tier_transparent(r#"try to_string(min([])) catch e => "empty""#);
-    assert_tier_transparent(r#"try to_string(max([])) catch e => "empty""#);
-    assert_tier_transparent(r#"try to_string(average([])) catch e => "empty""#);
+    // These raise, so the tier contract is about the error text matching.
+    assert_tier_transparent("to_string(min([]))");
+    assert_tier_transparent("to_string(max([]))");
+    assert_tier_transparent("to_string(average([]))");
 }
 
 #[test]
@@ -3181,8 +3183,7 @@ fn error_messages_are_identical_across_tiers() {
     // These pin the classes that used to diverge (prefix doubling,
     // VM-private wordings, operand order under immediate flipping).
     assert_tier_transparent(
-        r#"try { 0 } catch (e) { 0 }
-fn f(x) = match x { 1 => "one" }
+        r#"fn f(x) = match x { 1 => "one" }
 f(2)"#,
     );
     assert_tier_transparent("fn f() = 1 + true\nf()");

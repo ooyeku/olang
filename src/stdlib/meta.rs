@@ -349,15 +349,6 @@ fn expr_to_value(e: &Expr) -> Value {
         Expr::ResultOk(inner) => map(vec![("kind", s("ok")), ("value", expr_to_value(inner))]),
         Expr::ResultErr(inner) => map(vec![("kind", s("err")), ("value", expr_to_value(inner))]),
         Expr::Try(inner) => map(vec![("kind", s("try")), ("value", expr_to_value(inner))]),
-        Expr::TryCatch {
-            try_block,
-            catch_block,
-            ..
-        } => map(vec![
-            ("kind", s("try_catch")),
-            ("body", expr_to_value(try_block)),
-            ("handler", expr_to_value(catch_block)),
-        ]),
         Expr::ForLoop {
             variable,
             iterable,

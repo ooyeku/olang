@@ -34,11 +34,11 @@ fn error_inside_calls_carries_inner_line_and_call_stack() {
 
 #[test]
 fn recovered_error_does_not_leak_location_to_later_success() {
-    // A caught Err (a value, not a hard error — hard errors are not
-    // catchable by design) then a clean statement: no stale location.
+    // A handled Err (a value, not a hard error — hard errors are not
+    // recoverable by design) then a clean statement: no stale location.
     let parser = Parser::new();
     let program = parser
-        .parse("fn may() = Err(\"nope\")\nlet r = try { may() } catch (e) { -1 }\nprintln(to_string(r))\n")
+        .parse("fn may() = Err(\"nope\")\nlet r = match may() { Err(e) => -1, v => v }\nprintln(to_string(r))\n")
         .expect("parses");
     let mut interp = Interpreter::new();
     interp.eval_program(program).expect("runs clean");
