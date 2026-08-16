@@ -89,16 +89,23 @@ a time. See [Types and gradual typing](types.md).
 
 ## When to use olang
 
-olang is well suited to scripts, data-analysis tasks, teaching, and
-experimentation. The standard library and data stack make many such programs
-self-contained, and the tooling — a test runner, formatter, static checker,
-and single-file executable builder — supports small projects without
-additional dependencies.
+olang supports complete programs across several domains: command-line
+tools, data analysis, automation, HTTP services, and browser frontends,
+each demonstrated by a working program in
+[`examples/`](../examples/). The standard library and data stack make most
+such programs self-contained, and the tooling — a test runner, formatter,
+static checker, and executable builder — supports a project without
+additional dependencies. The implementation is heavily tested: every
+documented behavior is locked by an executed example, and the execution
+tiers are verified against each other on every change.
 
-olang is a young language. Long-running services and projects with many
-third-party dependencies should be treated as experimental. The
+Two considerations apply before 1.0. The third-party package ecosystem is
+small, so programs rely chiefly on the standard library. And one deliberate
+breaking release is planned before the compatibility contract freezes (see
+the [roadmap](roadmap.md)); a project that cannot absorb that migration
+should pin its olang version until 1.0. The
 [Stability and compatibility](stability.md) chapter is the authoritative
-statement of what is stable and what is not.
+statement of what is stable today.
 
 ## How to read this book
 

@@ -175,12 +175,21 @@ and CI runs it on every change.
 
 ## Maturity
 
-olang is a young language with extensive automated testing, including
-executed documentation examples, cross-tier and JIT agreement tests, and
-differential tests of the standard library. It is well suited to scripts,
-teaching, and experimentation. Long-running services and dependency-heavy
-projects should be considered experimental. The current, authoritative
-capability statement is in [Stability and compatibility](docs/stability.md).
+olang's implementation is heavily tested: more than 950 tests across the
+workspace, every documentation example executed in CI, cross-tier and JIT
+agreement suites, differential tests of the standard library, and a flagship
+example built specifically to soak-test the runtime over long sessions. The
+language, standard library, and data stack support complete programs today —
+command-line tools, data analysis, HTTP services, and browser frontends are
+all demonstrated in [`examples/`](examples/).
+
+What is young is not the engine but its surroundings. The third-party
+package ecosystem is small, so programs rely chiefly on the standard
+library, and the project is pre-1.0: one deliberate breaking release is
+planned before the compatibility contract freezes (see the
+[roadmap](docs/roadmap.md)). A project that cannot absorb that migration
+should pin its olang version until 1.0. The authoritative statement of what
+is stable today is [Stability and compatibility](docs/stability.md).
 
 ## License
 
