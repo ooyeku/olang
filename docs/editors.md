@@ -1,21 +1,18 @@
-# Editors
+# Editor support
 
-olang ships its own language server: `olang lsp` speaks the Language
-Server Protocol over stdio, straight from the same binary that runs your
-programs. Building the server into the compiler is a deliberate
-trade — no separate install, no version skew between what the editor
-reports and what the runtime does, and every diagnostic comes from the
-real parser rather than a reimplementation of it.
+Part of [the olang book](README.md).
 
-Part of [the olang book](README.md) ·
-[Tour](tour.md) · [Language](language.md) · [Stdlib](stdlib.md) ·
-[Data Stack](ods.md) · [Browser](wasm.md)
-
----
+olang includes a language server: `olang lsp` speaks the Language Server
+Protocol over stdio from the same binary that runs programs. Building the
+server into the compiler means there is no separate installation and no
+version skew between what the editor reports and what the runtime does, and
+every diagnostic comes from the real parser rather than a reimplementation of
+it. This chapter covers what the server provides and how to configure the
+supported editors.
 
 ## What the server provides
 
-| capability | source |
+| Capability | Source |
 |---|---|
 | Diagnostics as you type | the real parser (with its line/column info), the semantic analyzer, and the [`olang check`](tooling.md#olang-check) static checker — provable type-annotation violations appear as errors, down to element types (`[1, "a"]` against `List<Int>` flags element 1); warnings sit on the exact declaration span |
 | Completions | keywords, the global builtins, the stdlib modules, and `fn`/`type`/`let` names from the open file |

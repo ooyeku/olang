@@ -1,16 +1,16 @@
-# Stability
+# Stability and compatibility
 
-**This chapter is the authoritative statement of olang's capabilities.**
-Where the README, an old comment, or any other text disagrees with what is
-written here and in the reference chapters, this document wins.
+Part of [the olang book](README.md) · [Architecture and internals](internals.md)
+
+This chapter is the authoritative statement of olang's capabilities. Where
+the README, an old comment, or any other text disagrees with what is written
+here and in the reference chapters, this document is correct.
 
 olang's core language is now considered **stable in shape**: the syntax and
 behavior documented in [the language reference](language.md) and
 [the stdlib reference](stdlib.md) are a commitment, not a snapshot.
-Development from here focuses on **optimization, new features, and
-stability** — not on changing what already works.
-
-Part of [the olang book](README.md) · [Internals](internals.md)
+Development from here focuses on optimization, new features, and stability,
+not on changing what already works.
 
 ## The commitment
 
@@ -40,9 +40,11 @@ arguments, lambdas, closures-by-value, `return`), pipelines, `break value`,
 structs, enums and their constructors (including cross-module), `error`
 declarations, traits and impls, `Result` +
 `?` + `try`/`catch`, modules (`use`/`share` in all documented forms),
-`test` blocks, and the stdlib modules `str`, `col`, `math`, `json`, `csv`,
-`re`, `dates`, `time`, `base64`, `fs`, `os`, `db`, `random`, `crypto`, and
-the global builtins.
+`test` blocks, and the standard-library modules `str`, `col`, `math`,
+`json`, `toml`, `csv`, `re`, `dates`, `time`, `base64`, `fs`, `os`, `db`,
+`random`, `crypto`, `chan`, `proc`, `meta`, and the global builtins. The
+embedded olang modules (`colx`, `mathx`) and packages (`cli`, `term`, `ui`,
+`viz`, `dash`) follow the same append-mostly rule.
 
 ### Stable in behavior, evolving in scope
 
@@ -96,10 +98,10 @@ the global builtins.
   and response-struct returns) is settled and integration-tested; the
   *execution model* (bounded worker pool, blocking caller, localhost-only)
   may grow further without changing existing handlers.
-- The `dom` module — browser-only, and young: the ten-function surface
-  may grow (and payload conventions may gain fields) as frontend
-  programs demand more; the element-handle model and the stateless
-  pattern it supports are the stable core.
+- The `dom` module — browser-only, and young: the function surface may
+  grow (and payload conventions may gain fields) as frontend programs
+  demand more; the element-handle model and the stateless pattern it
+  supports are the stable core.
 - `testing.test_summary` / `testing.reset_tests` are real as of 0.50:
   every `testing.assert_*` outcome is tallied per thread, `test_summary()`
   returns `#{ "passed", "failed", "total" }`, and `reset_tests()` zeroes
@@ -117,7 +119,7 @@ the global builtins.
   release may tighten the semantics.
 - Assigning to a variable *captured* from an enclosing scope inside a
   closure or function has no effect (capture is by value — see
-  [Common Pitfalls](pitfalls.md)); `olang check` and the editor **warn**,
+  [Common pitfalls](pitfalls.md)); `olang check` and the editor **warn**,
   since the write is provably dead. Return the new value or thread the
   state through instead.
 

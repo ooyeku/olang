@@ -1,7 +1,11 @@
 # Openness
 
-olang makes three aspects of a program available as inspectable data: its
-code, its compiled artifacts, and its execution.
+Part of [the olang book](README.md).
+
+A distinguishing design goal of olang is that three aspects of a program are
+available to olang programs as inspectable data: its code, its compiled
+artifacts, and its execution. This chapter describes each and links to its
+reference.
 
 - **Open code:** `meta.parse` returns a program's syntax tree as olang
   values.
@@ -14,8 +18,9 @@ Each capability follows from an existing design decision: a stable
 grammar, immutable values, and a small, explicit effect boundary. This
 page summarizes each capability and links to its reference.
 
-Related pages: [Packages](packages.md), [Tooling](tooling.md),
-[Standard library](stdlib.md).
+See also: [Packages and dependencies](packages.md),
+[Command-line tooling](tooling.md),
+[Standard library reference](stdlib.md).
 
 ## Open code: the program as data
 
