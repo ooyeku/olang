@@ -71,7 +71,12 @@ async function instantiate() {
   return instance.exports;
 }
 
-const ready = instantiate();
+// The page shows "loading wasm…" until this lands, so Run is never a
+// button that silently does nothing on a cold load.
+const ready = instantiate().then((ex) => {
+  self.postMessage({ ready: true });
+  return ex;
+});
 
 function readResult(ex, ptr) {
   const len = new DataView(ex.memory.buffer).getUint32(ptr, true);

@@ -153,9 +153,18 @@ export async function renderMarkdown(markdown, baseDir = '') {
   const renderer = new marked.Renderer();
   renderer.code = (code) =>
     highlighted.get(code) ?? `<pre><code>${escapeHtml(code)}</code></pre>`;
+  // A chapter may repeat a heading ("Strings" as both a section and a
+  // sub-section). GitHub disambiguates by suffixing the repeats, and so
+  // must we: duplicate ids make every anchor after the first unreachable,
+  // and light up more than one entry in the page outline.
+  const seenIds = new Map();
   renderer.heading = (text, level, raw) => {
-    const id = slugify(String(raw ?? text).replace(/<[^>]*>/g, ''));
-    if (level === 2) toc.push({ id, text: String(raw ?? text).replace(/<[^>]*>/g, '') });
+    const plain = String(raw ?? text).replace(/<[^>]*>/g, '');
+    const base = slugify(plain);
+    const seen = seenIds.get(base) ?? 0;
+    seenIds.set(base, seen + 1);
+    const id = seen === 0 ? base : `${base}-${seen}`;
+    if (level === 2) toc.push({ id, text: plain });
     return `<h${level} id="${id}"><a class="anchor" href="#${id}">${text}</a></h${level}>`;
   };
   renderer.link = (href, title, text) =>

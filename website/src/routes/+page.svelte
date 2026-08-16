@@ -148,14 +148,15 @@
       </div>
       <div class="card">
         <h3><span class="glyph">?</span> Errors are values</h3>
-        <p><code>Result</code> + <code>?</code> + <code>try/catch</code> compose —
-        even a failed <code>spawn</code> task is just an <code>Err</code> you can match on.</p>
+        <p><code>Result</code> and <code>?</code> carry expected failure; a bug
+        stops the program. Even a failed <code>spawn</code> task is just an
+        <code>Err</code> you can match on.</p>
       </div>
       <div class="card">
-        <h3><span class="glyph">~</span> Thread-backed concurrency</h3>
-        <p><code>spawn</code> runs on OS threads; <code>http.serve</code> uses a
-        bounded worker pool, load-tested for exact consistency under
-        concurrent writes.</p>
+        <h3><span class="glyph">~</span> One concurrency model</h3>
+        <p><code>spawn</code> runs on OS threads and <code>task.join</code>
+        collects — no async colouring. <code>http.serve</code> uses a bounded
+        worker pool, load-tested under concurrent writes.</p>
       </div>
       <div class="card">
         <h3><span class="glyph">&gt;&gt;</span> Tiered execution</h3>
@@ -165,7 +166,7 @@
       </div>
       <div class="card">
         <h3><span class="glyph">##</span> Batteries included</h3>
-        <p>19 stdlib modules: JSON, CSV, SQLite, HTTP client + server, regex,
+        <p>22 stdlib modules: JSON, CSV, SQLite, HTTP client + server, regex,
         crypto, time, files, the data stack — plus a package manager with
         lockfiles.</p>
       </div>

@@ -52,14 +52,13 @@ export const olangGrammar = {
       patterns: [
         {
           name: 'keyword.control.olang',
-          match: '\\b(if|else|match|for|while|loop|break|continue|return|try|catch|await|in)\\b'
+          match: '\\b(if|else|match|for|while|loop|break|continue|return|in|par)\\b'
         },
         {
           name: 'storage.type.olang',
-          match: '\\b(fn|let|mut|type|share|use|struct|enum|error|trait|impl|test|async|spawn)\\b'
+          match: '\\b(fn|let|mut|type|share|use|struct|enum|error|trait|impl|test|spawn)\\b'
         },
-        { name: 'constant.language.olang', match: '\\b(true|false)\\b' },
-        { name: 'support.class.promise.olang', match: '\\bPromise\\b' }
+        { name: 'constant.language.olang', match: '\\b(true|false)\\b' }
       ]
     },
     types: {
@@ -80,31 +79,50 @@ export const olangGrammar = {
   }
 };
 
-// The brand code theme: ink surface, teal keywords, amber strings, and the
-// pipeline operator in full amber — the mark's chevron, in running code.
+// The brand code palette: ink surface, teal keywords, amber strings, and
+// the pipeline operator in full amber — the mark's chevron, in running
+// code. One object feeds two consumers: shiki's theme, which paints the
+// book's code blocks at build time, and the playground editor, which
+// paints itself on every keystroke. Changing a colour here changes both,
+// which is the only way the two stay in agreement.
+export const PALETTE = {
+  bg: '#11161D',
+  plain: '#D6E2EC',
+  comment: '#5C7288',
+  string: '#EBC776',
+  escape: '#FBBF24',
+  number: '#8FE8DB',
+  keyword: '#2DD4BF',
+  const: '#2DD4BF',
+  type: '#A5E8DE',
+  fn: '#E6EDF3',
+  pipe: '#FBBF24',
+  arrow: '#FBBF24',
+  op: '#9FB6C9'
+};
+
 export const olangTheme = {
   name: 'olang-dark',
   type: 'dark',
   colors: {
-    'editor.background': '#11161D',
-    'editor.foreground': '#D6E2EC'
+    'editor.background': PALETTE.bg,
+    'editor.foreground': PALETTE.plain
   },
   tokenColors: [
-    { scope: ['comment'], settings: { foreground: '#5C7288', fontStyle: 'italic' } },
-    { scope: ['string'], settings: { foreground: '#EBC776' } },
+    { scope: ['comment'], settings: { foreground: PALETTE.comment, fontStyle: 'italic' } },
+    { scope: ['string'], settings: { foreground: PALETTE.string } },
     { scope: ['constant.character.escape', 'punctuation.definition.template-expression'],
-      settings: { foreground: '#FBBF24' } },
-    { scope: ['constant.numeric'], settings: { foreground: '#8FE8DB' } },
-    { scope: ['keyword.control', 'storage.type'], settings: { foreground: '#2DD4BF' } },
-    { scope: ['constant.language', 'support.class.promise'],
-      settings: { foreground: '#2DD4BF', fontStyle: 'bold' } },
-    { scope: ['entity.name.type'], settings: { foreground: '#A5E8DE' } },
-    { scope: ['entity.name.function'], settings: { foreground: '#E6EDF3' } },
-    { scope: ['keyword.operator.pipeline'], settings: { foreground: '#FBBF24', fontStyle: 'bold' } },
-    { scope: ['keyword.operator.arrow'], settings: { foreground: '#FBBF24' } },
-    { scope: ['keyword.operator'], settings: { foreground: '#9FB6C9' } },
+      settings: { foreground: PALETTE.escape } },
+    { scope: ['constant.numeric'], settings: { foreground: PALETTE.number } },
+    { scope: ['keyword.control', 'storage.type'], settings: { foreground: PALETTE.keyword } },
+    { scope: ['constant.language'], settings: { foreground: PALETTE.const, fontStyle: 'bold' } },
+    { scope: ['entity.name.type'], settings: { foreground: PALETTE.type } },
+    { scope: ['entity.name.function'], settings: { foreground: PALETTE.fn } },
+    { scope: ['keyword.operator.pipeline'], settings: { foreground: PALETTE.pipe, fontStyle: 'bold' } },
+    { scope: ['keyword.operator.arrow'], settings: { foreground: PALETTE.arrow } },
+    { scope: ['keyword.operator'], settings: { foreground: PALETTE.op } },
     // non-olang languages (toml, json, bash) reuse the same family
-    { scope: ['support.type.property-name', 'entity.name.tag'], settings: { foreground: '#A5E8DE' } },
-    { scope: ['punctuation'], settings: { foreground: '#9FB6C9' } }
+    { scope: ['support.type.property-name', 'entity.name.tag'], settings: { foreground: PALETTE.type } },
+    { scope: ['punctuation'], settings: { foreground: PALETTE.op } }
   ]
 };

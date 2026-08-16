@@ -14,6 +14,15 @@
       "autoPort": true
     },
     {
+      "name": "olang-website-dev",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd website && exec bun run vite dev --port 5174 --strictPort"
+      ],
+      "port": 5174
+    },
+    {
       "name": "tracker",
       "runtimeExecutable": "sh",
       "runtimeArgs": [

@@ -247,8 +247,8 @@ findings failing a build.
 ### Project rules
 
 Run project-specific lint rules, written in olang over the [meta
-AST](#meta--the-program-as-data-the-open-ast), alongside the built-in
-type checks:
+AST](stdlib.md#meta--the-program-as-data-the-open-ast), alongside the
+built-in type checks:
 
 ```bash
 olang check --rules rules.ol .
