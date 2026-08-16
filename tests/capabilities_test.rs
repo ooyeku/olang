@@ -311,3 +311,161 @@ fn capabilities_demo_example_runs_clean() {
     );
     assert!(stdout.contains("demo ok"), "demo self-check did not pass");
 }
+
+// ── C1: enforcement holds on the bytecode tier ────────────────────────
+//
+// Capabilities used to step the bytecode tier aside: the gate reads its
+// context off the interpreter it is handed, and the tier reaches builtins
+// through a *bridge* interpreter that carried neither the grant table nor
+// any idea which function was running. Rather than enforce partially, a
+// restricted run ran interpreted — so turning on the security feature
+// turned off the performance work. These pin that it no longer does.
+
+/// A function whose first calls are pure promotes before it ever reaches
+/// the filesystem, so a denial here can only have come through compiled
+/// bytecode. Without the fix this ran interpreted and proved nothing.
+#[test]
+fn a_promoted_function_is_still_gated() {
+    let ws = workspace("tiergate");
+    write(
+        &ws.join("s.ol"),
+        // calls 0..3 are pure; the tier has promoted `f` by call 4
+        "fn f(n) = if n > 3 => { let r = fs.exists(\"/tmp\"); 1 } else => 0\n\
+         let mut acc = 0\n\
+         for i in 0..8 { acc = acc + f(i) }\n\
+         println(show(acc))\n",
+    );
+
+    // Allowed: it runs, and the stats prove the tier compiled and ran it.
+    let ok = Command::new(olang())
+        .current_dir(&ws)
+        .args(["--ovm-tier=1", "--ovm-stats", "s.ol"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&ok.stdout);
+    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    assert!(stdout.contains("1 promoted"), "did not promote: {stdout}");
+    assert!(
+        stdout.contains("bytecode calls"),
+        "no bytecode calls: {stdout}"
+    );
+
+    // Denied: refused, from that same compiled path.
+    let denied = Command::new(olang())
+        .current_dir(&ws)
+        .args(["--ovm-tier=1", "--deny", "fs", "s.ol"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&denied.stderr);
+    assert!(!denied.status.success());
+    assert!(err.contains("capability 'fs' denied"), "unexpected: {err}");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// The tier must not be silently switched off any more: a restricted run
+/// has to show the same promotion as an unrestricted one. This is the
+/// half of C1 that is about speed rather than safety, and it is the half
+/// a "denied correctly" assertion cannot see.
+#[test]
+fn a_restricted_run_keeps_the_tier() {
+    let ws = workspace("tierkept");
+    write(
+        &ws.join("s.ol"),
+        "fn fib(n) = if n < 2 => n else => fib(n - 1) + fib(n - 2)\n\
+         println(show(fib(20)))\n",
+    );
+    let stats = |args: &[&str]| {
+        let out = Command::new(olang())
+            .current_dir(&ws)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find(|l| l.starts_with("Bytecode tier:"))
+            .map(|l| l.to_string())
+    };
+    let free = stats(&["--ovm-tier=1", "--ovm-stats", "s.ol"]);
+    let restricted = stats(&["--ovm-tier=1", "--ovm-stats", "--deny", "net", "s.ol"]);
+    assert!(free.is_some(), "no tier line in the unrestricted run");
+    assert_eq!(
+        free, restricted,
+        "a capability-restricted run lost the bytecode tier"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// A dependency's grant follows its code onto the tier: a promoted
+/// function from an attenuated package is judged by *that package's*
+/// grant, not the application's. Attribution is the part that was hardest
+/// to carry across, so it gets its own pin.
+#[test]
+fn dependency_attenuation_survives_promotion() {
+    let ws = workspace("tierattn");
+    write(
+        &ws.join("lib/olang.toml"),
+        "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n",
+    );
+    // pure for the first calls, so it promotes before touching fs
+    write(
+        &ws.join("lib/index.ol"),
+        "share fn peek(n) = if n > 3 => { let r = fs.exists(\"/tmp\"); 1 } else => 0\n",
+    );
+    write(
+        &ws.join("app/olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n\
+         [dependencies]\nlib = { path = \"../lib\" }\n\n\
+         [capabilities]\nfs = true\n\n\
+         [capabilities.dependencies.lib]\nfs = false\n",
+    );
+    write(
+        &ws.join("app/main.ol"),
+        "use lib { peek }\n\
+         let mut acc = 0\n\
+         for i in 0..8 { acc = acc + peek(i) }\n\
+         println(show(acc))\n",
+    );
+    let out = Command::new(olang())
+        .current_dir(ws.join("app"))
+        .args(["--ovm-tier=1", "main.ol"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "the dependency's backdoor was allowed");
+    assert!(err.contains("capability 'fs' denied"), "unexpected: {err}");
+    assert!(
+        err.contains("dependency 'lib'"),
+        "denial did not attribute to the dependency: {err}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// --trace-caps profiles the whole run, not just its interpreted part.
+#[test]
+fn the_caps_profiler_sees_effects_from_promoted_code() {
+    let ws = workspace("tiertrace");
+    write(
+        &ws.join("s.ol"),
+        "fn f(n) = if n > 3 => { let r = fs.exists(\"/tmp\"); 1 } else => 0\n\
+         let mut acc = 0\n\
+         for i in 0..8 { acc = acc + f(i) }\n\
+         println(show(acc))\n",
+    );
+    let out = Command::new(olang())
+        .current_dir(&ws)
+        .args(["--ovm-tier=1", "--trace-caps", "s.ol"])
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "{text}");
+    assert!(
+        text.contains("fs = \"read\""),
+        "the profile missed the tier's effects: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}

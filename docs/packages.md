@@ -346,7 +346,8 @@ olang run --trace-caps program.ol
 
 Capabilities the program did not use are set to their most restrictive
 value, so applying the generated block can only reduce access. The
-profiler runs on the interpreter tier and observes every effect.
+profiler observes every effect on either tier, so a promoted function's
+demands appear in the profile alongside an interpreted one's.
 
 Add `--write` to fold the block directly into the package's `olang.toml`:
 
@@ -365,12 +366,20 @@ olang caps path/to/pkg     # or a specific package directory
 olang caps ./tool          # a built binary (defers to inspect --caps)
 ```
 
-Capabilities are enforced on the interpreter tier. The interpreter's call
-stack attributes a gated call to the package that made it, so a
-capability-restricted run disables the bytecode tier, like `par for`.
-Unrestricted runs keep the bytecode tier. Cross-tier capability
-attribution, which would retain native speed under a manifest, is a
-roadmap item.
+Capabilities are enforced on **both** tiers, at the one dispatch point
+every builtin passes through. A compiled function carries the file it was
+declared in, the bytecode tier keeps a stack of those files as it
+executes, and the gate reads the innermost one — the same attribution the
+interpreter takes from its own call stack. A promoted function in an
+attenuated dependency is therefore judged by *that dependency's* grant,
+exactly as the interpreted one was.
+
+A capability-restricted run keeps the full tier and the full speed. This
+was not always true: a manifest used to switch the bytecode tier off,
+because the tier reaches some builtins through a bridge interpreter that
+carried no grant table and no idea which function was running, and a
+partial gate is worse than none. Turning on the security feature cost
+roughly two orders of magnitude on hot numeric code.
 
 ## The transparent binary
 

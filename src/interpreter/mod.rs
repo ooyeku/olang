@@ -171,7 +171,13 @@ pub struct Interpreter {
     /// far. When Some, every gated builtin call records its demand at the
     /// dispatch choke point (independent of whether a manifest is loaded),
     /// so the profiler can report a least-privilege grant at end of run.
-    caps_trace: Option<std::collections::BTreeSet<crate::caps::CapUse>>,
+    ///
+    /// Shared behind an Arc because the bytecode tier's bridge
+    /// interpreter is a *different* `Interpreter` that dispatches the same
+    /// builtins. It has to write into this set, not a copy of it, or a
+    /// promoted function's effects would vanish from the profile.
+    caps_trace:
+        Option<std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<crate::caps::CapUse>>>>,
 
     /// The Open Timeline (`--record` / `olang replay`). When present,
     /// every nondeterministic builtin call is logged (record) or served
@@ -1521,9 +1527,14 @@ impl Interpreter {
     /// compile (closures, unsupported expressions, unresolved callees) stays
     /// interpreted. See `crate::ovm::tier` and the differential test suite.
     pub fn enable_bytecode_tier(&mut self, threshold: u32, verbose: bool) {
-        self.bytecode_tier = Some(Box::new(
-            crate::ovm::tier::BytecodeTier::new(threshold).with_verbose(verbose),
-        ));
+        let mut tier = crate::ovm::tier::BytecodeTier::new(threshold).with_verbose(verbose);
+        // Order-independent: capabilities may be installed before or after
+        // the tier is turned on, and the tier must enforce either way.
+        tier.set_capabilities(self.caps.clone());
+        if let Some(trace) = self.caps_trace.clone() {
+            tier.set_caps_trace(trace);
+        }
+        self.bytecode_tier = Some(Box::new(tier));
     }
 
     pub fn bytecode_tier_stats(&self) -> Option<crate::ovm::tier::TierStats> {
@@ -1553,6 +1564,28 @@ impl Interpreter {
         self.struct_defs = struct_defs;
         self.struct_field_checks = struct_field_checks;
         self.unit_variant_names = unit_variant_names;
+    }
+
+    /// Give a bridge interpreter the capability context of the compiled
+    /// function that is calling through it: the run's grant table, the
+    /// shared `--trace-caps` set, and the file whose code is making the
+    /// call. The gate in builtin dispatch reads exactly these, so a
+    /// promoted function is judged by the same rule and the same package
+    /// attribution as the interpreted one it replaced.
+    pub fn seed_bridge_caps(
+        &mut self,
+        caps: Option<std::sync::Arc<crate::caps::CapTable>>,
+        trace: Option<
+            std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<crate::caps::CapUse>>>,
+        >,
+        attributed_to: Option<String>,
+    ) {
+        self.caps = caps;
+        self.caps_trace = trace;
+        // One frame, replaced per dispatch: the bridge runs one builtin at
+        // a time and `current_caps` reads only the top of this stack.
+        self.coverage_file_stack.clear();
+        self.coverage_file_stack.push(attributed_to);
     }
 
     pub fn call_function(
@@ -2986,43 +3019,47 @@ impl Interpreter {
 
     pub fn set_capabilities(&mut self, table: crate::caps::CapTable) {
         self.caps = Some(std::sync::Arc::new(table));
-        // Enforcement runs on the semantic-oracle tier: the interpreter's
-        // call stack is what attributes a gated builtin to the package
-        // that invoked it, and only the interpreter path funnels every
-        // builtin through the one gate. A promoted function bridges some
-        // builtins through a throwaway interpreter that carries no call
-        // stack, so it could not attribute (or even see) the call. Rather
-        // than enforce partially, a capability-restricted run steps the
-        // bytecode tier aside — like `par for`, this construct is
-        // interpreter-owned. Unrestricted runs (no manifest, no --deny)
-        // keep the full tier. (Roadmap: cross-tier capability attribution
-        // so restricted runs keep native speed.)
-        self.bytecode_tier = None;
+        // Both tiers enforce, through the same gate. `BuiltinFunctions::
+        // call_internal` is the one choke point every builtin passes, on
+        // either tier — what used to be missing was not the check but the
+        // *context*: the tier reaches builtins through a bridge
+        // interpreter that carried no capability table and no idea which
+        // function was executing, so the gate saw an unrestricted run.
+        // The tier now carries the table and the executing function's
+        // defining file, and seeds both into the bridge before dispatch.
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.set_capabilities(self.caps.clone());
+        }
     }
 
     /// Turn on `--trace-caps` profiling. Runs on the interpreter tier so
     /// every effect passes the dispatch choke point (a promoted function
     /// bridges some builtins past it), exactly like the gate and coverage.
     pub fn enable_caps_trace(&mut self) {
-        self.caps_trace = Some(std::collections::BTreeSet::new());
-        self.bytecode_tier = None;
+        let trace = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeSet::new()));
+        self.caps_trace = Some(trace.clone());
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.set_caps_trace(trace);
+        }
     }
 
     /// Record that `full_name` exercised a capability, if profiling is on.
     /// Called from builtin dispatch alongside the gate; a no-op (one branch)
     /// when `--trace-caps` is off.
     pub fn record_caps_use(&mut self, full_name: &str) {
-        if let Some(set) = self.caps_trace.as_mut()
+        if let Some(trace) = self.caps_trace.as_ref()
             && let Some(u) = crate::caps::required(full_name)
         {
-            set.insert(u);
+            trace.lock().unwrap().insert(u);
         }
     }
 
     /// Take the exercised-capability set back out (to print the profile at
     /// end of run).
     pub fn take_caps_trace(&mut self) -> Option<std::collections::BTreeSet<crate::caps::CapUse>> {
-        self.caps_trace.take()
+        let trace = self.caps_trace.take()?;
+        let set = trace.lock().unwrap().clone();
+        Some(set)
     }
 
     /// The capability set governing the currently-executing code, and the

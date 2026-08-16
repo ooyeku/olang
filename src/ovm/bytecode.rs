@@ -57,6 +57,19 @@ pub struct BytecodeVm {
     /// Interpreter -> BytecodeTier -> BytecodeVm -> Interpreter type cycle,
     /// and created on first use since most functions call no builtins.
     builtin_interpreter: Option<Box<crate::interpreter::Interpreter>>,
+
+    /// The run's capability table, and the `--trace-caps` set, both shared
+    /// with the owning interpreter. The bridge interpreter below is seeded
+    /// from these before every builtin dispatch: it is a separate
+    /// `Interpreter`, so without this it would present an unrestricted run
+    /// to the gate.
+    caps: Option<Arc<crate::caps::CapTable>>,
+    caps_trace: Option<Arc<std::sync::Mutex<std::collections::BTreeSet<crate::caps::CapUse>>>>,
+    /// Defining file of each compiled function currently executing,
+    /// innermost last — the tier's mirror of the interpreter's
+    /// `coverage_file_stack`. This is what attributes a gated builtin to
+    /// the package whose code called it.
+    caps_file_stack: Vec<Option<Arc<str>>>,
     /// Current nesting depth of execute(); bounds Rust stack growth from
     /// recursive CallNamed so runaway recursion errors instead of aborting
     call_depth: u32,
@@ -131,6 +144,10 @@ pub struct BytecodeCompiler {
     /// tier (precomputed at declaration; generic params already erased).
     pub pending_param_checks: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]>,
     pub pending_return_check: Option<crate::ast::FieldTypeCheck>,
+    /// Defining file of the function currently being compiled, handed in
+    /// the same way and baked into the emitted `CompiledBytecode` so the
+    /// capability gate can attribute its effects.
+    pub pending_def_file: Option<Arc<str>>,
     // Register allocator
     register_allocator: RegisterAllocator,
 
@@ -229,6 +246,10 @@ pub struct CompiledBytecode {
     pub local_count: u32,
     /// Declared parameter count, enforced at call time
     pub param_count: usize,
+    /// The file this function was declared in, for capability
+    /// attribution. `None` for synthesized functions and for programs
+    /// with no file (the REPL), which attribute to the program itself.
+    pub def_file: Option<Arc<str>>,
     /// Parameter names in declaration order — only for arity-error
     /// messages, which must match the interpreter's word-for-word.
     pub param_names: std::sync::Arc<[String]>,
@@ -995,6 +1016,9 @@ impl BytecodeVm {
             builtin_names,
             builtins: BuiltinFunctions::new(),
             builtin_interpreter: None,
+            caps: None,
+            caps_trace: None,
+            caps_file_stack: Vec::new(),
             call_depth: 0,
             arg_pool: Vec::new(),
             hof_cache: HashMap::new(),
@@ -1212,11 +1236,33 @@ impl BytecodeVm {
             std::sync::Arc::new(im::HashMap::new()),
             checks.into(),
             ret,
+            None,
         )
     }
 
     /// Compile function to bytecode, with the function's declaration-time
     /// closure available for lambda eligibility and attachment.
+    /// Install the run's capability table. The VM keeps it so the bridge
+    /// interpreter — a separate `Interpreter` that dispatches builtins the
+    /// VM cannot run natively — is seeded with it before every call, and
+    /// so presents the same grant the interpreter tier would.
+    pub fn set_capabilities(&mut self, caps: Option<Arc<crate::caps::CapTable>>) {
+        self.caps = caps;
+        // The bridge caches its state; drop it so the next dispatch
+        // rebuilds one that carries the table.
+        self.builtin_interpreter = None;
+    }
+
+    /// Share the `--trace-caps` set, so a promoted function's effects land
+    /// in the same profile as an interpreted one's.
+    pub fn set_caps_trace(
+        &mut self,
+        trace: Arc<std::sync::Mutex<std::collections::BTreeSet<crate::caps::CapUse>>>,
+    ) {
+        self.caps_trace = Some(trace);
+        self.builtin_interpreter = None;
+    }
+
     pub fn compile_function_with_closure(
         &mut self,
         func_id: FunctionId,
@@ -1224,6 +1270,7 @@ impl BytecodeVm {
         closure: std::sync::Arc<im::HashMap<String, Value>>,
         param_checks: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]>,
         return_check: Option<crate::ast::FieldTypeCheck>,
+        def_file: Option<Arc<str>>,
     ) -> Result<(), BytecodeError> {
         let start_time = crate::clock::Instant::now();
 
@@ -1234,6 +1281,7 @@ impl BytecodeVm {
         self.compiler.struct_field_checks = self.struct_field_checks.clone();
         self.compiler.pending_param_checks = param_checks;
         self.compiler.pending_return_check = return_check;
+        self.compiler.pending_def_file = def_file;
         self.compiler.known_function_values = self.known_function_values.clone();
         self.compiler.unit_variant_names = self.unit_variant_names.clone();
         self.compiler.enclosing_closure = closure;
@@ -1371,7 +1419,9 @@ impl BytecodeVm {
             .push_frame(bytecode.register_count as usize, args);
         self.stats.bytecode_cache_hits += 1;
         self.stats.function_calls += 1;
+        self.push_caps_frame(bytecode);
         let result = self.execute_bytecode(bytecode);
+        self.pop_caps_frame();
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
         result
@@ -1472,7 +1522,9 @@ impl BytecodeVm {
         self.stats.bytecode_cache_hits += 1;
         self.stats.function_calls += 1;
 
+        self.push_caps_frame(&bytecode);
         let result = self.execute_bytecode(&bytecode);
+        self.pop_caps_frame();
 
         // Restore the caller's window on both success and error paths
         self.execution_state.pop_frame(saved);
@@ -1721,7 +1773,9 @@ impl BytecodeVm {
         self.stats.bytecode_cache_hits += 1;
         self.stats.function_calls += 1;
 
+        self.push_caps_frame(&bytecode);
         let result = self.execute_bytecode(&bytecode);
+        self.pop_caps_frame();
 
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
@@ -3236,6 +3290,7 @@ impl BytecodeVm {
             func.closure.clone(),
             func.param_checks.clone().into(),
             func.return_check.clone(),
+            func.def_file.as_deref().map(Arc::from),
         );
 
         let result = compiled.ok().map(|_| func_id);
@@ -3265,6 +3320,29 @@ impl BytecodeVm {
     /// "Field not found" that the tree-walk never would. Recreated (not
     /// mutated in place) whenever those tables change, which is why the
     /// `note_*` methods drop it.
+    /// Enter a compiled function for capability purposes: remember whose
+    /// file it came from. Mirrors the interpreter pushing `def_file` onto
+    /// `coverage_file_stack` in `call_function`, and is what lets a
+    /// promoted function in a dependency be gated by *that dependency's*
+    /// grant rather than the program's.
+    ///
+    /// Costs a push and a pop per call when a manifest or a trace is
+    /// active, and a single branch when neither is — an unrestricted run
+    /// pays nothing.
+    #[inline]
+    fn push_caps_frame(&mut self, bytecode: &CompiledBytecode) {
+        if self.caps.is_some() || self.caps_trace.is_some() {
+            self.caps_file_stack.push(bytecode.def_file.clone());
+        }
+    }
+
+    #[inline]
+    fn pop_caps_frame(&mut self) {
+        if self.caps.is_some() || self.caps_trace.is_some() {
+            self.caps_file_stack.pop();
+        }
+    }
+
     fn ensure_bridge_interpreter(&mut self) {
         if self.builtin_interpreter.is_none() {
             let mut interp = Box::new(crate::interpreter::Interpreter::new());
@@ -3837,7 +3915,22 @@ impl BytecodeVm {
         }
 
         self.ensure_bridge_interpreter();
+        // Hand the bridge the enforcement context before it dispatches.
+        // The gate lives in `BuiltinFunctions::call_internal` and reads it
+        // off the interpreter it is given; the bridge is a *different*
+        // interpreter from the one that owns the run, so without this it
+        // would present an unrestricted, unattributed call and the tier
+        // would be a hole in the manifest.
+        let caps = self.caps.clone();
+        let trace = self.caps_trace.clone();
+        let attributed_to = self
+            .caps_file_stack
+            .last()
+            .cloned()
+            .flatten()
+            .map(|f| f.to_string());
         let interpreter = self.builtin_interpreter.as_mut().expect("just ensured");
+        interpreter.seed_bridge_caps(caps, trace, attributed_to);
 
         let result = BuiltinFunctions::call(&self.builtins, name, ast_args, interpreter)
             .map_err(|e| BytecodeError::RuntimeError(e.to_string()))?;
@@ -4327,6 +4420,7 @@ impl BytecodeCompiler {
         Self {
             pending_param_checks: std::sync::Arc::from(Vec::new()),
             pending_return_check: None,
+            pending_def_file: None,
             register_allocator: RegisterAllocator::new(),
             emitter: InstructionEmitter::new(),
             optimizer: BytecodeOptimizer::new(),
@@ -4393,6 +4487,11 @@ impl BytecodeCompiler {
             register_count: self.register_allocator.max_register_used(),
             local_count: 0,
             param_count: func.parameters.len(),
+            // Carried from the declaration so the capability gate can
+            // attribute this function's effects to the package that owns
+            // its source, exactly as the interpreter does from its own
+            // call stack.
+            def_file: self.pending_def_file.clone(),
             param_names: func
                 .parameters
                 .iter()

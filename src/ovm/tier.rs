@@ -115,6 +115,23 @@ impl BytecodeTier {
         self
     }
 
+    /// Install the run's capability table. Passed straight down to the
+    /// VM, which seeds it into the bridge interpreter that dispatches
+    /// builtins, so a promoted function is gated exactly as the
+    /// interpreted one was.
+    pub fn set_capabilities(&mut self, caps: Option<Arc<crate::caps::CapTable>>) {
+        self.vm.set_capabilities(caps);
+    }
+
+    /// Share the `--trace-caps` set, so effects a promoted function
+    /// performs land in the same profile as interpreted ones.
+    pub fn set_caps_trace(
+        &mut self,
+        trace: Arc<std::sync::Mutex<std::collections::BTreeSet<crate::caps::CapUse>>>,
+    ) {
+        self.vm.set_caps_trace(trace);
+    }
+
     pub fn stats(&self) -> TierStats {
         // The instruction counter lives on the VM, not in the tier's own
         // tally, so it is read through at reporting time.
@@ -369,6 +386,7 @@ impl BytecodeTier {
                 func.closure.clone(),
                 func.param_checks.clone().into(),
                 func.return_check.clone(),
+                func.def_file.as_deref().map(Arc::from),
             ) {
                 Ok(()) => {
                     self.compiled

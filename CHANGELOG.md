@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Capabilities no longer switch the bytecode tier off (Campaign 3, C1).**
+  A `[capabilities]` manifest or a `--deny` flag used to force the whole
+  run onto the interpreter, so turning on the security feature turned off
+  the performance work. On `fib(30)` that cost **1497 ms instead of 4 ms**
+  — a sandboxed program was a different program, performance-wise, than an
+  unsandboxed one.
+
+  The gate was never the missing piece: `BuiltinFunctions::call_internal`
+  is the one choke point both tiers already pass through. What was missing
+  was *context*. The tier reaches builtins it cannot run natively through a
+  bridge interpreter — a separate `Interpreter` — which carried no
+  capability table and no notion of which function was executing, so it
+  presented every call as unrestricted and unattributed. Enforcing
+  partially being worse than not enforcing, the tier was stepped aside.
+
+  Compiled functions now carry the file they were declared in;
+  the VM keeps a stack of those files as it executes, mirroring the
+  interpreter's `coverage_file_stack`; and the grant table, the
+  `--trace-caps` set, and the executing function's file are handed to the
+  bridge before each dispatch. A promoted function in an attenuated
+  dependency is judged by *that dependency's* grant, and the profiler sees
+  its effects:
+
+  ```
+  capability 'fs' denied: fs.exists requires it, and dependency 'lib' is
+  granted fs=false ... (olang.toml [capabilities.dependencies.lib])
+  ```
+
+  A restricted run now shows the same promotion count, the same bytecode
+  calls, and the same wall time as an unrestricted one. An unrestricted run
+  pays one branch per call for the attribution stack and is unchanged at
+  4 ms.
+
+  Record/replay (`--record`) still runs interpreter-only; the timeline has
+  its own reason (it must observe every nondeterministic call, in order)
+  and its own lane.
+
 ### Removed
 
 - **The bytecode tier's value model drops six unreachable variants.** 0.63

@@ -135,11 +135,9 @@ surface is closed for 1.0.
   are new: the model (opt-in restriction, shrink-only attenuation,
   gate at the effectful-module boundary, source-carrying binaries) is
   settled, but the gated surface may grow (new modules), the bundle
-  format may gain fields, and capability enforcement currently runs on
-  the interpreter tier — a capability-restricted run forgoes the
-  bytecode tier for sound attribution. Unrestricted runs are
-  unaffected; a program with no manifest keeps full capability and full
-  speed.
+  format may gain fields. Enforcement runs on every tier, so a restricted
+  run keeps full speed: the grant a program is given is independent of
+  how fast its code happens to be running.
 
 - `http.serve` — the request/response API (the `HttpRequest` fields, string
   and response-struct returns) is settled and integration-tested; the

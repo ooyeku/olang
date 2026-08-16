@@ -199,15 +199,34 @@ benchmark is reproducible from the repository; the flagship example ships in
 
 ## Campaign 3 — capabilities on every tier
 
-Implements D6. Enforcement today runs on the interpreter tier only, and a
-capability-restricted run forgoes the bytecode tier; this campaign removes
+Implements D6. Enforcement used to run on the interpreter tier only, and a
+capability-restricted run forwent the bytecode tier; this campaign removes
 that trade.
 
 | Lane | Work | Status |
 |---|---|---|
-| C1 — builtin-boundary enforcement | Capability checks move to the single dispatch point that all tiers share. Each compiled function carries its source-package provenance; OVM frames expose it; JIT code reaches builtins through helpers that pass through the same dispatch. The restriction that disables the bytecode tier under a capability manifest is then removed. | planned |
+| C1 — builtin-boundary enforcement | Capability checks move to the single dispatch point that all tiers share. Each compiled function carries its source-package provenance; OVM frames expose it; JIT code reaches builtins through helpers that pass through the same dispatch. The restriction that disables the bytecode tier under a capability manifest is then removed. | **shipped** |
 | C2 — attribution hardening | Package roots are canonicalized so symlinks cannot confuse attribution; `os.exit` and remaining ungated process-affecting calls are brought under the `proc` gate; bundle-format fields are validated on read. | planned |
 | C3 — denial and the error model | A denial keeps stopping the program, and a `caps` module lets a program ask what it was granted (`caps.allowed("fs")`, `caps.granted()`) so it can choose a different path *before* attempting the call. Degradation becomes a branch the program takes deliberately, not an error it recovers from. | planned |
+
+**C1 shipped.** The gate was never the missing piece: `BuiltinFunctions::
+call_internal` is the one choke point both tiers already pass through.
+What was missing was *context*. The tier reaches builtins the VM cannot
+run natively through a bridge interpreter — a separate `Interpreter` —
+which carried no capability table and no notion of which function was
+executing, so it presented every call as unrestricted and unattributed.
+Rather than enforce partially, a manifest switched the tier off.
+
+Compiled functions now carry the file they were declared in, the VM keeps
+a stack of those files as it executes (the tier's mirror of the
+interpreter's `coverage_file_stack`), and both the grant table and the
+`--trace-caps` set are handed to the bridge before each dispatch. A
+promoted function in an attenuated dependency is judged by that
+dependency's grant, and the profiler sees its effects.
+
+Measured on `fib(30)`: a `--deny`-restricted run went from 1497 ms to
+4 ms, matching the unrestricted run exactly. An unrestricted run pays one
+branch per call for the attribution stack.
 
 **C3 was respecified after 0.65.** It read "a capability denial is a
 runtime error recoverable at a `catch` boundary, consistent with D8" —
