@@ -1,14 +1,21 @@
 # Roadmap
 
-Where olang goes from 0.27. Every item here traces to concrete friction hit
-while building the [example programs](../examples/) — nothing is speculative.
-All of it is additive, per the [stability policy](stability.md): documented
-syntax and behavior do not change; the language grows and gets faster.
-
 Part of [the olang book](README.md) ·
-[Stability](stability.md) · [Internals](internals.md)
+[Stability and compatibility](stability.md) ·
+[Architecture and internals](internals.md)
 
-Statuses: **planned** → **in progress** → **landed** (with the release).
+This chapter records olang's development history and direction. Most items
+trace to specific needs encountered while building the
+[example programs](../examples/). All planned work is additive, in accordance
+with the [stability policy](stability.md): documented syntax and behavior do
+not change; the language grows and its performance improves. Item statuses
+progress from planned to in progress to landed, and landed items name the
+release in which they shipped.
+
+This document is both a record of completed work and a statement of planned
+work; the two are interleaved by campaign. The
+[stability chapter](stability.md) is the authoritative statement of what is
+currently stable.
 
 ## Tier 1 — completing what exists
 
@@ -418,12 +425,10 @@ shipped; the table records what remains.
 | O5 | **The Open AST — the grammar as a stable public data format** — a `meta` module exposes the parsed program as ordinary olang values (`kind`-tagged maps), so linters, codemods, and import extractors are written *in olang*. The frozen syntax is what lets the AST shapes be published | **landed (0.58+)** — `meta.parse(source)` → the program as walkable node maps; `otc deps` is four lines over it; `examples/metatool` lints bare `unwrap`s |
 | O6 | **`olang check --rules` — project lints in olang** — a repo defines `rule_*` functions over the meta AST; `olang check --rules rules.ol .` runs them beside the built-in checker with the same `file:line` reporting and fails on findings. Projects express their own invariants in olang, without a compiler change | **landed (0.59)** — the checker flattens each file's AST (nodes line-stamped), calls each `rule_*` function, and reports returned findings as problems (exit 1) |
 
-The through-line: **open code, open artifacts, open execution.** No
-incumbent can follow all three — Python cannot freeze its AST, Go will
-not embed source, and no mainstream runtime is deterministic enough to
-promise replay. Each lane grows out of a decision olang already made
-(early syntax stability, immutable values, a clean effect boundary)
-rather than a system it would have to invent.
+The three lanes are open code, open artifacts, and open execution. Each
+depends on a decision made earlier in the language's design — early syntax
+stability, immutable values, and a narrow effect boundary — rather than on a
+mechanism added specifically for this purpose.
 
 **Status: the three pillars are complete, and 0.59 hardened them.** Open
 artifacts (O1), open execution (O2), and open code (O5, O6) have landed.

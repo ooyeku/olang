@@ -1,15 +1,29 @@
-# OVM — the Olang Virtual Machine
+# The execution model: OVM and JIT
 
 Part of [the olang book](README.md) ·
-[Internals](internals.md) · [Stability](stability.md)
+[Architecture and internals](internals.md) ·
+[Stability and compatibility](stability.md)
 
-This chapter describes how olang executes code: the bytecode tier and the
-JIT in depth — what each compiles, how they stay exactly faithful to the
-interpreter, and what they deliberately refuse. It is explicit about the
-refusals: knowing what a tier does *not* do is as much a part of the
-design as what it does. For the design rationale behind the tiered
-architecture itself, start with
-[Internals](internals.md#why-an-interpreter-is-the-authority).
+This chapter describes the two lower execution tiers in detail: the bytecode
+virtual machine (the OVM) and the Cranelift JIT. It covers what each tier
+compiles, how each stays faithful to the interpreter, and what each does not
+compile. The set of constructs a tier does not support is documented as
+precisely as the set it does, because a program's behavior depends on knowing
+where a tier falls back. For the rationale behind the tiered architecture, see
+[Architecture and internals](internals.md#why-an-interpreter-is-the-authority).
+
+## Table of contents
+
+- [Execution model](#execution-model)
+- [Correctness policy](#correctness-policy)
+- [Value model](#value-model)
+- [Bytecode VM](#bytecode-vm)
+- [The JIT](#the-jit)
+- [Builtins](#builtins)
+- [Performance](#performance)
+- [Known limitations](#known-limitations)
+- [Not implemented](#not-implemented)
+- [Source map](#source-map)
 
 ## Execution model
 
@@ -398,9 +412,10 @@ there rather than producing inf), `i64::MIN` edge cases, recursion-depth
 exhaustion — simply **deopts**: the native run is abandoned and the same
 call re-executes on bytecode, which produces the exact result or error
 the VM would have produced anyway. The JIT never reproduces an error
-message; it only ever declines (float modulo, for instance, is declined
-outright: fmod has no exact IR equivalent, and guessing is how
-divergence starts). Every native call — self- or cross-function —
+message; it only declines. Float modulo, for instance, is declined outright,
+because `fmod` has no exact equivalent in the JIT's intermediate
+representation and an approximation could diverge from the interpreter. Every
+native call — self- or cross-function —
 carries a depth budget clamped to the VM's own `max_call_depth`, so
 runaway recursion errors exactly as it does on bytecode instead of
 overflowing the native stack, and a deopt anywhere in a native call

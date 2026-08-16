@@ -1,15 +1,31 @@
-# olang Internals
+# Architecture and internals
 
-How the implementation works — written both for people changing it and
-for people who want to study how a language gets built. olang's runtime
-is organized around a small number of load-bearing design decisions,
-and this chapter presents each one as what it is: a choice, with
-reasons, alternatives, and consequences. Read alongside
-[the OVM chapter](ovm.md) (the bytecode and JIT tiers in depth) and
-[Stability](stability.md) (what you may and may not change).
+Part of [the olang book](README.md) · [Language reference](language.md) ·
+[Standard library reference](stdlib.md) ·
+[The execution model: OVM and JIT](ovm.md) ·
+[Stability and compatibility](stability.md)
 
-Part of [the olang book](README.md) ·
-[Language](language.md) · [Standard Library](stdlib.md)
+This chapter describes how the olang runtime is implemented. It is written for
+readers changing the implementation and for readers studying how a language is
+built. The runtime is organized around a small number of design decisions;
+each is presented with its reasons, its alternatives, and its consequences.
+The bytecode and JIT tiers are covered in detail in
+[The execution model: OVM and JIT](ovm.md), and the rules governing what may
+change are in [Stability and compatibility](stability.md).
+
+## Table of contents
+
+- [The pipeline](#the-pipeline)
+- [Why an interpreter is the authority](#why-an-interpreter-is-the-authority)
+- [The refusal ladder](#the-refusal-ladder)
+- [How promotion, inference, and deopt work](#how-promotion-inference-and-deopt-work)
+- [The scratch-ownership model](#the-scratch-ownership-model)
+- [The value model](#the-value-model)
+- [Modules](#modules)
+- [Errors](#errors)
+- [Testing strategy](#testing-strategy)
+- [How to add things](#how-to-add-things)
+- [Repository map](#repository-map)
 
 ## The pipeline
 
@@ -67,15 +83,15 @@ The first design decision everything else hangs on: **the tree-walking
 interpreter defines the language, and every faster tier must agree with
 it exactly.**
 
-Why give the *slowest* component the crown? Because a dynamic language's
-semantics live overwhelmingly in its corners — which error a bad index
-raises and with what message, what `for` does with a range versus a
-list, how `Int` and `Float` mix inside a structural comparison, the
-precise moment a closure snapshots its environment. No specification
-document keeps up with that level of detail, but an implementation does:
-a tree-walker is essentially an executable specification, one small
-`match` arm per construct, cheap to write, easy to audit, and — the
-crucial property — easy to *trust*.
+The slowest component is chosen as the authority because a dynamic
+language's semantics are concentrated in its details: which error a bad
+index raises and with what message, what `for` does with a range as opposed
+to a list, how `Int` and `Float` interact inside a structural comparison, and
+the exact point at which a closure snapshots its environment. A prose
+specification is difficult to keep synchronized with that level of detail,
+but an implementation captures it directly. A tree-walking interpreter is in
+effect an executable specification — one small `match` arm per construct —
+which makes it inexpensive to write and straightforward to audit.
 
 With a trusted oracle in place, "is the optimizer correct?" stops being
 a matter of argument and becomes a testable property: run the program
@@ -110,23 +126,21 @@ per tier:
   **deopts**: the native run is abandoned and the call re-executes on
   the tier below, which owns every error message.
 
-Why is refusal the right default? Consider the alternative. An optimizer
-that *approximates* an unsupported construct produces divergences that
-appear and disappear with warmup — the same function gives different
-answers on its first and thousandth call. That is the worst bug class a
-language runtime can have: non-deterministic, unreproducible in
-isolation, and invisible to unit tests that don't happen to cross the
-promotion threshold. Refusal converts that entire class into a
-performance question ("why didn't this promote?") which is observable
-(`--ovm-stats`), harmless, and fixable incrementally.
+Refusal is the default because the alternative is worse. An optimizer that
+approximates an unsupported construct produces divergences that appear and
+disappear with warmup: the same function gives different answers on its first
+and its thousandth call. Such bugs are non-deterministic, difficult to
+reproduce in isolation, and invisible to unit tests that do not cross the
+promotion threshold. Refusal converts this class of bug into a performance
+question — why a function did not promote — which is observable through
+`--ovm-stats`, harmless, and fixable incrementally.
 
-The ladder also makes the system *growable*. Supporting a new construct
-in a tier is purely additive: implement it exactly, extend the
-differential tests, and functions that use it start promoting. Nothing
-can regress semantically, because the failure mode of an incomplete
-implementation is a refusal, not a wrong answer. **Falling back is
-always correct; diverging is never acceptable** — the whole
-architecture is that sentence, enforced.
+The ladder also makes the system extensible. Supporting a new construct in a
+tier is additive: implement it exactly, extend the differential tests, and
+functions that use it begin to promote. No semantic regression is possible,
+because the failure mode of an incomplete implementation is a refusal rather
+than a wrong answer. Falling back to a lower tier is always correct;
+diverging from the interpreter's result is never acceptable.
 
 ## How promotion, inference, and deopt work
 

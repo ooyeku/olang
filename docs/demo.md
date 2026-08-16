@@ -1,15 +1,19 @@
-# Building Robust Systems: the Demo
+# Case study: building robust systems
 
-`examples/demo/` is **Harborline** — a harbor-operations simulator, and
-the largest program in this repository written *to be run*, not just
-read. Vessels arrive on a seeded random stream, queue in the roads, get
-berths from a depth-and-tide-aware scheduler, unload through a crew of
-real threads fed over channels, and settle tariffs computed from
-expression-tree pricing rules. Every movement and charge lands in a
-SQLite ledger; every simulated day folds into a template-rendered digest
-whose hmac chain — RSA-signed — makes the history tamper-evident; and
-every day the world is checked against the ledger with the `testing`
-module. A failed invariant fails the process.
+Part of [the olang book](README.md) ·
+[Architecture and internals](internals.md) ·
+[Language reference](language.md)
+
+`examples/demo/` is Harborline, a harbor-operations simulator and the largest
+program in this repository intended to be run rather than only read. Vessels
+arrive on a seeded random stream, queue in the roads, receive berths from a
+depth- and tide-aware scheduler, unload through a crew of operating-system
+threads fed over channels, and settle tariffs computed from expression-tree
+pricing rules. Every movement and charge is recorded in a SQLite ledger. Each
+simulated day is rendered into a digest whose RSA-signed HMAC chain makes the
+history tamper-evident, and each day the simulation state is checked against
+the ledger using the `testing` module. A failed invariant terminates the
+process.
 
 ```bash
 cd examples/demo && olang main.ol
@@ -110,8 +114,8 @@ the cache actually grows.
 
 ## Pattern 2: make illegal states unrepresentable
 
-`lib/cargo.ol` is the ADT chapter in production dress. Cargo is a sum
-type — `Container(teu)`, `Bulk(tonnes)`, `Reefer(teu)`,
+`lib/cargo.ol` applies algebraic data types. Cargo is a sum type —
+`Container(teu)`, `Bulk(tonnes)`, `Reefer(teu)`,
 `Hazmat(class, tonnes)` — so a cargo item that is somehow both bulk and
 containerized cannot exist, and `match` handles every kind or the
 checker complains. Policy lives in guards:
@@ -176,14 +180,15 @@ test "crews unload deterministically" {
 }
 ```
 
-The batch tariff sweep uses `par_map`, with a test pinning it equal to
-the sequential `map`. If your parallel code cannot pass that test, it
-was not parallel-safe to begin with.
+The batch tariff sweep uses `par_map`, with a test pinning its result equal
+to the sequential `map`. Because `par_map` carries `spawn`'s snapshot
+semantics, code that produces the same result under `par_map` as under `map`
+is parallel-safe, and the test verifies this.
 
 ## Pattern 5: the system audits itself
 
-Robustness is not the absence of bugs; it is the presence of checks that
-would catch them. The demo audits itself three ways:
+The demo checks its own behavior at runtime in three ways, so that a defect
+is detected rather than producing silently incorrect output:
 
 - **Module self-tests.** Every `lib/*.ol` carries `test` blocks — 95
   assertions across the suite — runnable with `olang test .` and pinned
