@@ -1,0 +1,136 @@
+/* suite.css — the one design system for every page the tracker serves.
+   Tokens first (the tracker's palette is canonical); then the shared
+   chrome (nav, page heads, grids, cards); then the few page-specific
+   pieces, scoped by body class. Charts match via plot's dark theme:
+   surface #101720 = --panel, ink #d9e6ef = --text, mint #3ddc97 leads. */
+
+:root {
+  color-scheme: dark;
+  --bg: #0b0f14;
+  --panel: #101720;
+  --panel-2: #131c27;
+  --line: #1d2937;
+  --line-soft: #17202c;
+  --text: #d9e6ef;
+  --dim: #7f93a3;
+  --faint: #55697a;
+  --mint: #3ddc97;
+  --mint-soft: rgba(61, 220, 151, 0.12);
+  --amber: #f4b84c;
+  --blue: #5aa9e6;
+  --red: #ef6b73;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100vh; }
+body {
+  background:
+    radial-gradient(1200px 500px at 85% -10%, rgba(61, 220, 151, 0.06), transparent 60%),
+    var(--bg);
+  color: var(--dim);
+  font: 14px/1.55 var(--mono);
+}
+b { color: var(--mint); font-weight: 600; }
+a { color: var(--dim); }
+
+/* ── the suite nav: every page carries it ─────────────────────────── */
+nav.demos {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+  display: flex; justify-content: center; align-items: center; gap: 1.1rem;
+  padding: 0.65rem 1rem; font-size: 12.5px;
+  background: rgba(11, 15, 20, 0.88); border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+}
+nav.demos a { color: var(--dim); text-decoration: none; transition: color 0.15s; }
+nav.demos a:hover { color: var(--mint); }
+nav.demos a.here { color: var(--mint); font-weight: 600; }
+nav.demos .sep { color: var(--line); }
+nav.demos .src { color: var(--faint); }
+
+/* ── page scaffolding ─────────────────────────────────────────────── */
+body.shell { padding: 3.6rem 1.5rem 2.5rem; }
+.page-head {
+  max-width: 1180px; margin: 0 auto 1rem;
+  display: flex; align-items: baseline; gap: 1rem;
+}
+.page-head h1 { color: var(--mint); font-size: 1.05rem; margin: 0; }
+.page-head span { color: var(--faint); }
+.page-head .end { margin-left: auto; }
+
+body.centered {
+  display: grid; place-items: center; padding: 3.6rem 1rem 2rem;
+}
+body.centered main { text-align: center; }
+body.centered p.caption { margin: 0.85rem 0 0; color: var(--dim); }
+
+.note {
+  max-width: 1180px; margin: 1.1rem auto 0; color: var(--dim); opacity: 0.85;
+}
+body.centered .note { max-width: 640px; }
+
+/* ── grids and cards ──────────────────────────────────────────────── */
+.grid {
+  max-width: 1180px; margin: 0 auto;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+  gap: 1rem;
+}
+.grid > div, .card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; padding: 0.5rem; overflow: hidden;
+}
+.grid > .wide { grid-column: 1 / -1; }
+.grid canvas { display: block; width: 100%; height: auto; }
+.hud { text-align: center; color: var(--faint); font-size: 12.5px; padding: 0.35rem; }
+
+/* ── controls ─────────────────────────────────────────────────────── */
+button, select {
+  background: var(--panel-2); color: var(--mint);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.4rem 0.95rem; font: inherit; cursor: pointer;
+  transition: border-color 0.15s;
+}
+button:hover, select:hover { border-color: var(--mint); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary { background: var(--mint); color: #06251a; border: 0; font-weight: 600; }
+input[type="text"], input:not([type]) {
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.5rem 0.75rem; font: inherit; outline: none;
+}
+input:focus { border-color: var(--mint); }
+
+/* ── orbit ────────────────────────────────────────────────────────── */
+body.page-orbit canvas {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel); cursor: crosshair;
+  max-width: 92vw; height: auto;
+}
+
+/* ── notes ────────────────────────────────────────────────────────── */
+body.page-notes main { width: min(560px, 92vw); text-align: left; }
+body.page-notes h1 { color: var(--mint); font-size: 1.05rem; }
+body.page-notes .bar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+body.page-notes .bar input { flex: 1; }
+body.page-notes #list > div { margin-bottom: 0.5rem; }
+body.page-notes .n-row {
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.6rem 0.9rem; cursor: pointer; color: var(--text);
+}
+body.page-notes .n-row.sel { border-color: var(--mint); background: #12241f; }
+body.page-notes .n-row button { padding: 0.1rem 0.55rem; color: var(--red); }
+body.page-notes .hint { color: var(--faint); font-size: 0.9em; margin-top: 1rem; }
+
+/* ── primes ───────────────────────────────────────────────────────── */
+body.page-primes main { width: min(440px, 92vw); }
+body.page-primes #dial { margin: 0 auto 1rem; display: block; }
+body.page-primes #track {
+  height: 8px; background: var(--line); border-radius: 4px;
+  margin: 1rem 0 0.5rem; overflow: hidden;
+}
+body.page-primes #bar {
+  height: 100%; width: 0%; background: var(--amber);
+  transition: width 120ms linear;
+}
+body.page-primes #out { color: var(--mint); font-weight: 600; min-height: 1.5em; margin-top: 0.5rem; }

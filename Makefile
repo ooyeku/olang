@@ -41,6 +41,7 @@ test:
 wasm:
 	cargo build -p olang-playground --target $(WASM_TARGET) --release
 	cp $(WASM_ARTIFACT) examples/app/static/olang_playground.wasm
+	cp $(WASM_ARTIFACT) examples/ledger/static/olang_playground.wasm
 	mkdir -p website/static/playground
 	cp $(WASM_ARTIFACT) website/static/playground/olang.wasm
 

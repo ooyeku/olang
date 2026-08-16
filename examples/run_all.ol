@@ -27,7 +27,7 @@ let root =
 
 // Programs that block forever by design (servers) can't run under the
 // harness; list them here so the skip is visible, never silent.
-let long_running = ["webserver/", "app/"]
+let long_running = ["webserver/", "app/", "ledger/"]
 
 // ── discover targets: each is { label, dir, file } ──
 // Labels stay relative to `root` (e.g. "demo/"), which is what harness_args

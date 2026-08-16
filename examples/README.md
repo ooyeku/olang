@@ -145,6 +145,13 @@ A two-package demonstration of the package manager (see
   `re` + `fs`, results merge after `await Promise.all`, and per-task
   `try`/`catch` survives worker failure. Prints sequential-vs-parallel
   timings and self-checks that both agree
+- [`ledger/`](ledger/) — a personal-finance web app run entirely by
+  `olang main.ol`: a schema-migrated SQLite backend (money as integer
+  cents) behind a validated JSON API for transactions, categories, and
+  monthly budgets, with an olang-in-the-browser frontend whose analysis
+  and charts run client-side on the ods data stack — Frames, `group_by`,
+  and `viz` SVG rendered inside the wasm runtime. Seeded demo data via
+  `seed.ol`; API contract locked by `tests/ledger_app_test.rs`
 - [`app/`](app/) — a full-stack issue tracker run entirely by
   `olang main.ol`: a persistent, schema-migrated SQLite backend behind a
   JSON API with request validation (422s that name each field problem),
