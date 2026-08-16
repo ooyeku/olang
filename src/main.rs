@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
 use std::process;
@@ -10,81 +10,252 @@ use olang::{
     repl::Repl,
 };
 
+/// olang command-line interface.
+///
+/// The bare form runs a program: `olang script.ol [args...]`, or drops into
+/// the REPL when no file is given. Everything else is a named command
+/// (`olang inspect`, `olang build`, `olang check`, …) listed under Commands.
+///
+/// Design note: olang is file-first, like `python` and `node` — `olang
+/// script.ol` runs a file directly. A word that isn't a known command and
+/// isn't a flag is taken as a file to run, so `olang report.ol` and `olang
+/// ./build` still run those files even though `build` is a command.
 #[derive(Parser)]
 #[command(name = "olang")]
-#[command(about = "A minimal, expressive language with first-class functions and pipelines")]
 #[command(version)]
-struct Cli {
-    /// Input file to execute (optional, starts REPL if not provided)
-    #[arg(value_name = "FILE")]
-    file: Option<PathBuf>,
+#[command(
+    about = "olang — the Open Language. Run programs, inspect binaries, and prove what code does."
+)]
+#[command(long_about = None)]
+#[command(subcommand_help_heading = "Commands")]
+#[command(
+    override_usage = "olang [RUN OPTIONS] <FILE> [ARGS]...\n       olang <COMMAND> [ARGS]...\n       olang                       (starts the REPL)"
+)]
+#[command(after_help = "Examples:
+  olang app.ol                 Run a program
+  olang app.ol --port 8080     Run, passing --port 8080 to the program
+  olang --watch app.ol         Re-run on every save
+  olang --deny net app.ol      Run with the network capability withheld
+  olang check src/             Type-check a directory
+  olang build app.ol -o app    Compile to a self-contained binary
+  olang inspect app --caps     Show a built binary's capability grant
+  olang <command> --help       Full help for any command
 
+Run options apply to `olang <file>` and `olang run <file>`. Every command
+also honors the OLANG_DENY environment variable. Full reference: docs/tooling.md")]
+struct Cli {
     /// Execute in batch mode (no REPL)
-    #[arg(short, long)]
+    #[arg(short, long, help_heading = "Run options")]
     batch: bool,
 
     /// Enable verbose output
-    #[arg(short, long)]
+    #[arg(short, long, help_heading = "Run options")]
     verbose: bool,
 
     /// Enable tracing for debugging
-    #[arg(long)]
+    #[arg(long, help_heading = "Run options")]
     trace: bool,
 
-    /// Disable OVM and use classic interpreter only
-    #[arg(long)]
+    /// Disable OVM and use the classic interpreter only
+    #[arg(long, help_heading = "Run options")]
     no_ovm: bool,
 
     /// Show OVM performance statistics
-    #[arg(long)]
+    #[arg(long, help_heading = "Run options")]
     ovm_stats: bool,
 
-    /// Rerun the file whenever any .ol file in its directory changes
+    /// Re-run the file whenever any .ol file in its directory changes
     /// (place before the file: `olang --watch script.ol`)
-    #[arg(long)]
+    #[arg(long, help_heading = "Run options")]
     watch: bool,
 
     /// Enable parallel evaluation of independent expressions
-    #[arg(long)]
+    #[arg(long, help_heading = "Run options")]
     enable_parallel: bool,
 
-    /// Set maximum parallelism for OVM/builtins (threads). Also respects OVM_PARALLELISM env var.
-    #[arg(long, value_name = "N")]
+    /// Set maximum parallelism for OVM/builtins (threads). Also respects the
+    /// OVM_PARALLELISM environment variable.
+    #[arg(long, value_name = "N", help_heading = "Run options")]
     ovm_parallelism: Option<usize>,
 
     /// Compile hot functions to OVM bytecode after N calls (default 50 when
     /// the flag is given without a value). Functions the tier cannot compile
     /// keep running on the interpreter.
-    #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "50")]
+    #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "50", help_heading = "Run options")]
     ovm_tier: Option<u32>,
 
-    /// Deny capabilities for this run, on top of any manifest: a comma
-    /// list of fs, fs-write, net, proc, db, env (e.g. --deny net,fs-write).
-    /// Also honored from the OLANG_DENY environment variable.
-    #[arg(long, value_name = "CAPS")]
+    /// Deny capabilities for this run, on top of any manifest: a comma list
+    /// of fs, fs-write, net, proc, db, env (e.g. --deny net,fs-write). Also
+    /// honored from the OLANG_DENY environment variable.
+    #[arg(long, value_name = "CAPS", help_heading = "Run options")]
     deny: Option<String>,
 
     /// Record this run's nondeterministic inputs to a portable .olt trace.
     /// Replay it bit-for-bit later with `olang replay <trace>`.
-    #[arg(long, value_name = "TRACE.olt")]
+    #[arg(long, value_name = "TRACE.olt", help_heading = "Run options")]
     record: Option<String>,
 
-    /// Report which capabilities the program actually exercised, then print
-    /// a suggested least-privilege [capabilities] manifest. Runs on the
+    /// Report which capabilities the program actually exercised, then print a
+    /// suggested least-privilege [capabilities] manifest. Runs on the
     /// interpreter tier so every effect is seen.
-    #[arg(long)]
+    #[arg(long, help_heading = "Run options")]
     trace_caps: bool,
 
     /// With --trace-caps, write the suggested [capabilities] block into the
     /// package's olang.toml instead of only printing it. Never overwrites an
     /// existing [capabilities] block.
-    #[arg(long)]
+    #[arg(long, help_heading = "Run options")]
     write: bool,
 
-    /// Arguments passed through to the program, readable via `os.args()`.
-    /// Everything after the file name (or after `--`) is the script's argv.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    script_args: Vec<String>,
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+/// olang's named commands. The catch-all `External` variant is how the
+/// file-first form (`olang script.ol`) reaches the runner: any leading word
+/// that is neither a known command nor a flag is treated as a file path,
+/// with the rest passed through as the program's argv.
+#[derive(Subcommand)]
+enum Commands {
+    /// Run a program (the explicit form of `olang <file>`)
+    Run {
+        /// Program to execute
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Arguments passed to the program, readable via os.args()
+        #[arg(
+            value_name = "ARGS",
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        args: Vec<String>,
+    },
+
+    /// Start the interactive REPL (the explicit form of bare `olang`)
+    Repl,
+
+    /// Type-check programs without running them
+    Check {
+        /// Files or directories to check (default: current directory)
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+        /// Also run project lints written as olang functions over the meta AST
+        #[arg(long, value_name = "RULES.ol")]
+        rules: Option<PathBuf>,
+    },
+
+    /// Format source files in place (or check formatting)
+    Fmt {
+        /// Files or directories to format (default: current directory)
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+        /// Report which files would change and exit non-zero; write nothing
+        #[arg(long)]
+        check: bool,
+    },
+
+    /// Discover and run test blocks
+    Test {
+        /// File or directory to test (default: current directory)
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+        /// Report line coverage
+        #[arg(long)]
+        coverage: bool,
+        /// Report coverage and list each file's uncovered lines (implies --coverage)
+        #[arg(long)]
+        coverage_lines: bool,
+    },
+
+    /// Compile a program to a self-contained executable
+    Build {
+        /// Program to compile
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Output path (default: the program's file stem)
+        #[arg(short, long, value_name = "OUT")]
+        output: Option<PathBuf>,
+    },
+
+    /// Inspect a built binary: embedded source, manifest, capabilities, provenance
+    Inspect {
+        /// The built binary to inspect
+        #[arg(value_name = "BINARY")]
+        binary: PathBuf,
+        /// Print the embedded source
+        #[arg(long)]
+        source: bool,
+        /// Print the embedded olang.toml manifest
+        #[arg(long)]
+        manifest: bool,
+        /// Print the embedded olang.lock lockfile
+        #[arg(long)]
+        lockfile: bool,
+        /// Print the resolved capability grant
+        #[arg(long)]
+        caps: bool,
+        /// Re-verify every embedded checksum and exit non-zero on mismatch
+        #[arg(long)]
+        verify: bool,
+        /// Prove the binary was built from the source tree in DIR
+        #[arg(long, value_name = "DIR")]
+        against: Option<PathBuf>,
+        /// Extract embedded source/manifest/lockfile into DIR
+        #[arg(short, long, value_name = "DIR")]
+        output: Option<PathBuf>,
+    },
+
+    /// Show the capability grant a program or built binary carries
+    Caps {
+        /// A source file, package directory, or built binary (default: current directory)
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+    },
+
+    /// Replay a recorded .olt timeline bit-for-bit
+    Replay {
+        /// The recorded trace to replay
+        #[arg(value_name = "TRACE.olt")]
+        trace: PathBuf,
+        /// Arguments passed to the replayed program
+        #[arg(
+            value_name = "ARGS",
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        args: Vec<String>,
+    },
+
+    /// Generate HTML or Markdown API documentation
+    Doc {
+        /// Files or directories to document (default: current directory)
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+        /// Output path (default: doc.html)
+        #[arg(short, long, value_name = "OUT")]
+        output: Option<PathBuf>,
+        /// Emit Markdown instead of HTML
+        #[arg(long)]
+        markdown: bool,
+    },
+
+    /// Run benchmarks
+    Bench {
+        /// Arguments forwarded to the benchmark runner
+        #[arg(
+            value_name = "ARGS",
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        args: Vec<String>,
+    },
+
+    /// Start the language server (LSP over stdio)
+    Lsp,
+
+    /// Run a program file — the file-first form `olang <file> [args]`
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }
 
 /// The interpreter recurses on the host stack, and its documented call-depth
@@ -116,20 +287,6 @@ fn run() -> i32 {
     }
 
     let mut cli = Cli::parse();
-
-    // `olang run x.ol` — muscle memory from cargo/go/deno. There is no
-    // `run` subcommand (the file is the first positional), so treat `run`
-    // as an alias: shift to the next argument — unless a real file named
-    // `run` exists, which stays runnable like any other file.
-    if cli.file.as_deref() == Some(std::path::Path::new("run"))
-        && !std::path::Path::new("run").exists()
-    {
-        if cli.script_args.is_empty() {
-            eprintln!("olang: no file named 'run' and no file given — usage: olang <file.ol>");
-            return 1;
-        }
-        cli.file = Some(PathBuf::from(cli.script_args.remove(0)));
-    }
 
     // Initialize logger
     let logger = init_logger();
@@ -191,213 +348,199 @@ fn run() -> i32 {
     // Initialize error reporting
     miette::set_panic_hook();
 
-    // Tool commands: `olang test [path]`, `olang fmt [paths] [--check]`,
-    // and `olang check [paths]`. The first positional dispatches; a file
-    // literally named `test` or `fmt` is still runnable as `./test` or
-    // `test.ol`.
-    if let Some(ref file_path) = cli.file {
-        match file_path.to_string_lossy().as_ref() {
-            "test" => {
-                // Files under the runner get a bare argv — a program that
-                // branches on os.args() takes its no-argument path.
-                olang::stdlib::os::set_script_args(vec!["olang-test".to_string()]);
-                // `--coverage` reports line coverage; `--coverage-lines`
-                // additionally lists each file's uncovered lines (and implies
-                // `--coverage`). The path is the first non-flag argument.
-                let show_missing = cli.script_args.iter().any(|a| a == "--coverage-lines");
-                let coverage = show_missing || cli.script_args.iter().any(|a| a == "--coverage");
-                let target = cli
-                    .script_args
-                    .iter()
-                    .find(|a| !a.starts_with("--"))
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("."));
-                return olang::tools::test_runner::run(&target, coverage, show_missing);
+    // Dispatch. The file-first form `olang <file> [args]` arrives as
+    // `Commands::External` (any leading word that is neither a known command
+    // nor a flag); every other command is named. No command — or `olang
+    // repl` — starts the REPL. Taking `command` out leaves the run options on
+    // `cli` for the runner to read.
+    let command = cli.command.take();
+    match command {
+        None | Some(Commands::Repl) => {
+            if let Err(e) = start_repl(cli.verbose, cli.no_ovm, logger) {
+                logger.error("main", &format!("REPL error: {}", e));
+                return 1;
             }
-            "lsp" => {
-                return match olang::tools::lsp::run() {
-                    Ok(()) => 0,
-                    Err(e) => {
-                        eprintln!("language server error: {e}");
-                        1
-                    }
-                };
-            }
-            "bench" => {
-                return olang::tools::bench::run(&cli.script_args);
-            }
-            "check" => {
-                // `--rules FILE` runs project-authored lints (olang functions
-                // over the meta AST) alongside the built-in type checker.
-                let mut rules: Option<PathBuf> = None;
-                let mut paths: Vec<PathBuf> = Vec::new();
-                let mut it = cli.script_args.iter();
-                while let Some(a) = it.next() {
-                    match a.as_str() {
-                        "--rules" => {
-                            rules = it.next().map(PathBuf::from);
-                            if rules.is_none() {
-                                eprintln!("olang check: --rules needs a rules file");
-                                return 2;
-                            }
-                        }
-                        other => paths.push(PathBuf::from(other)),
-                    }
-                }
-                if paths.is_empty() {
-                    paths.push(PathBuf::from("."));
-                }
-                return olang::tools::check::run(&paths, rules.as_deref());
-            }
-            "fmt" => {
-                let check = cli.script_args.iter().any(|a| a == "--check");
-                let mut paths: Vec<PathBuf> = cli
-                    .script_args
-                    .iter()
-                    .filter(|a| *a != "--check")
-                    .map(PathBuf::from)
-                    .collect();
-                if paths.is_empty() {
-                    paths.push(PathBuf::from("."));
-                }
-                return olang::tools::fmt::run(&paths, check);
-            }
-            "build" => {
-                return match build_executable(&cli.script_args) {
-                    Ok(out) => {
-                        println!("built {}", out);
-                        0
-                    }
-                    Err(e) => {
-                        eprintln!("olang build: {}", e);
-                        1
-                    }
-                };
-            }
-            "inspect" => {
-                return inspect_binary(&cli.script_args);
-            }
-            "caps" => {
-                return show_caps(&cli.script_args);
-            }
-            "replay" => {
-                // `olang replay <trace.olt> [-- args]` — re-run the recorded
-                // program, serving every nondeterministic call from the log.
-                return run_replay(&cli.script_args, logger);
-            }
-            "doc" => {
-                // olang doc [paths] [-o out.html] [--md]
-                let mut output = PathBuf::from("doc.html");
-                let mut markdown = false;
-                let mut paths: Vec<PathBuf> = Vec::new();
-                let mut it = cli.script_args.iter();
-                while let Some(a) = it.next() {
-                    match a.as_str() {
-                        "--md" | "--markdown" => markdown = true,
-                        "-o" | "--output" => {
-                            if let Some(o) = it.next() {
-                                output = PathBuf::from(o);
-                            }
-                        }
-                        other => paths.push(PathBuf::from(other)),
-                    }
-                }
-                if paths.is_empty() {
-                    paths.push(PathBuf::from("."));
-                }
-                return olang::tools::doc::run(&paths, &output, markdown);
-            }
-            _ => {}
+            0
         }
-    }
 
-    if let Some(file_path) = cli.file {
-        // Watch mode: run the script in a child process (so os.exit and
-        // crashes end the run, not the watcher) and rerun when any .ol
-        // file in the script's directory changes.
-        if cli.watch {
-            return watch_loop(&file_path, cli.deny.as_deref(), &cli.script_args);
+        Some(Commands::Run { file, args }) => run_program(&cli, file, args, logger),
+
+        Some(Commands::External(mut parts)) => {
+            // The catch-all arm: `olang report.ol a b` -> ["report.ol","a","b"].
+            // clap guarantees at least one element for an external subcommand.
+            let file = PathBuf::from(parts.remove(0));
+            run_program(&cli, file, parts, logger)
         }
-        // Program's argv: the script path, then everything after it. Read via
-        // os.args() inside the program.
-        let mut argv = vec![file_path.to_string_lossy().to_string()];
-        argv.extend(cli.script_args.clone());
-        olang::stdlib::os::set_script_args(argv);
 
-        // Capability restriction for this run: --deny and OLANG_DENY
-        // intersect (both can only remove). A typo in either refuses to
-        // run rather than running wide open.
-        let deny = {
-            let flag = match cli.deny.as_deref().map(olang::caps::parse_deny) {
-                Some(Ok(c)) => Some(c),
-                Some(Err(e)) => {
-                    eprintln!("olang: {}", e);
-                    return 2;
-                }
-                None => None,
-            };
-            let env = match std::env::var("OLANG_DENY")
-                .ok()
-                .as_deref()
-                .map(olang::caps::parse_deny)
-            {
-                Some(Ok(c)) => Some(c),
-                Some(Err(e)) => {
-                    eprintln!("olang (OLANG_DENY): {}", e);
-                    return 2;
-                }
-                None => None,
-            };
-            match (flag, env) {
-                (Some(a), Some(b)) => Some(a.intersect(b)),
-                (a, b) => a.or(b),
+        Some(Commands::Test {
+            path,
+            coverage,
+            coverage_lines,
+        }) => {
+            // Files under the runner get a bare argv — a program that branches
+            // on os.args() takes its no-argument path.
+            olang::stdlib::os::set_script_args(vec!["olang-test".to_string()]);
+            let target = path.unwrap_or_else(|| PathBuf::from("."));
+            olang::tools::test_runner::run(&target, coverage || coverage_lines, coverage_lines)
+        }
+
+        Some(Commands::Check { mut paths, rules }) => {
+            if paths.is_empty() {
+                paths.push(PathBuf::from("."));
             }
-        };
+            olang::tools::check::run(&paths, rules.as_deref())
+        }
 
-        // --record builds a recording timeline over the program source.
-        let timeline = match &cli.record {
-            Some(out) => match std::fs::read_to_string(&file_path) {
-                Ok(src) => Some(olang::timeline::Timeline::record(
-                    PathBuf::from(out),
-                    file_path.to_string_lossy().to_string(),
-                    src.clone(),
-                    sha256_hex(src.as_bytes()),
-                )),
+        Some(Commands::Fmt { mut paths, check }) => {
+            if paths.is_empty() {
+                paths.push(PathBuf::from("."));
+            }
+            olang::tools::fmt::run(&paths, check)
+        }
+
+        Some(Commands::Build { file, output }) => {
+            match build_executable(&file, output.as_deref()) {
+                Ok(out) => {
+                    println!("built {}", out);
+                    0
+                }
                 Err(e) => {
-                    eprintln!("olang --record: cannot read {}: {}", file_path.display(), e);
-                    return 1;
+                    eprintln!("olang build: {}", e);
+                    1
                 }
-            },
+            }
+        }
+
+        Some(Commands::Inspect {
+            binary,
+            source,
+            manifest,
+            lockfile,
+            caps,
+            verify,
+            against,
+            output,
+        }) => inspect_binary(&InspectArgs {
+            binary,
+            source,
+            manifest,
+            lockfile,
+            caps,
+            verify,
+            against,
+            output,
+        }),
+
+        Some(Commands::Caps { path }) => {
+            show_caps(path.unwrap_or_else(|| PathBuf::from(".")).as_path())
+        }
+
+        Some(Commands::Replay { trace, args }) => run_replay(&trace, &args, logger),
+
+        Some(Commands::Doc {
+            mut paths,
+            output,
+            markdown,
+        }) => {
+            if paths.is_empty() {
+                paths.push(PathBuf::from("."));
+            }
+            let output = output.unwrap_or_else(|| PathBuf::from("doc.html"));
+            olang::tools::doc::run(&paths, &output, markdown)
+        }
+
+        Some(Commands::Bench { args }) => olang::tools::bench::run(&args),
+
+        Some(Commands::Lsp) => match olang::tools::lsp::run() {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("language server error: {e}");
+                1
+            }
+        },
+    }
+}
+
+/// Run a program file with the given run options (`olang <file>` and `olang
+/// run <file>` both land here). `args` is the program's argv after the file.
+fn run_program(cli: &Cli, file_path: PathBuf, args: Vec<String>, logger: &Logger) -> i32 {
+    // Watch mode: run the script in a child process (so os.exit and crashes
+    // end the run, not the watcher) and rerun when any .ol file in the
+    // script's directory changes.
+    if cli.watch {
+        return watch_loop(&file_path, cli.deny.as_deref(), &args);
+    }
+    // Program's argv: the script path, then everything after it. Read via
+    // os.args() inside the program.
+    let mut argv = vec![file_path.to_string_lossy().to_string()];
+    argv.extend(args);
+    olang::stdlib::os::set_script_args(argv);
+
+    // Capability restriction for this run: --deny and OLANG_DENY intersect
+    // (both can only remove). A typo in either refuses to run rather than
+    // running wide open.
+    let deny = {
+        let flag = match cli.deny.as_deref().map(olang::caps::parse_deny) {
+            Some(Ok(c)) => Some(c),
+            Some(Err(e)) => {
+                eprintln!("olang: {}", e);
+                return 2;
+            }
             None => None,
         };
+        let env = match std::env::var("OLANG_DENY")
+            .ok()
+            .as_deref()
+            .map(olang::caps::parse_deny)
+        {
+            Some(Ok(c)) => Some(c),
+            Some(Err(e)) => {
+                eprintln!("olang (OLANG_DENY): {}", e);
+                return 2;
+            }
+            None => None,
+        };
+        match (flag, env) {
+            (Some(a), Some(b)) => Some(a.intersect(b)),
+            (a, b) => a.or(b),
+        }
+    };
 
-        // Execute file in batch mode
-        if let Err(e) = execute_file(
-            &file_path,
-            cli.verbose,
-            cli.no_ovm,
-            cli.ovm_stats,
-            cli.ovm_tier,
-            deny,
-            timeline,
-            if cli.trace_caps {
-                Some(cli.write)
-            } else {
-                None
-            },
-            logger,
-        ) {
-            logger.error("main", &format!("Error executing file: {}", e));
-            return 1;
-        }
-    } else {
-        // Start REPL
-        if let Err(e) = start_repl(cli.verbose, cli.no_ovm, logger) {
-            logger.error("main", &format!("REPL error: {}", e));
-            return 1;
-        }
+    // --record builds a recording timeline over the program source.
+    let timeline = match &cli.record {
+        Some(out) => match std::fs::read_to_string(&file_path) {
+            Ok(src) => Some(olang::timeline::Timeline::record(
+                PathBuf::from(out),
+                file_path.to_string_lossy().to_string(),
+                src.clone(),
+                sha256_hex(src.as_bytes()),
+            )),
+            Err(e) => {
+                eprintln!("olang --record: cannot read {}: {}", file_path.display(), e);
+                return 1;
+            }
+        },
+        None => None,
+    };
+
+    if let Err(e) = execute_file(
+        &file_path,
+        cli.verbose,
+        cli.no_ovm,
+        cli.ovm_stats,
+        cli.ovm_tier,
+        deny,
+        timeline,
+        if cli.trace_caps {
+            Some(cli.write)
+        } else {
+            None
+        },
+        logger,
+    ) {
+        logger.error("main", &format!("Error executing file: {}", e));
+        return 1;
     }
-
     0
 }
 
@@ -1082,58 +1225,28 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
 ///   --verify            recompute the payload digest; nonzero on mismatch
 ///   --against DIR       prove the binary was built from the source in DIR
 ///   -o DIR              extract source/manifest/lockfile into DIR
-fn inspect_binary(args: &[String]) -> i32 {
-    let mut target: Option<String> = None;
-    let mut show_source = false;
-    let mut show_manifest = false;
-    let mut show_lockfile = false;
-    let mut show_caps = false;
-    let mut verify = false;
-    let mut out_dir: Option<String> = None;
-    let mut against: Option<String> = None;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--source" => show_source = true,
-            "--manifest" => show_manifest = true,
-            "--lockfile" => show_lockfile = true,
-            "--caps" => show_caps = true,
-            "--verify" => verify = true,
-            "-o" | "--output" => {
-                i += 1;
-                out_dir = args.get(i).cloned();
-                if out_dir.is_none() {
-                    eprintln!("olang inspect: -o needs a directory");
-                    return 2;
-                }
-            }
-            "--against" => {
-                i += 1;
-                against = args.get(i).cloned();
-                if against.is_none() {
-                    eprintln!("olang inspect: --against needs a source directory");
-                    return 2;
-                }
-            }
-            other if other.starts_with('-') => {
-                eprintln!("olang inspect: unknown flag {}", other);
-                return 2;
-            }
-            other => {
-                if target.is_none() {
-                    target = Some(other.to_string());
-                }
-            }
-        }
-        i += 1;
-    }
-    let Some(target) = target else {
-        eprintln!(
-            "usage: olang inspect <binary> [--source|--manifest|--lockfile|--caps|--verify|--against DIR|-o DIR]"
-        );
-        return 2;
-    };
-    let path = std::path::Path::new(&target);
+/// Typed arguments for `olang inspect` (mirrors `Commands::Inspect`).
+struct InspectArgs {
+    binary: PathBuf,
+    source: bool,
+    manifest: bool,
+    lockfile: bool,
+    caps: bool,
+    verify: bool,
+    against: Option<PathBuf>,
+    output: Option<PathBuf>,
+}
+
+fn inspect_binary(args: &InspectArgs) -> i32 {
+    let show_source = args.source;
+    let show_manifest = args.manifest;
+    let show_lockfile = args.lockfile;
+    let show_caps = args.caps;
+    let verify = args.verify;
+    let out_dir = args.output.as_deref();
+    let against = args.against.as_deref();
+    let target = args.binary.to_string_lossy().to_string();
+    let path = args.binary.as_path();
     let Some(bundle) = read_bundle(path) else {
         eprintln!(
             "olang inspect: {} carries no olang bundle (not built with `olang build`?)",
@@ -1226,16 +1339,10 @@ fn inspect_binary(args: &[String]) -> i32 {
     // is the binary a given checkout builds — the provenance question.
     // (For a git ref, check it out first, then point --against at it.)
     if let Some(dir) = against {
-        return inspect_against(
-            std::path::Path::new(&dir),
-            &source,
-            meta.as_deref(),
-            program,
-        );
+        return inspect_against(dir, &source, meta.as_deref(), program);
     }
 
     if let Some(dir) = out_dir {
-        let dir = std::path::Path::new(&dir);
         if let Err(e) = std::fs::create_dir_all(dir) {
             eprintln!("olang inspect: {}: {}", dir.display(), e);
             return 1;
@@ -1507,55 +1614,34 @@ fn inspect_against(
 /// program that `use`s local files should be a package built with all
 /// its sources inlined, or restrict itself to stdlib and the embedded
 /// packages (cli, term, ui, viz, dash, …), which travel in the runtime.
-fn build_executable(args: &[String]) -> anyhow::Result<String> {
-    let mut source_path: Option<String> = None;
-    let mut output: Option<String> = None;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-o" | "--output" => {
-                i += 1;
-                output = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("-o needs an output path"))?,
-                );
-            }
-            other if other.starts_with('-') => {
-                return Err(anyhow::anyhow!("unknown flag: {}", other));
-            }
-            other => {
-                if source_path.is_none() {
-                    source_path = Some(other.to_string());
-                }
-            }
-        }
-        i += 1;
-    }
-    let source_path = source_path
-        .ok_or_else(|| anyhow::anyhow!("usage: olang build <program.ol> [-o output]"))?;
-    let src = std::fs::read_to_string(&source_path)?;
+fn build_executable(
+    source_path: &std::path::Path,
+    output_arg: Option<&std::path::Path>,
+) -> anyhow::Result<String> {
+    let src = std::fs::read_to_string(source_path)
+        .map_err(|e| anyhow::anyhow!("cannot read {}: {}", source_path.display(), e))?;
     // Parse-check up front (a broken program is never shipped) and keep the
     // AST: the built binary embeds it so startup skips the parser (rung B).
     let program = OlangParser::new()
         .parse(&src)
-        .map_err(|e| anyhow::anyhow!("{} does not parse:\n{}", source_path, e))?;
+        .map_err(|e| anyhow::anyhow!("{} does not parse:\n{}", source_path.display(), e))?;
     let ast_json =
         serde_json::to_vec(&program).map_err(|e| anyhow::anyhow!("serialize AST: {}", e))?;
 
-    let output = output.unwrap_or_else(|| {
-        PathBuf::from(&source_path)
+    let output = match output_arg {
+        Some(p) => p.to_string_lossy().to_string(),
+        None => source_path
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "program".to_string())
-    });
+            .unwrap_or_else(|| "program".to_string()),
+    };
 
     // The transparency record: checksum, provenance, and — when the
     // source lives in a package — its manifest and lockfile, verbatim.
     // Every built binary carries its own source and its own paper trail;
     // `olang inspect` reads them back out.
     let source_abs =
-        std::fs::canonicalize(&source_path).unwrap_or_else(|_| PathBuf::from(&source_path));
+        std::fs::canonicalize(source_path).unwrap_or_else(|_| source_path.to_path_buf());
     let (manifest_text, lockfile_text) =
         match olang::pkg::manifest::Manifest::find_root(&source_abs) {
             Some(root) => (
@@ -1580,7 +1666,7 @@ fn build_executable(args: &[String]) -> anyhow::Result<String> {
     let meta = BundleMeta {
         format: 3,
         olang_version: olang::VERSION.to_string(),
-        source_path: source_path.clone(),
+        source_path: source_path.to_string_lossy().to_string(),
         sha256: sha256_hex(src.as_bytes()),
         // The digest binds the AST — the bytes that actually execute — so a
         // swapped program cannot pass `--verify` behind an intact source.
@@ -1631,17 +1717,19 @@ fn build_executable(args: &[String]) -> anyhow::Result<String> {
 /// it actually use". `path` is a package directory or a file inside one
 /// (default: the current directory); for a built binary it defers to
 /// `inspect --caps`.
-fn show_caps(args: &[String]) -> i32 {
-    let target = args
-        .iter()
-        .find(|a| !a.starts_with('-'))
-        .cloned()
-        .unwrap_or_else(|| ".".to_string());
-    let path = std::path::Path::new(&target);
-
+fn show_caps(path: &std::path::Path) -> i32 {
     // A built binary carries its own manifest — reuse the inspect reader.
     if path.is_file() && read_bundle(path).is_some() {
-        return inspect_binary(&[target, "--caps".to_string()]);
+        return inspect_binary(&InspectArgs {
+            binary: path.to_path_buf(),
+            source: false,
+            manifest: false,
+            lockfile: false,
+            caps: true,
+            verify: false,
+            against: None,
+            output: None,
+        });
     }
 
     let abs = std::fs::canonicalize(path)
@@ -1964,12 +2052,8 @@ fn execute_program(
 /// serving every recorded nondeterministic call from the log. A clean
 /// finish means the run was fully determined by the recorded inputs; a
 /// divergence means the program changed or has uncaptured nondeterminism.
-fn run_replay(args: &[String], logger: &Logger) -> i32 {
-    let Some(trace_path) = args.iter().find(|a| !a.starts_with('-')) else {
-        eprintln!("usage: olang replay <trace.olt> [-- program args]");
-        return 2;
-    };
-    let trace = match olang::timeline::Timeline::load_trace(std::path::Path::new(trace_path)) {
+fn run_replay(trace_path: &std::path::Path, args: &[String], logger: &Logger) -> i32 {
+    let trace = match olang::timeline::Timeline::load_trace(trace_path) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("olang replay: {}", e);
@@ -1988,12 +2072,7 @@ fn run_replay(args: &[String], logger: &Logger) -> i32 {
     // The replayed program's argv is its own; recorded os.args() results
     // replay from the log regardless, so this only shapes any live reads.
     let mut argv = vec![trace.program_path.clone()];
-    argv.extend(
-        args.iter()
-            .skip_while(|a| *a != trace_path && !a.starts_with('-'))
-            .filter(|a| a.as_str() != trace_path.as_str())
-            .cloned(),
-    );
+    argv.extend(args.iter().cloned());
     olang::stdlib::os::set_script_args(argv);
 
     let program = match OlangParser::new().parse(&trace.source) {

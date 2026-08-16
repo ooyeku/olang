@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [0.60.0] - 2026-08-15
 
+### Changed
+
+- **CLI facelift — every command is now discoverable.** `olang` moved from
+  a hand-rolled first-argument dispatch to real clap subcommands, so `olang
+  --help` lists every command (`run`, `check`, `fmt`, `test`, `build`,
+  `inspect`, `caps`, `replay`, `doc`, `bench`, `lsp`, `repl`) and `olang
+  <command> --help` documents any one of them with its own flags — none of
+  which the old flat help surfaced. The file-first form is unchanged: `olang
+  script.ol [args]` still runs a file directly (a word that is neither a
+  command nor a flag is taken as a file path), bare `olang` still starts the
+  REPL, and every prior invocation — run options, `--watch`, `--deny`,
+  script arguments, built binaries — behaves exactly as before. Run options
+  are grouped under their own heading, and the help ends with a worked
+  example block.
+
 ### Added
 
 - **Parallel hash join (data-pipeline campaign DP1).** `ods.join` now runs

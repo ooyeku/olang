@@ -11,6 +11,36 @@ Part of [the olang book](README.md) ·
 [Language](language.md) · [Standard Library](stdlib.md) ·
 [Internals](internals.md)
 
+## Command overview
+
+`olang` is file-first: `olang <file> [args]` runs a program, and bare
+`olang` starts the REPL. Everything else is a named command. `olang
+--help` lists them all, and `olang <command> --help` documents any one.
+
+| Command | Purpose |
+|---|---|
+| `olang <file> [args]` | Run a program (`olang run <file>` is the explicit form) |
+| `olang` | Start the REPL (`olang repl`) |
+| `olang check [path]` | Type-check without running; `--rules FILE` adds project lints |
+| `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
+| `olang test [path]` | Discover and run `test` blocks; `--coverage` reports coverage |
+| `olang build <file>` | Compile to a self-contained executable; `-o OUT` names it |
+| `olang inspect <binary>` | Read a built binary's source, manifest, capabilities, provenance |
+| `olang caps [path]` | Show the capability grant a program or binary carries |
+| `olang replay <trace>` | Re-run a recorded `.olt` timeline bit-for-bit |
+| `olang doc [path]` | Generate HTML (or `--md` Markdown) API reference |
+| `olang bench` | Run benchmarks |
+| `olang lsp` | Start the language server (LSP over stdio) |
+
+Because the tool is file-first, a word that is neither a known command
+nor a flag is taken as a file to run — so `olang report.ol` and `olang
+./build` still run those files even though `build` is a command.
+
+**Run options** (before the file: `olang --watch app.ol`) shape how a
+program runs — `--watch`, `--deny CAPS`, `--record TRACE.olt`,
+`--trace-caps`, `--ovm-tier`, and more. See `olang --help` for the full
+set. Every command also honors the `OLANG_DENY` environment variable.
+
 ## `olang test`
 
 Discovers and runs [`test` blocks](language.md#testing) across a directory:
