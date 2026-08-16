@@ -49,24 +49,34 @@ export async function highlight(code, lang = 'olang') {
 }
 
 // ── the book ───────────────────────────────────────────────────────────
-// Chapter order mirrors docs/README.md's reading order.
+// Chapter order, slugs, and titles mirror docs/README.md's five-Part
+// table of contents. When a chapter is added, renamed, or reordered in the
+// book index, update this list to match — it is the one place the pipeline
+// cannot derive automatically. Each `part` groups chapters in the nav.
 export const BOOK = [
-  { slug: 'openness', file: 'openness.md', title: 'Openness' },
-  { slug: 'tour', file: 'tour.md', title: 'The Tour' },
-  { slug: 'language', file: 'language.md', title: 'The Language' },
-  { slug: 'pitfalls', file: 'pitfalls.md', title: 'Common Pitfalls' },
-  { slug: 'types', file: 'types.md', title: 'Types' },
-  { slug: 'stdlib', file: 'stdlib.md', title: 'The Standard Library' },
-  { slug: 'ods', file: 'ods.md', title: 'The Data Stack' },
-  { slug: 'wasm', file: 'wasm.md', title: 'olang in the Browser' },
-  { slug: 'packages', file: 'packages.md', title: 'Packages' },
-  { slug: 'demo', file: 'demo.md', title: 'Building Robust Systems' },
-  { slug: 'editors', file: 'editors.md', title: 'Editors' },
-  { slug: 'internals', file: 'internals.md', title: 'Internals' },
-  { slug: 'ovm', file: 'ovm.md', title: 'The OVM' },
-  { slug: 'stability', file: 'stability.md', title: 'Stability' },
-  { slug: 'tooling', file: 'tooling.md', title: 'Tooling' },
-  { slug: 'roadmap', file: 'roadmap.md', title: 'Roadmap' }
+  // Part I — Getting started
+  { slug: 'introduction', file: 'introduction.md', title: 'Introduction', part: 'Getting started' },
+  { slug: 'installation', file: 'installation.md', title: 'Installation', part: 'Getting started' },
+  { slug: 'tour', file: 'tour.md', title: 'A tour of olang', part: 'Getting started' },
+  // Part II — The language
+  { slug: 'language', file: 'language.md', title: 'Language reference', part: 'The language' },
+  { slug: 'types', file: 'types.md', title: 'Types and gradual typing', part: 'The language' },
+  { slug: 'pitfalls', file: 'pitfalls.md', title: 'Common pitfalls', part: 'The language' },
+  // Part III — The standard library
+  { slug: 'stdlib', file: 'stdlib.md', title: 'Standard library reference', part: 'The standard library' },
+  { slug: 'ods', file: 'ods.md', title: 'The data stack', part: 'The standard library' },
+  // Part IV — Building and running programs
+  { slug: 'packages', file: 'packages.md', title: 'Packages and dependencies', part: 'Building and running programs' },
+  { slug: 'tooling', file: 'tooling.md', title: 'Command-line tooling', part: 'Building and running programs' },
+  { slug: 'wasm', file: 'wasm.md', title: 'olang in the browser', part: 'Building and running programs' },
+  { slug: 'openness', file: 'openness.md', title: 'Openness', part: 'Building and running programs' },
+  { slug: 'editors', file: 'editors.md', title: 'Editor support', part: 'Building and running programs' },
+  // Part V — Implementation and project
+  { slug: 'internals', file: 'internals.md', title: 'Architecture and internals', part: 'Implementation and project' },
+  { slug: 'ovm', file: 'ovm.md', title: 'The execution model: OVM and JIT', part: 'Implementation and project' },
+  { slug: 'demo', file: 'demo.md', title: 'Case study: building robust systems', part: 'Implementation and project' },
+  { slug: 'stability', file: 'stability.md', title: 'Stability and compatibility', part: 'Implementation and project' },
+  { slug: 'roadmap', file: 'roadmap.md', title: 'Roadmap', part: 'Implementation and project' }
 ];
 
 const CHAPTER_LINKS = Object.fromEntries([
