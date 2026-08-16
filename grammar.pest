@@ -16,11 +16,7 @@ COMMENT     = _{ "//" ~ (!NEWLINE ~ ANY)* }
 // = ...` still parses as a type declaration. They are common enough as
 // variable names — a share of a total, an error term, a test case — that
 // reserving them cost more than it bought.
-//
-// `async` and `await` stay listed although 0.63 removed their semantics:
-// the parser needs them to emit a migration error rather than a generic
-// syntax failure. They are freed at 1.0.
-keyword = { "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "return" | "true" | "false" | "async" | "await" | "try" | "catch" | "struct" | "enum" }
+keyword = { "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "return" | "true" | "false" | "struct" | "enum" }
 
 // Identifiers and literals - exclude keywords
 identifier  = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_")) ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -58,7 +54,8 @@ paren_expr  = { "(" ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ expr)* ~ NL* ~ ")" }
 
 // Program structure - Put share_decl and use_decl BEFORE expr to ensure they are matched first
 program     = { SOI ~ NL* ~ (statement ~ (";" | NL)* )* ~ EOI }
-statement   = { share_decl | use_decl | test_decl | error_type_decl | trait_decl | impl_decl | type_decl | let_decl | async_function_decl | function_decl | expr }
+statement   = { share_decl | use_decl | test_decl | error_type_decl | trait_decl | impl_decl | type_decl | let_decl | function_decl | expr }
+function_decl = { "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ NL* ~ expr }
 
 // Share and use declarations - defined EARLY to get precedence
 share_decl = { "share" ~ (use_decl | function_decl | let_decl | type_decl | trait_decl | impl_decl) }
@@ -99,8 +96,6 @@ enum_variant_list = { NL* ~ enum_variant ~ (NL* ~ "," ~ NL* ~ enum_variant)* ~ N
 enum_variant = { identifier ~ (("(" ~ type_annotation ~ ("," ~ type_annotation)* ~ ")") | ("{" ~ struct_field_list ~ "}"))? }
 
 // Function declarations
-function_decl = { "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ NL* ~ expr }
-async_function_decl = { "async" ~ "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ NL* ~ expr }
 
 // Traits (runtime-dispatched interfaces) and their implementations
 trait_decl  = { "trait" ~ identifier ~ "{" ~ NL* ~ (trait_method ~ NL*)* ~ "}" }
@@ -157,27 +152,13 @@ named_arg = { identifier ~ ":" ~ expr }
 postfix_op = { "?" }
 
 // Primary expressions
-primary     = { lambda | async_expr | await_expr | promise_expr | all_expr | race_expr | spawn_expr | try_catch_expr | match_expr | if_expr | struct_literal | anonymous_object | map_literal | literal | identifier | paren_expr | block }
+primary     = { lambda | spawn_expr | match_expr | if_expr | struct_literal | anonymous_object | map_literal | literal | identifier | paren_expr | block }
 
 // Lambda functions
 lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ NL* ~ (block | expr) }
 
-// Async expressions
-async_expr  = { "async" ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ (block | expr) }
-await_expr  = { "await" ~ call_expr }
-
-// Promise expressions
-promise_expr = { "Promise" ~ "." ~ promise_method ~ "(" ~ expr ~ ("," ~ expr)? ~ ")" }
-promise_method = { "resolve" | "reject" | "delay" }
-
-// Concurrent operations
-all_expr    = { "Promise" ~ "." ~ "all" ~ "(" ~ expr ~ ")" }
-race_expr   = { "Promise" ~ "." ~ "race" ~ "(" ~ expr ~ ")" }
+// Background execution
 spawn_expr  = { "spawn" ~ call_expr }
-// Removed in 0.65. Kept solely so the parser can emit a migration error
-// naming `match` / `unwrap_or` instead of a bare syntax failure; the rule
-// and the two keywords go at 1.0. See `removed_try_catch` in parser.rs.
-try_catch_expr = { "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block }
 
 // Pattern matching
 match_expr  = { "match" ~ expr ~ "{" ~ NL* ~ match_arm+ ~ "}" }
@@ -211,12 +192,12 @@ literal     = { float | binary | octal | hex | integer | char_literal | raw_stri
 builtin_type = _{ "Int" | "Float" | "String" | "Bool" | "List" | "Tuple" }
 
 // Type annotations
-type_annotation = { union_type | intersection_type | literal_type | anonymous_struct_type | generic_type | result_type | promise_type | function_type | tuple_type | list_type | map_type | basic_type | custom_type | unit_type }
+type_annotation = { union_type | intersection_type | literal_type | anonymous_struct_type | generic_type | result_type | function_type | tuple_type | list_type | map_type | basic_type | custom_type | unit_type }
 // Union branches: everything except function types (whose `->` would be
 // ambiguous with `|` precedence) and nested unions. Parameterized forms
 // must come before custom_type, or a bare identifier match would strand
 // their `<...>`.
-base_type_annotation = { result_type | promise_type | map_type | generic_type | list_type | tuple_type | unit_type | literal_type | basic_type | custom_type }
+base_type_annotation = { result_type | map_type | generic_type | list_type | tuple_type | unit_type | literal_type | basic_type | custom_type }
 anonymous_struct_type = { "{" ~ struct_field_list? ~ "}" }
 basic_type = { "Int" | "Float" | "String" | "Bool" | "Map" }
 unit_type = { "()" }
@@ -227,7 +208,6 @@ map_type = { "Map" ~ "<" ~ type_annotation ~ "," ~ type_annotation ~ ">" }
 tuple_type = { "(" ~ type_annotation ~ "," ~ type_annotation ~ ("," ~ type_annotation)* ~ ")" }
 function_type = { "(" ~ (type_annotation ~ ("," ~ type_annotation)*)? ~ ")" ~ "->" ~ type_annotation }
 result_type = { "Result" ~ "<" ~ type_annotation ~ "," ~ type_annotation ~ ">" }
-promise_type = { "Promise" ~ "<" ~ type_annotation ~ ("," ~ type_annotation)? ~ ">" }
 union_type = { base_type_annotation ~ ("|" ~ base_type_annotation)+ }
 intersection_type = { basic_type ~ ("&" ~ basic_type)+ }
 literal_type = { string | integer | boolean }

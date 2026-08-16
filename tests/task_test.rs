@@ -168,31 +168,24 @@ fn task_operations_reject_values_that_are_not_tasks() {
 // ── the removed surface ───────────────────────────────────────────────
 
 #[test]
-fn the_removed_async_surface_gives_a_migration_error() {
-    // A removed keyword that simply falls out of the grammar yields
-    // "expected a statement", which tells a reader nothing. Each of these
-    // must name what went and what replaced it.
-    for (source, what) in [
-        ("let t = spawn 1\nlet v = await t\n", "`await`"),
-        ("async fn f(x) = x\n", "`async fn`"),
-        ("let f = async (x) => x\n", "an `async` lambda"),
-        ("let p = Promise.resolve(1)\n", "the `Promise` API"),
-        ("let p = Promise.delay(1, 5)\n", "the `Promise` API"),
-        ("let p = Promise.all([1])\n", "the `Promise` API"),
-        ("let p = Promise.race([1])\n", "the `Promise` API"),
-        (
-            "fn f(x) -> Promise<Int> = x\n",
-            "the `Promise<T>` annotation",
-        ),
-    ] {
-        let e = err(source);
-        assert!(e.contains(what), "{source}: expected {what} in {e}");
-        assert!(e.contains("removed in 0.63"), "{source}: {e}");
-        assert!(
-            e.contains("task.join"),
-            "{source}: no replacement named in {e}"
-        );
-    }
+fn the_async_vocabulary_is_gone_and_its_words_are_free() {
+    // 0.63 removed async/await/Promise. The grammar carried migration
+    // stubs for a release; with no olang code outside this repository
+    // there was nobody to migrate, so the stubs came out and the words
+    // are ordinary identifiers.
+    assert_eq!(
+        run("let async = 1\nlet await = 2\nlet Promise = 3\nto_string(async + await + Promise)\n")
+            .unwrap(),
+        "6"
+    );
+    // `await_all` reads fine as a helper name now.
+    assert_eq!(
+        run("fn one() = 7\n\
+             fn await_all(ts) = ts |> map(task.join)\n\
+             to_string(sum(await_all([spawn one(), spawn one()])))\n")
+        .unwrap(),
+        "14"
+    );
 }
 
 // ── the tiers agree ───────────────────────────────────────────────────

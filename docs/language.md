@@ -1409,8 +1409,8 @@ pieces, all explicit:
 - **`par_map`, `par_filter`, and `par for`** apply a function across a
   collection on a worker pool.
 
-There is no event loop, no scheduler, and no `async`/`await` colouring
-of functions. Any function can be spawned, because a task is a thread
+There is no event loop, no scheduler, and no colouring of functions into
+sync and async. Any function can be spawned, because a task is a thread
 running an ordinary call.
 
 ### `spawn` and `task.join`
@@ -1691,24 +1691,33 @@ names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions,
 Reserved keywords — not usable as identifiers:
 
 ```text
-fn let type if else match for while loop break continue return
-true false async await try catch error share use
-struct enum test trait impl
+fn let if else match for while loop break continue return
+true false struct enum
 ```
 
-`async` and `await` no longer *do* anything — 0.63 removed them along
-with the `Promise` API. They stay reserved for one release so that code
-written against the old model gets an error naming `spawn` and
-`task.join` instead of a generic parse failure. They become ordinary
-identifiers at 1.0.
+Fifteen words, and that is the whole list.
 
-Each, in one line:
+**Seven more that introduce declarations are *contextual*, not
+reserved**: `share`, `error`, `test`, `type`, `trait`, `impl`, and
+`use`. Each only ever appears at the start of its declaration form, and
+the token after it settles the reading — so a declaration and a variable
+of the same name coexist:
+
+```olang
+let type = "a value"          // an ordinary binding
+type Point = struct { x: Int }   // still a type declaration
+println(type + " / " + to_string(Point { x: 1 }.x))
+```
+
+They work as field names too: `row.type` and `row.error` parse.
+
+Each keyword and contextual word, in one line:
 
 | Keyword | Meaning |
 |---|---|
 | `fn` | Declare a function (`fn name(params) = expr`) |
 | `let` | Bind a name; `let mut` makes the binding reassignable |
-| `type` | Declare a `struct` or `enum` type |
+| `type` | *(contextual)* Declare a `struct` or `enum` type |
 | `if` / `else` | Conditional *expression* — `if cond => a else => b` |
 | `match` | Pattern-match an expression over arms |
 | `for` | Iterate over a list, range, string, or map |
@@ -1717,19 +1726,18 @@ Each, in one line:
 | `break` / `continue` | Exit a loop (optionally with a value) / skip to the next iteration |
 | `return` | Return early from a function |
 | `true` / `false` | Boolean literals |
-| `async` / `await` | **Removed in 0.63.** Still reserved so the parser can point at `spawn` + `task.join`; freed at 1.0 |
-| `try` / `catch` | **Removed in 0.65.** Still reserved so the parser can point at `match` / `unwrap_or`; freed at 1.0 |
-| `error` | Declare a named error type with fields |
-| `share` | Export a declaration from a module |
-| `use` | Import from another module or package |
+| `error` | *(contextual)* Declare a named error type with fields |
+| `share` | *(contextual)* Export a declaration from a module |
+| `use` | *(contextual)* Import from another module or package |
 | `struct` / `enum` | Type-definition forms after `type Name =` |
-| `trait` / `impl` | Declare a trait / implement it for a type |
-| `test` | A named test block, run by `olang test` |
+| `trait` / `impl` | *(contextual)* Declare a trait / implement it for a type |
+| `test` | *(contextual)* A named test block, run by `olang test` |
 
-`mut` and `par` are *contextual* keywords: `mut` is special only right
-after `let`, and `par` only directly before `for` (`par for x in xs`).
-`Ok`, `Err`, `Result`, and `spawn` are ordinary names with
-built-in meaning rather than reserved words.
+`mut` and `par` are *contextual* too: `mut` is special only right after
+`let`, and `par` only directly before `for` (`par for x in xs`). `Ok`,
+`Err`, `Result`, and `spawn` are ordinary names with built-in meaning
+rather than reserved words — as are `async`, `await`, `try`, `catch`,
+and `Promise`, which named constructs olang no longer has.
 
 Statement separators are newlines or `;`. Comments are `//` to end of
 line. A leading `#!` line (`#!/usr/bin/env olang`) is host metadata,

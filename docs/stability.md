@@ -38,11 +38,11 @@ their precedence, strings, lists/tuples/maps/objects, ranges, control flow,
 pattern matching (all documented pattern kinds), functions (defaults, named
 arguments, lambdas, closures-by-value, `return`), pipelines, `break value`,
 structs, enums and their constructors (including cross-module), `error`
-declarations, traits and impls, `Result` +
-`?` + `try`/`catch`, modules (`use`/`share` in all documented forms),
-`test` blocks, and the standard-library modules `str`, `col`, `math`,
-`json`, `toml`, `csv`, `re`, `dates`, `time`, `base64`, `fs`, `os`, `db`,
-`random`, `crypto`, `chan`, `proc`, `meta`, and the global builtins. The
+declarations, traits and impls, `Result` + `?`, modules (`use`/`share`
+in all documented forms), `test` blocks, and the standard-library
+modules `str`, `col`, `math`, `json`, `toml`, `csv`, `re`, `dates`,
+`time`, `base64`, `fs`, `os`, `db`, `random`, `crypto`, `chan`, `task`,
+`cell`, `proc`, `meta`, and the global builtins. The
 embedded olang modules (`colx`, `mathx`) and packages (`cli`, `term`, `ui`,
 `viz`, `dash`) follow the same append-mostly rule.
 
@@ -66,8 +66,30 @@ scope is an error (the write could only reach the closure's snapshot),
 and [`cell`](stdlib.md#cell--mutable-locations) is the one mutable
 location, confined to the thread that created it.
 
+**The stdlib conventions settled in 0.64.0.** One rule decides what
+every function returns, so its shape follows from what it does: an
+operation that cannot fail returns its value, one that can fail for
+reasons the caller could handle returns `Result`, and one *called
+wrongly* raises. That third tier is what makes the second trustworthy —
+before it, `unwrap_or(f(x), default)` could not tell a missing file from
+a typo'd call. The same release freed seven declaration keywords
+(`share`, `error`, `test`, `type`, `trait`, `impl`, `use`) as ordinary
+identifiers and made `fs.join` variadic.
+
+**The error model settled in 0.65.0.** `Result` with `?` carries
+expected failure. A runtime error is a bug and stops the program: there
+is no construct that catches one mid-expression, and `try`/`catch` —
+which never did, despite looking like it — was removed. Recovery is
+*structural*, at the boundaries that already isolate a failing unit: a
+spawned task's failure becomes `Err(e)` from `task.join`, and an
+`http.serve` handler's becomes a logged 500 with the server still
+serving. `try` and `catch` are ordinary identifiers, as are `async`,
+`await`, and `Promise` — the reserved-word list is fifteen words plus
+seven contextual ones, and is not expected to change again.
+
 These rules are now part of the commitment above and will not change
-again.
+again. Campaign 1 of [the roadmap](roadmap.md) is complete; the language
+surface is closed for 1.0.
 
 ### Stable in behavior, evolving in scope
 
@@ -149,6 +171,7 @@ again.
 
 Reserved constructs are safe to avoid entirely; when they gain semantics it
 will be additive.
+
 
 ## Versioning
 

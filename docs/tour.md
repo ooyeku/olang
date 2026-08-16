@@ -304,7 +304,7 @@ println(to_string(parse("north,2026-08-02,warm")))   // bad float: Err
 ```
 
 Because errors are values, "process what you can, report what you
-can't" is a fold, not a try/catch pyramid:
+can't" is a fold over `Result`s — no exception handler, no nesting:
 
 ```olang
 type Reading = struct { station: String, day: String, temp: Float }
@@ -366,11 +366,20 @@ snapshot of the bindings as they were when it started, and writing to
 them inside the worker updates only the worker's own copy. Watch:
 
 ```olang
-let mut tally = 0
-par for t in [21.5, 19.0, 23.5] {
-    tally = tally + 1        // increments the worker's snapshot
-}
-println(to_string(tally))    // 0 — the caller's tally never changed
+let factor = 10
+let scaled = par_map([1, 2, 3], (n) => n * factor)   // reads the snapshot
+println(to_string(sum(scaled)))                       // 60
+```
+
+Reading captured values is exactly what you want and costs nothing.
+*Writing* one is the trap, and the language closes it: assigning to a
+binding captured from an enclosing scope is refused before the program
+runs, because the write could only reach the worker's own copy.
+
+```text
+cannot assign to 'tally': it is captured from an enclosing scope, and
+functions capture by value — the outer 'tally' would not change. Return
+the new value, or hold the state in a cell
 ```
 
 This is not a limitation to route around; it is the design that makes

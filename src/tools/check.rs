@@ -2263,24 +2263,16 @@ mod tests {
     // ── 0.50 arc: Promise at non-async sites ───────────────────────────
 
     #[test]
-    fn the_removed_async_surface_never_reaches_the_checker() {
-        // 0.63 deleted `async`/`await`/`Promise`. The parser refuses them
-        // with a migration error, so the checker has nothing to model —
-        // this pins that the refusal happens rather than the annotation
-        // being silently accepted as an unknown generic.
-        for source in [
-            "fn f(p: Promise<Int>) = p\nf(42)\n",
-            "async fn get() -> Int = 1\nget()\n",
-            "let t = spawn f()\nawait t\n",
-        ] {
-            assert!(
-                crate::parser::Parser::new().parse(source).is_err(),
-                "{source} should be refused at parse time"
-            );
-        }
-        // A task handle is an ordinary value to the checker: no special
-        // type, no unwrapping rule, nothing to get wrong.
+    fn a_task_handle_is_an_ordinary_value_to_the_checker() {
+        // 0.63 deleted async/await/Promise and 0.65 deleted try/catch;
+        // nothing about concurrency or error handling needs a special
+        // case in the checker any more. A task handle has no type of its
+        // own here, and no unwrapping rule to get wrong.
         assert!(check("fn go() = 1\nlet t = spawn go()\nlet v = task.join(t)\n").is_empty());
+        // And the freed words are just names.
+        assert!(
+            check("let async = 1\nlet await = 2\nlet try = 3\nasync + await + try\n").is_empty()
+        );
     }
 
     // ── stage 4: Result payloads ───────────────────────────────────────

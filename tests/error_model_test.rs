@@ -33,19 +33,23 @@ fn err(source: &str) -> String {
 // ── try/catch is gone ─────────────────────────────────────────────────
 
 #[test]
-fn try_catch_gives_a_migration_error() {
-    // A removed construct that simply falls out of the grammar produces
-    // "expected a statement", which tells a reader nothing. This must name
-    // the two forms that replace it.
-    let e = err("let r = try { Err(\"x\") } catch (e) { 0 }\n");
-    assert!(e.contains("removed in 0.65"), "{e}");
-    assert!(e.contains("match"), "{e}");
-    assert!(e.contains("unwrap_or"), "{e}");
+fn try_and_catch_are_ordinary_identifiers() {
+    // Removed in 0.65, and freed the moment the migration scaffolding
+    // came out — there is no olang code outside this repository, so the
+    // grammar carries no stub for them.
+    assert_eq!(
+        run("let try = 3\nlet catch = 4\nto_string(try + catch)\n").unwrap(),
+        "7"
+    );
+    assert_eq!(
+        run("let r = { try: 1, catch: 2 }\nto_string(r.try + r.catch)\n").unwrap(),
+        "3"
+    );
 }
 
 #[test]
 fn match_and_unwrap_or_say_what_catch_said() {
-    // The two forms the migration error names, on the same input.
+    // The two forms that replaced it, on the same input.
     assert_eq!(
         run(
             "fn risky(n) = if n > 0 => Ok(n * 2) else => Err(\"negative\")\n\

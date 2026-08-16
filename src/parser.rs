@@ -224,47 +224,6 @@ impl ParseError {
     }
 }
 
-/// The error for a construct 0.63 removed.
-///
-/// `async`, `await`, and the `Promise` API are gone: olang's concurrency
-/// model is threads (`spawn`), channels (`chan`), and data parallelism
-/// (`par_map`, `par_filter`, `par for`). The grammar still *recognizes*
-/// the old forms — that is deliberate and temporary. A removed keyword
-/// that simply falls out of the grammar produces "expected a statement",
-/// which tells a reader nothing; keeping the productions lets the parser
-/// name what went and what replaced it, at the right span. The rules go
-/// when the words are freed as ordinary identifiers.
-fn removed_async(what: &str) -> ParseError {
-    ParseError::InvalidSyntax {
-        message: format!(
-            "{what} was removed in 0.63. olang's concurrency model is \
-             threads, channels, and data parallelism: `spawn f(x)` starts a \
-             task and `task.join(t)` collects its result (or `Err(e)` if it \
-             failed); join several with `tasks |> map(task.join)`; use \
-             `time.sleep(ms)` for delays and `chan` to stream results. See \
-             the migration guide in the CHANGELOG."
-        ),
-    }
-}
-
-/// The error for `try`/`catch`, removed in 0.65.
-///
-/// It was never exception handling: a `try` block that hit a real runtime
-/// error still aborted the program. What it actually did was destructure a
-/// `Result` — the same job as `match` and `unwrap_or`, in a third spelling
-/// nobody reached for. The grammar still recognizes it so this message can
-/// point at the two that remain.
-fn removed_try_catch() -> ParseError {
-    ParseError::InvalidSyntax {
-        message: "`try`/`catch` was removed in 0.65. It handled a `Result`, \
-                  not a runtime error, so `match` and `unwrap_or` already say \
-                  it: `match f(x) { Ok(v) => v, Err(e) => fallback }`, or \
-                  `unwrap_or(f(x), fallback)` when the fallback is just a \
-                  value. See the migration guide in the CHANGELOG."
-            .to_string(),
-    }
-}
-
 pub struct Parser {
     suggestion_engine: ErrorSuggestionEngine,
 }
@@ -375,7 +334,6 @@ impl Parser {
             Rule::function_decl => Ok(Statement::FunctionDecl(
                 self.build_function_decl(pair.into_inner())?,
             )),
-            Rule::async_function_decl => Err(removed_async("`async fn`")),
             Rule::type_decl => Ok(Statement::TypeDecl(
                 self.build_type_decl(pair.into_inner())?,
             )),
@@ -974,17 +932,9 @@ impl Parser {
         })?;
         match pair.as_rule() {
             Rule::lambda => self.build_lambda(pair.into_inner()),
-            // Removed in 0.63 — see `removed_async` for why these rules
-            // still parse.
-            Rule::async_expr => Err(removed_async("an `async` lambda")),
-            Rule::await_expr => Err(removed_async("`await`")),
-            Rule::promise_expr | Rule::all_expr | Rule::race_expr => {
-                Err(removed_async("the `Promise` API"))
-            }
             Rule::spawn_expr => self.build_spawn_expr(pair.into_inner()),
             Rule::match_expr => self.build_match_expr(pair.into_inner()),
             Rule::if_expr => self.build_if_expr(pair.into_inner()),
-            Rule::try_catch_expr => Err(removed_try_catch()),
             Rule::struct_literal => self.build_struct_literal(pair.into_inner()),
             Rule::anonymous_object => self.build_anonymous_object(pair.into_inner()),
             Rule::map_literal => self.build_map_literal(pair.into_inner()),
@@ -1267,15 +1217,6 @@ impl Parser {
                     .as_str()
                     .to_string();
 
-                // `Promise<T>` reaches here rather than the `promise_type`
-                // rule, because `generic_type` is tried first. Catch it so
-                // the annotation gets the same migration error as the rest
-                // of the removed surface instead of being silently accepted
-                // as an unknown generic nothing can satisfy.
-                if base_type == "Promise" {
-                    return Err(removed_async("the `Promise<T>` annotation"));
-                }
-
                 // Parse type arguments
                 let mut type_args = Vec::new();
                 for arg_pair in inner_pairs {
@@ -1376,7 +1317,6 @@ impl Parser {
                     return_type: Box::new(return_annotation),
                 })
             }
-            Rule::promise_type => Err(removed_async("the `Promise<T>` annotation")),
             Rule::anonymous_struct_type => {
                 let fields = if let Some(field_list) = pair.into_inner().next() {
                     self.build_struct_field_list(field_list.into_inner())?

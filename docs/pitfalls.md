@@ -265,14 +265,14 @@ than a silent wrong answer.
 
 ## `os.args()` includes the program path
 
-`os.args()` returns the full process argv (as a `Result`), with the
-program (or script) path at index `0` — real arguments start at `[1]`,
-exactly like C's `argv`. The `cli` package's `cli.args()` already drops it;
-by hand, `skip(unwrap_or(os.args(), []), 1)`.
+`os.args()` returns the full process argv, with the program (or script)
+path at index `0` — real arguments start at `[1]`, exactly like C's
+`argv`. The `cli` package's `cli.args()` already drops it; by hand,
+`skip(os.args(), 1)`.
 
 ```olang no-run
-let all = unwrap_or(os.args(), [])   // ["/path/to/tool", "arg1", "arg2"]
-let args = skip(all, 1)              // ["arg1", "arg2"]
+let all = os.args()      // ["/path/to/tool", "arg1", "arg2"]
+let args = skip(all, 1)  // ["arg1", "arg2"]
 ```
 
 ## Small syntax reminders

@@ -142,9 +142,9 @@ tree passes `--check`.
 
 ## `olang check`
 
-The static side of gradual typing ([the Types chapter](types.md) tells
-the full story) — reports provable type-annotation violations before
-the program runs:
+Everything the compiler can tell you before the program runs. It began
+as the static side of gradual typing ([the Types chapter](types.md)
+tells that story) and now reports three distinct classes of finding.
 
 ```bash
 olang check               # every .ol file under the current directory
@@ -190,9 +190,59 @@ breaks the shallow runtime checks let pass say *"the annotation's
 promise is broken here"* — the program may run, but an annotation in the
 flagged chain is provably false.
 
-The same checker runs in the language server, so editors surface these
-as error squiggles while you type. Exit is non-zero when a violation or
-parse error is found, so `olang check` slots directly into CI.
+### Scope and mutability
+
+The second class is not about types at all. The rules settled in
+0.61–0.62 — every block scopes its bindings, `let` is required for a
+first binding, `let mut` is required to reassign, and a closure cannot
+assign to a binding it captured — are validated by one pass that runs
+*before* execution. `olang check` reports exactly what `olang run`
+would, in the same words and at the same position, because both call
+the same validator:
+
+```text
+  × cannot assign to 'total': it is captured from an enclosing scope, and
+  │ functions capture by value — the outer 'total' would not change. Return
+  │ the new value, or hold the state in a cell
+   ╭─[src/report.ol:12:20]
+   · ╰── the program is refused before it runs
+```
+
+These gate. A program with one cannot run at all, on any tier — which is
+what makes the three execution tiers agree about them by construction
+rather than by testing.
+
+### Advisory warnings
+
+The third class is reported but does not gate: findings that are a
+judgement about intent rather than a provable contradiction.
+
+- **A discarded `Result`.** A fallible call in statement position drops
+  its failure on the floor — a failed write reads exactly like a
+  successful one. Bind it, match it, `unwrap` it to fail loudly, or
+  write `let _ = ...` to say the failure is deliberately ignored. A
+  block's final statement is its *value*, so a function whose body is
+  the fallible call is not flagged.
+- **A non-exhaustive `match`** over a known literal-type enum, naming
+  the members with no arm.
+
+```text
+  ⚠ the Result from fs.write_file is discarded, so a failure here is
+  │ invisible. Bind it, match it, unwrap it to fail loudly, or write
+  │ `let _ = ...` to say the failure is deliberately ignored
+   ╭─[src/backup.ol:8:5]
+   · ╰── advisory — the program still runs
+```
+
+The discarded-`Result` warning reads which functions return `Result`
+from the same registry `:help` does, so the diagnostic and the
+documentation cannot disagree about what can fail.
+
+The same checker runs in the language server, so editors surface all
+three classes while you type — errors as squiggles, advisories as
+hints. Exit is non-zero for a violation or parse error but **not** for a
+warning alone, so `olang check` slots directly into CI without advisory
+findings failing a build.
 
 ### Project rules
 

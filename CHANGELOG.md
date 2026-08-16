@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`async`, `await`, `try`, `catch`, and `Promise` are ordinary
+  identifiers.** 0.63 and 0.65 removed the constructs but kept grammar
+  stubs so the parser could emit migration errors naming the
+  replacements. There is no olang code outside this repository, so there
+  was nobody to migrate: the stubs are gone, and the reserved-word list
+  is down to fifteen words plus seven contextual ones. `let try = 3`,
+  `row.catch`, and `fn await_all(ts)` all parse.
+
 ## [0.65.0] - 2026-08-16
 
 The error-model boundary (D8), and the last lane of Campaign 1's language
