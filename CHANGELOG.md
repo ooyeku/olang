@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A Frame prints as a table.** `display()` gave a shape and a type
+  list, which is what a debugger prints, not what an exploratory session
+  wants. Printing a Frame — at the REPL, through `println`, through
+  `to_string` — now renders the data:
+
+  ```text
+  Frame[2 x 3]
+  ┌────────┬────────┬─────┐
+  │ region │ amount │ qty │
+  │ String │  Float │ Int │
+  ├────────┼────────┼─────┤
+  │ east   │   25.5 │  10 │
+  │ west   │  320.0 │   3 │
+  └────────┴────────┴─────┘
+  ```
+
+  Numeric columns are right-aligned so digits line up, text columns are
+  left-aligned, and nulls print as `—`. Four caps keep a large Frame
+  inside a terminal — twenty rows, twenty-eight characters per cell, a
+  hundred characters of width, and however many columns fit — and each
+  one that bites is reported under the table, because a table that
+  silently dropped a column would be worse than the summary it replaced.
+  A long Frame keeps both ends and elides its middle, which is what makes
+  the result of a `sort_by` readable at a glance.
+
+- **`ods.head(f)` defaults to 10 rows.** The verb typed most often at the
+  REPL was the one that raised most often, because it demanded a count.
+
 - **`ods` streams files larger than memory (Campaign 2, DP2).**
   `read_csv_file` holds the whole table at once, which is the right shape
   until the file no longer fits. `ods.open_csv` returns a reader that
@@ -142,8 +170,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   for anything embedding olang as a library, and 320 fewer lines in the
   file every tier value passes through.
 
-### Changed
-
 - **`async`, `await`, `try`, `catch`, and `Promise` are ordinary
   identifiers.** 0.63 and 0.65 removed the constructs but kept grammar
   stubs so the parser could emit migration errors naming the
@@ -153,6 +179,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `row.catch`, and `fn await_all(ts)` all parse.
 
 ### Fixed
+
+- **`ods.read_csv` given a path now says so.** `read_csv` takes CSV
+  *text*, so `ods.read_csv("data/sales.csv")` parsed the path itself: a
+  Frame with one column named `data/sales.csv`, zero rows, and no error
+  anywhere — the failure surfaced later, as a confusing result from
+  something else. A single-line argument ending in `.csv`, `.tsv`, or
+  `.txt` is now refused, naming `read_csv_file` and `open_csv` instead.
+  The check reads the string rather than asking the filesystem, because
+  `read_csv` holds no `fs` grant, and a function that probes the disk
+  without one is the leak that keeping these two functions separate
+  exists to prevent.
 
 - **A `par for` body could not write to an enclosing binding, but nothing
   said so (breaking).** 0.62 made an assignment across a capture boundary

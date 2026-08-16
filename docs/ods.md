@@ -296,6 +296,15 @@ println(to_string(ods.columns(sales)))
 println(to_string(ods.null_count(ods.column(sales, "amount"))))   // 1
 ```
 
+Because it takes text, `ods.read_csv("sales.csv")` would once have
+parsed the *path* — one column named `sales.csv`, no rows, and no error
+anywhere. A single-line argument ending in `.csv`, `.tsv`, or `.txt` is
+refused instead, naming [`ods.read_csv_file`](#files-in-files-out) as
+the function that was meant. The check reads the string rather than
+asking the filesystem whether the path exists, because `read_csv` holds
+no `fs` grant — and a function that probes the disk without one is
+exactly the leak that keeping these two functions separate prevents.
+
 ### Files in, files out
 
 `ods.read_csv_file` reads straight from disk, and `ods.write_csv` writes
@@ -395,11 +404,40 @@ the `fs` capability at read level.
 
 ### Looking at one
 
-`ods.columns(f)` lists the column names, `ods.column(f, name)`
-extracts one column as a Series, `ods.n_rows` and `ods.n_cols` give
-the dimensions. Extracting a column and computing on it is the
-fundamental Frame move — the table organizes the columns; the Series
-operations do the work.
+Printing a Frame prints a table. This is the first thing an exploratory
+session does, so it shows the data rather than describing it — the shape
+line, the column names, each column's type, and the rows:
+
+```olang
+let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\n")
+println(to_string(sales))
+```
+
+```text
+Frame[2 x 3]
+┌────────┬────────┬─────┐
+│ region │ amount │ qty │
+│ String │  Float │ Int │
+├────────┼────────┼─────┤
+│ east   │   25.5 │  10 │
+│ west   │  320.0 │   3 │
+└────────┴────────┴─────┘
+```
+
+Numeric columns are right-aligned and text columns left-aligned, so a
+column of numbers can be read down its last digit; nulls print as `—`.
+A Frame larger than the terminal is capped four ways — twenty rows,
+twenty-eight characters per cell, a hundred characters of width, and
+however many columns fit in it — and every cap that bites is reported
+under the table. A long Frame keeps both ends and elides the middle,
+which is what makes the result of a `sort_by` readable at a glance.
+
+`ods.head(f, n)` takes the first `n` rows, and `n` defaults to 10, so
+`ods.head(f)` is the whole gesture. `ods.columns(f)` lists the column
+names, `ods.column(f, name)` extracts one column as a Series, and
+`ods.n_rows` and `ods.n_cols` give the dimensions. Extracting a column
+and computing on it is the fundamental Frame move — the table organizes
+the columns; the Series operations do the work.
 
 ### Shaping columns and rows
 

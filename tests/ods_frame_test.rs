@@ -230,7 +230,11 @@ fn frame_equality_and_display() {
     assert_eq!(items[1], Value::Boolean(false));
     assert_eq!(
         items[2],
-        Value::String("Frame[2 x 1](x: Int)".to_string().into())
+        Value::String(
+            "Frame[2 x 1]\n┌─────┐\n│   x │\n│ Int │\n├─────┤\n│   1 │\n│   2 │\n└─────┘"
+                .to_string()
+                .into()
+        )
     );
 }
 
@@ -506,4 +510,149 @@ fn opening_a_missing_file_is_an_err() {
     )
     .expect("no raise");
     assert_eq!(out.to_string(), "\"true\"".to_string());
+}
+
+// ── Table rendering ───────────────────────────────────────────────────
+
+/// The table a Frame renders to. `to_string` yields a String value whose
+/// own Display adds the surrounding quotes, which would skew the width
+/// assertions below, so they come off here rather than in each test.
+fn rendered(source: &str) -> String {
+    let out = eval(source, None).expect("render").to_string();
+    out.trim_matches('"').to_string()
+}
+
+/// Every box line in a rendered table, for the checks that care about
+/// alignment rather than content.
+fn box_lines(text: &str) -> Vec<&str> {
+    text.lines().filter(|l| !l.starts_with("Frame[")).collect()
+}
+
+#[test]
+fn a_frame_displays_as_a_table() {
+    // The shape line survives from the old one-line display — it is the
+    // one fact a truncated table cannot show — and the table follows.
+    let text = rendered(
+        r#"
+let f = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\n")
+to_string(f)
+"#,
+    );
+    for expected in [
+        "Frame[2 x 3]",
+        "│ region │ amount │ qty │",
+        "│ String │  Float │ Int │",
+        "│ east   │   25.5 │  10 │",
+        "│ west   │  320.0 │   3 │",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+    }
+}
+
+#[test]
+fn numbers_are_right_aligned_and_text_is_left_aligned() {
+    // Alignment is the whole reason a table beats a list: a column of
+    // numbers is only scannable when the digits line up.
+    // Column widths come from the widest of name, dtype, and cells, so
+    // "String" sets the first column's width here.
+    let text = rendered(r#"to_string(ods.read_csv("name,n\na,1\nbbbb,1000\n"))"#);
+    assert!(text.contains("│ a      │    1 │"), "{text}");
+    assert!(text.contains("│ bbbb   │ 1000 │"), "{text}");
+}
+
+#[test]
+fn a_long_frame_elides_its_middle_and_says_so() {
+    // Both ends matter — the head shows what the data is, the tail shows
+    // where a sort landed — so the elision goes in the middle, and the
+    // count of what it hid is printed rather than left to be inferred.
+    let mut csv = String::from("i\n");
+    for i in 0..500 {
+        csv.push_str(&format!("{}\n", i));
+    }
+    let text = rendered(&format!("to_string(ods.read_csv({:?}))", csv));
+    assert!(text.contains("Frame[500 x 1]"), "{text}");
+    assert!(text.contains("│   0 │"), "head row missing:\n{text}");
+    assert!(text.contains("│ 499 │"), "tail row missing:\n{text}");
+    assert!(text.contains("│   … │"), "elision missing:\n{text}");
+    assert!(text.contains("480 rows not shown"), "{text}");
+}
+
+#[test]
+fn a_wide_frame_drops_columns_and_says_so() {
+    // Wrapping a table destroys the alignment that makes it worth having,
+    // so the width budget drops columns instead — and reports the drop.
+    let names: Vec<String> = (0..40).map(|i| format!("column_{}", i)).collect();
+    let row: Vec<String> = (0..40).map(|i| i.to_string()).collect();
+    let csv = format!("{}\n{}\n", names.join(","), row.join(","));
+    let text = rendered(&format!("to_string(ods.read_csv({:?}))", csv));
+    assert!(text.contains("Frame[1 x 40]"), "{text}");
+    assert!(text.contains("columns not shown"), "{text}");
+    for line in box_lines(&text) {
+        assert!(
+            line.chars().count() <= 100,
+            "line of {} chars exceeds the width budget:\n{line}",
+            line.chars().count()
+        );
+    }
+}
+
+#[test]
+fn an_empty_frame_still_shows_its_columns() {
+    // The case that prompted this: a Frame with a schema and no rows used
+    // to print as a shape and a type list, which reads like an error.
+    let text = rendered(r#"to_string(ods.read_csv("a,b\n"))"#);
+    assert!(text.contains("Frame[0 x 2]"), "{text}");
+    assert!(text.contains("│ a "), "{text}");
+    assert!(text.contains("(no rows)"), "{text}");
+    // The filler row must not break the box.
+    let widths: Vec<usize> = box_lines(&text)
+        .iter()
+        .map(|l| l.chars().count())
+        .collect::<Vec<_>>();
+    assert!(
+        widths.windows(2).all(|w| w[0] == w[1]),
+        "ragged box: {widths:?}\n{text}"
+    );
+}
+
+#[test]
+fn a_wide_cell_is_truncated_rather_than_stretching_the_table() {
+    let long = "x".repeat(200);
+    let text = rendered(&format!(
+        "to_string(ods.read_csv({:?}))",
+        format!("s\n{}\n", long)
+    ));
+    assert!(text.contains('…'), "{text}");
+    for line in box_lines(&text) {
+        assert!(line.chars().count() <= 100, "{line}");
+    }
+}
+
+#[test]
+fn head_defaults_to_ten_rows() {
+    // `ods.head(f)` is what a hand types at the REPL; demanding the count
+    // made the most-used verb the one most likely to error.
+    let mut csv = String::from("i\n");
+    for i in 0..50 {
+        csv.push_str(&format!("{}\n", i));
+    }
+    let out = eval(
+        &format!("ods.n_rows(ods.head(ods.read_csv({:?})))", csv),
+        None,
+    )
+    .expect("head");
+    assert_eq!(out.to_string(), "10".to_string());
+}
+
+#[test]
+fn the_default_head_agrees_across_tiers() {
+    // The default is applied in `ods` dispatch, which both tiers share —
+    // this is what proves it, rather than the claim that they share it.
+    assert_tier_transparent(
+        r#"
+let f = ods.frame_from_records([#{ "n": 1 }, #{ "n": 2 }, #{ "n": 3 }])
+ods.n_rows(ods.head(f))
+"#,
+    )
+    .expect("tier agreement");
 }

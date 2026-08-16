@@ -2029,10 +2029,10 @@ impl HelpSystem {
         );
         self.doc(
             "ods.head",
-            "ods.head(f, n)",
+            "ods.head(f, n = 10)",
             "Frame",
             "ods",
-            "the first n rows of f",
+            "the first n rows of f (n defaults to 10)",
         );
         self.doc(
             "ods.to_records",

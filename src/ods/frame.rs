@@ -33,19 +33,7 @@ impl NativeObject for OdsFrame {
     }
 
     fn display(&self) -> String {
-        let cols: Vec<String> = self
-            .0
-            .names()
-            .iter()
-            .zip(self.0.columns())
-            .map(|(n, c)| format!("{}: {}", n, c.dtype()))
-            .collect();
-        format!(
-            "Frame[{} x {}]({})",
-            self.0.n_rows(),
-            self.0.n_cols(),
-            cols.join(", ")
-        )
+        super::table::render(&self.0)
     }
 
     fn native_eq(&self, other: &dyn NativeObject) -> bool {
@@ -150,12 +138,24 @@ fn e(err: olang_ods::OdsError) -> String {
     err.to_string()
 }
 
-pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
+/// Functions whose final declared argument may be omitted. `head` is the
+/// one verb typed constantly at the REPL, where `ods.head(f)` is what a
+/// hand reaches for; the default is stated here rather than buried in the
+/// arm so the arity check and the default cannot drift apart.
+const OPTIONAL_TAIL: &[(&str, usize)] = &[("head", DEFAULT_HEAD)];
+const DEFAULT_HEAD: usize = 10;
+
+pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
     let expected = FUNCTIONS
         .iter()
         .find(|(n, _)| *n == func)
         .map(|(_, a)| *a)
         .expect("caller checked membership");
+    if let Some((_, default)) = OPTIONAL_TAIL.iter().find(|(n, _)| *n == func)
+        && args.len() + 1 == expected
+    {
+        args.push(Value::Integer(*default as i64));
+    }
     if args.len() != expected {
         return Err(format!(
             "ods.{} expects {} argument{}, got {}",
@@ -212,6 +212,26 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
         }
         "read_csv" => {
             let text = want_string(func, &args, 0)?;
+            // `read_csv` takes CSV *text*, so a path parses as a one-line
+            // file: one column named after the path, zero rows, and no
+            // error anywhere. Silence is the worst outcome here, and the
+            // shape is unmistakable, so name the sibling that was meant.
+            // The check stays a string test — probing the filesystem from
+            // a function with no `fs` grant is the very hole the split
+            // between these two functions exists to prevent.
+            let trimmed = text.trim();
+            if !text.contains('\n')
+                && ["csv", "tsv", "txt"]
+                    .iter()
+                    .any(|ext| trimmed.to_lowercase().ends_with(&format!(".{}", ext)))
+            {
+                return Err(format!(
+                    "ods.read_csv: {:?} looks like a path, but read_csv takes \
+                     CSV text — use ods.read_csv_file({:?}) to read the file, \
+                     or ods.open_csv({:?}) to stream it",
+                    trimmed, trimmed, trimmed
+                ));
+            }
             read_csv(&text)
         }
         // The file-reading twin. Gated under `fs` (see caps::required):

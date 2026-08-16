@@ -12,6 +12,7 @@ mod frame;
 mod plot;
 mod series;
 mod stats;
+mod table;
 
 pub use frame::OdsFrame;
 pub use series::{OdsSeries, make_series_value, series_of};
