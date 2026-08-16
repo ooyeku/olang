@@ -24,8 +24,18 @@ fn stringify_round_trips_and_rejects_non_tables() {
         "let out = unwrap(toml.stringify(#{ \"server\": #{ \"port\": 7317 }, \"name\": \"x\" }))\nshow(map_get(map_get(unwrap(toml.parse(out)), \"server\"), \"port\"))",
     );
     assert_eq!(v, Value::String("7317".to_string().into()));
-    assert_eq!(eval("is_err(toml.stringify([1, 2]))"), Value::Boolean(true));
-    assert_eq!(eval("is_err(toml.stringify(42))"), Value::Boolean(true));
+    // A non-table argument is misuse, so 0.64 raises rather than
+    // returning an Err the caller might unwrap_or past.
+    for bad in ["toml.stringify([1, 2])", "toml.stringify(42)"] {
+        let program = Parser::new().parse(bad).expect("parses");
+        let err = Interpreter::new()
+            .eval_program(program)
+            .expect_err("a non-table is misuse");
+        assert!(
+            err.to_string().contains("a TOML document is a table"),
+            "{err}"
+        );
+    }
 }
 
 #[test]

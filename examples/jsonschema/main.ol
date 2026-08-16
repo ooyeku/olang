@@ -19,7 +19,7 @@ fn report(label, schema, data) = {
 
 let schema = load("schema.json")
 
-let args = unwrap(os.args())
+let args = os.args()
 if len(args) > 1 => {
     report(args[1], schema, load(args[1]))
 }

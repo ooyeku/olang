@@ -70,6 +70,8 @@ pub fn create_fs_module() -> Value {
         create_builtin_function("list_dir", 1),
     );
     module.insert("walk".to_string(), create_builtin_function("walk", 1));
+    // Variadic: `fs.join("a", "b")` or `fs.join(parts)`. The registered
+    // arity is the minimum; path_join validates the rest.
     module.insert("join".to_string(), create_builtin_function("join", 1));
     module.insert("dirname".to_string(), create_builtin_function("dirname", 1));
     module.insert(
@@ -171,18 +173,13 @@ pub fn call_fs_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
 /// Usage: fs.read_file("/path/to/file.txt") -> Result<String, Error>
 fn read_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "read_file expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("read_file expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "read_file: path must be a string".to_string(),
-            )))));
+            return Err("read_file: path must be a string".to_string().into());
         }
     };
 
@@ -199,27 +196,20 @@ fn read_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: fs.write_file("/path/to/file.txt", "contents") -> Result<Unit, Error>
 fn write_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "write_file expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("write_file expects 2 arguments, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "write_file: path must be a string".to_string(),
-            )))));
+            return Err("write_file: path must be a string".to_string().into());
         }
     };
 
     let contents = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "write_file: contents must be a string".to_string(),
-            )))));
+            return Err("write_file: contents must be a string".to_string().into());
         }
     };
 
@@ -236,27 +226,20 @@ fn write_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: fs.append_file("/path/to/file.txt", "more contents") -> Result<Unit, Error>
 fn append_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "append_file expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("append_file expects 2 arguments, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "append_file: path must be a string".to_string(),
-            )))));
+            return Err("append_file: path must be a string".to_string().into());
         }
     };
 
     let contents = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "append_file: contents must be a string".to_string(),
-            )))));
+            return Err("append_file: contents must be a string".to_string().into());
         }
     };
 
@@ -303,28 +286,28 @@ fn one_path_arg<'a>(name: &str, args: &'a [Value]) -> Result<&'a str, Value> {
 /// separator, normalizing nothing else. Absolute segments restart the
 /// path, matching every standard library's join semantics.
 fn path_join(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "join expects 1 argument (a list of parts), got {}",
-            args.len()
-        ))))));
+    if args.is_empty() {
+        return Err("fs.join expects at least one path part".to_string().into());
     }
-    let parts = match &args[0] {
-        Value::List(items) => items,
-        _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "join: argument must be a list of strings".to_string(),
-            )))));
-        }
+    // Two shapes, one meaning. `fs.join("a", "b", "c")` is the literal
+    // case; `fs.join(parts)` is the computed one, and forcing a spread
+    // there would be a downgrade for no gain. A single list argument is
+    // therefore read as "these are the parts" — unambiguous, because a
+    // path part is a string and never a list.
+    let parts: Vec<&Value> = match args.as_slice() {
+        [Value::List(items)] => items.iter().collect(),
+        rest => rest.iter().collect(),
     };
     let mut path = std::path::PathBuf::new();
-    for part in parts.iter() {
+    for part in parts {
         match part {
             Value::String(s) => path.push(s.as_ref()),
-            _ => {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    "join: every part must be a string".to_string(),
-                )))));
+            other => {
+                return Err(format!(
+                    "fs.join: every part must be a string, got {}",
+                    other.type_name()
+                )
+                .into());
             }
         }
     }
@@ -404,90 +387,64 @@ fn path_abs(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 fn exists(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "exists expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("exists expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "exists: path must be a string".to_string(),
-            )))));
+            return Err("exists: path must be a string".to_string().into());
         }
     };
 
-    Ok(Value::Ok(Box::new(Value::Boolean(
-        Path::new(path_str).exists(),
-    ))))
+    Ok(Value::Boolean(Path::new(path_str).exists()))
 }
 
 /// Check if path is a file
 /// Usage: fs.is_file("/path/to/file") -> Result<Bool, Error>
 fn is_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "is_file expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("is_file expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "is_file: path must be a string".to_string(),
-            )))));
+            return Err("is_file: path must be a string".to_string().into());
         }
     };
 
-    Ok(Value::Ok(Box::new(Value::Boolean(
-        Path::new(path_str).is_file(),
-    ))))
+    Ok(Value::Boolean(Path::new(path_str).is_file()))
 }
 
 /// Check if path is a directory
 /// Usage: fs.is_dir("/path/to/dir") -> Result<Bool, Error>
 fn is_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "is_dir expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("is_dir expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "is_dir: path must be a string".to_string(),
-            )))));
+            return Err("is_dir: path must be a string".to_string().into());
         }
     };
 
-    Ok(Value::Ok(Box::new(Value::Boolean(
-        Path::new(path_str).is_dir(),
-    ))))
+    Ok(Value::Boolean(Path::new(path_str).is_dir()))
 }
 
 /// List directory contents
 /// Usage: fs.list_dir("/path/to/dir") -> Result<List<String>, Error>
 fn list_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "list_dir expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("list_dir expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "list_dir: path must be a string".to_string(),
-            )))));
+            return Err("list_dir: path must be a string".to_string().into());
         }
     };
 
@@ -524,17 +481,12 @@ fn list_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: fs.walk("src") -> Result<[String], Error>
 fn walk(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "walk expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("walk expects 1 argument, got {}", args.len()).into());
     }
     let root = match &args[0] {
         Value::String(s) => s.as_ref().clone(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "walk: path must be a string".to_string(),
-            )))));
+            return Err("walk: path must be a string".to_string().into());
         }
     };
 
@@ -572,17 +524,12 @@ fn walk_into(dir: &std::path::Path, out: &mut Vec<String>) -> std::io::Result<()
 /// Usage: fs.glob("examples/**/*.ol") -> Result<[String], Error>
 fn glob(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "glob expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("glob expects 1 argument, got {}", args.len()).into());
     }
     let pattern = match &args[0] {
         Value::String(s) => s.as_ref().clone(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "glob: pattern must be a string".to_string(),
-            )))));
+            return Err("glob: pattern must be a string".to_string().into());
         }
     };
 
@@ -658,18 +605,13 @@ fn match_chars(p: &[char], t: &[char]) -> bool {
 /// Usage: fs.create_dir("/path/to/new/dir") -> Result<Unit, Error>
 fn create_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "create_dir expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("create_dir expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "create_dir: path must be a string".to_string(),
-            )))));
+            return Err("create_dir: path must be a string".to_string().into());
         }
     };
 
@@ -686,18 +628,13 @@ fn create_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: fs.create_dir_all("/path/to/new/dir") -> Result<Unit, Error>
 fn create_dir_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "create_dir_all expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("create_dir_all expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "create_dir_all: path must be a string".to_string(),
-            )))));
+            return Err("create_dir_all: path must be a string".to_string().into());
         }
     };
 
@@ -714,18 +651,13 @@ fn create_dir_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 /// Usage: fs.remove_dir("/path/to/dir") -> Result<Unit, Error>
 fn remove_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "remove_dir expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("remove_dir expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "remove_dir: path must be a string".to_string(),
-            )))));
+            return Err("remove_dir: path must be a string".to_string().into());
         }
     };
 
@@ -742,18 +674,13 @@ fn remove_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: fs.remove_dir_all("/path/to/dir") -> Result<Unit, Error>
 fn remove_dir_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "remove_dir_all expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("remove_dir_all expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "remove_dir_all: path must be a string".to_string(),
-            )))));
+            return Err("remove_dir_all: path must be a string".to_string().into());
         }
     };
 
@@ -770,18 +697,13 @@ fn remove_dir_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 /// Usage: fs.remove_file("/path/to/file") -> Result<Unit, Error>
 fn remove_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "remove_file expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("remove_file expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "remove_file: path must be a string".to_string(),
-            )))));
+            return Err("remove_file: path must be a string".to_string().into());
         }
     };
 
@@ -798,27 +720,22 @@ fn remove_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: fs.copy_file("/source/path", "/dest/path") -> Result<Unit, Error>
 fn copy_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "copy_file expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("copy_file expects 2 arguments, got {}", args.len()).into());
     }
 
     let src_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "copy_file: source path must be a string".to_string(),
-            )))));
+            return Err("copy_file: source path must be a string".to_string().into());
         }
     };
 
     let dest_str = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "copy_file: destination path must be a string".to_string(),
-            )))));
+            return Err("copy_file: destination path must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -835,27 +752,22 @@ fn copy_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: fs.move_file("/old/path", "/new/path") -> Result<Unit, Error>
 fn move_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "move_file expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("move_file expects 2 arguments, got {}", args.len()).into());
     }
 
     let src_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "move_file: source path must be a string".to_string(),
-            )))));
+            return Err("move_file: source path must be a string".to_string().into());
         }
     };
 
     let dest_str = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "move_file: destination path must be a string".to_string(),
-            )))));
+            return Err("move_file: destination path must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -872,18 +784,13 @@ fn move_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: fs.file_size("/path/to/file") -> Result<Int, Error>
 fn file_size(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "file_size expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("file_size expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "file_size: path must be a string".to_string(),
-            )))));
+            return Err("file_size: path must be a string".to_string().into());
         }
     };
 
@@ -900,18 +807,13 @@ fn file_size(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: fs.file_info("/path/to/file") -> Result<Struct, Error>
 fn file_info(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "file_info expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("file_info expects 1 argument, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "file_info: path must be a string".to_string(),
-            )))));
+            return Err("file_info: path must be a string".to_string().into());
         }
     };
 
@@ -964,13 +866,29 @@ mod tests {
     fn assert_ok(result: &Value) -> &Value {
         match result {
             Value::Ok(inner) => inner,
-            _ => {
-                panic!("Expected Ok result, got: {:?}", result)
-            }
+            Value::Err(e) => panic!("Expected Ok result, got Err: {:?}", e),
+            // 0.64: infallible functions return the value directly.
+            bare => bare,
         }
     }
 
     // Helper to assert Result<T, E> error
+
+    /// Assert a call reports failure, either way it can now.
+    ///
+    /// 0.64 split the two: misuse (bad arity or type) **raises**, which is
+    /// a Rust `Err`; environmental failure still returns `Ok(Value::Err)`.
+    /// Tests that only care *that* the call failed use this; tests that
+    /// care *which* assert on the specific shape.
+    #[allow(dead_code)]
+    fn assert_fails(result: Result<Value, Box<dyn std::error::Error>>) {
+        match result {
+            Err(_) => {}
+            Ok(Value::Err(_)) => {}
+            Ok(other) => panic!("expected a failure, got: {:?}", other),
+        }
+    }
+
     fn assert_err(result: &Value) -> &Value {
         match result {
             Value::Err(inner) => inner,
@@ -1121,8 +1039,7 @@ mod tests {
     #[test]
     fn test_file_operations_error_handling() {
         // Test reading non-existent file
-        let read_result = read_file(vec![string_val("/nonexistent/file.txt")]).unwrap();
-        assert_err(&read_result);
+        assert_fails(read_file(vec![string_val("/nonexistent/file.txt")]));
 
         // Test writing to invalid path (directory doesn't exist)
         let write_result = write_file(vec![
@@ -1133,18 +1050,14 @@ mod tests {
         assert_err(&write_result);
 
         // Test invalid argument types
-        let read_result = read_file(vec![int_val(42)]).unwrap();
-        assert_err(&read_result);
+        assert_fails(read_file(vec![int_val(42)]));
 
-        let write_result = write_file(vec![string_val("file.txt"), int_val(42)]).unwrap();
-        assert_err(&write_result);
+        assert_fails(write_file(vec![string_val("file.txt"), int_val(42)]));
 
         // Test wrong number of arguments
-        let read_result = read_file(vec![]).unwrap();
-        assert_err(&read_result);
+        assert_fails(read_file(vec![]));
 
-        let write_result = write_file(vec![string_val("file.txt")]).unwrap();
-        assert_err(&write_result);
+        assert_fails(write_file(vec![string_val("file.txt")]));
     }
 
     #[test]
@@ -1177,9 +1090,9 @@ mod tests {
         ));
 
         // Test error conditions
-        assert_err(&exists(vec![int_val(42)]).unwrap());
-        assert_err(&is_file(vec![]).unwrap());
-        assert_err(&is_dir(vec![string_val("a"), string_val("b")]).unwrap());
+        assert_fails(exists(vec![int_val(42)]));
+        assert_fails(is_file(vec![]));
+        assert_fails(is_dir(vec![string_val("a"), string_val("b")]));
     }
 
     #[test]
@@ -1268,11 +1181,9 @@ mod tests {
         }
 
         // Test error conditions
-        let list_result = list_dir(vec![string_val("/nonexistent/directory")]).unwrap();
-        assert_err(&list_result);
+        assert_fails(list_dir(vec![string_val("/nonexistent/directory")]));
 
-        let list_result = list_dir(vec![int_val(42)]).unwrap();
-        assert_err(&list_result);
+        assert_fails(list_dir(vec![int_val(42)]));
     }
 
     #[test]
@@ -1329,22 +1240,17 @@ mod tests {
         assert_err(&move_result);
 
         // Test remove non-existent file
-        let remove_result = remove_file(vec![string_val("/nonexistent/file.txt")]).unwrap();
-        assert_err(&remove_result);
+        assert_fails(remove_file(vec![string_val("/nonexistent/file.txt")]));
 
         // Test invalid argument types
-        let copy_result = copy_file(vec![int_val(42), string_val("dest.txt")]).unwrap();
-        assert_err(&copy_result);
+        assert_fails(copy_file(vec![int_val(42), string_val("dest.txt")]));
 
-        let move_result = move_file(vec![string_val("source.txt"), int_val(42)]).unwrap();
-        assert_err(&move_result);
+        assert_fails(move_file(vec![string_val("source.txt"), int_val(42)]));
 
         // Test wrong number of arguments
-        let copy_result = copy_file(vec![string_val("file.txt")]).unwrap();
-        assert_err(&copy_result);
+        assert_fails(copy_file(vec![string_val("file.txt")]));
 
-        let move_result = move_file(vec![]).unwrap();
-        assert_err(&move_result);
+        assert_fails(move_file(vec![]));
     }
 
     #[test]
@@ -1368,11 +1274,9 @@ mod tests {
         assert_eq!(extract_int(size_value), 0);
 
         // Test error conditions
-        let size_result = file_size(vec![string_val("/nonexistent/file.txt")]).unwrap();
-        assert_err(&size_result);
+        assert_fails(file_size(vec![string_val("/nonexistent/file.txt")]));
 
-        let size_result = file_size(vec![int_val(42)]).unwrap();
-        assert_err(&size_result);
+        assert_fails(file_size(vec![int_val(42)]));
     }
 
     #[test]
@@ -1421,22 +1325,18 @@ mod tests {
         }
 
         // Test error conditions
-        let info_result = file_info(vec![string_val("/nonexistent/file.txt")]).unwrap();
-        assert_err(&info_result);
+        assert_fails(file_info(vec![string_val("/nonexistent/file.txt")]));
 
-        let info_result = file_info(vec![int_val(42)]).unwrap();
-        assert_err(&info_result);
+        assert_fails(file_info(vec![int_val(42)]));
     }
 
     #[test]
     fn test_directory_operation_errors() {
         // Test create_dir with invalid path
-        let create_result = create_dir(vec![string_val("/nonexistent/parent/dir")]).unwrap();
-        assert_err(&create_result);
+        assert_fails(create_dir(vec![string_val("/nonexistent/parent/dir")]));
 
         // Test remove_dir with non-existent directory
-        let remove_result = remove_dir(vec![string_val("/nonexistent/dir")]).unwrap();
-        assert_err(&remove_result);
+        assert_fails(remove_dir(vec![string_val("/nonexistent/dir")]));
 
         // Test remove_dir with non-empty directory
         let temp_dir = tempdir().unwrap();
@@ -1448,18 +1348,14 @@ mod tests {
         assert_err(&remove_result);
 
         // Test invalid argument types
-        let create_result = create_dir(vec![int_val(42)]).unwrap();
-        assert_err(&create_result);
+        assert_fails(create_dir(vec![int_val(42)]));
 
-        let remove_result = remove_dir_all(vec![bool_val(true)]).unwrap();
-        assert_err(&remove_result);
+        assert_fails(remove_dir_all(vec![bool_val(true)]));
 
         // Test wrong number of arguments
-        let create_result = create_dir(vec![]).unwrap();
-        assert_err(&create_result);
+        assert_fails(create_dir(vec![]));
 
-        let remove_result = remove_dir(vec![string_val("a"), string_val("b")]).unwrap();
-        assert_err(&remove_result);
+        assert_fails(remove_dir(vec![string_val("a"), string_val("b")]));
     }
 
     #[test]
@@ -1482,8 +1378,10 @@ mod tests {
         assert!(call_fs_function("unknown_func", vec![]).is_err());
 
         // Test with error conditions
-        let result = call_fs_function("read_file", vec![string_val("/nonexistent")]).unwrap();
-        assert_err(&result);
+        assert_fails(call_fs_function(
+            "read_file",
+            vec![string_val("/nonexistent")],
+        ));
     }
 
     #[test]
@@ -1639,8 +1537,7 @@ mod tests {
         }
 
         // Try to remove non-empty directory (should fail)
-        let remove_result = remove_dir(vec![string_val(test_dir_str)]).unwrap();
-        assert_err(&remove_result);
+        assert_fails(remove_dir(vec![string_val(test_dir_str)]));
 
         // Remove directory with all contents
         let remove_all_result = remove_dir_all(vec![string_val(test_dir_str)]).unwrap();
@@ -1663,16 +1560,26 @@ mod tests {
         assert!(error_str.contains("Failed to read file"));
         assert!(error_str.contains("/clearly/nonexistent/file.txt"));
 
-        // Invalid argument type error
-        let write_result = write_file(vec![string_val("file.txt"), int_val(42)]).unwrap();
-        let error_msg = assert_err(&write_result);
-        let error_str = extract_string(error_msg);
-        assert!(error_str.contains("contents must be a string"));
+        // Invalid argument type: misuse, so it raises — but the message
+        // must still say what was wrong.
+        let write_err = write_file(vec![string_val("file.txt"), int_val(42)])
+            .expect_err("a non-string body is misuse");
+        assert!(
+            write_err.to_string().contains("contents must be a string"),
+            "got: {}",
+            write_err
+        );
 
-        // Wrong number of arguments error
-        let copy_result = copy_file(vec![string_val("only_one_arg")]).unwrap();
-        let error_msg = assert_err(&copy_result);
-        let error_str = extract_string(error_msg);
-        assert!(error_str.contains("copy_file expects 2 arguments"));
+        // Wrong number of arguments: misuse, so it raises — and the
+        // message still has to name the expected count.
+        let copy_err =
+            copy_file(vec![string_val("only_one_arg")]).expect_err("one argument is misuse");
+        assert!(
+            copy_err
+                .to_string()
+                .contains("copy_file expects 2 arguments"),
+            "got: {}",
+            copy_err
+        );
     }
 }

@@ -84,10 +84,10 @@ test "an empty day still reports" {
 }
 
 test "digests land on disk" {
-    let dir = unwrap(os.temp_dir()) + "/harborline_report_test"
+    let dir = os.temp_dir() + "/harborline_report_test"
     let rows = [#{ "callsign": "AAAA-111", "kind": "reefer", "units": 8.0, "amount": 90.0 }]
     let path = write_digest(dir, 54, build_digest(54, rows, 1, 0))
-    testing.assert_true(unwrap(fs.exists(path)))
+    testing.assert_true(fs.exists(path))
     let back = unwrap(fs.read_file(path))
     testing.assert_true(str.contains(back, "reefer: $90.00"))
     unwrap(fs.remove_dir_all(dir))

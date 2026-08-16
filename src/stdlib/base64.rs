@@ -98,18 +98,13 @@ pub fn call_base64_function(
 /// Usage: base64.encode("Hello, World!") -> Result<String, Error>
 fn base64_encode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "encode expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("encode expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "encode: argument must be a string".to_string(),
-            )))));
+            return Err("encode: argument must be a string".to_string().into());
         }
     };
 
@@ -121,18 +116,13 @@ fn base64_encode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: base64.decode("SGVsbG8sIFdvcmxkIQ==") -> Result<String, Error>
 fn base64_decode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "decode expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("decode expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decode: argument must be a string".to_string(),
-            )))));
+            return Err("decode: argument must be a string".to_string().into());
         }
     };
 
@@ -155,18 +145,15 @@ fn base64_decode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: base64.encode_url_safe("Hello, World!") -> Result<String, Error>
 fn base64_encode_url_safe(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "encode_url_safe expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("encode_url_safe expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "encode_url_safe: argument must be a string".to_string(),
-            )))));
+            return Err("encode_url_safe: argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -178,18 +165,15 @@ fn base64_encode_url_safe(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
 /// Usage: base64.decode_url_safe("SGVsbG8sIFdvcmxkIQ==") -> Result<String, Error>
 fn base64_decode_url_safe(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "decode_url_safe expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("decode_url_safe expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decode_url_safe: argument must be a string".to_string(),
-            )))));
+            return Err("decode_url_safe: argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -212,23 +196,18 @@ fn base64_decode_url_safe(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
 /// Usage: base64.validate("SGVsbG8sIFdvcmxkIQ==") -> Result<Bool, Error>
 fn base64_validate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "validate expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("validate expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "validate: argument must be a string".to_string(),
-            )))));
+            return Err("validate: argument must be a string".to_string().into());
         }
     };
 
     let is_valid = general_purpose::STANDARD.decode(input).is_ok();
-    Ok(Value::Ok(Box::new(Value::Boolean(is_valid))))
+    Ok(Value::Boolean(is_valid))
 }
 
 /// Check if a string is valid base64 (alias for validate)
@@ -241,18 +220,15 @@ fn base64_is_valid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 /// Usage: base64.encode_no_pad("Hello, World!") -> Result<String, Error>
 fn base64_encode_no_pad(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "encode_no_pad expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("encode_no_pad expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "encode_no_pad: argument must be a string".to_string(),
-            )))));
+            return Err("encode_no_pad: argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -264,18 +240,15 @@ fn base64_encode_no_pad(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
 /// Usage: base64.decode_no_pad("SGVsbG8sIFdvcmxkIQ") -> Result<String, Error>
 fn base64_decode_no_pad(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "decode_no_pad expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("decode_no_pad expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decode_no_pad: argument must be a string".to_string(),
-            )))));
+            return Err("decode_no_pad: argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -322,7 +295,23 @@ mod tests {
         }
     }
 
+    /// Assert a call reports failure, either way it can now.
+    ///
+    /// 0.64 split the two: misuse (bad arity or type) **raises**, which is
+    /// a Rust `Err`; environmental failure still returns `Ok(Value::Err)`.
+    /// Tests that only care *that* the call failed use this; tests that
+    /// care *which* assert on the specific shape.
+    #[allow(dead_code)]
+    fn assert_fails(result: Result<Value, Box<dyn std::error::Error>>) {
+        match result {
+            Err(_) => {}
+            Ok(Value::Err(_)) => {}
+            Ok(other) => panic!("expected a failure, got: {:?}", other),
+        }
+    }
+
     // Helper function to assert Err result and extract error message
+    #[allow(dead_code)]
     fn assert_err(result: &Value) -> &Value {
         match result {
             Value::Err(inner) => inner,
@@ -578,29 +567,23 @@ mod tests {
         ];
 
         for invalid_case in invalid_cases {
-            let result = base64_decode(vec![string_val(invalid_case)]).unwrap();
-            assert_err(&result);
+            assert_fails(base64_decode(vec![string_val(invalid_case)]));
         }
     }
 
     #[test]
     fn test_base64_argument_validation() {
         // Test wrong number of arguments
-        let result = base64_encode(vec![]).unwrap();
-        assert_err(&result);
+        assert_fails(base64_encode(vec![]));
 
-        let result = base64_encode(vec![string_val("test"), string_val("extra")]).unwrap();
-        assert_err(&result);
+        assert_fails(base64_encode(vec![string_val("test"), string_val("extra")]));
 
         // Test wrong argument types
-        let result = base64_encode(vec![int_val(42)]).unwrap();
-        assert_err(&result);
+        assert_fails(base64_encode(vec![int_val(42)]));
 
-        let result = base64_decode(vec![bool_val(true)]).unwrap();
-        assert_err(&result);
+        assert_fails(base64_decode(vec![bool_val(true)]));
 
-        let result = base64_validate(vec![int_val(123)]).unwrap();
-        assert_err(&result);
+        assert_fails(base64_validate(vec![int_val(123)]));
     }
 
     #[test]

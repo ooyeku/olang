@@ -332,7 +332,7 @@ let mut world = new_world(conn)
 
 loop {
     if max_ticks > 0 && world.tick >= max_ticks => break
-    if unwrap(os.interrupted()) => {
+    if os.interrupted() => {
         println(announce("alert", "interrupt — closing the day and settling up"))
         break
     }

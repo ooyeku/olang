@@ -151,7 +151,7 @@ fn stdlib_convention_holds() {
 fn os_args_returns_a_list() {
     // Without the CLI setting script args, os.args() falls back to the
     // process args — but it must always return Ok(list-of-strings).
-    match eval(r#"unwrap(os.args())"#) {
+    match eval(r#"os.args()"#) {
         Value::List(items) => assert!(items.iter().all(|v| matches!(v, Value::String(_)))),
         other => panic!("expected list, got {:?}", other),
     }

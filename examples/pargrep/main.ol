@@ -11,7 +11,7 @@
 
 use lib.search { search_chunk }
 
-let args = unwrap(os.args())
+let args = os.args()
 let pattern = if len(args) > 1 => args[1] else => "share fn"
 let root = if len(args) > 2 => args[2] else => ".."
 let workers = if len(args) > 3 => unwrap(str.parse_int(args[3])) else => 6

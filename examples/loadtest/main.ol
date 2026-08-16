@@ -12,7 +12,7 @@
 use lib.server { make_server, server_hit_count }
 use lib.stats { empty_stats, record, merge }
 
-let args = unwrap(os.args())
+let args = os.args()
 let clients = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 12
 let per_client = if len(args) > 2 => unwrap(str.parse_int(args[2])) else => 25
 let server_workers = if len(args) > 3 => unwrap(str.parse_int(args[3])) else => 8

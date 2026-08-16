@@ -5,7 +5,7 @@
 // revenue is one vectorized multiply, and revenue-by-region is a
 // group_by instead of a hand-rolled map fold.
 
-let args = unwrap(os.args())
+let args = os.args()
 let path = if len(args) > 1 => args[1] else => "data/sales.csv"
 
 // ── load: CSV text → typed Frame ──

@@ -11,7 +11,7 @@
 //
 // Generation is seeded, so a given row count always produces the same file.
 
-let args = unwrap(os.args())
+let args = os.args()
 let rows = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 200000
 let out = if len(args) > 2 => args[2] else => "data/sales_large.csv"
 

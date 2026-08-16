@@ -132,18 +132,13 @@ pub fn call_json_function(
 /// Usage: json.parse("{\"name\": \"John\", \"age\": 30}") -> Result<Object, Error>
 fn json_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "parse expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("parse expects 1 argument, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "parse: argument must be a string".to_string(),
-            )))));
+            return Err("parse: argument must be a string".to_string().into());
         }
     };
 
@@ -163,10 +158,7 @@ fn json_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: json.stringify({"name": "John", "age": 30}) -> Result<String, Error>
 fn json_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "stringify expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("stringify expects 1 argument, got {}", args.len()).into());
     }
 
     match olang_value_to_json(&args[0]) {
@@ -188,18 +180,13 @@ fn json_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 /// Usage: json.prettify("{\"name\":\"John\",\"age\":30}") -> Result<String, Error>
 fn json_prettify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "prettify expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("prettify expects 1 argument, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "prettify: argument must be a string".to_string(),
-            )))));
+            return Err("prettify: argument must be a string".to_string().into());
         }
     };
 
@@ -222,18 +209,13 @@ fn json_prettify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: json.minify("{\n  \"name\": \"John\",\n  \"age\": 30\n}") -> Result<String, Error>
 fn json_minify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "minify expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("minify expects 1 argument, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "minify: argument must be a string".to_string(),
-            )))));
+            return Err("minify: argument must be a string".to_string().into());
         }
     };
 
@@ -272,18 +254,13 @@ fn json_validate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: json.get_type("{\"name\": \"John\"}") -> Result<String, Error>
 fn json_get_type(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "get_type expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("get_type expects 1 argument, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "get_type: argument must be a string".to_string(),
-            )))));
+            return Err("get_type: argument must be a string".to_string().into());
         }
     };
 
@@ -312,27 +289,24 @@ fn json_get_type(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: json.has_key("{\"name\": \"John\"}", "name") -> Result<Bool, Error>
 fn json_has_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "has_key expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("has_key expects 2 arguments, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "has_key: first argument must be a string".to_string(),
-            )))));
+            return Err("has_key: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let key = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "has_key: second argument must be a string".to_string(),
-            )))));
+            return Err("has_key: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -357,18 +331,13 @@ fn json_has_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: json.get_keys("{\"name\": \"John\", \"age\": 30}") -> Result<List<String>, Error>
 fn json_get_keys(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "get_keys expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("get_keys expects 1 argument, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "get_keys: argument must be a string".to_string(),
-            )))));
+            return Err("get_keys: argument must be a string".to_string().into());
         }
     };
 
@@ -397,18 +366,13 @@ fn json_get_keys(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: json.get_values("{\"name\": \"John\", \"age\": 30}") -> Result<List<Value>, Error>
 fn json_get_values(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "get_values expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("get_values expects 1 argument, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "get_values: argument must be a string".to_string(),
-            )))));
+            return Err("get_values: argument must be a string".to_string().into());
         }
     };
 
@@ -437,27 +401,20 @@ fn json_get_values(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 /// Usage: json.get("{\"name\": \"John\"}", "name") -> Result<Value, Error>
 fn json_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "get expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("get expects 2 arguments, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "get: first argument must be a string".to_string(),
-            )))));
+            return Err("get: first argument must be a string".to_string().into());
         }
     };
 
     let key = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "get: second argument must be a string".to_string(),
-            )))));
+            return Err("get: second argument must be a string".to_string().into());
         }
     };
 
@@ -490,27 +447,20 @@ fn json_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: json.set("{\"name\": \"John\"}", "age", 30) -> Result<String, Error>
 fn json_set(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "set expects 3 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("set expects 3 arguments, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "set: first argument must be a string".to_string(),
-            )))));
+            return Err("set: first argument must be a string".to_string().into());
         }
     };
 
     let key = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "set: second argument must be a string".to_string(),
-            )))));
+            return Err("set: second argument must be a string".to_string().into());
         }
     };
 
@@ -552,27 +502,22 @@ fn json_set(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: json.remove("{\"name\": \"John\", \"age\": 30}", "age") -> Result<String, Error>
 fn json_remove(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "remove expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("remove expects 2 arguments, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "remove: first argument must be a string".to_string(),
-            )))));
+            return Err("remove: first argument must be a string".to_string().into());
         }
     };
 
     let key = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "remove: second argument must be a string".to_string(),
-            )))));
+            return Err("remove: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -604,27 +549,24 @@ fn json_remove(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: json.array_get("[1, 2, 3]", 1) -> Result<Value, Error>
 fn json_array_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "array_get expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("array_get expects 2 arguments, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "array_get: first argument must be a string".to_string(),
-            )))));
+            return Err("array_get: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let index = match &args[1] {
         Value::Integer(i) => *i as usize,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "array_get: second argument must be an integer".to_string(),
-            )))));
+            return Err("array_get: second argument must be an integer"
+                .to_string()
+                .into());
         }
     };
 
@@ -658,18 +600,13 @@ fn json_array_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 /// Usage: json.array_length("[1, 2, 3]") -> Result<Int, Error>
 fn json_array_length(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "array_length expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("array_length expects 1 argument, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "array_length: argument must be a string".to_string(),
-            )))));
+            return Err("array_length: argument must be a string".to_string().into());
         }
     };
 
@@ -694,18 +631,15 @@ fn json_array_length(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
 /// Usage: json.array_push("[1, 2]", 3) -> Result<String, Error>
 fn json_array_push(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "array_push expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("array_push expects 2 arguments, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "array_push: first argument must be a string".to_string(),
-            )))));
+            return Err("array_push: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -747,27 +681,20 @@ fn json_array_push(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 /// Usage: json.merge("{\"a\": 1}", "{\"b\": 2}") -> Result<String, Error>
 fn json_merge(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "merge expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("merge expects 2 arguments, got {}", args.len()).into());
     }
 
     let json1_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "merge: first argument must be a string".to_string(),
-            )))));
+            return Err("merge: first argument must be a string".to_string().into());
         }
     };
 
     let json2_str = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "merge: second argument must be a string".to_string(),
-            )))));
+            return Err("merge: second argument must be a string".to_string().into());
         }
     };
 
@@ -810,18 +737,13 @@ fn json_merge(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: json.deep_clone("{\"name\": \"John\"}") -> Result<String, Error>
 fn json_deep_clone(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "deep_clone expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("deep_clone expects 1 argument, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "deep_clone: argument must be a string".to_string(),
-            )))));
+            return Err("deep_clone: argument must be a string".to_string().into());
         }
     };
 

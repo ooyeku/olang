@@ -82,6 +82,12 @@ examples/**/*.db
 examples/app/backups/
 examples/statlab/*.svg
 
+# `olang build` output inside examples: a built binary is named after its
+# source directory's entry point, so these collide with nothing but must
+# not be committed.
+examples/*/main
+examples/*/ledger
+
 # Local distribution staging (make dist). dist/homebrew (the formula
 # template) stays tracked.
 /dist/*

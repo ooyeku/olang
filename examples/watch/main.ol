@@ -94,7 +94,7 @@ fn watch(cmd, is_pipe, interval, count) = {
     unwrap_or(os.on_interrupt(), false)
     // Without a terminal (piped, or under the example runner) there is no
     // one to press Ctrl-C, so a "forever" watch would never end: cap it.
-    let tty = unwrap_or(os.is_tty(), false)
+    let tty = os.is_tty()
     let limit = if count > 0 => count else => (if tty => 0 else => 2)
 
     let mut run = 0
@@ -107,20 +107,20 @@ fn watch(cmd, is_pipe, interval, count) = {
         println(term.dim("exit " + show(last)))
 
         let hit_limit = limit > 0 && run >= limit
-        if unwrap_or(os.interrupted(), false) || hit_limit => { go = false }
+        if os.interrupted() || hit_limit => { go = false }
         else => {
             // Sleep in short slices so Ctrl-C is noticed promptly, not only
             // at the end of a full interval.
             let mut slept = 0
-            while slept < interval && unwrap_or(os.interrupted(), false) == false {
+            while slept < interval && os.interrupted() == false {
                 time.sleep(50)
                 slept = slept + 50
             }
-            if unwrap_or(os.interrupted(), false) => { go = false }
+            if os.interrupted() => { go = false }
         }
     }
     println("")
-    if unwrap_or(os.interrupted(), false) =>
+    if os.interrupted() =>
         println(term.yellow("watch stopped") + term.dim(" after " + show(run)
             + " run(s); last exit " + show(last)))
     else =>

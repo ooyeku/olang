@@ -1,10 +1,10 @@
 use lib.parse { parse_line }
 use lib.stats { level_counts, errors, top_routes }
 
-let args = unwrap(os.args())
+let args = os.args()
 let path = if len(args) > 1 => args[1] else => "data/app.log"
 
-if !unwrap(fs.exists(path)) => {
+if !fs.exists(path) => {
     println("no such file: " + path)
 } else => {
     let content = unwrap(fs.read_file(path))

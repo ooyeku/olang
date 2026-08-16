@@ -74,7 +74,7 @@ fn bi_ls(state, args) = {
     let all = contains(args, "-a")
     let paths = args |> filter((a) => !str.starts_with(a, "-"))
     let target = if len(paths) == 0 => "." else => paths[0]
-    if target != "." && unwrap_or(fs.exists(target), false) && !unwrap_or(fs.is_dir(target), false) => {
+    if target != "." && fs.exists(target) && !fs.is_dir(target) => {
         if long => {
             match fs.file_info(target) {
                 Ok(info) => done(state, "- " + str.pad_start(to_string(map_get(info, "size")), 10, " ") + "  " + target + "\n", 0),
@@ -191,13 +191,9 @@ fn bi_wc(state, args, input) = {
 // ── environment and shell state ──────────────────────────────────────
 
 fn bi_env(state) = {
-    match os.list_env() {
-        Ok(pairs) => {
-            let mut lines = sort(map_keys(pairs)) |> map((k) => k + "=" + map_get(pairs, k))
-            done(state, joined_lines(lines), 0)
-        },
-        Err(e) => fail(state, "env: " + e)
-    }
+    let pairs = os.list_env()
+    let mut lines = sort(map_keys(pairs)) |> map((k) => k + "=" + map_get(pairs, k))
+    done(state, joined_lines(lines), 0)
 }
 
 fn bi_export(state, args) = {
@@ -279,14 +275,14 @@ fn bi_which(state, args, verbose) = {
 
 share fn path_lookup(name) = {
     if str.contains(name, "/") => {
-        if unwrap_or(fs.exists(name), false) => Ok(name) else => Err("not found")
+        if fs.exists(name) => Ok(name) else => Err("not found")
     } else => {
         let path = match os.get_env("PATH") { Ok(p) => p, Err(e) => "" }
         let mut hit = ""
         for dir in str.split(path, ":") {
             if hit == "" && dir != "" => {
                 let candidate = dir + "/" + name
-                if unwrap_or(fs.exists(candidate), false) => { hit = candidate }
+                if fs.exists(candidate) => { hit = candidate }
             }
         }
         if hit != "" => Ok(hit) else => Err("not found")
@@ -322,7 +318,7 @@ fn bi_rm(state, args) = {
         let mut code = 0
         let mut out = ""
         for p in real {
-            let r = if unwrap_or(fs.is_dir(p), false) => {
+            let r = if fs.is_dir(p) => {
                 if recursive => fs.remove_dir_all(p)
                 else => Err("is a directory (use rm -r)")
             } else => fs.remove_file(p)
@@ -350,7 +346,7 @@ fn bi_touch(state, args) = {
     if len(args) == 0 => fail(state, "touch: usage: touch file")
     else => {
         for f in args {
-            if !unwrap_or(fs.exists(f), false) => { fs.write_file(f, "") }
+            if !fs.exists(f) => { fs.write_file(f, "") }
         }
         done(state, "", 0)
     }

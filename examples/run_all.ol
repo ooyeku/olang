@@ -18,7 +18,7 @@ let olang = unwrap(os.exe_path())
 // working directory, so the discovered set (and the per-target labels the
 // harness args key off) is the same no matter where the runner is launched.
 // The script path is argv[0]; its directory, made absolute, is the base.
-let self_path = unwrap_or(os.args(), [""])[0]
+let self_path = os.args()[0]
 let self_dir = fs.dirname(self_path)
 let root =
     if str.starts_with(self_dir, "/") => self_dir
@@ -44,13 +44,13 @@ for e in entries {
 // Packages: a directory with a main.ol, looking one level deeper for nested
 // package roots like packages/demo.
 for e in entries {
-    if (!str.ends_with(e, ".ol")) && unwrap(fs.is_dir(root + "/" + e)) => {
-        if unwrap(fs.exists(root + "/" + e + "/main.ol")) =>
+    if (!str.ends_with(e, ".ol")) && fs.is_dir(root + "/" + e) => {
+        if fs.exists(root + "/" + e + "/main.ol") =>
             { targets = targets + [{ label: e + "/", dir: root + "/" + e, file: "main.ol" }] }
         else => {
             for sub in sort(unwrap(fs.list_dir(root + "/" + e))) {
                 let rel = e + "/" + sub
-                if unwrap(fs.is_dir(root + "/" + rel)) && unwrap(fs.exists(root + "/" + rel + "/main.ol")) =>
+                if fs.is_dir(root + "/" + rel) && fs.exists(root + "/" + rel + "/main.ol") =>
                     { targets = targets + [{ label: rel + "/", dir: root + "/" + rel, file: "main.ol" }] }
             }
         }

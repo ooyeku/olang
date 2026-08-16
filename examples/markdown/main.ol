@@ -6,7 +6,7 @@
 
 use lib.blocks { to_html }
 
-let args = unwrap(os.args())
+let args = os.args()
 
 if len(args) > 1 => {
     println(to_html(unwrap(fs.read_file(args[1]))))

@@ -31,7 +31,7 @@ use lib.store {
 use lib.validate { validate_transaction, validate_category, validate_rename, validate_budget, validate_id, valid_month }
 use lib.format { this_month, month_add }
 
-let args = unwrap(os.args())
+let args = os.args()
 // Default 7411: macOS AirPlay Receiver listens on 5000/7000 and answers
 // 403, which reads as a mysterious "access denied" when the app is down.
 let port = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 7411
@@ -50,7 +50,7 @@ let suite_css = unwrap(fs.read_file("static/suite.css"))
 
 // The wasm artifact is gitignored; warn loudly at boot when missing.
 // (fs.exists, not read_file: the artifact is binary.)
-if !unwrap_or(fs.exists("static/olang_playground.wasm"), false) => {
+if !fs.exists("static/olang_playground.wasm") => {
     println("WARNING: static/olang_playground.wasm is missing — the frontend cannot boot.")
     println("Build and copy it:")
     println("  cargo build -p olang-playground --target wasm32-unknown-unknown --release")

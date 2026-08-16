@@ -135,7 +135,7 @@ fn app(req) = {
     response
 }
 
-let args = unwrap(os.args())
+let args = os.args()
 let port = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 8080
 
 let requested_log_mode = str.to_lower(env_or("OLANG_ACCESS_LOG", "errors"))

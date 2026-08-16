@@ -73,6 +73,51 @@ pub fn get_stdlib() -> HashMap<String, Value> {
 }
 
 /// Standardized error utilities for stdlib modules
+/// Misuse errors: a wrong argument count or type.
+///
+/// These **raise** rather than returning `Err(...)` as a value. The
+/// distinction is the stdlib's governing convention as of 0.64:
+///
+/// - An operation that cannot fail returns its value directly.
+/// - An operation that can fail for reasons the caller could reasonably
+///   handle — a missing file, an absent environment variable, malformed
+///   input — returns `Result`.
+/// - An operation *called wrongly* raises, because no caller can sensibly
+///   recover from its own bug, and a returned `Err` invites exactly that:
+///   `unwrap_or(fs.read_file(), "")` would quietly swallow a typo'd call
+///   the same way it swallows a missing file.
+///
+/// A Rust `Err` from a stdlib function becomes an olang runtime error at
+/// the dispatch boundary, which is what makes these raise.
+pub mod misuse {
+    use super::Value;
+
+    /// Wrong number of arguments. `expected` is rendered verbatim, so it
+    /// can read "2", "1 or 2", or "at least 1".
+    pub fn arity(function: &str, expected: &str, got: usize) -> Box<dyn std::error::Error> {
+        format!("{function} expects {expected} argument(s), got {got}").into()
+    }
+
+    /// Wrong argument type, named by position or parameter name.
+    pub fn arg_type(
+        function: &str,
+        which: &str,
+        expected: &str,
+        got: &Value,
+    ) -> Box<dyn std::error::Error> {
+        format!(
+            "{function}: {which} must be {expected}, got {}",
+            got.type_name()
+        )
+        .into()
+    }
+
+    /// An argument that is the right type but outside the allowed range.
+    pub fn arg_value(function: &str, detail: &str) -> Box<dyn std::error::Error> {
+        format!("{function}: {detail}").into()
+    }
+}
+
 pub mod error_utils {
     use super::*;
 

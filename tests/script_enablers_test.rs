@@ -73,7 +73,7 @@ fn env_surface_round_trips() {
     );
     assert_eq!(v, Value::String("v1".to_string().into()));
     assert_eq!(
-        eval("unwrap(os.has_env(\"OLANG_DEFINITELY_NOT_SET_ANYWHERE\"))"),
+        eval("os.has_env(\"OLANG_DEFINITELY_NOT_SET_ANYWHERE\")"),
         Value::Boolean(false)
     );
 }

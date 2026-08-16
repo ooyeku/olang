@@ -114,18 +114,13 @@ pub fn call_http_function(
 /// Usage: http.get("https://api.example.com/data") -> Result<HttpResponse, Error>
 fn http_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "get expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("get expects 1 argument, got {}", args.len()).into());
     }
 
     let url = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "get: URL must be a string".to_string(),
-            )))));
+            return Err("get: URL must be a string".to_string().into());
         }
     };
 
@@ -164,27 +159,20 @@ fn http_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: http.post("https://api.example.com/data", "request body") -> Result<HttpResponse, Error>
 fn http_post(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "post expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("post expects 2 arguments, got {}", args.len()).into());
     }
 
     let url = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "post: URL must be a string".to_string(),
-            )))));
+            return Err("post: URL must be a string".to_string().into());
         }
     };
 
     let body = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "post: body must be a string".to_string(),
-            )))));
+            return Err("post: body must be a string".to_string().into());
         }
     };
 
@@ -224,27 +212,20 @@ fn http_post(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: http.put("https://api.example.com/data", "request body") -> Result<HttpResponse, Error>
 fn http_put(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "put expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("put expects 2 arguments, got {}", args.len()).into());
     }
 
     let url = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "put: URL must be a string".to_string(),
-            )))));
+            return Err("put: URL must be a string".to_string().into());
         }
     };
 
     let body = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "put: body must be a string".to_string(),
-            )))));
+            return Err("put: body must be a string".to_string().into());
         }
     };
 
@@ -284,18 +265,13 @@ fn http_put(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: http.delete("https://api.example.com/data") -> Result<HttpResponse, Error>
 fn http_delete(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "delete expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("delete expects 1 argument, got {}", args.len()).into());
     }
 
     let url = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "delete: URL must be a string".to_string(),
-            )))));
+            return Err("delete: URL must be a string".to_string().into());
         }
     };
 
@@ -335,36 +311,27 @@ fn http_delete(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: http.request("GET", "https://api.example.com", "body") -> Result<HttpResponse, Error>
 fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "request expects 3 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("request expects 3 arguments, got {}", args.len()).into());
     }
 
     let method = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "request: method must be a string".to_string(),
-            )))));
+            return Err("request: method must be a string".to_string().into());
         }
     };
 
     let url = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "request: URL must be a string".to_string(),
-            )))));
+            return Err("request: URL must be a string".to_string().into());
         }
     };
 
     let body = match &args[2] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "request: body must be a string".to_string(),
-            )))));
+            return Err("request: body must be a string".to_string().into());
         }
     };
 
@@ -377,10 +344,7 @@ fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         "PATCH" => client.patch(url),
         "HEAD" => client.head(url),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                "Unsupported HTTP method: {}",
-                method
-            ))))));
+            return Err(format!("Unsupported HTTP method: {}", method).into());
         }
     };
 
@@ -1116,18 +1080,13 @@ fn http_response_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
 /// Usage: http.parse_url("https://example.com/path?query=value") -> Result<UrlInfo, Error>
 fn parse_url(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "parse_url expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("parse_url expects 1 argument, got {}", args.len()).into());
     }
 
     let url_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "parse_url: URL must be a string".to_string(),
-            )))));
+            return Err("parse_url: URL must be a string".to_string().into());
         }
     };
 
@@ -1175,10 +1134,7 @@ fn parse_url(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: http.encode_query(params_struct) -> Result<String, Error>
 fn encode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "encode_query expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("encode_query expects 1 argument, got {}", args.len()).into());
     }
 
     match &args[0] {
@@ -1212,18 +1168,15 @@ fn encode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: http.decode_query("key1=value1&key2=value2") -> Result<Struct, Error>
 fn decode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "decode_query expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("decode_query expects 1 argument, got {}", args.len()).into());
     }
 
     let query_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decode_query: query string must be a string".to_string(),
-            )))));
+            return Err("decode_query: query string must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -1240,10 +1193,10 @@ fn decode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     }
 
-    Ok(Value::Ok(Box::new(Value::Struct {
+    Ok(Value::Struct {
         type_name: "QueryParams".to_string(),
         fields: params,
-    })))
+    })
 }
 
 #[cfg(test)]
@@ -1277,13 +1230,30 @@ mod tests {
     fn assert_ok(result: &Value) -> &Value {
         match result {
             Value::Ok(inner) => inner,
-            _ => {
-                panic!("Expected Ok result, got: {:?}", result)
-            }
+            Value::Err(e) => panic!("Expected Ok result, got Err: {:?}", e),
+            // 0.64: infallible functions return the value directly.
+            bare => bare,
         }
     }
 
     // Helper to assert Result<T, E> error
+
+    /// Assert a call reports failure, either way it can now.
+    ///
+    /// 0.64 split the two: misuse (bad arity or type) **raises**, which is
+    /// a Rust `Err`; environmental failure still returns `Ok(Value::Err)`.
+    /// Tests that only care *that* the call failed use this; tests that
+    /// care *which* assert on the specific shape.
+    #[allow(dead_code)]
+    fn assert_fails(result: Result<Value, Box<dyn std::error::Error>>) {
+        match result {
+            Err(_) => {}
+            Ok(Value::Err(_)) => {}
+            Ok(other) => panic!("expected a failure, got: {:?}", other),
+        }
+    }
+
+    #[allow(dead_code)]
     fn assert_err(result: &Value) -> &Value {
         match result {
             Value::Err(inner) => inner,
@@ -1436,8 +1406,7 @@ mod tests {
         ];
 
         for invalid_url in invalid_urls {
-            let result = parse_url(vec![string_val(invalid_url)]).unwrap();
-            assert_err(&result); // Should be an error
+            assert_fails(parse_url(vec![string_val(invalid_url)])); // Should be an error
         }
     }
 
@@ -1592,55 +1561,42 @@ mod tests {
         // Test various argument validation errors
 
         // http_get - wrong number of arguments
-        let result = http_get(vec![]).unwrap();
-        assert_err(&result);
+        assert_fails(http_get(vec![]));
 
-        let result = http_get(vec![string_val("url"), string_val("extra")]).unwrap();
-        assert_err(&result);
+        assert_fails(http_get(vec![string_val("url"), string_val("extra")]));
 
         // http_get - wrong argument type
-        let result = http_get(vec![int_val(123)]).unwrap();
-        assert_err(&result);
+        assert_fails(http_get(vec![int_val(123)]));
 
         // http_post - wrong number of arguments
-        let result = http_post(vec![string_val("url")]).unwrap();
-        assert_err(&result);
+        assert_fails(http_post(vec![string_val("url")]));
 
         // http_post - wrong argument types
-        let result = http_post(vec![int_val(123), string_val("body")]).unwrap();
-        assert_err(&result);
+        assert_fails(http_post(vec![int_val(123), string_val("body")]));
 
-        let result = http_post(vec![string_val("url"), int_val(123)]).unwrap();
-        assert_err(&result);
+        assert_fails(http_post(vec![string_val("url"), int_val(123)]));
 
         // http_request - wrong number of arguments
-        let result = http_request(vec![string_val("GET"), string_val("url")]).unwrap();
-        assert_err(&result);
+        assert_fails(http_request(vec![string_val("GET"), string_val("url")]));
 
         // http_request - unsupported method
-        let result = http_request(vec![
+        assert_fails(http_request(vec![
             string_val("INVALID"),
             string_val("http://example.com"),
             string_val(""),
-        ])
-        .unwrap();
-        assert_err(&result);
+        ]));
 
         // parse_url - wrong number of arguments
-        let result = parse_url(vec![]).unwrap();
-        assert_err(&result);
+        assert_fails(parse_url(vec![]));
 
         // parse_url - wrong argument type
-        let result = parse_url(vec![int_val(123)]).unwrap();
-        assert_err(&result);
+        assert_fails(parse_url(vec![int_val(123)]));
 
         // encode_query - wrong argument type
-        let result = encode_query(vec![string_val("not a struct")]).unwrap();
-        assert_err(&result);
+        assert_fails(encode_query(vec![string_val("not a struct")]));
 
         // decode_query - wrong argument type
-        let result = decode_query(vec![int_val(123)]).unwrap();
-        assert_err(&result);
+        assert_fails(decode_query(vec![int_val(123)]));
 
         // http_serve — the interpreter-less path always refuses (real serving
         // is dispatched to serve_blocking with the interpreter)

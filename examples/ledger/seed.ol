@@ -11,7 +11,7 @@
 use lib.store { open_store, seed_if_empty, list_categories, create_transaction, put_budget }
 use lib.format { this_month, month_add }
 
-let args = unwrap(os.args())
+let args = os.args()
 let db_path = if len(args) > 1 => args[1] else => "ledger.db"
 
 random.seed(11)

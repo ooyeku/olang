@@ -200,18 +200,13 @@ pub fn call_crypto_function(
 /// Usage: crypto.md5("hello") -> Result<String, Error>
 fn crypto_md5(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "md5 expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("md5 expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "md5: argument must be a string".to_string(),
-            )))));
+            return Err("md5: argument must be a string".to_string().into());
         }
     };
 
@@ -225,18 +220,13 @@ fn crypto_md5(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: crypto.sha1("hello") -> Result<String, Error>
 fn crypto_sha1(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "sha1 expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("sha1 expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "sha1: argument must be a string".to_string(),
-            )))));
+            return Err("sha1: argument must be a string".to_string().into());
         }
     };
 
@@ -250,18 +240,13 @@ fn crypto_sha1(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: crypto.sha256("hello") -> Result<String, Error>
 fn crypto_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "sha256 expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("sha256 expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "sha256: argument must be a string".to_string(),
-            )))));
+            return Err("sha256: argument must be a string".to_string().into());
         }
     };
 
@@ -275,18 +260,13 @@ fn crypto_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: crypto.sha512("hello") -> Result<String, Error>
 fn crypto_sha512(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "sha512 expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("sha512 expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "sha512: argument must be a string".to_string(),
-            )))));
+            return Err("sha512: argument must be a string".to_string().into());
         }
     };
 
@@ -300,27 +280,24 @@ fn crypto_sha512(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: crypto.hmac_sha256("secret", "message") -> Result<String, Error>
 fn crypto_hmac_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "hmac_sha256 expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("hmac_sha256 expects 2 arguments, got {}", args.len()).into());
     }
 
     let key = match &args[0] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "hmac_sha256: first argument must be a string".to_string(),
-            )))));
+            return Err("hmac_sha256: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let message = match &args[1] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "hmac_sha256: second argument must be a string".to_string(),
-            )))));
+            return Err("hmac_sha256: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -344,27 +321,24 @@ fn crypto_hmac_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
 /// Usage: crypto.hmac_sha512("secret", "message") -> Result<String, Error>
 fn crypto_hmac_sha512(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "hmac_sha512 expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("hmac_sha512 expects 2 arguments, got {}", args.len()).into());
     }
 
     let key = match &args[0] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "hmac_sha512: first argument must be a string".to_string(),
-            )))));
+            return Err("hmac_sha512: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let message = match &args[1] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "hmac_sha512: second argument must be a string".to_string(),
-            )))));
+            return Err("hmac_sha512: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -388,18 +362,15 @@ fn crypto_hmac_sha512(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
 /// Usage: crypto.hash_password("mypassword") -> Result<String, Error>
 fn crypto_hash_password(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "hash_password expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("hash_password expects 1 argument, got {}", args.len()).into());
     }
 
     let password = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "hash_password: argument must be a string".to_string(),
-            )))));
+            return Err("hash_password: argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -416,27 +387,24 @@ fn crypto_hash_password(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
 /// Usage: crypto.verify_password("mypassword", "$2b$12$...") -> Result<Bool, Error>
 fn crypto_verify_password(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "verify_password expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("verify_password expects 2 arguments, got {}", args.len()).into());
     }
 
     let password = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "verify_password: first argument must be a string".to_string(),
-            )))));
+            return Err("verify_password: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let hash = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "verify_password: second argument must be a string".to_string(),
-            )))));
+            return Err("verify_password: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -453,32 +421,29 @@ fn crypto_verify_password(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
 /// Usage: crypto.random_bytes(32) -> Result<[Int], Error>
 fn crypto_random_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "random_bytes expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("random_bytes expects 1 argument, got {}", args.len()).into());
     }
 
     let count = match &args[0] {
         Value::Integer(i) => {
             if *i < 0 {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    "random_bytes: count must be non-negative".to_string(),
-                )))));
+                return Err("random_bytes: count must be non-negative"
+                    .to_string()
+                    .into());
             }
             *i as usize
         }
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "random_bytes: argument must be an integer".to_string(),
-            )))));
+            return Err("random_bytes: argument must be an integer"
+                .to_string()
+                .into());
         }
     };
 
     if count > 1024 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "random_bytes: maximum 1024 bytes allowed".to_string(),
-        )))));
+        return Err("random_bytes: maximum 1024 bytes allowed"
+            .to_string()
+            .into());
     }
 
     let mut bytes = vec![0u8; count];
@@ -496,32 +461,23 @@ fn crypto_random_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Er
 /// Usage: crypto.random_hex(16) -> Result<String, Error>
 fn crypto_random_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "random_hex expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("random_hex expects 1 argument, got {}", args.len()).into());
     }
 
     let count = match &args[0] {
         Value::Integer(i) => {
             if *i < 0 {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    "random_hex: count must be non-negative".to_string(),
-                )))));
+                return Err("random_hex: count must be non-negative".to_string().into());
             }
             *i as usize
         }
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "random_hex: argument must be an integer".to_string(),
-            )))));
+            return Err("random_hex: argument must be an integer".to_string().into());
         }
     };
 
     if count > 1024 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "random_hex: maximum 1024 bytes allowed".to_string(),
-        )))));
+        return Err("random_hex: maximum 1024 bytes allowed".to_string().into());
     }
 
     let mut bytes = vec![0u8; count];
@@ -535,41 +491,31 @@ fn crypto_random_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
 /// Usage: crypto.hex_encode("hello") -> Result<String, Error>
 fn crypto_hex_encode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "hex_encode expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("hex_encode expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "hex_encode: argument must be a string".to_string(),
-            )))));
+            return Err("hex_encode: argument must be a string".to_string().into());
         }
     };
 
     let hex_string = hex::encode(input);
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(hex_string)))))
+    Ok(Value::String(Arc::new(hex_string)))
 }
 
 /// Decode hexadecimal string to bytes (as string)
 /// Usage: crypto.hex_decode("68656c6c6f") -> Result<String, Error>
 fn crypto_hex_decode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "hex_decode expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("hex_decode expects 1 argument, got {}", args.len()).into());
     }
 
     let hex_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "hex_decode: argument must be a string".to_string(),
-            )))));
+            return Err("hex_decode: argument must be a string".to_string().into());
         }
     };
 
@@ -591,27 +537,24 @@ fn crypto_hex_decode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
 /// Usage: crypto.secure_compare("secret1", "secret2") -> Result<Bool, Error>
 fn crypto_secure_compare(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "secure_compare expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("secure_compare expects 2 arguments, got {}", args.len()).into());
     }
 
     let str1 = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "secure_compare: first argument must be a string".to_string(),
-            )))));
+            return Err("secure_compare: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let str2 = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "secure_compare: second argument must be a string".to_string(),
-            )))));
+            return Err("secure_compare: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -635,27 +578,24 @@ fn crypto_secure_compare(args: Vec<Value>) -> Result<Value, Box<dyn std::error::
 /// Returns hex-encoded ciphertext with nonce prepended
 fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "encrypt_aes expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("encrypt_aes expects 2 arguments, got {}", args.len()).into());
     }
 
     let data = match &args[0] {
         Value::String(s) => s.as_ref().as_bytes(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "encrypt_aes: first argument must be a string".to_string(),
-            )))));
+            return Err("encrypt_aes: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let key = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "encrypt_aes: second argument must be a string".to_string(),
-            )))));
+            return Err("encrypt_aes: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -663,16 +603,16 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     let key_bytes = match hex::decode(key) {
         Ok(k) => k,
         Err(_) => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "encrypt_aes: key must be valid hex string".to_string(),
-            )))));
+            return Err("encrypt_aes: key must be valid hex string"
+                .to_string()
+                .into());
         }
     };
 
     if key_bytes.len() != 32 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "encrypt_aes: key must be 32 bytes (64 hex characters)".to_string(),
-        )))));
+        return Err("encrypt_aes: key must be 32 bytes (64 hex characters)"
+            .to_string()
+            .into());
     }
 
     let cipher = match Aes256Gcm::new_from_slice(&key_bytes) {
@@ -713,27 +653,24 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
 ///        (ciphertext and nonce as separate hex strings)
 fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 && args.len() != 3 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "decrypt_aes expects 2 or 3 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("decrypt_aes expects 2 or 3 arguments, got {}", args.len()).into());
     }
 
     let encrypted_data = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decrypt_aes: first argument must be a string".to_string(),
-            )))));
+            return Err("decrypt_aes: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let key = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decrypt_aes: second argument must be a string".to_string(),
-            )))));
+            return Err("decrypt_aes: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -741,18 +678,18 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     let key_bytes = match hex::decode(key) {
         Ok(k) => k,
         Err(_) => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decrypt_aes: key must be valid hex string".to_string(),
-            )))));
+            return Err("decrypt_aes: key must be valid hex string"
+                .to_string()
+                .into());
         }
     };
 
     let decoded = match hex::decode(encrypted_data) {
         Ok(c) => c,
         Err(_) => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decrypt_aes: encrypted_data must be valid hex string".to_string(),
-            )))));
+            return Err("decrypt_aes: encrypted_data must be valid hex string"
+                .to_string()
+                .into());
         }
     };
 
@@ -762,17 +699,17 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         let nonce = match &args[2] {
             Value::String(s) => s.as_ref(),
             _ => {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    "decrypt_aes: third argument must be a string".to_string(),
-                )))));
+                return Err("decrypt_aes: third argument must be a string"
+                    .to_string()
+                    .into());
             }
         };
         let nonce_bytes = match hex::decode(nonce) {
             Ok(n) => n,
             Err(_) => {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    "decrypt_aes: nonce must be valid hex string".to_string(),
-                )))));
+                return Err("decrypt_aes: nonce must be valid hex string"
+                    .to_string()
+                    .into());
             }
         };
         (nonce_bytes, decoded)
@@ -789,15 +726,15 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     };
 
     if key_bytes.len() != 32 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "decrypt_aes: key must be 32 bytes (64 hex characters)".to_string(),
-        )))));
+        return Err("decrypt_aes: key must be 32 bytes (64 hex characters)"
+            .to_string()
+            .into());
     }
 
     if nonce_bytes.len() != 12 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "decrypt_aes: nonce must be 12 bytes (24 hex characters)".to_string(),
-        )))));
+        return Err("decrypt_aes: nonce must be 12 bytes (24 hex characters)"
+            .to_string()
+            .into());
     }
 
     let cipher = match Aes256Gcm::new_from_slice(&key_bytes) {
@@ -839,27 +776,24 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
 /// Usage: crypto.encrypt_rsa(data, public_key) -> Result<String, Error>
 fn crypto_encrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "encrypt_rsa expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("encrypt_rsa expects 2 arguments, got {}", args.len()).into());
     }
 
     let data = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "encrypt_rsa: first argument must be a string".to_string(),
-            )))));
+            return Err("encrypt_rsa: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let public_key_pem = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "encrypt_rsa: second argument must be a string".to_string(),
-            )))));
+            return Err("encrypt_rsa: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -891,27 +825,24 @@ fn crypto_encrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
 /// Usage: crypto.decrypt_rsa(encrypted_data, private_key) -> Result<String, Error>
 fn crypto_decrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "decrypt_rsa expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("decrypt_rsa expects 2 arguments, got {}", args.len()).into());
     }
 
     let encrypted_data = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decrypt_rsa: first argument must be a string".to_string(),
-            )))));
+            return Err("decrypt_rsa: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let private_key_pem = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "decrypt_rsa: second argument must be a string".to_string(),
-            )))));
+            return Err("decrypt_rsa: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -962,50 +893,47 @@ fn crypto_decrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
 /// Usage: crypto.derive_key(password, salt, key_length) -> Result<String, Error>
 fn crypto_derive_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "derive_key expects 3 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("derive_key expects 3 arguments, got {}", args.len()).into());
     }
 
     let password = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "derive_key: first argument must be a string".to_string(),
-            )))));
+            return Err("derive_key: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let salt = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "derive_key: second argument must be a string".to_string(),
-            )))));
+            return Err("derive_key: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let key_length = match &args[2] {
         Value::Integer(i) => {
             if *i < 0 {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    "derive_key: key length must be non-negative".to_string(),
-                )))));
+                return Err("derive_key: key length must be non-negative"
+                    .to_string()
+                    .into());
             }
             *i as usize
         }
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "derive_key: third argument must be an integer".to_string(),
-            )))));
+            return Err("derive_key: third argument must be an integer"
+                .to_string()
+                .into());
         }
     };
 
     if key_length > 64 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "derive_key: maximum key length is 64 bytes".to_string(),
-        )))));
+        return Err("derive_key: maximum key length is 64 bytes"
+            .to_string()
+            .into());
     }
 
     // Use salt as raw bytes instead of parsing as base64
@@ -1030,10 +958,7 @@ fn crypto_derive_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
 /// Usage: crypto.generate_key_pair() -> Result<{private_key: String, public_key: String}, Error>
 fn crypto_generate_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "generate_key_pair expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("generate_key_pair expects 0 arguments, got {}", args.len()).into());
     }
 
     let private_key = match RsaPrivateKey::new(&mut RsaOsRng, 2048) {
@@ -1088,10 +1013,7 @@ fn crypto_generate_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
 /// Usage: crypto.export_public_key(public_key) -> Result<String, Error>
 fn crypto_export_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "export_public_key expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("export_public_key expects 1 argument, got {}", args.len()).into());
     }
 
     let public_key = match &args[0] {
@@ -1100,45 +1022,40 @@ fn crypto_export_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
                 match key {
                     Value::String(s) => s.as_ref(),
                     _ => {
-                        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                            "export_public_key: public_key field must be a string".to_string(),
-                        )))));
+                        return Err("export_public_key: public_key field must be a string"
+                            .to_string()
+                            .into());
                     }
                 }
             } else {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    "export_public_key: struct must have public_key field".to_string(),
-                )))));
+                return Err("export_public_key: struct must have public_key field"
+                    .to_string()
+                    .into());
             }
         }
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "export_public_key: argument must be a key pair struct".to_string(),
-            )))));
+            return Err("export_public_key: argument must be a key pair struct"
+                .to_string()
+                .into());
         }
     };
 
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(
-        public_key.to_string(),
-    )))))
+    Ok(Value::String(Arc::new(public_key.to_string())))
 }
 
 /// Import a public key from PEM format
 /// Usage: crypto.import_public_key(pem_string) -> Result<PublicKey, Error>
 fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "import_public_key expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("import_public_key expects 1 argument, got {}", args.len()).into());
     }
 
     let pem_string = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "import_public_key: argument must be a string".to_string(),
-            )))));
+            return Err("import_public_key: argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -1167,27 +1084,24 @@ fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
 /// Usage: crypto.sign_data(data, private_key) -> Result<String, Error>
 fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "sign_data expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("sign_data expects 2 arguments, got {}", args.len()).into());
     }
 
     let data = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "sign_data: first argument must be a string".to_string(),
-            )))));
+            return Err("sign_data: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let private_key_pem = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "sign_data: second argument must be a string".to_string(),
-            )))));
+            return Err("sign_data: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -1214,36 +1128,33 @@ fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
 /// Usage: crypto.verify_signature(data, signature, public_key) -> Result<Bool, Error>
 fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "verify_signature expects 3 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("verify_signature expects 3 arguments, got {}", args.len()).into());
     }
 
     let data = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "verify_signature: first argument must be a string".to_string(),
-            )))));
+            return Err("verify_signature: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let signature = match &args[1] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "verify_signature: second argument must be a string".to_string(),
-            )))));
+            return Err("verify_signature: second argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let public_key_pem = match &args[2] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "verify_signature: third argument must be a string".to_string(),
-            )))));
+            return Err("verify_signature: third argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -1260,9 +1171,9 @@ fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error
     let signature_bytes = match hex::decode(signature) {
         Ok(b) => b,
         Err(_) => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "verify_signature: signature must be a valid hex string".to_string(),
-            )))));
+            return Err("verify_signature: signature must be a valid hex string"
+                .to_string()
+                .into());
         }
     };
 

@@ -215,7 +215,7 @@ fn replay_reproduces_machine_identity() {
     let ws = workspace("machine");
     write(
         &ws.join("p.ol"),
-        "println(unwrap(os.arch()) + \" \" + show(unwrap(os.pid())))\n",
+        "println(os.arch() + \" \" + show(os.pid()))\n",
     );
     let rec = Command::new(olang())
         .current_dir(&ws)

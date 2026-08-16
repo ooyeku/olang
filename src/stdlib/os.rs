@@ -163,18 +163,13 @@ pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
 /// Usage: os.get_env("PATH") -> Result<String, Error>
 fn os_get_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "get_env expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.get_env expects 1 argument, got {}", args.len()).into());
     }
 
     let var_name = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "get_env: argument must be a string".to_string(),
-            )))));
+            return Err("os.get_env: argument must be a string".to_string().into());
         }
     };
 
@@ -196,18 +191,15 @@ fn os_get_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: os.set_env("MY_VAR", "value") -> Result<Unit, Error>
 fn os_set_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "set_env expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.set_env expects 2 arguments, got {}", args.len()).into());
     }
 
     let var_name = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "set_env: first argument must be a string".to_string(),
-            )))));
+            return Err("os.set_env: first argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -217,49 +209,45 @@ fn os_set_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Value::Float(f) => &f.to_string(),
         Value::Boolean(b) => &b.to_string(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "set_env: second argument must be a string, number, or boolean".to_string(),
-            )))));
+            return Err(
+                "os.set_env: second argument must be a string, number, or boolean"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
     // FIXME: Audit that the environment access only happens in single-threaded code.
     unsafe { env::set_var(var_name, var_value) };
-    Ok(Value::Ok(Box::new(Value::Unit)))
+    Ok(Value::Unit)
 }
 
 /// Remove an environment variable
 /// Usage: os.remove_env("MY_VAR") -> Result<Unit, Error>
 fn os_remove_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "remove_env expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.remove_env expects 1 argument, got {}", args.len()).into());
     }
 
     let var_name = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "remove_env: argument must be a string".to_string(),
-            )))));
+            return Err("os.remove_env: argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
     // FIXME: Audit that the environment access only happens in single-threaded code.
     unsafe { env::remove_var(var_name) };
-    Ok(Value::Ok(Box::new(Value::Unit)))
+    Ok(Value::Unit)
 }
 
 /// List all environment variables
 /// Usage: os.list_env() -> Result<{String: String}, Error>
 fn os_list_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "list_env expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.list_env expects 0 arguments, got {}", args.len()).into());
     }
 
     let mut env_vars = HashMap::new();
@@ -267,43 +255,35 @@ fn os_list_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         env_vars.insert(key, Value::String(Arc::new(value)));
     }
 
-    Ok(Value::Ok(Box::new(Value::Struct {
+    Ok(Value::Struct {
         type_name: "EnvironmentVariables".to_string(),
         fields: env_vars,
-    })))
+    })
 }
 
 /// Check if an environment variable exists
 /// Usage: os.has_env("PATH") -> Result<Bool, Error>
 fn os_has_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "has_env expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.has_env expects 1 argument, got {}", args.len()).into());
     }
 
     let var_name = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "has_env: argument must be a string".to_string(),
-            )))));
+            return Err("os.has_env: argument must be a string".to_string().into());
         }
     };
 
     let exists = env::var(var_name).is_ok();
-    Ok(Value::Ok(Box::new(Value::Boolean(exists))))
+    Ok(Value::Boolean(exists))
 }
 
 /// Get system hostname
 /// Usage: os.hostname() -> Result<String, Error>
 fn os_hostname(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "hostname expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.hostname expects 0 arguments, got {}", args.len()).into());
     }
 
     match hostname::get() {
@@ -322,76 +302,55 @@ fn os_hostname(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: os.username() -> Result<String, Error>
 fn os_username(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "username expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.username expects 0 arguments, got {}", args.len()).into());
     }
 
     let username = whoami::username();
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(username)))))
+    Ok(Value::String(Arc::new(username)))
 }
 
 /// Get operating system type
 /// Usage: os.os_type() -> Result<String, Error>
 fn os_os_type(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "os_type expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.os_type expects 0 arguments, got {}", args.len()).into());
     }
 
     let os_type = env::consts::OS;
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(
-        os_type.to_string(),
-    )))))
+    Ok(Value::String(Arc::new(os_type.to_string())))
 }
 
 /// Get system architecture
 /// Usage: os.arch() -> Result<String, Error>
 fn os_arch(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "arch expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.arch expects 0 arguments, got {}", args.len()).into());
     }
 
     let arch = env::consts::ARCH;
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(
-        arch.to_string(),
-    )))))
+    Ok(Value::String(Arc::new(arch.to_string())))
 }
 
 /// Get operating system family
 /// Usage: os.family() -> Result<String, Error>
 fn os_family(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "family expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.family expects 0 arguments, got {}", args.len()).into());
     }
 
     let family = env::consts::FAMILY;
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(
-        family.to_string(),
-    )))))
+    Ok(Value::String(Arc::new(family.to_string())))
 }
 
 /// Get current process ID
 /// Usage: os.pid() -> Result<Int, Error>
 fn os_pid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "pid expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.pid expects 0 arguments, got {}", args.len()).into());
     }
 
     let pid = process::id();
-    Ok(Value::Ok(Box::new(Value::Integer(pid as i64))))
+    Ok(Value::Integer(pid as i64))
 }
 
 /// Get command line arguments
@@ -408,10 +367,7 @@ pub fn set_script_args(args: Vec<String>) {
 
 fn os_args(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "args expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.args expects 0 arguments, got {}", args.len()).into());
     }
 
     // The script's own argv when the CLI set it, otherwise the process args.
@@ -425,17 +381,14 @@ fn os_args(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .collect(),
     };
 
-    Ok(Value::Ok(Box::new(Value::List(args.into()))))
+    Ok(Value::List(args.into()))
 }
 
 /// Get executable path
 /// Usage: os.exe_path() -> Result<String, Error>
 fn os_exe_path(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "exe_path expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.exe_path expects 0 arguments, got {}", args.len()).into());
     }
 
     match env::current_exe() {
@@ -453,10 +406,7 @@ fn os_exe_path(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: os.cwd() -> Result<String, Error>
 fn os_cwd(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "cwd expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.cwd expects 0 arguments, got {}", args.len()).into());
     }
 
     match env::current_dir() {
@@ -474,18 +424,13 @@ fn os_cwd(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: os.chdir("/path/to/dir") -> Result<Unit, Error>
 fn os_chdir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "chdir expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.chdir expects 1 argument, got {}", args.len()).into());
     }
 
     let path = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "chdir: argument must be a string".to_string(),
-            )))));
+            return Err("os.chdir: argument must be a string".to_string().into());
         }
     };
 
@@ -506,27 +451,28 @@ fn os_chdir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// program could not be started at all (e.g. it was not found).
 fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 && args.len() != 3 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "exec expects 2 or 3 arguments (program, args, options?), got {}",
+        return Err(format!(
+            "os.exec expects 2 or 3 arguments (program, args, options?), got {}",
             args.len()
-        ))))));
+        )
+        .into());
     }
 
     let program = match &args[0] {
         Value::String(s) => s.as_ref().clone(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "exec: first argument (program) must be a string".to_string(),
-            )))));
+            return Err("os.exec: first argument (program) must be a string"
+                .to_string()
+                .into());
         }
     };
 
     let arg_list = match &args[1] {
         Value::List(items) => items,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "exec: second argument (args) must be a list of strings".to_string(),
-            )))));
+            return Err("os.exec: second argument (args) must be a list of strings"
+                .to_string()
+                .into());
         }
     };
 
@@ -535,10 +481,11 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         match item {
             Value::String(s) => cmd_args.push(s.as_ref().clone()),
             other => {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                    "exec: argument list must contain only strings, found {}",
+                return Err(format!(
+                    "os.exec: argument list must contain only strings, found {}",
                     other.type_name()
-                ))))));
+                )
+                .into());
             }
         }
     }
@@ -552,9 +499,9 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             Value::Map(m) => m.as_ref().clone(),
             Value::Struct { fields, .. } => fields.clone(),
             _ => {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    "exec: options must be a map or object".to_string(),
-                )))));
+                return Err("os.exec: options must be a map or object"
+                    .to_string()
+                    .into());
             }
         };
         for (key, value) in &fields {
@@ -566,19 +513,21 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                         match v {
                             Value::String(s) => env_vars.push((k.clone(), s.as_ref().clone())),
                             other => {
-                                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                                    "exec: env values must be strings, got {}",
+                                return Err(format!(
+                                    "os.exec: env values must be strings, got {}",
                                     other.type_name()
-                                ))))));
+                                )
+                                .into());
                             }
                         }
                     }
                 }
                 (other_key, _) => {
-                    return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                        "exec: unknown or mistyped option '{}' (supported: cwd, stdin, env)",
+                    return Err(format!(
+                        "os.exec: unknown or mistyped option '{}' (supported: cwd, stdin, env)",
                         other_key
-                    ))))));
+                    )
+                    .into());
                 }
             }
         }
@@ -626,7 +575,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "exec: failed to run '{}': {}",
+            "os.exec: failed to run '{}': {}",
             program, e
         )))))),
     }
@@ -641,16 +590,13 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// string. The pipe-friendly primitive: `cat log | olang analyze.ol`.
 fn os_stdin(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "stdin expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.stdin expects 0 arguments, got {}", args.len()).into());
     }
     let mut buf = String::new();
     match std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut buf) {
         Ok(_) => Ok(Value::Ok(Box::new(Value::String(Arc::new(buf))))),
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "stdin: {}",
+            "os.stdin: {}",
             e
         )))))),
     }
@@ -660,10 +606,7 @@ fn os_stdin(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// endings stripped (both \n and \r\n).
 fn os_stdin_lines(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "stdin_lines expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.stdin_lines expects 0 arguments, got {}", args.len()).into());
     }
     let mut buf = String::new();
     match std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut buf) {
@@ -675,7 +618,7 @@ fn os_stdin_lines(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
             Ok(Value::Ok(Box::new(Value::List(lines.into()))))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "stdin_lines: {}",
+            "os.stdin_lines: {}",
             e
         )))))),
     }
@@ -683,10 +626,7 @@ fn os_stdin_lines(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 
 fn os_read_line(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "read_line expects no arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.read_line expects no arguments, got {}", args.len()).into());
     }
     let mut line = String::new();
     match std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line) {
@@ -703,7 +643,7 @@ fn os_read_line(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             Ok(Value::Ok(Box::new(Value::String(Arc::new(line)))))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "read_line: {}",
+            "os.read_line: {}",
             e
         )))))),
     }
@@ -713,24 +653,18 @@ fn os_read_line(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: os.path_separator() -> Result<String, Error>
 fn os_path_separator(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "path_separator expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.path_separator expects 0 arguments, got {}", args.len()).into());
     }
 
     let separator = std::path::MAIN_SEPARATOR.to_string();
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(separator)))))
+    Ok(Value::String(Arc::new(separator)))
 }
 
 /// Get home directory
 /// Usage: os.home_dir() -> Result<String, Error>
 fn os_home_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "home_dir expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.home_dir expects 0 arguments, got {}", args.len()).into());
     }
 
     match dirs::home_dir() {
@@ -747,34 +681,26 @@ fn os_home_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: os.temp_dir() -> Result<String, Error>
 fn os_temp_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "temp_dir expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.temp_dir expects 0 arguments, got {}", args.len()).into());
     }
 
     let temp_dir = env::temp_dir();
-    Ok(Value::Ok(Box::new(Value::String(Arc::new(
+    Ok(Value::String(Arc::new(
         temp_dir.to_string_lossy().to_string(),
-    )))))
+    )))
 }
 
 /// Exit the program with a status code
 /// Usage: os.exit(0) -> Never returns
 fn os_exit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "exit expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.exit expects 1 argument, got {}", args.len()).into());
     }
 
     let exit_code = match &args[0] {
         Value::Integer(i) => *i as i32,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "exit: argument must be an integer".to_string(),
-            )))));
+            return Err("os.exit: argument must be an integer".to_string().into());
         }
     };
 
@@ -787,15 +713,10 @@ fn os_exit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// (including under wasm, which has no terminal).
 fn os_is_tty(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "is_tty expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.is_tty expects 0 arguments, got {}", args.len()).into());
     }
     use std::io::IsTerminal;
-    Ok(Value::Ok(Box::new(Value::Boolean(
-        std::io::stdout().is_terminal(),
-    ))))
+    Ok(Value::Boolean(std::io::stdout().is_terminal()))
 }
 
 /// Flush standard output. `print` without a newline is buffered, so a
@@ -803,14 +724,11 @@ fn os_is_tty(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// to appear. Returns `Ok(Unit)`.
 fn os_flush(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "flush expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.flush expects 0 arguments, got {}", args.len()).into());
     }
     use std::io::Write;
     let _ = std::io::stdout().flush();
-    Ok(Value::Ok(Box::new(Value::Unit)))
+    Ok(Value::Unit)
 }
 
 /// Set once an interrupt (SIGINT / Ctrl-C) has been seen, and cleared by
@@ -828,19 +746,18 @@ static HANDLER_INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::Ato
 /// gracefully. Idempotent. Returns `Ok(Unit)`.
 fn os_on_interrupt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "on_interrupt expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.on_interrupt expects 0 arguments, got {}", args.len()).into());
     }
     use std::sync::atomic::Ordering;
     if !HANDLER_INSTALLED.swap(true, Ordering::SeqCst)
         && let Err(e) = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst))
     {
-        // Rare — e.g. another handler was installed outside olang.
+        // Environmental, not misuse — e.g. another handler was installed
+        // outside olang. The caller can carry on without interrupt
+        // trapping, so this stays a Result rather than raising.
         HANDLER_INSTALLED.store(false, Ordering::SeqCst);
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "on_interrupt: could not install handler: {}",
+            "os.on_interrupt: could not install handler: {}",
             e
         ))))));
     }
@@ -853,27 +770,21 @@ fn os_on_interrupt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 /// `while os.interrupted() == false { ... }`.
 fn os_interrupted(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "interrupted expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.interrupted expects 0 arguments, got {}", args.len()).into());
     }
-    Ok(Value::Ok(Box::new(Value::Boolean(
+    Ok(Value::Boolean(
         INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst),
-    ))))
+    ))
 }
 
 /// `os.reset_interrupt()` — clear the interrupt flag, so a supervisor can
 /// arm for the next Ctrl-C after handling one. Returns `Ok(Unit)`.
 fn os_reset_interrupt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "reset_interrupt expects 0 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("os.reset_interrupt expects 0 arguments, got {}", args.len()).into());
     }
     INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
-    Ok(Value::Ok(Box::new(Value::Unit)))
+    Ok(Value::Unit)
 }
 
 #[cfg(test)]
@@ -902,9 +813,24 @@ mod tests {
     fn assert_ok(result: &Value) -> &Value {
         match result {
             Value::Ok(inner) => inner,
-            _ => {
-                panic!("Expected Ok result, got: {:?}", result)
-            }
+            Value::Err(e) => panic!("Expected Ok result, got Err: {:?}", e),
+            // 0.64: infallible functions return the value directly.
+            bare => bare,
+        }
+    }
+
+    /// Assert a call reports failure, either way it can now.
+    ///
+    /// 0.64 split the two: misuse (bad arity or type) **raises**, which is
+    /// a Rust `Err`; environmental failure still returns `Ok(Value::Err)`.
+    /// Tests that only care *that* the call failed use this; tests that
+    /// care *which* assert on the specific shape.
+    #[allow(dead_code)]
+    fn assert_fails(result: Result<Value, Box<dyn std::error::Error>>) {
+        match result {
+            Err(_) => {}
+            Ok(Value::Err(_)) => {}
+            Ok(other) => panic!("expected a failure, got: {:?}", other),
         }
     }
 
@@ -1035,8 +961,7 @@ mod tests {
         assert!(!extract_bool(exists), "Variable should not exist initially");
 
         // Test get_env for non-existent variable
-        let result = os_get_env(vec![string_val(test_var)]).unwrap();
-        assert_err(&result); // Should return error for non-existent variable
+        assert_fails(os_get_env(vec![string_val(test_var)])); // Should return error for non-existent variable
 
         // Test set_env
         let result = os_set_env(vec![string_val(test_var), string_val(test_value)]).unwrap();
@@ -1286,68 +1211,59 @@ mod tests {
         ];
 
         for func_name in zero_arg_functions {
+            // Extra arguments are misuse, so these raise rather than
+            // returning an Err the caller might unwrap_or past.
             let result = call_os_function(func_name, vec![string_val("extra")]);
-            match result {
-                Ok(Value::Err(_)) => {} // Expected error
-                Ok(other) => panic!(
-                    "Expected error for {} with extra arg, got: {:?}",
-                    func_name, other
-                ),
-                Err(e) => panic!("Unexpected error for {}: {}", func_name, e),
-            }
+            assert!(
+                result.is_err(),
+                "{} with an extra argument should raise, got: {:?}",
+                func_name,
+                result
+            );
         }
 
         // Test functions that expect 1 argument
-        let result = os_get_env(vec![]).unwrap();
-        assert_err(&result);
+        assert_fails(os_get_env(vec![]));
 
-        let result = os_get_env(vec![string_val("TEST"), string_val("EXTRA")]).unwrap();
-        assert_err(&result);
+        assert_fails(os_get_env(vec![string_val("TEST"), string_val("EXTRA")]));
 
         // Test functions that expect 2 arguments
-        let result = os_set_env(vec![string_val("TEST")]).unwrap();
-        assert_err(&result);
+        assert_fails(os_set_env(vec![string_val("TEST")]));
 
-        let result = os_set_env(vec![
+        assert_fails(os_set_env(vec![
             string_val("TEST"),
             string_val("VALUE"),
             string_val("EXTRA"),
-        ])
-        .unwrap();
-        assert_err(&result);
+        ]));
     }
 
     #[test]
     fn test_type_validation() {
         // Test get_env with non-string argument
-        let result = os_get_env(vec![int_val(42)]).unwrap();
-        assert_err(&result);
+        assert_fails(os_get_env(vec![int_val(42)]));
 
         // Test set_env with non-string first argument
-        let result = os_set_env(vec![int_val(42), string_val("value")]).unwrap();
-        assert_err(&result);
+        assert_fails(os_set_env(vec![int_val(42), string_val("value")]));
 
         // Test set_env with unsupported type for second argument
-        let result = os_set_env(vec![string_val("TEST"), Value::List(vec![].into())]).unwrap();
-        assert_err(&result);
+        assert_fails(os_set_env(vec![
+            string_val("TEST"),
+            Value::List(vec![].into()),
+        ]));
 
         // Test has_env with non-string argument
-        let result = os_has_env(vec![bool_val(true)]).unwrap();
-        assert_err(&result);
+        assert_fails(os_has_env(vec![bool_val(true)]));
 
         // Test remove_env with non-string argument
-        let result = os_remove_env(vec![float_val(2.5)]).unwrap();
-        assert_err(&result);
+        assert_fails(os_remove_env(vec![float_val(2.5)]));
 
         // Test chdir with non-string argument
-        let result = os_chdir(vec![int_val(123)]).unwrap();
-        assert_err(&result);
+        assert_fails(os_chdir(vec![int_val(123)]));
 
         // Test exit with non-integer argument
         // Note: We can't actually test exit because it would terminate the test process
         // But we can test the argument validation
-        let result = os_exit(vec![string_val("not_a_number")]).unwrap();
-        assert_err(&result);
+        assert_fails(os_exit(vec![string_val("not_a_number")]));
     }
 
     #[test]
@@ -1360,8 +1276,7 @@ mod tests {
         assert_err(&result);
 
         // Test get_env with non-existent variable
-        let result = os_get_env(vec![string_val("OLANG_NONEXISTENT_VAR_12345")]).unwrap();
-        assert_err(&result);
+        assert_fails(os_get_env(vec![string_val("OLANG_NONEXISTENT_VAR_12345")]));
     }
 
     #[test]

@@ -53,14 +53,18 @@ match os.exec("this_binary_does_not_exist_37f2", []) {
 
 #[test]
 fn exec_rejects_a_non_string_in_the_argument_list() {
-    let src = r#"
-match os.exec("echo", [1, 2]) {
-    Ok(v) => "ran",
-    Err(e) => "bad args"
-}
-"#;
-    match eval(src) {
-        Value::String(s) => assert_eq!(s.to_string(), "bad args"),
-        other => panic!("expected string, got {:?}", other),
-    }
+    // A non-string in the argument list is misuse, not an environmental
+    // failure, so 0.64 raises instead of returning Err — the caller cannot
+    // sensibly recover from passing the wrong type.
+    let program = Parser::new()
+        .parse(r#"os.exec("echo", [1, 2])"#)
+        .expect("parses");
+    let err = Interpreter::new()
+        .eval_program(program)
+        .expect_err("a non-string argument is misuse");
+    assert!(
+        err.to_string()
+            .contains("argument list must contain only strings"),
+        "got: {err}"
+    );
 }

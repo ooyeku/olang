@@ -7,7 +7,7 @@ use lib.lexer { tokenize }
 use lib.parser { parse }
 use lib.render { render }
 
-let args = unwrap(os.args())
+let args = os.args()
 let tmpl_path = if len(args) > 1 => args[1] else => "templates/report.tmpl"
 
 let template = unwrap(fs.read_file(tmpl_path))

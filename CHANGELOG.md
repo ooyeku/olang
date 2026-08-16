@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-08-16
+
+The standard-library conventions audit (D7). Every module was walked once
+against one rule, because there is exactly one chance to do this: after
+1.0 the API is frozen.
+
+### Changed
+
+- **One rule now decides what a stdlib function returns (breaking).**
+
+  | The operation | Returns |
+  |---|---|
+  | cannot fail | its value |
+  | can fail for reasons the caller could handle | `Result` |
+  | was *called wrongly* | raises |
+
+  The third tier is new, and it is what makes the second trustworthy.
+  Previously a wrong argument count came back as `Err`, indistinguishable
+  from a missing file — so `unwrap_or(fs.read_file(p), "")` swallowed a
+  typo'd call exactly the way it swallows a real failure, and the default
+  hid the bug indefinitely. Misuse now stops the program:
+
+  ```text
+  os.arch(1, 2)
+  // error: os.arch expects 0 arguments, got 2
+  ```
+
+- **28 functions stopped returning `Result`.** The `os` module carried
+  most of the noise — `unwrap(os.args())` appeared in nearly every
+  script:
+
+  | Module | Now returns a value |
+  |---|---|
+  | `os` | `args` `arch` `os_type` `family` `pid` `path_separator` `temp_dir` `username` `is_tty` `flush` `has_env` `list_env` `set_env` `remove_env` `interrupted` `reset_interrupt` |
+  | `fs` | `exists` `is_dir` `is_file` |
+  | `crypto` | `hex_encode` `export_public_key` |
+  | `csv` | `add_row` `read_column` `row_count` `set_headers` `sort_by_column` |
+  | `base64` | `validate` |
+  | `http` | `decode_query` |
+
+  What keeps `Result` is what genuinely fails: `os.get_env` (the variable
+  may be absent), `os.cwd`, `os.chdir`, `os.home_dir`, `os.hostname`,
+  `os.exe_path`, `os.exec`, `os.read_line`, `os.stdin`, `os.stdin_lines`,
+  `os.on_interrupt`, and every file, network, database, and parsing
+  operation.
+
+- **Error messages name the module-qualified function.** `arch expects 0
+  arguments` left the reader guessing which `arch`; it is now `os.arch`.
+
+- **Seven declaration keywords are freed as identifiers (`share`,
+  `error`, `test`, `type`, `trait`, `impl`, `use`).** Each only ever
+  introduces a declaration, and the token after it disambiguates, so
+  `let type = row.kind` is an ordinary binding while `type Point = ...`
+  still declares a type — including both in one file. They are common
+  enough in data and statistical code (a *share* of a total, an *error*
+  term, a *test* case) that reserving them cost more than it bought.
+  They also work as field names now: `row.type` used to be a parse error.
+
+- **`fs.join` takes its parts variadically**, and still accepts a single
+  list. `fs.join("data", "raw", name)` for the literal case,
+  `fs.join(segments)` when they are computed — forcing a spread there
+  would have been a downgrade. A non-string part raises.
+
+### Migration
+
+`unwrap`/`unwrap_or` raise on a non-`Result`, so every affected call site
+fails loudly rather than silently. The fix is to delete the wrapper:
+
+```olang
+let args = os.args()                  // was: unwrap(os.args())
+if fs.exists(path) => ...             // was: unwrap_or(fs.exists(path), false)
+let tty = os.is_tty()                 // was: unwrap_or(os.is_tty(), false)
+```
+
+A `match` on one of these needs the same treatment — the `Ok`/`Err` arms
+no longer fit and the match will fail at runtime:
+
+```olang
+let user = os.username()              // was: match os.username() { Ok(u) => u, Err(e) => "?" }
+```
+
+The repository corpus (46 call sites across 25 files, plus the embedded
+`cli` and `term` packages) is migrated in this release.
+
 ## [0.63.0] - 2026-08-16
 
 Removes `async`, `await`, and the `Promise` API. olang now has **one**
@@ -3590,7 +3674,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.63.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.64.0...HEAD
+[0.64.0]: https://github.com/ooyeku/olang/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/ooyeku/olang/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/ooyeku/olang/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/ooyeku/olang/compare/v0.60.0...v0.61.0

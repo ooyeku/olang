@@ -90,10 +90,7 @@ fn toml_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// TOML documents are tables at the top level; anything else is an Err.
 fn toml_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "stringify expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("stringify expects 1 argument, got {}", args.len()).into());
     }
     let jv = match super::json::olang_value_to_json(&args[0]) {
         Ok(v) => v,
@@ -105,9 +102,11 @@ fn toml_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         }
     };
     if !jv.is_object() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "stringify: a TOML document is a table — pass a Map or struct-like value".to_string(),
-        )))));
+        return Err(
+            "stringify: a TOML document is a table — pass a Map or struct-like value"
+                .to_string()
+                .into(),
+        );
     }
     match toml::Value::try_from(jv) {
         Ok(tv) => match toml::to_string_pretty(&tv) {

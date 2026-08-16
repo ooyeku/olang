@@ -32,7 +32,7 @@ use lib.store {
 }
 use lib.validate { validate_issue, validate_comment, validate_id }
 
-let args = unwrap(os.args())
+let args = os.args()
 // Default 7317, not 7000: macOS AirPlay Receiver (Control Center) listens
 // on ports 5000 and 7000 on every modern Mac and answers with 403
 // Forbidden — a browser hitting an olang app that isn't running (or that
@@ -69,7 +69,7 @@ let suite_css = unwrap(fs.read_file("static/suite.css"))
 // The wasm artifact is gitignored; warn loudly at boot when missing.
 // (fs.exists, not read_file: the artifact is binary, and reading it as
 // a string fails on non-UTF-8 bytes even when the file is fine.)
-if !unwrap_or(fs.exists("static/olang_playground.wasm"), false) => {
+if !fs.exists("static/olang_playground.wasm") => {
     println("WARNING: static/olang_playground.wasm is missing — the frontend cannot boot.")
     println("Build and copy it:")
     println("  cargo build -p olang-playground --target wasm32-unknown-unknown --release")

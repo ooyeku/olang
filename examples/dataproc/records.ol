@@ -10,7 +10,7 @@
 //   time olang records.ol data/sales_large.csv
 //   time olang main.ol    data/sales_large.csv
 
-let args = unwrap(os.args())
+let args = os.args()
 let path = if len(args) > 1 => args[1] else => "data/sales.csv"
 
 // ── load: CSV text → list of row maps ──

@@ -7,7 +7,20 @@ NEWLINE     = _{ "\n" | "\r\n" }
 COMMENT     = _{ "//" ~ (!NEWLINE ~ ANY)* }
 
 // Keywords - these must not be parsed as identifiers
-keyword = { "fn" | "let" | "type" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "return" | "true" | "false" | "async" | "await" | "try" | "catch" | "error" | "share" | "use" | "struct" | "enum" | "test" | "trait" | "impl" }
+// Reserved words — never usable as identifiers.
+//
+// The seven declaration-position words (`share`, `error`, `test`, `type`,
+// `trait`, `impl`, `use`) were freed in 0.64: each only ever introduces a
+// declaration, and the token after it disambiguates, so PEG backtracking
+// resolves `let type = row.kind` to an ordinary binding while `type Point
+// = ...` still parses as a type declaration. They are common enough as
+// variable names — a share of a total, an error term, a test case — that
+// reserving them cost more than it bought.
+//
+// `async` and `await` stay listed although 0.63 removed their semantics:
+// the parser needs them to emit a migration error rather than a generic
+// syntax failure. They are freed at 1.0.
+keyword = { "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "return" | "true" | "false" | "async" | "await" | "try" | "catch" | "struct" | "enum" }
 
 // Identifiers and literals - exclude keywords
 identifier  = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_")) ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }

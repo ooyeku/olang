@@ -13,11 +13,11 @@
 //   println(term.table(["name", "age"], [["ada", "36"], ["eve", "41"]]))
 //   print(term.bar(0.6, 20)); os.flush()
 
-fn has(name) = unwrap_or(os.has_env(name), false)
+fn has(name) = os.has_env(name)
 
 /// Whether styled output should be emitted right now.
 share fn color() =
-    has("CLICOLOR_FORCE") || (unwrap_or(os.is_tty(), false) && has("NO_COLOR") == false)
+    has("CLICOLOR_FORCE") || (os.is_tty() && has("NO_COLOR") == false)
 
 let ESC = "\x1b["
 let RESET = "\x1b[0m"

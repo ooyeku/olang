@@ -119,9 +119,9 @@ fn signal_flag_starts_clear_and_resets() {
     assert_all_true(
         r#"
 unwrap(os.on_interrupt())
-let a = unwrap(os.interrupted())
-unwrap(os.reset_interrupt())
-let b = unwrap(os.interrupted())
+let a = os.interrupted()
+os.reset_interrupt()
+let b = os.interrupted()
 [ a == false, b == false ]
 "#,
         2,

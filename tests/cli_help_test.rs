@@ -85,11 +85,7 @@ fn a_file_named_like_a_command_still_runs() {
 fn script_arguments_pass_through_after_the_file() {
     // Everything after the file — including hyphenated flags — is the
     // program's own argv, not olang's.
-    let file = fixture(
-        "argv",
-        "argv.ol",
-        r#"for a in unwrap_or(os.args(), []) { println(a) }"#,
-    );
+    let file = fixture("argv", "argv.ol", r#"for a in os.args() { println(a) }"#);
     let out = olang()
         .arg(&file)
         .arg("--port")

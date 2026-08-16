@@ -81,7 +81,7 @@ fn scan(root) = {
     let total = len(files)
     // A live progress bar only makes sense on a terminal; piped or
     // redirected output stays clean.
-    let show_progress = unwrap_or(os.is_tty(), false) && total > 40
+    let show_progress = os.is_tty() && total > 40
 
     let mut by_lang = #{}    // language -> [files, lines]
     let mut per_file = []    // [path, lines]
@@ -212,7 +212,7 @@ fn sort_files(files) = {
 
 fn run(a) = {
     let path = if map_has_key(a, "path") => map_get(a, "path") else => "."
-    if unwrap_or(fs.is_dir(path), false) == false => {
+    if fs.is_dir(path) == false => {
         println(term.red("survey: ") + "not a directory: " + path)
         os.exit(1)
     }

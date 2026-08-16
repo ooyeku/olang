@@ -27,7 +27,7 @@
 //   }
 
 /// The program's own arguments, with the program path (argv[0]) dropped.
-share fn args() = skip(unwrap_or(os.args(), []), 1)
+share fn args() = skip(os.args(), 1)
 
 // ── spec accessors ─────────────────────────────────────────────────────
 
@@ -73,7 +73,7 @@ fn parse_core(spec, argv) = {
         else => {
             if map_has_key(f, "default") => { out = map_set(out, name, map_get(f, "default")) }
             else => {
-                if map_has_key(f, "env") && unwrap_or(os.has_env(map_get(f, "env")), false) => {
+                if map_has_key(f, "env") && os.has_env(map_get(f, "env")) => {
                     out = map_set(out, name, unwrap_or(os.get_env(map_get(f, "env")), ""))
                 }
             }

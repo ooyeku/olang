@@ -33,7 +33,7 @@ extract("\\d+", "order 66 shipped 128 units over 3 days")
 extract("\\w+@\\w+", "ping a@b, then cat@dog, done")
 extract("(ab)+", "abab_ab_x_ababab")
 
-let args = unwrap(os.args())
+let args = os.args()
 if len(args) > 1 => {
     println("")
     println("═══ grep /" + args[1] + "/ ═══")

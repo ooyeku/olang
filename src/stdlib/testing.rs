@@ -123,10 +123,7 @@ thread_local! {
 /// Usage: testing.assert_eq(expected, actual) -> Result<Unit, Error>
 fn assert_eq(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "assert_eq expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("assert_eq expects 2 arguments, got {}", args.len()).into());
     }
 
     let expected = &args[0];
@@ -144,10 +141,7 @@ fn assert_eq(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: testing.assert_ne(expected, actual) -> Result<Unit, Error>
 fn assert_ne(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "assert_ne expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("assert_ne expects 2 arguments, got {}", args.len()).into());
     }
 
     let expected = &args[0];
@@ -168,10 +162,7 @@ fn assert_ne(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: testing.assert_true(condition) -> Result<Unit, Error>
 fn assert_true(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "assert_true expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("assert_true expects 1 argument, got {}", args.len()).into());
     }
 
     match &args[0] {
@@ -196,10 +187,7 @@ fn assert_true(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: testing.assert_false(condition) -> Result<Unit, Error>
 fn assert_false(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "assert_false expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("assert_false expects 1 argument, got {}", args.len()).into());
     }
 
     match &args[0] {
@@ -224,10 +212,7 @@ fn assert_false(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: testing.assert_ok(result) -> Result<Unit, Error>
 fn assert_ok(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "assert_ok expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("assert_ok expects 1 argument, got {}", args.len()).into());
     }
 
     match &args[0] {
@@ -250,10 +235,7 @@ fn assert_ok(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: testing.assert_err(result) -> Result<Unit, Error>
 fn assert_err(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "assert_err expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("assert_err expects 1 argument, got {}", args.len()).into());
     }
 
     match &args[0] {
@@ -276,19 +258,15 @@ fn assert_err(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: testing.fail("Test failed because...") -> Error
 fn fail_test(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "fail expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("fail expects 1 argument, got {}", args.len()).into());
     }
 
     let message = match &args[0] {
         Value::String(s) => s.as_ref(),
         other => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                "fail: message must be a string, got {}",
-                other.type_name()
-            ))))));
+            return Err(
+                format!("fail: message must be a string, got {}", other.type_name()).into(),
+            );
         }
     };
 
@@ -300,19 +278,17 @@ fn fail_test(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: testing.run_test("test_name", test_function) -> Result<String, Error>
 fn run_test(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "run_test expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("run_test expects 2 arguments, got {}", args.len()).into());
     }
 
     let test_name = match &args[0] {
         Value::String(s) => s.as_ref(),
         other => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            return Err(format!(
                 "run_test: test name must be a string, got {}",
                 other.type_name()
-            ))))));
+            )
+            .into());
         }
     };
 

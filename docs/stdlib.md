@@ -59,9 +59,24 @@ system and are absent from the browser playground build, where calling
 them reports exactly that; `dom` is the reverse — browser-only, an error
 everywhere else.
 
-**Fallible functions return `Result`.** Anything that can fail — parsing,
-I/O, lookups that may miss — returns `Ok(v)` or `Err(e)`. Unwrap it, pattern
-match it, or propagate with `?`:
+### What a function returns, and when it raises
+
+Three rules, settled in 0.64. They hold across every module, so you can
+predict a function's shape from what it does rather than looking it up.
+
+**1. An operation that cannot fail returns its value.** `os.args()`,
+`math.sqrt(x)`, `str.trim(s)`, `fs.exists(p)`, `crypto.sha256(s)` — no
+wrapper, nothing to unwrap:
+
+```olang
+let args = os.args()
+println(to_string(len(args)) + " " + os.arch())
+```
+
+**2. An operation that can fail for reasons you could handle returns
+`Result`.** A missing file, an absent environment variable, malformed
+input, a network that is down. Unwrap it, pattern match it, or propagate
+with `?`:
 
 ```olang
 let n = unwrap(str.parse_int("42"))          // trust it
@@ -69,8 +84,21 @@ let m = unwrap_or(str.parse_int("nope"), 0)  // with a default
 println(to_string(n + m))
 ```
 
-Pure computations (`str.trim`, `math.sqrt`, `crypto.sha256`, ...) return
-their value directly.
+**3. An operation *called wrongly* raises.** A wrong argument count, a
+wrong type, an index outside the collection — these are bugs in the
+calling program, and no caller can sensibly recover from its own bug.
+Returning `Err` for them would invite exactly that:
+
+```text
+os.arch(1, 2)
+// error: os.arch expects 0 arguments, got 2
+```
+
+The third rule is why the second one is trustworthy. If misuse also came
+back as `Err`, then `unwrap_or(fs.read_file(path), "")` would swallow a
+typo'd call exactly the way it swallows a missing file, and the default
+would hide the bug indefinitely. Keeping them apart means a `Result` you
+see is always a real condition worth handling.
 
 ## Global builtins
 
@@ -815,12 +843,12 @@ else.
 | Group | Functions |
 |---|---|
 | Process | `args` `exit(code)` `pid` `exe_path` `exec(program, args)` |
-| Terminal | `is_tty()` — is stdout a terminal? (`Ok(bool)`); `flush()` — flush buffered stdout, for progress bars |
+| Terminal | `is_tty()` — is stdout a terminal? (`Bool`); `flush()` — flush buffered stdout, for progress bars |
 | Input | `read_line()` — one line from stdin as `Ok(line)`, `Err("eof")` at end; `stdin()` — everything to end-of-file as one string; `stdin_lines()` — everything as a list of lines, endings stripped. The stdin pair is what makes olang pipe-friendly: `cat access.log \| olang analyze.ol` |
 | Environment | `get_env` `set_env` `remove_env` `has_env` `list_env` |
 | Directories | `cwd` `chdir` `home_dir` `temp_dir` |
 | System | `hostname` `username` `os_type` `arch` `family` `path_separator` |
-| Signals | `on_interrupt()` — trap Ctrl-C (SIGINT) instead of terminating; `interrupted()` — has it been pressed? (`Ok(bool)`); `reset_interrupt()` — clear the flag |
+| Signals | `on_interrupt()` — trap Ctrl-C (SIGINT) instead of terminating (`Result`: installing the handler can fail); `interrupted()` — has it been pressed? (`Bool`); `reset_interrupt()` — clear the flag |
 
 `os.exec` runs an external program to completion and returns
 `Ok({ code, stdout, stderr })` — or `Err` if it could not be launched at
@@ -828,8 +856,17 @@ all. An optional third argument configures the child:
 `#{ "cwd": dir, "stdin": text, "env": #{ name: value } }` (any subset).
 `os.args()` is the program's argv (`[script, arg1, ...]`).
 
+Most of `os` cannot fail, and as of 0.64 says so: `args`, `arch`,
+`os_type`, `family`, `pid`, `path_separator`, `temp_dir`, `username`,
+`is_tty`, `flush`, `has_env`, `list_env`, `set_env`, `remove_env`,
+`interrupted`, and `reset_interrupt` all return their value directly.
+The ones that keep `Result` are the ones that genuinely can fail:
+`get_env` (the variable may be absent), `cwd`, `chdir`, `home_dir`,
+`hostname`, `exe_path`, `exec`, `read_line`, `stdin`, `stdin_lines`, and
+`on_interrupt`.
+
 ```olang no-run
-let args = unwrap(os.args())
+let args = os.args()
 let target = if len(args) > 1 => args[1] else => "."
 
 let r = unwrap(os.exec("git", ["status", "--short"], #{ "cwd": target }))

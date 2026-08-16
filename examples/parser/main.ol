@@ -35,7 +35,7 @@ show("((7 - 2) * (3 + 1)) / 4")
 show("1 +")          // deliberately malformed
 show("(1 + 2")       // unbalanced
 
-let args = unwrap(os.args())
+let args = os.args()
 if len(args) > 1 => {
     println("")
     println("═══ from the command line ═══")

@@ -156,18 +156,13 @@ pub fn call_csv_function(
 /// Usage: csv.parse("name,age\nAlice,30\nBob,25") -> Result<[[String]], Error>
 fn csv_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "parse expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("parse expects 1 argument, got {}", args.len()).into());
     }
 
     let csv_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "parse: argument must be a string".to_string(),
-            )))));
+            return Err("parse: argument must be a string".to_string().into());
         }
     };
 
@@ -201,18 +196,15 @@ fn csv_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: csv.parse_with_headers("name,age\nAlice,30\nBob,25") -> Result<[{name: "Alice", age: "30"}], Error>
 fn csv_parse_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "parse_with_headers expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("parse_with_headers expects 1 argument, got {}", args.len()).into());
     }
 
     let csv_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "parse_with_headers: argument must be a string".to_string(),
-            )))));
+            return Err("parse_with_headers: argument must be a string"
+                .to_string()
+                .into());
         }
     };
 
@@ -264,18 +256,15 @@ fn csv_parse_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
 /// Usage: csv.stringify([["name", "age"], ["Alice", "30"], ["Bob", "25"]]) -> String
 fn csv_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "stringify expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("stringify expects 1 argument, got {}", args.len()).into());
     }
 
     let rows = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "stringify: argument must be a list of lists".to_string(),
-            )))));
+            return Err("stringify: argument must be a list of lists"
+                .to_string()
+                .into());
         }
     };
 
@@ -310,9 +299,7 @@ fn csv_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
                 }
             }
             _ => {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    "Each row must be a list".to_string(),
-                )))));
+                return Err("Each row must be a list".to_string().into());
             }
         }
     }
@@ -336,27 +323,32 @@ fn csv_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: csv.stringify_with_headers([{name: "Alice", age: 30}], ["name", "age"]) -> Result<String, Error>
 fn csv_stringify_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+        return Err(format!(
             "stringify_with_headers expects 2 arguments, got {}",
             args.len()
-        ))))));
+        )
+        .into());
     }
 
     let objects = match &args[0] {
         Value::List(objects) => objects,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "stringify_with_headers: first argument must be a list of objects".to_string(),
-            )))));
+            return Err(
+                "stringify_with_headers: first argument must be a list of objects"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
     let headers = match &args[1] {
         Value::List(headers) => headers,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "stringify_with_headers: second argument must be a list of strings".to_string(),
-            )))));
+            return Err(
+                "stringify_with_headers: second argument must be a list of strings"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
@@ -413,9 +405,7 @@ fn csv_stringify_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
                 }
             }
             _ => {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    "Each object must be a struct".to_string(),
-                )))));
+                return Err("Each object must be a struct".to_string().into());
             }
         }
     }
@@ -439,36 +429,27 @@ fn csv_stringify_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
 /// Usage: csv.read_row(csv_data, 1) -> Result<[String], Error>
 fn csv_read_row(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "read_row expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("read_row expects 2 arguments, got {}", args.len()).into());
     }
 
     let rows = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "read_row: first argument must be a list".to_string(),
-            )))));
+            return Err("read_row: first argument must be a list".to_string().into());
         }
     };
 
     let index = match &args[1] {
         Value::Integer(i) => *i as usize,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "read_row: second argument must be an integer".to_string(),
-            )))));
+            return Err("read_row: second argument must be an integer"
+                .to_string()
+                .into());
         }
     };
 
     if index >= rows.len() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "Index {} out of bounds for {} rows",
-            index,
-            rows.len()
-        ))))));
+        return Err(format!("Index {} out of bounds for {} rows", index, rows.len()).into());
     }
 
     Ok(Value::Ok(Box::new(rows[index].clone())))
@@ -478,27 +459,24 @@ fn csv_read_row(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: csv.read_column(csv_data, 0) -> Result<[String], Error>
 fn csv_read_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "read_column expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("read_column expects 2 arguments, got {}", args.len()).into());
     }
 
     let rows = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "read_column: first argument must be a list".to_string(),
-            )))));
+            return Err("read_column: first argument must be a list"
+                .to_string()
+                .into());
         }
     };
 
     let col_index = match &args[1] {
         Value::Integer(i) => *i as usize,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "read_column: second argument must be an integer".to_string(),
-            )))));
+            return Err("read_column: second argument must be an integer"
+                .to_string()
+                .into());
         }
     };
 
@@ -513,69 +491,66 @@ fn csv_read_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
                 }
             }
             _ => {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    "Each row must be a list".to_string(),
-                )))));
+                return Err("Each row must be a list".to_string().into());
             }
         }
     }
 
-    Ok(Value::Ok(Box::new(Value::List(column.into()))))
+    Ok(Value::List(column.into()))
 }
 
 /// Read a specific cell from CSV data
 /// Usage: csv.read_cell(csv_data, 1, 0) -> Result<String, Error>
 fn csv_read_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "read_cell expects 3 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("read_cell expects 3 arguments, got {}", args.len()).into());
     }
 
     let rows = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "read_cell: first argument must be a list".to_string(),
-            )))));
+            return Err("read_cell: first argument must be a list"
+                .to_string()
+                .into());
         }
     };
 
     let row_index = match &args[1] {
         Value::Integer(i) => *i as usize,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "read_cell: second argument must be an integer".to_string(),
-            )))));
+            return Err("read_cell: second argument must be an integer"
+                .to_string()
+                .into());
         }
     };
 
     let col_index = match &args[2] {
         Value::Integer(i) => *i as usize,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "read_cell: third argument must be an integer".to_string(),
-            )))));
+            return Err("read_cell: third argument must be an integer"
+                .to_string()
+                .into());
         }
     };
 
     if row_index >= rows.len() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+        return Err(format!(
             "Row index {} out of bounds for {} rows",
             row_index,
             rows.len()
-        ))))));
+        )
+        .into());
     }
 
     match &rows[row_index] {
         Value::List(fields) => {
             if col_index >= fields.len() {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                return Err(format!(
                     "Column index {} out of bounds for {} columns",
                     col_index,
                     fields.len()
-                ))))));
+                )
+                .into());
             }
             Ok(Value::Ok(Box::new(fields[col_index].clone())))
         }
@@ -589,18 +564,13 @@ fn csv_read_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: csv.get_headers(csv_data) -> Result<[String], Error>
 fn csv_get_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "get_headers expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("get_headers expects 1 argument, got {}", args.len()).into());
     }
 
     let rows = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "get_headers: argument must be a list".to_string(),
-            )))));
+            return Err("get_headers: argument must be a list".to_string().into());
         }
     };
 
@@ -617,40 +587,30 @@ fn csv_get_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 /// Usage: csv.row_count(csv_data) -> Result<Int, Error>
 fn csv_row_count(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "row_count expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("row_count expects 1 argument, got {}", args.len()).into());
     }
 
     let rows = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "row_count: argument must be a list".to_string(),
-            )))));
+            return Err("row_count: argument must be a list".to_string().into());
         }
     };
 
-    Ok(Value::Ok(Box::new(Value::Integer(rows.len() as i64))))
+    Ok(Value::Integer(rows.len() as i64))
 }
 
 /// Get column count from CSV data (based on first row)
 /// Usage: csv.column_count(csv_data) -> Result<Int, Error>
 fn csv_column_count(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "column_count expects 1 argument, got {}",
-            args.len()
-        ))))));
+        return Err(format!("column_count expects 1 argument, got {}", args.len()).into());
     }
 
     let rows = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "column_count: argument must be a list".to_string(),
-            )))));
+            return Err("column_count: argument must be a list".to_string().into());
         }
     };
 
@@ -671,77 +631,73 @@ fn csv_column_count(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
 /// Usage: csv.add_row(csv_data, row_data) -> Result<CSV, Error>
 fn csv_add_row(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "add_row expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("add_row expects 2 arguments, got {}", args.len()).into());
     }
 
     let csv_data = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "add_row: first argument must be CSV data (list of lists)".to_string(),
-            )))));
+            return Err("add_row: first argument must be CSV data (list of lists)"
+                .to_string()
+                .into());
         }
     };
 
     let new_row = match &args[1] {
         Value::List(row) => row.clone(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "add_row: second argument must be a list (row data)".to_string(),
-            )))));
+            return Err("add_row: second argument must be a list (row data)"
+                .to_string()
+                .into());
         }
     };
 
     let mut new_csv: Vec<Value> = csv_data.iter().cloned().collect();
     new_csv.push(Value::List(new_row));
 
-    Ok(Value::Ok(Box::new(Value::List(new_csv.into()))))
+    Ok(Value::List(new_csv.into()))
 }
 
 /// Add a new column to CSV data
 /// Usage: csv.add_column(csv_data, column_data, header) -> Result<CSV, Error>
 fn csv_add_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "add_column expects 3 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("add_column expects 3 arguments, got {}", args.len()).into());
     }
 
     let csv_data = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "add_column: first argument must be CSV data (list of lists)".to_string(),
-            )))));
+            return Err(
+                "add_column: first argument must be CSV data (list of lists)"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
     let column_data = match &args[1] {
         Value::List(column) => column,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "add_column: second argument must be a list (column data)".to_string(),
-            )))));
+            return Err("add_column: second argument must be a list (column data)"
+                .to_string()
+                .into());
         }
     };
 
     let header = match &args[2] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "add_column: third argument must be a string (header)".to_string(),
-            )))));
+            return Err("add_column: third argument must be a string (header)"
+                .to_string()
+                .into());
         }
     };
 
     if csv_data.len() != column_data.len() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "add_column: column data length must match CSV row count".to_string(),
-        )))));
+        return Err("add_column: column data length must match CSV row count"
+            .to_string()
+            .into());
     }
 
     let mut new_csv = Vec::new();
@@ -777,45 +733,43 @@ fn csv_add_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 /// Usage: csv.set_cell(csv_data, row_index, column_index, value) -> Result<CSV, Error>
 fn csv_set_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 4 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "set_cell expects 4 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("set_cell expects 4 arguments, got {}", args.len()).into());
     }
 
     let csv_data = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "set_cell: first argument must be CSV data (list of lists)".to_string(),
-            )))));
+            return Err("set_cell: first argument must be CSV data (list of lists)"
+                .to_string()
+                .into());
         }
     };
 
     let row_index = match &args[1] {
         Value::Integer(i) => *i as usize,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "set_cell: second argument must be an integer (row index)".to_string(),
-            )))));
+            return Err("set_cell: second argument must be an integer (row index)"
+                .to_string()
+                .into());
         }
     };
 
     let column_index = match &args[2] {
         Value::Integer(i) => *i as usize,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "set_cell: third argument must be an integer (column index)".to_string(),
-            )))));
+            return Err("set_cell: third argument must be an integer (column index)"
+                .to_string()
+                .into());
         }
     };
 
     if row_index >= csv_data.len() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+        return Err(format!(
             "set_cell: row index {} out of bounds (have {} rows)",
             row_index,
             csv_data.len()
-        ))))));
+        )
+        .into());
     }
 
     let row = match &csv_data[row_index] {
@@ -828,11 +782,12 @@ fn csv_set_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
 
     if column_index >= row.len() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+        return Err(format!(
             "set_cell: column index {} out of bounds (have {} columns)",
             column_index,
             row.len()
-        ))))));
+        )
+        .into());
     }
 
     let mut new_csv: Vec<Value> = csv_data.iter().cloned().collect();
@@ -847,34 +802,33 @@ fn csv_set_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: csv.set_headers(csv_data, headers) -> Result<CSV, Error>
 fn csv_set_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "set_headers expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("set_headers expects 2 arguments, got {}", args.len()).into());
     }
 
     let csv_data = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "set_headers: first argument must be CSV data (list of lists)".to_string(),
-            )))));
+            return Err(
+                "set_headers: first argument must be CSV data (list of lists)"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
     let headers = match &args[1] {
         Value::List(header_list) => header_list,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "set_headers: second argument must be a list of strings (headers)".to_string(),
-            )))));
+            return Err(
+                "set_headers: second argument must be a list of strings (headers)"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
     if csv_data.is_empty() {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "set_headers: CSV data cannot be empty".to_string(),
-        )))));
+        return Err("set_headers: CSV data cannot be empty".to_string().into());
     }
 
     let mut new_csv: Vec<Value> = csv_data.iter().cloned().collect();
@@ -890,34 +844,35 @@ fn csv_set_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 
     new_csv[0] = Value::List(header_values.into());
 
-    Ok(Value::Ok(Box::new(Value::List(new_csv.into()))))
+    Ok(Value::List(new_csv.into()))
 }
 
 /// Filter CSV rows based on criteria
 /// Usage: csv.filter_rows(csv_data, column_index, predicate_function) -> Result<CSV, Error>
 fn csv_filter_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "filter_rows expects 3 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("filter_rows expects 3 arguments, got {}", args.len()).into());
     }
 
     let csv_data = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "filter_rows: first argument must be CSV data (list of lists)".to_string(),
-            )))));
+            return Err(
+                "filter_rows: first argument must be CSV data (list of lists)"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
     let column_index = match &args[1] {
         Value::Integer(i) => *i as usize,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "filter_rows: second argument must be an integer (column index)".to_string(),
-            )))));
+            return Err(
+                "filter_rows: second argument must be an integer (column index)"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
@@ -926,9 +881,11 @@ fn csv_filter_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
     let filter_value = match &args[2] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "filter_rows: third argument must be a string (filter value)".to_string(),
-            )))));
+            return Err(
+                "filter_rows: third argument must be a string (filter value)"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
@@ -969,41 +926,44 @@ fn csv_filter_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 /// Usage: csv.sort_by_column(csv_data, column_index, ascending) -> Result<CSV, Error>
 fn csv_sort_by_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "sort_by_column expects 3 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("sort_by_column expects 3 arguments, got {}", args.len()).into());
     }
 
     let csv_data = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "sort_by_column: first argument must be CSV data (list of lists)".to_string(),
-            )))));
+            return Err(
+                "sort_by_column: first argument must be CSV data (list of lists)"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
     let column_index = match &args[1] {
         Value::Integer(i) => *i as usize,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "sort_by_column: second argument must be an integer (column index)".to_string(),
-            )))));
+            return Err(
+                "sort_by_column: second argument must be an integer (column index)"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
     let ascending = match &args[2] {
         Value::Boolean(b) => *b,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "sort_by_column: third argument must be a boolean (ascending)".to_string(),
-            )))));
+            return Err(
+                "sort_by_column: third argument must be a boolean (ascending)"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
     if csv_data.is_empty() {
-        return Ok(Value::Ok(Box::new(Value::List(Arc::new(vec![])))));
+        return Ok(Value::List(Arc::new(vec![])));
     }
 
     let mut sorted_rows: Vec<Value> = csv_data.iter().skip(1).cloned().collect();
@@ -1047,34 +1007,33 @@ fn csv_sort_by_column(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     result_rows.push(csv_data[0].clone()); // Header row
     result_rows.extend(sorted_rows);
 
-    Ok(Value::Ok(Box::new(Value::List(result_rows.into()))))
+    Ok(Value::List(result_rows.into()))
 }
 
 /// Convert CSV data to JSON format
 /// Usage: csv.to_json(csv_data, include_headers) -> Result<String, Error>
 fn csv_to_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "to_json expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("to_json expects 2 arguments, got {}", args.len()).into());
     }
 
     let csv_data = match &args[0] {
         Value::List(rows) => rows,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "to_json: first argument must be CSV data (list of lists)".to_string(),
-            )))));
+            return Err("to_json: first argument must be CSV data (list of lists)"
+                .to_string()
+                .into());
         }
     };
 
     let include_headers = match &args[1] {
         Value::Boolean(b) => *b,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "to_json: second argument must be a boolean (include_headers)".to_string(),
-            )))));
+            return Err(
+                "to_json: second argument must be a boolean (include_headers)"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
@@ -1148,27 +1107,26 @@ fn csv_to_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: csv.from_json(json_data, headers) -> Result<CSV, Error>
 fn csv_from_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "from_json expects 2 arguments, got {}",
-            args.len()
-        ))))));
+        return Err(format!("from_json expects 2 arguments, got {}", args.len()).into());
     }
 
     let json_data = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "from_json: first argument must be a string (JSON data)".to_string(),
-            )))));
+            return Err("from_json: first argument must be a string (JSON data)"
+                .to_string()
+                .into());
         }
     };
 
     let headers = match &args[1] {
         Value::List(header_list) => header_list,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "from_json: second argument must be a list of strings (headers)".to_string(),
-            )))));
+            return Err(
+                "from_json: second argument must be a list of strings (headers)"
+                    .to_string()
+                    .into(),
+            );
         }
     };
 
@@ -1185,9 +1143,7 @@ fn csv_from_json(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     let objects = match parsed {
         serde_json::Value::Array(objs) => objs,
         _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "from_json: JSON data must be an array".to_string(),
-            )))));
+            return Err("from_json: JSON data must be an array".to_string().into());
         }
     };
 
@@ -1266,13 +1222,30 @@ mod tests {
     fn assert_ok(result: &Value) -> &Value {
         match result {
             Value::Ok(inner) => inner,
-            _ => {
-                panic!("Expected Ok result, got: {:?}", result)
-            }
+            Value::Err(e) => panic!("Expected Ok result, got Err: {:?}", e),
+            // 0.64: infallible functions return the value directly.
+            bare => bare,
         }
     }
 
     // Helper to assert Result<T, E> error
+
+    /// Assert a call reports failure, either way it can now.
+    ///
+    /// 0.64 split the two: misuse (bad arity or type) **raises**, which is
+    /// a Rust `Err`; environmental failure still returns `Ok(Value::Err)`.
+    /// Tests that only care *that* the call failed use this; tests that
+    /// care *which* assert on the specific shape.
+    #[allow(dead_code)]
+    fn assert_fails(result: Result<Value, Box<dyn std::error::Error>>) {
+        match result {
+            Err(_) => {}
+            Ok(Value::Err(_)) => {}
+            Ok(other) => panic!("expected a failure, got: {:?}", other),
+        }
+    }
+
+    #[allow(dead_code)]
     fn assert_err(result: &Value) -> &Value {
         match result {
             Value::Err(inner) => inner,
@@ -1385,14 +1358,11 @@ mod tests {
         assert_eq!(extract_string(&second_row[1]), "30");
 
         // Test error conditions
-        let result = csv_parse(vec![int_val(42)]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_parse(vec![int_val(42)]));
 
-        let result = csv_parse(vec![]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_parse(vec![]));
 
-        let result = csv_parse(vec![string_val("test"), string_val("extra")]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_parse(vec![string_val("test"), string_val("extra")]));
     }
 
     #[test]
@@ -1421,8 +1391,7 @@ mod tests {
         assert_eq!(rows.len(), 0);
 
         // Test error conditions
-        let result = csv_parse_with_headers(vec![int_val(42)]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_parse_with_headers(vec![int_val(42)]));
     }
 
     #[test]
@@ -1457,19 +1426,16 @@ mod tests {
         assert!(csv_string.contains("Alice,30,true"));
 
         // Test error conditions - should return Err
-        let result = csv_stringify(vec![string_val("not a list")]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_stringify(vec![string_val("not a list")]));
 
-        let result = csv_stringify(vec![]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_stringify(vec![]));
 
         // Test with invalid row data
         let invalid_data = list_val(vec![
             list_val(vec![string_val("name")]),
             string_val("not a list"), // Invalid row
         ]);
-        let result = csv_stringify(vec![invalid_data]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_stringify(vec![invalid_data]));
     }
 
     #[test]
@@ -1499,11 +1465,12 @@ mod tests {
         assert!(csv_string.contains("Bob,25"));
 
         // Test error conditions
-        let result = csv_stringify_with_headers(vec![string_val("not a list")]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_stringify_with_headers(vec![string_val("not a list")]));
 
-        let result = csv_stringify_with_headers(vec![list_val(vec![]), int_val(42)]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_stringify_with_headers(vec![
+            list_val(vec![]),
+            int_val(42),
+        ]));
     }
 
     #[test]
@@ -1522,8 +1489,7 @@ mod tests {
         assert_eq!(extract_string(&row_list[1]), "30");
 
         // Test read_row out of bounds
-        let result = csv_read_row(vec![csv_data.clone(), int_val(10)]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_read_row(vec![csv_data.clone(), int_val(10)]));
 
         // Test read_column
         let result = csv_read_column(vec![csv_data.clone(), int_val(0)]).unwrap();
@@ -1540,8 +1506,7 @@ mod tests {
         assert_eq!(extract_string(cell), "Alice");
 
         // Test read_cell out of bounds
-        let result = csv_read_cell(vec![csv_data, int_val(1), int_val(10)]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_read_cell(vec![csv_data, int_val(1), int_val(10)]));
     }
 
     #[test]
@@ -1586,28 +1551,25 @@ mod tests {
         // Test various error conditions
 
         // Wrong number of arguments
-        let result = csv_parse(vec![]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_parse(vec![]));
 
-        let result = csv_stringify(vec![]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_stringify(vec![]));
 
         // Wrong argument types
-        let result = csv_parse(vec![int_val(42)]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_parse(vec![int_val(42)]));
 
-        let result = csv_read_row(vec![string_val("not a list"), int_val(0)]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_read_row(vec![string_val("not a list"), int_val(0)]));
 
-        let result = csv_read_row(vec![list_val(vec![]), string_val("not an int")]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_read_row(vec![
+            list_val(vec![]),
+            string_val("not an int"),
+        ]));
 
         // Invalid CSV structure
         let invalid_csv_data = list_val(vec![
             string_val("not a row"), // Should be a list
         ]);
-        let result = csv_stringify(vec![invalid_csv_data]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_stringify(vec![invalid_csv_data]));
     }
 
     #[test]
@@ -1720,11 +1682,9 @@ mod tests {
         assert_eq!(extract_string(&last_row[1]), "25");
 
         // Test error conditions
-        let result = csv_add_row(vec![string_val("not csv")]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_add_row(vec![string_val("not csv")]));
 
-        let result = csv_add_row(vec![csv_data, string_val("not a row")]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_add_row(vec![csv_data, string_val("not a row")]));
     }
 
     #[test]
@@ -1760,12 +1720,10 @@ mod tests {
         assert_eq!(extract_string(&first_data_row[2]), "NYC");
 
         // Test error conditions
-        let result = csv_add_column(vec![string_val("not csv")]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_add_column(vec![string_val("not csv")]));
 
         let wrong_length_column = list_val(vec![string_val("city")]);
-        let result = csv_add_column(vec![csv_data, wrong_length_column, header]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_add_column(vec![csv_data, wrong_length_column, header]));
     }
 
     #[test]
@@ -1790,18 +1748,20 @@ mod tests {
         assert_eq!(extract_string(&modified_row[1]), "31");
 
         // Test error conditions
-        let result = csv_set_cell(vec![
+        assert_fails(csv_set_cell(vec![
             csv_data.clone(),
             int_val(10),
             int_val(0),
             string_val("test"),
-        ])
-        .unwrap();
-        assert_err(&result); // Row index out of bounds
+        ])); // Row index out of bounds: misuse, so it raises
 
-        let result =
-            csv_set_cell(vec![csv_data, int_val(0), int_val(10), string_val("test")]).unwrap();
-        assert_err(&result); // Column index out of bounds
+        // Column index out of bounds: misuse, so it raises.
+        assert_fails(csv_set_cell(vec![
+            csv_data,
+            int_val(0),
+            int_val(10),
+            string_val("test"),
+        ]));
     }
 
     #[test]
@@ -1823,8 +1783,7 @@ mod tests {
 
         // Test error conditions
         let empty_csv = list_val(vec![]);
-        let result = csv_set_headers(vec![empty_csv, new_headers]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_set_headers(vec![empty_csv, new_headers]));
     }
 
     #[test]
@@ -1949,8 +1908,7 @@ mod tests {
 
         // Test error conditions
         let invalid_json = string_val("not json");
-        let result = csv_from_json(vec![invalid_json, headers]).unwrap();
-        assert_err(&result);
+        assert_fails(csv_from_json(vec![invalid_json, headers]));
     }
 
     #[test]

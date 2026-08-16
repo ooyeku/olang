@@ -12,7 +12,7 @@
 
 use lib.nbody { make_bodies, simulate, total_momentum }
 
-let args = unwrap(os.args())
+let args = os.args()
 let n = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 120
 let steps = if len(args) > 2 => unwrap(str.parse_int(args[2])) else => 150
 let dt = 0.01

@@ -111,7 +111,18 @@ direct replacement. `task.join_timeout(t, ms)` bounds the *wait*, and
 the task keeps running, because an OS thread cannot be cancelled from
 outside without leaving what it touched in an unknown state. A general
 `race` would have implied the losers stopped. The remaining lanes
-(S6–S8) are unchanged.
+(S7–S8) are unchanged.
+
+**S6 shipped in 0.64.0.** The conventions audit walked all 22 stdlib
+modules — 391 functions, 470 error sites — against one rule, and the
+rule gained a tier D7 did not name. D7 asked that infallible operations
+stop returning `Result`; the audit found the deeper problem was that
+*misuse* also returned `Result`, which is what made `Result` unreliable:
+`unwrap_or(f(x), default)` could not tell a missing file from a typo'd
+call. Misuse now raises, which is the change that makes the other two
+tiers mean something. Twenty-eight functions dropped `Result`, seven
+declaration keywords became ordinary identifiers, and `fs.join` went
+variadic while still accepting a list.
 
 | Lane | Work | Status |
 |---|---|---|
@@ -120,7 +131,7 @@ outside without leaving what it touched in an unknown state. A general
 | S3 — enforced `mut` | Reassignment of a non-`mut` binding is an error. The checker and language server list every site to migrate; the corpus is migrated in the same change. | **shipped 0.61.0** |
 | S4 — the cell | `cell(v)`, `cell.get(c)`, `cell.set(c, v)`, `cell.update(c, f)`. Cells are values with identity confined to their creating thread: reading or writing one from another thread is an error, and `chan.send` refuses to send one. Dead captured-variable writes became errors pointing to `cell`. Timeline recording is unaffected because cell mutation is deterministic within a thread. | **shipped 0.62.0** |
 | S5 — remove async | `async`, `await`, and the `Promise` API are removed from the interpreter and tiers. `spawn` returns a task handle collected by `task.join` / `task.join_timeout`. Programs using `Promise.delay/all/race` migrate to `time.sleep`, `map(task.join)`, and `chan`; the book's concurrency chapter is rewritten around the single model. | **shipped 0.63.0** |
-| S6 — stdlib conventions audit | Every builtin and module function is audited once: infallible operations return their value directly (`os.args`, `os.arch`, and the other host-introspection calls are the known cases); contextual keywords free `share` and any other colliding identifiers; `fs.join` becomes variadic; the definitive before/after table is recorded in the CHANGELOG. | planned |
+| S6 — stdlib conventions audit | Every builtin and module function audited once against one rule: infallible operations return their value, handleable failure returns `Result`, and misuse raises. Seven declaration keywords freed as identifiers; `fs.join` variadic; the definitive before/after table recorded in the CHANGELOG. | **shipped 0.64.0** |
 | S7 — error-model boundary | The `catch`-for-control-flow checker warning lands, and the book's error-handling chapter is rewritten around the Result-primary model with `catch` documented for boundary recovery only. | planned |
 | S8 — migration | The release ships with a migration guide. `olang check` reports every site the release breaks (its 0.50 warnings are the census); the repository corpus is migrated in the release itself as the proof of the guide. | planned |
 

@@ -144,7 +144,7 @@ fn load_history() = match fs.read_file(hist_path()) {
 // ── the prompt and the loop ──────────────────────────────────────────
 
 fn prompt_text() = {
-    let user = match os.username() { Ok(u) => u, Err(e) => "?" }
+    let user = os.username()
     let host = match os.hostname() { Ok(h) => h, Err(e) => "?" }
     let cwd = match os.cwd() { Ok(d) => d, Err(e) => "?" }
     let home = match os.home_dir() { Ok(h) => h, Err(e) => "" }
@@ -154,7 +154,7 @@ fn prompt_text() = {
     "\u001b[1;32m" + user + "@" + host + "\u001b[0m:\u001b[1;34m" + shown + "\u001b[0m$ "
 }
 
-let interactive = len(unwrap(os.args())) <= 1 || unwrap(os.args())[1] != "-q"
+let interactive = len(os.args()) <= 1 || os.args()[1] != "-q"
 if interactive => {
     println("oshell 1.0 — a Unix-like shell written in olang. 'help' lists builtins; ctrl-d exits.")
 }

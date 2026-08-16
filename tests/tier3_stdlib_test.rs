@@ -99,8 +99,18 @@ fn exec_two_argument_form_is_unchanged() {
 
 #[test]
 fn exec_rejects_unknown_options() {
-    let src = r#"show(is_err(os.exec("echo", [], #{ "typo": 1 })))"#;
-    assert_eq!(s(eval(src)), "true");
+    // A mistyped option key is misuse: 0.64 raises, so the typo cannot be
+    // swallowed by an `unwrap_or` and silently ignored.
+    let program = olang::Parser::new()
+        .parse(r#"os.exec("echo", [], #{ "typo": 1 })"#)
+        .expect("parses");
+    let err = olang::Interpreter::new()
+        .eval_program(program)
+        .expect_err("an unknown option is misuse");
+    assert!(
+        err.to_string().contains("unknown or mistyped option"),
+        "got: {err}"
+    );
 }
 
 // ── str.fmt ────────────────────────────────────────────────────────────
