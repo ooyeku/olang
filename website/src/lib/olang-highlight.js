@@ -58,6 +58,20 @@ function esc(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/**
+ * Wrap `inner` in a span of `cls` — but close and reopen it at every
+ * newline, so no element ever straddles a line. The editor wraps its
+ * text, which means the painted layer has to be sliceable into one block
+ * per logical line; a `<span>` spanning a newline would make that
+ * impossible to do without re-balancing tags.
+ */
+function spanPerLine(inner, cls) {
+  return inner
+    .split('\n')
+    .map((part) => `<span class="${cls}">${part}</span>`)
+    .join('\n');
+}
+
 /** A string body with its escape sequences picked out in their own colour. */
 function withEscapes(text, cls) {
   let out = '';
@@ -67,7 +81,7 @@ function withEscapes(text, cls) {
     out += `<span class="t-escape">${esc(m[0])}</span>`;
     last = m.index + m[0].length;
   }
-  return `<span class="${cls}">${out + esc(text.slice(last))}</span>`;
+  return spanPerLine(out + esc(text.slice(last)), cls);
 }
 
 /** Is `index` the first non-space position on its line? */
@@ -119,7 +133,13 @@ export function highlightOlang(source) {
     else if (g.op) out += `<span class="t-op">${esc(g.op)}</span>`;
   }
 
-  // A trailing newline in a <pre> is collapsed, which would leave the
-  // overlay one line shorter than the textarea on the last line.
-  return out + esc(source.slice(last)) + '\n';
+  out += esc(source.slice(last));
+
+  // One block per logical line. The blocks are what the gutter measures:
+  // a wrapped line occupies several visual rows, and its number has to be
+  // as tall as all of them or the column drifts out of step.
+  return out
+    .split('\n')
+    .map((line) => `<span class="ln">${line}</span>`)
+    .join('');
 }

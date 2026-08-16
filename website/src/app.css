@@ -29,6 +29,7 @@
   --hero-wash-1: rgba(13, 148, 136, 0.07);
   --hero-wash-2: rgba(13, 148, 136, 0.05);
   --row-hover: rgba(11, 18, 32, 0.025);
+  --gutter-bg: rgba(11, 18, 32, 0.035);
   --selection: rgba(13, 148, 136, 0.2);
 
   --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
@@ -72,6 +73,7 @@
     --hero-wash-1: rgba(45, 212, 191, 0.07);
     --hero-wash-2: rgba(45, 212, 191, 0.04);
     --row-hover: rgba(255, 255, 255, 0.015);
+    --gutter-bg: rgba(0, 0, 0, 0.18);
     --selection: rgba(45, 212, 191, 0.26);
     color-scheme: dark;
   }
@@ -98,6 +100,7 @@
   --hero-wash-1: rgba(45, 212, 191, 0.07);
   --hero-wash-2: rgba(45, 212, 191, 0.04);
   --row-hover: rgba(255, 255, 255, 0.015);
+  --gutter-bg: rgba(0, 0, 0, 0.18);
   --selection: rgba(45, 212, 191, 0.26);
   color-scheme: dark;
 }

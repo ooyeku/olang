@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { highlightOlang, TOKEN_COLORS, TOKEN_COLORS_LIGHT } from '$lib/olang-highlight.js';
 
   const EXAMPLES = [
@@ -425,8 +425,32 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
   $: current = EXAMPLES.find((e) => e.name === selected) ?? EXAMPLES[0];
   $: dirty = current && source !== current.code;
   $: lineCount = source.split('\n').length;
-  $: gutter = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n');
+  // One entry per logical line, holding the pixel height that line
+  // occupies once wrapped. Seeded with 0 (= "use the natural height") so
+  // the first paint is right before any measurement lands.
+  let lineHeights = [];
+  $: lineHeights = Array.from({ length: lineCount }, (_, i) => lineHeights[i] ?? 0);
   $: painted = highlightOlang(source);
+  // Re-measure whenever the text changes; a width change re-wraps
+  // everything, so the pane's resize feeds in here too.
+  $: if (painted) measureLines();
+
+  async function measureLines() {
+    await tick();
+    if (!paintEl) return;
+    // getBoundingClientRect, not offsetHeight: a line is 22.79px, and
+    // offsetHeight rounds each one to 23, which compounds into a visible
+    // drift by line twenty.
+    const next = Array.from(paintEl.querySelectorAll('.ln'), (el) =>
+      el.getBoundingClientRect().height
+    );
+    // Only assign on a real change: this runs after every keystroke, and
+    // an unconditional write would re-enter the reactive statement that
+    // produced it.
+    if (next.length !== lineHeights.length || next.some((h, i) => h !== lineHeights[i])) {
+      lineHeights = next;
+    }
+  }
 
   // Both palettes ride on the wrapper; the stylesheet below picks one by
   // theme. Emitting only the active set would need the theme in component
@@ -571,13 +595,29 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     }
   }
 
+  // A width change re-wraps every line, so the gutter has to re-measure
+  // even though the text did not change. Two triggers, because they
+  // cover different things: the window resize below is the one that
+  // actually happens, and the observer catches a pane that changes width
+  // without the window moving (browser zoom, a future layout).
+  let paneObserver;
+  onMount(() => {
+    if (typeof ResizeObserver !== 'undefined' && paintEl) {
+      paneObserver = new ResizeObserver(() => measureLines());
+      paneObserver.observe(paintEl);
+    }
+  });
+
   onMount(spawnWorker);
   onDestroy(() => {
+    paneObserver?.disconnect();
     worker?.terminate();
     clearTimeout(timeoutHandle);
     clearInterval(tickHandle);
   });
 </script>
+
+<svelte:window on:resize={measureLines} />
 
 <svelte:head>
   <title>playground — olang</title>
@@ -634,7 +674,11 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
 
   <div class="panes">
     <div class="editor-wrap" style={tokenStyle}>
-      <pre class="gutter" bind:this={gutterEl} aria-hidden="true">{gutter}</pre>
+      <div class="gutter" bind:this={gutterEl} aria-hidden="true">
+        {#each lineHeights as h, i}
+          <div class="lno" style={h ? `height:${h.toFixed(3)}px` : undefined}>{i + 1}</div>
+        {/each}
+      </div>
       <!-- The painted copy sits under a textarea whose own text is
            transparent, so the caret, selection, and editing behaviour are
            the browser's while the colour is ours. Both layers share the
@@ -841,7 +885,7 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     overflow: hidden;
     text-align: right;
     color: var(--text-4);
-    background: rgba(0, 0, 0, 0.18);
+    background: var(--gutter-bg);
     border-right: 1px solid var(--line);
     user-select: none;
     font-family: var(--mono);
@@ -849,6 +893,10 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     line-height: 1.62;
     font-variant-numeric: tabular-nums;
   }
+  /* Each number is as tall as its logical line, which is several rows
+     once that line wraps. Without this the column drifts a row further
+     out of step with every wrap. */
+  .lno { height: 1.62em; }
 
   .code { position: relative; min-width: 0; }
 
@@ -866,17 +914,27 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     line-height: 1.62;
     letter-spacing: normal;
     tab-size: 4;
-    white-space: pre;
+    /* Wrap rather than scroll sideways. Both layers must agree exactly:
+       same width, same font, same break rules — the caret sits on the
+       textarea's wrap, the colour on the paint layer's. */
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: normal;
     word-spacing: normal;
     text-rendering: auto;
     font-variant-ligatures: none;
+  }
+  .paint :global(.ln) {
+    display: block;
+    /* An empty line has no content to give it height. */
+    min-height: 1.62em;
   }
   .paint {
     overflow: hidden;
     pointer-events: none;
     color: var(--tok-plain);
     /* A scrollbar on the textarea steals width; the painted layer keeps
-       the same content box so columns still line up. */
+       the same content box, so the two wrap at the same column. */
     scrollbar-gutter: stable;
   }
   .editor {
@@ -885,7 +943,8 @@ println("recursive and iterative agree: " + show(fib(30) == fib_iter(30)))`,
     -webkit-text-fill-color: transparent;
     caret-color: var(--text);
     resize: none;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     scrollbar-gutter: stable;
   }
   .editor:focus { outline: none; }
