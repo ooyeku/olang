@@ -1,20 +1,19 @@
-# The olang Standard Library Reference
+# Standard library reference
 
-Everything the runtime ships: the global builtins (always in scope) and the
-twenty-one native modules plus the olang-source modules compiled into the
-binary. As in the [language reference](language.md), every `olang` code
-block here is executed by the test suite — the examples cannot drift from
-the implementation. (Blocks marked `no-run` are parse-checked only: they
-need a file system, a network, or a browser.)
+Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
+[Language reference](language.md) · [The data stack](ods.md) ·
+[olang in the browser](wasm.md) ·
+[Packages and dependencies](packages.md) ·
+[Stability and compatibility](stability.md)
 
-Part of [the olang book](README.md) ·
-[Tour](tour.md) · [Language](language.md) ·
-[Data Stack](ods.md) · [Browser](wasm.md) · [Packages](packages.md) ·
-[Internals](internals.md) · [Stability](stability.md)
+This chapter documents the standard library: the global builtins, which are
+always in scope, and the modules — those implemented in Rust and those
+written in olang and compiled into the binary. As in the
+[language reference](language.md), every `olang` block is executed by the
+test suite. Blocks marked `no-run` are parse-checked only, because they need
+a file system, a network, or a browser.
 
----
-
-## Table of Contents
+## Table of contents
 
 - [Conventions](#conventions)
 - [Global builtins](#global-builtins)
@@ -32,6 +31,7 @@ Part of [the olang book](README.md) ·
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
 - [`base64` — base64](#base64--base64)
 - [`fs` — file system](#fs--file-system)
+- [`meta` — the program as data](#meta--the-program-as-data-the-open-ast)
 - [`os` — operating system](#os--operating-system)
 - [`proc` — child processes and pipelines](#proc--child-processes-and-pipelines)
 - [`cli` — command-line argument parsing](#cli--command-line-argument-parsing)
@@ -605,12 +605,11 @@ println(to_string(str.length(random.randstr_alpha(8))))
 
 ## `crypto` — hashing and encryption
 
-The primitives applications actually reach for — digests, HMACs,
-password hashing, AES and RSA — with string-friendly conventions:
-digests return lowercase hex strings, and key operations return
-`Result`. `secure_compare` exists because comparing secrets with `==`
-leaks timing; use it for anything an attacker might submit guesses
-against.
+The `crypto` module provides digests, HMACs, password hashing, and AES and
+RSA encryption, with string-friendly conventions: digests return lowercase
+hexadecimal strings, and key operations return `Result`. `secure_compare`
+compares two strings in constant time; use it in place of `==` when comparing
+secrets, because `==` can leak information through its timing.
 
 | Group | Functions |
 |---|---|

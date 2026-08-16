@@ -1,25 +1,22 @@
-# The Data Stack
+# The data stack
 
-olang builds its data tools into the language: `ods` (typed columns and
-tables), `stats` (statistical inference), and `plot` (charts as SVG
-text). No import, no package, no flag — the three modules are in scope
-in every build, including the browser playground. This chapter teaches
-the whole stack: what a columnar model buys, every Series and Frame
-verb, a complete inference workflow, and how the stack composes with
-the rest of the language.
+Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
+[Language reference](language.md) · [Standard library reference](stdlib.md)
 
-Every plain `olang` block here is executed by the test suite on every
-change; blocks marked `no-run` are parse-checked only (they touch the
-file system).
+The data stack consists of three modules: `ods` (typed columns and tables),
+`stats` (statistical inference), and `plot` (charts as SVG text). The three
+modules are in scope in every build, including the browser playground, and
+require no import. This chapter describes the columnar model the stack is
+built on, every Series and Frame operation, a complete inference workflow,
+how the stack composes with the rest of the language, its measured
+performance, and the reasoning behind its design.
 
-Part of [the olang book](README.md) ·
-[Tour](tour.md) · [Language](language.md) · [Stdlib](stdlib.md)
+Every plain `olang` block is executed by the test suite; blocks marked
+`no-run` are parse-checked only, because they access the file system.
 
----
+## Table of contents
 
-## Table of Contents
-
-- [Why columns](#why-columns)
+- [The columnar model](#why-columns)
 - [Series — the typed column](#series--the-typed-column)
 - [Frames — tables of named columns](#frames--tables-of-named-columns)
 - [`stats` — from description to inference](#stats--from-description-to-inference)
@@ -32,8 +29,8 @@ Part of [the olang book](README.md) ·
 
 ## Why columns
 
-Consider computing revenue over a CSV of sales. The general-purpose
-answer is a list of records — one map per row — and a fold:
+Consider computing revenue over a CSV of sales. The general-purpose answer is
+a list of records — one map per row — and a fold:
 
 ```olang
 let rows = [
@@ -59,17 +56,16 @@ qty" is a single vectorized multiply over two arrays — no hashing, no
 boxing, no per-element interpretation — and the memory access pattern
 is exactly the sequential streaming that hardware is built to prefetch.
 
-The difference is not subtle. When
+The effect is large. When
 [`examples/dataproc/`](../examples/dataproc/) was rewritten from the
-records-and-fold pipeline above to the Frame pipeline this chapter
-teaches, the same 200,000-row CSV job went from 3.0 seconds to 0.06
-seconds — a 50× change from representation alone, in the same binary
-(measured in [the design record](#the-design-record)). That measurement is
-the design rationale for the entire stack: data work is dominated by
-representation, so the representation belongs in the runtime, beneath
-the language, where every olang program gets it for free — the same
-relationship NumPy has to Python, except built in rather than bolted
-on.
+records-and-fold pipeline above to the Frame pipeline this chapter describes,
+the same 200,000-row CSV job ran in 0.06 seconds rather than 3.0 seconds — a
+50-fold reduction from the change in representation alone, in the same binary
+(measured in [the design record](#the-design-record)). Because data work is
+dominated by representation, the columnar representation is implemented in the
+runtime, beneath the language, so that every olang program uses it without
+additional code. This is the same relationship that NumPy has to Python, with
+the stack built into the runtime rather than provided as a separate library.
 
 Two ideas carry everything that follows:
 
@@ -575,9 +571,9 @@ cold through the surface color to warm) — hand-tuned multi-stop
 gradients in the spirit of the scientific colormaps. `plot.ramp(name,
 t)` exposes the same ramps to olang code: one color for `t` in
 [0, 1], which is how `viz`'s continuous color encoding is built. Null handling matches what a chart can honestly draw: xy plots
-drop a point when either coordinate is null; the bar family refuses
-null values outright, since a bar of unknown height is a lie —
-`fill_null` or `filter` first, so the decision is visible in the code;
+drop a point when either coordinate is null; the bar family rejects
+null values, because a bar has no defined height for a missing value.
+Call `fill_null` or `filter` first, so that the decision is explicit;
 `box` drops nulls, since a distribution summary honestly tolerates
 missing observations.
 
@@ -737,11 +733,10 @@ being something to think about.
 
 ## The design record
 
-This section is the stack's design register — the problem it was built
-to solve, the decisions that shaped it, and the measurements that gated
-each phase. It is kept in the book because the discipline it records is
-part of the product: **benchmarks are the spec**, and a claim that was
-never measured is a claim this chapter does not make.
+This section records the design of the stack: the problem it was built to
+solve, the decisions that shaped it, and the measurements that gated each
+phase. Every performance claim in this chapter corresponds to a benchmark in
+the repository; claims that were not measured are not made.
 
 ### The problem
 
@@ -800,8 +795,9 @@ Rust, which is why the full stack runs in the
 
 ### Where the speed comes from
 
-Assembled levers, in order of payoff — no clever code where a crate or
-the compiler already wins:
+The stack's performance comes from the following techniques, listed in order
+of impact. Each relies on an existing crate or compiler capability where one
+is available:
 
 | Lever | Buys | How |
 |---|---|---|
@@ -885,12 +881,13 @@ memory streams where a fused kernel needs two. Measured on B2, a fused
 single pass would land around 3–4 ms sequential against the eager
 engine's 6.19 ms.
 
-**Why that didn't buy lazy.** Two facts frame it: the eager engine
-already beats the competition (parallel ods runs this exact benchmark
-1.3× ahead of NumPy — which pays the identical two-pass cost, because
-NumPy doesn't fuse either), and the win is bounded — one memory stream
-saved per intermediate, roughly a third of the traffic for a two-op
-chain. Nobody's workload is 10×'d.
+**Why this did not lead to lazy evaluation.** Two considerations bound the
+benefit. First, the eager engine is already competitive on this benchmark:
+parallel ods runs it about 1.3 times faster than NumPy, which pays the same
+two-pass cost because it does not fuse either. Second, the potential gain is
+limited to one saved memory stream per intermediate — roughly a third of the
+memory traffic for a two-operation chain — so the improvement is
+incremental, not order-of-magnitude.
 
 The three places fusion could live, and the verdicts:
 
