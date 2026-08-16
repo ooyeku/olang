@@ -1,33 +1,36 @@
 <p align="center">
-  <img src="branding/banner.svg" alt="olang — pipelines, pattern matching, batteries included" width="840">
+  <img src="branding/banner.svg" alt="olang" width="840">
 </p>
 
-**olang is the Open Language** — and it means the word literally, at three
-layers no other language offers together:
+# olang
 
-- **Open code** — a program's own structure is a stable, public data
-  format your olang code reads and transforms (`meta.parse`), so linters
-  and codemods are olang scripts, not compiler changes.
-- **Open artifacts** — a compiled binary carries its own source and a
-  checksum, and declares exactly what it may touch (`olang inspect`,
-  per-dependency capabilities): never a black box, never a silent
-  over-reacher.
-- **Open execution** — any run records and replays bit-for-bit, anywhere
-  (`olang --record` / `replay`): a bug report becomes a file.
+olang is a dynamically typed, functional programming language implemented in
+Rust. Its core features are first-class functions, pipeline composition,
+pattern matching, algebraic data types, and immutable values. The
+distribution includes a data-analysis stack (typed columns, data frames,
+statistical inference, and SVG charts), thread-based parallelism without a
+global interpreter lock, a source-based package manager, and a three-tier
+execution model.
 
-These fall out of decisions olang already made — early-stabilized syntax,
-immutable values, a small explicit effect boundary — and an incumbent
-cannot follow (Python can't freeze its AST; Go won't embed source; no
-mainstream runtime is deterministic enough to promise replay). See
-**[Openness](docs/openness.md)** for the whole story.
+A distinguishing design goal is *openness*: a program's source structure, its
+compiled artifacts, and its execution history are all represented as data
+that olang programs can inspect.
 
-Under that identity, olang is a batteries-included dynamic functional
-language: pipelines, pattern matching, algebraic data types, immutable
-values, `Result`-based errors — with a built-in data stack (Series,
-Frames, statistical inference, SVG charts), real no-GIL parallelism, a
-source-based package manager, and a three-tier runtime — interpreter →
-bytecode VM → native JIT — where every tier below the interpreter must
-agree with it exactly or refuse.
+- **Open code.** A program's abstract syntax tree is a stable, documented
+  data format. The `meta.parse` function returns it as ordinary olang values,
+  so linters and code-transformation tools are written as olang programs
+  rather than as changes to the compiler.
+- **Open artifacts.** A compiled binary embeds its own source and a checksum,
+  and declares the capabilities it is permitted to use. The `olang inspect`
+  command reads all of this back out.
+- **Open execution.** A run can be recorded to a portable trace and replayed
+  exactly, on another machine and at a later time, with `olang record` and
+  `olang replay`.
+
+These properties follow from decisions made elsewhere in the design: an
+early-stabilized syntax, immutable values, and a small, explicit boundary
+around side effects. The [Openness](docs/openness.md) chapter describes the
+mechanisms in detail.
 
 ```olang
 type Shape = enum { Circle(Float), Rect(Float, Float) }
@@ -44,77 +47,81 @@ let total = [Circle(1.0), Rect(2.0, 3.0), Circle(0.5)]
 println(`total area: ${total}`)
 ```
 
-**[The olang book](docs/README.md)** is the authoritative documentation —
-every code block in it (and in this README) is executed by the test suite.
-**[Stability](docs/stability.md)** is the authoritative statement of what
-is stable, evolving, experimental, and reserved. Where any other text
-disagrees with those two, they win.
+The [olang book](docs/README.md) is the reference documentation; every code
+block in it and in this file is executed by the test suite.
+[Stability and compatibility](docs/stability.md) is the authoritative
+statement of what is stable, evolving, and experimental.
 
-## Install and run
-
-Or don't install anything: the website's **playground** runs the whole
-language — interpreter, bytecode tier, and the full data stack —
-compiled to WebAssembly, sandboxed in your browser (`cd website && bun
-run dev`, then /playground; no code leaves the page).
+## Installation
 
 ```bash
 cargo install --path .
 
-olang script.ol            # run a program (args reach os.args())
-olang                      # REPL
-olang test                 # run `test` blocks under the current directory
-olang fmt --check .        # formatter (whitespace hygiene, AST-safe)
-olang check                # static checker: provable annotation violations
-olang --watch script.ol    # rerun on every save (the edit-run loop)
+olang script.ol            # run a program; arguments reach os.args()
+olang                      # start the REPL
+olang test                 # run test blocks under the current directory
+olang fmt --check .        # check formatting
+olang check                # report provable type-annotation violations
+olang --watch script.ol    # re-run on every save
 ```
 
-## What's in the language
+The language also runs in the browser: the website's playground compiles the
+interpreter, bytecode tier, and data stack to WebAssembly and runs them
+sandboxed in the page (`cd website && bun run dev`, then open `/playground`).
+No code leaves the browser.
 
-- **Expressions everywhere** — `if`, `match`, blocks, and loops produce
-  values; `break value` and `return` for early exits.
-- **Pattern matching** — literals, tuples, lists with `...rest`, structs,
-  enum variants, ranges, or-patterns, guards.
-- **Algebraic data types** — enums with payload constructors, validated
-  struct declarations (shape and annotated field types are checked at
-  construction), traits with runtime dispatch, `error` declarations.
-- **Gradually typed** — unannotated code is fully dynamic at zero cost;
-  every annotation is enforced at runtime on every tier, and
-  `olang check` (plus the language server) reports provable violations —
-  down to element types — before the program runs
-  ([docs/types.md](docs/types.md)).
-- **Immutability and capture-by-value closures** — values never mutate in
-  place; closures snapshot their environment.
-- **Errors as values** — `Result`, `?` propagation, `try`/`catch`.
-- **Concurrency, honestly labeled** — `spawn` runs on a real OS thread
-  (await joins it); `par_map`/`par_filter` fan pipelines — and `par for`
-  fans loop iterations — across every core with no GIL (9–13× measured
-  on compute-heavy kernels), all with spawn's snapshot semantics;
-  `Promise.delay`/`all`/`race` are deterministic, deadline-based timing
-  simulation.
-- **Modules and packages** — `use`/`share`, plus `olang.toml` packages
-  with lockfiles, checksums, a content-addressed cache, and Minimal
-  Version Selection ([docs/packages.md](docs/packages.md)).
+## Language features
 
-## The standard library
+- **Expressions.** `if`, `match`, blocks, and loops evaluate to values.
+  `return` and `break value` provide early exits.
+- **Pattern matching.** Patterns cover literals, tuples, lists with a
+  `...rest` binding, structs, enum variants, ranges, or-patterns, and guards.
+- **Algebraic data types.** Enums carry payload constructors; struct
+  declarations validate shape and annotated field types at construction;
+  traits dispatch at runtime; `error` declarations define typed error values.
+- **Gradual typing.** Unannotated code runs fully dynamically at no cost.
+  Every annotation is enforced at runtime on all three tiers, and `olang
+  check`, together with the language server, reports provable violations —
+  including element types — before the program runs. See
+  [Types and gradual typing](docs/types.md).
+- **Immutability.** Values are never mutated in place. Closures capture their
+  environment by value.
+- **Errors as values.** Fallible operations return `Result`; `?` propagates
+  errors and `try`/`catch` handles them.
+- **Parallelism.** `spawn` runs a function on an operating-system thread;
+  `par_map`, `par_filter`, and `par for` distribute work across cores without
+  a global interpreter lock. `Promise.delay`, `Promise.all`, and
+  `Promise.race` provide deterministic, deadline-based timing.
+- **Modules and packages.** Programs import with `use`; libraries are
+  `olang.toml` packages with lockfiles, checksums, a content-addressed cache,
+  and Minimal Version Selection. See [Packages and dependencies](docs/packages.md).
 
-Twenty-one native modules — `str`, `col`, `math`, `json`, `toml`, `csv`, `re`,
-`dates`, `time`, `random`, `crypto`, `base64`, `fs`, `os`, `http` (client
-and a keep-alive server), `db` (SQLite), `testing`, `dom` (the browser,
-in the wasm build), and the data stack (`ods`, `stats`, `plot`) — plus
-two olang-source modules (`colx`, `mathx`) compiled into the binary and
-differential-tested against their native twins. Reference:
-[docs/stdlib.md](docs/stdlib.md); the browser story — olang as a
-frontend language over the wasm build — has its own chapter,
-[docs/wasm.md](docs/wasm.md).
+## Standard library
+
+The standard library consists of native modules implemented in Rust, the data
+stack, and modules and packages written in olang and compiled into the
+binary. The native modules are `str`, `col`, `math`, `json`, `toml`, `csv`,
+`re`, `dates`, `time`, `random`, `crypto`, `base64`, `fs`, `os`, `http` (an
+HTTP client and a keep-alive server), `db` (SQLite), `chan` (channels),
+`proc` (subprocesses), `testing`, `meta` (the program-as-data interface), and
+`dom` (available in the WebAssembly build). The data stack adds `ods`,
+`stats`, and `plot`. The embedded olang modules are `colx` and `mathx`
+(extensions to `col` and `math`), which are differential-tested against their
+native counterparts, and the packages `cli`, `term`, `ui`, `viz`, and `dash`.
+
+The full reference is [The standard library](docs/stdlib.md). The browser
+build, including olang as a frontend language, has its own chapter,
+[olang in the browser](docs/wasm.md).
 
 ## The data stack
 
-`ods`, `stats`, and `plot` are part of the language — no import, no
-flag, in every build including the browser playground. Series are typed,
-null-aware columns with vectorized operators; Frames add the table verbs
-(CSV, `group_by`, joins); `stats` covers distributions, t-tests, χ², and
-OLS, every statistic pinned against scipy reference values; `plot`
-renders standalone SVG charts as text.
+`ods`, `stats`, and `plot` are part of every build, including the browser
+playground, and require no import. `ods` provides typed, null-aware columns
+(Series) with vectorized operators and tables (Frames) with the usual table
+operations, including CSV input, `group_by`, and joins. `stats` covers
+common distributions, t-tests, chi-squared tests, and ordinary least squares,
+with each statistic validated against SciPy reference values. `plot` renders
+standalone SVG charts.
 
 ```olang
 let prices = ods.series([12.5, 8.0, 15.25, 4.0])
@@ -127,71 +134,59 @@ let fit = stats.lm(y, x)
 println(to_string(map_get(fit, "r2") > 0.99))
 ```
 
-Measured, not asserted: reductions at NumPy parity sequentially and
-2.7× ahead in parallel; a 10M-row, 1k-group aggregation in 27.2 ms
-single-threaded against 24.0 ms for Polars on 18 threads; a 1M×20 OLS
-3.8× ahead of `numpy.linalg.lstsq`. The stack's chapter —
-teaching, full benchmark tables, and every recorded deferral:
-[docs/ods.md](docs/ods.md).
+Reductions on large columns run at parity with NumPy sequentially and roughly
+2.7 times faster in parallel; a 1M-row, 20-predictor ordinary-least-squares
+fit runs about 3.8 times faster than `numpy.linalg.lstsq`. The full benchmark
+tables, methodology, and comparison baselines are in
+[The data stack](docs/ods.md).
 
 ## Execution model
 
-Three tiers. A tree-walking interpreter is the semantic authority. Hot
-functions are promoted to a register bytecode VM (the OVM) — anything
-the OVM cannot compile *identically* is refused and stays interpreted.
-Hot numeric functions go one tier further: a Cranelift JIT compiles them
-to native machine code — type-specialized, lazy, and call-graph-aware
-(helpers, chains, and mutual recursion compile together with
-native-to-native calls; struct field access rides borrowed pointers) —
-and every guard failure deopts to bytecode, which owns all errors.
-Falling back is always correct; diverging is never acceptable.
+olang runs on three tiers. A tree-walking interpreter is the semantic
+authority. Functions that are called frequently are promoted to a register
+bytecode VM (the OVM); any function the OVM cannot compile with identical
+behavior stays on the interpreter. Frequently called numeric functions are
+compiled further, by a Cranelift JIT, to native machine code, with type
+specialization and native-to-native calls between compiled functions. Every
+guard failure in compiled code deoptimizes to the bytecode tier, which owns
+error reporting. A lower tier that cannot reproduce the interpreter's result
+exactly refuses to run the function rather than diverging.
 
-The bytecode tier covers the language people actually write — 158 of
-the 164 functions in the example corpus promote (the six holdouts are
-async and global assignment, by design). The JIT covers ints, floats,
-structs, lists, tuples, and strings: each either compiles or refuses by
-a tested rule (allocating loops, for instance, deliberately stay on
-bytecode driving native constructors). Measured: fib(30) at 4 ms, level
-with Node and Bun; N-body at 26 ms, 15× ahead of CPython; integer
-kernels 20–30× over bytecode; float kernels ~4.5×. Details and measured
-tables: [docs/internals.md](docs/internals.md),
-[docs/ovm.md](docs/ovm.md).
+The bytecode tier compiles the large majority of ordinary code; the JIT
+covers integer, float, struct, list, tuple, and string operations, each by a
+tested rule. Full details and measured tables are in
+[Architecture and internals](docs/internals.md) and
+[The execution model: OVM and JIT](docs/ovm.md).
 
 ## Examples
 
-[`examples/`](examples/) holds real programs. The flagship is
-[`demo/`](examples/demo/) — **Harborline**, a long-running
-harbor-operations simulator (threaded unload crews over channels,
-SQLite ledger, tariff expression trees, an RSA-signed hmac digest
-chain, daily self-checked invariants) built to genuinely soak-test the
-language; [docs/demo.md](docs/demo.md) reads it as a design study for
-robust olang systems. Alongside it — a task CLI, log analyzer,
-template engine, workflow engine, parser combinators, a regex engine, a
-JSON Schema validator, a markdown converter, an HTTP notes API, a small
-Lisp interpreter written in olang (`minilisp/`), a full-stack issue
-tracker (`app/`: SQLite JSON API plus its own browser frontend, all
-served by `olang main.ol`), a CSV→Frame→aggregate pipeline (`dataproc/`),
-a full statistical study — permutation test and bootstrap fanned over
-`par_map`, OLS, SVG charts, 10,000 subjects in under half a second
-(`statlab/`) — and data-parallel prime counting that measures its own
-speedup with `par_map` and `par for` (`parmap/`) — all run by the
-self-hosted harness
-(`olang run_all.ol`) and in CI.
+[`examples/`](examples/) contains complete programs. The largest is
+[`demo/`](examples/demo/) (Harborline), a long-running harbor-operations
+simulator that uses threaded worker crews over channels, a SQLite ledger,
+tariff expression trees, an RSA-signed digest chain, and daily self-checked
+invariants; [the case study](docs/demo.md) reads it as a design study for
+robust olang programs. The directory also includes a task CLI, a log
+analyzer, a template engine, a workflow engine, a parser combinator library,
+a regular-expression engine, a JSON Schema validator, a Markdown converter,
+an HTTP notes API, a Lisp interpreter written in olang, a full-stack issue
+tracker whose frontend runs in the browser, and several data-analysis
+programs. The self-hosted harness (`olang run_all.ol`) runs the whole set,
+and CI runs it on every change.
 
 ## Maturity
 
-olang is a young language with an unusual amount of testing discipline
-(950+ tests across 49 binaries; doc examples, tier and JIT agreement, and
-differential stdlib tests in CI). It is well suited to scripts, teaching, and
-experimentation; treat long-running services and dependency-heavy
-projects as adventurous. The honest, current capability statement always
-lives in [docs/stability.md](docs/stability.md).
+olang is a young language with extensive automated testing, including
+executed documentation examples, cross-tier and JIT agreement tests, and
+differential tests of the standard library. It is well suited to scripts,
+teaching, and experimentation. Long-running services and dependency-heavy
+projects should be considered experimental. The current, authoritative
+capability statement is in [Stability and compatibility](docs/stability.md).
 
 ## License
 
 MIT
 
 <p align="center">
-  <img src="branding/mascot.svg" alt="Ollie, the olang otter, floating with the o> pebble" width="180"><br>
+  <img src="branding/mascot.svg" alt="Ollie, the olang otter" width="180"><br>
   <sub>Ollie, the olang otter</sub>
 </p>

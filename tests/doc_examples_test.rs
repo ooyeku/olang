@@ -110,6 +110,11 @@ fn readme_examples_work() {
 }
 
 #[test]
+fn introduction_chapter_examples_work() {
+    run_doc_file("docs/introduction.md", include_str!("../docs/introduction.md"));
+}
+
+#[test]
 fn language_reference_examples_work() {
     run_doc_file("docs/language.md", include_str!("../docs/language.md"));
 }
