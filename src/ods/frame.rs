@@ -79,6 +79,10 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("frame", 1),
     ("read_csv", 1),
     ("read_csv_file", 1),
+    ("open_csv", 1),
+    ("next_chunk", 2),
+    ("rows_read", 1),
+    ("at_end", 1),
     ("to_csv", 1),
     ("write_csv", 2),
     ("frame_from_records", 1),
@@ -232,6 +236,36 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                     )))))),
                 },
             }
+        }
+        "open_csv" => {
+            let path = want_string(func, &args, 0)?;
+            open_csv(&path)
+        }
+        "next_chunk" => {
+            let r = reader_of(func, &args)?;
+            let n = match args.get(1) {
+                Some(Value::Integer(n)) if *n >= 0 => *n as usize,
+                _ => return Err(format!("ods.{}: argument 2 must be a row count", func)),
+            };
+            next_chunk(r, n)
+        }
+        "rows_read" => {
+            let r = reader_of(func, &args)?;
+            r.own_thread()?;
+            let st = r
+                .state
+                .lock()
+                .map_err(|_| "csv reader is unusable".to_string())?;
+            Ok(Value::Integer(st.delivered as i64))
+        }
+        "at_end" => {
+            let r = reader_of(func, &args)?;
+            r.own_thread()?;
+            let st = r
+                .state
+                .lock()
+                .map_err(|_| "csv reader is unusable".to_string())?;
+            Ok(Value::Boolean(st.done))
         }
         // Serialization cannot fail — every Scalar has a text form — so it
         // returns the string outright.
@@ -576,4 +610,211 @@ fn frame_from_records(records: &[Value]) -> Result<Value, String> {
         pairs.push((name, col));
     }
     Frame::new(pairs).map(OdsFrame::into_value).map_err(e)
+}
+
+// ── streaming CSV ─────────────────────────────────────────────────────
+//
+// A bounded-memory reader: it holds an open file and its position, and
+// hands back one Frame per call. Reading a file larger than memory is
+// then an ordinary olang loop.
+//
+// This is a *handle* rather than a fold taking a callback, and both of
+// the reasons are forced rather than chosen. A callback cannot
+// accumulate: `(chunk) => { total = total + chunk }` is refused by the
+// capture rule, because the write lands on the closure's snapshot. And a
+// fold taking an olang lambda cannot live in this module at all —
+// `OvmModule::dispatch` receives `(func, args)` and no interpreter, which
+// is exactly what lets both tiers dispatch identically. A handle needs
+// neither, and it is also the only shape that is not quadratic: a fold
+// over chunks re-read from offset zero would rescan the prefix every
+// time.
+//
+// Like a cell, a reader is confined to the thread that created it. It is
+// a mutable location — the file position — and the guarantee that no two
+// threads reach one of those is what makes olang's parallelism lock-free.
+
+/// An open CSV file, its header, and its position.
+///
+/// The mutex is uncontended by construction (only the owning thread ever
+/// reaches it) and exists to satisfy the `Send + Sync` every `Value` must
+/// have.
+struct CsvReader {
+    path: String,
+    owner: std::thread::ThreadId,
+    owner_label: String,
+    state: std::sync::Mutex<CsvReaderState>,
+}
+
+struct CsvReaderState {
+    headers: Vec<String>,
+    records: csv::StringRecordsIntoIter<std::io::BufReader<std::fs::File>>,
+    /// Rows handed out so far, for `ods.rows_read`.
+    delivered: usize,
+    done: bool,
+}
+
+impl std::fmt::Debug for CsvReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<csv reader {}>", self.path)
+    }
+}
+
+impl NativeObject for CsvReader {
+    fn module(&self) -> &'static str {
+        "ods"
+    }
+    fn type_name(&self) -> &'static str {
+        "CsvReader"
+    }
+    fn display(&self) -> String {
+        format!("<csv reader {}>", self.path)
+    }
+    fn native_eq(&self, other: &dyn NativeObject) -> bool {
+        // Identity, like a cell: two readers over the same path are two
+        // distinct positions and are not interchangeable.
+        other
+            .as_any()
+            .downcast_ref::<CsvReader>()
+            .is_some_and(|o| std::ptr::eq(self, o))
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn confined_to(&self) -> Option<std::thread::ThreadId> {
+        Some(self.owner)
+    }
+}
+
+impl CsvReader {
+    fn own_thread(&self) -> Result<(), String> {
+        if std::thread::current().id() == self.owner {
+            return Ok(());
+        }
+        Err(format!(
+            "csv reader escaped its thread: this reader was opened on {} and \
+             cannot be read from {}. A reader holds a file position, which is \
+             mutable state — open one per thread, or send the rows through a \
+             channel",
+            self.owner_label,
+            match std::thread::current().name() {
+                Some("main") => "the main thread".to_string(),
+                Some(name) => format!("thread '{}'", name),
+                None => "an unnamed thread".to_string(),
+            }
+        ))
+    }
+}
+
+fn reader_of<'a>(func: &str, args: &'a [Value]) -> Result<&'a CsvReader, String> {
+    match args.first() {
+        Some(Value::Native(h)) => {
+            h.0.as_any()
+                .downcast_ref::<CsvReader>()
+                .ok_or_else(|| format!("ods.{}: argument 1 must be a CsvReader", func))
+        }
+        other => Err(format!(
+            "ods.{}: argument 1 must be a CsvReader, got {}",
+            func,
+            other.map(|v| v.type_name()).unwrap_or_default()
+        )),
+    }
+}
+
+fn open_csv(path: &str) -> Result<Value, String> {
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(err) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "ods.open_csv: {}: {}",
+                path, err
+            ))))));
+        }
+    };
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(std::io::BufReader::new(file));
+    let headers: Vec<String> = match rdr.headers() {
+        Ok(h) => h.iter().map(|s| s.to_string()).collect(),
+        Err(err) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "ods.open_csv: {}: {}",
+                path, err
+            ))))));
+        }
+    };
+    let reader = CsvReader {
+        path: path.to_string(),
+        owner: std::thread::current().id(),
+        owner_label: match std::thread::current().name() {
+            Some("main") => "the main thread".to_string(),
+            Some(name) => format!("thread '{}'", name),
+            None => "an unnamed thread".to_string(),
+        },
+        state: std::sync::Mutex::new(CsvReaderState {
+            headers,
+            records: rdr.into_records(),
+            delivered: 0,
+            done: false,
+        }),
+    };
+    Ok(Value::Ok(Box::new(Value::Native(NativeHandle::new(
+        reader,
+    )))))
+}
+
+/// Pull up to `n` rows. The Frame always carries the file's columns, so a
+/// pipeline written against it keeps working on the final short chunk and
+/// on the empty one that ends the loop.
+fn next_chunk(reader: &CsvReader, n: usize) -> Result<Value, String> {
+    reader.own_thread()?;
+    if n == 0 {
+        return Err(
+            "ods.next_chunk: chunk size must be at least 1 (a zero-row chunk \
+             would end the loop without reading anything)"
+                .to_string(),
+        );
+    }
+    let mut st = reader
+        .state
+        .lock()
+        .map_err(|_| "csv reader is unusable: the thread reading it panicked".to_string())?;
+
+    let mut cells: Vec<Vec<String>> = vec![Vec::new(); st.headers.len()];
+    let mut taken = 0;
+    while taken < n {
+        match st.records.next() {
+            None => {
+                st.done = true;
+                break;
+            }
+            Some(Err(err)) => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                    "ods.next_chunk: {}: {}",
+                    reader.path, err
+                ))))));
+            }
+            Some(Ok(record)) => {
+                for (c, cell) in cells.iter_mut().enumerate() {
+                    cell.push(record.get(c).unwrap_or("").to_string());
+                }
+                taken += 1;
+            }
+        }
+    }
+    st.delivered += taken;
+
+    // Each chunk infers its own column types, which is the price of not
+    // reading the file twice: a column that is all-Int in one chunk and
+    // has a decimal in the next comes back Int then Float. Callers that
+    // need one type across the whole file should say so with a cast.
+    let pairs = st
+        .headers
+        .iter()
+        .cloned()
+        .zip(cells)
+        .map(|(name, raw)| (name, infer_column(raw)))
+        .collect();
+    Frame::new(pairs)
+        .map(|f| Value::Ok(Box::new(OdsFrame::into_value(f))))
+        .map_err(e)
 }

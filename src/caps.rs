@@ -410,7 +410,7 @@ pub fn required(full_name: &str) -> Option<CapUse> {
     // demand `fs` at the matching level, so a program granted `db` and
     // `net` but not `fs` cannot read a CSV off disk through `ods` — the
     // latent-capability hole `db.open` had before it was gated.
-    if full_name == "ods.read_csv_file" {
+    if full_name == "ods.read_csv_file" || full_name == "ods.open_csv" {
         return Some(CapUse::FsRead);
     }
     if full_name == "ods.write_csv" {
@@ -688,6 +688,12 @@ mod tests {
         assert_eq!(required("db.open"), Some(CapUse::Db));
         // ods is pure except at the two points it touches the filesystem
         assert_eq!(required("ods.read_csv_file"), Some(CapUse::FsRead));
+        assert_eq!(required("ods.open_csv"), Some(CapUse::FsRead));
+        // `next_chunk` reads from a handle already obtained under a grant,
+        // the way a Unix read(2) needs no fresh permission for an open fd.
+        // Acquisition is the gate; the handle carries the authority, and
+        // passing one to a dependency is deliberate delegation.
+        assert_eq!(required("ods.next_chunk"), None);
         assert_eq!(required("ods.write_csv"), Some(CapUse::FsWrite));
         assert_eq!(required("ods.read_csv"), None);
         assert_eq!(required("ods.to_csv"), None);

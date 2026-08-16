@@ -343,6 +343,56 @@ The inverse, `ods.to_records(f)`, turns a Frame back into a list of
 maps — the exit ramp for row-at-a-time output like printing a report
 or serializing JSON.
 
+### Files larger than memory
+
+`ods.read_csv_file` holds the whole table at once, which is the right
+shape until the file no longer fits. `ods.open_csv` returns a reader that
+hands back one chunk at a time, each chunk an ordinary Frame with the
+file's columns:
+
+```olang no-run
+let r = unwrap(ods.open_csv("events.csv"))
+let mut total = 0.0
+loop {
+    let chunk = unwrap(ods.next_chunk(r, 50000))
+    if ods.n_rows(chunk) == 0 => break
+    total = total + ods.sum(ods.column(chunk, "amount"))
+}
+println(to_string(total))
+```
+
+Only the current chunk is resident, so the memory a program uses is set
+by the chunk size rather than the file size: the loop above costs the
+same on a one-million-row file as on a two-hundred-thousand-row one.
+Nothing else changes — a chunk is a Frame, so every transform, join, and
+aggregation in this chapter applies to it unmodified.
+
+The reader ends when a chunk comes back with zero rows. That final empty
+chunk still carries the file's columns, so a pipeline written against a
+chunk does not need a special case for it. `ods.rows_read(r)` reports how
+many rows have been delivered so far and `ods.at_end(r)` whether the file
+is exhausted; asking for fewer than one row per chunk is refused, since a
+zero-row chunk is the loop's own stopping signal.
+
+A reader is not a value like a Frame. It holds a position in a file —
+mutable state — and so it belongs to the thread that opened it. Reaching
+one from a `spawn`ed task or sending one down a channel is refused, the
+same rule and for the same reason as [`cell`](concurrency.md#cell). To
+process chunks in parallel, read on one thread and send the chunks:
+
+```olang no-run
+let r = unwrap(ods.open_csv("events.csv"))
+let mut totals = []
+loop {
+    let chunk = unwrap(ods.next_chunk(r, 50000))
+    if ods.n_rows(chunk) == 0 => break
+    totals = totals + [spawn ods.sum(ods.column(chunk, "amount"))]
+}
+```
+
+`ods.open_csv` reaches the filesystem, so like `read_csv_file` it demands
+the `fs` capability at read level.
+
 ### Looking at one
 
 `ods.columns(f)` lists the column names, `ods.column(f, name)`

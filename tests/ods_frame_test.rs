@@ -371,3 +371,139 @@ ods.to_csv(f)
     )
     .expect("tier agreement");
 }
+
+// ── DP2: the streaming reader ─────────────────────────────────────────
+
+/// Build a CSV of `n` rows and hand back its path.
+fn big_csv(tag: &str, n: usize) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("olang_stream_{}_{}", tag, std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("data.csv");
+    let mut text = String::from("id,region,amount\n");
+    for i in 0..n {
+        text.push_str(&format!(
+            "{},{},{}\n",
+            i,
+            ["east", "west"][i % 2],
+            (i % 7) + 1
+        ));
+    }
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+#[test]
+fn streaming_a_file_in_chunks_matches_reading_it_whole() {
+    // The property that makes the reader worth having: a windowed pass and
+    // a whole-file pass are the same computation.
+    let path = big_csv("agree", 2500);
+    let src = format!(
+        r#"
+let r = unwrap(ods.open_csv("{p}"))
+let mut total = 0
+let mut rows = 0
+loop {{
+    let chunk = unwrap(ods.next_chunk(r, 300))
+    let n = ods.n_rows(chunk)
+    if n == 0 => break
+    total = total + ods.sum(ods.column(chunk, "amount"))
+    rows = rows + n
+}}
+let whole = unwrap(ods.read_csv_file("{p}"))
+show([rows, ods.rows_read(r), total == ods.sum(ods.column(whole, "amount")), ods.at_end(r)])
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("stream");
+    assert_eq!(out.to_string(), "\"[2500, 2500, true, true]\"".to_string());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn the_last_chunk_is_short_and_the_next_one_is_empty() {
+    // 2500 rows in 300s: eight full chunks, one of 100, then the empty
+    // chunk that ends the loop. The empty one still carries the columns,
+    // so a pipeline written against a chunk does not fall over on it.
+    let path = big_csv("tail", 2500);
+    let src = format!(
+        r#"
+let r = unwrap(ods.open_csv("{p}"))
+let mut sizes = []
+loop {{
+    let c = unwrap(ods.next_chunk(r, 300))
+    sizes = sizes + [ods.n_rows(c)]
+    if ods.n_rows(c) == 0 => break
+}}
+let last = unwrap(ods.next_chunk(r, 300))
+show([len(sizes), sizes[8], sizes[9], ods.n_cols(last)])
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("tail");
+    assert_eq!(out.to_string(), "\"[10, 100, 0, 3]\"".to_string());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn a_reader_is_confined_to_the_thread_that_opened_it() {
+    // A reader holds a file position — mutable state — so two threads
+    // reaching one would be exactly the shared-mutable-state hole the
+    // language's parallelism depends on not existing. Same rule as `cell`.
+    let path = big_csv("conf", 50);
+    let src = format!(
+        r#"
+let r = unwrap(ods.open_csv("{p}"))
+match task.join(spawn ods.next_chunk(r, 5)) {{ Err(e) => "refused", v => "LEAKED" }}
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("confinement");
+    assert_eq!(out.to_string(), "\"refused\"".to_string());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn a_channel_refuses_to_carry_a_reader() {
+    // The one crossing that holds the value being sent. This passes
+    // because `chan.send` asks the value whether it is confined rather
+    // than naming the types it knows — the reader was never mentioned
+    // there.
+    let path = big_csv("chan", 50);
+    let src = format!(
+        r#"
+let r = unwrap(ods.open_csv("{p}"))
+chan.send(chan.new(), r)
+"#,
+        p = path.to_string_lossy()
+    );
+    let err = eval(&src, None).expect_err("a reader must not cross a channel");
+    assert!(err.contains("CsvReader"), "{err}");
+    assert!(err.contains("cannot be sent"), "{err}");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn a_zero_row_chunk_is_refused_rather_than_looping_forever() {
+    // `next_chunk(r, 0)` would return an empty Frame, which is the loop's
+    // termination signal — so a program asking for zero rows would exit
+    // its loop having read nothing, silently. Misuse raises (the 0.64
+    // rule) rather than quietly producing a wrong answer.
+    let path = big_csv("zero", 10);
+    let src = format!(
+        "let r = unwrap(ods.open_csv(\"{p}\"))\nods.next_chunk(r, 0)\n",
+        p = path.to_string_lossy()
+    );
+    let err = eval(&src, None).expect_err("zero must be refused");
+    assert!(err.contains("at least 1"), "{err}");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn opening_a_missing_file_is_an_err() {
+    let out = eval(
+        "show(is_err(ods.open_csv(\"/nope/missing/stream.csv\")))\n",
+        None,
+    )
+    .expect("no raise");
+    assert_eq!(out.to_string(), "\"true\"".to_string());
+}

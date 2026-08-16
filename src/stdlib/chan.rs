@@ -182,15 +182,17 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     }
     let value = args.pop().expect("len checked");
     // A channel is the one thread crossing where the value being sent is in
-    // hand, so the cell-confinement rule is enforced here — at the send,
-    // where the mistake is — instead of on the receiver's first access.
-    if crate::stdlib::cell::contains_cell(&value) {
-        return Err(
-            "chan.send: a cell cannot be sent through a channel — a cell belongs \
-                    to the thread that created it. Send its contents instead \
-                    (`chan.send(ch, cell.get(c))`)"
-                .into(),
-        );
+    // hand, so the confinement rule is enforced here — at the send, where
+    // the mistake is — instead of on the receiver's first access.
+    if let Some(kind) = crate::stdlib::cell::confined_within(&value) {
+        return Err(format!(
+            "chan.send: a {} cannot be sent through a channel — it belongs to \
+             the thread that created it. Send what it holds instead \
+             (`chan.send(ch, cell.get(c))` for a cell; for a reader, send the \
+             rows rather than the reader)",
+            kind
+        )
+        .into());
     }
     let chan = chan_of(&args[0])?;
     // Clone the sender out of its lock: a bounded send may block until a

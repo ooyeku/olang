@@ -146,6 +146,10 @@ impl NativeObject for CellObject {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn confined_to(&self) -> Option<ThreadId> {
+        Some(self.owner)
+    }
 }
 
 /// The `cell` module. It is *callable*: `cell(0)` is `cell.new(0)`, which
@@ -183,23 +187,30 @@ fn cell_of(value: &Value) -> Result<&CellObject, String> {
     }
 }
 
-/// Does this value contain a cell anywhere inside it? Used by `chan.send`,
-/// the one thread crossing that holds the value being sent — a cell nested
-/// in a list or a struct field is exactly the case a shallow check would
-/// wave through.
-pub fn contains_cell(value: &Value) -> bool {
+/// The name of the thread-confined value inside `value`, if there is one.
+/// Used by `chan.send`, the one thread crossing that holds the value being
+/// sent — a confined value nested in a list or a struct field is exactly
+/// the case a shallow check would wave through.
+///
+/// Asks each native whether it is confined rather than naming the types it
+/// knows about, so a new confined native is refused here without anyone
+/// remembering to come back and add it.
+pub fn confined_within(value: &Value) -> Option<&'static str> {
+    fn first<'a>(mut it: impl Iterator<Item = &'a Value>) -> Option<&'static str> {
+        it.find_map(confined_within)
+    }
     match value {
-        Value::Native(h) => h.0.as_any().downcast_ref::<CellObject>().is_some(),
-        Value::List(items) | Value::Tuple(items) => items.iter().any(contains_cell),
-        Value::Map(entries) => entries.values().any(contains_cell),
-        Value::Struct { fields, .. } => fields.values().any(contains_cell),
-        Value::Ok(inner) | Value::Err(inner) => contains_cell(inner),
+        Value::Native(h) => h.0.confined_to().map(|_| h.0.type_name()),
+        Value::List(items) | Value::Tuple(items) => first(items.iter()),
+        Value::Map(entries) => first(entries.values()),
+        Value::Struct { fields, .. } => first(fields.values()),
+        Value::Ok(inner) | Value::Err(inner) => confined_within(inner),
         Value::Enum { variant_data, .. } => match variant_data {
-            crate::ast::EnumVariantData::Tuple(items) => items.iter().any(contains_cell),
-            crate::ast::EnumVariantData::Struct(fields) => fields.values().any(contains_cell),
-            crate::ast::EnumVariantData::Unit => false,
+            crate::ast::EnumVariantData::Tuple(items) => first(items.iter()),
+            crate::ast::EnumVariantData::Struct(fields) => first(fields.values()),
+            crate::ast::EnumVariantData::Unit => None,
         },
-        _ => false,
+        _ => None,
     }
 }
 

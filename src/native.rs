@@ -41,6 +41,21 @@ pub trait NativeObject: fmt::Debug + Send + Sync {
 
     /// Downcast support for the owning module's kernels.
     fn as_any(&self) -> &dyn Any;
+
+    /// Is this value confined to one thread? `Some(id)` names the thread
+    /// that created it; the default `None` means the value is free to
+    /// cross, which is true of every immutable native.
+    ///
+    /// Confinement is what keeps olang's central guarantee structural: no
+    /// two threads can reach the same mutable location, so the absence of
+    /// data races is not a matter of discipline. `cell` was the first such
+    /// value and the check was written against `CellObject` by name; that
+    /// only works until there is a second one, so it asks the value
+    /// instead. A new confined native gets `chan.send`'s refusal for free,
+    /// which is the crossing most likely to be forgotten.
+    fn confined_to(&self) -> Option<std::thread::ThreadId> {
+        None
+    }
 }
 
 /// Shared handle to a native value: the single allocation both tiers hold.

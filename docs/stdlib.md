@@ -1311,10 +1311,10 @@ are vectorized (`s * 2.0` runs one kernel over the whole column;
 `s > 2` yields a Bool mask for `ods.filter`), nulls propagate through
 arithmetic and are skipped by reductions, and the Frame verbs —
 `read_csv`, `select`, `with_column`, `filter`, `sort_by`, `group_by`,
-`join`, `to_records` — all chain with `|>`. `read_csv_file` and
-`write_csv` reach the filesystem and are the module's only two calls that
-demand the `fs` capability; `to_csv` serializes to text without touching
-disk.
+`join`, `to_records` — all chain with `|>`. `read_csv_file`,
+`open_csv`, and `write_csv` reach the filesystem and are the module's
+only calls that demand the `fs` capability; `to_csv` serializes to text
+without touching disk.
 
 ```olang
 let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,80.0,4\n")
@@ -1348,6 +1348,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Group | Verbs |
 |---|---|
 | Build | `frame(columns)` · `frame_from_records(records)` · `read_csv(text)` |
+| Files | `read_csv_file(path)` · `write_csv(f, path)` · `to_csv(f)` · `open_csv(path)` · `next_chunk(r, n)` · `rows_read(r)` · `at_end(r)` |
 | Inspect | `columns(f)` · `column(f, name)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `to_records(f)` |
 | Shape | `select(f, names)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
 | Aggregate / join | `group_by(f, key, aggs)` · `join(a, b, key)` · `join_left(a, b, key)` |

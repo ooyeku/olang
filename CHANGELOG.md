@@ -9,8 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **The data stack can reach files, and write them (Campaign 2, DP2 —
-  first half).** `ods` could parse CSV *text* and had no way to emit
+- **`ods` streams files larger than memory (Campaign 2, DP2).**
+  `read_csv_file` holds the whole table at once, which is the right shape
+  until the file no longer fits. `ods.open_csv` returns a reader that
+  hands back one chunk at a time, each an ordinary Frame:
+
+  ```olang
+  let r = unwrap(ods.open_csv("events.csv"))
+  let mut total = 0.0
+  loop {
+      let chunk = unwrap(ods.next_chunk(r, 50000))
+      if ods.n_rows(chunk) == 0 => break
+      total = total + ods.sum(ods.column(chunk, "amount"))
+  }
+  ```
+
+  Memory is set by the chunk size rather than the file size. Measured
+  over a 1M-row CSV: the whole-file read peaks at 196.5MB, the streamed
+  pass at **12.2MB** — 0.2MB more than the same pass over a file five
+  times smaller. `ods.rows_read(r)` and `ods.at_end(r)` report progress;
+  the final chunk is empty but still carries the file's columns, so a
+  pipeline written against a chunk needs no special case for it. Asking
+  for zero rows is refused rather than silently ending the loop.
+  `open_csv` demands `fs` at read level, like `read_csv_file`.
+
+  Two constraints from the language picked this shape. A callback API —
+  `(chunk) => { total = total + chunk }` — is refused by 0.62's capture
+  rule, the accumulator being a captured write; and a fold taking an
+  olang lambda cannot live in `ods` at all, because `OvmModule::dispatch`
+  receives `(func, args)` and no interpreter, which is exactly what lets
+  both tiers dispatch identically. The loop needs no closure, so it needs
+  no exception.
+
+- **Thread confinement is now a property a native value can declare.**
+  `cell` was confined to its creating thread by code that named cells
+  specifically. That check moved onto the `NativeObject` trait as
+  `confined_to()`, so `spawn` and `chan.send` refuse any confined value
+  without knowing what it is. The CSV reader — which holds a file
+  position, and so is exactly as unsafe to share as a cell — was refused
+  at both boundaries before a line was written for it.
+
+- **The data stack can reach files, and write them (Campaign 2, DP2).** `ods` could parse CSV *text* and had no way to emit
   anything at all, so the chapter described an end-to-end story the stack
   could not finish. Three functions close the loop:
 

@@ -1958,6 +1958,34 @@ impl HelpSystem {
             "read a CSV file into a Frame, inferring column types. Requires the fs capability at read level; an unreadable file or malformed CSV is an Err",
         );
         self.doc(
+            "ods.open_csv",
+            "ods.open_csv(path)",
+            "Result<CsvReader, Error>",
+            "ods",
+            "open a CSV file for streaming: the reader holds its position, so a file larger than memory is read one chunk at a time. Requires the fs capability at read level; the reader is confined to the thread that opened it",
+        );
+        self.doc(
+            "ods.next_chunk",
+            "ods.next_chunk(reader, rows)",
+            "Result<Frame, Error>",
+            "ods",
+            "pull up to `rows` more rows as a Frame; the Frame is empty when the file is exhausted, which is how a streaming loop ends",
+        );
+        self.doc(
+            "ods.rows_read",
+            "ods.rows_read(reader)",
+            "Int",
+            "ods",
+            "how many rows this reader has handed out so far",
+        );
+        self.doc(
+            "ods.at_end",
+            "ods.at_end(reader)",
+            "Bool",
+            "ods",
+            "whether the reader has reached the end of its file",
+        );
+        self.doc(
             "ods.to_csv",
             "ods.to_csv(f)",
             "String",
