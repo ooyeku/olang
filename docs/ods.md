@@ -709,10 +709,10 @@ Two complete worked programs extend these patterns to full scale:
 
 ## Performance characteristics
 
-The stack's performance claims are measured, not asserted — the full
-methodology, benchmark code, and every recorded revision live in
-[the design record below](#the-design-record). The shape of the results,
-on 10M-element columns against NumPy and 10M-row tables against Polars:
+Every performance figure in this section is produced by a benchmark in the
+repository; the methodology, benchmark code, and recorded revisions are in
+[the design record below](#the-design-record). The results, on 10M-element
+columns against NumPy and 10M-row tables against Polars, are as follows:
 
 | Operation | ods | Reference | Standing |
 |---|---|---|---|

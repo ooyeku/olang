@@ -381,11 +381,11 @@ closures, a seeded RNG), reproducing the inputs reproduces the entire
 run — the same random rolls, the same timestamps, the same environment,
 down to the last digit.
 
-The `.olt` trace **embeds the program source**, so it is self-contained:
-replay works from a directory where the program does not exist, on
-another machine, months later. A bug report becomes a file. And a
-*crashed* run records too — the trace is written on the way down — so the
-failure replays exactly, as many times as you need to understand it.
+The `.olt` trace embeds the program source, so it is self-contained: replay
+works from a directory where the program does not exist, on another machine,
+at a later time. A crashed run is also recorded — the trace is written as the
+run fails — so the failure replays exactly and can be re-examined as many
+times as needed.
 
 Replay is honest about drift. If the program's sequence of
 nondeterministic calls no longer matches the trace — a *different* call,
