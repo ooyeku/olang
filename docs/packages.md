@@ -1,15 +1,27 @@
-# Packages
+# Packages and dependencies
 
-Part of [the olang book](README.md) ·
-[Tour](tour.md) · [Language](language.md) · [Standard Library](stdlib.md)
+Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
+[Language reference](language.md) · [Standard library reference](stdlib.md)
 
-olang has a source-based package manager: a package is a directory of `.ol`
-files plus an `olang.toml` manifest. There is no build step and no compiled
-artifact — dependencies are fetched as source and resolved by the same `use`
-mechanism as local modules, so a dependency behaves exactly like code you
-wrote, minus the writing.
+olang has a source-based package manager. A package is a directory of `.ol`
+files with an `olang.toml` manifest. There is no build step and no compiled
+artifact: dependencies are fetched as source and resolved by the same `use`
+mechanism as local modules, so a dependency is used the same way as code
+written in the same project. The package commands are provided by the
+companion tool `otc`.
 
-The package commands live in the companion tool, `otc`.
+## Table of contents
+
+- [Starting a package](#starting-a-package)
+- [The manifest](#the-manifest)
+- [Commands](#commands)
+- [In the REPL](#in-the-repl)
+- [The lockfile](#the-lockfile)
+- [Version resolution (MVS)](#version-resolution-mvs)
+- [The registry](#the-registry)
+- [Trust model](#trust-model)
+- [Capabilities](#capabilities)
+- [The transparent binary](#the-transparent-binary)
 
 ## Starting a package
 
@@ -276,8 +288,8 @@ manifest with no `[capabilities]`, runs unrestricted, so this is
 opt-in and never breaks existing code. A denied call is a runtime
 error naming the capability, the call, and the grant that refused it.
 
-**Per-dependency attenuation** is the part no mainstream ecosystem
-has. A dependency can be granted *less* than the app, never more:
+**Per-dependency attenuation** grants a dependency fewer capabilities than
+the application, never more:
 
 ```toml
 [capabilities.dependencies.leftpad]
@@ -295,9 +307,10 @@ database (`:memory:`) needs no `fs`.
 Enforcement is by *attribution*: when code that lives in `leftpad`'s
 directory calls a gated builtin, `leftpad`'s grant applies — the
 intersection of the app's capabilities and the attenuation. A
-supply-chain compromise that adds `fs`/`net` behaviour to a dependency
-that was never granted it dies at the gate rather than shipping. A
-named attenuation for a package that is not actually a dependency is
+supply-chain compromise that adds `fs` or `net` behavior to a dependency
+that was never granted those capabilities is stopped at the boundary rather
+than taking effect. A named attenuation for a package that is not actually a
+dependency is
 an error, so a typo can never silently grant nothing to the wrong
 name.
 

@@ -1,30 +1,23 @@
-# olang in the Browser
+# olang in the browser
 
-A web application normally means two languages: one for the server and
-JavaScript for the page, with a translation layer — JSON shapes, DTOs,
-duplicated validation — standing between them. olang compiles to
-WebAssembly, and that changes the shape of the problem: **one language
-end to end**. A single olang process serves the API, serves the page,
-and serves the frontend's *olang source*; the browser loads the
-language as wasm and runs that source against the real DOM. The
-frontend and the backend are two programs in one language, one of
-which happens to execute inside a browser.
+Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
+[Language reference](language.md) · [Standard library reference](stdlib.md) ·
+[The data stack](ods.md)
 
-This chapter tells that story whole: the architecture that makes it
-work, the `dom` module that makes a page programmable, the patterns
-that make browser olang simple rather than merely possible, and a
-guided reading of a complete production-shaped frontend. Code blocks
-that drive a browser are marked `no-run` — they are parse-checked by
-the test suite but need a page to execute; everything they show is
-running code from [`examples/app/`](../examples/app/).
+olang compiles to WebAssembly, so the same language can be used for both a
+web server and the page it serves. A single olang process can serve an API,
+serve the page, and serve the frontend's olang source; the browser loads the
+language as WebAssembly and runs that source against the DOM. The frontend
+and the backend are then two programs written in one language, one of which
+runs in the browser.
 
-Part of [the olang book](README.md) ·
-[Tour](tour.md) · [Language](language.md) · [Stdlib](stdlib.md) ·
-[The Data Stack](ods.md)
+This chapter describes the architecture that supports this, the `dom` module
+that makes a page programmable, the patterns used to write browser olang,
+and a reading of a complete frontend. Code blocks that drive a browser are
+marked `no-run`: they are parse-checked by the test suite but need a page to
+execute. The code they show runs in [`examples/app/`](../examples/app/).
 
----
-
-## Table of Contents
+## Table of contents
 
 - [The same language, end to end](#the-same-language-end-to-end)
 - [The architecture](#the-architecture)
@@ -53,11 +46,12 @@ the browser. Start it and look at what the one process serves:
 | `GET /olang.wasm` | the olang language itself, compiled to WebAssembly |
 | `GET /api/...` | the JSON API, handled by the same `http.serve` |
 
-Three more pages ride the same shim and link to each other from a
-shared nav: `/orbit.html` (an animated canvas scene), `/notes.html` (a
-routed SPA with localStorage persistence), and `/primes.html` (a Web
-Worker running a second olang). Each serves its `.ol` source as plain
-text too — every demo is view-source all the way down.
+Three more pages use the same shim and link to each other through a shared
+navigation bar: `/orbit.html` (an animated canvas scene), `/notes.html` (a
+routed single-page application with localStorage persistence), and
+`/primes.html` (a Web Worker running a second olang instance). Each page also
+serves its `.ol` source as plain text, so the source of every demo can be
+viewed directly.
 
 The browser fetches the wasm build and the olang source, instantiates
 the language, and runs `app.ol`. From that moment the page is driven
@@ -553,13 +547,14 @@ from the event for assignee and points edits; `on_filter_click` and
 `on_sort_click` drive the hidden state inputs and reload. Comments
 POST and re-open the drawer.
 
-**Boot.** Twelve `dom.on` registrations — every one on an element that
-exists at boot — and a first `reload()`. There is no step five.
+**Boot.** Twelve `dom.on` registrations, each on an element present at boot,
+followed by a first `reload()`.
 
-The exercise worth doing: skim the file and count what is *absent* —
-no component classes, no virtual DOM, no state container, no
-lifecycle. The architecture carries that weight, which is what lets
-the program be only as long as its actual behavior.
+The frontend uses no component classes, no virtual DOM, no state container,
+and no lifecycle methods. The architecture described in this chapter — a
+server-rendered page reloaded on change, with the DOM as the source of truth —
+provides the structure those abstractions would otherwise supply, so the
+program is roughly as long as its behavior requires.
 
 Then read the companion pages in ascending order of machinery, each
 linked from the tracker's header: `orbit.ol` (the draw-list and frame

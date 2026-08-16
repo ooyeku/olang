@@ -1,15 +1,16 @@
-# Tooling
+# Command-line tooling
 
-The developer tools shipped inside the `olang` binary: the test runner,
-the formatter, the static checker, the benchmark harness, the reference
-generator (`olang doc`), and the bundler (`olang build`). (Package
-commands live in `otc` —
-see [Packages](packages.md); the language server has
-[its own chapter](editors.md).)
+Part of [the olang book](README.md) · [Language reference](language.md) ·
+[Standard library reference](stdlib.md) ·
+[Architecture and internals](internals.md)
 
-Part of [the olang book](README.md) ·
-[Language](language.md) · [Standard Library](stdlib.md) ·
-[Internals](internals.md)
+This chapter documents the developer tools built into the `olang` binary: the
+test runner, the formatter, the static checker, the documentation generator,
+the standalone-executable builder, the benchmark runner, and the record and
+replay commands. Package-management commands are provided by the companion
+tool `otc` and are described in
+[Packages and dependencies](packages.md); the language server has
+[its own chapter](editors.md).
 
 ## Command overview
 
@@ -403,20 +404,21 @@ observable concurrency is outside the model. (Roadmap: `replay --why`,
 which carries value provenance during replay to answer "where did this
 number come from?" — a chain back to the recorded inputs.)
 
-## `meta` — the program as data (the Open AST)
+## Writing custom tools with `meta`
 
-Not a subcommand but a stdlib module, and the reason tools like `check`
-and `deps` need not be the only ones: `meta.parse(source)` returns a
-parsed olang program as ordinary olang values, so a project can write
-its own linters, codemods, and code generators *in olang* rather than
-as compiler changes. `otc deps` — list a file's imports — is four lines
-over it. See [the `meta` reference](stdlib.md#meta--the-program-as-data-the-open-ast)
-and [`examples/metatool`](../examples/metatool/main.ol).
+Several of the commands above are built on the `meta` module, which returns a
+parsed olang program as ordinary olang values. A project can use it to write
+its own linters, code transformations, and code generators in olang rather
+than as changes to the compiler; `olang check --rules` runs such tools
+alongside the built-in checker. The `meta` module is documented in the
+[standard library reference](stdlib.md#meta--the-program-as-data-the-open-ast),
+and the [Openness](openness.md) chapter describes the program-as-data model.
+A complete example is [`examples/metatool`](../examples/metatool/main.ol).
 
 ## The examples harness
 
-`examples/run_all.ol` — a test harness written *in olang* — runs every
-example program (standalone scripts and packages) in its own subprocess and
-reports a pass/fail summary. It complements `olang test`: the harness
-checks that whole programs run; the test runner checks `test`-block
-assertions. See [examples/README.md](../examples/README.md).
+`examples/run_all.ol`, a test harness written in olang, runs every example
+program — standalone scripts and packages — in its own subprocess and reports
+a pass/fail summary. It complements `olang test`: the harness checks that
+whole programs run, and the test runner checks `test`-block assertions. See
+[examples/README.md](../examples/README.md).
