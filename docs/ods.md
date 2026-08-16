@@ -56,16 +56,20 @@ qty" is a single vectorized multiply over two arrays — no hashing, no
 boxing, no per-element interpretation — and the memory access pattern
 is exactly the sequential streaming that hardware is built to prefetch.
 
-The effect is large. When
-[`examples/dataproc/`](../examples/dataproc/) was rewritten from the
-records-and-fold pipeline above to the Frame pipeline this chapter describes,
-the same 200,000-row CSV job ran in 0.06 seconds rather than 3.0 seconds — a
-50-fold reduction from the change in representation alone, in the same binary
-(measured in [the design record](#the-design-record)). Because data work is
-dominated by representation, the columnar representation is implemented in the
-runtime, beneath the language, so that every olang program uses it without
-additional code. This is the same relationship that NumPy has to Python, with
-the stack built into the runtime rather than provided as a separate library.
+The effect is large, and it is reproducible from the repository.
+[`examples/dataproc/`](../examples/dataproc/) contains the same job in both
+representations: `records.ol` is the records-and-fold pipeline above, and
+`main.ol` is the Frame pipeline this chapter describes. The checked-in data
+is a nine-row sample; `gen.ol` generates a seeded input of any size. On a
+generated 200,000-row input (`olang gen.ol 200000`), the fold pipeline runs
+in about 5 seconds and the Frame pipeline in about 0.06 seconds — a
+difference of roughly eighty-fold from the change in representation alone,
+in the same binary, with both programs producing identical totals. Because
+data work is dominated by representation, the columnar representation is
+implemented in the runtime, beneath the language, so that every olang
+program uses it without additional code. This is the same relationship that
+NumPy has to Python, with the stack built into the runtime rather than
+provided as a separate library.
 
 Two ideas carry everything that follows:
 
@@ -699,8 +703,9 @@ println("95% CI: [" + to_string(math.round(ods.quantile(means, 0.025)))
 Two complete worked programs extend these patterns to full scale:
 
 - [`examples/dataproc/`](../examples/dataproc/) — the CSV → Frame →
-  `group_by` → JSON pipeline, the 50× story of the opening section as
-  a running program.
+  `group_by` → JSON pipeline, with the opening section's representation
+  comparison shipped as two runnable programs (`main.ol` and
+  `records.ol`) and a seeded data generator (`gen.ol`).
 - [`examples/statlab/`](../examples/statlab/) — a full statistical
   study: 10,000 simulated subjects, a Welch t-test cross-validated by
   a 1,000-round permutation test and a bootstrap CI (both fanned over
@@ -856,9 +861,12 @@ Revisions and notes, recorded per the rule:
   generating snippets noted inline. `stats.*.sample` draws from the
   `random` module's stream, so `random.seed(k)` makes sampling
   reproducible — pinned by test.
-- **The 50× headline** at the top of this chapter is B-series
-  discipline applied end-to-end: `examples/dataproc` rewritten from
-  records-and-fold to the Frame pipeline, same binary, 3.0 s → 0.06 s.
+- **The representation comparison** at the top of this chapter is
+  B-series discipline applied end-to-end, and it ships as runnable code:
+  `examples/dataproc` contains both pipelines (`records.ol` and
+  `main.ol`) and a seeded generator (`gen.ol`). At the 0.40 rewrite the
+  measured change was 3.0 s → 0.06 s on 200,000 rows; re-measured on the
+  0.60 binary with the shipped programs, it is about 5 s → 0.06 s.
 
 Deferrals recorded with reopening conditions: **faer-backed linear
 algebra** (the in-crate Cholesky is textbook-correct for
