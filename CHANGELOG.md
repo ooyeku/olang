@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-08-15
+
+### Added
+
+- **Parallel hash join (data-pipeline campaign DP1).** `ods.join` now runs
+  its probe phase across every CPU core when the left frame is large
+  (50,000+ rows): each left row is looked up in the built key table
+  independently, and the per-thread chunks are concatenated in row order,
+  so the parallel result is byte-identical to the sequential one (pinned by
+  a test that passes in both feature modes). Measured ~2.6× on a 4M-row
+  join. Small joins stay single-threaded. This is where the lack of a GIL
+  shows — a large join uses the whole machine with no ceremony. (Elementwise
+  Series operations were already parallel; `group_by` aggregation is next.)
+
 ## [0.59.0] - 2026-08-15
 
 ### Added
@@ -3261,6 +3275,7 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.59.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.60.0...HEAD
+[0.60.0]: https://github.com/ooyeku/olang/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/ooyeku/olang/compare/v0.58.0...v0.59.0
 [0.23.0]: https://github.com/ooyeku/olang/releases/tag/v0.23.0

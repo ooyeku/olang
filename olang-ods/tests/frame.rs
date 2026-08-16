@@ -320,3 +320,115 @@ fn string_series_kernels() {
     assert_eq!(s.min().unwrap(), Scalar::Str("apple".to_string()));
     assert!(s.sum(false).is_err());
 }
+
+/// DP1: a join above the parallel threshold (50k left rows) must produce
+/// exactly the sequential result. This exercises the parallel probe under
+/// `--features parallel` and the sequential path otherwise; the assertions
+/// hold either way, so parallel == sequential is pinned. Left keys have
+/// many duplicates and some non-matching rows to stress ordering and the
+/// left-join null path.
+#[test]
+fn large_join_is_correct_and_order_stable() {
+    let n: i64 = 120_000;
+    // left key = row % 1000, so keys 0..999 each appear 120 times; keys
+    // 1000+ never appear (all rows match on the inner join).
+    let left = Frame::new(vec![
+        (
+            "k".to_string(),
+            Series::from_i64((0..n).map(|i| i % 1000).collect()),
+        ),
+        ("v".to_string(), Series::from_i64((0..n).collect())),
+    ])
+    .unwrap();
+    // right has keys 0..1499; only 0..999 match anything on the left.
+    let right = Frame::new(vec![
+        ("k".to_string(), Series::from_i64((0..1500).collect())),
+        (
+            "tag".to_string(),
+            Series::from_i64((0..1500).map(|i| i * 10).collect()),
+        ),
+    ])
+    .unwrap();
+
+    let inner = left.join(&right, "k", "k", JoinHow::Inner).unwrap();
+    assert_eq!(
+        inner.n_rows(),
+        n as usize,
+        "every left row matches one right row"
+    );
+    // Rows stay in left order, so row i keeps left value i, and its tag is
+    // (i % 1000) * 10.
+    let v = inner.column("v").unwrap();
+    let tag = inner.column("tag").unwrap();
+    for &i in &[0usize, 1, 999, 1000, 50_000, 119_999] {
+        assert_eq!(v.scalar_at(i), Scalar::I64(i as i64), "row {i} value");
+        assert_eq!(
+            tag.scalar_at(i),
+            Scalar::I64(((i as i64) % 1000) * 10),
+            "row {i} tag"
+        );
+    }
+
+    // A left join with non-matching right keys keeps unmatched left rows.
+    let sparse_right = Frame::new(vec![
+        ("k".to_string(), Series::from_i64(vec![0, 1, 2])),
+        ("tag".to_string(), Series::from_i64(vec![100, 101, 102])),
+    ])
+    .unwrap();
+    let left_join = left.join(&sparse_right, "k", "k", JoinHow::Left).unwrap();
+    assert_eq!(
+        left_join.n_rows(),
+        n as usize,
+        "left join keeps all left rows"
+    );
+    // Row 3 has key 3, which is not in sparse_right → null tag.
+    assert_eq!(left_join.column("tag").unwrap().scalar_at(3), Scalar::Null);
+    // Row 0 has key 0 → tag 100.
+    assert_eq!(
+        left_join.column("tag").unwrap().scalar_at(0),
+        Scalar::I64(100)
+    );
+}
+
+/// Not a gate (timing is machine-dependent) — run manually with
+/// `cargo test -p olang-ods --features parallel --test frame join_speedup
+/// -- --ignored --nocapture` to see the multi-core win on the join probe.
+#[test]
+#[ignore]
+#[cfg(feature = "parallel")]
+fn join_speedup() {
+    use std::time::Instant;
+    let n: i64 = 4_000_000;
+    let left = Frame::new(vec![
+        (
+            "k".to_string(),
+            Series::from_i64((0..n).map(|i| i % 100_000).collect()),
+        ),
+        ("v".to_string(), Series::from_i64((0..n).collect())),
+    ])
+    .unwrap();
+    let right = Frame::new(vec![
+        ("k".to_string(), Series::from_i64((0..100_000).collect())),
+        ("t".to_string(), Series::from_i64((0..100_000).collect())),
+    ])
+    .unwrap();
+
+    let time_with = |threads: usize| -> f64 {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            let t = Instant::now();
+            let out = left.join(&right, "k", "k", JoinHow::Inner).unwrap();
+            assert_eq!(out.n_rows(), n as usize);
+            t.elapsed().as_secs_f64() * 1000.0
+        })
+    };
+    let one = time_with(1);
+    let many = time_with(0); // 0 = rayon default (all cores)
+    println!(
+        "join {n} rows: 1 thread {one:.1} ms, all cores {many:.1} ms, speedup {:.2}x",
+        one / many
+    );
+}

@@ -382,6 +382,13 @@ let tax = ods.column(joined, "total") * ods.column(joined, "rate")
 println(to_string(ods.to_list(tax)))
 ```
 
+On a large left frame (50,000+ rows) the join's probe runs across every
+CPU core — each left row is looked up independently, and the chunks are
+concatenated in row order, so the parallel result is identical to the
+sequential one. This is where olang's lack of a GIL shows: the whole join
+uses the machine, no ceremony. Small joins stay single-threaded (the
+thread hand-off would cost more than it saves).
+
 ## `stats` — from description to inference
 
 Description says what the data at hand looks like; inference asks what

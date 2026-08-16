@@ -317,24 +317,11 @@ impl Frame {
             }
         }
 
-        let mut left_idx: Vec<i64> = Vec::new();
-        let mut right_idx: Vec<Option<usize>> = Vec::new();
-        for i in 0..lkey.len() {
-            match key_at(lkey, i).and_then(|k| table.get(&k)) {
-                Some(matches) => {
-                    for &r in matches {
-                        left_idx.push(i as i64);
-                        right_idx.push(Some(r));
-                    }
-                }
-                None => {
-                    if how == JoinHow::Left {
-                        left_idx.push(i as i64);
-                        right_idx.push(None);
-                    }
-                }
-            }
-        }
+        // The probe: each left row is looked up independently in the
+        // read-only table, so the loop parallelizes across left rows on a
+        // large frame — the join's dominant cost. Chunks are concatenated in
+        // row order, so the result is bit-identical to the sequential path.
+        let (left_idx, right_idx) = join_probe(lkey, &table, how, lkey.len());
 
         let lidx = Series::from_i64(left_idx);
         let mut pairs: Vec<(String, Series)> = Vec::new();
@@ -354,6 +341,82 @@ impl Frame {
         }
         Frame::new(pairs)
     }
+}
+
+// ---------------------------------------------------------------------
+// Join probe
+// ---------------------------------------------------------------------
+
+/// Left frames at or above this many rows probe in parallel. Below it, the
+/// thread hand-off costs more than the probe saves.
+#[cfg(feature = "parallel")]
+const PAR_JOIN_ROWS: usize = 50_000;
+
+/// Probe left rows `[lo, hi)` against the built right-key table, producing
+/// `(left_idx, right_idx)` match pairs in left-row order (a matched left row
+/// repeats once per right match; an unmatched row is kept with `None` only
+/// for a left join). Pure and read-only over `table`/`lkey`, so it is safe
+/// to run over disjoint ranges on separate threads.
+fn probe_join(
+    lkey: &Series,
+    table: &FxMap<Key, Vec<usize>>,
+    how: JoinHow,
+    lo: usize,
+    hi: usize,
+) -> (Vec<i64>, Vec<Option<usize>>) {
+    let mut left_idx: Vec<i64> = Vec::new();
+    let mut right_idx: Vec<Option<usize>> = Vec::new();
+    for i in lo..hi {
+        match key_at(lkey, i).and_then(|k| table.get(&k)) {
+            Some(matches) => {
+                for &r in matches {
+                    left_idx.push(i as i64);
+                    right_idx.push(Some(r));
+                }
+            }
+            None => {
+                if how == JoinHow::Left {
+                    left_idx.push(i as i64);
+                    right_idx.push(None);
+                }
+            }
+        }
+    }
+    (left_idx, right_idx)
+}
+
+/// Probe all `n` left rows, in parallel over row-chunks when the frame is
+/// large and the `parallel` feature is on. Chunks are concatenated in row
+/// order, so the output is identical to the sequential probe.
+fn join_probe(
+    lkey: &Series,
+    table: &FxMap<Key, Vec<usize>>,
+    how: JoinHow,
+    n: usize,
+) -> (Vec<i64>, Vec<Option<usize>>) {
+    #[cfg(feature = "parallel")]
+    if n >= PAR_JOIN_ROWS {
+        use rayon::prelude::*;
+        let threads = rayon::current_num_threads().max(1);
+        let chunk = n.div_ceil(threads).max(1);
+        let ranges: Vec<(usize, usize)> = (0..n)
+            .step_by(chunk)
+            .map(|s| (s, (s + chunk).min(n)))
+            .collect();
+        let parts: Vec<(Vec<i64>, Vec<Option<usize>>)> = ranges
+            .par_iter()
+            .map(|&(lo, hi)| probe_join(lkey, table, how, lo, hi))
+            .collect();
+        let total: usize = parts.iter().map(|(l, _)| l.len()).sum();
+        let mut left_idx = Vec::with_capacity(total);
+        let mut right_idx = Vec::with_capacity(total);
+        for (li, ri) in parts {
+            left_idx.extend(li);
+            right_idx.extend(ri);
+        }
+        return (left_idx, right_idx);
+    }
+    probe_join(lkey, table, how, 0, n)
 }
 
 // ---------------------------------------------------------------------
