@@ -12,7 +12,7 @@
 //! SipHash's DoS resistance buys nothing against our own group keys and
 //! costs most of the group-by budget at 10M rows.
 
-use crate::{OdsError, Scalar, Series};
+use crate::{Bitmap, OdsError, Scalar, Series};
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 
@@ -541,48 +541,170 @@ fn group_ids_multi(key_cols: &[&Series], n: usize) -> (Vec<u32>, usize) {
 // Aggregation
 // ---------------------------------------------------------------------
 
+/// Per-group accumulators from one scatter pass: (sum, count, min, max).
+type F64Acc = (Vec<f64>, Vec<i64>, Vec<f64>, Vec<f64>);
+type I64Acc = (Vec<i64>, Vec<i64>, Vec<i64>, Vec<i64>);
+
+/// Below this row count, group-by aggregation stays sequential — the thread
+/// hand-off costs more than the scatter saves.
+#[cfg(feature = "parallel")]
+const PAR_GROUPBY_ROWS: usize = 100_000;
+/// Above this group count, aggregation stays sequential regardless of rows:
+/// each thread holds its own `n_groups`-sized partial accumulators, so a very
+/// high-cardinality group-by would blow memory. Typical group-bys have far
+/// fewer groups than rows and fall well under this.
+#[cfg(feature = "parallel")]
+const PAR_GROUPBY_MAX_GROUPS: usize = 4_000_000;
+
+/// Scatter-accumulate a float column into per-group (sum, count, min, max).
+/// On a large frame the scatter runs across all cores: each thread reduces a
+/// disjoint row-chunk into its own partials, and the partials merge in a
+/// **fixed chunk order** — so the result is deterministic run to run.
+/// `count`, `min`, and `max` are bit-identical to the sequential path; the
+/// float `sum` (and the `mean` derived from it) can differ in the last ULPs
+/// because addition is reordered.
+fn accumulate_f64(
+    values: &[f64],
+    validity: Option<&Bitmap>,
+    group_ids: &[u32],
+    n_groups: usize,
+) -> F64Acc {
+    let scatter = |lo: usize, hi: usize| {
+        let mut acc = vec![0.0f64; n_groups];
+        let mut cnt = vec![0i64; n_groups];
+        let mut mins = vec![f64::INFINITY; n_groups];
+        let mut maxs = vec![f64::NEG_INFINITY; n_groups];
+        for i in lo..hi {
+            if validity.map(|b| b.get(i)).unwrap_or(true) {
+                let g = group_ids[i] as usize;
+                let v = values[i];
+                acc[g] += v;
+                cnt[g] += 1;
+                if v < mins[g] {
+                    mins[g] = v;
+                }
+                if v > maxs[g] {
+                    maxs[g] = v;
+                }
+            }
+        }
+        (acc, cnt, mins, maxs)
+    };
+
+    #[cfg(feature = "parallel")]
+    if values.len() >= PAR_GROUPBY_ROWS && n_groups <= PAR_GROUPBY_MAX_GROUPS {
+        use rayon::prelude::*;
+        let n = values.len();
+        let threads = rayon::current_num_threads().max(1);
+        let chunk = n.div_ceil(threads).max(1);
+        let ranges: Vec<(usize, usize)> = (0..n)
+            .step_by(chunk)
+            .map(|s| (s, (s + chunk).min(n)))
+            .collect();
+        let partials: Vec<F64Acc> = ranges.par_iter().map(|&(lo, hi)| scatter(lo, hi)).collect();
+        let mut acc = vec![0.0f64; n_groups];
+        let mut cnt = vec![0i64; n_groups];
+        let mut mins = vec![f64::INFINITY; n_groups];
+        let mut maxs = vec![f64::NEG_INFINITY; n_groups];
+        for (pa, pc, pmin, pmax) in &partials {
+            for g in 0..n_groups {
+                acc[g] += pa[g];
+                cnt[g] += pc[g];
+                if pmin[g] < mins[g] {
+                    mins[g] = pmin[g];
+                }
+                if pmax[g] > maxs[g] {
+                    maxs[g] = pmax[g];
+                }
+            }
+        }
+        return (acc, cnt, mins, maxs);
+    }
+
+    scatter(0, values.len())
+}
+
+/// The integer counterpart of [`accumulate_f64`]. Every reduction here is
+/// associative, so the parallel result is bit-identical to sequential. Sum
+/// overflow is a checked error, in both the per-chunk scatter and the merge.
+fn accumulate_i64(
+    values: &[i64],
+    validity: Option<&Bitmap>,
+    group_ids: &[u32],
+    n_groups: usize,
+) -> Result<I64Acc> {
+    let scatter = |lo: usize, hi: usize| -> Result<I64Acc> {
+        let mut acc = vec![0i64; n_groups];
+        let mut cnt = vec![0i64; n_groups];
+        let mut mins = vec![i64::MAX; n_groups];
+        let mut maxs = vec![i64::MIN; n_groups];
+        for i in lo..hi {
+            if validity.map(|b| b.get(i)).unwrap_or(true) {
+                let g = group_ids[i] as usize;
+                let v = values[i];
+                acc[g] = acc[g]
+                    .checked_add(v)
+                    .ok_or(OdsError::IntegerOverflow("addition"))?;
+                cnt[g] += 1;
+                if v < mins[g] {
+                    mins[g] = v;
+                }
+                if v > maxs[g] {
+                    maxs[g] = v;
+                }
+            }
+        }
+        Ok((acc, cnt, mins, maxs))
+    };
+
+    #[cfg(feature = "parallel")]
+    if values.len() >= PAR_GROUPBY_ROWS && n_groups <= PAR_GROUPBY_MAX_GROUPS {
+        use rayon::prelude::*;
+        let n = values.len();
+        let threads = rayon::current_num_threads().max(1);
+        let chunk = n.div_ceil(threads).max(1);
+        let ranges: Vec<(usize, usize)> = (0..n)
+            .step_by(chunk)
+            .map(|s| (s, (s + chunk).min(n)))
+            .collect();
+        let partials: Vec<I64Acc> = ranges
+            .par_iter()
+            .map(|&(lo, hi)| scatter(lo, hi))
+            .collect::<Result<Vec<_>>>()?;
+        let mut acc = vec![0i64; n_groups];
+        let mut cnt = vec![0i64; n_groups];
+        let mut mins = vec![i64::MAX; n_groups];
+        let mut maxs = vec![i64::MIN; n_groups];
+        for (pa, pc, pmin, pmax) in &partials {
+            for g in 0..n_groups {
+                acc[g] = acc[g]
+                    .checked_add(pa[g])
+                    .ok_or(OdsError::IntegerOverflow("addition"))?;
+                cnt[g] += pc[g];
+                if pmin[g] < mins[g] {
+                    mins[g] = pmin[g];
+                }
+                if pmax[g] > maxs[g] {
+                    maxs[g] = pmax[g];
+                }
+            }
+        }
+        return Ok((acc, cnt, mins, maxs));
+    }
+
+    scatter(0, values.len())
+}
+
 fn aggregate_column(col: &Series, group_ids: &[u32], n_groups: usize, op: AggOp) -> Result<Series> {
     match col {
         Series::F64 { values, validity } => {
-            let mut acc = vec![0.0f64; n_groups];
-            let mut cnt = vec![0i64; n_groups];
-            let mut mins = vec![f64::INFINITY; n_groups];
-            let mut maxs = vec![f64::NEG_INFINITY; n_groups];
-            for (i, (&v, &g)) in values.iter().zip(group_ids.iter()).enumerate() {
-                if validity.as_ref().map(|b| b.get(i)).unwrap_or(true) {
-                    let g = g as usize;
-                    acc[g] += v;
-                    cnt[g] += 1;
-                    if v < mins[g] {
-                        mins[g] = v;
-                    }
-                    if v > maxs[g] {
-                        maxs[g] = v;
-                    }
-                }
-            }
+            let (acc, cnt, mins, maxs) =
+                accumulate_f64(values, validity.as_ref(), group_ids, n_groups);
             finish_f64(op, acc, cnt, mins, maxs)
         }
         Series::I64 { values, validity } => {
-            let mut acc = vec![0i64; n_groups];
-            let mut cnt = vec![0i64; n_groups];
-            let mut mins = vec![i64::MAX; n_groups];
-            let mut maxs = vec![i64::MIN; n_groups];
-            for (i, (&v, &g)) in values.iter().zip(group_ids.iter()).enumerate() {
-                if validity.as_ref().map(|b| b.get(i)).unwrap_or(true) {
-                    let g = g as usize;
-                    acc[g] = acc[g]
-                        .checked_add(v)
-                        .ok_or(OdsError::IntegerOverflow("addition"))?;
-                    cnt[g] += 1;
-                    if v < mins[g] {
-                        mins[g] = v;
-                    }
-                    if v > maxs[g] {
-                        maxs[g] = v;
-                    }
-                }
-            }
+            let (acc, cnt, mins, maxs) =
+                accumulate_i64(values, validity.as_ref(), group_ids, n_groups)?;
             match op {
                 AggOp::Sum => Ok(Series::from_i64_options(
                     cnt.iter()

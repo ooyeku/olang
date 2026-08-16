@@ -366,6 +366,15 @@ for rec in ods.to_records(summary) {
 }
 ```
 
+On a large frame (100,000+ rows with under a few million groups) the
+aggregation pass runs across every CPU core: each thread accumulates
+`sum`/`count`/`min`/`max` into per-group partials over a fixed range of
+rows, and the partials are merged in chunk order. Integer results are
+bit-identical to the sequential path; float `sum` and `mean` reorder
+their additions, but the order is fixed by the chunk layout, so a given
+input always reproduces the same result. The group-id hashing pass — the
+larger cost — is still sequential; parallelizing it is the next step.
+
 ### Joins
 
 `ods.join(a, b, on_a, on_b)` is an inner hash join on one key column

@@ -19,7 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   a test that passes in both feature modes). Measured ~2.6× on a 4M-row
   join. Small joins stay single-threaded. This is where the lack of a GIL
   shows — a large join uses the whole machine with no ceremony. (Elementwise
-  Series operations were already parallel; `group_by` aggregation is next.)
+  Series operations were already parallel.)
+
+- **Parallel `group_by` aggregation (data-pipeline campaign DP1b).** The
+  aggregation pass in `ods.group_by` now scatters across every CPU core when
+  the frame is large (100,000+ rows with under ~4M groups): each thread
+  accumulates `sum`/`count`/`min`/`max` into per-group partials over a fixed
+  row range, and the partials are merged sequentially in chunk order. Integer
+  results are bit-identical to sequential; float `sum`/`mean` reorder their
+  additions but the order is fixed by the chunk layout, so a given input
+  always reproduces the same result run to run. The group-id hashing pass
+  stays sequential. Measured ~1.4× on 8M rows over 1,000 groups (aggregation
+  is a fraction of the total; the hashing pass dominates and is DP1c's
+  target). Pinned by a test that passes in both feature modes.
 
 ## [0.59.0] - 2026-08-15
 

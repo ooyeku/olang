@@ -432,3 +432,98 @@ fn join_speedup() {
         one / many
     );
 }
+
+/// DP1b: a group_by above the parallel threshold (100k rows) must be
+/// correct. Integer sum/count/min/max are bit-identical to sequential
+/// (associative), and a float aggregation is deterministic run to run. This
+/// exercises the parallel scatter under `--features parallel` and the
+/// sequential path otherwise; the assertions hold either way.
+#[test]
+fn large_group_by_is_correct() {
+    let n: i64 = 500_000;
+    // 5 groups (key = row % 5), each with n/5 rows. Integer value is 1 and
+    // float value is 1.0, so per-group sum = 100_000 exactly (small integers
+    // and 1.0 sums are exact in f64 regardless of reduction order).
+    let f = Frame::new(vec![
+        (
+            "k".to_string(),
+            Series::from_i64((0..n).map(|i| i % 5).collect()),
+        ),
+        ("iv".to_string(), Series::from_i64(vec![1i64; n as usize])),
+        ("fv".to_string(), Series::from_f64(vec![1.0f64; n as usize])),
+    ])
+    .unwrap();
+
+    let spec = || {
+        vec![
+            agg("cnt", AggOp::Count, "iv"),
+            agg("isum", AggOp::Sum, "iv"),
+            agg("imin", AggOp::Min, "iv"),
+            agg("imax", AggOp::Max, "iv"),
+            agg("fsum", AggOp::Sum, "fv"),
+            agg("fmean", AggOp::Mean, "fv"),
+        ]
+    };
+    let g = f.group_by(&["k".to_string()], &spec()).unwrap();
+    assert_eq!(g.n_rows(), 5);
+    let per = 100_000i64;
+    for row in 0..5 {
+        assert_eq!(g.column("cnt").unwrap().scalar_at(row), Scalar::I64(per));
+        assert_eq!(g.column("isum").unwrap().scalar_at(row), Scalar::I64(per));
+        assert_eq!(g.column("imin").unwrap().scalar_at(row), Scalar::I64(1));
+        assert_eq!(g.column("imax").unwrap().scalar_at(row), Scalar::I64(1));
+        assert_eq!(
+            g.column("fsum").unwrap().scalar_at(row),
+            Scalar::F64(per as f64)
+        );
+        assert_eq!(g.column("fmean").unwrap().scalar_at(row), Scalar::F64(1.0));
+    }
+
+    // Run-to-run determinism: the same aggregation twice is identical.
+    let g2 = f.group_by(&["k".to_string()], &spec()).unwrap();
+    assert_eq!(col_values(&g, "fsum"), col_values(&g2, "fsum"));
+}
+
+/// Manual timing (not a gate): `cargo test -p olang-ods --features parallel
+/// --test frame group_by_speedup -- --ignored --nocapture`.
+#[test]
+#[ignore]
+#[cfg(feature = "parallel")]
+fn group_by_speedup() {
+    use std::time::Instant;
+    let n: i64 = 8_000_000;
+    let f = Frame::new(vec![
+        (
+            "k".to_string(),
+            Series::from_i64((0..n).map(|i| i % 1000).collect()),
+        ),
+        (
+            "v".to_string(),
+            Series::from_f64((0..n).map(|i| (i % 97) as f64).collect()),
+        ),
+    ])
+    .unwrap();
+    let spec = [
+        agg("s", AggOp::Sum, "v"),
+        agg("m", AggOp::Mean, "v"),
+        agg("n", AggOp::Count, "v"),
+    ];
+    let time_with = |threads: usize| -> f64 {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            let t = Instant::now();
+            let g = f.group_by(&["k".to_string()], &spec).unwrap();
+            assert_eq!(g.n_rows(), 1000);
+            t.elapsed().as_secs_f64() * 1000.0
+        })
+    };
+    let one = time_with(1);
+    let many = time_with(0);
+    println!(
+        "group_by {n} rows, 1000 groups: 1 thread {one:.1} ms, all cores {many:.1} ms, speedup {:.2}x",
+        one / many
+    );
+}
