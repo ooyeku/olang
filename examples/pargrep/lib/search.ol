@@ -1,6 +1,6 @@
 // The search worker: everything a spawned thread runs. A worker takes a
 // chunk of file paths and a pattern and returns its hits — no shared state,
-// no locks; the merge happens after `await` in the coordinator, which is
+// no locks; the merge happens after `task.join` in the coordinator, which is
 // the whole trick of capture-by-value concurrency.
 
 share type FileHits = struct { file: String, lines: List, count: Int }

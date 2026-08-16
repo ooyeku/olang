@@ -50,12 +50,12 @@ fn run_client(id) = {
     s
 }
 
-// ── fan out, await, merge ──
+// ── fan out, join, merge ──
 println(str.fmt("load test: {} clients x {} requests -> {} ({} server workers)",
     clients, per_client, base, server_workers))
 let t0 = time.monotonic_ms()
 let workers = range(0, clients) |> map((id) => spawn run_client(id))
-let per_worker = workers |> map((w) => try { await w } catch (e) { empty_stats() })
+let per_worker = workers |> map((w) => match task.join(w) { Err(e) => empty_stats(), s => s })
 let elapsed = time.monotonic_ms() - t0
 let total = per_worker |> fold(empty_stats(), merge)
 

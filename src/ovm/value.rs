@@ -1079,32 +1079,6 @@ impl OvmValue {
                 }))
             }
 
-            Value::Promise {
-                state,
-                value,
-                error,
-                ..
-            } => {
-                let ovm_state = match state {
-                    crate::ast::PromiseState::Pending => PromiseState::Pending,
-                    crate::ast::PromiseState::Resolved => PromiseState::Resolved,
-                    crate::ast::PromiseState::Rejected => PromiseState::Rejected,
-                };
-
-                let promise_obj = PromiseObject {
-                    state: ovm_state,
-                    value: value.map(|v| Box::new(Self::from_ast(*v))),
-                    error: error.map(|e| Box::new(Self::from_ast(*e))),
-                    callbacks: Vec::new(),
-                };
-
-                let gc_ptr = Arc::new(promise_obj);
-
-                Self {
-                    data: ValueData::Promise(gc_ptr),
-                }
-            }
-
             Value::Map(map) => Self::new_map(Arc::new(
                 map.iter()
                     .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))

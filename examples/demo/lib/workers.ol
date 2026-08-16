@@ -39,7 +39,7 @@ share fn unload_all(items, crews: Int) = {
     for k in range(0, len(items)) {
         collected = concat(collected, [unwrap(chan.recv(results))])
     }
-    for t in tasks { await t }
+    for t in tasks { task.join(t) }
     chan.close(jobs)
     chan.close(results)
     let by_index = sort_by_key(collected)

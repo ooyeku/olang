@@ -26,6 +26,7 @@ a file system, a network, or a browser.
 - [`re` — regular expressions](#re--regular-expressions)
 - [`dates` — dates and times](#dates--dates-and-times)
 - [`time` — clocks and sleeping](#time--clocks-and-sleeping)
+- [`task` — background threads](#task--background-threads)
 - [`cell` — mutable locations](#cell--mutable-locations)
 - [`chan` — channels](#chan--channels)
 - [`random` — randomness](#random--randomness)
@@ -525,6 +526,42 @@ time.sleep(25)
 println(show(time.monotonic_ms() - t0 >= 20))   // true
 ```
 
+## `task` — background threads
+
+`spawn expr` runs the expression on its own OS thread and returns a
+**task handle** immediately; this module is how you collect the result.
+The model is covered in
+[the language reference](language.md#spawn-and-taskjoin).
+
+| Function | Returns |
+|---|---|
+| `task.join(t)` | the task's value, or `Err(e)` if it failed — blocks until it finishes |
+| `task.join_timeout(t, ms)` | `Ok(v)` if it finished within `ms`, else `Err("timed out")` |
+
+Neither wraps success in `Result` unnecessarily: `task.join` hands back
+the value itself, and reports failure as `Err(e)` so one bad worker is
+a value to handle rather than a crash. `task.join_timeout` *does* wrap,
+because it must distinguish "the task produced `Err`" from "we stopped
+waiting" — two very different things.
+
+```olang
+fn work(n) = { time.sleep(10); n * n }
+
+let jobs = [spawn work(2), spawn work(3), spawn work(4)]
+println(to_string(jobs |> map(task.join)))   // [4, 9, 16]
+```
+
+**A timeout bounds the wait, not the work.** An OS thread cannot be
+cancelled from outside without leaving whatever it touched in an
+unknown state, so a timed-out task keeps running to completion. Its
+result is memoized, so a later `task.join` on the same handle still
+collects it. For work that genuinely stops early, give the task
+something to check — a channel, or a value it re-reads each pass.
+
+Joining the same handle twice returns the memoized result rather than
+re-running anything. A handle dropped without ever being joined is
+fire-and-forget: the thread detaches and finishes on its own.
+
 ## `cell` — mutable locations
 
 A cell holds a value that can be replaced in place. It is the language's
@@ -610,7 +647,7 @@ fn producer(ch, n) = {
 }
 
 let pipe = chan.new()
-let task = spawn producer(pipe, 4)
+let worker = spawn producer(pipe, 4)
 let mut total = 0
 let mut going = true
 while going {
@@ -619,7 +656,7 @@ while going {
         Err(e) => { going = false }
     }
 }
-println(to_string(total) + " from " + to_string(await task) + " squares")
+println(to_string(total) + " from " + to_string(task.join(worker)) + " squares")
 ```
 
 ## `random` — randomness
@@ -758,7 +795,7 @@ for node in program |> filter((n) => map_get(n, "kind") == "use") {
 ```
 
 Every sub-expression is emitted — a `match`'s `arms`, a map's `entries`, a
-struct's `fields`, a template's `parts`, and the `await`/`assert` interiors
+struct's `fields`, a template's `parts`, and the `spawn`/`assert` interiors
 are all walkable node maps — so a tool that filters the node tree cannot
 silently miss a call hidden in a subtree. What is summarized (not dropped)
 is non-expression detail: patterns collapse to their bound names, type

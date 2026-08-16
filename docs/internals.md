@@ -117,7 +117,7 @@ per tier:
 
 - The bytecode compiler returns `CompilationFailed` for anything outside
   its supported subset (global assignment, `return` crossing bytecode
-  loops, async, and more — see [ovm.md](ovm.md#known-limitations)), and
+  loops, `spawn`, and more — see [ovm.md](ovm.md#known-limitations)), and
   the function transparently stays on the interpreter forever.
 - The JIT only prequalifies functions whose every bytecode instruction
   is on its whitelist; anything else stays on bytecode.
@@ -218,7 +218,7 @@ whitelist and the measured results.
 `Map(Arc<HashMap>)`, `Struct { type_name, fields }` (also used for anonymous
 objects, modules, and parsed JSON objects), `Enum` / `EnumConstructor`,
 `Function` (parameters, body, closure snapshot), `Builtin`, `Ok` / `Err`,
-`Range`, `Promise`, `Unit`.
+`Range`, `Unit`.
 
 Conventions the code relies on:
 

@@ -1,9 +1,7 @@
 use crate::ast::{
     Argument, BinaryOp, BuiltinFunction, EnumVariantData, Expr, Function, FunctionDecl, LetDecl,
-    MatchArm, Parameter, Program, PromiseType, ShareDecl, Statement, TestDecl, TypeAnnotation,
-    UseDecl, Value,
+    MatchArm, Parameter, Program, ShareDecl, Statement, TestDecl, TypeAnnotation, UseDecl, Value,
 };
-use crate::async_runtime::AsyncRuntime;
 use crate::builtin::BuiltinFunctions;
 use crate::ovm::gc::SafepointManager;
 use im::HashMap as ImHashMap;
@@ -67,7 +65,6 @@ pub use environment::{Environment, ModuleDebugConfig};
 pub struct Interpreter {
     environment: Environment,
     builtin_functions: BuiltinFunctions,
-    async_runtime: AsyncRuntime,
     safepoint_manager: Arc<SafepointManager>,
     pub module_debug_config: ModuleDebugConfig,
 
@@ -219,7 +216,6 @@ impl Interpreter {
         let mut interpreter = Self {
             environment: Environment::new(),
             builtin_functions: BuiltinFunctions::new(),
-            async_runtime: AsyncRuntime::new(),
             safepoint_manager: Arc::new(SafepointManager::new()),
             module_debug_config: ModuleDebugConfig::default(),
 
@@ -411,7 +407,6 @@ impl Interpreter {
             Statement::Located { stmt, .. } => Self::statement_binds(stmt),
             Statement::LetDecl(_)
             | Statement::FunctionDecl(_)
-            | Statement::AsyncFunctionDecl(_)
             | Statement::UseDecl(_)
             | Statement::ShareDecl(_) => true,
             _ => false,
@@ -498,9 +493,6 @@ impl Interpreter {
             Statement::Expression(expr) => self.eval_expr(expr),
             Statement::LetDecl(let_decl) => self.eval_let_decl(let_decl),
             Statement::FunctionDecl(func_decl) => self.eval_function_decl(func_decl.clone()),
-            Statement::AsyncFunctionDecl(async_func_decl) => {
-                self.eval_async_function_decl(async_func_decl.clone())
-            }
             Statement::TypeDecl(type_decl) => self.eval_type_decl(type_decl.clone()),
             Statement::ErrorTypeDecl(error_type_decl) => {
                 self.eval_error_type_decl(error_type_decl.clone())
@@ -1448,166 +1440,14 @@ impl Interpreter {
                     }),
                 }
             }
-            // Async expressions - enhanced implementations
-            Expr::Async {
-                parameters,
-                body,
-                return_type: _return_type,
-            } => {
-                // Create async function with enhanced async capabilities
-                // Convert ImHashMap to regular HashMap for closure storage
-                // O(1): adopt the persistent flat map directly
-                let closure = self.environment.flat_snapshot();
-                let function = Function {
-                    name: None,
-                    param_checks: crate::ast::param_checks_of(parameters, &[]),
-                    return_check: None,
-                    parameters: parameters.clone(),
-                    body: Arc::new((**body).clone()),
-                    closure: Arc::new(closure),
-                    param_bounds: Vec::new(),
-                    def_file: self.current_module_path.clone(),
-                };
-
-                // Return a function that when called returns a promise
-                Ok(Value::Function(function))
-            }
-            Expr::Await { expression } => {
-                let value = self.eval_expr(expression)?;
-                let (deadline, outcome) = self.settle_info(value)?;
-                Self::sleep_until_epoch_ms(deadline);
-                match outcome {
-                    Ok(v) => Ok(v),
-                    // Rejection is a value, not a crash: awaiting a rejected
-                    // promise (a failed spawn task, Promise.reject, or a
-                    // rejecting all/race) yields `Err(e)`, composing with
-                    // match, unwrap_or, `?`, and try/catch like every other
-                    // fallible result in the language. Previously this raised
-                    // a hard error nothing could catch — one failed worker
-                    // killed the whole program.
-                    Err(e) => Ok(Value::Err(Box::new(e))),
-                }
-            }
-            Expr::Promise {
-                promise_type,
-                value,
-                delay,
-            } => {
-                let evaluated_value = self.eval_expr(value)?;
-                match promise_type {
-                    PromiseType::Resolve => Ok(self.async_runtime.promise_resolve(evaluated_value)),
-                    PromiseType::Reject => Ok(self.async_runtime.promise_reject(evaluated_value)),
-                    PromiseType::Delay => {
-                        // Enhanced delay implementation
-                        if let Some(delay_expr) = delay {
-                            let delay_value = self.eval_expr(delay_expr)?;
-                            match delay_value {
-                                Value::Integer(ms) if ms >= 0 => {
-                                    // The interpreter is synchronous — there is
-                                    // no scheduler to resolve this later. Carry
-                                    // the deadline in the value so `await` can
-                                    // sleep out the remainder; the old path
-                                    // registered with a runtime nothing drains,
-                                    // leaking an entry per delay and making
-                                    // every await of it error.
-                                    let deadline = crate::clock::system_now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .map(|d| d.as_millis() as u64)
-                                        .unwrap_or(0)
-                                        .saturating_add(ms as u64);
-                                    Ok(Value::Promise {
-                                        state: crate::ast::PromiseState::Pending,
-                                        value: Some(Box::new(evaluated_value)),
-                                        error: None,
-                                        resolve_at_epoch_ms: Some(deadline),
-                                        task_id: None,
-                                        guard: None,
-                                    })
-                                }
-                                Value::Integer(_) => Err(InterpreterError::RuntimeError {
-                                    message: "Delay must be a non-negative integer".to_string(),
-                                }),
-                                _ => Err(InterpreterError::TypeError {
-                                    message: "Delay must be an integer representing milliseconds"
-                                        .to_string(),
-                                }),
-                            }
-                        } else {
-                            // Default delay of 0ms (immediate resolution)
-                            Ok(self.async_runtime.promise_resolve(evaluated_value))
-                        }
-                    }
-                }
-            }
-            Expr::All(list_expr) => {
-                // Await every promise in the list, resolving to the list of
-                // their values. Delayed promises carry a deadline, so
-                // "concurrent" fan-out sleeps once until the *latest* deadline
-                // (total time = the longest delay, not their sum) — correct
-                // concurrent timing even on a single thread. Rejects as soon
-                // as any input has already rejected.
-                let promises = self.eval_promise_collection(list_expr, "all")?;
-                let mut settled = Vec::with_capacity(promises.len());
-                for value in promises {
-                    settled.push(self.settle_info(value)?);
-                }
-
-                // A rejection short-circuits the whole thing.
-                for (_, outcome) in &settled {
-                    if let Err(err) = outcome {
-                        return Ok(self.async_runtime.promise_reject(err.clone()));
-                    }
-                }
-
-                // Sleep once until the last deadline, then collect values.
-                let deadline = settled.iter().map(|(t, _)| *t).max().unwrap_or(0);
-                Self::sleep_until_epoch_ms(deadline);
-                let results: Vec<Value> = settled
-                    .into_iter()
-                    .map(|(_, outcome)| outcome.unwrap_or(Value::Unit))
-                    .collect();
-                Ok(self
-                    .async_runtime
-                    .promise_resolve(Value::List(std::sync::Arc::from(results))))
-            }
-            Expr::Race(list_expr) => {
-                // Settle to whichever promise finishes first: the minimum
-                // deadline wins (already-resolved promises settle at t=0).
-                let promises = self.eval_promise_collection(list_expr, "race")?;
-                if promises.is_empty() {
-                    return Ok(Value::Promise {
-                        state: crate::ast::PromiseState::Pending,
-                        value: None,
-                        error: None,
-                        resolve_at_epoch_ms: None,
-                        task_id: None,
-                        guard: None,
-                    });
-                }
-
-                let mut settled = Vec::with_capacity(promises.len());
-                for value in promises {
-                    settled.push(self.settle_info(value)?);
-                }
-
-                // The earliest to settle wins (ties: first in the list).
-                let (deadline, outcome) = settled
-                    .into_iter()
-                    .min_by_key(|(t, _)| *t)
-                    .expect("non-empty");
-                Self::sleep_until_epoch_ms(deadline);
-                match outcome {
-                    Ok(v) => Ok(self.async_runtime.promise_resolve(v)),
-                    Err(e) => Ok(self.async_runtime.promise_reject(e)),
-                }
-            }
             Expr::Spawn(expression) => {
                 // Real background execution: the expression evaluates on its
                 // own OS thread against a thread-safe clone of this
                 // interpreter — the same worker pattern http.serve uses. The
                 // clone snapshots current bindings, so `spawn` captures by
-                // value, exactly like closures do. `await` joins the thread
-                // (memoized, so a cloned promise can be awaited repeatedly).
+                // value, exactly like closures do. `task.join` joins the
+                // thread (memoized, so a cloned handle can be joined more
+                // than once).
                 let mut worker = self.thread_safe_clone();
                 let expr = expression.as_ref().clone();
                 let task_id = spawn_registry::next_id();
@@ -1619,16 +1459,7 @@ impl Interpreter {
                         message: format!("spawn: could not start thread: {}", e),
                     })?;
                 spawn_registry::register(task_id, handle);
-                Ok(Value::Promise {
-                    state: crate::ast::PromiseState::Pending,
-                    value: None,
-                    error: None,
-                    resolve_at_epoch_ms: None,
-                    task_id: Some(task_id),
-                    guard: Some(std::sync::Arc::new(
-                        crate::interpreter::spawn_registry::SpawnGuard::new(task_id),
-                    )),
-                })
+                Ok(crate::stdlib::task::handle(task_id))
             }
 
             // Test assertions
@@ -1714,41 +1545,6 @@ impl Interpreter {
                 }
             }
         }
-    }
-
-    fn eval_async_function_decl(
-        &mut self,
-        async_func_decl: crate::ast::AsyncFunctionDecl,
-    ) -> Result<Value, InterpreterError> {
-        // For now, treat async functions like regular functions
-        // In full implementation, would mark as async
-        // Convert ImHashMap to regular HashMap for closure storage
-        // O(1): the environment's flat map is persistent, adopt it directly
-        let closure = self.environment.flat_snapshot();
-        let function = Function {
-            name: Some(async_func_decl.name.clone()),
-            param_checks: crate::ast::param_checks_of(
-                &async_func_decl.parameters,
-                &async_func_decl.type_params,
-            ),
-            return_check: crate::ast::async_return_check_of(
-                async_func_decl.return_type.as_ref(),
-                &async_func_decl.type_params,
-            ),
-            parameters: async_func_decl.parameters,
-            body: Arc::new(async_func_decl.body),
-            closure: Arc::new(closure),
-            param_bounds: Vec::new(),
-            def_file: self.current_module_path.clone(),
-        };
-
-        let function_value = Value::Function(function);
-
-        // Define the function in the current environment so it can be called recursively
-        self.environment
-            .define(async_func_decl.name, function_value.clone());
-
-        Ok(function_value)
     }
 
     /// Enable promotion of hot functions to the OVM bytecode tier.
@@ -2054,7 +1850,6 @@ impl Interpreter {
             scope_bindings: self.scope_bindings.clone(),
             environment: self.environment.clone(),
             builtin_functions: self.builtin_functions.clone(),
-            async_runtime: AsyncRuntime::new(),
             safepoint_manager: self.safepoint_manager.clone(),
             module_debug_config: self.module_debug_config.clone(),
 
@@ -3117,99 +2912,6 @@ impl Interpreter {
         // This just ensures the items are available in the current module's environment
 
         Ok(Value::Unit)
-    }
-
-    /// Install the package dependency map (name -> source directory), so
-    /// `use` paths rooted at a dependency name resolve inside it.
-    /// Evaluate the argument of `Promise.all`/`race` — any expression that
-    /// yields a list — into a vector of promise values. Accepts a literal
-    /// list or a variable holding one.
-    fn eval_promise_collection(
-        &mut self,
-        list_expr: &Expr,
-        which: &str,
-    ) -> Result<Vec<Value>, InterpreterError> {
-        match self.eval_expr(list_expr)? {
-            Value::List(items) => Ok(items.iter().cloned().collect()),
-            other => Err(InterpreterError::TypeError {
-                message: format!(
-                    "Promise.{} expects a list of promises, got {}",
-                    which,
-                    other.type_name()
-                ),
-            }),
-        }
-    }
-
-    /// Normalize a promise value into `(settle_epoch_ms, Ok(value) | Err(err))`
-    /// so `await`, `Promise.all`, and `Promise.race` share one resolution
-    /// model. Already-resolved/rejected promises settle at t=0; a delayed
-    /// promise settles at its deadline carrying its value. A pending promise
-    /// with no deadline can never settle in a synchronous interpreter and is
-    /// an error. Non-promise values are treated as resolved.
-    fn settle_info(&self, value: Value) -> Result<(u64, Result<Value, Value>), InterpreterError> {
-        match value {
-            // A spawn-backed promise settles by joining its thread. The
-            // result is memoized in the registry, so awaiting a clone of the
-            // same promise again returns the same value.
-            Value::Promise {
-                state: crate::ast::PromiseState::Pending,
-                task_id: Some(id),
-                ..
-            } => match spawn_registry::join(id) {
-                Some(Ok(v)) => Ok((0, Ok(v))),
-                Some(Err(msg)) => Ok((
-                    0,
-                    Err(Value::String(std::sync::Arc::new(format!(
-                        "spawned task failed: {}",
-                        msg
-                    )))),
-                )),
-                None => Err(InterpreterError::RuntimeError {
-                    message: format!("spawned task {} is unknown to this process", id),
-                }),
-            },
-            Value::Promise {
-                state: crate::ast::PromiseState::Resolved,
-                value: Some(v),
-                ..
-            } => Ok((0, Ok(*v))),
-            Value::Promise {
-                state: crate::ast::PromiseState::Rejected,
-                error: Some(e),
-                ..
-            } => Ok((0, Err(*e))),
-            Value::Promise {
-                state: crate::ast::PromiseState::Pending,
-                value,
-                resolve_at_epoch_ms: Some(deadline),
-                ..
-            } => Ok((deadline, Ok(value.map(|v| *v).unwrap_or(Value::Unit)))),
-            Value::Promise {
-                state: crate::ast::PromiseState::Pending,
-                ..
-            } => Err(InterpreterError::RuntimeError {
-                message: "Cannot await pending promise (no deadline to resolve it)".to_string(),
-            }),
-            // A plain value is an already-resolved result.
-            other => Ok((0, Ok(other))),
-        }
-    }
-
-    /// Sleep until the given epoch-millisecond deadline (no-op if already
-    /// past). Time already elapsed since the promise was created counts
-    /// against the delay, like a real timer.
-    fn sleep_until_epoch_ms(deadline: u64) {
-        if deadline == 0 {
-            return;
-        }
-        let now = crate::clock::system_now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(u64::MAX);
-        if deadline > now {
-            crate::clock::sleep_ms(deadline - now);
-        }
     }
 
     fn eval_test_decl(&mut self, test_decl: TestDecl) -> Result<Value, InterpreterError> {

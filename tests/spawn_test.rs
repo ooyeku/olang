@@ -1,7 +1,11 @@
-//! `spawn` runs its expression on a real background thread. 0.29
-//! consolidation item C2: previously spawn evaluated eagerly and wrapped a
-//! resolved promise — these tests prove genuine concurrency and pin the
-//! semantics (capture-by-value, memoized await, failure as rejection).
+//! `spawn` runs its expression on a real background thread.
+//!
+//! Originally the 0.29 consolidation item C2: spawn used to evaluate
+//! eagerly and wrap a resolved promise, and these tests prove genuine
+//! concurrency. 0.63 removed promises — `spawn` now returns a task handle
+//! and `task.join` collects it — but every property below is about the
+//! *thread*, not the vocabulary, so they still earn their place.
+//! [`task_test.rs`](task_test.rs) covers the `task` module's own surface.
 
 use olang::{Interpreter, Parser, Value};
 use std::time::Instant;
@@ -14,7 +18,7 @@ fn eval(src: &str) -> Result<Value, String> {
 
 #[test]
 fn spawned_tasks_run_in_parallel() {
-    // Three 80ms tasks awaited together: parallel execution finishes in
+    // Three 80ms tasks joined together: parallel execution finishes in
     // roughly one task's time, eager-in-disguise would take three.
     let src = r#"
 fn slow(n) = {
@@ -24,7 +28,7 @@ fn slow(n) = {
 let a = spawn slow(1)
 let b = spawn slow(2)
 let c = spawn slow(3)
-await a + await b + await c
+task.join(a) + task.join(b) + task.join(c)
 "#;
     let started = Instant::now();
     assert_eq!(eval(src).unwrap(), Value::Integer(6));
@@ -41,22 +45,22 @@ fn spawn_returns_before_the_task_finishes() {
 let t0 = time.monotonic_ms()
 let p = spawn { time.sleep(120) }
 let spawn_cost = time.monotonic_ms() - t0
-await p
+task.join(p)
 spawn_cost < 60
 "#;
     assert_eq!(eval(src).unwrap(), Value::Boolean(true));
 }
 
 #[test]
-fn awaiting_a_cloned_promise_is_memoized() {
+fn joining_a_cloned_handle_is_memoized() {
     let src = r#"
 fn work() = {
     time.sleep(20)
     42
 }
 let p = spawn work()
-let first = await p
-let second = await p
+let first = task.join(p)
+let second = task.join(p)
 first + second
 "#;
     assert_eq!(eval(src).unwrap(), Value::Integer(84));
@@ -68,38 +72,38 @@ fn spawn_captures_bindings_by_value() {
 let base = 100
 let p = spawn (base + 1)
 let base = 999
-await p
+task.join(p)
 "#;
     assert_eq!(eval(src).unwrap(), Value::Integer(101));
 }
 
 #[test]
-fn a_failing_task_rejects_as_an_err_value() {
-    // Awaiting a failed task yields Err(e) — a value, not a crash — so
+fn a_failing_task_settles_as_an_err_value() {
+    // Joining a failed task yields Err(e) — a value, not a crash — so
     // match / try-catch / unwrap_or / `?` all recover from worker failure.
     let src = r#"
 fn boom() = unwrap(Err("exploded"))
 let p = spawn boom()
-match await p {
-    Ok(v) => "unexpected",
-    Err(e) => "handled: " + show(e)
+match task.join(p) {
+    Err(e) => "handled: " + show(e),
+    v => "unexpected"
 }
 "#;
     match eval(src).unwrap() {
         Value::String(s) => {
-            assert!(s.contains("handled: spawned task failed"), "got: {s}")
+            assert!(s.contains("handled: "), "got: {s}");
+            assert!(s.contains("exploded"), "the cause should survive: {s}");
         }
         other => panic!("expected string, got {:?}", other),
     }
 }
 
 #[test]
-fn try_catch_recovers_a_failed_task_and_passes_success_through() {
+fn a_failed_task_does_not_stop_its_siblings() {
     let src = r#"
 fn work(n) = if n == 1 => unwrap(Err("died")) else => n * 10
 let jobs = [spawn work(0), spawn work(1), spawn work(2)]
-let results = jobs |> map((j) => try { await j } catch (e) { 0 - 1 })
-results
+jobs |> map((j) => match task.join(j) { Err(e) => 0 - 1, v => v })
 "#;
     match eval(src).unwrap() {
         Value::List(items) => {
@@ -113,15 +117,16 @@ results
 }
 
 #[test]
-fn spawned_tasks_settle_through_promise_all() {
+fn a_list_of_tasks_is_joined_with_map() {
+    // What `Promise.all` used to do. It needs no API of its own: the tasks
+    // are already running, so joining them in order costs nothing.
     let src = r#"
 fn slow(n) = {
     time.sleep(50)
     n * 2
 }
 let jobs = [spawn slow(1), spawn slow(2), spawn slow(3)]
-let results = await Promise.all(jobs)
-sum(results)
+sum(jobs |> map(task.join))
 "#;
     let started = Instant::now();
     assert_eq!(eval(src).unwrap(), Value::Integer(12));

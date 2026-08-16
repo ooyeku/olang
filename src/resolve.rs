@@ -446,7 +446,6 @@ impl Resolver {
             Statement::Located { stmt, .. } => Self::statement_binds(stmt),
             Statement::LetDecl(_)
             | Statement::FunctionDecl(_)
-            | Statement::AsyncFunctionDecl(_)
             | Statement::UseDecl(_)
             | Statement::ShareDecl(_) => true,
             _ => false,

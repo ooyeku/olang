@@ -691,6 +691,11 @@ impl BuiltinFunctions {
             );
         }
 
+        // Handle task functions
+        if let Some(task_function) = name.strip_prefix("task.") {
+            return crate::stdlib::task::call_task_function(task_function, arguments);
+        }
+
         // Handle cell functions. Takes the interpreter because
         // `cell.update` applies a caller-supplied function.
         if let Some(cell_function) = name.strip_prefix("cell.") {

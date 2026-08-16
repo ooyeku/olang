@@ -171,7 +171,7 @@ Anything else causes the function to stay interpreted:
 - a free identifier absent from the function's closure — the interpreter
   would resolve it through the caller's runtime scope chain, which no
   compile-time snapshot can represent
-- async (`spawn`, `await`, promises), and struct-variant enum
+- background tasks (`spawn`), and struct-variant enum
   construction (unit and tuple variants compile)
 - `return` and `break value` — both unwind in ways the bytecode loops
   don't model
@@ -554,7 +554,7 @@ These are real boundaries, stated so you can predict them:
    for an expression with side effects. Pure receivers — locals, field
    chains, literals — compile.
 2. ***Assigning* to a global is uncompiled** (reads bake as snapshot
-   constants). Async constructs (`spawn`, `await`, promises) and
+   constants). Background tasks (`spawn`) and
    `par for` stay interpreted — the compiler refuses the parallel loop
    fail-closed; it is interpreter-owned by design.
 3. **Bridged builtin calls cost a value round trip.** Builtins outside

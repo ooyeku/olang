@@ -27,6 +27,7 @@ pub mod proc;
 pub mod random;
 pub mod regex_mod;
 pub mod string;
+pub mod task;
 pub mod testing;
 pub mod time;
 pub mod toml_mod;
@@ -49,6 +50,7 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("toml".to_string(), toml_mod::create_toml_module());
     stdlib.insert("chan".to_string(), chan::create_chan_module());
     stdlib.insert("cell".to_string(), cell::create_cell_module());
+    stdlib.insert("task".to_string(), task::create_task_module());
     stdlib.insert("math".to_string(), math::create_math_module());
     #[cfg(feature = "native")]
     stdlib.insert("os".to_string(), os::create_os_module());
@@ -145,7 +147,6 @@ pub mod error_utils {
             Value::Err(_) => "Err",
             Value::Enum { .. } => "enum",
             Value::EnumConstructor { .. } => "enum_constructor",
-            Value::Promise { .. } => "promise",
             Value::Map(_) => "map",
             Value::TypeInfo { .. } => "type",
             Value::Native(handle) => handle.0.type_name(),

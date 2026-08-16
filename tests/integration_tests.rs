@@ -666,58 +666,6 @@ fn test_default_parameters_error_too_many_args() {
 // --- Regressions found while verifying the documentation examples ---
 
 #[test]
-fn promise_all_collects_results() {
-    // Promise.all silently evaluated to [] because the parser skipped pairs
-    // for grammar literals that produce none, consuming the argument list.
-    let source = r#"
-async fn double(x: Int) -> Promise<Int, String> = { x * 2 }
-await Promise.all([double(1), double(2), double(3)])
-"#;
-    let parser = Parser::new();
-    let program = parser.parse(source).expect("should parse");
-    let mut interpreter = Interpreter::new();
-    let result = interpreter.eval_program(program).expect("should evaluate");
-    assert_eq!(
-        result,
-        Value::List(vec![Value::Integer(2), Value::Integer(4), Value::Integer(6)].into())
-    );
-}
-
-#[test]
-fn async_return_annotation_checks_the_resolved_value() {
-    // `-> Promise<Int, String>` describes the promise the caller receives;
-    // the runtime check unwraps it and enforces Int on what the body
-    // resolves to. A dishonest body still fails, with the inner type named.
-    let parser = Parser::new();
-    let program = parser
-        .parse("async fn nope(x: Int) -> Promise<Int, String> = { \"not an int\" }\nawait nope(1)")
-        .expect("should parse");
-    let mut interpreter = Interpreter::new();
-    let err = interpreter
-        .eval_program(program)
-        .expect_err("should reject");
-    assert!(
-        err.to_string().contains("expects Int, got String"),
-        "got: {}",
-        err
-    );
-}
-
-#[test]
-fn promise_resolve_returns_its_argument() {
-    // The same pair-skipping bug read the argument as the method name.
-    let parser = Parser::new();
-    let program = parser
-        .parse("await Promise.resolve(42)")
-        .expect("should parse");
-    let mut interpreter = Interpreter::new();
-    assert_eq!(
-        interpreter.eval_program(program).expect("should evaluate"),
-        Value::Integer(42)
-    );
-}
-
-#[test]
 fn let_declarations_work_inside_test_blocks() {
     // `test_statement` wraps a `statement`, which build_statement rejected.
     let source = r#"
@@ -758,52 +706,6 @@ fn bare_identifier_patterns_still_bind() {
     assert_eq!(
         interpreter.eval_program(program).expect("should evaluate"),
         Value::Integer(8)
-    );
-}
-
-/// Promise.delay must be awaitable: the promise carries its deadline and
-/// await sleeps out the remainder. Previously every await of a delayed
-/// promise errored ("async scheduling not implemented") and each delay
-/// leaked an async-runtime registry entry.
-#[test]
-fn promise_delay_resolves_at_await() {
-    let parser = olang::Parser::new();
-    let mut interpreter = olang::Interpreter::new();
-
-    let program = parser
-        .parse(r#"await Promise.delay("done", 30)"#)
-        .expect("parse");
-    let start = std::time::Instant::now();
-    let result = interpreter.eval_program(program).expect("eval");
-    let elapsed = start.elapsed();
-
-    assert_eq!(result, olang::Value::String("done".to_string().into()));
-    assert!(
-        elapsed.as_millis() >= 25,
-        "await should sleep out the delay, took {:?}",
-        elapsed
-    );
-}
-
-#[test]
-fn promise_delay_counts_elapsed_work_against_the_delay() {
-    let parser = olang::Parser::new();
-    let mut interpreter = olang::Interpreter::new();
-
-    // The delay deadline is set at creation; by the time we await, most of
-    // it may already have passed.
-    let program = parser
-        .parse(
-            r#"
-let p = Promise.delay(42, 20)
-let x = await p
-x
-"#,
-        )
-        .expect("parse");
-    assert_eq!(
-        interpreter.eval_program(program).expect("eval"),
-        olang::Value::Integer(42)
     );
 }
 

@@ -1,5 +1,5 @@
 // Client-side measurement: each client worker returns one Stats value, and
-// the coordinator folds them together after `await`. No shared mutable
+// the coordinator folds them together after `task.join`. No shared mutable
 // state anywhere — merging after the join is the whole concurrency story.
 
 share type Stats = struct {

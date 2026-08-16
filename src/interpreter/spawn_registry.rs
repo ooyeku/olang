@@ -76,9 +76,44 @@ fn forget(id: u64) {
     }
 }
 
+/// Join the task if it finishes before `deadline`, otherwise report the
+/// timeout. `Some(None)` means "still running" — the thread is left
+/// alone and keeps working, because an OS thread cannot be cancelled;
+/// a timeout here stops the *waiting*, not the work. `None` means the id
+/// is unknown.
+///
+/// Polls rather than blocking, since `JoinHandle` has no timed join. The
+/// finished handle is joined normally once `is_finished` reports it, so
+/// the memoized result path is shared with `join`.
+pub(crate) fn join_until(
+    id: u64,
+    deadline: std::time::Instant,
+) -> Option<Option<Result<Value, String>>> {
+    loop {
+        let ready = {
+            let map = tasks().lock().unwrap();
+            match map.get(&id) {
+                None => return None,
+                Some(TaskSlot::Done(r)) => return Some(Some(r.clone())),
+                Some(TaskSlot::Running(h)) => h.is_finished(),
+                // Another thread is mid-join; treat as not-yet-ready and
+                // come back for its memoized result.
+                Some(TaskSlot::Joining) => false,
+            }
+        };
+        if ready {
+            return Some(join(id));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Some(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 /// Join the task (or return its memoized result). Returns `None` for an
 /// unknown id. The registry lock is never held across the join itself —
-/// a spawned task may await other tasks, and holding the lock while
+/// a spawned task may join other tasks, and holding the lock while
 /// blocking would deadlock.
 pub(crate) fn join(id: u64) -> Option<Result<Value, String>> {
     loop {

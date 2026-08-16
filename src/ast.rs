@@ -45,7 +45,6 @@ pub enum Statement {
     Expression(Expr),
     LetDecl(LetDecl),
     FunctionDecl(FunctionDecl),
-    AsyncFunctionDecl(AsyncFunctionDecl),
     TypeDecl(TypeDecl),
     ErrorTypeDecl(ErrorTypeDecl),
     ShareDecl(ShareDecl),
@@ -61,7 +60,6 @@ impl PartialEq for Statement {
             (Statement::Expression(a), Statement::Expression(b)) => a == b,
             (Statement::LetDecl(a), Statement::LetDecl(b)) => a == b,
             (Statement::FunctionDecl(a), Statement::FunctionDecl(b)) => a == b,
-            (Statement::AsyncFunctionDecl(a), Statement::AsyncFunctionDecl(b)) => a == b,
             (Statement::TypeDecl(a), Statement::TypeDecl(b)) => a == b,
             (Statement::ErrorTypeDecl(a), Statement::ErrorTypeDecl(b)) => a == b,
             (Statement::ShareDecl(a), Statement::ShareDecl(b)) => a == b,
@@ -160,16 +158,6 @@ pub struct FunctionDecl {
     pub type_param_bounds: Vec<(String, Vec<String>)>,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<TypeAnnotation>,
-    pub body: Expr,
-}
-
-/// Async function declaration for named/recursive async functions
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct AsyncFunctionDecl {
-    pub name: String,
-    pub type_params: Vec<String>, // Type parameters for generic functions
-    pub parameters: Vec<Parameter>,
-    pub return_type: Option<TypeAnnotation>, // Should be Promise<T, E>
     pub body: Expr,
 }
 
@@ -329,25 +317,9 @@ pub enum Expr {
         index: Box<Expr>,
     },
 
-    // Async expressions
-    Async {
-        parameters: Vec<Parameter>,
-        body: Box<Expr>,
-        return_type: Option<TypeAnnotation>,
-    },
-    Await {
-        expression: Box<Expr>,
-    },
-    Promise {
-        promise_type: PromiseType,
-        value: Box<Expr>,
-        delay: Option<Box<Expr>>, // For Promise.delay(ms, value)
-    },
-
-    // Concurrent operations
-    All(Box<Expr>),   // Promise.all(list-expr)
-    Race(Box<Expr>),  // Promise.race(list-expr)
-    Spawn(Box<Expr>), // spawn async_expr
+    // Background execution: `spawn f(x)` runs the call on its own OS
+    // thread and evaluates to a task handle, which `task.join` collects.
+    Spawn(Box<Expr>),
 
     // New string literal variants
     RawString(Arc<String>),
@@ -396,14 +368,6 @@ pub enum Expr {
 pub enum Argument {
     Positional(Expr),
     Named { name: String, value: Expr },
-}
-
-/// Promise types for Promise expressions
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum PromiseType {
-    Resolve, // Promise.resolve(value)
-    Reject,  // Promise.reject(error)
-    Delay,   // Promise.delay(ms, value)
 }
 
 /// Binary operators
@@ -516,14 +480,6 @@ pub enum Pattern {
     Rest(String),
 }
 
-/// State of a Promise value
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum PromiseState {
-    Pending,
-    Resolved,
-    Rejected,
-}
-
 /// Enum variant data for proper enum value representation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum EnumVariantData {
@@ -577,31 +533,6 @@ pub enum Value {
         type_name: String,
         variant_name: String,
         arity: usize,
-    },
-
-    // Promise values for async operations
-    Promise {
-        state: PromiseState,
-        value: Option<Box<Value>>,
-        error: Option<Box<Value>>,
-        /// For `promise delay`: epoch millis when the value becomes ready.
-        /// `await` sleeps out the remainder. This is what makes a delayed
-        /// promise awaitable at all in a synchronous interpreter — there is
-        /// no scheduler to resolve it in the background.
-        #[serde(default)]
-        resolve_at_epoch_ms: Option<u64>,
-        /// For `spawn`: the id of a real background thread in the spawn
-        /// registry. `await` joins it (memoized, so a cloned promise can be
-        /// awaited more than once).
-        #[serde(default)]
-        task_id: Option<u64>,
-        /// For `spawn`: a drop-guard shared by every clone of this promise.
-        /// When the last clone is dropped, the task's registry entry is
-        /// removed — so per-tick worker pools don't accumulate completed
-        /// tasks forever. Not serialized (a live thread doesn't cross a
-        /// wire); a deserialized promise carries None and is inert.
-        #[serde(skip)]
-        guard: Option<std::sync::Arc<crate::interpreter::spawn_registry::SpawnGuard>>,
     },
 
     // Type information for exported types
@@ -711,11 +642,6 @@ pub enum TypeAnnotation {
         ok_type: Box<TypeAnnotation>,
         err_type: Box<TypeAnnotation>,
     },
-    // Promise type for async operations
-    Promise {
-        value_type: Box<TypeAnnotation>,
-        error_type: Option<Box<TypeAnnotation>>, // Optional error type
-    },
     // Type inference placeholders
     Inferred(String), // For type variables during inference
     Unknown,          // For unresolved types
@@ -780,17 +706,6 @@ impl TypeAnnotation {
                 ok_type.display_source(),
                 err_type.display_source()
             ),
-            TypeAnnotation::Promise {
-                value_type,
-                error_type,
-            } => match error_type {
-                Some(e) => format!(
-                    "Promise<{}, {}>",
-                    value_type.display_source(),
-                    e.display_source()
-                ),
-                None => format!("Promise<{}>", value_type.display_source()),
-            },
             TypeAnnotation::Custom(n) | TypeAnnotation::TypeVariable(n) => n.clone(),
             TypeAnnotation::Generic {
                 base_type,
@@ -928,10 +843,6 @@ impl FieldTypeCheck {
                 ok: Self::from_annotation(ok_type, type_params).map(Box::new),
                 err: Self::from_annotation(err_type, type_params).map(Box::new),
             }),
-            // A Promise annotation checks the base at non-async sites;
-            // the payload exists only at resolution, where the async
-            // return check enforces it.
-            TypeAnnotation::Promise { .. } => Some(Self::Named("Promise".to_string())),
             // A literal annotation checks by value equality.
             TypeAnnotation::Literal { value } => match value.as_ref() {
                 Value::Integer(i) => Some(Self::Literal(LitCheck::Int(*i))),
@@ -1154,26 +1065,6 @@ pub fn return_check_of(
     type_params: &[String],
 ) -> Option<FieldTypeCheck> {
     ret.and_then(|ann| FieldTypeCheck::from_annotation(ann, type_params))
-}
-
-/// Return check for an *async* function. Its annotation describes the
-/// promise the caller receives, but the runtime check runs on the value
-/// the body resolves to — so `Promise<T, ...>` unwraps to check `T`, and
-/// a bare `Promise` promises nothing checkable about the resolved value.
-pub fn async_return_check_of(
-    ret: Option<&TypeAnnotation>,
-    type_params: &[String],
-) -> Option<FieldTypeCheck> {
-    match ret {
-        Some(TypeAnnotation::Generic {
-            base_type,
-            type_args,
-        }) if base_type == "Promise" => type_args
-            .first()
-            .and_then(|t| FieldTypeCheck::from_annotation(t, type_params)),
-        Some(TypeAnnotation::Custom(name)) if name == "Promise" => None,
-        other => return_check_of(other, type_params),
-    }
 }
 
 /// Generic type definition
@@ -1513,28 +1404,6 @@ impl std::fmt::Display for Value {
                 variant_name,
                 ..
             } => write!(f, "{}.{}", type_name, variant_name),
-            Value::Promise {
-                state,
-                value,
-                error,
-                ..
-            } => match state {
-                PromiseState::Pending => write!(f, "Promise<Pending>"),
-                PromiseState::Resolved => {
-                    if let Some(val) = value {
-                        write!(f, "Promise<Resolved: {}>", val)
-                    } else {
-                        write!(f, "Promise<Resolved>")
-                    }
-                }
-                PromiseState::Rejected => {
-                    if let Some(err) = error {
-                        write!(f, "Promise<Rejected: {}>", err)
-                    } else {
-                        write!(f, "Promise<Rejected>")
-                    }
-                }
-            },
             Value::TypeInfo { name, .. } => write!(f, "<type: {}>", name),
             Value::Native(handle) => write!(f, "{}", handle.0.display()),
         }
@@ -1561,7 +1430,6 @@ impl Value {
             Value::Unit => "Unit".to_string(),
             Value::Enum { type_name, .. } => type_name.clone(),
             Value::EnumConstructor { type_name, .. } => type_name.clone(),
-            Value::Promise { .. } => "Promise".to_string(),
             Value::TypeInfo { .. } => "Type".to_string(),
             Value::Native(handle) => handle.0.type_name().to_string(),
         }

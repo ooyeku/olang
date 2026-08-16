@@ -127,7 +127,6 @@ impl Validator {
             }
             match s {
                 Statement::FunctionDecl(d) => self.bind(&d.name, false),
-                Statement::AsyncFunctionDecl(d) => self.bind(&d.name, false),
                 Statement::ShareDecl(ShareDecl::Function(d)) => self.bind(&d.name, false),
                 _ => {}
             }
@@ -153,10 +152,6 @@ impl Validator {
             Statement::Expression(e) => self.expr(e),
             Statement::LetDecl(d) => self.let_decl(d),
             Statement::FunctionDecl(d) => {
-                self.bind(&d.name, false);
-                self.function_body(&d.parameters, &d.body);
-            }
-            Statement::AsyncFunctionDecl(d) => {
                 self.bind(&d.name, false);
                 self.function_body(&d.parameters, &d.body);
             }
@@ -295,9 +290,6 @@ impl Validator {
 
             Expr::Lambda {
                 parameters, body, ..
-            }
-            | Expr::Async {
-                parameters, body, ..
             } => self.function_body(parameters, body),
 
             Expr::ForLoop {
@@ -423,13 +415,6 @@ impl Validator {
                 self.expr(body);
             }
             Expr::Loop { body } => self.expr(body),
-            Expr::Await { expression } => self.expr(expression),
-            Expr::Promise { value, delay, .. } => {
-                self.expr(value);
-                if let Some(d) = delay {
-                    self.expr(d);
-                }
-            }
             Expr::TemplateString { parts } => {
                 for p in parts {
                     match p {
@@ -454,8 +439,6 @@ impl Validator {
             Expr::ResultOk(e)
             | Expr::ResultErr(e)
             | Expr::Try(e)
-            | Expr::All(e)
-            | Expr::Race(e)
             | Expr::Spawn(e)
             | Expr::Spread(e)
             | Expr::Rest(e) => self.expr(e),

@@ -492,31 +492,32 @@ fn test_map_operation_error_paths() {
 #[test]
 fn test_concurrent_error_paths() {
     let parser = Parser::new();
+
+    // Joining something that is not a task.
     let mut interpreter = Interpreter::new();
+    let program = parser.parse("task.join(42)").expect("Failed to parse");
+    let err = interpreter
+        .eval_program(program)
+        .expect_err("42 is not a task");
+    assert!(err.to_string().contains("expected a task"), "{err}");
 
-    // Test await on non-promise
-    let source = r#"await 42"#;
-    let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program);
+    // A task that fails settles as Err rather than aborting the program.
+    let mut interpreter = Interpreter::new();
+    let program = parser
+        .parse("fn boom() = unwrap(Err(\"x\"))\nshow(task.join(spawn boom()))\n")
+        .expect("Failed to parse");
+    let out = interpreter.eval_program(program).expect("must not abort");
+    assert!(format!("{out}").contains("Err("), "{out}");
 
-    // Should handle await on non-promise
-    assert!(result.is_ok() || result.is_err());
-
-    // Test race with empty array
-    let source = r#"race([])"#;
-    let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program);
-
-    // Should handle empty race
-    assert!(result.is_ok() || result.is_err());
-
-    // Test all with mixed types
-    let source = r#"all([42, "not a promise"])"#;
-    let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program);
-
-    // Should handle mixed types in all
-    assert!(result.is_ok() || result.is_err());
+    // A negative timeout budget is rejected rather than silently clamped.
+    let mut interpreter = Interpreter::new();
+    let program = parser
+        .parse("fn one() = 1\ntask.join_timeout(spawn one(), -1)\n")
+        .expect("Failed to parse");
+    let err = interpreter
+        .eval_program(program)
+        .expect_err("negative budget");
+    assert!(err.to_string().contains("non-negative"), "{err}");
 }
 
 #[test]

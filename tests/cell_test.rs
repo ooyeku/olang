@@ -117,14 +117,14 @@ fn a_cell_shows_its_contents() {
 fn reading_a_cell_from_a_spawned_task_is_an_error() {
     // `spawn` snapshots the whole environment, so the cell rides along —
     // and the access on the other side is what fails, naming both threads.
-    let out = run("let c = cell(0)\nshow(await spawn { cell.get(c) })\n").unwrap();
+    let out = run("let c = cell(0)\nshow(task.join(spawn { cell.get(c) }))\n").unwrap();
     assert!(out.contains("cell escaped its thread"), "{out}");
     assert!(out.contains("olang-spawn"), "{out}");
 }
 
 #[test]
 fn writing_a_cell_from_a_spawned_task_is_an_error() {
-    let out = run("let c = cell(0)\nshow(await spawn { cell.set(c, 1) })\n").unwrap();
+    let out = run("let c = cell(0)\nshow(task.join(spawn { cell.set(c, 1) }))\n").unwrap();
     assert!(out.contains("cell escaped its thread"), "{out}");
 }
 
@@ -132,11 +132,12 @@ fn writing_a_cell_from_a_spawned_task_is_an_error() {
 fn a_cell_created_inside_a_task_belongs_to_that_task() {
     // Confinement is about the creating thread, not about `spawn`: a cell
     // made and used entirely inside a task is perfectly legal.
-    let out = run("await spawn {\n\
+    let out = run("let t = spawn {\n\
                        let c = cell(0)\n\
                        cell.set(c, 41)\n\
                        cell.get(c) + 1\n\
-                   }\n")
+                   }\n\
+                   task.join(t)\n")
     .unwrap();
     assert_eq!(out, "42");
 }
@@ -148,7 +149,7 @@ fn a_cell_merely_in_scope_during_a_task_stays_legal() {
     // for one existing in the enclosing scope.
     let out = run("let c = cell(0)\n\
                    let t = spawn { 1 + 1 }\n\
-                   let n = await t\n\
+                   let n = task.join(t)\n\
                    cell.set(c, 5)\n\
                    to_string(n) + \" \" + to_string(cell.get(c))\n")
     .unwrap();

@@ -28,7 +28,7 @@ consistent with the interpreter.
 12. [User-defined types](#user-defined-types)
 13. [Traits](#traits)
 14. [Error handling](#error-handling)
-15. [Async and concurrency](#async-and-concurrency)
+15. [Concurrency](#concurrency)
 16. [Modules and sharing](#modules-and-sharing)
 17. [Testing](#testing)
 18. [Type annotations](#type-annotations)
@@ -455,13 +455,13 @@ is about crossing, not about tasks.
 
 ```olang
 let readings = cell([])
-let task = spawn {
+let worker = spawn {
     // A cell made in here belongs in here.
     let local = cell(0)
     for n in [1, 2, 3] { cell.update(local, (t) => t + n) }
     cell.get(local)
 }
-cell.set(readings, [await task])
+cell.set(readings, [task.join(worker)])
 println(to_string(cell.get(readings)))   // [6]
 ```
 
@@ -1382,61 +1382,26 @@ statements inside block bodies pinpoint the failing statement, while a
 single-expression function body (`fn f(x) = ...`) attributes the error
 to the nearest enclosing located statement — its call site.
 
-## Async and concurrency
+## Concurrency
 
-olang has two concurrency mechanisms, both explicit:
+olang has **one** concurrency model, and it is threads. There are three
+pieces, all explicit:
 
-- **Deterministic promises** (`async`, `Promise.resolve/reject/delay`,
-  `all`, `race`): a promise carries a settled value or a *deadline*, and
-  `await` sleeps exactly as long as needed. Awaiting several delays started
-  together costs the longest, not the sum. No threads are involved —
-  timing is simulated, deterministically.
-- **Real background threads** (`spawn`): `spawn expr` evaluates the
-  expression on its own OS thread against a snapshot of the current
-  bindings, returning a promise that `await` joins. This is genuine
-  parallelism — three 100ms tasks awaited together take ~100ms.
+- **`spawn`** starts work on a real OS thread and hands back a task
+  handle; `task.join` collects the result.
+- **`chan`** is a queue tasks use to send values to each other.
+- **`par_map`, `par_filter`, and `par for`** apply a function across a
+  collection on a worker pool.
 
-### `async` functions and lambdas
+There is no event loop, no scheduler, and no `async`/`await` colouring
+of functions. Any function can be spawned, because a task is a thread
+running an ordinary call.
 
-`async fn` declares a function returning a promise; `async (args) => ...`
-is the lambda form. `await` resolves a promise to its value:
+### `spawn` and `task.join`
 
-```olang
-async fn fetch_score(id) = {
-    let base = Promise.delay(id * 10, 5)   // value, then ms
-    let v = await base
-    v + 1
-}
-println(to_string(await fetch_score(3)))
-```
-
-### The Promise API
-
-| Expression | Meaning |
-|---|---|
-| `Promise.resolve(v)` | already-settled promise of `v` |
-| `Promise.reject(e)` | failed promise |
-| `Promise.delay(v, ms)` | resolves to `v` after `ms` milliseconds |
-| `Promise.all(list)` | list of results; waits for the slowest |
-| `Promise.race(list)` | first result; waits only for the fastest |
-| `spawn f()` | run a call as a promise |
-
-```olang
-let jobs = [Promise.delay("a", 10), Promise.delay("b", 5), Promise.resolve("c")]
-println(to_string(Promise.all(jobs)))     // ["a", "b", "c"] — total wait ≈ 10ms
-println(Promise.race([Promise.delay("slow", 50), Promise.delay("fast", 5)]))
-```
-
-`Promise.all` accepts any list expression — a variable, a `map` result — not
-just a literal.
-
-### `spawn`
-
-`spawn expr` starts evaluating the expression on a **real background
-thread** and returns a promise immediately; `await` joins it. The thread
-sees a snapshot of the bindings at spawn time (capture by value, like
-closures), a failing task rejects the promise, and awaiting the same
-promise again returns the memoized result:
+`spawn expr` evaluates the expression on its own thread and returns a
+**task handle** immediately. `task.join(t)` blocks until that thread
+finishes and returns what it produced:
 
 ```olang
 fn heavy(n) = {
@@ -1445,24 +1410,118 @@ fn heavy(n) = {
 }
 let a = spawn heavy(10)
 let b = spawn heavy(11)
-println(to_string(await a + await b))   // both ran concurrently
-
-let p = spawn heavy(21)
-println(to_string(await p == await p))  // memoized: true
+println(to_string(task.join(a) + task.join(b)))   // both ran concurrently
 ```
 
-Spawned promises compose with `Promise.all`/`race` like any other.
+Both calls above overlap: the second `spawn` does not wait for the
+first. Only `task.join` blocks, and by the time it runs the work is
+already underway — which is why joining several is just `map`:
 
-**Failure is a value.** Awaiting a failed task (or any rejected promise)
-yields `Err(e)` rather than aborting, so worker failure is handled with
-the ordinary Result toolkit — one bad task never kills the batch:
+```olang
+fn heavy(n) = {
+    time.sleep(20)
+    n * 2
+}
+let jobs = [spawn heavy(1), spawn heavy(2), spawn heavy(3)]
+println(to_string(jobs |> map(task.join)))   // [2, 4, 6]
+```
+
+A spawned thread sees a **snapshot** of the bindings at spawn time —
+capture by value, exactly like a closure — so no two threads share
+mutable state and no locks exist in the language. Joining the same
+handle twice returns the memoized result rather than running the work
+again:
+
+```olang
+fn heavy(n) = { time.sleep(20); n * 2 }
+let p = spawn heavy(21)
+println(to_string(task.join(p) == task.join(p)))   // memoized: true
+```
+
+**Failure is a value.** A task that fails yields `Err(e)` from
+`task.join` rather than aborting the program, so worker failure is
+handled with the ordinary Result toolkit and one bad task never kills
+the batch:
 
 ```olang
 fn work(n) = if n == 1 => unwrap(Err("task died")) else => n * 10
 let jobs = [spawn work(0), spawn work(1), spawn work(2)]
-let results = jobs |> map((j) => try { await j } catch (e) { -1 })
+let results = jobs |> map((j) => match task.join(j) { Err(e) => -1, v => v })
 println(to_string(results))   // [0, -1, 20]
 ```
+
+### Bounding the wait
+
+`task.join_timeout(t, ms)` returns `Ok(v)` if the task finished within
+the budget and `Err("timed out")` otherwise.
+
+Be precise about what that means: it bounds how long you *wait*, not
+how long the task *works*. An OS thread cannot be cancelled from
+outside without leaving whatever it was touching in an unknown state,
+so olang does not offer a cancel that would be a lie. A timed-out task
+runs to completion and its result stays collectible from the same
+handle:
+
+```olang
+fn slow(n) = { time.sleep(80); n }
+let t = spawn slow(7)
+println(show(task.join_timeout(t, 5)))      // Err("timed out")
+println(show(task.join_timeout(t, 5000)))   // Ok(7) — it kept running
+```
+
+When you need work that genuinely stops early, give the task something
+to check: a channel it polls, or a value it re-reads each iteration.
+
+### Channels
+
+A channel is a queue of values with a sending and a receiving end.
+Where `task.join` collects one result at the end, a channel streams
+results as they are produced — which is what you want for a worker pool,
+a pipeline stage, or any producer whose output the consumer should start
+handling immediately. The full API is in
+[the stdlib chapter](stdlib.md#chan--channels).
+
+```olang
+let ch = chan.new()
+let worker = spawn {
+    for n in [1, 2, 3] { chan.send(ch, n * n) }
+    chan.close(ch)
+    "done"
+}
+let mut total = 0
+let mut going = true
+while going {
+    match chan.recv(ch) {
+        Ok(v) => { total = total + v }
+        Err(e) => { going = false }
+    }
+}
+println(to_string(total) + " (" + show(task.join(worker)) + ")")
+```
+
+### Data parallelism
+
+For the common case — the same function over every element — reach for
+`par_map`, `par_filter`, or `par for` instead of spawning by hand. They
+run on a worker pool, carry the same snapshot semantics as `spawn`, and
+are differential-tested against their sequential counterparts, so
+swapping `map` for `par_map` cannot change results:
+
+```olang
+let squares = par_map([1, 2, 3, 4, 5], (n) => n * n)
+println(to_string(sum(squares)))
+```
+
+See [`par for`](#par-for--parallel-iteration) for the loop form.
+
+### Which to reach for
+
+| You want | Use |
+|---|---|
+| The same function over a collection | `par_map` / `par_filter` / `par for` |
+| A handful of distinct jobs, results at the end | `spawn` + `task.join` |
+| Results as they arrive, or tasks talking to each other | `chan` |
+| Mutable state within one thread | [`cell`](#cells-the-one-mutable-location) |
 
 ## Modules and sharing
 
@@ -1607,7 +1666,7 @@ println(to_string(apply((n) => n + count, 39)))
 
 Annotation forms: `Int`, `Float`, `String`, `Bool`, `Map`, custom type
 names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions,
-`Result<T, E>`, `Promise<T>`, `A | B` unions, scalar literals
+`Result<T, E>`, `A | B` unions, scalar literals
 (`"open" | "done"` is a lightweight enum), generic applications
 `Name<T>`, `()` unit, and (reserved) intersection forms.
 
@@ -1620,6 +1679,12 @@ fn let type if else match for while loop break continue return
 true false async await try catch error share use
 struct enum test trait impl
 ```
+
+`async` and `await` no longer *do* anything — 0.63 removed them along
+with the `Promise` API. They stay reserved for one release so that code
+written against the old model gets an error naming `spawn` and
+`task.join` instead of a generic parse failure. They become ordinary
+identifiers at 1.0.
 
 Each, in one line:
 
@@ -1636,7 +1701,7 @@ Each, in one line:
 | `break` / `continue` | Exit a loop (optionally with a value) / skip to the next iteration |
 | `return` | Return early from a function |
 | `true` / `false` | Boolean literals |
-| `async` / `await` | Declare an async function/lambda; await a promise |
+| `async` / `await` | **Removed in 0.63.** Still reserved so the parser can point at `spawn` + `task.join`; freed at 1.0 |
 | `try` / `catch` | Catch a raised error (`try { … } catch (e) { … }`) |
 | `error` | Declare a named error type with fields |
 | `share` | Export a declaration from a module |
@@ -1647,7 +1712,7 @@ Each, in one line:
 
 `mut` and `par` are *contextual* keywords: `mut` is special only right
 after `let`, and `par` only directly before `for` (`par for x in xs`).
-`Ok`, `Err`, `Result`, `Promise`, and `spawn` are ordinary names with
+`Ok`, `Err`, `Result`, and `spawn` are ordinary names with
 built-in meaning rather than reserved words.
 
 Statement separators are newlines or `;`. Comments are `//` to end of

@@ -1,8 +1,8 @@
 use crate::ast::{
-    Argument, AsyncFunctionDecl, BinaryOp, BitwiseOp, EnumVariant, ErrorTypeDecl, Expr, FieldValue,
-    FunctionDecl, LetDecl, MapEntry, MatchArm, Parameter, Pattern, Program, PromiseType, ShareDecl,
-    Statement, StructField, StructLiteral, TemplatePart, TestDecl, TypeAnnotation, TypeDecl,
-    TypeDefinition, UnaryOp, UseDecl,
+    Argument, BinaryOp, BitwiseOp, EnumVariant, ErrorTypeDecl, Expr, FieldValue, FunctionDecl,
+    LetDecl, MapEntry, MatchArm, Parameter, Pattern, Program, ShareDecl, Statement, StructField,
+    StructLiteral, TemplatePart, TestDecl, TypeAnnotation, TypeDecl, TypeDefinition, UnaryOp,
+    UseDecl,
 };
 use pest::{Parser as PestParser, iterators::Pair, iterators::Pairs};
 use pest_derive::Parser;
@@ -224,6 +224,29 @@ impl ParseError {
     }
 }
 
+/// The error for a construct 0.63 removed.
+///
+/// `async`, `await`, and the `Promise` API are gone: olang's concurrency
+/// model is threads (`spawn`), channels (`chan`), and data parallelism
+/// (`par_map`, `par_filter`, `par for`). The grammar still *recognizes*
+/// the old forms — that is deliberate and temporary. A removed keyword
+/// that simply falls out of the grammar produces "expected a statement",
+/// which tells a reader nothing; keeping the productions lets the parser
+/// name what went and what replaced it, at the right span. The rules go
+/// when the words are freed as ordinary identifiers.
+fn removed_async(what: &str) -> ParseError {
+    ParseError::InvalidSyntax {
+        message: format!(
+            "{what} was removed in 0.63. olang's concurrency model is \
+             threads, channels, and data parallelism: `spawn f(x)` starts a \
+             task and `task.join(t)` collects its result (or `Err(e)` if it \
+             failed); join several with `tasks |> map(task.join)`; use \
+             `time.sleep(ms)` for delays and `chan` to stream results. See \
+             the migration guide in the CHANGELOG."
+        ),
+    }
+}
+
 pub struct Parser {
     suggestion_engine: ErrorSuggestionEngine,
 }
@@ -334,9 +357,7 @@ impl Parser {
             Rule::function_decl => Ok(Statement::FunctionDecl(
                 self.build_function_decl(pair.into_inner())?,
             )),
-            Rule::async_function_decl => Ok(Statement::AsyncFunctionDecl(
-                self.build_async_function_decl(pair.into_inner())?,
-            )),
+            Rule::async_function_decl => Err(removed_async("`async fn`")),
             Rule::type_decl => Ok(Statement::TypeDecl(
                 self.build_type_decl(pair.into_inner())?,
             )),
@@ -935,11 +956,13 @@ impl Parser {
         })?;
         match pair.as_rule() {
             Rule::lambda => self.build_lambda(pair.into_inner()),
-            Rule::async_expr => self.build_async_expr(pair.into_inner()),
-            Rule::await_expr => self.build_await_expr(pair.into_inner()),
-            Rule::promise_expr => self.build_promise_expr(pair.into_inner()),
-            Rule::all_expr => self.build_all_expr(pair.into_inner()),
-            Rule::race_expr => self.build_race_expr(pair.into_inner()),
+            // Removed in 0.63 — see `removed_async` for why these rules
+            // still parse.
+            Rule::async_expr => Err(removed_async("an `async` lambda")),
+            Rule::await_expr => Err(removed_async("`await`")),
+            Rule::promise_expr | Rule::all_expr | Rule::race_expr => {
+                Err(removed_async("the `Promise` API"))
+            }
             Rule::spawn_expr => self.build_spawn_expr(pair.into_inner()),
             Rule::match_expr => self.build_match_expr(pair.into_inner()),
             Rule::if_expr => self.build_if_expr(pair.into_inner()),
@@ -1060,124 +1083,6 @@ impl Parser {
             parameters,
             return_type,
             body: Box::new(body_expr),
-        })
-    }
-
-    fn build_async_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut parameters = Vec::new();
-        let mut return_type = None;
-        let mut body = None;
-
-        // The param list is optional (`async () => x` has none), so the first
-        // pair may already be the body — handle every pair uniformly rather
-        // than special-casing the first and discarding it (the zero-param bug
-        // that also bit build_lambda).
-        for pair in pairs.by_ref() {
-            match pair.as_rule() {
-                Rule::param_list => {
-                    parameters = self.build_param_list(pair.into_inner())?;
-                }
-                Rule::type_annotation => {
-                    return_type = Some(self.build_type_annotation(pair.into_inner())?);
-                }
-                Rule::block => {
-                    body = Some(self.build_block(pair.into_inner())?);
-                }
-                Rule::expr => {
-                    body = Some(self.build_expr(pair.into_inner())?);
-                }
-                _ => {}
-            }
-        }
-
-        let body_expr = body.ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing function body".to_string(),
-        })?;
-
-        Ok(Expr::Async {
-            parameters,
-            return_type,
-            body: Box::new(body_expr),
-        })
-    }
-
-    fn build_await_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let expr = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing expression in await".to_string(),
-        })?;
-
-        let awaited_expr = self.build_call_expr(expr.into_inner())?;
-
-        Ok(Expr::Await {
-            expression: Box::new(awaited_expr),
-        })
-    }
-
-    fn build_promise_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        // "Promise" and "." are silent string literals in the grammar and
-        // produce no pairs — skipping them consumed the method instead, so
-        // the argument was read as the method name.
-        let method = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing promise method".to_string(),
-        })?;
-
-        let promise_type = match method.as_str() {
-            "resolve" => PromiseType::Resolve,
-            "reject" => PromiseType::Reject,
-            "delay" => PromiseType::Delay,
-            _ => {
-                return Err(ParseError::InvalidSyntax {
-                    message: format!("Unknown promise method: {}", method.as_str()),
-                });
-            }
-        };
-
-        let value_expr = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing value expression in promise".to_string(),
-        })?;
-        let value = self.build_expr(value_expr.into_inner())?;
-
-        let delay = if promise_type == PromiseType::Delay {
-            if let Some(delay_expr) = pairs.next() {
-                Some(Box::new(self.build_expr(delay_expr.into_inner())?))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        Ok(Expr::Promise {
-            promise_type,
-            value: Box::new(value),
-            delay,
-        })
-    }
-
-    fn build_all_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        // Promise.all(<expr>) — the argument is any expression that evaluates
-        // to a list of promises (a literal `[a, b]` or a variable holding one).
-        let expr = self.build_promise_collection(pairs, "all")?;
-        Ok(Expr::All(Box::new(expr)))
-    }
-
-    fn build_race_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let expr = self.build_promise_collection(pairs, "race")?;
-        Ok(Expr::Race(Box::new(expr)))
-    }
-
-    fn build_promise_collection(
-        &self,
-        pairs: Pairs<Rule>,
-        which: &str,
-    ) -> Result<Expr, ParseError> {
-        for pair in pairs {
-            if pair.as_rule() == Rule::expr {
-                return self.build_expr(pair.into_inner());
-            }
-        }
-        Err(ParseError::InvalidSyntax {
-            message: format!("Promise.{} expects a list argument", which),
         })
     }
 
@@ -1344,6 +1249,15 @@ impl Parser {
                     .as_str()
                     .to_string();
 
+                // `Promise<T>` reaches here rather than the `promise_type`
+                // rule, because `generic_type` is tried first. Catch it so
+                // the annotation gets the same migration error as the rest
+                // of the removed surface instead of being silently accepted
+                // as an unknown generic nothing can satisfy.
+                if base_type == "Promise" {
+                    return Err(removed_async("the `Promise<T>` annotation"));
+                }
+
                 // Parse type arguments
                 let mut type_args = Vec::new();
                 for arg_pair in inner_pairs {
@@ -1444,29 +1358,7 @@ impl Parser {
                     return_type: Box::new(return_annotation),
                 })
             }
-            Rule::promise_type => {
-                let mut inner_pairs = pair.into_inner();
-
-                // Get the value type
-                let value_type = inner_pairs
-                    .next()
-                    .ok_or_else(|| ParseError::InvalidSyntax {
-                        message: "Missing value type for Promise".to_string(),
-                    })?;
-                let value_annotation = self.build_type_annotation(value_type.into_inner())?;
-
-                // Get the optional error type
-                let error_type = if let Some(err_type) = inner_pairs.next() {
-                    Some(Box::new(self.build_type_annotation(err_type.into_inner())?))
-                } else {
-                    None
-                };
-
-                Ok(TypeAnnotation::Promise {
-                    value_type: Box::new(value_annotation),
-                    error_type,
-                })
-            }
+            Rule::promise_type => Err(removed_async("the `Promise<T>` annotation")),
             Rule::anonymous_struct_type => {
                 let fields = if let Some(field_list) = pair.into_inner().next() {
                     self.build_struct_field_list(field_list.into_inner())?
@@ -2598,55 +2490,6 @@ impl Parser {
             parameters,
             return_type,
             body,
-        })
-    }
-
-    fn build_async_function_decl(
-        &self,
-        mut pairs: Pairs<Rule>,
-    ) -> Result<AsyncFunctionDecl, ParseError> {
-        let name = pairs
-            .next()
-            .ok_or_else(|| ParseError::InvalidSyntax {
-                message: "Missing function name".to_string(),
-            })?
-            .as_str()
-            .to_string();
-
-        let mut type_params = Vec::new();
-        let mut parameters = Vec::new();
-        let mut return_type = None;
-        let mut body = None;
-
-        for pair in pairs {
-            match pair.as_rule() {
-                Rule::type_params => {
-                    let (names, _bounds) = self.parse_type_params(pair);
-                    type_params = names;
-                }
-                Rule::param_list => {
-                    parameters = self.build_param_list(pair.into_inner())?;
-                }
-                Rule::type_annotation => {
-                    return_type = Some(self.build_type_annotation(pair.into_inner())?);
-                }
-                Rule::expr => {
-                    body = Some(self.build_expr(pair.into_inner())?);
-                }
-                _ => {}
-            }
-        }
-
-        let body_expr = body.ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing async function body".to_string(),
-        })?;
-
-        Ok(AsyncFunctionDecl {
-            name,
-            type_params,
-            parameters,
-            return_type,
-            body: body_expr,
         })
     }
 

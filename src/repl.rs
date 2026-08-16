@@ -950,12 +950,44 @@ impl Repl {
                     match crate::pkg::manifest::Manifest::find_root(path) {
                         Some(root) => {
                             if let Some(name) = self.load_package_at(&root, false) {
+                                // Only promise `use <name>` when a public
+                                // root module actually exists. An
+                                // application package (main.ol + lib/) has
+                                // none, and telling the reader to import it
+                                // by name sends them into an error.
+                                let has_root = ["index.ol", "mod.ol", "src/index.ol"]
+                                    .iter()
+                                    .map(|f| root.join(f))
+                                    .chain(std::iter::once(root.join(format!("{name}.ol"))))
+                                    .any(|p| p.exists());
                                 println!(
-                                    "Loaded package '{}' from {} — use it with `use {}`",
+                                    "Loaded package '{}' from {}",
                                     name.bright_green(),
-                                    root.display(),
-                                    name
+                                    root.display()
                                 );
+                                if has_root {
+                                    println!("  import it with `use {name}`");
+                                } else {
+                                    let modules =
+                                        crate::interpreter::Interpreter::importable_modules(&root);
+                                    if modules.is_empty() {
+                                        println!(
+                                            "  {}",
+                                            "no importable modules — this package is an entry point, not a library"
+                                                .bright_yellow()
+                                        );
+                                    } else {
+                                        println!(
+                                            "  no root module, so `use {name}` will not resolve. Import a module directly:"
+                                        );
+                                        for m in modules.iter().take(8) {
+                                            println!("    use {name}.{m}");
+                                        }
+                                        if modules.len() > 8 {
+                                            println!("    … and {} more", modules.len() - 8);
+                                        }
+                                    }
+                                }
                             }
                         }
                         None => println!(
@@ -1900,7 +1932,6 @@ impl Repl {
                 // Use a static string for REPL display
                 "enum"
             }
-            Value::Promise { .. } => "promise",
             Value::Map(_) => "map",
             Value::TypeInfo { .. } => "type",
             Value::Native(handle) => handle.0.type_name(),

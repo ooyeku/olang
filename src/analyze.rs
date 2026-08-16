@@ -313,54 +313,6 @@ impl Analyzer {
                 // Analyze the test declaration
                 self.analyze_test_decl(test_decl)
             }
-            Statement::AsyncFunctionDecl(async_func_decl) => {
-                // Add async function to current scope
-                if self.scopes[self.current_scope].contains(&async_func_decl.name) {
-                    return Err(AnalysisError::DuplicateVariable {
-                        name: async_func_decl.name.clone(),
-                    });
-                }
-                self.declare_in_scope(async_func_decl.name.clone());
-
-                // Add async function to variables map
-                self.variables.insert(
-                    async_func_decl.name.clone(),
-                    VariableInfo {
-                        name: async_func_decl.name.clone(),
-                        scope: self.current_scope,
-                        is_mutable: false,
-                        usage_count: 0,
-                    },
-                );
-
-                // Analyze async function body with parameters in scope
-                self.enter_scope();
-
-                // Add parameters to function scope
-                for param in &async_func_decl.parameters {
-                    if self.scopes[self.current_scope].contains(&param.name) {
-                        return Err(AnalysisError::DuplicateVariable {
-                            name: param.name.clone(),
-                        });
-                    }
-                    self.declare_in_scope(param.name.clone());
-                    self.variables.insert(
-                        param.name.clone(),
-                        VariableInfo {
-                            name: param.name.clone(),
-                            scope: self.current_scope,
-                            is_mutable: false,
-                            usage_count: 0,
-                        },
-                    );
-                }
-
-                // Analyze async function body
-                self.analyze_expr(&async_func_decl.body)?;
-
-                self.exit_scope();
-                Ok(())
-            }
         }
     }
 
@@ -618,23 +570,6 @@ impl Analyzer {
                 }
                 Ok(())
             }
-            Expr::Async { body, .. } => {
-                self.analyze_expr(body)?;
-                Ok(())
-            }
-            Expr::Await { expression } => {
-                self.analyze_expr(expression)?;
-                Ok(())
-            }
-            Expr::Promise { value, delay, .. } => {
-                self.analyze_expr(value)?;
-                if let Some(delay) = delay {
-                    self.analyze_expr(delay)?;
-                }
-                Ok(())
-            }
-            Expr::All(promises) => self.analyze_expr(promises),
-            Expr::Race(promises) => self.analyze_expr(promises),
             Expr::Spawn(expr) => {
                 self.analyze_expr(expr)?;
                 Ok(())
@@ -1232,9 +1167,6 @@ impl Analyzer {
             Statement::FunctionDecl(func_decl) => {
                 self.mark_expression_reachable(&func_decl.body, reachable);
             }
-            Statement::AsyncFunctionDecl(async_func_decl) => {
-                self.mark_expression_reachable(&async_func_decl.body, reachable);
-            }
             Statement::ShareDecl(share_decl) => {
                 self.mark_share_decl_reachable(share_decl, reachable);
             }
@@ -1380,24 +1312,6 @@ impl Analyzer {
                 for field in fields {
                     self.mark_expression_reachable(&field.value, reachable);
                 }
-            }
-            Expr::Async { body, .. } => {
-                self.mark_expression_reachable(body, reachable);
-            }
-            Expr::Await { expression } => {
-                self.mark_expression_reachable(expression, reachable);
-            }
-            Expr::Promise { value, delay, .. } => {
-                self.mark_expression_reachable(value, reachable);
-                if let Some(delay) = delay {
-                    self.mark_expression_reachable(delay, reachable);
-                }
-            }
-            Expr::All(promises) => {
-                self.mark_expression_reachable(promises, reachable);
-            }
-            Expr::Race(promises) => {
-                self.mark_expression_reachable(promises, reachable);
             }
             Expr::Spawn(expr) => {
                 self.mark_expression_reachable(expr, reachable);
@@ -1882,9 +1796,6 @@ impl DeadCodeDetector {
             }
             Statement::FunctionDecl(func_decl) => {
                 self.mark_expression_reachable(&func_decl.body);
-            }
-            Statement::AsyncFunctionDecl(async_func_decl) => {
-                self.mark_expression_reachable(&async_func_decl.body);
             }
             Statement::ShareDecl(share_decl) => {
                 // Handle share declarations by marking their expressions as reachable

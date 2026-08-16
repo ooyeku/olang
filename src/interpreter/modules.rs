@@ -834,14 +834,26 @@ impl Interpreter {
 
         // Package dependencies win first: `use foo.bar` where `foo` is a
         // declared dependency resolves inside that dependency's directory.
-        if let Ok(path) = self.discover_module_dependency(module_path) {
-            if debug_config.enable_resolution_tracing {
-                crate::log::get_logger().debug(
-                    "interpreter",
-                    &format!("Found in dependency: {}", path.display()),
-                );
+        //
+        // When the head names a known dependency, its failure is *final* —
+        // propagate it instead of falling through to the generic search.
+        // Falling through replaced a precise diagnosis ("that package has
+        // no root module; here is what it does export") with "Module 'foo'
+        // not found", which sent readers looking for the wrong problem.
+        let head = module_path.split('.').next().unwrap_or("");
+        let head_is_dependency = self.dependency_map.contains_key(head);
+        match self.discover_module_dependency(module_path) {
+            Ok(path) => {
+                if debug_config.enable_resolution_tracing {
+                    crate::log::get_logger().debug(
+                        "interpreter",
+                        &format!("Found in dependency: {}", path.display()),
+                    );
+                }
+                return Ok(path);
             }
-            return Ok(path);
+            Err(e) if head_is_dependency => return Err(e),
+            Err(_) => {}
         }
 
         // Try discovery algorithms in order of priority
@@ -891,6 +903,41 @@ impl Interpreter {
 
     /// If the first segment of the module path is a declared dependency,
     /// resolve the remaining path inside that dependency's directory. A bare
+    /// Dotted module paths a package actually offers, one level deep:
+    /// top-level `.ol` files (excluding `main.ol`, which is an entry point,
+    /// not an import) and `dir/file` for each subdirectory. Used to turn
+    /// "not found" into a list of what *is* there.
+    pub fn importable_modules(root: &std::path::Path) -> Vec<String> {
+        let mut out = Vec::new();
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return out;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = entry.file_name().to_str().map(|s| s.to_string()) else {
+                continue;
+            };
+            if path.is_file() && name.ends_with(".ol") && name != "main.ol" {
+                out.push(name.trim_end_matches(".ol").to_string());
+            } else if path.is_dir()
+                && !name.starts_with('.')
+                && name != "target"
+                && let Ok(inner) = std::fs::read_dir(&path)
+            {
+                for sub in inner.flatten() {
+                    if let Some(sub_name) = sub.file_name().to_str()
+                        && sub_name.ends_with(".ol")
+                        && sub.path().is_file()
+                    {
+                        out.push(format!("{}.{}", name, sub_name.trim_end_matches(".ol")));
+                    }
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
     /// `use foo` resolves to the dependency's package root (its index.ol,
     /// mod.ol, or foo.ol).
     pub(crate) fn discover_module_dependency(
@@ -927,12 +974,34 @@ impl Interpreter {
                 return Ok(candidate);
             }
         }
-        Err(InterpreterError::RuntimeError {
-            message: format!(
-                "module '{}' not found in dependency '{}'",
-                module_path, head
-            ),
-        })
+        // Name what the package *does* offer. The common case is an
+        // application package — `main.ol` plus a `lib/` — which has no
+        // public root module, so `use <pkg>` can never work and the reader
+        // needs to be pointed at `use <pkg>.lib.<module>` instead.
+        let importable = Self::importable_modules(&dep_dir);
+        let mut message = if rest.is_empty() {
+            format!(
+                "package '{head}' has no root module: `use {head}` needs one of \
+                 index.ol, mod.ol, {head}.ol, or src/index.ol at {}",
+                dep_dir.display()
+            )
+        } else {
+            format!(
+                "module '{module_path}' not found in package '{head}' at {}",
+                dep_dir.display()
+            )
+        };
+        if !importable.is_empty() {
+            message.push_str(&format!(
+                ". Importable modules there: {}",
+                importable
+                    .iter()
+                    .map(|m| format!("{head}.{m}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        Err(InterpreterError::RuntimeError { message })
     }
 
     /// 1. Check same directory as current file

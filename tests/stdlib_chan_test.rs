@@ -109,7 +109,7 @@ fn producer(ch, n) = {
     n
 }
 let pipe = chan.new()
-let task = spawn producer(pipe, 5)
+let worker = spawn producer(pipe, 5)
 let mut total = 0
 let mut going = true
 while going {
@@ -118,7 +118,7 @@ while going {
         Err(e) => { going = false }
     }
 }
-total * 10 + await task
+total * 10 + task.join(worker)
 "#,
     );
     assert_eq!(v, Value::Integer(155));
@@ -143,13 +143,13 @@ fn worker(req, rep) = {
 }
 let req = chan.new()
 let rep = chan.new()
-let task = spawn worker(req, rep)
+let worker = spawn worker(req, rep)
 chan.send(req, 10)
 chan.send(req, 20)
 let a = unwrap(chan.recv(rep))
 let b = unwrap(chan.recv(rep))
 chan.close(req)
-await task
+task.join(worker)
 a + b
 "#,
     );
@@ -168,9 +168,9 @@ fn sender(ch) = {
     0
 }
 let c = chan.bounded(0)
-let task = spawn sender(c)
+let worker = spawn sender(c)
 let got = unwrap(chan.recv(c))
-await task
+task.join(worker)
 got
 "#,
     );

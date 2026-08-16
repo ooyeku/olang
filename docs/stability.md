@@ -71,12 +71,14 @@ again.
 
 ### Stable in behavior, evolving in scope
 
-- **Async and concurrency** — the documented API (`async`/`await`,
-  `Promise.resolve/reject/delay/all/race`, `spawn`, `par_map`,
-  `par_filter`, `par for`) is stable. `spawn` runs on a real OS thread;
-  `par_map`/`par_filter` carry spawn's snapshot semantics and are
-  differential-tested against `map`/`filter`; `Promise.delay` keeps its
-  deterministic deadline model. The scheduling model may gain further
+- **Concurrency** — the documented API (`spawn`, `task.join`,
+  `task.join_timeout`, `chan`, `par_map`, `par_filter`, `par for`) is
+  stable as of 0.63, which removed `async`/`await` and the `Promise`
+  API and left one model: threads. `spawn` runs on a real OS thread and
+  returns a task handle; `par_map`/`par_filter` carry spawn's snapshot
+  semantics and are differential-tested against `map`/`filter`;
+  `task.join_timeout` bounds the wait, never the work, because an OS
+  thread cannot be cancelled. The scheduling model may gain further
   capability without changing what existing programs observe.
 - **The OVM and JIT tiers** — which functions get promoted or compiled
   to native code, and how fast they run, changes freely; results never

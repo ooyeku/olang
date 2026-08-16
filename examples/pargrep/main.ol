@@ -4,7 +4,7 @@
 //   olang main.ol "share fn" ../..  8
 //
 // The coordinator walks the tree, deals the files into chunks, spawns one
-// worker thread per chunk, awaits them all, and merges. It also runs the
+// worker thread per chunk, joins them all, and merges. It also runs the
 // same search sequentially and prints both timings — the speedup is the
 // point of the exercise. A worker that fails (e.g. a bad pattern) is
 // handled per-task with try/catch, so one bad worker cannot kill the run.
@@ -33,7 +33,7 @@ let t1 = time.monotonic_ms()
 let chunk_size = (len(files) + workers - 1) / workers
 let jobs = chunk(files, chunk_size)
     |> map((paths) => spawn search_chunk(paths, pattern))
-let outcomes = jobs |> map((job) => try { await job } catch (e) { [] })
+let outcomes = jobs |> map((job) => match task.join(job) { Err(e) => [], hits => hits })
 let par_hits = flatten(outcomes)
 let par_ms = time.monotonic_ms() - t1
 

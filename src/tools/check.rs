@@ -433,9 +433,6 @@ enum SType {
         required: usize,
         ret: Box<SType>,
     },
-    /// `Promise<T, E>`. Base-checked like a named type at rest; `await`
-    /// unwraps `T`.
-    Promise(Box<SType>, Box<SType>),
     /// A literal type: satisfied only by exactly that value. The checker
     /// proves violations when the expression is itself a scalar literal
     /// (or a binding annotated with a different literal).
@@ -488,18 +485,6 @@ impl SType {
                 required: params.len(),
                 ret: Box::new(SType::from_annotation(return_type, type_params)),
             },
-            TypeAnnotation::Promise {
-                value_type,
-                error_type,
-            } => SType::Promise(
-                Box::new(SType::from_annotation(value_type, type_params)),
-                Box::new(
-                    error_type
-                        .as_ref()
-                        .map(|t| SType::from_annotation(t, type_params))
-                        .unwrap_or(SType::Unknown),
-                ),
-            ),
             TypeAnnotation::Literal { value } => match value.as_ref() {
                 crate::ast::Value::Integer(i) => SType::Lit(crate::ast::LitCheck::Int(*i)),
                 crate::ast::Value::String(st) => {
@@ -552,20 +537,6 @@ impl SType {
                             .unwrap_or(SType::Unknown),
                     ),
                 ),
-                "Promise" => SType::Promise(
-                    Box::new(
-                        type_args
-                            .first()
-                            .map(|t| SType::from_annotation(t, type_params))
-                            .unwrap_or(SType::Unknown),
-                    ),
-                    Box::new(
-                        type_args
-                            .get(1)
-                            .map(|t| SType::from_annotation(t, type_params))
-                            .unwrap_or(SType::Unknown),
-                    ),
-                ),
                 "Result" => SType::Result(
                     Box::new(
                         type_args
@@ -602,7 +573,6 @@ impl SType {
             SType::Tuple(_) => Some("Tuple"),
             SType::Result(_, _) => Some("Result"),
             SType::Function { .. } => Some("Function"),
-            SType::Promise(_, _) => Some("Promise"),
             SType::Lit(crate::ast::LitCheck::Int(_)) => Some("Int"),
             SType::Lit(crate::ast::LitCheck::Str(_)) => Some("String"),
             SType::Lit(crate::ast::LitCheck::Bool(_)) => Some("Bool"),
@@ -635,10 +605,6 @@ impl SType {
                     .join(", "),
                 ret.display()
             ),
-            SType::Promise(v, e) if **v == SType::Unknown && **e == SType::Unknown => {
-                "Promise".to_string()
-            }
-            SType::Promise(v, e) => format!("Promise<{}, {}>", v.display(), e.display()),
             SType::Lit(lit) => lit.display(),
             SType::Union(bs) => bs
                 .iter()
@@ -767,9 +733,6 @@ fn violation(expected: &SType, actual: &SType) -> Option<(String, String, bool)>
         }
         (SType::Result(o1, e1), SType::Result(o2, e2)) => {
             violation(o1, o2).is_some() || violation(e1, e2).is_some()
-        }
-        (SType::Promise(v1, e1), SType::Promise(v2, e2)) => {
-            violation(v1, v2).is_some() || violation(e1, e2).is_some()
         }
         _ => false,
     };
@@ -967,42 +930,6 @@ impl Checker {
                                 .as_ref()
                                 .map(|a| SType::from_annotation(a, &f.type_params))
                                 .unwrap_or(SType::Unknown),
-                        },
-                    );
-                }
-                Statement::AsyncFunctionDecl(f) => {
-                    // Calling an async fn yields a Promise; its annotation
-                    // describes the resolved value (a bare `-> T` wraps).
-                    let resolved = f
-                        .return_type
-                        .as_ref()
-                        .map(|a| SType::from_annotation(a, &f.type_params))
-                        .unwrap_or(SType::Unknown);
-                    let ret = match resolved {
-                        p @ SType::Promise(_, _) => p,
-                        other => SType::Promise(Box::new(other), Box::new(SType::Unknown)),
-                    };
-                    self.sigs.insert(
-                        f.name.clone(),
-                        FnSig {
-                            param_names: f.parameters.iter().map(|p| p.name.clone()).collect(),
-                            params: f
-                                .parameters
-                                .iter()
-                                .map(|p| {
-                                    p.type_annotation
-                                        .as_ref()
-                                        .map(|a| SType::from_annotation(a, &f.type_params))
-                                        .unwrap_or(SType::Unknown)
-                                })
-                                .collect(),
-                            required: f
-                                .parameters
-                                .iter()
-                                .filter(|p| p.default_value.is_none())
-                                .count(),
-                            total: f.parameters.len(),
-                            ret,
                         },
                     );
                 }
@@ -1264,11 +1191,6 @@ impl Checker {
             // `expr?` unwraps the Ok payload (or propagates the Err out).
             Expr::Try(e) => match self.infer(e) {
                 SType::Result(ok, _) => *ok,
-                _ => SType::Unknown,
-            },
-            // `await` unwraps the resolved payload.
-            Expr::Await { expression } => match self.infer(expression) {
-                SType::Promise(v, _) => *v,
                 _ => SType::Unknown,
             },
             Expr::Identifier(name) | Expr::LocalRef { name, .. } => self.lookup(name),
@@ -2289,30 +2211,24 @@ mod tests {
     // ── 0.50 arc: Promise at non-async sites ───────────────────────────
 
     #[test]
-    fn promise_annotations_base_check_and_await_unwraps() {
-        // Base check at rest.
-        let d = check("fn f(p: Promise<Int>) = p\nf(42)\n");
-        assert_eq!(d.len(), 1);
-        assert_eq!(d[0].message, "parameter 'p' of f expects Promise, got Int");
-        assert!(d[0].runtime);
-        // await carries the resolved type into the flow; a bare -> T on an
-        // async fn wraps into Promise<T, _>.
-        let d = check(
-            "async fn get() -> Promise<Int, String> = { 1 }\nfn g(x: String) = x\nlet v = await get()\ng(v)\n",
-        );
-        assert_eq!(d.len(), 1);
-        assert!(
-            d[0].message
-                .contains("parameter 'x' of g expects String, got Int")
-        );
-        // The unawaited call is a Promise, not the payload.
-        let d =
-            check("async fn get() -> Promise<Int, String> = { 1 }\nfn h(x: Int) = x\nh(get())\n");
-        assert_eq!(d.len(), 1);
-        assert!(
-            d[0].message
-                .contains("parameter 'x' of h expects Int, got Promise")
-        );
+    fn the_removed_async_surface_never_reaches_the_checker() {
+        // 0.63 deleted `async`/`await`/`Promise`. The parser refuses them
+        // with a migration error, so the checker has nothing to model —
+        // this pins that the refusal happens rather than the annotation
+        // being silently accepted as an unknown generic.
+        for source in [
+            "fn f(p: Promise<Int>) = p\nf(42)\n",
+            "async fn get() -> Int = 1\nget()\n",
+            "let t = spawn f()\nawait t\n",
+        ] {
+            assert!(
+                crate::parser::Parser::new().parse(source).is_err(),
+                "{source} should be refused at parse time"
+            );
+        }
+        // A task handle is an ordinary value to the checker: no special
+        // type, no unwrapping rule, nothing to get wrong.
+        assert!(check("fn go() = 1\nlet t = spawn go()\nlet v = task.join(t)\n").is_empty());
     }
 
     // ── stage 4: Result payloads ───────────────────────────────────────

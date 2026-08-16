@@ -280,11 +280,11 @@ fn rules_see_calls_in_previously_dropped_positions() {
     )
     .unwrap();
     // Seven bare unwrap() calls, each in a position meta.parse used to drop:
-    // two match arms, a map literal, a template interpolation, an await, and
+    // two match arms, a map literal, a template interpolation, a spawn, and
     // both sides of an assert_eq.
     std::fs::write(
         dir.join("app.ol"),
-        "fn a(v) = match v {\n    1 => unwrap(z),\n    _ => unwrap(other)\n}\nfn b(v) = #{ \"k\": unwrap(danger) }\nfn d(v) = `val ${unwrap(sneaky)}`\nfn e(v) = await unwrap(promised)\nfn f(v) = assert_eq(unwrap(a), unwrap(b))\n",
+        "fn a(v) = match v {\n    1 => unwrap(z),\n    _ => unwrap(other)\n}\nfn b(v) = #{ \"k\": unwrap(danger) }\nfn d(v) = `val ${unwrap(sneaky)}`\nfn e(v) = spawn unwrap(promised)\nfn f(v) = assert_eq(unwrap(a), unwrap(b))\n",
     )
     .unwrap();
 

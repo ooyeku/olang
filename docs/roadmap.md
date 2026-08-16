@@ -99,8 +99,19 @@ than at the thread crossing: `spawn` and `par_map` snapshot the whole
 environment rather than an enumerated capture list, so there is no list
 of what crossed to inspect, and a crossing-time check would have had to
 refuse any spawn with a cell merely in scope. `chan.send` is the one
-crossing that holds the value, and is checked there. The remaining
-lanes (S5–S8) are unchanged.
+crossing that holds the value, and is checked there.
+
+**S5 shipped in 0.63.0.** `async`, `await`, and the `Promise` API are
+gone; `spawn` returns a task handle that `task.join` collects. The
+deadline-based promise scheduler is deleted rather than repositioned, as
+D5 required — it simulated latency without providing concurrency, while
+`spawn` beside it was a real thread and `await` on a spawned task was
+really a join. One amendment to D5's wording: `Promise.race` has no
+direct replacement. `task.join_timeout(t, ms)` bounds the *wait*, and
+the task keeps running, because an OS thread cannot be cancelled from
+outside without leaving what it touched in an unknown state. A general
+`race` would have implied the losers stopped. The remaining lanes
+(S6–S8) are unchanged.
 
 | Lane | Work | Status |
 |---|---|---|
@@ -108,7 +119,7 @@ lanes (S5–S8) are unchanged.
 | S2 — required `let` | Assignment to an undeclared name is an error naming the variable and suggesting `let`. The 0.50 advisory warning becomes the error. | **shipped 0.61.0** |
 | S3 — enforced `mut` | Reassignment of a non-`mut` binding is an error. The checker and language server list every site to migrate; the corpus is migrated in the same change. | **shipped 0.61.0** |
 | S4 — the cell | `cell(v)`, `cell.get(c)`, `cell.set(c, v)`, `cell.update(c, f)`. Cells are values with identity confined to their creating thread: reading or writing one from another thread is an error, and `chan.send` refuses to send one. Dead captured-variable writes became errors pointing to `cell`. Timeline recording is unaffected because cell mutation is deterministic within a thread. | **shipped 0.62.0** |
-| S5 — remove async | `async`, `await`, and the `Promise` API are removed from the grammar, interpreter, and tiers. The promotion holdout list shrinks accordingly. Programs using `Promise.delay/all/race` migrate to `time`, `chan`, and `spawn` patterns; the book's concurrency sections are rewritten around the single model. | planned |
+| S5 — remove async | `async`, `await`, and the `Promise` API are removed from the interpreter and tiers. `spawn` returns a task handle collected by `task.join` / `task.join_timeout`. Programs using `Promise.delay/all/race` migrate to `time.sleep`, `map(task.join)`, and `chan`; the book's concurrency chapter is rewritten around the single model. | **shipped 0.63.0** |
 | S6 — stdlib conventions audit | Every builtin and module function is audited once: infallible operations return their value directly (`os.args`, `os.arch`, and the other host-introspection calls are the known cases); contextual keywords free `share` and any other colliding identifiers; `fs.join` becomes variadic; the definitive before/after table is recorded in the CHANGELOG. | planned |
 | S7 — error-model boundary | The `catch`-for-control-flow checker warning lands, and the book's error-handling chapter is rewritten around the Result-primary model with `catch` documented for boundary recovery only. | planned |
 | S8 — migration | The release ships with a migration guide. `olang check` reports every site the release breaks (its 0.50 warnings are the census); the repository corpus is migrated in the release itself as the proof of the guide. | planned |
@@ -191,7 +202,7 @@ Recorded so they are not lost; none is a commitment.
 - Timeline reach: recording `db` reads and channel interleavings so
   database-backed and concurrent programs replay end to end.
 - Asynchronous I/O, only if designed as genuine non-blocking I/O; the
-  removed Promise surface is not coming back in its old form.
+  removed async/Promise surface is not coming back in its old form.
 
 ## Process
 

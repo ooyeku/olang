@@ -558,3 +558,97 @@ fn verify_flags_edited_locked_content() {
     );
     let _ = fs::remove_dir_all(&ws);
 }
+
+/// An *application* package — `main.ol` plus a `lib/`, no public root
+/// module — cannot be imported by its own name, and the error must say so
+/// and name what it does export.
+///
+/// Regression: `use <app-pkg>` reported the generic "Module 'x' not found"
+/// with a "system-level error" hint, because the resolver swallowed the
+/// dependency-specific diagnosis and fell through to the global search.
+/// The reader was sent looking for a missing file rather than told the
+/// package has no root module.
+#[test]
+fn importing_an_application_package_by_name_explains_itself() {
+    let ws = workspace("app_pkg_root");
+    let app = ws.join("fleet");
+    write(
+        &app.join("olang.toml"),
+        "[package]\nname = \"fleet\"\nversion = \"0.1.0\"\n",
+    );
+    write(&app.join("main.ol"), "println(\"entry point\")\n");
+    write(
+        &app.join("lib/stats.ol"),
+        "share fn mean(xs) = average(xs)\n",
+    );
+    install(&app, &InstallOptions::default()).expect("install");
+
+    let mut interp = Interpreter::new();
+    interp.set_current_file(&app.join("olang.toml"));
+    interp.set_dependency_map(std::collections::HashMap::from([(
+        "fleet".to_string(),
+        app.clone(),
+    )]));
+
+    let program = Parser::new().parse("use fleet\n").expect("parses");
+    let err = interp
+        .eval_program(program)
+        .expect_err("an app package has no root module")
+        .to_string();
+    assert!(err.contains("has no root module"), "{err}");
+    assert!(
+        err.contains("index.ol"),
+        "should name what it looked for: {err}"
+    );
+    assert!(
+        err.contains("fleet.lib.stats"),
+        "should name what IS importable: {err}"
+    );
+
+    // And the submodule form works, which is the whole point of saying so.
+    let mut interp = Interpreter::new();
+    interp.set_current_file(&app.join("olang.toml"));
+    interp.set_dependency_map(std::collections::HashMap::from([(
+        "fleet".to_string(),
+        app.clone(),
+    )]));
+    let program = Parser::new()
+        .parse("use fleet.lib.stats { mean }\nmean([2.0, 4.0])\n")
+        .expect("parses");
+    assert_eq!(
+        format!("{}", interp.eval_program(program).expect("resolves")),
+        "3.0"
+    );
+
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// The mirror case: a library package with an `index.ol` still resolves by
+/// name, so the stricter error path did not break ordinary imports.
+#[test]
+fn importing_a_library_package_by_name_still_works() {
+    let ws = workspace("lib_pkg_root");
+    let lib = ws.join("shapes");
+    write(
+        &lib.join("olang.toml"),
+        "[package]\nname = \"shapes\"\nversion = \"0.1.0\"\n",
+    );
+    write(&lib.join("index.ol"), "share fn area(w, h) = w * h\n");
+    install(&lib, &InstallOptions::default()).expect("install");
+
+    let mut interp = Interpreter::new();
+    interp.set_current_file(&lib.join("olang.toml"));
+    interp.set_dependency_map(std::collections::HashMap::from([(
+        "shapes".to_string(),
+        lib.clone(),
+    )]));
+    let program = Parser::new()
+        .parse("use shapes { area }\narea(3, 4)\n")
+        .expect("parses");
+    assert_eq!(
+        format!("{}", interp.eval_program(program).expect("resolves")),
+        "12"
+    );
+
+    let _ = fs::remove_dir_all(&ws);
+}

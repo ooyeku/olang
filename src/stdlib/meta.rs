@@ -108,12 +108,6 @@ fn stmt_to_value(stmt: &Statement) -> Value {
         Statement::Expression(e) => map(vec![("kind", s("expr")), ("value", expr_to_value(e))]),
         Statement::LetDecl(d) => let_to_value(d, false),
         Statement::FunctionDecl(d) => fn_to_value(d, false),
-        Statement::AsyncFunctionDecl(d) => map(vec![
-            ("kind", s("async_fn")),
-            ("name", s(&d.name)),
-            ("params", params_to_value(&d.parameters)),
-            ("body", expr_to_value(&d.body)),
-        ]),
         Statement::TypeDecl(d) => map(vec![
             ("kind", s("type")),
             ("name", s(&d.name)),
@@ -437,24 +431,10 @@ fn expr_to_value(e: &Expr) -> Value {
             ("left", expr_to_value(left)),
             ("right", expr_to_value(right)),
         ]),
+        // Concurrency and assertion interiors carry sub-expressions where
+        // calls hide (`spawn risky()`, `assert_eq(f(), g())`), so they are
+        // walked, not collapsed — a lint over the node tree must see them.
         Expr::Spawn(inner) => map(vec![("kind", s("spawn")), ("value", expr_to_value(inner))]),
-        Expr::Async { body, .. } => map(vec![("kind", s("async")), ("value", expr_to_value(body))]),
-        // Async, concurrency, and assertion interiors carry sub-expressions
-        // where calls hide (`await risky()`, `assert_eq(f(), g())`), so they
-        // are walked, not collapsed — a lint over the node tree must see them.
-        Expr::Await { expression } => map(vec![
-            ("kind", s("await")),
-            ("value", expr_to_value(expression)),
-        ]),
-        Expr::Promise { value, delay, .. } => {
-            let mut pairs = vec![("kind", s("promise")), ("value", expr_to_value(value))];
-            if let Some(d) = delay {
-                pairs.push(("delay", expr_to_value(d)));
-            }
-            map(pairs)
-        }
-        Expr::All(inner) => map(vec![("kind", s("all")), ("value", expr_to_value(inner))]),
-        Expr::Race(inner) => map(vec![("kind", s("race")), ("value", expr_to_value(inner))]),
         Expr::Spread(inner) => map(vec![("kind", s("spread")), ("value", expr_to_value(inner))]),
         Expr::Rest(inner) => map(vec![("kind", s("rest")), ("value", expr_to_value(inner))]),
         Expr::AssertEq {

@@ -88,10 +88,11 @@ No code leaves the browser.
   environment by value.
 - **Errors as values.** Fallible operations return `Result`; `?` propagates
   errors and `try`/`catch` handles them.
-- **Parallelism.** `spawn` runs a function on an operating-system thread;
-  `par_map`, `par_filter`, and `par for` distribute work across cores without
-  a global interpreter lock. `Promise.delay`, `Promise.all`, and
-  `Promise.race` provide deterministic, deadline-based timing.
+- **Parallelism.** One model: threads. `spawn` runs a call on an
+  operating-system thread and returns a task handle that `task.join`
+  collects; `chan` streams values between tasks; `par_map`, `par_filter`,
+  and `par for` distribute work across cores without a global interpreter
+  lock. Tasks capture by value, so there is nothing shared to race on.
 - **Modules and packages.** Programs import with `use`; libraries are
   `olang.toml` packages with lockfiles, checksums, a content-addressed cache,
   and Minimal Version Selection. See [Packages and dependencies](docs/packages.md).

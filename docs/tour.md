@@ -335,7 +335,7 @@ three constructs, all built on OS threads (there is no global
 interpreter lock):
 
 - `spawn expr` starts evaluating on a background thread and returns a
-  promise; `await` joins it.
+  task handle; `task.join` collects its result.
 - `par_map(xs, f)` is `map` fanned across the cores: same arguments,
   same results in the same order.
 - `par for x in xs { ... }` is the parallel loop — for per-element
@@ -354,7 +354,7 @@ println(to_string(len(calibrated)))
 
 let a = spawn calibrate(21.5)
 let b = spawn calibrate(24.0)                    // both run concurrently
-println(to_string(await a < await b))
+println(to_string(task.join(a) < task.join(b)))
 ```
 
 ### The snapshot rule
@@ -379,11 +379,12 @@ another's writes, so there are no data races, no locks, and no
 heisenbugs — the compiler-level guarantee is simply that there is
 nothing shared to corrupt. When you want values back, use the construct
 that returns them: `par_map` collects results in order, `spawn` hands
-you a promise, and aggregation is a `fold` over what came back.
+you a task handle for `task.join`, and aggregation is a `fold` over what
+came back.
 
-A failing worker doesn't kill the batch, either — awaiting a failed
-task yields an `Err` value, handled with the same Result toolkit as any
-other failure. The [language reference](language.md#async-and-concurrency)
+A failing worker doesn't kill the batch, either — joining a failed task
+yields an `Err` value, handled with the same Result toolkit as any
+other failure. The [language reference](language.md#concurrency)
 has the full semantics; [`examples/parmap/`](../examples/parmap/)
 measures the speedup on real kernels.
 

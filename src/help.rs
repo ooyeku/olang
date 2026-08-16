@@ -1620,6 +1620,22 @@ impl HelpSystem {
         );
 
         // --- chan ---
+        // task — background threads started by `spawn`.
+        self.doc(
+            "task.join",
+            "task.join(t)",
+            "Any",
+            "task",
+            "block until the task finishes; its value, or Err(e) if it failed",
+        );
+        self.doc(
+            "task.join_timeout",
+            "task.join_timeout(t, ms)",
+            "Result",
+            "task",
+            "Ok(v) if it finished within ms, else Err(\"timed out\") — the task keeps running",
+        );
+
         // cell — the one mutable location, confined to its creating thread.
         self.doc(
             "cell.new",

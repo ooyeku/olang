@@ -178,24 +178,21 @@ let groups = unwrap(re.captures("^(\\S+ \\S+) \\[(\\w+)\\] (.+)$", "2026-08-06 0
     assert_eq!(no_match, Value::Integer(0));
 }
 
-// ── async / concurrency (found by dogfooding the scheduler) ──
+// ── concurrency (found by dogfooding the scheduler) ──
+//
+// These began as four Promise regressions. 0.63 removed that API; what
+// they were really guarding — that a dynamically-built list of jobs
+// works, and that concurrent jobs overlap — survives, expressed against
+// `spawn` + `task.join`.
 
 #[test]
-fn async_lambda_parses_with_and_without_params() {
-    assert_eq!(eval(r#"await (async () => 5)()"#), Value::Integer(5));
-    assert_eq!(
-        eval(r#"await (async (a, b) => a + b)(3, 4)"#),
-        Value::Integer(7)
-    );
-}
-
-#[test]
-fn promise_all_accepts_a_variable_list() {
-    // Promise.all/race take any expression yielding a list, not only a
-    // literal [...]. A dynamically-built list of promises must work.
+fn a_dynamically_built_list_of_tasks_joins() {
+    // The original guarded `Promise.all` accepting any list expression,
+    // not only a literal. The same question applies to `map(task.join)`.
     let src = r#"
-let ps = [Promise.resolve(1), Promise.resolve(2), Promise.resolve(3)]
-await Promise.all(ps)
+fn id(n) = n
+let ts = range(1, 4) |> map((n) => spawn id(n))
+ts |> map(task.join)
 "#;
     match eval(src) {
         Value::List(items) => assert_eq!(
@@ -207,28 +204,20 @@ await Promise.all(ps)
 }
 
 #[test]
-fn promise_all_awaits_pending_delays() {
-    // Promise.all resolves pending delay-promises (previously errored with
-    // "async scheduling not implemented"). Order is preserved.
+fn joined_tasks_keep_their_order_and_overlap_in_time() {
+    // Order follows the handles, not completion: the slowest task is
+    // first in the list and first in the result. And the total is one
+    // task's time, not the sum.
     let src = r#"
-await Promise.all([Promise.delay("a", 5), Promise.delay("b", 5), Promise.resolve("c")])
+fn work(name, ms) = { time.sleep(ms); name }
+let jobs = [spawn work("slow", 60), spawn work("fast", 5)]
+join(jobs |> map(task.join), ",")
 "#;
-    match eval(src) {
-        Value::List(items) => {
-            let got: Vec<String> = items.iter().cloned().map(s).collect();
-            assert_eq!(got, vec!["a", "b", "c"]);
-        }
-        other => panic!("expected list, got {:?}", other),
-    }
-}
-
-#[test]
-fn promise_race_returns_the_fastest() {
-    // race settles to the minimum-deadline promise.
-    assert_eq!(
-        s(eval(
-            r#"await Promise.race([Promise.delay("slow", 200), Promise.delay("fast", 5)])"#
-        )),
-        "fast"
+    let started = std::time::Instant::now();
+    assert_eq!(s(eval(src)), "slow,fast");
+    assert!(
+        started.elapsed().as_millis() < 150,
+        "tasks should overlap, took {:?}",
+        started.elapsed()
     );
 }

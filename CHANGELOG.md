@@ -7,6 +7,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.63.0] - 2026-08-16
+
+Removes `async`, `await`, and the `Promise` API. olang now has **one**
+concurrency model — threads — and this is the last of Campaign 1's
+breaking changes to the language surface.
+
+### Changed
+
+- **`async`, `await`, and `Promise` are gone (breaking).** They described
+  a deadline-based scheduler that resembled asynchronous I/O without
+  being it: `Promise.delay` simulated latency, `await` slept, and none of
+  it involved concurrency at all. Meanwhile `spawn` was already a real OS
+  thread and `await` on a spawned task was really a *join*. Two
+  vocabularies for one mechanism, one of which was theatre.
+
+  What remains is what was always doing the work:
+
+  | Was | Now |
+  |---|---|
+  | `await t` | `task.join(t)` |
+  | `Promise.all(ts)` | `ts \|> map(task.join)` |
+  | `Promise.race([work, timeout])` | `task.join_timeout(t, ms)` |
+  | `Promise.delay(v, ms)` | `time.sleep(ms)` |
+  | `Promise.resolve(v)` | `v` |
+  | `Promise.reject(e)` | `Err(e)` |
+  | `async fn f() = ...` | `fn f() = ...`, called through `spawn f()` |
+
+  There is no function colouring left: any function can be spawned,
+  because a task is a thread running an ordinary call.
+
+- **`spawn` returns a task handle** instead of a promise. `task.join(t)`
+  blocks and returns the value, or `Err(e)` if the task failed —
+  unchanged from what `await` did, so worker failure stays a value
+  rather than a crash. Joining the same handle twice returns the
+  memoized result; a handle dropped unjoined is fire-and-forget.
+
+- **`Promise<T>` annotations are removed.** `spawn` produces a `Task`.
+
+- The removed forms still *parse*, solely so the error can name the
+  replacement. A keyword that merely falls out of a grammar produces
+  "expected a statement", which tells a reader nothing:
+
+  ```text
+  `await` was removed in 0.63. olang's concurrency model is threads,
+  channels, and data parallelism: `spawn f(x)` starts a task and
+  `task.join(t)` collects its result (or `Err(e)` if it failed); join
+  several with `tasks |> map(task.join)`; use `time.sleep(ms)` for delays
+  and `chan` to stream results.
+  ```
+
+  `async` and `await` stay reserved for this release and become ordinary
+  identifiers at 1.0.
+
+### Added
+
+- **`task` module.** `task.join(t)` collects a spawned task's result.
+  `task.join_timeout(t, ms)` returns `Ok(v)` if it finished in time and
+  `Err("timed out")` otherwise.
+
+  **A timeout bounds the wait, not the work.** An OS thread cannot be
+  cancelled from outside without leaving whatever it touched in an
+  unknown state, so olang does not offer a cancel that would be a lie: a
+  timed-out task runs to completion and its result stays collectible
+  from the same handle. `join_timeout` wraps success in `Ok` precisely
+  so "the task produced `Err`" stays distinguishable from "we stopped
+  waiting". This is the honest replacement for `Promise.race`, which
+  implied the loser stopped.
+
+- No `task.join_all`. Joining a list of tasks is `map(task.join)` —
+  they are all already running, so the fan-in needs no API of its own.
+
+### Fixed
+
+- **`:pkg load` no longer promises an import that cannot work.** Loading
+  an *application* package (a `main.ol` plus a `lib/`, with no public
+  root module) printed "use it with `use <name>`", and that import then
+  failed with the generic "Module 'x' not found" plus a "system-level
+  error" hint. Two bugs: the REPL advertised a root module without
+  checking for one, and the resolver swallowed its own precise
+  diagnosis and fell through to the global file search, so the reader
+  was sent looking for a missing file instead of being told the package
+  has no importable root. `:pkg load` now lists the modules the package
+  actually offers, and `use <pkg>` names both what it looked for and
+  what is there:
+
+  ```text
+  package 'loadtest' has no root module: `use loadtest` needs one of
+  index.ol, mod.ol, loadtest.ol, or src/index.ol at examples/loadtest/.
+  Importable modules there: loadtest.lib.server, loadtest.lib.stats
+  ```
+
+### Migration
+
+`olang check .` reports every site. The corpus migration in this release
+(scheduler, loadtest, pargrep, demo, and the book's concurrency chapter)
+is the worked example. `examples/scheduler/` is the clearest before and
+after: it was built entirely on `Promise.delay` + `Promise.race` and is
+now `spawn` + `task.join` + `task.join_timeout`, with the "the task is
+still running" caveat stated where the timeout is taken.
+
 ## [0.62.0] - 2026-08-16
 
 Completes the mutability model 0.61.0 began. Plain `let` is an immutable
@@ -3490,7 +3590,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.62.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.63.0...HEAD
+[0.63.0]: https://github.com/ooyeku/olang/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/ooyeku/olang/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/ooyeku/olang/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/ooyeku/olang/compare/v0.59.0...v0.60.0
