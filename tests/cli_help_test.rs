@@ -26,8 +26,8 @@ fn top_level_help_lists_every_command() {
     let help = String::from_utf8_lossy(&out.stdout);
     // The whole point of the facelift: the commands are discoverable.
     for cmd in [
-        "run", "repl", "check", "fmt", "test", "build", "inspect", "caps", "replay", "doc",
-        "bench", "lsp",
+        "run", "repl", "check", "fmt", "test", "build", "inspect", "caps", "record", "replay",
+        "doc", "bench", "lsp",
     ] {
         assert!(
             help.contains(cmd),
@@ -106,4 +106,44 @@ fn script_arguments_pass_through_after_the_file() {
         stdout.contains("8080"),
         "script must see 8080; got:\n{stdout}"
     );
+}
+
+#[test]
+fn record_writes_a_trace_that_replay_reproduces() {
+    // `olang record` is the command form of the timeline: it runs the
+    // program (printing a nondeterministic value) and writes a trace next to
+    // it; `olang replay` must reproduce that exact value.
+    let file = fixture(
+        "record",
+        "roll.ol",
+        r#"println("roll:" + to_string(random.randint(1, 1000000000)))"#,
+    );
+    let dir = file.parent().unwrap();
+
+    let live = olang().arg("record").arg(&file).output().expect("record");
+    assert!(live.status.success(), "record should exit 0");
+    let live_out = String::from_utf8_lossy(&live.stdout);
+    let roll = live_out
+        .lines()
+        .find(|l| l.starts_with("roll:"))
+        .expect("record should print the roll")
+        .to_string();
+
+    // The trace defaults to the program's stem + .olt.
+    let trace = dir.join("roll.olt");
+    assert!(
+        trace.exists(),
+        "record must write roll.olt next to the program"
+    );
+
+    // Replay reproduces the recorded value, every time.
+    for _ in 0..2 {
+        let out = olang().arg("replay").arg(&trace).output().expect("replay");
+        assert!(out.status.success(), "replay should exit 0");
+        let replayed = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            replayed.contains(&roll),
+            "replay must reproduce {roll:?}; got:\n{replayed}"
+        );
+    }
 }

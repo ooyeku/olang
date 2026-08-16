@@ -7,7 +7,7 @@ code, its compiled artifacts, and its execution.
   values.
 - **Open artifacts:** a compiled binary embeds its exact source and
   declares the capabilities it is allowed to use.
-- **Open execution:** `olang --record` logs a run's nondeterministic
+- **Open execution:** `olang record` logs a run's nondeterministic
   inputs, and `olang replay` reproduces the run from that log.
 
 Each capability follows from an existing design decision: a stable
@@ -80,9 +80,14 @@ from a small, fixed set of standard-library calls. As a result, a run can
 be recorded and reproduced exactly:
 
 ```bash
-olang --record bug.olt program.ol   # Record the run's nondeterministic inputs.
-olang replay bug.olt                # Reproduce the run from the recording.
+olang record program.ol             # Record a run; writes program.olt.
+olang record program.ol -o bug.olt  # Or name the trace explicitly.
+olang replay bug.olt                 # Reproduce the run from the recording.
 ```
+
+`olang record <file>` is the command form; `olang --record <trace> <file>`
+is the equivalent run option when you are already invoking the file
+directly.
 
 Replay produces the same random values, timestamps, and environment as the
 original run. The `.olt` trace embeds the program source, so replay works
@@ -90,7 +95,7 @@ on a machine that does not have the program. A run that crashes is still
 recorded, so the failure reproduces. If a program's sequence of effects no
 longer matches the trace, replay stops at that point and reports the
 divergence. For the full model, see [The Open
-Timeline](tooling.md#olang---record-and-olang-replay--the-open-timeline).
+Timeline](tooling.md#olang-record-and-olang-replay--the-open-timeline).
 
 ## Design decisions
 

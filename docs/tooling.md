@@ -27,6 +27,7 @@ Part of [the olang book](README.md) ·
 | `olang build <file>` | Compile to a self-contained executable; `-o OUT` names it |
 | `olang inspect <binary>` | Read a built binary's source, manifest, capabilities, provenance |
 | `olang caps [path]` | Show the capability grant a program or binary carries |
+| `olang record <file>` | Run a program and record its inputs to a `.olt` trace |
 | `olang replay <trace>` | Re-run a recorded `.olt` timeline bit-for-bit |
 | `olang doc [path]` | Generate HTML (or `--md` Markdown) API reference |
 | `olang bench` | Run benchmarks |
@@ -353,15 +354,20 @@ never the watcher. Changes are detected by polling every `.ol` file at
 or below the script's directory (module edits trigger reruns too); a
 save landing mid-run queues an immediate rerun. Ctrl+C stops both.
 
-## `olang --record` and `olang replay` — the Open Timeline
+## `olang record` and `olang replay` — the Open Timeline
 
 Record a run's nondeterministic inputs to a portable trace, then replay
 the run bit-for-bit — anywhere, any time:
 
 ```bash
-olang --record bug.olt program.ol   # run, logging every nondeterministic input
-olang replay bug.olt                # re-run: identical, from the trace alone
+olang record program.ol             # run, logging every nondeterministic input;
+                                    # writes program.olt (or -o bug.olt to name it)
+olang replay program.olt            # re-run: identical, from the trace alone
 ```
+
+`olang record <file>` is the command form. When you are already invoking
+a file directly, the `--record <trace>` run option does the same thing:
+`olang --record bug.olt program.ol`.
 
 A program can only observe nondeterminism through a small, explicit set
 of stdlib calls — `random.*`, the clocks in `time`, the

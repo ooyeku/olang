@@ -26,6 +26,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`olang record` — recording is now a first-class command.** Recording a
+  run was only reachable through the `--record TRACE.olt` run option, so the
+  timeline story was lopsided: `olang replay` was a visible command with no
+  visible way to produce what it replays. `olang record <file> [-o
+  trace.olt] [args]` runs a program and writes its trace (defaulting to the
+  program's stem + `.olt`), the mirror of `olang replay`. The `--record` run
+  option still works and is unchanged.
+
+- **`olang inspect` reports the build platform.** A built binary now records
+  the OS and CPU architecture it was built on (`built on: macos/aarch64`),
+  and `inspect` flags whether that matches the current machine — a native
+  `olang build` binary only runs on its own platform, so this tells you at a
+  glance whether a binary that arrived from elsewhere will run here. The
+  field is informational provenance (like the olang version): it is not part
+  of the integrity digest, and binaries built before it existed inspect
+  cleanly with the line omitted. The default `inspect` summary also now
+  points at `--source` (the way it already pointed at `--manifest` and
+  `--lockfile`), so printing a binary's embedded source is discoverable from
+  the summary itself.
+
 - **Parallel hash join (data-pipeline campaign DP1).** `ods.join` now runs
   its probe phase across every CPU core when the left frame is large
   (50,000+ rows): each left row is looked up in the built key table

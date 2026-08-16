@@ -80,6 +80,46 @@ fn verify_catches_a_widened_capability_grant() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A built binary records the platform it was built on, and `inspect`
+/// reports it. A native binary only runs on its own OS/arch, so the line —
+/// and its "this platform" marker on the machine that built it — tells you
+/// whether a binary that arrived from elsewhere will run here.
+#[test]
+fn inspect_reports_the_build_platform() {
+    let dir = tmp("platform");
+    let src = dir.join("main.ol");
+    std::fs::write(&src, "println(\"hi\")\n").unwrap();
+    let out = dir.join("tool");
+
+    let build = Command::new(olang_bin())
+        .args(["build", src.to_str().unwrap(), "-o", out.to_str().unwrap()])
+        .output()
+        .expect("run olang build");
+    assert!(build.status.success());
+
+    let inspect = Command::new(olang_bin())
+        .args(["inspect", out.to_str().unwrap()])
+        .output()
+        .expect("inspect");
+    let text = String::from_utf8_lossy(&inspect.stdout);
+    assert!(
+        text.contains("built on:"),
+        "inspect should report the build platform; got:\n{text}"
+    );
+    // Built here and inspected here: the OS/arch match, so it is flagged as
+    // the current platform.
+    assert!(
+        text.contains(std::env::consts::OS) && text.contains(std::env::consts::ARCH),
+        "should name this machine's os/arch; got:\n{text}"
+    );
+    assert!(
+        text.contains("[this platform]"),
+        "a binary built and inspected on the same machine is this platform; got:\n{text}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// C1 regression: the digest binds the executed AST, so a binary whose AST
 /// was swapped while its source was left clean fails `--verify` — on both
 /// the digest and the source-faithfulness check. Without the fix, `--verify`

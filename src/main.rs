@@ -38,7 +38,10 @@ use olang::{
   olang --deny net app.ol      Run with the network capability withheld
   olang check src/             Type-check a directory
   olang build app.ol -o app    Compile to a self-contained binary
+  olang inspect app --source   Print the source embedded in a built binary
   olang inspect app --caps     Show a built binary's capability grant
+  olang record app.ol          Run and record inputs to app.olt
+  olang replay app.olt         Re-run that recording bit-for-bit
   olang <command> --help       Full help for any command
 
 Run options apply to `olang <file>` and `olang run <file>`. Every command
@@ -212,6 +215,23 @@ enum Commands {
         path: Option<PathBuf>,
     },
 
+    /// Run a program and record its nondeterministic inputs to a .olt trace
+    Record {
+        /// Program to run and record
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Trace to write (default: the program's path with a .olt extension)
+        #[arg(short, long, value_name = "TRACE.olt")]
+        output: Option<PathBuf>,
+        /// Arguments passed to the program
+        #[arg(
+            value_name = "ARGS",
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        args: Vec<String>,
+    },
+
     /// Replay a recorded .olt timeline bit-for-bit
     Replay {
         /// The recorded trace to replay
@@ -363,13 +383,17 @@ fn run() -> i32 {
             0
         }
 
-        Some(Commands::Run { file, args }) => run_program(&cli, file, args, logger),
+        Some(Commands::Run { file, args }) => {
+            let record = cli.record.clone();
+            run_program(&cli, file, args, record, logger)
+        }
 
         Some(Commands::External(mut parts)) => {
             // The catch-all arm: `olang report.ol a b` -> ["report.ol","a","b"].
             // clap guarantees at least one element for an external subcommand.
             let file = PathBuf::from(parts.remove(0));
-            run_program(&cli, file, parts, logger)
+            let record = cli.record.clone();
+            run_program(&cli, file, parts, record, logger)
         }
 
         Some(Commands::Test {
@@ -435,6 +459,18 @@ fn run() -> i32 {
             show_caps(path.unwrap_or_else(|| PathBuf::from(".")).as_path())
         }
 
+        Some(Commands::Record { file, output, args }) => {
+            // The trace path: -o if given, else the program's path with a
+            // .olt extension, so the trace lands next to the program it
+            // records rather than in the current directory.
+            let trace = output
+                .unwrap_or_else(|| file.with_extension("olt"))
+                .to_string_lossy()
+                .to_string();
+            eprintln!("olang record: writing trace to {trace}");
+            run_program(&cli, file, args, Some(trace), logger)
+        }
+
         Some(Commands::Replay { trace, args }) => run_replay(&trace, &args, logger),
 
         Some(Commands::Doc {
@@ -463,7 +499,13 @@ fn run() -> i32 {
 
 /// Run a program file with the given run options (`olang <file>` and `olang
 /// run <file>` both land here). `args` is the program's argv after the file.
-fn run_program(cli: &Cli, file_path: PathBuf, args: Vec<String>, logger: &Logger) -> i32 {
+fn run_program(
+    cli: &Cli,
+    file_path: PathBuf,
+    args: Vec<String>,
+    record: Option<String>,
+    logger: &Logger,
+) -> i32 {
     // Watch mode: run the script in a child process (so os.exit and crashes
     // end the run, not the watcher) and rerun when any .ol file in the
     // script's directory changes.
@@ -506,8 +548,9 @@ fn run_program(cli: &Cli, file_path: PathBuf, args: Vec<String>, logger: &Logger
         }
     };
 
-    // --record builds a recording timeline over the program source.
-    let timeline = match &cli.record {
+    // Recording builds a timeline over the program source (from `--record`
+    // or the `olang record` command).
+    let timeline = match &record {
         Some(out) => match std::fs::read_to_string(&file_path) {
             Ok(src) => Some(olang::timeline::Timeline::record(
                 PathBuf::from(out),
@@ -979,6 +1022,18 @@ struct BundleMeta {
     /// The package's olang.lock, verbatim, when present.
     #[serde(default)]
     lockfile: Option<String>,
+    /// The operating system the binary was built on (`std::env::consts::OS`,
+    /// e.g. "macos", "linux"). Informational provenance — like
+    /// `olang_version`, it is not part of the integrity digest. Empty when
+    /// read from a binary built before this field existed. A native `olang
+    /// build` binary is platform-specific; this tells you which platform if
+    /// it turns up on another machine.
+    #[serde(default)]
+    built_os: String,
+    /// The CPU architecture the binary was built on
+    /// (`std::env::consts::ARCH`, e.g. "aarch64", "x86_64").
+    #[serde(default)]
+    built_arch: String,
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -1381,7 +1436,36 @@ fn inspect_binary(args: &InspectArgs) -> i32 {
         Some(m) => {
             println!("  built with:   olang {}", m.olang_version);
             println!("  built from:   {}", m.source_path);
-            println!("  source:       {} bytes", source.len());
+            // Build host platform: a native binary only runs on a matching
+            // OS/arch, so this flags a binary that turned up off-platform.
+            // Empty on binaries built before the field existed.
+            if !m.built_os.is_empty() || !m.built_arch.is_empty() {
+                let os = if m.built_os.is_empty() {
+                    "unknown"
+                } else {
+                    &m.built_os
+                };
+                let arch = if m.built_arch.is_empty() {
+                    "unknown"
+                } else {
+                    &m.built_arch
+                };
+                let here = os == std::env::consts::OS && arch == std::env::consts::ARCH;
+                println!(
+                    "  built on:     {}/{}{}",
+                    os,
+                    arch,
+                    if here {
+                        "  [this platform]"
+                    } else {
+                        "  [foreign — native binaries are platform-specific]"
+                    }
+                );
+            }
+            println!(
+                "  source:       {} bytes  (--source to print)",
+                source.len()
+            );
             let actual_src = sha256_hex(source.as_bytes());
             let src_ok = actual_src == m.sha256;
             println!(
@@ -1678,6 +1762,10 @@ fn build_executable(
         ),
         manifest: manifest_text,
         lockfile: lockfile_text,
+        // The build host's platform: a native binary only runs on a matching
+        // OS/arch, so `olang inspect` can flag one that wandered off-platform.
+        built_os: std::env::consts::OS.to_string(),
+        built_arch: std::env::consts::ARCH.to_string(),
     };
     let meta_json =
         serde_json::to_vec(&meta).map_err(|e| anyhow::anyhow!("serialize meta: {}", e))?;
