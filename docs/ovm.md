@@ -245,8 +245,8 @@ wired**. Measurement priced the remaining win at roughly 10% on the most
 value-bound workloads, against the cost of manual reference counting at
 every register move — a raw-pointer discipline with a demonstrated
 leak-prone failure mode. The verdict and its evidence are recorded in
-[the roadmap](roadmap.md#the-performance-campaign-039) so the question
-is not reopened without new data.
+the [CHANGELOG](../CHANGELOG.md) and the repository history so the
+question is not reopened without new data.
 
 ## Bytecode VM
 
@@ -572,19 +572,19 @@ These are real boundaries, stated so you can predict them:
   immutable and acyclic, so there are no cycles to collect.
 - **Full NaN-boxing.** The 8-byte value scheme's primitives are
   implemented and tested (`src/ovm/nanbox.rs`) but deliberately not
-  wired — the measured verdict is in
-  [the roadmap](roadmap.md#the-performance-campaign-039).
+  wired — the measured verdict is recorded in the
+  [CHANGELOG](../CHANGELOG.md).
 - **Automatic SIMD vectorization** and pipeline fusion. If bulk numeric
   throughput matters, the honest route is explicit vectorized
   operations — which is what [the ods data stack](stdlib.md#ods--series-and-frames)
   provides — rather than a speculative auto-vectorizer inside the VM.
 - **Adaptive optimization** — profiling feedback, on-stack replacement,
   polymorphic inline caches, speculation with side-exit deopt,
-  feedback-driven inlining, background tiering. These are the planned
-  next arc, not accidental gaps: the staged plan (and what is
-  deliberately rejected — a tracing JIT, a tracing GC) is
-  [the adaptive-engine campaign](roadmap.md#the-adaptive-engine-campaign--from-baseline-jit-to-feedback-driven)
-  in the roadmap.
+  feedback-driven inlining, background tiering. These are deliberate
+  omissions, not accidental gaps. Under the current plan, adaptive
+  optimization is deferred until after 1.0
+  ([roadmap](roadmap.md#post-10-candidates)); a tracing JIT and a
+  tracing garbage collector are rejected outright.
 
 ## Source map
 
