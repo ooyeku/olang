@@ -205,3 +205,36 @@ fn replay_detects_a_changed_argument() {
     );
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// S6: machine-identity `os.*` is recorded, so a trace is portable — replay
+/// serves the recorded `os.arch()` / `os.pid()`, not the replay machine's
+/// live values (proved by replay output matching the recorded output for
+/// `os.pid`, which is per-process).
+#[test]
+fn replay_reproduces_machine_identity() {
+    let ws = workspace("machine");
+    write(
+        &ws.join("p.ol"),
+        "println(unwrap(os.arch()) + \" \" + show(unwrap(os.pid())))\n",
+    );
+    let rec = Command::new(olang())
+        .current_dir(&ws)
+        .args(["--record", "t.olt", "p.ol"])
+        .output()
+        .unwrap();
+    assert!(rec.status.success());
+    let recorded = stdout_of(&rec);
+
+    let rep = Command::new(olang())
+        .current_dir(&ws)
+        .args(["replay", "t.olt"])
+        .output()
+        .unwrap();
+    assert!(rep.status.success(), "replay should be clean");
+    assert_eq!(
+        stdout_of(&rep),
+        recorded,
+        "replay must serve the recorded arch/pid, not live values"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}

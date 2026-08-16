@@ -159,6 +159,21 @@ fn run_rules(rules_path: &Path, files: &[PathBuf]) -> usize {
         }
     };
     let mut interp = crate::interpreter::Interpreter::new();
+    // A lint is pure analysis over AST data — it needs no effects. Sandbox
+    // the rules program (which may be third-party) so it cannot touch the
+    // filesystem, network, processes, database, or environment when it is
+    // loaded and run. Rules that legitimately need I/O are out of scope by
+    // design; the built-in checker runs no target or rule code at all.
+    interp.set_capabilities(crate::caps::CapTable {
+        app: crate::caps::Caps {
+            fs: crate::caps::FsCap::None,
+            net: false,
+            proc: false,
+            db: false,
+            env: false,
+        },
+        deps: Vec::new(),
+    });
     let abs = std::fs::canonicalize(rules_path).unwrap_or_else(|_| rules_path.to_path_buf());
     interp.set_current_file(&abs);
     if let Err(e) = interp.eval_program(program) {

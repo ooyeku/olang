@@ -183,9 +183,6 @@ impl Timeline {
             op,
             "time.now_ms"
                 | "time.monotonic_ms"
-                | "time.now"
-                | "time.utc_now"
-                | "time.today"
                 | "dates.now"
                 | "dates.utc_now"
                 | "dates.today"
@@ -201,6 +198,19 @@ impl Timeline {
                 | "os.stdin"
                 | "os.stdin_lines"
                 | "os.exec"
+                // machine identity and process context — the axes that
+                // differ across machines and runs, so recording them is what
+                // makes a trace portable (a program branching on os.arch()
+                // replays the arch it was recorded on).
+                | "os.os_type"
+                | "os.arch"
+                | "os.family"
+                | "os.path_separator"
+                | "os.args"
+                | "os.cwd"
+                | "os.exe_path"
+                | "os.pid"
+                | "os.is_tty"
                 // filesystem reads: external, mutable state.
                 | "fs.read_file"
                 | "fs.exists"
@@ -218,6 +228,7 @@ impl Timeline {
                 | "http.delete"
                 | "http.request"
                 // seeded-random crypto.
+                | "crypto.random_bytes"
                 | "crypto.random_hex"
                 | "crypto.generate_key_pair"
                 | "crypto.hash_password"
@@ -242,8 +253,18 @@ impl Timeline {
     }
 
     /// Record mode: after a real call, log its arguments' fingerprint and its
-    /// result, in call order.
+    /// result, in call order. A result that does not serialize round-trip
+    /// (a non-finite float — `NaN`/`Infinity` are not valid JSON) is *not*
+    /// recorded: replay then diverges cleanly at that call rather than
+    /// serving a value that was silently corrupted through the trace.
     pub fn record_result(&mut self, op: &str, args_fp: &str, result: &Value) {
+        if !round_trips(result) {
+            eprintln!(
+                "olang --record: '{}' returned a value that does not serialize (e.g. NaN/Infinity); it was not recorded, so replay will report a divergence here rather than a wrong value",
+                op
+            );
+            return;
+        }
         let seq = self.cursor as u64;
         self.cursor += 1;
         self.events.push(Event {
@@ -336,6 +357,18 @@ impl Timeline {
     }
 }
 
+/// Whether a value serializes and deserializes back to an equal value.
+/// False for a non-finite float (serde_json rejects `NaN`/`Infinity`), so a
+/// recorded result that would be corrupted by the trace is caught.
+fn round_trips(v: &Value) -> bool {
+    match serde_json::to_vec(v) {
+        Ok(bytes) => serde_json::from_slice::<Value>(&bytes)
+            .map(|back| &back == v)
+            .unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
 /// Render a value deterministically for [`Timeline::fingerprint`]: maps and
 /// structs in sorted-key order (so a randomized `HashMap` order can't make
 /// the fingerprint unstable), lists and tuples in order, scalars via their
@@ -401,6 +434,13 @@ mod tests {
         assert!(Timeline::is_recorded("fs.read_file"));
         assert!(Timeline::is_recorded("http.get"));
         assert!(Timeline::is_recorded("crypto.hash_password"));
+        assert!(Timeline::is_recorded("crypto.random_bytes"));
+        // machine identity / process context — recorded so a trace is portable
+        assert!(Timeline::is_recorded("os.arch"));
+        assert!(Timeline::is_recorded("os.os_type"));
+        assert!(Timeline::is_recorded("os.args"));
+        assert!(Timeline::is_recorded("os.cwd"));
+        assert!(Timeline::is_recorded("os.pid"));
         // seed is deterministic state, not an observed input
         assert!(!Timeline::is_recorded("random.seed"));
         // pure computation is never recorded
@@ -506,6 +546,25 @@ mod tests {
             rep2.replay_next("random.random", &no_args),
             Err(Divergence::RanOut { .. })
         ));
+    }
+
+    #[test]
+    fn non_round_tripping_results_are_not_recorded() {
+        let mut rec = Timeline::record(
+            std::path::PathBuf::from("/tmp/x.olt"),
+            "p.ol".into(),
+            "source".into(),
+            "sha".into(),
+        );
+        let fp = Timeline::fingerprint(&[]);
+        // A finite float records; NaN does not (it is not valid JSON), so the
+        // event is dropped rather than corrupted to null.
+        rec.record_result("random.random", &fp, &Value::Float(0.5));
+        rec.record_result("random.random", &fp, &Value::Float(f64::NAN));
+        assert_eq!(rec.total_events(), 1, "NaN result must not be recorded");
+        assert!(round_trips(&Value::Float(0.5)));
+        assert!(!round_trips(&Value::Float(f64::NAN)));
+        assert!(!round_trips(&Value::Float(f64::INFINITY)));
     }
 
     #[test]

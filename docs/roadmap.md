@@ -488,22 +488,25 @@ opportunistic).
 | S3 | High | `net` is a latent file-read capability: with `fs=false, net=true`, an `http.serve` handler returning `body_file` reads any local file | Gate `body_file` reads under `fs` | **landed (0.59)** — the serve response builder refuses `body_file` (403) unless the app's grant permits `fs` read |
 | S4 | High | Timeline replays recorded values into the wrong slots under map iteration — `HashMap` order is process-randomized and replay matches op-name+position only (arguments never stored) — with **no divergence raised** | Deterministic map iteration order; record and compare call arguments in the trace | **landed (0.59)** — `map_keys`/`map_values` now iterate in key-sorted order (matching `entries`); the trace records an argument fingerprint per event and replay raises `ArgMismatch` when a recorded op is called with different args (trace format 2; v1 traces replay without the arg check) |
 | S5 | High | `meta.parse` drops children exactly where calls hide (`match` arms, `await`/`assert*`, `map`/struct/object/template literals), so a lint over the node list silently misses code | Emit all children in the conversion; add a completeness self-check; document any deliberate summary nodes | **landed (0.59)** — every dropped variant now emits its children (`arms`, `entries`, `fields`, template `parts`, `await`/`assert*` interiors); the `expr_to_value` match is **exhaustive** (no catch-all), so the compiler guarantees no variant is silently dropped and a new one is a build error until handled |
-| S6 | Med | Timeline omits whole nondeterminism channels (`db.*`, `proc.*`, `crypto.random_bytes`/`encrypt_*`) and machine-identity `os.*` (`arch`/`os_type`/`args`/`cwd`), breaking replay and the cross-machine portability claim (`os.args` also has a doc-vs-code mismatch) | Extend the recorded set; fix the `os.args` note | planned |
-| S7 | Med | `check --rules` runs the rules file with full capabilities at load time — a hostile `rules.ol` executes `fs`/`net`/`proc` before any rule runs | Run rules under a restrictive `CapTable` (the machinery exists); document the trust model | planned |
-| S8 | Low | `read_bundle` footer parsing does unchecked `u64` adds → panic / multi-exabyte allocation on a crafted binary (DoS of `inspect`) | `checked_add`/`try_into`, reject on overflow | planned |
-| S9 | Low | A symlinked dependency file can resolve outside its dep dir, so attribution falls back to the **wider app grant** | Fail-closed on an unresolvable / out-of-dir `def_file` instead of defaulting to the app grant | planned |
-| S10 | Low | Batch hardening: `record_result` claims a round-trip guard it lacks (NaN/Inf → JSON `null` → wrong replay); `os.exit` ungated (any code can abort the host); `BundleMeta.format` never validated; malformed rule findings silently dropped | Each addressed in a cleanup rung | planned |
+| S6 | Med | Timeline omits whole nondeterminism channels (`db.*`, `proc.*`, `crypto.random_bytes`/`encrypt_*`) and machine-identity `os.*` (`arch`/`os_type`/`args`/`cwd`), breaking replay and the cross-machine portability claim | Extend the recorded set | **landed (0.59)** — machine-identity `os.*` (`arch`, `os_type`, `family`, `path_separator`, `args`, `cwd`, `exe_path`, `pid`, `is_tty`) and `crypto.random_bytes` are now recorded, and the dead `time.now`/`utc_now`/`today` entries removed. `db`/`proc` recording still deferred — those return live handles and need the replay-stub work tracked under O4 |
+| S7 | Med | `check --rules` runs the rules file with full capabilities at load time — a hostile `rules.ol` executes `fs`/`net`/`proc` before any rule runs | Run rules under a restrictive `CapTable` (the machinery exists) | **landed (0.59)** — the rules interpreter is installed with a deny-all grant (`fs`/`net`/`proc`/`db`/`env` all off), so a rules file cannot perform effects when loaded or run |
+| S8 | Low | `read_bundle` footer parsing does unchecked `u64` adds → panic / multi-exabyte allocation on a crafted binary (DoS of `inspect`) | `checked_add`, reject on overflow | **landed (0.59)** — all three footer branches use `checked_add`, so an overflowing length is rejected as "not a bundle" rather than driving a huge allocation |
+| S9 | Low | A symlinked dependency file can resolve outside its dep dir, so attribution falls back to the **wider app grant** | Fail-closed on an unresolvable / out-of-dir `def_file` instead of defaulting to the app grant | planned (narrow, adversarial-layout only; the fix needs the pre-canonical loader path) |
+| S10 | Low | Batch hardening: `record_result` claims a round-trip guard it lacks (NaN/Inf → JSON `null` → wrong replay); `os.exit` ungated (any code can abort the host); `BundleMeta.format` never validated; malformed rule findings silently dropped | Each addressed in a cleanup rung | **partly landed (0.59)** — the round-trip guard now exists (a non-serializing result is not recorded, so replay diverges cleanly instead of serving a corrupt value). `os.exit` gating (a design question — no capability covers process liveness), `format` validation, and surfacing malformed rule findings remain |
 
-**Honest-status note:** with S1–S5 landed, the transparent binary
+**Honest-status note:** the soundness pass is substantially complete. With
+S1–S8 and the S10 round-trip guard landed, the transparent binary
 authenticates the program it runs, `fs=false` confines the filesystem even
-when `db`/`net` is granted, a lint over the meta AST sees every node, and
-single-threaded record/replay is sound (deterministic map order + argument
-fingerprints, so a divergence is detected rather than silently misapplied).
-The remaining timeline bound is **S6**: `db.*`/`proc.*` and machine-identity
-`os.*` are still unrecorded, so a program that reads a database or branches
-on `os.arch` is not fully reproducible across machines — the docs state
-this rather than claiming unqualified portability. Worker-thread effects
-(the O4 scheduler gap) also remain outside the model.
+when `db`/`net` is granted, a lint over the meta AST sees every node,
+single-threaded record/replay is sound (deterministic map order, argument
+fingerprints, machine-identity `os.*` recorded), and `check --rules` is
+sandboxed. Two known bounds remain, both narrow: **`db`/`proc` reads are
+still not recorded** (they return live handles — the replay-stub work under
+O4), so a database-backed program is not fully reproducible; and
+worker-thread effects remain outside the replay model (the O4 scheduler
+gap). S9 (a symlinked-dependency attribution edge) and the residual S10
+items (`os.exit` gating, `format` validation) stay open as low-severity
+follow-ups.
 
 ## The data-pipeline campaign (0.60.0) — the flagship niche
 

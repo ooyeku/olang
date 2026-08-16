@@ -948,8 +948,13 @@ fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
         let source_len = u64::from_le_bytes(lens[0..8].try_into().ok()?);
         let ast_len = u64::from_le_bytes(lens[8..16].try_into().ok()?);
         let meta_len = u64::from_le_bytes(lens[16..24].try_into().ok()?);
-        let payload = source_len + ast_len + meta_len;
-        if source_len == 0 || ast_len == 0 || meta_len == 0 || payload + 32 > total {
+        // Checked arithmetic: the lengths are attacker-controlled on a
+        // hostile file, and an overflowing sum could pass the bounds check
+        // and then drive a multi-exabyte allocation below.
+        let payload = source_len
+            .checked_add(ast_len)
+            .and_then(|s| s.checked_add(meta_len))?;
+        if source_len == 0 || ast_len == 0 || meta_len == 0 || payload.checked_add(32)? > total {
             return None;
         }
         f.seek(SeekFrom::End(-(32 + payload as i64))).ok()?;
@@ -980,7 +985,10 @@ fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
         f.read_exact(&mut lens).ok()?;
         let source_len = u64::from_le_bytes(lens[0..8].try_into().ok()?);
         let ast_len = u64::from_le_bytes(lens[8..16].try_into().ok()?);
-        if source_len == 0 || ast_len == 0 || source_len + ast_len + 24 > total {
+        let footer_end = source_len
+            .checked_add(ast_len)
+            .and_then(|s| s.checked_add(24))?;
+        if source_len == 0 || ast_len == 0 || footer_end > total {
             return None;
         }
         f.seek(SeekFrom::End(-(24 + ast_len as i64 + source_len as i64)))
@@ -1005,7 +1013,7 @@ fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
         let mut footer = [0u8; 16];
         f.read_exact(&mut footer).ok()?;
         let src_len = u64::from_le_bytes(footer[0..8].try_into().ok()?);
-        if src_len == 0 || src_len + 16 > total {
+        if src_len == 0 || src_len.checked_add(16)? > total {
             return None;
         }
         f.seek(SeekFrom::End(-(16 + src_len as i64))).ok()?;

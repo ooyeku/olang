@@ -51,6 +51,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
+- **Openness soundness cleanup (pass S6–S10).** Several smaller hardening
+  fixes: (S6) machine-identity `os.*` — `arch`, `os_type`, `family`,
+  `path_separator`, `args`, `cwd`, `exe_path`, `pid`, `is_tty` — and
+  `crypto.random_bytes` are now recorded by the timeline, so a trace that
+  branches on the machine or process context replays portably (dead
+  `time.now`/`utc_now`/`today` entries removed). (S7) `olang check --rules`
+  runs the rules file in a no-capability sandbox, so a hostile `rules.ol`
+  cannot touch the filesystem, network, or processes when loaded. (S8)
+  `olang inspect`'s bundle-footer parser uses checked arithmetic, so a
+  crafted binary is rejected rather than triggering a huge allocation.
+  (S10) the timeline's record step now actually enforces its documented
+  round-trip guard — a result that does not serialize (a non-finite float)
+  is not recorded, so replay diverges cleanly instead of serving a
+  corrupted value. (`db`/`proc` recording and a symlinked-dependency
+  attribution edge remain tracked.)
+
 - **Record/replay no longer silently misapplies recorded values (openness
   soundness pass S4).** Two fixes make single-threaded replay sound. (1) Map
   iteration is now deterministic: `map_keys`/`map_values` iterate in

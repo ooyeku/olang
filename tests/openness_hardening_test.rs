@@ -445,3 +445,32 @@ share fn rule_no_bare_unwrap(nodes) =
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// S7: `check --rules` runs the rules file in a sandbox with no
+/// capabilities, so a hostile rules.ol cannot touch the filesystem, network,
+/// or processes when it is loaded.
+#[test]
+fn check_rules_sandboxes_the_rules_file() {
+    let dir = tmp("rulesbox");
+    std::fs::write(
+        dir.join("rules.ol"),
+        "let _ = fs.read_file(\"/etc/passwd\")\nshare fn rule_noop(nodes) = []\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("app.ol"), "fn a() = 1\n").unwrap();
+    let out = Command::new(olang_bin())
+        .current_dir(&dir)
+        .args(["check", "app.ol", "--rules", "rules.ol"])
+        .output()
+        .expect("run check --rules");
+    assert!(
+        !out.status.success(),
+        "a rule reaching for fs must be denied"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("capability 'fs' denied"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
