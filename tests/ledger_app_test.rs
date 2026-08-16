@@ -107,7 +107,10 @@ fn transactions_budgets_categories_and_errors() {
     );
     assert_eq!(status, 201, "got: {body}");
     assert!(body.contains("\"amount_cents\":-1250"));
-    assert!(body.contains("\"category\":"), "row carries the joined name: {body}");
+    assert!(
+        body.contains("\"category\":"),
+        "row carries the joined name: {body}"
+    );
 
     // Create: invalid → 422 listing each field problem.
     let (status, body) = call(
@@ -131,10 +134,28 @@ fn transactions_budgets_categories_and_errors() {
         "",
     );
     assert_eq!(status, 201);
-    let (_, aug) = call(port, "GET", "/api/transactions?from=2026-08&to=2026-08", "", "");
-    assert!(aug.contains("coffee") && !aug.contains("july"), "got: {aug}");
-    let (_, both) = call(port, "GET", "/api/transactions?from=2026-07&to=2026-08", "", "");
-    assert!(both.contains("coffee") && both.contains("july"), "got: {both}");
+    let (_, aug) = call(
+        port,
+        "GET",
+        "/api/transactions?from=2026-08&to=2026-08",
+        "",
+        "",
+    );
+    assert!(
+        aug.contains("coffee") && !aug.contains("july"),
+        "got: {aug}"
+    );
+    let (_, both) = call(
+        port,
+        "GET",
+        "/api/transactions?from=2026-07&to=2026-08",
+        "",
+        "",
+    );
+    assert!(
+        both.contains("coffee") && both.contains("july"),
+        "got: {both}"
+    );
 
     // PATCH is partial; an unknown id is 404; a bad id is 400.
     let (status, body) = call(
@@ -146,9 +167,21 @@ fn transactions_budgets_categories_and_errors() {
     );
     assert_eq!(status, 200, "got: {body}");
     assert!(body.contains("\"amount_cents\":-1300"));
-    let (status, _) = call(port, "PATCH", "/api/transactions/999", r#"{"note":"x"}"#, "");
+    let (status, _) = call(
+        port,
+        "PATCH",
+        "/api/transactions/999",
+        r#"{"note":"x"}"#,
+        "",
+    );
     assert_eq!(status, 404);
-    let (status, _) = call(port, "PATCH", "/api/transactions/abc", r#"{"note":"x"}"#, "");
+    let (status, _) = call(
+        port,
+        "PATCH",
+        "/api/transactions/abc",
+        r#"{"note":"x"}"#,
+        "",
+    );
     assert_eq!(status, 400);
 
     // Budgets: upsert twice, then clear with zero.
@@ -194,7 +227,13 @@ fn transactions_budgets_categories_and_errors() {
 
     // Categories: create, duplicate name 422, in-use delete 409,
     // unused delete 200.
-    let (status, body) = call(port, "POST", "/api/categories", r#"{"name":"Books","kind":"expense"}"#, "");
+    let (status, body) = call(
+        port,
+        "POST",
+        "/api/categories",
+        r#"{"name":"Books","kind":"expense"}"#,
+        "",
+    );
     assert_eq!(status, 201, "got: {body}");
     let new_id: u64 = body
         .split("\"id\":")
@@ -202,7 +241,13 @@ fn transactions_budgets_categories_and_errors() {
         .and_then(|s| s.split([',', '}']).next())
         .and_then(|s| s.trim().parse().ok())
         .expect("new category id");
-    let (status, _) = call(port, "POST", "/api/categories", r#"{"name":"Books","kind":"expense"}"#, "");
+    let (status, _) = call(
+        port,
+        "POST",
+        "/api/categories",
+        r#"{"name":"Books","kind":"expense"}"#,
+        "",
+    );
     assert_eq!(status, 422);
     let (status, _) = call(port, "DELETE", "/api/categories/1", "", "");
     assert_eq!(status, 409, "category 1 has transactions");

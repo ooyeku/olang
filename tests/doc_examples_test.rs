@@ -111,7 +111,10 @@ fn readme_examples_work() {
 
 #[test]
 fn introduction_chapter_examples_work() {
-    run_doc_file("docs/introduction.md", include_str!("../docs/introduction.md"));
+    run_doc_file(
+        "docs/introduction.md",
+        include_str!("../docs/introduction.md"),
+    );
 }
 
 #[test]
