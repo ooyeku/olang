@@ -125,6 +125,7 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("read_frame", 2),
     ("write_frame", 2),
     ("frame_info", 1),
+    ("concat", 1),
     ("frame_from_records", 1),
     ("to_records", 1),
     ("columns", 1),
@@ -197,13 +198,18 @@ fn e(err: olang_ods::OdsError) -> String {
 /// `ods.read_frame(path)` should not demand a column list to mean "all of
 /// them". Each default is stated here rather than buried in its arm, so
 /// the arity check and the default cannot drift apart.
-fn default_tail(func: &str) -> Option<Value> {
+fn default_tail(func: &str, args: &[Value]) -> Option<Value> {
     match func {
         "head" => Some(Value::Integer(DEFAULT_HEAD)),
         // Unit reads as "unspecified", which `wanted_columns` turns into
         // every column. An empty list would be ambiguous with asking for
         // no columns at all.
         "read_frame" => Some(Value::Unit),
+        // Both sides of a join usually call the key the same thing, and
+        // repeating it was pure ceremony. The default is the *other*
+        // side's name rather than a constant, which is why this takes the
+        // arguments.
+        "join" | "join_left" => args.get(2).cloned(),
         _ => None,
     }
 }
@@ -216,7 +222,7 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
         .map(|(_, a)| *a)
         .expect("caller checked membership");
     if args.len() + 1 == expected
-        && let Some(default) = default_tail(func)
+        && let Some(default) = default_tail(func, &args)
     {
         args.push(default);
     }
@@ -428,6 +434,22 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
                     Err(msg) => Ok(open_error("frame_info", &path, msg)),
                 },
             }
+        }
+        // Row-binding. Streaming turns one pass into many partial
+        // results, and without this there is no way to put them back
+        // together except a detour through row-shaped values — which is
+        // exactly what the columnar representation exists to avoid.
+        "concat" => {
+            let frames = match &args[0] {
+                Value::List(items) => items,
+                other => {
+                    return Err(format!(
+                        "ods.concat: expects a list of Frames, got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            concat(frames)
         }
         "frame_from_records" => {
             let records = match &args[0] {
@@ -839,6 +861,66 @@ fn records_to_frame(records: &[Value]) -> Result<Frame, String> {
         pairs.push((name, col));
     }
     Frame::new(pairs).map_err(e)
+}
+
+/// Stack Frames vertically. Every Frame must carry the same column
+/// names; the first Frame's order is the result's order.
+///
+/// Columns are matched by *name*, not position, because two Frames that
+/// happen to share a shape but not a meaning is the failure this is most
+/// likely to be handed. A missing or extra column is refused and named,
+/// rather than filled with nulls: a schema that drifted between chunks is
+/// a bug in the producer, and quietly padding it would hide that.
+fn concat(frames: &[Value]) -> Result<Value, String> {
+    let mut parts = Vec::with_capacity(frames.len());
+    for (i, value) in frames.iter().enumerate() {
+        parts.push(frame_of(value).ok_or_else(|| {
+            format!(
+                "ods.concat: item {} must be a Frame, got {}",
+                i + 1,
+                value.type_name()
+            )
+        })?);
+    }
+    let Some((first, rest)) = parts.split_first() else {
+        // An empty list carries no schema, so there is no Frame it could
+        // honestly produce — not even an empty one.
+        return Err("ods.concat: needs at least one Frame".to_string());
+    };
+    let names = first.names().to_vec();
+    for (i, frame) in rest.iter().enumerate() {
+        let mut theirs = frame.names().to_vec();
+        let mut ours = names.clone();
+        theirs.sort();
+        ours.sort();
+        if theirs != ours {
+            return Err(format!(
+                "ods.concat: Frame {} has columns [{}] but the first has [{}]",
+                i + 2,
+                frame.names().join(", "),
+                names.join(", ")
+            ));
+        }
+    }
+
+    let mut pairs = Vec::with_capacity(names.len());
+    for name in &names {
+        // Collect the column from every Frame as language values, which
+        // is what lets `series_from_list` apply the same widening rule a
+        // literal list gets: an Int column meeting a Float one becomes
+        // Float, and anything less compatible is refused there.
+        let mut cells = Vec::new();
+        for frame in &parts {
+            let col = frame.column(name).map_err(e)?;
+            for row in 0..col.len() {
+                cells.push(scalar_to_value(col.scalar_at(row)));
+            }
+        }
+        let series = series_from_list(&cells)
+            .map_err(|err| format!("ods.concat: column '{}': {}", name, err))?;
+        pairs.push((name.clone(), series));
+    }
+    Frame::new(pairs).map(OdsFrame::into_value).map_err(e)
 }
 
 /// Per-column summary statistics, one row per column.

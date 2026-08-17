@@ -1986,6 +1986,34 @@ impl HelpSystem {
             "whether the reader has reached the end of its file",
         );
         self.doc(
+            "ods.all_of",
+            "ods.all_of(masks)",
+            "Series",
+            "ods",
+            "combine Bool masks with AND, elementwise. Takes a list because a real filter has several conditions; `&&` cannot serve, since the language compiles it to a short-circuiting jump. Three-valued: one false settles the result even if another entry is null",
+        );
+        self.doc(
+            "ods.any_of",
+            "ods.any_of(masks)",
+            "Series",
+            "ods",
+            "combine Bool masks with OR, elementwise. Three-valued: one true settles the result even if another entry is null",
+        );
+        self.doc(
+            "ods.not",
+            "ods.not(mask)",
+            "Series",
+            "ods",
+            "invert a Bool mask elementwise; a null stays null",
+        );
+        self.doc(
+            "ods.concat",
+            "ods.concat(frames)",
+            "Frame",
+            "ods",
+            "stack Frames vertically, matching columns by name. A missing or extra column is refused rather than padded with nulls; an Int column meeting a Float one widens. This is how partial results from a streaming loop are put back together",
+        );
+        self.doc(
             "ods.write_frame",
             "ods.write_frame(f, path)",
             "Result<Unit, Error>",
@@ -2148,7 +2176,7 @@ impl HelpSystem {
         );
         self.doc(
             "ods.join",
-            "ods.join(a, b, on_a, on_b)",
+            "ods.join(a, b, on_a, on_b = on_a)",
             "Frame",
             "ods",
             "inner hash join of a and b on one key column from each side",

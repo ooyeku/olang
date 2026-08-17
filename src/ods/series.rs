@@ -18,7 +18,7 @@
 
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
-use olang_ods::{ArithOp, CmpOp, Scalar, Series};
+use olang_ods::{ArithOp, CmpOp, DType, Scalar, Series};
 use std::any::Any;
 
 #[derive(Debug)]
@@ -126,6 +126,96 @@ pub(super) fn value_to_scalar(v: &Value) -> Option<Scalar> {
         Value::Unit => Some(Scalar::Null),
         _ => None,
     }
+}
+
+/// A Bool Series argument — the shape every mask operation needs.
+fn want_bool_series<'a>(func: &str, args: &'a [Value], idx: usize) -> Result<&'a Series, String> {
+    let series = want_series(func, args, idx)?;
+    if series.dtype() != DType::Bool {
+        return Err(format!(
+            "ods.{}: argument {} must be a Bool mask, got a {} Series. A mask \
+             comes from a comparison, like f[\"amount\"] > 100.0",
+            func,
+            idx + 1,
+            series.dtype()
+        ));
+    }
+    Ok(series)
+}
+
+/// The list of masks `all_of` / `any_of` combine, checked for shape.
+fn mask_list<'a>(func: &str, args: &'a [Value]) -> Result<Vec<&'a Series>, String> {
+    let items = match args.first() {
+        Some(Value::List(items)) => items,
+        other => {
+            return Err(format!(
+                "ods.{}: expects a list of Bool masks, got {}",
+                func,
+                other.map(|v| v.type_name()).unwrap_or_default()
+            ));
+        }
+    };
+    if items.is_empty() {
+        // There is no length to give the answer, so there is no honest
+        // result — `all_of([])` cannot be a mask over anything.
+        return Err(format!("ods.{}: needs at least one mask", func));
+    }
+    let mut masks = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        masks.push(
+            want_bool_series(func, std::slice::from_ref(item), 0).map_err(|_| {
+                format!(
+                    "ods.{}: item {} must be a Bool mask, got {}",
+                    func,
+                    i + 1,
+                    item.type_name()
+                )
+            })?,
+        );
+    }
+    let len = masks[0].len();
+    if let Some(bad) = masks.iter().position(|m| m.len() != len) {
+        return Err(format!(
+            "ods.{}: mask {} has {} rows but the first has {} — every mask \
+             must come from the same Frame",
+            func,
+            bad + 1,
+            masks[bad].len(),
+            len
+        ));
+    }
+    Ok(masks)
+}
+
+/// Three-valued conjunction or disjunction, the same logic SQL uses and
+/// the same that `filter` already assumes when it treats a null as false:
+/// one `false` settles an `all_of` even if another entry is unknown, and
+/// one `true` settles an `any_of`.
+fn combine(all: bool, masks: &[&Series]) -> Result<Series, String> {
+    let len = masks[0].len();
+    let mut out = Vec::with_capacity(len);
+    for i in 0..len {
+        let mut unknown = false;
+        let mut settled = false;
+        for mask in masks {
+            match mask.scalar_at(i) {
+                Scalar::Bool(b) if b != all => {
+                    settled = true;
+                    break;
+                }
+                Scalar::Bool(_) => {}
+                _ => unknown = true,
+            }
+        }
+        out.push(if settled {
+            Some(!all)
+        } else if unknown {
+            None
+        } else {
+            Some(all)
+        });
+    }
+    Ok(Series::from_bool_options(out))
 }
 
 pub fn series_of(value: &Value) -> Option<&Series> {
@@ -240,6 +330,9 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("take", 2),
     ("filter", 2),
     ("eq", 2),
+    ("all_of", 1),
+    ("any_of", 1),
+    ("not", 1),
     ("ne", 2),
 ];
 
@@ -442,9 +535,49 @@ fn dispatch_inner(func: &str, args: Vec<Value>, expected: usize) -> Result<Value
         }
         "eq" | "ne" => {
             let a = want_series(func, &args, 0)?;
-            let b = want_series(func, &args, 1)?;
             let op = if func == "eq" { CmpOp::Eq } else { CmpOp::Ne };
-            a.compare(op, b).map(OdsSeries::into_value).map_err(e)
+            // The `==` operator already accepts a scalar on the right, so
+            // refusing one here was an inconsistency that cost a
+            // confusing error on the most common filter there is.
+            match args.get(1) {
+                Some(other) if series_of(other).is_some() => a
+                    .compare(op, series_of(other).expect("checked"))
+                    .map(OdsSeries::into_value)
+                    .map_err(e),
+                Some(other) => match value_to_scalar(other) {
+                    Some(scalar) => a
+                        .compare_scalar(op, scalar, false)
+                        .map(OdsSeries::into_value)
+                        .map_err(e),
+                    None => Err(format!(
+                        "ods.{}: argument 2 must be a Series or a scalar, got {}",
+                        func,
+                        other.type_name()
+                    )),
+                },
+                None => Err(format!("ods.{}: expects 2 arguments", func)),
+            }
+        }
+        // Mask combination. Filtering on more than one condition is the
+        // normal case, and `&&` cannot serve: the language compiles it to
+        // conditional jumps for short-circuiting, which has no elementwise
+        // reading. These take a list rather than two arguments because a
+        // real filter usually has three or four conditions, not two.
+        "all_of" | "any_of" => {
+            let masks = mask_list(func, &args)?;
+            Ok(OdsSeries::into_value(combine(func == "all_of", &masks)?))
+        }
+        "not" => {
+            let mask = want_bool_series(func, &args, 0)?;
+            let flipped: Vec<Option<bool>> = (0..mask.len())
+                .map(|i| match mask.scalar_at(i) {
+                    Scalar::Bool(b) => Some(!b),
+                    // Unknown stays unknown, as everywhere else nulls
+                    // meet arithmetic.
+                    _ => None,
+                })
+                .collect();
+            Ok(OdsSeries::into_value(Series::from_bool_options(flipped)))
         }
         _ => unreachable!("dispatch() checked membership"),
     }

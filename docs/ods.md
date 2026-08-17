@@ -605,6 +605,53 @@ Subscripting is read-only. There is no `f["a"] = x`: Frames are values,
 every verb returns a new one, and an assignment that silently produced a
 copy would be a trap. Use `ods.with_column`.
 
+### Combining conditions
+
+A real filter has more than one condition, and `&&` cannot serve: the
+language compiles it to a conditional jump so that it can short-circuit,
+which has no elementwise reading over a column. `ods.all_of` and
+`ods.any_of` take a *list* of masks, because a filter usually has three
+or four conditions rather than two, and `ods.not` inverts one:
+
+```olang
+let f = ods.read_csv("quality,kwh\nok,5.0\nfail,7.0\nok,-1.0\nok,9.0\n")
+let usable = f[ods.all_of([ods.eq(f["quality"], "ok"), f["kwh"] > 0.0])]
+println(to_string(ods.to_list(usable["kwh"])))               // [5, 9]
+```
+
+`ods.eq` and `ods.ne` are equality as a *mask*, taking either another
+Series or a plain value — the `==` operator is structural between two
+Series, because "are these the same column?" is what `==` answers
+everywhere else in the language.
+
+Combination is three-valued, the same logic SQL uses and the same that
+`filter` already assumes when it treats a null as false. One `false`
+settles an `all_of` even when another entry is unknown, and one `true`
+settles an `any_of`; otherwise an unknown propagates. A comparison
+against a null is itself unknown, which is why the mask above does not
+need a null check in front of it.
+
+### Stacking Frames
+
+`ods.concat(frames)` puts Frames on top of one another. It is what makes
+streaming aggregation possible: each chunk produces its own partial
+result, and those have to be stacked and re-reduced before the answer is
+whole.
+
+```olang
+let a = ods.read_csv("x,y\n1,a\n")
+let b = ods.read_csv("x,y\n2,b\n")
+println(to_string(ods.to_list(ods.concat([a, b])["x"])))     // [1, 2]
+```
+
+Columns are matched by *name*, not position, because two Frames that
+happen to share a shape but not a meaning is the mistake this is most
+likely to be handed. A missing or extra column is refused and named
+rather than padded with nulls: a schema that drifted between chunks is a
+bug in whatever produced it, and quietly filling the gap would hide that.
+An Int column meeting a Float one widens to Float, which is the rule a
+literal list already follows.
+
 ### Shaping columns and rows
 
 `ods.select(f, names)` keeps named columns; `ods.with_column(f, name,

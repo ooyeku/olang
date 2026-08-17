@@ -1383,3 +1383,214 @@ ods.to_list(unwrap(ods.read_frame("{p}", ["s"]))["s"])
     .expect("tier agreement");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+// ── Mask combination, concat, and the join default ────────────────────
+
+#[test]
+fn masks_combine_with_all_of_and_any_of() {
+    // Filtering on more than one condition is the normal case, and `&&`
+    // cannot serve: the language compiles it to a conditional jump for
+    // short-circuiting, which has no elementwise reading over a column.
+    let out = eval(
+        r#"
+let f = ods.read_csv("q,k\nok,5\nbad,7\nok,-1\nok,9\n")
+let keep = ods.all_of([ods.eq(f["q"], "ok"), f["k"] > 0])
+let either = ods.any_of([ods.eq(f["q"], "bad"), f["k"] > 8])
+show([ods.to_list(f[keep]["k"]), ods.to_list(f[either]["k"])])
+"#,
+        None,
+    )
+    .expect("masks");
+    assert_eq!(out.to_string(), "\"[[5, 9], [7, 9]]\"".to_string());
+}
+
+#[test]
+fn mask_combination_is_three_valued() {
+    // The same logic SQL uses, and the one `filter` already assumed when
+    // it treated a null as false: one `false` settles an `all_of` even
+    // when another entry is unknown, and one `true` settles an `any_of`.
+    let out = eval(
+        r#"
+let f = ods.read_csv("a,b\n1,1\n,1\n,\n"  )
+let known = f["a"] > 0
+let other = f["b"] > 0
+show([ods.to_list(ods.all_of([known, other])), ods.to_list(ods.any_of([known, other]))])
+"#,
+        None,
+    )
+    .expect("three-valued");
+    // Row 2: a is null (unknown) and b is true -> all_of unknown, any_of true.
+    // Row 3: both unknown -> both unknown.
+    assert_eq!(
+        out.to_string(),
+        "\"[[true, (), ()], [true, true, ()]]\"".to_string()
+    );
+}
+
+#[test]
+fn not_flips_a_mask_and_leaves_unknowns_alone() {
+    let out = eval(
+        r#"
+let f = ods.read_csv("a,tag\n1,x\n,y\n-1,z\n")
+show(ods.to_list(ods.not(f["a"] > 0)))
+"#,
+        None,
+    )
+    .expect("not");
+    assert_eq!(out.to_string(), "\"[false, (), true]\"".to_string());
+}
+
+#[test]
+fn a_mask_operation_refuses_a_non_mask() {
+    // The likely mistake is passing the column instead of a comparison
+    // over it, so the message names the fix.
+    let err = eval(r#"ods.not(ods.series([1, 2, 3]))"#, None).expect_err("must refuse");
+    assert!(err.contains("must be a Bool mask"), "{err}");
+    assert!(err.contains("> 100.0"), "{err}");
+
+    let err = eval(r#"ods.all_of([])"#, None).expect_err("must refuse");
+    assert!(err.contains("at least one mask"), "{err}");
+
+    let err = eval(
+        r#"
+let a = ods.read_csv("x\n1\n2\n")
+let b = ods.read_csv("x\n1\n")
+ods.all_of([a["x"] > 0, b["x"] > 0])
+"#,
+        None,
+    )
+    .expect_err("must refuse");
+    assert!(err.contains("same Frame"), "{err}");
+}
+
+#[test]
+fn eq_accepts_a_scalar_like_the_operator_does() {
+    // `==` already took a scalar on the right; `ods.eq` refusing one was
+    // an inconsistency that cost a confusing error on the commonest
+    // filter there is.
+    let out = eval(
+        r#"
+let f = ods.read_csv("q\nok\nbad\nok\n")
+show([ods.to_list(ods.eq(f["q"], "ok")), ods.to_list(ods.ne(f["q"], "ok"))])
+"#,
+        None,
+    )
+    .expect("scalar eq");
+    assert_eq!(
+        out.to_string(),
+        "\"[[true, false, true], [false, true, false]]\"".to_string()
+    );
+}
+
+#[test]
+fn concat_stacks_frames() {
+    // Streaming turns one pass into many partial results; without this
+    // there is no way to put them back together except a detour through
+    // row-shaped values, which is what the columnar model exists to avoid.
+    let out = eval(
+        r#"
+let a = ods.read_csv("x,y\n1,a\n2,b\n")
+let b = ods.read_csv("x,y\n3,c\n")
+let both = ods.concat([a, b])
+show([ods.columns(both), ods.to_list(both["x"]), ods.to_list(both["y"])])
+"#,
+        None,
+    )
+    .expect("concat");
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"x\", \"y\"], [1, 2, 3], [\"a\", \"b\", \"c\"]]\"".to_string()
+    );
+}
+
+#[test]
+fn concat_matches_columns_by_name_not_position() {
+    // Two Frames that share a shape but not a meaning is the failure this
+    // is most likely to be handed.
+    let out = eval(
+        r#"
+let a = ods.read_csv("x,y\n1,10\n")
+let b = ods.read_csv("y,x\n20,2\n")
+show([ods.to_list(ods.concat([a, b])["x"]), ods.to_list(ods.concat([a, b])["y"])])
+"#,
+        None,
+    )
+    .expect("by name");
+    assert_eq!(out.to_string(), "\"[[1, 2], [10, 20]]\"".to_string());
+}
+
+#[test]
+fn concat_refuses_a_drifting_schema() {
+    // Padding a missing column with nulls would hide a bug in whatever
+    // produced the second Frame.
+    let err = eval(
+        r#"
+ods.concat([ods.read_csv("x,y\n1,2\n"), ods.read_csv("x,z\n3,4\n")])
+"#,
+        None,
+    )
+    .expect_err("must refuse");
+    assert!(err.contains("Frame 2 has columns"), "{err}");
+
+    let err = eval("ods.concat([])", None).expect_err("must refuse");
+    assert!(err.contains("at least one Frame"), "{err}");
+}
+
+#[test]
+fn concat_widens_an_int_column_meeting_a_float_one() {
+    // The same rule a literal list already follows, so the exception
+    // would be the surprise.
+    let out = eval(
+        r#"
+let both = ods.concat([ods.read_csv("n\n1\n"), ods.read_csv("n\n2.5\n")])
+show(ods.to_list(both["n"]))
+"#,
+        None,
+    )
+    .expect("widen");
+    assert_eq!(out.to_string(), "\"[1.0, 2.5]\"".to_string());
+}
+
+#[test]
+fn a_join_key_named_the_same_on_both_sides_is_written_once() {
+    let out = eval(
+        r#"
+let facts = ods.read_csv("meter,kwh\nA,1.5\nB,2.0\n")
+let dim = ods.read_csv("meter,site\nA,north\nB,south\n")
+let joined = ods.join(facts, dim, "meter")
+show([ods.columns(joined), ods.to_list(joined["site"])])
+"#,
+        None,
+    )
+    .expect("join");
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"meter\", \"kwh\", \"site\"], [\"north\", \"south\"]]\"".to_string()
+    );
+}
+
+#[test]
+fn differently_named_join_keys_still_take_both() {
+    let out = eval(
+        r#"
+let facts = ods.read_csv("meter,kwh\nA,1.5\n")
+let dim = ods.read_csv("id,site\nA,north\n")
+show(ods.to_list(ods.join(facts, dim, "meter", "id")["site"]))
+"#,
+        None,
+    )
+    .expect("join");
+    assert_eq!(out.to_string(), "\"[\"north\"]\"".to_string());
+}
+
+#[test]
+fn the_new_verbs_agree_across_tiers() {
+    assert_tier_transparent(
+        r#"
+let f = ods.read_csv("q,k\nok,5\nbad,7\nok,9\n")
+let kept = f[ods.all_of([ods.eq(f["q"], "ok"), f["k"] > 6])]
+ods.to_list(ods.concat([kept, kept])["k"])
+"#,
+    )
+    .expect("tier agreement");
+}

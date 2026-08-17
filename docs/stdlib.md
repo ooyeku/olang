@@ -1354,7 +1354,8 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` |
 | Subscript | `f["name"]` a column · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (negatives from the end) |
 | Shape | `select(f, names)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
-| Aggregate / join | `group_by(f, key, aggs)` · `join(a, b, key)` · `join_left(a, b, key)` |
+| Aggregate / join | `group_by(f, key, aggs)` · `join(a, b, on, on_b = on)` · `join_left(a, b, on, on_b = on)` · `concat(frames)` |
+| Masks | `eq(s, v)` · `ne(s, v)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL |
 
 The stack has its own chapter, **[The Data Stack](ods.md)**: why the
 columnar model wins (with the measured 50× rewrite behind it), every

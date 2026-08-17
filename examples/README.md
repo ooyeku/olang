@@ -56,6 +56,9 @@ A two-package demonstration of the package manager (see
   threads: four `spawn`ed fetches run concurrently and are collected with
   `map(task.join)` (total time = the slowest, not the sum), then each is
   given a budget with `task.join_timeout`
+- [`meterflow/`](meterflow/) — a multi-source ETL: JSON-lines telemetry
+  streamed in bounded memory, cleaned, aggregated across chunks, joined to
+  CSV dimensions, cached in the native columnar format, and charted.
 - [`dataproc/`](dataproc/) — a CSV→Frame→aggregate→JSON pipeline on the ods
   data stack: `ods.read_csv` infers column types, revenue is one vectorized
   column multiply, revenue-by-region is a `group_by`, then a `json` report

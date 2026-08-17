@@ -1,0 +1,4 @@
+[package]
+name = "meterflow"
+version = "1.0.0"
+description = "A multi-source ETL on the ods data stack: stream, clean, join, roll up, chart, cache"

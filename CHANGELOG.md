@@ -37,6 +37,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`ods.head(f)` defaults to 10 rows.** The verb typed most often at the
   REPL was the one that raised most often, because it demanded a count.
 
+- **`meterflow`: the data stack's flagship ETL (Campaign 2, DP4).**
+  A multi-source pipeline in [`examples/meterflow/`](examples/meterflow/):
+  meter telemetry arrives as JSON lines too large to hold, two CSV
+  dimension tables carry sites and tariffs, and the job streams the
+  readings, gates them on quality, aggregates across chunks, joins the
+  dimensions, prices the result, caches it in the native columnar format,
+  and charts it.
+
+  Streaming turns one pass into many partial aggregates, so the pipeline
+  is correct only if chunk boundaries cannot change the answer. Over
+  400,000 readings the streamed run and a whole-file computation agree
+  exactly — 390,033 rows kept and 781,262.26 kWh either way, across 80
+  chunk boundaries.
+
+  **It was built to find what was missing, and it did.** Four gaps
+  surfaced in the writing, all now closed:
+
+  | | |
+  |---|---|
+  | `ods.all_of(masks)` · `ods.any_of(masks)` · `ods.not(mask)` | combine Bool masks, three-valued like SQL |
+  | `ods.concat(frames)` | stack Frames, matching columns by name |
+  | `ods.join(a, b, on)` | the second key name now defaults to the first |
+  | `ods.eq(s, v)` · `ods.ne(s, v)` | now accept a plain value, as `==` already did |
+
+  Mask combination was the blocking one: a filter with two conditions was
+  simply not expressible. `&&` cannot serve, because the language compiles
+  it to a conditional jump so that it can short-circuit, and that has no
+  elementwise reading over a column — so these are functions taking a
+  *list*, since a real filter has three or four conditions rather than
+  two. `concat` was the other: without it, putting the partial results of
+  a streaming loop back together required a detour through row-shaped
+  values, which is exactly what the columnar representation exists to
+  avoid.
+
 - **A native columnar file format (Campaign 2, DP2 — the last lane).**
   CSV and JSON lines are interchange with the outside world and both pay
   for it: every load re-parses text and re-infers types, and neither can

@@ -1,0 +1,61 @@
+meter,site,tariff,installed
+M0000,harbour,standard,2024-01-01
+M0001,ridgeway,economy,2024-02-01
+M0002,old mill,peak,2024-03-01
+M0003,beacon hill,standard,2024-04-01
+M0004,harbour,economy,2024-05-01
+M0005,ridgeway,peak,2024-06-01
+M0006,old mill,standard,2024-07-01
+M0007,beacon hill,economy,2024-08-01
+M0008,harbour,peak,2024-09-01
+M0009,ridgeway,standard,2024-01-01
+M0010,old mill,economy,2024-02-01
+M0011,beacon hill,peak,2024-03-01
+M0012,harbour,standard,2024-04-01
+M0013,ridgeway,economy,2024-05-01
+M0014,old mill,peak,2024-06-01
+M0015,beacon hill,standard,2024-07-01
+M0016,harbour,economy,2024-08-01
+M0017,ridgeway,peak,2024-09-01
+M0018,old mill,standard,2024-01-01
+M0019,beacon hill,economy,2024-02-01
+M0020,harbour,peak,2024-03-01
+M0021,ridgeway,standard,2024-04-01
+M0022,old mill,economy,2024-05-01
+M0023,beacon hill,peak,2024-06-01
+M0024,harbour,standard,2024-07-01
+M0025,ridgeway,economy,2024-08-01
+M0026,old mill,peak,2024-09-01
+M0027,beacon hill,standard,2024-01-01
+M0028,harbour,economy,2024-02-01
+M0029,ridgeway,peak,2024-03-01
+M0030,old mill,standard,2024-04-01
+M0031,beacon hill,economy,2024-05-01
+M0032,harbour,peak,2024-06-01
+M0033,ridgeway,standard,2024-07-01
+M0034,old mill,economy,2024-08-01
+M0035,beacon hill,peak,2024-09-01
+M0036,harbour,standard,2024-01-01
+M0037,ridgeway,economy,2024-02-01
+M0038,old mill,peak,2024-03-01
+M0039,beacon hill,standard,2024-04-01
+M0040,harbour,economy,2024-05-01
+M0041,ridgeway,peak,2024-06-01
+M0042,old mill,standard,2024-07-01
+M0043,beacon hill,economy,2024-08-01
+M0044,harbour,peak,2024-09-01
+M0045,ridgeway,standard,2024-01-01
+M0046,old mill,economy,2024-02-01
+M0047,beacon hill,peak,2024-03-01
+M0048,harbour,standard,2024-04-01
+M0049,ridgeway,economy,2024-05-01
+M0050,old mill,peak,2024-06-01
+M0051,beacon hill,standard,2024-07-01
+M0052,harbour,economy,2024-08-01
+M0053,ridgeway,peak,2024-09-01
+M0054,old mill,standard,2024-01-01
+M0055,beacon hill,economy,2024-02-01
+M0056,harbour,peak,2024-03-01
+M0057,ridgeway,standard,2024-04-01
+M0058,old mill,economy,2024-05-01
+M0059,beacon hill,peak,2024-06-01

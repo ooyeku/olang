@@ -1,0 +1,7 @@
+# Large inputs from `olang gen.ol <n> data/big.jsonl`; the checked-in
+# data/readings.jsonl sample is what the harness runs.
+data/big.jsonl
+cache/
+*.svg
+by_site.csv
+report.json

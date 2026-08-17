@@ -192,7 +192,7 @@ the corpus if Campaign 1 lands first.
 | DP2 — IO breadth | Read CSV from files and as a bounded-memory stream; JSON-lines input; a columnar interchange format; `to_csv` and file output. The end-to-end input-to-output story. | **shipped** |
 | DP2b — ergonomics | Subscript syntax for Frames and Series, and the orientation verbs (`describe`, `schema`). Reaching a column was 13.6% of every `ods` call in the corpus and the most verbose thing in it. | **shipped** |
 | DP3 — verb completeness | Window functions, reshape (wide/long, pivot), additional join kinds and aggregations, and string and categorical column operations. | planned |
-| DP4 — flagship and benchmark | A realistic end-to-end ETL example wired to `plot`, and a reproducible benchmark against pandas and Polars with methodology and hardware documented in [The data stack](ods.md). | planned |
+| DP4 — flagship and benchmark | A realistic end-to-end ETL example wired to `plot`, and a reproducible benchmark against pandas and Polars with methodology and hardware documented in [The data stack](ods.md). | **flagship shipped**; the benchmark remains |
 
 **DP2 shipped.** `ods.read_csv_file`,
 `ods.to_csv`, and `ods.write_csv` close the loop the chapter described but
@@ -279,6 +279,30 @@ header (`enc=`) is where later ones go.
 Acceptance: a streaming job processes input larger than memory; the
 benchmark is reproducible from the repository; the flagship example ships in
 `examples/` and runs in the harness.
+
+**DP4's flagship shipped, and it earned its place by breaking things.**
+[`examples/meterflow/`](../examples/meterflow/) streams JSON-lines
+telemetry in bounded memory, gates it on quality, aggregates across
+chunks, joins two CSV dimension tables, prices the result, caches it in
+the native columnar format, and charts it. Over 400,000 readings the
+streamed run and a whole-file computation agree exactly — 390,033 rows
+and 781,262.26 kWh either way, across 80 chunk boundaries.
+
+Writing it found four gaps, all closed in the same change: `all_of` /
+`any_of` / `not` for mask combination, `concat` for stacking Frames,
+`join`'s second key name defaulting to the first, and `eq` / `ne`
+accepting a plain value as `==` already did. The first two were blocking.
+A filter with two conditions was not expressible at all — `&&` compiles
+to a short-circuiting jump, which has no elementwise reading over a
+column — and without `concat` the partial results of a streaming loop
+could only be recombined through a row-shaped detour, which is the thing
+the columnar representation exists to avoid.
+
+That is the argument for having built DP4 before DP3. None of the four
+were on DP3's list, which names window functions, reshape, and
+categorical operations; all four are things a first real pipeline cannot
+do without. DP3 should now be written against what the flagship reached
+for rather than ahead of it.
 
 ## Campaign 3 — capabilities on every tier
 
