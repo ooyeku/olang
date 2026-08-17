@@ -148,3 +148,70 @@ fn build_rejects_a_program_that_does_not_parse() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// C2: a transparency record must be validated before anything trusts a
+/// field of it. `format` selects which bytes the digest covers, and the
+/// check was `>= 3` — so a bundle claiming format 99 took the format-3
+/// path, recomputed a digest that does not cover the meta record, matched
+/// it, and printed "verified". The only verdict worse than "unverifiable"
+/// is a confident wrong one.
+#[test]
+fn a_bundle_claiming_an_unknown_format_is_refused() {
+    let dir = tmp("meta_format");
+    let src = dir.join("prog.ol");
+    std::fs::write(&src, "println(\"hi\")\n").unwrap();
+    let exe = dir.join("prog");
+    let built = std::process::Command::new(olang_bin())
+        .args(["build", src.to_str().unwrap(), "-o", exe.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "build failed");
+
+    // Sanity: the honest bundle inspects clean.
+    let good = std::process::Command::new(olang_bin())
+        .args(["inspect", exe.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&good.stdout).contains("[verified]"),
+        "the unmodified bundle should verify"
+    );
+
+    // Rewrite only `format`, leaving the digest untouched and still
+    // correct for the payload it covers.
+    let bytes = std::fs::read(&exe).unwrap();
+    let n = bytes.len();
+    let lens = &bytes[n - 32..n - 8];
+    let get = |i: usize| u64::from_le_bytes(lens[i * 8..i * 8 + 8].try_into().unwrap()) as usize;
+    let (sl, al, ml) = (get(0), get(1), get(2));
+    let start = n - 32 - (sl + al + ml);
+    let meta: serde_json::Value =
+        serde_json::from_slice(&bytes[start + sl + al..start + sl + al + ml]).unwrap();
+    let mut meta = meta.as_object().unwrap().clone();
+    meta.insert("format".to_string(), serde_json::json!(99));
+    let new_meta = serde_json::to_vec(&meta).unwrap();
+
+    let mut forged = Vec::new();
+    forged.extend_from_slice(&bytes[..start + sl + al]);
+    forged.extend_from_slice(&new_meta);
+    for len in [sl as u64, al as u64, new_meta.len() as u64] {
+        forged.extend_from_slice(&len.to_le_bytes());
+    }
+    forged.extend_from_slice(&bytes[n - 8..]);
+    let forged_path = dir.join("forged");
+    std::fs::write(&forged_path, &forged).unwrap();
+
+    let out = std::process::Command::new(olang_bin())
+        .args(["inspect", forged_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !text.contains("[verified]"),
+        "a bundle of an unknown format must not be reported as verified: {text}"
+    );
+}

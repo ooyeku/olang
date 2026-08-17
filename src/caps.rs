@@ -429,7 +429,12 @@ pub fn required(full_name: &str) -> Option<CapUse> {
     ) {
         return Some(CapUse::FsWrite);
     }
-    if full_name.starts_with("proc.") || full_name == "os.exec" {
+    // Process-affecting calls, whatever module they live in. `os.exit`
+    // was the hole: a dependency denied `proc` could not spawn a process
+    // but could still terminate the host, which is a larger power than
+    // the one it was refused. `proc` means "may affect processes",
+    // including this one.
+    if full_name.starts_with("proc.") || matches!(full_name, "os.exec" | "os.exit") {
         return Some(CapUse::Proc);
     }
     if let Some(f) = full_name.strip_prefix("os.") {

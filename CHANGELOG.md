@@ -331,6 +331,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A program can read its own capability grant (Campaign 3, C3).**
+  A denial still stops the program — that is deliberate and unchanged.
+  What was missing is the other branch: a program that can degrade could
+  not *ask*, only attempt the call and be killed by it, so degradation
+  had to be written as recovery from an error, which the language does
+  not offer.
+
+  | | |
+  |---|---|
+  | `caps.allowed(name)` | does the calling code hold it → `Bool` |
+  | `caps.level(name)` | `"none"` / `"read"` / `"full"` |
+  | `caps.granted()` | the whole grant as a map |
+
+  ```olang
+  let plan = if caps.allowed("fs") => "cache to disk" else => "in memory"
+  ```
+
+  The answer is the **caller's** grant: code in an attenuated dependency
+  sees what that dependency was given, which is the same set the gate
+  would enforce a moment later — one classification, asked two ways.
+  None of the three is itself gated, so the escape hatch stays available
+  under the tightest restriction.
+
+- **`os.exit` now requires `proc` (Campaign 3, C2).** It was the hole in
+  the gate: a dependency denied `proc` could not spawn a process but
+  could still terminate the host, which is a larger power than the one it
+  was refused. `proc` now means "may affect processes", including this
+  one.
+
+- **A bundle's transparency record is validated before it is trusted
+  (Campaign 3, C2).** `read_bundle` checked the *frame* — lengths,
+  overflow, bounds — but nothing checked the *contents*. The `format`
+  field selects which bytes the digest covers and the test was
+  `format >= 3`, so a bundle claiming format 99 took the format-3 path,
+  recomputed a digest that does not cover the meta record, matched it,
+  and printed `[verified]`. An unknown format is now refused, and
+  digests must be well-formed hex. The only verdict worse than
+  "unverifiable" is a confident wrong one.
+
 - **A struct shares its fields instead of copying them.**
   `Value::Struct` held a bare `HashMap` while `Value::Map` directly beside
   it held an `Arc`, so every clone of a struct rebuilt the whole field map

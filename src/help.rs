@@ -1986,6 +1986,27 @@ impl HelpSystem {
             "whether the reader has reached the end of its file",
         );
         self.doc(
+            "caps.allowed",
+            "caps.allowed(name)",
+            "Bool",
+            "caps",
+            "whether the calling code holds a capability (\"fs\", \"net\", \"proc\", \"db\", \"env\"). Answers for the *caller*: attenuated dependency code sees its own grant. Use it to choose a path before attempting a call — a denial still stops the program",
+        );
+        self.doc(
+            "caps.level",
+            "caps.level(name)",
+            "String",
+            "caps",
+            "the granted level of a capability: \"none\", \"read\", or \"full\". Only `fs` has a middle level; every other capability answers \"none\" or \"full\"",
+        );
+        self.doc(
+            "caps.granted",
+            "caps.granted()",
+            "Map",
+            "caps",
+            "the calling code's whole grant as a map — `fs` as a level string, the rest as Bool. For reporting a grant rather than branching on it",
+        );
+        self.doc(
             "ods.all_of",
             "ods.all_of(masks)",
             "Series",

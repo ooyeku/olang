@@ -299,6 +299,11 @@ block in `olang.toml` gates the effectful stdlib surface — `fs`,
 `http` (as `net`), `db`, `proc`, and the environment functions of
 `os` — at the module boundary; pure computation is never gated.
 
+`proc` means "may affect processes", including this one: it covers the
+`proc` module, `os.exec`, and `os.exit`. Terminating the host is a
+larger power than spawning a child, so a dependency refused the second
+does not get the first.
+
 ```toml
 [capabilities]
 fs = "read"        # false | "read" | true
@@ -337,6 +342,34 @@ The data stack is gated the same way and at the level it actually uses.
 `ods.read_csv` and `ods.read_jsonl` — reaches nothing and needs no grant.
 That split is deliberate: a data module that could be handed a path would
 be a filesystem capability under another name.
+
+### Asking what you were granted
+
+A denial stops the program. That is deliberate: a call that needed a
+capability it did not have is a mistake in how the program was deployed,
+and continuing past it would run a program the manifest does not
+describe.
+
+But a program that can degrade should be able to look before it leaps,
+and until now it could only attempt the call and be killed by it — so
+degradation had to be written as recovery from an error, which the
+language does not offer. The `caps` module closes that gap:
+
+```olang
+let plan = if caps.allowed("fs") => "cache to disk" else => "in memory"
+println(caps.level("fs"))        // "none" | "read" | "full"
+println(show(caps.granted()))    // the whole grant, as a map
+```
+
+`caps.allowed` answers for the **caller**, not the application: code in an
+attenuated dependency sees what *that dependency* was given, which is the
+same set the gate would enforce a moment later. One classification, asked
+two ways — the same relationship `check` and `required` already have.
+
+None of the three is itself gated. Asking what you hold reaches nothing
+and reveals nothing a caller could not learn by making the call and
+reading the error, so the escape hatch stays available under the
+tightest restriction.
 
 Enforcement is by *attribution*: when code that lives in `leftpad`'s
 directory calls a gated builtin, `leftpad`'s grant applies — the

@@ -313,8 +313,8 @@ that trade.
 | Lane | Work | Status |
 |---|---|---|
 | C1 — builtin-boundary enforcement | Capability checks move to the single dispatch point that all tiers share. Each compiled function carries its source-package provenance; OVM frames expose it; JIT code reaches builtins through helpers that pass through the same dispatch. The restriction that disables the bytecode tier under a capability manifest is then removed. | **shipped** |
-| C2 — attribution hardening | Package roots are canonicalized so symlinks cannot confuse attribution; `os.exit` and remaining ungated process-affecting calls are brought under the `proc` gate; bundle-format fields are validated on read. | planned |
-| C3 — denial and the error model | A denial keeps stopping the program, and a `caps` module lets a program ask what it was granted (`caps.allowed("fs")`, `caps.granted()`) so it can choose a different path *before* attempting the call. Degradation becomes a branch the program takes deliberately, not an error it recovers from. | planned |
+| C2 — attribution hardening | Package roots are canonicalized so symlinks cannot confuse attribution; `os.exit` and remaining ungated process-affecting calls are brought under the `proc` gate; bundle-format fields are validated on read. | **shipped** |
+| C3 — denial and the error model | A denial keeps stopping the program, and a `caps` module lets a program ask what it was granted (`caps.allowed("fs")`, `caps.granted()`) so it can choose a different path *before* attempting the call. Degradation becomes a branch the program takes deliberately, not an error it recovers from. | **shipped** |
 
 **C1 shipped.** The gate was never the missing piece: `BuiltinFunctions::
 call_internal` is the one choke point both tiers already pass through.
@@ -371,6 +371,31 @@ Acceptance: a capability-restricted run matches the unrestricted run's tier
 behavior and speed; the capability test suite passes on every tier; the
 book's openness and packages chapters describe capabilities as an enforced
 boundary, with the attribution model and its limits stated precisely.
+
+**Campaign 3 is complete.** C2 turned out to be two real holes and one
+already-closed item. `os.exit` escaped the `proc` gate entirely — a
+dependency denied `proc` could not spawn a process but could still
+terminate the host, a larger power than the one it was refused. And a
+bundle's transparency record was never validated: `read_bundle` checked
+lengths, overflow and bounds, but the `format` field — which selects
+*which bytes the digest covers* — was tested with `>= 3`, so a bundle
+claiming format 99 verified under format-3 rules and printed
+`[verified]`. Both are fixed and both have tests that forge the
+condition rather than assert the fix.
+
+The third item, canonicalizing package roots against symlinks, was
+already done — but nothing proved it, so it now has a test that reaches
+a dependency through a symlink and confirms the attenuation holds.
+"Already correct" and "known to be correct" are different states, and
+only the second survives a refactor.
+
+C3 completes the openness story. Degradation is now a branch a program
+takes deliberately (`caps.allowed`, `caps.level`, `caps.granted`) rather
+than an error it recovers from, which keeps the error model intact: a
+denial still stops the program, and the way to avoid one is to not make
+the call. The grant a program reads is the *caller's*, so attenuated
+dependency code sees its own — the same classification the gate uses,
+asked as a question instead of enforced as a refusal.
 
 ## Campaign 4 — 1.0 readiness
 

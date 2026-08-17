@@ -535,3 +535,238 @@ fn the_data_stack_is_not_a_latent_filesystem_capability() {
     );
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+// ── C3: reading the grant, rather than only being stopped by it ───────
+
+/// A denial still stops the program — that is unchanged and deliberate.
+/// What C3 adds is the other branch: a program that can degrade should be
+/// able to *ask* before attempting the call, rather than being killed by
+/// it and having to recover, which the language deliberately does not
+/// offer.
+#[test]
+fn a_program_can_read_its_own_grant() {
+    let dir = workspace("caps_read");
+    write(
+        &dir.join("main.ol"),
+        r#"
+println(show(caps.allowed("fs")) + " " + caps.level("fs"))
+println(show(caps.allowed("net")) + " " + show(caps.allowed("proc")))
+"#,
+    );
+    let granted = Command::new(olang())
+        .args(["run", "main.ol"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&granted.stdout).trim(),
+        "true full\ntrue true"
+    );
+
+    let denied = Command::new(olang())
+        .args(["--deny", "fs,net", "run", "main.ol"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&denied.stdout).trim(),
+        "false none\nfalse true"
+    );
+}
+
+/// The whole point of the lane: degradation becomes a branch the program
+/// takes deliberately, not an error it recovers from.
+#[test]
+fn a_program_can_degrade_instead_of_dying() {
+    let dir = workspace("caps_degrade");
+    write(
+        &dir.join("main.ol"),
+        r#"
+let out = if caps.allowed("fs") => {
+    unwrap(fs.write_file("cache.txt", "cached"))
+    "wrote cache"
+} else => "no fs grant, keeping results in memory"
+println(out)
+"#,
+    );
+    let denied = Command::new(olang())
+        .args(["--deny", "fs", "run", "main.ol"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    // Exit 0: the program chose the other path rather than being stopped.
+    assert!(denied.status.success(), "a degrading program must not die");
+    assert_eq!(
+        String::from_utf8_lossy(&denied.stdout).trim(),
+        "no fs grant, keeping results in memory"
+    );
+    assert!(!dir.join("cache.txt").exists());
+}
+
+/// `caps` answers for the *caller*, so attenuated dependency code sees
+/// its own grant — the same set the gate would enforce a moment later.
+#[test]
+fn a_dependency_reads_its_own_attenuated_grant() {
+    let dir = workspace("caps_dep_view");
+    write(
+        &dir.join("olang.toml"),
+        r#"[package]
+name = "app"
+version = "1.0.0"
+
+[dependencies]
+probe = { path = "../probe_pkg" }
+
+[capabilities]
+fs = true
+net = true
+
+[capabilities.dependencies.probe]
+fs = false
+net = false
+"#,
+    );
+    let probe = dir.parent().unwrap().join("probe_pkg");
+    write(
+        &probe.join("olang.toml"),
+        "[package]\nname = \"probe\"\nversion = \"1.0.0\"\n",
+    );
+    write(
+        &probe.join("index.ol"),
+        "share fn my_fs() = caps.allowed(\"fs\")\nshare fn my_net() = caps.allowed(\"net\")\n",
+    );
+    write(
+        &dir.join("main.ol"),
+        r#"
+use probe { my_fs, my_net }
+println("app sees:  " + show(caps.allowed("fs")) + " " + show(caps.allowed("net")))
+println("dep sees:  " + show(my_fs()) + " " + show(my_net()))
+"#,
+    );
+    let out = Command::new(olang())
+        .args(["run", "main.ol"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("app sees:  true true"), "{text}");
+    assert!(
+        text.contains("dep sees:  false false"),
+        "a dependency must read its own attenuation, not the app's: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&probe);
+}
+
+#[test]
+fn asking_about_a_capability_needs_no_capability() {
+    // Reading the grant reaches nothing, so it must work under the
+    // tightest possible restriction — otherwise the escape hatch would
+    // be unavailable exactly when it is needed.
+    let dir = workspace("caps_ungated");
+    write(&dir.join("main.ol"), "println(show(caps.granted()))\n");
+    let out = Command::new(olang())
+        .args(["--deny", "fs,net,proc,db,env", "run", "main.ol"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "caps.granted must not itself be gated"
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("\"fs\": \"none\""), "{text}");
+    assert!(text.contains("\"net\": false"), "{text}");
+}
+
+// ── C2: attribution hardening ────────────────────────────────────────
+
+/// `os.exit` was the hole in the `proc` gate: a dependency denied `proc`
+/// could not spawn a process but could still terminate the host, which is
+/// a larger power than the one it was refused.
+#[test]
+fn os_exit_is_a_process_capability() {
+    let dir = workspace("caps_exit");
+    write(
+        &dir.join("main.ol"),
+        "println(\"before\")\nos.exit(3)\nprintln(\"after\")\n",
+    );
+    let granted = Command::new(olang())
+        .args(["run", "main.ol"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(granted.status.code(), Some(3), "granted proc: exit works");
+
+    let denied = Command::new(olang())
+        .args(["--deny", "proc", "run", "main.ol"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&denied.stderr);
+    assert!(
+        err.contains("capability 'proc' denied") && err.contains("os.exit"),
+        "denied proc must refuse os.exit rather than letting it kill the process: {err}"
+    );
+    assert_ne!(denied.status.code(), Some(3));
+}
+
+/// Attribution is by real path, so reaching a dependency through a
+/// symlink must not escape its attenuation. Both the dependency roots and
+/// the executing file are canonicalized before they are compared.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_dependency_keeps_its_attenuation() {
+    let dir = workspace("caps_symlink");
+    let real =
+        dir.parent()
+            .unwrap()
+            .join(format!("olang_caps_real_{}_{}", std::process::id(), "sym"));
+    let _ = std::fs::remove_dir_all(&real);
+    write(
+        &real.join("olang.toml"),
+        "[package]\nname = \"sneaky\"\nversion = \"1.0.0\"\n",
+    );
+    write(
+        &real.join("index.ol"),
+        "share fn peek() = unwrap(fs.read_file(\"secret.txt\"))\n",
+    );
+    // The dependency is reached through a symlink; its code lives
+    // elsewhere on disk.
+    let link = dir.join("linked_dep");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    write(&dir.join("secret.txt"), "classified");
+    write(
+        &dir.join("olang.toml"),
+        r#"[package]
+name = "app"
+version = "1.0.0"
+
+[dependencies]
+sneaky = { path = "linked_dep" }
+
+[capabilities]
+fs = true
+
+[capabilities.dependencies.sneaky]
+fs = false
+"#,
+    );
+    write(
+        &dir.join("main.ol"),
+        "use sneaky { peek }\nprintln(peek())\n",
+    );
+    let out = Command::new(olang())
+        .args(["run", "main.ol"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && err.contains("capability 'fs' denied"),
+        "a symlinked dependency must not escape its attenuation: stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        err
+    );
+    let _ = std::fs::remove_dir_all(&real);
+}

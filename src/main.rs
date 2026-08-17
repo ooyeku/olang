@@ -998,6 +998,12 @@ const OLANG_BUNDLE_MAGIC: &[u8; 8] = b"oLaNgBnd";
 const OLANG_AST_MAGIC: &[u8; 8] = b"oLaNgAsT";
 /// Rung "transparent binary": [source][ast][meta][3 x u64 lens][magic].
 const OLANG_META_MAGIC: &[u8; 8] = b"oLaNgMeT";
+/// The highest meta format this build knows how to interpret. A bundle
+/// claiming more is refused rather than guessed at: `format` selects
+/// which bytes the digest covers, so reading a future layout under
+/// today's rules would print "verified" about a check that never
+/// examined what the newer format binds.
+const OLANG_META_FORMAT: u32 = 3;
 
 /// The transparency record a built binary carries alongside its program:
 /// enough for `olang inspect` to reproduce, verify, and reason about the
@@ -1127,6 +1133,38 @@ fn embedded_program() -> Option<Bundle> {
 
 /// Read a bundled program from any file — the shared reader behind both
 /// self-execution and `olang inspect <binary>`.
+/// Is this a plausible sha256 hex digest?
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Field-level validation of a bundle's transparency record.
+///
+/// `read_bundle` already checks the *frame* — lengths, overflow, bounds —
+/// so the payload cannot drive a bad allocation. This checks the
+/// *contents*, which the frame says nothing about. Returning None makes
+/// the bundle unreadable, which is the correct outcome: a transparency
+/// record that cannot be interpreted must not produce a verdict, because
+/// the only verdict worse than "unverifiable" is a confident wrong one.
+fn validate_meta(meta: &BundleMeta) -> Option<()> {
+    // An unknown format is the important one. `format` decides which
+    // bytes the digest covers, and `>= 3` would silently accept a
+    // format 9 bundle as if it were 3.
+    if meta.format == 0 || meta.format > OLANG_META_FORMAT {
+        return None;
+    }
+    // Digests are checked by string comparison, so a non-hex value could
+    // never match and would report a mismatch that is really a malformed
+    // record. Empty is legitimate: pre-digest bundles carry none.
+    if !meta.digest.is_empty() && !is_sha256_hex(&meta.digest) {
+        return None;
+    }
+    if !meta.sha256.is_empty() && !is_sha256_hex(&meta.sha256) {
+        return None;
+    }
+    Some(())
+}
+
 fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
@@ -1169,6 +1207,11 @@ fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
         let source = String::from_utf8(source_buf).ok()?;
         let program: olang::ast::Program = serde_json::from_slice(&ast_buf).ok()?;
         let meta: BundleMeta = serde_json::from_slice(&meta_buf).ok()?;
+        // Validate the record before anything trusts a field of it. The
+        // bytes came off disk and nothing has authenticated them yet:
+        // the digest is checked *using* these fields, so a malformed
+        // record must be refused here rather than steering the check.
+        validate_meta(&meta)?;
         return Some(Bundle::Ast {
             meta: Some(Box::new(meta)),
             program: Box::new(program),

@@ -3120,6 +3120,17 @@ impl Interpreter {
         Some((*caps, package.map(|s| s.to_string())))
     }
 
+    /// The grant governing the currently-executing code, for the `caps`
+    /// module to report. With no manifest loaded a program is
+    /// unrestricted, so the default grant (everything) is the honest
+    /// answer — `caps.allowed("fs")` is true precisely when an `fs` call
+    /// would be permitted.
+    pub fn effective_caps(&mut self) -> crate::caps::Caps {
+        self.current_caps()
+            .map(|(caps, _)| caps)
+            .unwrap_or_default()
+    }
+
     /// The capability gate, called from builtin dispatch. None = allowed.
     /// Some(message) = denied, with the message naming the capability,
     /// the call, and the package whose grant refused it.

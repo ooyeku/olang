@@ -824,6 +824,15 @@ impl BuiltinFunctions {
             );
         }
 
+        // `caps` answers from the *caller's* grant, so it resolves
+        // through the interpreter rather than from a static table — the
+        // same resolution the gate above already performed.
+        if let Some(caps_function) = name.strip_prefix("caps.") {
+            let grant = interpreter.effective_caps();
+            return crate::stdlib::caps_mod::call(caps_function, arguments, &grant)
+                .map_err(|message| InterpreterError::RuntimeError { message });
+        }
+
         // Handle testing functions
         if let Some(testing_function) = name.strip_prefix("testing.") {
             // Remove "testing." prefix
