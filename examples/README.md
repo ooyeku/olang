@@ -1,9 +1,12 @@
 # olang examples
 
-Runnable programs demonstrating the language. Run any of them with:
+Runnable programs demonstrating the language. Every entry below is a real
+program that does real work and prints computed results — nothing is faked,
+and nothing is a stub. Run any of them directly:
 
 ```bash
-olang examples/01_language_tour.ol
+olang examples/metatool/main.ol
+cd examples/survey && olang main.ol summary ../../src
 ```
 
 To run **every** example at once — each standalone script and each package —
@@ -14,35 +17,50 @@ subprocess and reports a pass/fail summary:
 cd examples && olang run_all.ol
 ```
 
-The numbered programs are a curated, self-contained tour — each runs top to
-bottom, does real work, and prints computed results (nothing is faked). They
-are verified in CI by `tests/example_programs_test.rs`, so they cannot rot.
+Three of them are servers that block forever by design (`app/`, `ledger/`,
+`webserver/`), so the harness skips them — naming each skip rather than
+passing over it silently — and a Rust integration test boots each one
+instead. Everything else runs, including `oshell/`, which notices that its
+stdin is not a terminal and exits cleanly.
 
-## Curated tour
+**Where to start.** [`demo/`](demo/) is the guided tour: Harborline is one
+system that reaches for nearly every part of the language at once, and
+[the Harborline chapter](../docs/demo.md) walks through it. To learn one
+feature at a time, [the book](../docs/README.md) teaches each with its own
+runnable snippets. `tests/example_programs_test.rs` pins the flagship —
+every `demo/` module must parse, and a bounded soak run must finish with
+its invariants intact — so a language change that breaks it is a CI
+failure rather than something a reader discovers.
 
-| File | What it teaches |
-|---|---|
-| [`01_language_tour.ol`](01_language_tour.ol) | Every core construct: literals, collections, destructuring, functions, closures, control flow, pattern matching, pipelines, structs, error handling, maps |
-| [`02_data_pipeline.ol`](02_data_pipeline.ol) | Real analytics — totals, filtering, group-by via fold, leaderboards, derived metrics — the pipeline sweet spot |
-| [`03_algorithms.ol`](03_algorithms.ol) | Recursion, memoization, quicksort, binary search, the prime sieve, function composition, and the strategy pattern via closures |
-| [`04_stdlib_showcase.ol`](04_stdlib_showcase.ol) | The batteries: SHA-256/HMAC hashing, bcrypt passwords, RSA sign/verify, math (stddev, trig identities), calendar arithmetic, and JSON |
-| [`05_text_processing.ol`](05_text_processing.ol) | Real text work with `str` and `re`: word frequency, log parsing via regex captures, email extraction, validation, a template engine, and slugification |
-| [`06_database.ol`](06_database.ol) | A SQLite-backed task tracker: schema, parameterized inserts, queries, group-by aggregates, updates — real persistence |
-| [`07_algebraic_types.ol`](07_algebraic_types.ol) | Enums as real sum types: a recursive expression-tree evaluator, generic Option combinators, and a binary search tree |
+## The programs
 
-## Packages
-
-A two-package demonstration of the package manager (see
-[docs/packages.md](../docs/packages.md)):
+The first three demonstrate the package manager and the capability model
+(see [docs/packages.md](../docs/packages.md) and
+[docs/openness.md](../docs/openness.md)); the rest are complete
+programs grouped by nothing in particular — read the one whose subject
+you care about.
 
 - [`packages/geometry/`](packages/geometry/) — a library package: shapes,
   areas, and 2D point math, exposing a public API with `share`
 - [`packages/demo/`](packages/demo/) — depends on `geometry` by path and
-  imports it with `use geometry { ... }`
+  imports it with `use geometry { ... }`. Running it
+  (`olang examples/packages/demo/main.ol`) resolves the dependency with no
+  separate install step
 - [`capabilities/`](capabilities/) — per-dependency capability attenuation:
   the same app runs twice against a malicious `analytics` dependency, and the
   guarded manifest (`fs = false` for the dependency) blocks the backdoor the
   unguarded one lets through
+- [`demo/`](demo/) — Harborline, the flagship soak test and the closest
+  thing to a guided tour: vessels arrive on a seeded random stream, a
+  depth-and-tide-aware scheduler assigns berths, a crew of real threads
+  unloads them over channels, and tariffs come from expression-tree pricing
+  rules — every movement recorded in SQLite, every simulated day folded into
+  a template-rendered digest whose HMAC chain (RSA-signed) makes the history
+  tamper-evident. State is one world record that `tick()` maps to the next,
+  so there is no hidden mutation; invariants are asserted every simulated day
+  and a violation fails the process. Designed to run for hours in bounded
+  memory — `olang main.ol --ticks 48 --fast` for two days in a second.
+  Walked through in [the Harborline chapter](../docs/demo.md)
 - [`taskcli/`](taskcli/) — a persistent task tracker as a real multi-file
   package: SQLite storage (`lib/store.ol`), a reporting module using `col`
   and pipelines (`lib/report.ol`), a domain module (`lib/model.ol`), and a
@@ -100,14 +118,16 @@ A two-package demonstration of the package manager (see
 - [`loadtest/`](loadtest/) — a self-contained HTTP load test: it boots the
   API (SQLite-backed) in a spawned task, fans a fleet of client workers out
   across `spawn` threads (each firing a burst and timing it), merges the
-  per-worker stats after `await`, prints throughput/latency, and a `test`
+  per-worker stats through `map(task.join)`, prints throughput/latency, and a `test`
   block asserts the server's own hit count equals the clients' successes
   exactly — proving `http.serve`'s worker pool loses no writes under
   concurrent load
 - [`nbody/`](nbody/) — an N-body gravity simulation as a bytecode-tier
   benchmark: `Body` structs whose O(n^2) force kernels read fields and call
   `math.sqrt` in a hot loop — exactly what the tier accelerates. Times itself
-  and reports throughput; ~9x faster on the tier than the interpreter. A
+  and reports throughput; ~44× faster on the tier than the interpreter — the
+  widest tier gap in the corpus, which is what a float-and-field hot loop
+  hands the JIT. A
   `test` block locks determinism and momentum conservation
 - [`oshell/`](oshell/) — a Unix-like shell written in olang: an interactive
   `os.read_line` loop with pipelines threading stdout→stdin through
@@ -115,14 +135,15 @@ A two-package demonstration of the package manager (see
   quoting, `;`/`&&`/`||` sequencing, 25 builtins implemented on the stdlib,
   aliases, and history persisted across sessions — the long-running
   systems-work proof (1,000 mixed commands soak through one session in
-  ~1.4 s). Interactive, so `run_all.ol` skips it; scripted stdin drives it
-  in CI-style checks
+  ~1.4 s). Interactive, but it runs under the harness unattended: a
+  non-terminal stdin ends the loop instead of hanging it, and scripted
+  stdin drives it in CI-style checks
 - [`minilisp/`](minilisp/) — a small Lisp interpreted by olang: reader and
   evaluator over `LVal` enum trees, maps as functional environments, Err
   values as the only error channel, and call-time self-binding for recursive
   defines — the same trick olang's own interpreter uses one level up. Every
   function promotes to the bytecode tier; a timed `fib(17)` runs through two
-  layers of interpretation (~11× faster on the tier — this example is what
+  layers of interpretation (~17× faster on the tier — this example is what
   motivated the native collection builtins), and a test block locks
   evaluation results and error messages
 - [`statlab/`](statlab/) — robust inference on the ods data stack at
@@ -130,14 +151,14 @@ A two-package demonstration of the package manager (see
   1,000-round permutation test and a 1,000-resample bootstrap CI (both
   Monte Carlos fanned across every core with `par_map`), a 3-predictor
   OLS at n=5,000 recovering its true coefficients, and SVG charts of
-  the bootstrap distribution and the fit — the whole study in under
-  half a second. A `test` block pins every inference. The `stats` and
+  the bootstrap distribution and the fit — the whole study in
+  roughly half a second. A `test` block pins every inference. The `stats` and
   `plot` workflow it scales up is taught in
   [the Data Stack chapter](../docs/ods.md)
 - [`parmap/`](parmap/) — data-parallel pipelines with `par_map` /
   `par_filter` and the `par for` loop: counts primes in 48 blocks both
   sequentially and fanned out across every core, asserts the answers
-  are identical, and reports the measured speedup (~7× on an M-series,
+  are identical, and reports the measured speedup (~6–7× on an M-series,
   now that the JIT compiles the kernel natively on every worker);
   then runs the same work through `par for`, whose spawn-style snapshot
   rule means results cross back over a `chan` rather than through shared
@@ -167,6 +188,25 @@ A two-package demonstration of the package manager (see
   [the Browser chapter](../docs/wasm.md)). The API contract is
   locked by `tests/tracker_app_test.rs`, which boots the real app.
   Long-running — `run_all.ol` skips it
+- [`survey/`](survey/) — a codebase surveyor and the command-line flagship:
+  it turns a directory into a report of files and lines by language, a bar
+  chart of the biggest, and the largest files. The whole command surface
+  (`summary` / `langs` / `files`) is one declarative `cli` spec, `term`
+  draws colored tables and a live progress bar that degrade to plain text
+  when piped, and `fs` walks the tree. Using only the stdlib and embedded
+  packages, it bundles to one executable with `olang build` and documents
+  itself with `olang doc`
+- [`watch/`](watch/) — rerun a command on an interval and stream its output
+  until Ctrl-C: the dogfood for the process story. Drives children with
+  `proc`, chains them with `proc.pipeline` (`--pipe "ls | wc -l"`), reads
+  exit codes, and traps SIGINT to shut down and print a summary rather than
+  being killed mid-frame
+- [`metatool/`](metatool/) — olang reading olang over `meta.parse`, which
+  hands a parsed program back as ordinary values: a list of statement maps
+  you walk with the same `map`/`filter`/`fold` as any data. It reports a
+  program's imports and every bare `unwrap(...)` grouped by enclosing
+  function — a linter as a script rather than a compiler change, which is
+  the "open code" pillar of [openness](../docs/openness.md)
 - [`markdown/`](markdown/) — a markdown→HTML converter: a block parser
   (`lib/blocks.ol` — headings, lists, blockquotes, fenced code, rules,
   paragraphs) over a recursive inline renderer (`lib/inline.ol` — `code`,
@@ -174,21 +214,15 @@ A two-package demonstration of the package manager (see
   built-in sample, and self-checks its contract with a `test` block on
   every run
 
-```bash
-olang examples/packages/demo/main.ol      # auto-resolves the dependency
-```
+## Also in this directory
 
-## Topic examples
-
-Older single-topic programs, still runnable:
-
-- `string_interpolation.ol` — template strings and advanced literals
-- `union_types.ol` — discriminated-union dispatch via `match`
-- `dates.ol`, `crypto_test.ol` — focused stdlib walkthroughs
-- `simple_sales.ol`, `stats_module.ol` — small analytics
-- `base_utils.ol`, `extended_utils.ol`, `stats_module.ol` — `share`/`use` module system
-- `chain_a/b/c.ol`, `conflict_*.ol` — transitive sharing and name-conflict resolution
-- `loops.ol`, `fast_loops.ol`, `benchmark.ol` — iteration and performance
+- `benchmark.ol` — a standalone timing script: loop, arithmetic, and
+  call-heavy microbenchmarks, run by the harness like any other example
+- `utils/` — three small `share`d modules (`math`, `string`, `validation`)
+  imported by dotted path: `use utils.math { calculate_average }`. It has
+  no `main.ol`, so the harness does not run it
+- `run_all.ol` — the harness itself, written in olang: it discovers targets,
+  runs each in a subprocess with `os.exec`, and exits non-zero on any failure
 
 ## Notes
 

@@ -26,8 +26,13 @@ let root =
     else => unwrap(os.cwd()) + "/" + self_dir
 
 // Programs that block forever by design (servers) can't run under the
-// harness; list them here so the skip is visible, never silent.
-let long_running = ["webserver/", "app/", "ledger/"]
+// harness; each is listed here with the test that covers it instead, so the
+// skip is visible and its replacement is named, never silent.
+let long_running = #{
+    "webserver/": "tests/http_serve_test.rs",
+    "app/": "tests/tracker_app_test.rs",
+    "ledger/": "tests/ledger_app_test.rs"
+}
 
 // ── discover targets: each is { label, dir, file } ──
 // Labels stay relative to `root` (e.g. "demo/"), which is what harness_args
@@ -65,10 +70,11 @@ let harness_args = #{
 fn args_for(label) =
     if map_has_key(harness_args, label) => map_get(harness_args, label) else => []
 
-let runnable = targets |> filter((t) => !contains(long_running, t.label))
+let runnable = targets |> filter((t) => !map_has_key(long_running, t.label))
 for t in targets {
-    if contains(long_running, t.label) =>
-        { println("  ~ skip   " + t.label + "  (long-running server; covered by tests/http_serve_test.rs)") }
+    if map_has_key(long_running, t.label) =>
+        { println("  ~ skip   " + t.label + "  (long-running server; covered by "
+            + map_get(long_running, t.label) + ")") }
 }
 let targets = runnable
 
