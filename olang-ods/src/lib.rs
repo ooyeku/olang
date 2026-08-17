@@ -1096,6 +1096,98 @@ impl Series {
     }
 
     // -----------------------------------------------------------------
+    // Conversion
+    // -----------------------------------------------------------------
+
+    /// Convert every element to `to`, keeping nulls null.
+    ///
+    /// A conversion that cannot represent a value yields a null rather
+    /// than an error or a wrong number: parsing "abc" as an Int, or a
+    /// Float too large for an i64, or a NaN. That is the ETL-shaped
+    /// choice — one unparseable row in a million should not fail the
+    /// load — and it is visible afterwards, since `null_count` counts
+    /// exactly what was lost. Float to Int truncates toward zero.
+    ///
+    /// `fmt_f64` renders a float on the way to String. The engine has no
+    /// opinion on how olang spells a float, and holding a second opinion
+    /// here would be free to drift from the language's own.
+    pub fn cast(&self, to: DType, fmt_f64: &dyn Fn(f64) -> String) -> Result<Series> {
+        if self.dtype() == to {
+            return Ok(self.clone());
+        }
+        // Float to Bool is the one pair with no defensible reading: 0.5
+        // is neither true nor false, and NaN is neither. The comparison
+        // the caller means is better written out.
+        if self.dtype() == DType::F64 && to == DType::Bool {
+            return Err(OdsError::InvalidArgument(
+                "cast: Float to Bool has no meaning for values like 0.5. \
+                 Write the comparison you mean, e.g. `s != 0.0`"
+                    .to_string(),
+            ));
+        }
+        let n = self.len();
+        let scalars = (0..n).map(|i| self.scalar_at(i));
+        Ok(match to {
+            DType::F64 => Series::from_f64_options(
+                scalars
+                    .map(|v| match v {
+                        Scalar::Null => None,
+                        Scalar::F64(x) => Some(x),
+                        Scalar::I64(x) => Some(x as f64),
+                        Scalar::Bool(b) => Some(if b { 1.0 } else { 0.0 }),
+                        Scalar::Str(s) => s.trim().parse::<f64>().ok(),
+                    })
+                    .collect(),
+            ),
+            DType::I64 => Series::from_i64_options(
+                scalars
+                    .map(|v| match v {
+                        Scalar::Null => None,
+                        Scalar::I64(x) => Some(x),
+                        // Truncate toward zero, but only where the result
+                        // is representable: `as` would silently saturate
+                        // 1e30 to i64::MAX and turn NaN into 0.
+                        Scalar::F64(x) => {
+                            let t = x.trunc();
+                            (t.is_finite() && t >= i64::MIN as f64 && t <= i64::MAX as f64)
+                                .then_some(t as i64)
+                        }
+                        Scalar::Bool(b) => Some(i64::from(b)),
+                        Scalar::Str(s) => s.trim().parse::<i64>().ok(),
+                    })
+                    .collect(),
+            ),
+            DType::Bool => Series::from_bool_options(
+                scalars
+                    .map(|v| match v {
+                        Scalar::Null => None,
+                        Scalar::Bool(b) => Some(b),
+                        Scalar::I64(x) => Some(x != 0),
+                        Scalar::Str(s) => match s.trim().to_ascii_lowercase().as_str() {
+                            "true" => Some(true),
+                            "false" => Some(false),
+                            _ => None,
+                        },
+                        // Refused above.
+                        Scalar::F64(_) => None,
+                    })
+                    .collect(),
+            ),
+            DType::Str => Series::from_str_options(
+                scalars
+                    .map(|v| match v {
+                        Scalar::Null => None,
+                        Scalar::Str(s) => Some(s),
+                        Scalar::F64(x) => Some(fmt_f64(x)),
+                        Scalar::I64(x) => Some(x.to_string()),
+                        Scalar::Bool(b) => Some(b.to_string()),
+                    })
+                    .collect(),
+            ),
+        })
+    }
+
+    // -----------------------------------------------------------------
     // Nulls
     // -----------------------------------------------------------------
 

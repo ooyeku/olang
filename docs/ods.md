@@ -217,21 +217,106 @@ the one place a default value appears is the place you wrote one.
 
 ### Reductions
 
-`ods.sum`, `ods.mean`, `ods.var`, `ods.std`, `ods.min`, `ods.max`, and
-`ods.quantile(s, q)` reduce a column to a number, skipping nulls.
-`var` and `std` are the *sample* statistics (the n−1 divisor), and
-`quantile` interpolates linearly between order statistics, matching
-NumPy's default. Two running forms complete the set: `ods.cumsum(s)`
-is the running sum as a new Series, and `ods.dot(a, b)` is the inner
-product.
+`ods.sum`, `ods.mean`, `ods.var`, `ods.std`, `ods.min`, `ods.max`,
+`ods.median`, and `ods.quantile(s, q)` reduce a column to a number,
+skipping nulls. `var` and `std` are the *sample* statistics (the n−1
+divisor), and `quantile` interpolates linearly between order
+statistics, matching NumPy's default. `median` is defined as
+`quantile(s, 0.5)` rather than computed separately, so the two can
+never disagree — and neither can the `median` row of `ods.describe`,
+which is the same call again. Two running forms complete the set:
+`ods.cumsum(s)` is the running sum as a new Series, and `ods.dot(a, b)`
+is the inner product.
 
 ```olang
 let s = ods.series([4.0, 1.0, 7.0, 2.0])
 println(to_string(ods.min(s)) + " .. " + to_string(ods.max(s)))
-println(to_string(ods.quantile(s, 0.5)))          // median: 3
+println(to_string(ods.median(s)))                 // 3.0
 println(to_string(ods.to_list(ods.cumsum(s))))    // [4, 5, 12, 14]
 println(to_string(ods.dot(s, s)))                 // 4²+1²+7²+2²
 ```
+
+### Distinct values
+
+`ods.unique(s)` gives the distinct values in first-seen order,
+`ods.n_unique(s)` counts them without building the column, and
+`ods.value_counts(s)` returns a two-column Frame — `value` and
+`count` — with the most frequent first, ties breaking by first
+appearance so the result is deterministic:
+
+```olang
+let s = ods.series(["west", "east", "east", "north", "east"])
+println(to_string(ods.to_list(ods.unique(s))))    // [west, east, north]
+println(to_string(ods.n_unique(s)))               // 3
+println(to_string(ods.to_list(ods.value_counts(s)["count"])))    // [3, 1, 1]
+```
+
+All three go through the pass `ods.group_by` uses to identify keys, so
+they cannot disagree with it about what counts as one value. Two
+consequences are worth stating because both differ from `==` on the
+corresponding scalars: **a null is a value**, forming its own entry
+rather than being skipped (the R and Polars convention, and the same
+rule `group_by` follows), and **all NaNs are one value**, since keys
+are float bit patterns with NaN canonicalized.
+
+### Changing a column's type
+
+`ods.cast(s, type)` converts a column, where `type` is one of
+`"Float"`, `"Int"`, `"Bool"`, or `"String"` — the names `ods.schema`
+reports. Nulls stay null.
+
+The rule that matters is what happens to a value the target type
+cannot hold: it becomes **null**, not an error and not a wrong number.
+That is the shape ETL wants — one unparseable row in a million should
+not fail a load — and it stays visible, since `ods.null_count` counts
+exactly what was lost:
+
+```olang
+let text = ods.series(["1", " 2 ", "oops", "4"])
+let ints = ods.cast(text, "Int")
+println(to_string(ods.to_list(ints)))       // [1, 2, (), 4]
+println(to_string(ods.null_count(ints)))    // 1
+```
+
+Float to Int truncates toward zero, and a float too large for an Int,
+or infinite, or NaN, becomes null rather than the saturated value a
+raw hardware conversion would produce. Strings parse with surrounding
+whitespace ignored; `"true"` and `"false"` parse to Bool in any case.
+Casting to String spells a float exactly as `to_string` does.
+
+One pair is refused rather than guessed at: Float to Bool has no
+defensible reading for a value like `0.5`, so it raises and points at
+writing the comparison instead (`s != 0.0`).
+
+### Taking a sample
+
+`ods.sample(s, n)` draws `n` rows at random, and works the same way on
+a Frame — `ods.sample(f, n)` samples whole rows, keeping the columns
+aligned.
+
+Three properties are worth knowing. Sampling is **without
+replacement**, so `n` draws are `n` distinct rows; asking for more
+rows than exist returns all of them rather than raising, as `head` and
+`tail` do. Rows come back in the frame's **original order**, not draw
+order, because a sample is meant to be read and shuffling it as a side
+effect would make a sample of sorted data unreadable. And randomness
+comes from the same stream `random.seed(k)` governs, so a sample is
+reproducible exactly when the program says so:
+
+```olang
+let f = ods.read_csv("id,v\n1,a\n2,b\n3,c\n4,d\n5,e\n")
+random.seed(20260817)
+let first = ods.to_list(ods.sample(f, 3)["id"])
+random.seed(20260817)
+println(to_string(first == ods.to_list(ods.sample(f, 3)["id"])))    // true
+```
+
+That stream is shared by the whole process, which is what makes one
+`random.seed` govern every sampling verb. It also means a seed does
+**not** make sampling reproducible inside `par_map` or `par for`:
+several threads drawing from one stream interleave in whatever order
+they reach it. Sample before the fan-out, or seed nothing and treat
+the result as genuinely random.
 
 ### Order and selection
 

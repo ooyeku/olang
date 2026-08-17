@@ -1818,6 +1818,48 @@ impl HelpSystem {
             "replace every null in s with v",
         );
         self.doc(
+            "ods.unique",
+            "ods.unique(s)",
+            "Series",
+            "ods",
+            "the distinct values of s, in first-seen order (a null is a value)",
+        );
+        self.doc(
+            "ods.n_unique",
+            "ods.n_unique(s)",
+            "Int",
+            "ods",
+            "how many distinct values s has",
+        );
+        self.doc(
+            "ods.value_counts",
+            "ods.value_counts(s)",
+            "Frame",
+            "ods",
+            "a value/count Frame for s, most frequent first",
+        );
+        self.doc(
+            "ods.median",
+            "ods.median(s)",
+            "Float",
+            "ods",
+            "the middle value of s, skipping nulls — quantile(s, 0.5)",
+        );
+        self.doc(
+            "ods.cast",
+            "ods.cast(s, type)",
+            "Series",
+            "ods",
+            "s converted to \"Float\", \"Int\", \"Bool\", or \"String\"; what will not convert becomes null",
+        );
+        self.doc(
+            "ods.sample",
+            "ods.sample(f, n)",
+            "Frame",
+            "ods",
+            "n random rows of a Frame or Series, without replacement, in original order",
+        );
+        self.doc(
             "ods.null_count",
             "ods.null_count(s)",
             "Int",

@@ -260,16 +260,8 @@ impl Frame {
         };
 
         // Key output columns: first row index of each group.
-        let mut first_row: Vec<usize> = vec![0; n_groups];
-        let mut seen = vec![false; n_groups];
-        for (row, &g) in group_ids.iter().enumerate() {
-            let g = g as usize;
-            if !seen[g] {
-                seen[g] = true;
-                first_row[g] = row;
-            }
-        }
-        let first_idx = Series::from_i64(first_row.iter().map(|&r| r as i64).collect());
+        let first_row = first_row_per_group(&group_ids, n_groups);
+        let first_idx = Series::from_i64(first_row.clone());
 
         let mut pairs: Vec<(String, Series)> = Vec::with_capacity(keys.len() + aggs.len());
         for (k, col) in keys.iter().zip(key_cols.iter()) {
@@ -417,6 +409,62 @@ fn join_probe(
         return (left_idx, right_idx);
     }
     probe_join(lkey, table, how, 0, n)
+}
+
+/// The row index where each group first appears, indexed by group id.
+/// `group_ids_single`/`_multi` assign ids in first-seen order, so this is
+/// also sorted ascending — but the verbs below reorder groups, and rely
+/// on being able to ask for a specific group's first row.
+fn first_row_per_group(group_ids: &[u32], n_groups: usize) -> Vec<i64> {
+    let mut first_row: Vec<i64> = vec![0; n_groups];
+    let mut seen = vec![false; n_groups];
+    for (row, &g) in group_ids.iter().enumerate() {
+        let g = g as usize;
+        if !seen[g] {
+            seen[g] = true;
+            first_row[g] = row as i64;
+        }
+    }
+    first_row
+}
+
+/// Column-level distinct verbs.
+///
+/// All three go through `group_ids_single` — the same pass `group_by`
+/// uses — so they cannot disagree with it about what counts as one
+/// value. Two consequences worth stating, because both differ from `==`
+/// on the corresponding scalars: a null is a value (it forms its own
+/// group, the R/Polars convention), and all NaNs are one value, since
+/// keys are float bit patterns with NaN canonicalized.
+impl Series {
+    /// The distinct values, in first-seen order.
+    pub fn unique(&self) -> Result<Series> {
+        let (ids, n_groups) = group_ids_single(self);
+        self.take(&Series::from_i64(first_row_per_group(&ids, n_groups)))
+    }
+
+    /// How many distinct values there are. Counting does not need the
+    /// values themselves, so this skips the gather `unique` pays for.
+    pub fn n_unique(&self) -> usize {
+        group_ids_single(self).1
+    }
+
+    /// Each distinct value paired with how many rows carry it, most
+    /// frequent first. Ties break by first appearance rather than
+    /// arbitrarily, so the result is deterministic for a given input.
+    pub fn value_counts(&self) -> Result<(Series, Series)> {
+        let (ids, n_groups) = group_ids_single(self);
+        let mut counts = vec![0i64; n_groups];
+        for &g in &ids {
+            counts[g as usize] += 1;
+        }
+        let first = first_row_per_group(&ids, n_groups);
+        let mut order: Vec<usize> = (0..n_groups).collect();
+        order.sort_by(|&a, &b| counts[b].cmp(&counts[a]).then(first[a].cmp(&first[b])));
+        let rows = Series::from_i64(order.iter().map(|&g| first[g]).collect());
+        let counts = Series::from_i64(order.iter().map(|&g| counts[g]).collect());
+        Ok((self.take(&rows)?, counts))
+    }
 }
 
 // ---------------------------------------------------------------------

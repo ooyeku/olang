@@ -713,6 +713,89 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
 }
 
 /// Frame-typed overloads for the names shared with Series.
+/// Build a Frame from columns that are already Series. `value_counts`
+/// returns a Frame from the Series layer, and this is the one place that
+/// knows how a Frame becomes a Value.
+pub fn from_columns(pairs: Vec<(String, Series)>) -> Result<Value, String> {
+    Frame::new(pairs).map(OdsFrame::into_value).map_err(e)
+}
+
+/// Choose `n` distinct row positions out of `len`, in increasing order.
+///
+/// Shared by the Frame and Series forms of `sample` so they cannot drift
+/// apart. Three decisions worth naming:
+///
+/// Sampling is **without replacement** — asking for 100 rows gives 100
+/// distinct rows, which is what "a sample of the data" means to a reader
+/// looking at one. Asking for more rows than exist yields all of them
+/// rather than an error, matching `head` and `tail`.
+///
+/// Rows come back in their **original order**, not draw order. A sample
+/// is meant to be looked at, and the alternative — shuffling as a side
+/// effect of sampling — makes a sample of a sorted frame unreadable.
+///
+/// Randomness comes from the same seeded stream `random.seed(n)`
+/// governs, as `ods.stats`' Monte Carlo already does. So a sample is
+/// reproducible exactly when the program says it is, and there is one
+/// seed to set rather than one per verb.
+/// Turn a uniform in [0, 1) into an index below `span`. The clamp cannot
+/// trigger for a well-formed uniform; it is there so a float bound can
+/// never become an out-of-range index.
+fn index_from(u: f64, span: usize) -> usize {
+    ((u * span as f64) as usize).min(span - 1)
+}
+
+pub fn sample_indices(func: &str, len: usize, n: Option<&Value>) -> Result<Series, String> {
+    let want = match n {
+        Some(Value::Integer(k)) if *k >= 0 => (*k as usize).min(len),
+        Some(Value::Integer(k)) => {
+            return Err(format!(
+                "ods.{}: n must be a non-negative Int, got {}",
+                func, k
+            ));
+        }
+        other => {
+            return Err(format!(
+                "ods.{}: n must be an Int, got {}",
+                func,
+                other.map(|v| v.type_name()).unwrap_or_default()
+            ));
+        }
+    };
+    // A small sample out of a large frame — `ods.sample(f, 5)` on ten
+    // million rows, which is the gesture this verb exists for — draws by
+    // rejecting collisions, so the memory it touches is proportional to
+    // the sample rather than to the frame. Below the ratio, collisions
+    // stop being rare and the shuffle is both cheaper and bounded.
+    let mut pool: Vec<i64> = if want > 0 && want.saturating_mul(4) <= len {
+        let mut chosen: std::collections::HashSet<i64> =
+            std::collections::HashSet::with_capacity(want);
+        while chosen.len() < want {
+            // One batch per round rather than one draw per candidate:
+            // the RNG is behind a lock, and at this ratio a round
+            // usually finishes the job.
+            for u in crate::stdlib::random::draw_uniforms(want - chosen.len()) {
+                chosen.insert(index_from(u, len) as i64);
+            }
+        }
+        chosen.into_iter().collect()
+    } else {
+        // Partial Fisher-Yates: `want` swaps, not `len`.
+        let draws = crate::stdlib::random::draw_uniforms(want);
+        let mut pool: Vec<i64> = (0..len as i64).collect();
+        for (i, u) in draws.iter().enumerate() {
+            pool.swap(i, i + index_from(*u, len - i));
+        }
+        pool.truncate(want);
+        pool
+    };
+    // Sorting is what puts the rows back in the frame's own order, and
+    // it is also what makes the result independent of HashSet iteration
+    // order above.
+    pool.sort_unstable();
+    Ok(Series::from_i64(pool))
+}
+
 pub fn dispatch_shared(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
     let f = frame_of(args.first()?)?;
     match func {
@@ -724,6 +807,10 @@ pub fn dispatch_shared(func: &str, args: &[Value]) -> Option<Result<Value, Strin
             Some(idx) => f.take(idx).map(OdsFrame::into_value).map_err(e),
             None => Err("ods.take: indices must be an Int Series".to_string()),
         }),
+        "sample" => Some(
+            sample_indices(func, f.n_rows(), args.get(1))
+                .and_then(|idx| f.take(&idx).map(OdsFrame::into_value).map_err(e)),
+        ),
         _ => None,
     }
 }

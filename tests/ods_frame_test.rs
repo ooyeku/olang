@@ -1763,3 +1763,262 @@ let g = ods.rename(ods.drop_null(ods.distinct(f)), #{"v": "value"})
     )
     .expect("tier agreement");
 }
+
+// ── DP3 Tier 2: the verbs reached for once `describe` has shown the shape ──
+
+#[test]
+fn value_counts_orders_by_frequency_then_first_appearance() {
+    let out = eval(
+        r#"
+let f = ods.read_csv("r\nwest\neast\neast\nnorth\neast\n")
+let vc = ods.value_counts(f["r"])
+show([ods.columns(vc), ods.to_list(vc["value"]), ods.to_list(vc["count"])])
+"#,
+        None,
+    )
+    .expect("value_counts");
+    // east (3) leads; west and north tie at 1, and west appeared first,
+    // so the tie breaks by first appearance rather than arbitrarily.
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"value\", \"count\"], [\"east\", \"west\", \"north\"], [3, 1, 1]]\"".to_string()
+    );
+}
+
+#[test]
+fn value_counts_agrees_with_group_by() {
+    // Both go through the same key-identification pass, and this is what
+    // says so: the counts must match column for column.
+    let out = eval(
+        r#"
+let f = ods.frame([["r", ["west", "east", "east", (), "east"]]])
+let vc = ods.value_counts(f["r"])
+let g = ods.sort_by(ods.group_by(f, "r", [["n", "count"]]), "n", true)
+show([ods.to_list(vc["count"]), ods.to_list(g["n"]), ods.n_unique(f["r"])])
+"#,
+        None,
+    )
+    .expect("agreement");
+    // Four values: east(3), west(1), null(1) — the null row counts as a
+    // value on both sides rather than vanishing from one of them.
+    assert_eq!(out.to_string(), "\"[[3, 1, 1], [3, 1, 1], 3]\"".to_string());
+}
+
+#[test]
+fn unique_keeps_first_seen_order_and_counts_null_as_a_value() {
+    let out = eval(
+        r#"
+let s = ods.series(["b", "a", "b", "c", "a"])
+let withnull = ods.frame([["x", [1, (), 1, 2, ()]]])["x"]
+show([ods.to_list(ods.unique(s)), ods.n_unique(s),
+      ods.to_list(ods.unique(withnull)), ods.n_unique(withnull)])
+"#,
+        None,
+    )
+    .expect("unique");
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"b\", \"a\", \"c\"], 3, [1, (), 2], 3]\"".to_string()
+    );
+}
+
+#[test]
+fn median_is_quantile_at_a_half() {
+    // Defined in terms of quantile rather than reimplemented, so the two
+    // can never disagree — including on an even-length column, where the
+    // answer depends on the interpolation rule.
+    let out = eval(
+        r#"
+let odd = ods.series([3.0, 1.0, 2.0])
+let even = ods.series([4.0, 1.0, 3.0, 2.0])
+show([ods.median(odd), ods.quantile(odd, 0.5),
+      ods.median(even), ods.quantile(even, 0.5),
+      ods.median(ods.series([1.0, (), 3.0]))])
+"#,
+        None,
+    )
+    .expect("median");
+    assert_eq!(out.to_string(), "\"[2.0, 2.0, 2.5, 2.5, 2.0]\"".to_string());
+}
+
+#[test]
+fn cast_turns_an_unconvertible_value_into_a_null_not_a_wrong_number() {
+    // The ETL-shaped choice: one bad row in a million must not fail the
+    // load, and must not silently become a plausible number either.
+    let out = eval(
+        r#"
+let text = ods.series(["1", " 2 ", "oops", "", "4"])
+let ints = ods.cast(text, "Int")
+show([ods.to_list(ints), ods.null_count(ints)])
+"#,
+        None,
+    )
+    .expect("cast");
+    assert_eq!(out.to_string(), "\"[[1, 2, (), (), 4], 2]\"".to_string());
+}
+
+#[test]
+fn cast_to_int_truncates_toward_zero_and_refuses_the_unrepresentable() {
+    // `as` would saturate 1e30 to i64::MAX. That is a wrong answer that
+    // looks like data, so it becomes null instead. (NaN is the other
+    // such case; olang refuses every expression that would produce one,
+    // so it is pinned in olang-ods/tests/kernels.rs.)
+    let out = eval(
+        r#"
+let f = ods.series([2.7, -2.7, 1.0e30, -1.0e30])
+show(ods.to_list(ods.cast(f, "Int")))
+"#,
+        None,
+    )
+    .expect("cast");
+    assert_eq!(out.to_string(), "\"[2, -2, (), ()]\"".to_string());
+}
+
+#[test]
+fn cast_to_string_spells_a_float_the_way_the_language_does() {
+    // The engine holds no opinion about float formatting; it is handed
+    // the language's own, so a cast column and to_string agree.
+    let out = eval(
+        r#"
+let f = ods.series([25.5, 320.0, 0.5])
+show([ods.to_list(ods.cast(f, "String")),
+      [to_string(25.5), to_string(320.0), to_string(0.5)]])
+"#,
+        None,
+    )
+    .expect("cast");
+    let text = out.to_string();
+    let half = text.len() / 2;
+    assert!(
+        text[..half].contains("320.0") && text[half..].contains("320.0"),
+        "cast and to_string must spell a float alike: {text}"
+    );
+}
+
+#[test]
+fn cast_refuses_float_to_bool_and_names_the_comparison() {
+    let err = eval(r#"ods.cast(ods.series([0.5]), "Bool")"#, None).expect_err("refused");
+    assert!(err.contains("0.5") && err.contains("!= 0.0"), "{err}");
+    let err = eval(r#"ods.cast(ods.series([1]), "Decimal")"#, None).expect_err("refused");
+    assert!(
+        err.contains("not a column type") && err.contains("Float"),
+        "{err}"
+    );
+}
+
+#[test]
+fn sample_draws_without_replacement_and_keeps_the_original_order() {
+    let out = eval(
+        r#"
+let s = ods.series(range(0, 50))
+let a = ods.to_list(ods.sample(s, 8))
+show([len(a), ods.n_unique(ods.series(a)), a == sort(a)])
+"#,
+        None,
+    )
+    .expect("sample");
+    // Eight draws are eight distinct rows, and they come back in the
+    // frame's own order rather than draw order. (Seed reproducibility
+    // needs its own process — see the test below.)
+    assert_eq!(out.to_string(), "\"[8, 8, true]\"".to_string());
+}
+
+/// Reproducibility has to be checked in a fresh process each time.
+///
+/// `random` is one stream for the whole process, so an in-process test
+/// that seeds and then draws can have its uniforms taken by whichever
+/// other test happens to be running beside it — the assertion would be
+/// about the test harness, not about `sample`. Running the real binary
+/// twice tests the property a reader actually depends on: the same
+/// program, seeded the same way, prints the same sample.
+#[test]
+fn sample_is_reproducible_from_a_seed() {
+    let dir = std::env::temp_dir().join(format!("olang_sample_seed_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let program = dir.join("sample.ol");
+    std::fs::write(
+        &program,
+        r#"
+let s = ods.series(range(0, 100))
+random.seed(20260817)
+println(to_string(ods.to_list(ods.sample(s, 10))))
+random.seed(99)
+println(to_string(ods.to_list(ods.sample(s, 10))))
+"#,
+    )
+    .expect("write program");
+
+    let run = || {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
+            .arg("run")
+            .arg(&program)
+            .output()
+            .expect("olang runs");
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    let first = run();
+    let second = run();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(first, second, "a seeded sample must reproduce across runs");
+    let lines: Vec<&str> = first.lines().collect();
+    assert_eq!(lines.len(), 2, "expected two samples, got {first:?}");
+    assert_ne!(
+        lines[0], lines[1],
+        "two different seeds must not draw the same sample"
+    );
+}
+
+#[test]
+fn sampling_more_rows_than_exist_yields_all_of_them() {
+    let out = eval(
+        r#"
+let f = ods.read_csv("a,b\n1,x\n2,y\n3,z\n")
+random.seed(1)
+show([ods.n_rows(ods.sample(f, 999)), ods.n_rows(ods.sample(f, 0)),
+      ods.columns(ods.sample(f, 2))])
+"#,
+        None,
+    )
+    .expect("sample");
+    assert_eq!(out.to_string(), "\"[3, 0, [\"a\", \"b\"]]\"".to_string());
+}
+
+#[test]
+fn the_tier_two_verbs_agree_across_tiers() {
+    assert_tier_transparent(
+        r#"
+let f = ods.read_csv("r,v\neast,1\nwest,2\neast,3\nnorth,4\n")
+let vc = ods.value_counts(f["r"])
+[ods.to_list(vc["count"]), ods.to_list(ods.unique(f["r"])), ods.n_unique(f["r"]),
+ ods.median(ods.cast(f["v"], "Float")), ods.to_list(ods.cast(f["v"], "String"))]
+"#,
+    )
+    .expect("tier agreement");
+}
+
+#[test]
+fn both_sampling_paths_yield_distinct_in_range_rows() {
+    // A small sample out of a large frame rejects collisions rather than
+    // shuffling, so that `ods.sample(f, 5)` on ten million rows does not
+    // allocate one i64 per row. The two paths must be indistinguishable
+    // from the outside, so this crosses the ratio that switches them.
+    let out = eval(
+        r#"
+fn ok(size, n) = {
+    let got = ods.to_list(ods.sample(ods.series(range(0, size)), n))
+    len(got) == n
+        && ods.n_unique(ods.series(got)) == n
+        && got == sort(got)
+        && fold(got, true, (acc, x) => acc && x >= 0 && x < size)
+}
+show([ok(100000, 5), ok(100, 25), ok(100, 26), ok(100, 100), ok(1, 1), ok(10, 0)])
+"#,
+        None,
+    )
+    .expect("sample");
+    assert_eq!(
+        out.to_string(),
+        "\"[true, true, true, true, true, true]\"".to_string()
+    );
+}

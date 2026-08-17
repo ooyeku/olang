@@ -2,7 +2,7 @@
 //! generated data, including null patterns — the property-test discipline
 //! the design doc requires (docs/design/ods.md, Phase 1 gate).
 
-use olang_ods::{ArithOp, CmpOp, OdsError, Scalar, Series};
+use olang_ods::{ArithOp, CmpOp, DType, OdsError, Scalar, Series};
 
 /// Deterministic xorshift so failures reproduce; no rand dependency.
 struct Rng(u64);
@@ -436,4 +436,77 @@ fn map_unary_domain_and_type_errors() {
             .map_unary("sin")
             .is_err()
     );
+}
+
+// ── cast ──────────────────────────────────────────────────────────────
+
+#[test]
+fn cast_to_int_yields_null_where_the_value_is_not_representable() {
+    // Rust's `as` would saturate 1e30 to i64::MAX and turn NaN into 0 —
+    // two wrong answers that look exactly like data. Neither can be
+    // constructed from olang source (the language refuses `0.0 / 0.0`
+    // and `math.sqrt(-1.0)`), but a Float column can carry them in from
+    // a file, so the guard is tested where a NaN can be written down.
+    let s = Series::from_f64(vec![2.7, -2.7, f64::NAN, 1e30, -1e30, f64::INFINITY]);
+    let out = s.cast(DType::I64, &|x| x.to_string()).expect("cast");
+    let got: Vec<Scalar> = (0..out.len()).map(|i| out.scalar_at(i)).collect();
+    assert_eq!(
+        got,
+        vec![
+            Scalar::I64(2),
+            Scalar::I64(-2),
+            Scalar::Null,
+            Scalar::Null,
+            Scalar::Null,
+            Scalar::Null,
+        ]
+    );
+    assert_eq!(out.null_count(), 4);
+}
+
+#[test]
+fn cast_keeps_nulls_null_in_every_direction() {
+    let s = Series::from_i64_options(vec![Some(1), None, Some(0)]);
+    for to in [DType::F64, DType::Bool, DType::Str] {
+        let out = s.cast(to, &|x| x.to_string()).expect("cast");
+        assert_eq!(out.null_count(), 1, "null lost casting to {}", to);
+        assert_eq!(out.scalar_at(1), Scalar::Null, "wrong position for {}", to);
+    }
+}
+
+#[test]
+fn cast_uses_the_formatter_it_is_given_for_floats() {
+    // The engine holds no opinion on how a float is spelled; olang hands
+    // in its own so a cast column matches `to_string`.
+    let s = Series::from_f64(vec![320.0]);
+    let plain = s.cast(DType::Str, &|x| x.to_string()).expect("cast");
+    let olangish = s
+        .cast(DType::Str, &|x| {
+            let t = x.to_string();
+            if t.contains('.') {
+                t
+            } else {
+                format!("{}.0", t)
+            }
+        })
+        .expect("cast");
+    assert_eq!(plain.scalar_at(0), Scalar::Str("320".to_string()));
+    assert_eq!(olangish.scalar_at(0), Scalar::Str("320.0".to_string()));
+}
+
+// ── unique / value_counts ─────────────────────────────────────────────
+
+#[test]
+fn value_counts_and_unique_see_all_nans_as_one_value() {
+    // Keys are float bit patterns with NaN canonicalized, matching
+    // group_by. This differs from `==` on the scalars, where no NaN
+    // equals any other — stated in the docs, pinned here.
+    let s = Series::from_f64(vec![f64::NAN, 1.0, f64::NAN, 1.0, 2.0]);
+    assert_eq!(s.n_unique(), 3);
+    let (values, counts) = s.value_counts().expect("value_counts");
+    assert_eq!(values.len(), 3);
+    // NaN and 1.0 both occur twice; NaN appeared first, so it leads.
+    let got: Vec<Scalar> = (0..counts.len()).map(|i| counts.scalar_at(i)).collect();
+    assert_eq!(got, vec![Scalar::I64(2), Scalar::I64(2), Scalar::I64(1)]);
+    assert!(matches!(values.scalar_at(0), Scalar::F64(x) if x.is_nan()));
 }

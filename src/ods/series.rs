@@ -322,6 +322,12 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("min", 1),
     ("max", 1),
     ("quantile", 2),
+    ("median", 1),
+    ("unique", 1),
+    ("n_unique", 1),
+    ("value_counts", 1),
+    ("cast", 2),
+    ("sample", 2),
     ("cumsum", 1),
     ("map", 2),
     ("dot", 2),
@@ -335,6 +341,23 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("not", 1),
     ("ne", 2),
 ];
+
+/// The type names `cast` accepts, which are the names `schema` reports.
+const DTYPE_NAMES: &[&str] = &["Float", "Int", "Bool", "String"];
+
+fn parse_dtype(name: &str) -> Result<DType, String> {
+    match name {
+        "Float" => Ok(DType::F64),
+        "Int" => Ok(DType::I64),
+        "Bool" => Ok(DType::Bool),
+        "String" => Ok(DType::Str),
+        other => Err(format!(
+            "ods.cast: '{}' is not a column type. Expected one of {}",
+            other,
+            DTYPE_NAMES.join(", ")
+        )),
+    }
+}
 
 fn want_series<'a>(func: &str, args: &'a [Value], idx: usize) -> Result<&'a Series, String> {
     args.get(idx).and_then(series_of).ok_or_else(|| {
@@ -472,6 +495,48 @@ fn dispatch_inner(func: &str, args: Vec<Value>, expected: usize) -> Result<Value
             .max()
             .map(scalar_to_value)
             .map_err(e),
+        // Defined as quantile(0.5) rather than reimplemented, so the two
+        // cannot disagree — and so `describe`, whose "median" row is the
+        // same call, reports the same number this does.
+        "median" => want_series(func, &args, 0)?
+            .quantile(0.5)
+            .map(|v| v.map(Value::Float).unwrap_or(Value::Unit))
+            .map_err(e),
+        "unique" => want_series(func, &args, 0)?
+            .unique()
+            .map(make_series_value)
+            .map_err(e),
+        "n_unique" => Ok(Value::Integer(
+            want_series(func, &args, 0)?.n_unique() as i64
+        )),
+        "value_counts" => {
+            let (values, counts) = want_series(func, &args, 0)?.value_counts().map_err(e)?;
+            crate::ods::frame::from_columns(vec![
+                ("value".to_string(), values),
+                ("count".to_string(), counts),
+            ])
+        }
+        "cast" => {
+            let s = want_series(func, &args, 0)?;
+            let to = match &args[1] {
+                Value::String(name) => parse_dtype(name)?,
+                other => {
+                    return Err(format!(
+                        "ods.cast: the target type must be a String — one of {}. Got {}",
+                        DTYPE_NAMES.join(", "),
+                        other.type_name()
+                    ));
+                }
+            };
+            s.cast(to, &crate::ast::format_float)
+                .map(make_series_value)
+                .map_err(e)
+        }
+        "sample" => {
+            let s = want_series(func, &args, 0)?;
+            let idx = crate::ods::frame::sample_indices(func, s.len(), args.get(1))?;
+            s.take(&idx).map(make_series_value).map_err(e)
+        }
         "quantile" => {
             let s = want_series(func, &args, 0)?;
             let q = match &args[1] {

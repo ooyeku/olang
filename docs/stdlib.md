@@ -1340,7 +1340,9 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Elementwise | `map(s, "sin")` — apply a `math.*` unary fn over the column in one kernel pass |
 | Comparisons | `eq(a, b)` · `ne(a, b)` — elementwise masks between two Series (against a *scalar*, use the `s == v` / `s != v` operators) |
 | Nulls | `is_null(s)` (mask) · `fill_null(s, v)` · `null_count(s)` |
-| Reductions | `sum` `mean` `var` `std` `min` `max` (skip nulls; `var`/`std` are sample) · `quantile(s, q)` · `cumsum(s)` · `dot(a, b)` |
+| Reductions | `sum` `mean` `var` `std` `min` `max` `median` (skip nulls; `var`/`std` are sample) · `quantile(s, q)` · `cumsum(s)` · `dot(a, b)` |
+| Distinct | `unique(s)` (first-seen order) · `n_unique(s)` · `value_counts(s)` → a value/count Frame, most frequent first |
+| Convert type | `cast(s, "Float"\|"Int"\|"Bool"\|"String")` — what the target cannot hold becomes null, so `null_count` reports what was lost |
 | Order / select | `sort(s)` (nulls last) · `argsort(s)` (sorting indices) · `take(s, idx)` (gather) · `get(s, i)` (negative counts from end) |
 | Convert | `to_list(s)` (nulls → `()`) · `len(s)` |
 
@@ -1356,6 +1358,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Subscript | `f["name"]` a column · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (negatives from the end) |
 | Shape | `select(f, names)` · `drop(f, names)` · `rename(f, mapping)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
 | Whole rows | `distinct(f, names = all)` · `drop_null(f, names = all)` — duplicates and missing data, first occurrence kept |
+| Sample | `sample(f, n)` (also on a Series) — n random rows, without replacement, in original order; seeded by `random.seed` |
 | Aggregate / join | `group_by(f, key, aggs)` · `join(a, b, on, on_b = on)` · `join_left(a, b, on, on_b = on)` · `concat(frames)` |
 | Masks | `eq(s, v)` · `ne(s, v)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL |
 

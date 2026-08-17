@@ -100,9 +100,10 @@ impl OvmModule for OdsModule {
         if frame::FUNCTIONS.iter().any(|(n, _)| *n == func) {
             return frame::dispatch(func, args);
         }
-        // filter/take are shared names: a Frame first argument routes to
-        // the frame verbs, everything else to the series kernels.
-        if matches!(func, "filter" | "take")
+        // filter/take/sample are shared names: a Frame first argument
+        // routes to the frame verbs, everything else to the series
+        // kernels.
+        if matches!(func, "filter" | "take" | "sample")
             && let Some(result) = frame::dispatch_shared(func, &args)
         {
             return result;

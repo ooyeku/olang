@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **DP3 Tier 2: `value_counts`, `unique`/`n_unique`, `median`, `cast`,
+  `sample`.** What a pipeline reaches for once `describe` has shown it the
+  shape of the data.
+
+  `ods.value_counts(s)` returns a value/count Frame, most frequent first,
+  ties breaking by first appearance. `ods.unique(s)` gives the distinct
+  values in first-seen order and `ods.n_unique(s)` counts them without
+  building the column. All three run through the same key-identification
+  pass `group_by` uses, so they cannot disagree with it: a null is a value
+  (its own entry, not a skip) and all NaNs are one value, both differing
+  from `==` on the corresponding scalars, and both matching what a
+  `group_by` on the column already did.
+
+  `ods.median(s)` is defined as `quantile(s, 0.5)` rather than computed
+  again, joining the named reductions where its absence beside `mean` and
+  `std` was the anomaly. `describe`'s median row is the same call, so the
+  three agree by construction.
+
+  `ods.cast(s, type)` converts between `"Float"`, `"Int"`, `"Bool"`, and
+  `"String"` — the names `schema` reports. A value the target cannot hold
+  becomes null rather than an error or a wrong number: one unparseable row
+  should not fail a load, and `null_count` then reports exactly what was
+  lost. Float to Int truncates toward zero, and a float that is infinite,
+  NaN, or out of Int range becomes null instead of the saturated value a
+  raw hardware conversion produces. Float to Bool is refused outright,
+  since `0.5` is neither, with the error naming the comparison to write
+  instead.
+
+  `ods.sample(f, n)` draws random rows from a Frame or a Series, without
+  replacement, returned in the frame's original order rather than draw
+  order — a sample is meant to be read, and shuffling as a side effect
+  makes a sample of sorted data unreadable. Asking for more rows than
+  exist returns all of them, as `head` and `tail` do. Randomness comes
+  from the stream `random.seed(k)` already governs, so there is one seed
+  to set rather than one per verb. That stream is process-wide, which is
+  documented as the reason a seed does *not* make sampling reproducible
+  inside `par_map` — several threads drawing from one stream interleave.
+
 - **DP3 Tier 1: `rename`, `drop`, `distinct`, `tail`, frame-level
   `drop_null`.** The five verbs a first pipeline reaches for before any
   of the ones the original DP3 list named. `ods.rename(f, mapping)`
