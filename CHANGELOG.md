@@ -331,6 +331,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Assertions work inside a nested block.** They were parsed only as a
+  direct child of a test block, so `assert_eq` inside an `if`, a `for`,
+  or a `while` fell through to an ordinary call and failed with
+  "Undefined variable: assert_eq" — surprising, since a loop over cases
+  is exactly where an assertion belongs. Assertions are now a statement
+  form like any other, so they also work outside a test block, where a
+  failure raises.
+
+- **`()` has a literal, and a pattern.** Unit is what the language hands
+  back from an empty branch and what an `X | ()` field holds, and it had
+  no spelling: `let u = ()` was a parse error, and so was
+  `match x { () => ... }`. Both work now, on both tiers. Where `()` is
+  followed by `=>` the nullary-lambda reading still wins — except on the
+  right of a comparison, so `if t == () => 0 else => 1` reads as "t is
+  Unit, then this branch", which is the whole reason to write it.
+
+- **`for _ in xs` discards its binding.** `_` is not an identifier —
+  identifiers must start with a letter — so a loop that ignored its item
+  needed an invented name. `par for _ in` too.
+
+- **A tuple iterates in `for`.** Refusing it was a surprise with nothing
+  behind it.
+
+- **The tiers agreed to disagree about the empty tuple.** Adding the
+  `()` literal surfaced it immediately: the interpreter read a zero-element
+  tuple as Unit and the bytecode compiler built an actual empty tuple, so
+  a hot function comparing against `()` got a different answer than a cold
+  one. Both now read it as Unit, and the new forms above are covered by
+  tier-agreement tests that run the same source through both.
+
 - **A long float no longer pushes columns off a printed table.** A
   computed column carries full `f64` precision — a standard deviation of
   `173.98078198467783` — which is wide enough to cost a table two other

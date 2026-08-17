@@ -944,6 +944,10 @@ impl Interpreter {
                 Ok(Value::List(std::sync::Arc::from(values)))
             }
             Expr::Tuple(items_rc) => {
+                // The empty tuple is Unit — `()` in source reaches here.
+                if items_rc.is_empty() {
+                    return Ok(Value::Unit);
+                }
                 let mut values = Vec::new();
                 for item in items_rc.iter() {
                     values.push(self.eval_expr(item)?);
@@ -2554,6 +2558,24 @@ impl Interpreter {
                 let result = self.run_loop_body(body, items.map(Value::Integer), Some(variable));
 
                 // Restore parent environment
+                if let Some(parent) = self.environment.parent.take() {
+                    self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
+                }
+
+                result
+            }
+            // A tuple iterates over its elements. It is a fixed-shape
+            // group rather than a collection, so this is mostly for
+            // `for (k, v) in entries(m)`-shaped code and for symmetry —
+            // refusing it was a surprise with no reason behind it.
+            Value::Tuple(items) => {
+                let parent_env = std::mem::take(&mut self.environment);
+                self.environment.parent = Some(Arc::new(parent_env));
+                self.environment.is_frame = true;
+
+                let values: Vec<Value> = items.as_ref().clone();
+                let result = self.run_loop_body(body, values.into_iter(), Some(variable));
+
                 if let Some(parent) = self.environment.parent.take() {
                     self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
                 }

@@ -54,7 +54,7 @@ paren_expr  = { "(" ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ expr)* ~ NL* ~ ")" }
 
 // Program structure - Put share_decl and use_decl BEFORE expr to ensure they are matched first
 program     = { SOI ~ NL* ~ (statement ~ (";" | NL)* )* ~ EOI }
-statement   = { share_decl | use_decl | test_decl | error_type_decl | trait_decl | impl_decl | type_decl | let_decl | function_decl | expr }
+statement   = { share_decl | use_decl | test_decl | error_type_decl | trait_decl | impl_decl | type_decl | let_decl | function_decl | assertion | expr }
 function_decl = { "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ NL* ~ expr }
 
 // Share and use declarations - defined EARLY to get precedence
@@ -68,10 +68,16 @@ wildcard = { "*" }
 // Test declarations
 test_decl = { "test" ~ string ~ test_block }
 test_block = { "{" ~ NL* ~ (test_statement ~ (";" | NL)* )* ~ "}" }
-test_statement = { assertion | statement }
-// Assertions accept newlines between arguments, like every other call form —
-// without this, a multi-line assert_eq silently parsed as a plain call to an
-// undefined `assert_eq` function.
+test_statement = { statement }
+// Assertions are a statement form, not a test-block form. They were once
+// reachable only as a direct child of a test block, so `assert_eq` inside
+// an `if`, a `for`, or a `while` fell through to an ordinary call and
+// failed with "Undefined variable: assert_eq" — surprising, since a loop
+// over cases is exactly where an assertion belongs.
+//
+// They also accept newlines between arguments, like every other call
+// form; without that, a multi-line assert_eq silently parsed as a plain
+// call to an undefined `assert_eq` function.
 assertion = { assert_eq | assert_ne | assert | assert_true | assert_false }
 assert_eq = { "assert_eq" ~ "(" ~ NL* ~ expr ~ NL* ~ "," ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ string)? ~ NL* ~ ")" }
 assert_ne = { "assert_ne" ~ "(" ~ NL* ~ expr ~ NL* ~ "," ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ string)? ~ NL* ~ ")" }
@@ -127,7 +133,13 @@ range_op      = { "..=" | ".." }
 unary_op      = { "-" | "!" }
 
 binary_expr   = { comparison_expr ~ (NL* ~ bool_op ~ NL* ~ comparison_expr)* }
-comparison_expr = { additive_expr ~ (NL* ~ comp_op ~ NL* ~ additive_expr)* }
+comparison_expr = { additive_expr ~ (NL* ~ comp_op ~ NL* ~ cmp_rhs)* }
+// The right of a comparison is the one place `()` must outrank the
+// nullary-lambda reading. `if t == () => 0 else => 1` means "t is Unit,
+// then this branch" — never "t equals a function" — but ordered choice
+// would otherwise let `lambda` swallow the `=>` that belongs to the `if`.
+// Comparing against a literal function is still writable, parenthesized.
+cmp_rhs = { unit | additive_expr }
 additive_expr = { multiplicative_expr ~ (NL* ~ add_op ~ NL* ~ multiplicative_expr)* }
 multiplicative_expr = { bitwise_expr ~ (NL* ~ mul_op ~ NL* ~ bitwise_expr)* }
 bitwise_expr = { pipe_expr ~ (NL* ~ bitwise_op ~ NL* ~ pipe_expr)* }
@@ -165,7 +177,10 @@ match_expr  = { "match" ~ expr ~ "{" ~ NL* ~ match_arm+ ~ "}" }
 match_arm   = { pattern ~ ("if" ~ expr)? ~ "=>" ~ NL* ~ expr ~ NL* ~ ","? ~ NL* }
 pattern     = { or_pattern }
 or_pattern  = { base_pattern ~ ("|" ~ base_pattern)* }
-base_pattern = { range_pattern | result_pattern | struct_pattern | anonymous_struct_pattern | integer | string | boolean | pattern_wildcard | list_pattern | tuple_pattern | enum_variant_pattern | identifier }
+// `unit` precedes tuple_pattern, which needs at least one element — so
+// `()` matched nothing and a Unit value, which the language hands back
+// from an empty branch and from `N | ()` fields, had no way to be tested.
+base_pattern = { range_pattern | result_pattern | struct_pattern | anonymous_struct_pattern | integer | string | boolean | pattern_wildcard | unit | list_pattern | tuple_pattern | enum_variant_pattern | identifier }
 range_pattern = { (integer ~ range_op ~ integer) | (char_literal ~ range_op ~ char_literal) }
 result_pattern = { "Ok" ~ "(" ~ pattern ~ ")" | "Err" ~ "(" ~ pattern ~ ")" }
 enum_variant_pattern = { identifier ~ "(" ~ pattern ~ ("," ~ pattern)* ~ ")" }
@@ -186,7 +201,11 @@ block       = { "{" ~ NL* ~ (statement ~ (";" | NL)* )* ~ "}" }
 if_expr     = { "if" ~ expr ~ NL* ~ "=>" ~ NL* ~ (block | expr) ~ (NL* ~ "else" ~ NL* ~ (if_expr | ("=>" ~ NL* ~ (block | expr))))? }
 
 // Literals
-literal     = { float | binary | octal | hex | integer | char_literal | raw_string | template_string | string | boolean | list }
+// `unit` precedes everything that could start with "(": paren_expr needs
+// an expression inside, so `()` matched nothing and every use of the
+// language's own Unit value was a parse error.
+literal     = { unit | float | binary | octal | hex | integer | char_literal | raw_string | template_string | string | boolean | list }
+unit        = { "(" ~ NL* ~ ")" }
 
 // Built-in types (for future type system)
 builtin_type = _{ "Int" | "Float" | "String" | "Bool" | "List" | "Tuple" }
@@ -225,11 +244,15 @@ map_entry = { expr ~ ":" ~ expr }
 
 // Loop constructs. The loop binding is a name or a tuple of names —
 // `for (i, x) in enumerate(xs)` destructures each element.
-for_loop    = { "for" ~ (for_binding_tuple | identifier) ~ "in" ~ expr ~ block }
+for_loop    = { "for" ~ (for_binding_tuple | discard | identifier) ~ "in" ~ expr ~ block }
+// `_` is a binding that discards. It is not an identifier — identifiers
+// must start with a letter — so a loop that ignores its item needed a
+// throwaway name until this existed.
+discard     = @{ "_" ~ !(ASCII_ALPHANUMERIC | "_") }
 // `par for` fans iterations across worker threads: spawn-style snapshot
 // semantics, an implicit barrier at the end, Unit result. `par` is not a
 // reserved word — it only means something directly before `for`.
-par_for_loop = { "par" ~ "for" ~ (for_binding_tuple | identifier) ~ "in" ~ expr ~ block }
+par_for_loop = { "par" ~ "for" ~ (for_binding_tuple | discard | identifier) ~ "in" ~ expr ~ block }
 for_binding_tuple = { "(" ~ identifier ~ ("," ~ identifier)+ ~ ")" }
 while_loop  = { "while" ~ expr ~ block }
 loop_expr   = { "loop" ~ block }

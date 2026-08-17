@@ -353,6 +353,12 @@ impl Parser {
             Rule::impl_decl => Ok(Statement::ImplDecl(
                 self.build_impl_decl(pair.into_inner())?,
             )),
+            // An assertion is a statement form, so it reaches here from any
+            // block — a loop body, an `if`, a function — not only from the
+            // top level of a test block.
+            Rule::assertion => Ok(Statement::Expression(
+                self.build_assertion(pair.into_inner())?,
+            )),
             Rule::expr => Ok(Statement::Expression(self.build_expr(pair.into_inner())?)),
             // `test_statement` wraps a plain `statement`, so unwrap one level
             // rather than rejecting (this blocked `let` inside test blocks)
@@ -558,7 +564,20 @@ impl Parser {
                     ">=" => BinaryOp::GreaterThanEqual,
                     _ => break,
                 };
-                let right = self.build_additive_expr(right_pair.into_inner())?;
+                let right = match right_pair.as_rule() {
+                    Rule::cmp_rhs => {
+                        let inner = right_pair.into_inner().next().ok_or_else(|| {
+                            ParseError::InvalidSyntax {
+                                message: "Missing right operand in comparison".to_string(),
+                            }
+                        })?;
+                        match inner.as_rule() {
+                            Rule::unit => Expr::Tuple(std::sync::Arc::new(Vec::new())),
+                            _ => self.build_additive_expr(inner.into_inner())?,
+                        }
+                    }
+                    _ => self.build_additive_expr(right_pair.into_inner())?,
+                };
                 expr = Expr::BinaryOp {
                     left: Box::new(expr),
                     op,
@@ -1573,6 +1592,8 @@ impl Parser {
                 Ok(Pattern::Identifier(name))
             }
             Rule::pattern_wildcard => Ok(Pattern::Wildcard),
+            // `()` as a pattern: the Unit value, matched literally.
+            Rule::unit => Ok(Pattern::Literal(crate::ast::Value::Unit)),
             Rule::integer => {
                 let value =
                     pair.as_str()
@@ -1922,6 +1943,8 @@ impl Parser {
                 Ok(Pattern::Identifier(name))
             }
             Rule::pattern_wildcard => Ok(Pattern::Wildcard),
+            // `()` as a pattern: the Unit value, matched literally.
+            Rule::unit => Ok(Pattern::Literal(crate::ast::Value::Unit)),
             Rule::integer => {
                 let value =
                     pair.as_str()
@@ -2110,6 +2133,10 @@ impl Parser {
         })?;
 
         match pair.as_rule() {
+            // `()` is the empty tuple, which is what Unit *is* — so it
+            // needs no Expr variant of its own, and every tier that
+            // already handles tuples handles it.
+            Rule::unit => Ok(Expr::Tuple(std::sync::Arc::new(Vec::new()))),
             Rule::integer => {
                 // Remove numeric separators
                 let s = pair.as_str().replace('_', "");
@@ -3193,15 +3220,11 @@ impl Parser {
         let mut body = Vec::new();
         for statement_pair in block_pair.into_inner() {
             if statement_pair.as_rule() == Rule::test_statement {
+                // `build_statement` handles assertions like any other
+                // statement form now, so there is nothing special left to
+                // do at a test block's top level.
                 let inner = statement_pair.into_inner().next().unwrap();
-                if inner.as_rule() == Rule::assertion {
-                    // Handle assertion as expression
-                    let assertion_expr = self.build_assertion(inner.into_inner())?;
-                    body.push(Statement::Expression(assertion_expr));
-                } else {
-                    // Handle regular statement
-                    body.push(self.build_statement(inner)?);
-                }
+                body.push(self.build_statement(inner)?);
             }
         }
 

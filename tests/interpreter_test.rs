@@ -111,3 +111,117 @@ fn par_is_not_a_reserved_word() {
     let result = run_program("let par = 5\npar + 1");
     assert_eq!(result, "6");
 }
+
+// ── Review findings: forms that had no way to be written ──────────────
+
+/// Both tiers, same source, same answer. The three forms below are new,
+/// and a new form is exactly where the tiers drift apart.
+fn both_tiers(source: &str) -> String {
+    let run = |bytecode: bool| {
+        let program = olang::parser::Parser::new().parse(source).expect("parse");
+        let mut interpreter = olang::interpreter::Interpreter::new();
+        if bytecode {
+            interpreter.enable_bytecode_tier(2, false);
+        }
+        interpreter
+            .eval_program(program)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|e| format!("error: {e}"))
+    };
+    let interpreted = run(false);
+    let compiled = run(true);
+    assert_eq!(
+        interpreted, compiled,
+        "tiers disagree on:\n{source}\n  interpreter: {interpreted}\n  bytecode:    {compiled}"
+    );
+    interpreted
+}
+
+#[test]
+fn unit_has_a_literal() {
+    // `()` is the value the language hands back from an empty branch and
+    // from an `X | ()` field, and it had no spelling — every use of it
+    // was a parse error.
+    assert_eq!(both_tiers("let u = ()\nu"), "()");
+    assert_eq!(both_tiers("fn id(x) = x\nid(())"), "()");
+}
+
+#[test]
+fn unit_is_matchable() {
+    // Without a pattern there was no way to *test* for Unit either, so
+    // an optional field could be produced and never inspected.
+    assert_eq!(
+        both_tiers(
+            r#"
+fn kind(x) = match x { () => "empty", v => "value" }
+kind(()) + "/" + kind(1)
+"#
+        ),
+        "\"empty/value\""
+    );
+}
+
+#[test]
+fn unit_wins_over_a_nullary_lambda_after_a_comparison() {
+    // `if t == () => 0 else => 1` reads as "t is Unit, then this branch".
+    // Ordered choice would otherwise let the nullary-lambda rule swallow
+    // the `=>` that belongs to the `if`.
+    assert_eq!(both_tiers("let u = ()\nif u == () => 1 else => 2"), "1");
+    // And the nullary lambda itself still parses where it is meant.
+    assert_eq!(both_tiers("let f = () => 42\nf()"), "42");
+}
+
+#[test]
+fn a_loop_can_discard_its_binding() {
+    // `_` is not an identifier — identifiers start with a letter — so a
+    // loop that ignores its item needed an invented name.
+    assert_eq!(
+        both_tiers("let mut n = 0\nfor _ in 0..3 { n = n + 1 }\nn"),
+        "3"
+    );
+}
+
+#[test]
+fn a_tuple_iterates() {
+    assert_eq!(
+        both_tiers("let mut s = 0\nfor x in (1, 2, 3) { s = s + x }\ns"),
+        "6"
+    );
+}
+
+#[test]
+fn assertions_work_inside_nested_blocks() {
+    // Assertions were parsed only as a direct child of a test block, so
+    // one inside an `if`, a `for`, or a `while` fell through to an
+    // ordinary call and failed with "Undefined variable: assert_eq" —
+    // surprising, since a loop over cases is where an assertion belongs.
+    let source = r#"
+test "nested" {
+    for i in 0..3 { assert_eq(i * 2, i + i) }
+    if true => { assert_true(1 < 2) }
+    let mut n = 0
+    while n < 2 {
+        assert_ne(n, 99)
+        n = n + 1
+    }
+}
+"#;
+    let program = olang::parser::Parser::new().parse(source).expect("parse");
+    let mut interpreter = olang::interpreter::Interpreter::new();
+    interpreter.eval_program(program).expect("assertions run");
+}
+
+#[test]
+fn a_failing_assertion_in_a_loop_still_fails() {
+    // The fix must not make assertions unreachable in the other
+    // direction — a nested assertion that fails has to be reported.
+    let source = r#"
+test "nested failure" {
+    for i in 0..3 { assert_eq(i, 99) }
+}
+"#;
+    let program = olang::parser::Parser::new().parse(source).expect("parse");
+    let mut interpreter = olang::interpreter::Interpreter::new();
+    let result = interpreter.eval_program(program);
+    assert!(result.is_err(), "a failing nested assertion must be caught");
+}

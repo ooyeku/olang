@@ -5256,6 +5256,16 @@ impl BytecodeCompiler {
             } => self.compile_lambda(parameters, body, None),
 
             Expr::Tuple(items) => {
+                // The empty tuple is Unit — `()` in source. The
+                // interpreter reads it the same way, and a tier that
+                // built a zero-element tuple here instead would disagree
+                // with it on every `x == ()`.
+                if items.is_empty() {
+                    let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));
+                    let dst_reg = self.register_allocator.allocate_register();
+                    self.emitter.emit_load_const(dst_reg, const_idx);
+                    return Ok(dst_reg);
+                }
                 let exprs: Vec<&Expr> = items.iter().collect();
                 let element_regs = self.compile_operands(&exprs)?;
                 let dst_reg = self.register_allocator.allocate_register();
