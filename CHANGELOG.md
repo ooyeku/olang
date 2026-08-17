@@ -153,6 +153,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   already expresses it through the subscript added in 0.66, and a second
   spelling of an existing operation is surface area without capability.
 
+### Fixed
+
+- **Four documentation claims that were true of an older olang** (R1's
+  prose pass, second sitting). Found by probing rather than reading:
+  writing the program each falsifiable claim implies, and checking that
+  the binary agrees.
+
+  `docs/stability.md` — the chapter that declares itself authoritative
+  wherever other text disagrees — headed a section "Reserved — parses
+  today, semantics later" over two constructs that do not parse at all;
+  omitted the `caps` module from every list; credited only the
+  per-function tier tests for tier agreement, predating both the
+  whole-program harness and the doc-reference guard; and illustrated
+  semver with 0.25 → 0.26.
+
+  `docs/pitfalls.md` warned that `for _ in ...` is a parse error. It has
+  not been since the papercut batch, so the pitfall told readers to
+  avoid something that works. The real rule beside it was documented
+  nowhere: an identifier may not begin with an underscore, so `_unused`
+  fails with `expected the end of the file` — an error naming neither
+  the underscore nor the line's actual problem.
+
+  `docs/language.md` did not record that `for` iterates tuples, or that
+  `()` is a literal rather than only a value one arrives at.
+
 ### Changed
 
 - **DP1c closed without work, on measurement.** The lane assumed
