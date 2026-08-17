@@ -857,6 +857,65 @@ their additions, but the order is fixed by the chunk layout, so a given
 input always reproduces the same result. The group-id hashing pass — the
 larger cost — is still sequential; parallelizing it is the next step.
 
+### Reshaping between long and wide
+
+The same data has two shapes. **Long** is one row per observation, which
+is what a database returns and what `group_by` and the plotting verbs
+want. **Wide** is one row per subject and one column per category, which
+is what a person reads in a table. `ods.pivot` and `ods.unpivot` move
+between them.
+
+`ods.pivot(f, index, columns, values, agg)` spreads: the distinct values
+of `index` become rows, the distinct values of `columns` become new
+columns, and each cell is the `agg` reduction of `values` over the rows
+that share both. The aggregation is a `group_by` — the same call — so
+pivoting and grouping cannot disagree about how a column reduces or what
+happens to nulls; what `pivot` adds is the scatter.
+
+```olang
+let sales = ods.read_csv(
+    "region,quarter,amount\neast,Q1,10.0\neast,Q2,20.0\nwest,Q1,5.0\neast,Q1,3.0\n")
+let wide = ods.pivot(sales, "region", "quarter", "amount", "sum")
+println(to_string(ods.columns(wide)))          // [region, Q1, Q2]
+println(to_string(ods.to_list(wide["Q1"])))    // [13.0, 5.0] — east's two Q1 rows summed
+println(to_string(ods.to_list(wide["Q2"])))    // [20.0, ()] — west never reported Q2
+```
+
+The aggregation is required rather than defaulted. When a cell has more
+than one row behind it, which reduction applies is the caller's
+decision, and choosing one silently is how a wrong number reaches a
+report. A cell no row reached is null — the combination did not occur,
+which is a different fact from a null value in it.
+
+Two shapes are refused rather than guessed at. A null in the `columns`
+column cannot name a column, and calling it `"null"` would collide with
+a genuine `"null"` string, so it says so and points at `drop_null`. And
+a value that would name a column the index already has is refused rather
+than silently overwriting it.
+
+`ods.unpivot(f, ids, value_columns)` gathers, the other direction: the
+`ids` stay as they are and every other column becomes rows of a
+`name`/`value` pair. Omitting `value_columns` takes every column that is
+not an id — which is the form that survives a new column arriving
+upstream, where naming the value columns would leave it behind.
+
+```olang
+let wide = ods.frame([["region", ["east", "west"]], ["Q1", [13.0, 5.0]], ["Q2", [20.0, 1.0]]])
+let long = ods.unpivot(wide, "region")
+println(to_string(ods.columns(long)))            // [region, name, value]
+println(to_string(ods.to_list(long["name"])))    // [Q1, Q1, Q2, Q2]
+```
+
+The value columns stack into one column, so they must share a type.
+Mixing them would mean choosing a common type on the caller's behalf,
+which is `ods.cast`'s job and its explicit decision, so `unpivot`
+refuses and names the two columns that disagree.
+
+The round trip is lossless in one direction and explicit in the other:
+`unpivot` after `pivot` returns the long form with the combinations that
+never occurred present as nulls. Dropping them is then the caller's
+call — `ods.drop_null` — rather than a decision the verb made silently.
+
 ### Joins
 
 `ods.join(a, b, on_a, on_b)` is an inner hash join on one key column

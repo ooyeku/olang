@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **DP3 Tier 3b: `pivot` and `unpivot`.** The two shapes of the same
+  data — long, which is what a database returns and what `group_by` and
+  the plotting verbs want, and wide, which is what a person reads — and
+  the pair of verbs that moves between them.
+
+  `ods.pivot(f, index, columns, values, agg)` spreads. Its aggregation is
+  a `group_by`, literally the same call, so pivoting and grouping cannot
+  disagree about how a column reduces or what happens to nulls; what
+  `pivot` adds is the scatter. There is a test asserting the cells equal
+  the groups.
+
+  The aggregation is required rather than defaulted: when a cell has more
+  than one row behind it, which reduction applies is the caller's
+  decision, and choosing one silently is how a wrong number reaches a
+  report. A cell no row reached is null, which is a different fact from a
+  null value in it. Two shapes are refused rather than guessed at — a
+  null cannot name a column (and calling it `"null"` would collide with a
+  genuine `"null"` string), and a value that would name an existing index
+  column is refused rather than overwriting it.
+
+  `ods.unpivot(f, ids, value_columns)` gathers. Omitting the value
+  columns takes everything that is not an id, which is the form that
+  survives a new column arriving upstream. The value columns stack into
+  one column, so they must share a type; mixing them would mean choosing
+  a common type for the caller, which is `cast`'s explicit job, so it
+  refuses and names the two columns that disagree.
+
+  `unpivot` after `pivot` returns the long form with the combinations
+  that never occurred present as nulls, leaving `drop_null` as the
+  caller's decision rather than one the verb made silently.
+
 - **DP3 Tier 3a: `join_full`, `join_semi`, `join_anti`.** The rest of the
   join kinds, completing the set `join` and `join_left` started.
 

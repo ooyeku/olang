@@ -149,6 +149,8 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("join_full", 4),
     ("join_semi", 4),
     ("join_anti", 4),
+    ("pivot", 5),
+    ("unpivot", 3),
 ];
 
 fn want_frame<'a>(func: &str, args: &'a [Value], idx: usize) -> Result<&'a Frame, String> {
@@ -217,6 +219,9 @@ fn default_tail(func: &str, args: &[Value]) -> Option<Value> {
         // every column. An empty list would be ambiguous with asking for
         // no columns at all.
         "read_frame" => Some(Value::Unit),
+        // Unit means "every column that is not an id column", which is
+        // what unpivot means without a list.
+        "unpivot" => Some(Value::Unit),
         // Both sides of a join usually call the key the same thing, and
         // repeating it was pure ceremony. The default is the *other*
         // side's name rather than a constant, which is why this takes the
@@ -694,6 +699,59 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
             let keys = string_list(func, &args, 1)?;
             let aggs = parse_aggs(&args[2])?;
             f.group_by(&keys, &aggs)
+                .map(OdsFrame::into_value)
+                .map_err(e)
+        }
+        // Long to wide. The aggregation is required rather than
+        // defaulted: when a cell has more than one row behind it, which
+        // reduction applies is the caller's decision, and picking one
+        // silently is how a wrong number gets into a report.
+        "pivot" => {
+            let f = want_frame(func, &args, 0)?;
+            let index = string_list(func, &args, 1)?;
+            let columns = want_string(func, &args, 2)?;
+            let values = want_string(func, &args, 3)?;
+            let op_name = want_string(func, &args, 4)?;
+            let op = AggOp::parse(&op_name).ok_or_else(|| {
+                format!(
+                    "ods.pivot: '{}' is not an aggregation. Expected one of \
+                     count, sum, mean, min, max",
+                    op_name
+                )
+            })?;
+            f.pivot(&index, &columns, &values, op, &crate::ast::format_float)
+                .map(OdsFrame::into_value)
+                .map_err(e)
+        }
+        // Wide to long.
+        "unpivot" => {
+            let f = want_frame(func, &args, 0)?;
+            let id = string_list(func, &args, 1)?;
+            let value_columns = match &args[2] {
+                // Everything that is not an id column, in the Frame's own
+                // order — the common case, and the one that survives a
+                // new column arriving upstream.
+                Value::Unit => f
+                    .names()
+                    .iter()
+                    .filter(|n| !id.contains(n))
+                    .cloned()
+                    .collect(),
+                other => {
+                    let named = string_list(func, std::slice::from_ref(other), 0)?;
+                    for name in &named {
+                        f.column(name).map_err(|_| {
+                            format!(
+                                "ods.unpivot: no column '{}' in this Frame. It has: {}",
+                                name,
+                                f.names().join(", ")
+                            )
+                        })?;
+                    }
+                    named
+                }
+            };
+            f.unpivot(&id, &value_columns, "name", "value")
                 .map(OdsFrame::into_value)
                 .map_err(e)
         }

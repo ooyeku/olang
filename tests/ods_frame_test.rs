@@ -2118,3 +2118,160 @@ let r = {JOIN_R}
     ))
     .expect("tier agreement");
 }
+
+// ── DP3 Tier 3b: reshape ──────────────────────────────────────────────
+
+const LONG_CSV: &str = "region,quarter,amount\\neast,Q1,10.0\\neast,Q2,20.0\\nwest,Q1,5.0\\nwest,Q3,7.0\\neast,Q1,3.0\\n";
+
+#[test]
+fn pivot_spreads_one_column_into_many() {
+    let out = eval(
+        &format!(
+            r#"
+let wide = ods.pivot(ods.read_csv("{LONG_CSV}"), "region", "quarter", "amount", "sum")
+show([ods.columns(wide), ods.to_list(wide["Q1"]), ods.to_list(wide["Q2"])])
+"#
+        ),
+        None,
+    )
+    .expect("pivot");
+    // east's two Q1 rows aggregate to 13; west never reported Q2, so
+    // that cell is null — the combination did not occur, which is a
+    // different fact from a null amount in it.
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"region\", \"Q1\", \"Q2\", \"Q3\"], [13.0, 5.0], [20.0, ()]]\"".to_string()
+    );
+}
+
+#[test]
+fn pivot_aggregates_exactly_as_group_by_does() {
+    // pivot's aggregation *is* a group_by, so the cells must equal the
+    // groups. This is the test that keeps the two from drifting.
+    let out = eval(
+        &format!(
+            r#"
+let f = ods.read_csv("{LONG_CSV}")
+let wide = ods.pivot(f, "region", "quarter", "amount", "sum")
+let grouped = ods.group_by(f, ["region", "quarter"], [["total", "sum", "amount"]])
+let q1 = ods.filter(grouped, grouped["quarter"] == "Q1")
+show([ods.to_list(wide["Q1"]), ods.to_list(ods.sort_by(q1, "region", false)["total"])])
+"#
+        ),
+        None,
+    )
+    .expect("pivot vs group_by");
+    assert_eq!(
+        out.to_string(),
+        "\"[[13.0, 5.0], [13.0, 5.0]]\"".to_string()
+    );
+}
+
+#[test]
+fn unpivot_returns_the_long_form_pivot_started_from() {
+    // The round trip: the cells come back, and the combinations that
+    // never occurred come back as explicit nulls rather than vanishing.
+    // `drop_null` is then the caller's choice, not the verb's.
+    let out = eval(
+        &format!(
+            r#"
+let wide = ods.pivot(ods.read_csv("{LONG_CSV}"), "region", "quarter", "amount", "sum")
+let long = ods.unpivot(wide, "region")
+let present = ods.drop_null(long)
+show([ods.columns(long), ods.n_rows(long), ods.n_rows(present),
+      ods.to_list(present["name"]), ods.to_list(present["value"])])
+"#
+        ),
+        None,
+    )
+    .expect("unpivot");
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"region\", \"name\", \"value\"], 6, 4, [\"Q1\", \"Q1\", \"Q2\", \"Q3\"], \
+         [13.0, 5.0, 20.0, 7.0]]\""
+            .to_string()
+    );
+}
+
+#[test]
+fn unpivot_defaults_to_every_column_that_is_not_an_id() {
+    // Naming only the ids survives a new column arriving upstream, where
+    // listing the value columns would silently leave it behind.
+    let out = eval(
+        r#"
+let f = ods.frame([["id", [1, 2]], ["a", [10, 20]], ["b", [30, 40]]])
+show([ods.n_rows(ods.unpivot(f, "id")), ods.n_rows(ods.unpivot(f, "id", ["a"])),
+      ods.to_list(ods.unpivot(f, "id")["name"])])
+"#,
+        None,
+    )
+    .expect("unpivot");
+    assert_eq!(
+        out.to_string(),
+        "\"[4, 2, [\"a\", \"a\", \"b\", \"b\"]]\"".to_string()
+    );
+}
+
+#[test]
+fn reshape_refuses_the_shapes_that_have_no_honest_answer() {
+    let cases: &[(&str, &str)] = &[
+        // A null cannot name a column, and calling it "null" would
+        // collide with a genuine "null" string.
+        (
+            r#"ods.pivot(ods.frame([["r", ["a"]], ["c", [()]], ["v", [1]]]), "r", "c", "v", "sum")"#,
+            "cannot name a column",
+        ),
+        // A value that would name an existing index column.
+        (
+            r#"ods.pivot(ods.frame([["r", ["a"]], ["c", ["r"]], ["v", [1]]]), "r", "c", "v", "sum")"#,
+            "already exists as an index column",
+        ),
+        (
+            r#"ods.pivot(ods.frame([["r", ["a"]], ["v", [1]]]), "r", "v", "r", "sum")"#,
+            "cannot be both an index column",
+        ),
+        (
+            r#"ods.pivot(ods.frame([["r", ["a"]], ["v", [1]]]), "r", "v", "v", "nope")"#,
+            "is not an aggregation",
+        ),
+        // Stacking columns of different types would mean choosing a
+        // common type on the caller's behalf — that is `cast`'s job.
+        (
+            r#"ods.unpivot(ods.frame([["id", [1]], ["i", [1]], ["f", [1.0]]]), "id")"#,
+            "must share",
+        ),
+        (
+            r#"ods.unpivot(ods.frame([["name", [1]], ["v", [2]]]), "name")"#,
+            "is where the output goes",
+        ),
+        (
+            r#"ods.unpivot(ods.frame([["a", [1]], ["b", [2]]]), ["a", "b"], ["b"])"#,
+            "cannot be both an id column",
+        ),
+        (
+            r#"ods.unpivot(ods.frame([["a", [1]]]), "a", ["nope"])"#,
+            "no column 'nope'",
+        ),
+    ];
+    for (source, wanted) in cases {
+        let err = eval(source, None)
+            .err()
+            .unwrap_or_else(|| panic!("{source} should have failed"));
+        assert!(
+            err.contains(wanted),
+            "expected {wanted:?} in the error for {source}, got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn reshape_agrees_across_tiers() {
+    assert_tier_transparent(&format!(
+        r#"
+let wide = ods.pivot(ods.read_csv("{LONG_CSV}"), "region", "quarter", "amount", "mean")
+[ods.columns(wide), ods.to_list(wide["Q1"]),
+ ods.to_list(ods.unpivot(wide, "region")["value"])]
+"#
+    ))
+    .expect("tier agreement");
+}

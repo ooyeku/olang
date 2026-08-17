@@ -2280,6 +2280,20 @@ impl HelpSystem {
             "inner hash join of a and b on one key column from each side",
         );
         self.doc(
+            "ods.pivot",
+            "ods.pivot(f, index, columns, values, agg)",
+            "Frame",
+            "ods",
+            "long to wide: a row per index value, a column per distinct `columns` value, cells aggregated by agg",
+        );
+        self.doc(
+            "ods.unpivot",
+            "ods.unpivot(f, id_columns, value_columns = the rest)",
+            "Frame",
+            "ods",
+            "wide to long: keep the id columns, turn the rest into name/value rows",
+        );
+        self.doc(
             "ods.join_full",
             "ods.join_full(a, b, on, on_b = on)",
             "Frame",

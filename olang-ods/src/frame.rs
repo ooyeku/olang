@@ -421,6 +421,252 @@ impl Frame {
 }
 
 // ---------------------------------------------------------------------
+// Reshape
+// ---------------------------------------------------------------------
+
+impl Frame {
+    /// Long to wide: one row per distinct `index` combination, one column
+    /// per distinct value of `columns`, each cell the `op` aggregate of
+    /// `values` over the rows that share both.
+    ///
+    /// The aggregation is a `group_by` — literally, the same call — so
+    /// pivoting and grouping cannot disagree about how a column reduces
+    /// or what happens to nulls. What this adds is the scatter.
+    ///
+    /// `fmt_f64` renders a float on its way to becoming a column name,
+    /// for the same reason `cast` takes one: the engine has no opinion on
+    /// how olang spells a float, and a second opinion would drift.
+    pub fn pivot(
+        &self,
+        index: &[String],
+        columns: &str,
+        values: &str,
+        op: AggOp,
+        fmt_f64: &dyn Fn(f64) -> String,
+    ) -> Result<Frame> {
+        if index.is_empty() {
+            return Err(OdsError::InvalidArgument(
+                "pivot: needs at least one index column".to_string(),
+            ));
+        }
+        for name in index {
+            if name == columns || name == values {
+                return Err(OdsError::InvalidArgument(format!(
+                    "pivot: '{}' cannot be both an index column and the {} column",
+                    name,
+                    if name == columns { "columns" } else { "values" }
+                )));
+            }
+        }
+
+        // One group per (index..., columns) cell, aggregated exactly as
+        // group_by would. CELL is a name a caller cannot collide with,
+        // since it never reaches the output.
+        const CELL: &str = "\u{0}cell";
+        let mut keys: Vec<String> = index.to_vec();
+        keys.push(columns.to_string());
+        let cells = self.group_by(
+            &keys,
+            &[AggSpec {
+                out_name: CELL.to_string(),
+                op,
+                col: values.to_string(),
+            }],
+        )?;
+
+        let index_cols: Vec<&Series> = index
+            .iter()
+            .map(|n| cells.column(n))
+            .collect::<Result<_>>()?;
+        let column_col = cells.column(columns)?;
+        let cell_col = cells.column(CELL)?;
+
+        // Rows and output columns, both in first-seen order — the order
+        // the data presented them, which is what group_by already
+        // guarantees for its keys.
+        let (row_ids, n_rows) = if index_cols.len() == 1 {
+            group_ids_single(index_cols[0])
+        } else {
+            group_ids_multi(&index_cols, cells.n_rows())
+        };
+        let (col_ids, n_cols) = group_ids_single(column_col);
+
+        // A null cannot name a column, and calling it "null" would
+        // collide with a genuine "null" string. Say so instead.
+        for i in 0..column_col.len() {
+            if matches!(column_col.scalar_at(i), Scalar::Null) {
+                return Err(OdsError::InvalidArgument(format!(
+                    "pivot: '{}' has a null, and a null cannot name a column. \
+                     Drop or fill those rows first",
+                    columns
+                )));
+            }
+        }
+
+        let out_names: Vec<String> = first_row_per_group(&col_ids, n_cols)
+            .iter()
+            .map(|&r| scalar_name(column_col.scalar_at(r as usize), fmt_f64))
+            .collect();
+        for name in &out_names {
+            if index.contains(name) {
+                return Err(OdsError::InvalidArgument(format!(
+                    "pivot: the value '{}' in '{}' would name a column that already \
+                     exists as an index column",
+                    name, columns
+                )));
+            }
+        }
+
+        // Scatter: every group is one cell, so each lands in exactly one
+        // slot. Slots nothing wrote stay null — the combination did not
+        // occur, which is a different fact from a null value in it.
+        let mut slots: Vec<Vec<Option<usize>>> = vec![vec![None; n_rows]; n_cols];
+        for r in 0..cells.n_rows() {
+            slots[col_ids[r] as usize][row_ids[r] as usize] = Some(r);
+        }
+
+        let first_rows = Series::from_i64(first_row_per_group(&row_ids, n_rows));
+        let mut pairs: Vec<(String, Series)> = Vec::with_capacity(index.len() + n_cols);
+        for (name, col) in index.iter().zip(index_cols.iter()) {
+            pairs.push((name.clone(), col.take(&first_rows)?));
+        }
+        for (name, slot) in out_names.into_iter().zip(slots) {
+            pairs.push((name, gather_optional(cell_col, &slot)));
+        }
+        Frame::new(pairs)
+    }
+
+    /// Wide to long: keep `id` columns as they are, and turn each of
+    /// `value_columns` into rows of a `name`/`value` pair.
+    ///
+    /// The value columns are stacked into one column, so they must share
+    /// a type. Mixing them would mean choosing a common type on the
+    /// caller's behalf, which is `cast`'s job and its explicit decision.
+    pub fn unpivot(
+        &self,
+        id: &[String],
+        value_columns: &[String],
+        name_out: &str,
+        value_out: &str,
+    ) -> Result<Frame> {
+        if value_columns.is_empty() {
+            return Err(OdsError::InvalidArgument(
+                "unpivot: needs at least one value column".to_string(),
+            ));
+        }
+        let cols: Vec<&Series> = value_columns
+            .iter()
+            .map(|n| self.column(n))
+            .collect::<Result<_>>()?;
+        let dtype = cols[0].dtype();
+        if let Some(pos) = cols.iter().position(|c| c.dtype() != dtype) {
+            return Err(OdsError::InvalidArgument(format!(
+                "unpivot: the value columns stack into one column, so they must share \
+                 a type — '{}' is {} but '{}' is {}. Cast them first",
+                value_columns[0],
+                dtype,
+                value_columns[pos],
+                cols[pos].dtype()
+            )));
+        }
+        for name in id {
+            if value_columns.contains(name) {
+                return Err(OdsError::InvalidArgument(format!(
+                    "unpivot: '{}' cannot be both an id column and a value column",
+                    name
+                )));
+            }
+        }
+        for reserved in [name_out, value_out] {
+            if id.contains(&reserved.to_string()) {
+                return Err(OdsError::InvalidArgument(format!(
+                    "unpivot: an id column is already called '{}', which is where the \
+                     output goes",
+                    reserved
+                )));
+            }
+        }
+
+        // Column-major: all of the first value column's rows, then the
+        // second's. Reading down the output follows the input's columns
+        // in the order the caller named them.
+        let n = self.n_rows();
+        let repeat = Series::from_i64((0..value_columns.len()).flat_map(|_| 0..n as i64).collect());
+        let mut pairs: Vec<(String, Series)> = Vec::with_capacity(id.len() + 2);
+        for name in id {
+            pairs.push((name.clone(), self.column(name)?.take(&repeat)?));
+        }
+        pairs.push((
+            name_out.to_string(),
+            Series::from_str_values(
+                value_columns
+                    .iter()
+                    .flat_map(|name| std::iter::repeat_n(name.clone(), n))
+                    .collect(),
+            ),
+        ));
+        pairs.push((value_out.to_string(), stack_same_dtype(&cols)));
+        Frame::new(pairs)
+    }
+}
+
+/// Lay same-typed columns end to end. `unpivot` has already established
+/// that they share a type; this is the copy that follows.
+fn stack_same_dtype(cols: &[&Series]) -> Series {
+    let scalars = || {
+        cols.iter()
+            .flat_map(|c| (0..c.len()).map(|i| c.scalar_at(i)))
+    };
+    match cols[0].dtype() {
+        crate::DType::F64 => Series::from_f64_options(
+            scalars()
+                .map(|v| match v {
+                    Scalar::F64(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        crate::DType::I64 => Series::from_i64_options(
+            scalars()
+                .map(|v| match v {
+                    Scalar::I64(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        crate::DType::Bool => Series::from_bool_options(
+            scalars()
+                .map(|v| match v {
+                    Scalar::Bool(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        crate::DType::Str => Series::from_str_options(
+            scalars()
+                .map(|v| match v {
+                    Scalar::Str(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+    }
+}
+
+/// A scalar as a column name. Only reached for `pivot`, where the values
+/// of one column become the names of many.
+fn scalar_name(v: Scalar, fmt_f64: &dyn Fn(f64) -> String) -> String {
+    match v {
+        Scalar::Str(s) => s,
+        Scalar::I64(x) => x.to_string(),
+        Scalar::F64(x) => fmt_f64(x),
+        Scalar::Bool(b) => b.to_string(),
+        // Refused before this is reached.
+        Scalar::Null => "null".to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------
 // Join probe
 // ---------------------------------------------------------------------
 
