@@ -136,6 +136,11 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("with_column", 3),
     ("sort_by", 3),
     ("head", 2),
+    ("tail", 2),
+    ("rename", 2),
+    ("drop", 2),
+    ("distinct", 2),
+    ("drop_null", 2),
     ("describe", 1),
     ("schema", 1),
     ("group_by", 3),
@@ -200,7 +205,11 @@ fn e(err: olang_ods::OdsError) -> String {
 /// the arity check and the default cannot drift apart.
 fn default_tail(func: &str, args: &[Value]) -> Option<Value> {
     match func {
-        "head" => Some(Value::Integer(DEFAULT_HEAD)),
+        "head" | "tail" => Some(Value::Integer(DEFAULT_HEAD)),
+        // Unit means "every column", which is what these verbs mean
+        // without a subset. An empty list would be ambiguous with
+        // "consider no columns", which is not a useful request.
+        "distinct" | "drop_null" => Some(Value::Unit),
         // Unit reads as "unspecified", which `wanted_columns` turns into
         // every column. An empty list would be ambiguous with asking for
         // no columns at all.
@@ -558,6 +567,125 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
             let f = want_frame(func, &args, 0)?;
             schema(f)
         }
+        "tail" => {
+            let f = want_frame(func, &args, 0)?;
+            let n = match &args[1] {
+                Value::Integer(n) if *n >= 0 => (*n as usize).min(f.n_rows()),
+                other => {
+                    return Err(format!(
+                        "ods.tail: n must be a non-negative Int, got {}",
+                        other
+                    ));
+                }
+            };
+            let start = f.n_rows() - n;
+            let idx = Series::from_i64((start..f.n_rows()).map(|i| i as i64).collect());
+            f.take(&idx).map(OdsFrame::into_value).map_err(e)
+        }
+        // Renaming is what makes a join survivable: `join` suffixes a
+        // collision `_right`, and until now there was no way to give it
+        // the name the rest of the pipeline wants.
+        "rename" => {
+            let f = want_frame(func, &args, 0)?;
+            let renames = match &args[1] {
+                Value::Map(m) => m.as_ref().clone(),
+                other => {
+                    return Err(format!(
+                        "ods.rename: expects a map of old name to new name, got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            let mut names: Vec<String> = f.names().to_vec();
+            for (old, new) in renames.iter() {
+                let new = match new {
+                    Value::String(s) => s.as_ref().clone(),
+                    other => {
+                        return Err(format!(
+                            "ods.rename: the new name for '{}' must be a String, got {}",
+                            old,
+                            other.type_name()
+                        ));
+                    }
+                };
+                let at = names.iter().position(|n| n == old).ok_or_else(|| {
+                    format!(
+                        "ods.rename: no column '{}' in this Frame. It has: {}",
+                        old,
+                        f.names().join(", ")
+                    )
+                })?;
+                // A rename onto a name that is staying would make two
+                // columns indistinguishable, which Frame::new refuses
+                // anyway — refused here so the message names the cause.
+                if let Some(clash) = names
+                    .iter()
+                    .enumerate()
+                    .find(|(i, n)| *i != at && *n == &new)
+                {
+                    return Err(format!(
+                        "ods.rename: '{}' would collide with the existing column '{}'",
+                        new, clash.1
+                    ));
+                }
+                names[at] = new;
+            }
+            let pairs = names
+                .into_iter()
+                .zip(f.columns().iter().cloned())
+                .collect::<Vec<_>>();
+            Frame::new(pairs).map(OdsFrame::into_value).map_err(e)
+        }
+        // The complement of `select`. Naming what to remove is shorter
+        // and more robust than listing everything to keep, which silently
+        // drops a column added upstream.
+        "drop" => {
+            let f = want_frame(func, &args, 0)?;
+            let drops = string_list(func, &args, 1)?;
+            for name in &drops {
+                if !f.names().iter().any(|n| n == name) {
+                    return Err(format!(
+                        "ods.drop: no column '{}' in this Frame. It has: {}",
+                        name,
+                        f.names().join(", ")
+                    ));
+                }
+            }
+            let keep: Vec<String> = f
+                .names()
+                .iter()
+                .filter(|n| !drops.contains(n))
+                .cloned()
+                .collect();
+            f.select(&keep).map(OdsFrame::into_value).map_err(e)
+        }
+        "distinct" => {
+            let f = want_frame(func, &args, 0)?;
+            let cols = subset_columns(func, f, args.get(1))?;
+            let mut seen = std::collections::HashSet::new();
+            let mut keep = Vec::new();
+            for row in 0..f.n_rows() {
+                if seen.insert(row_key(&cols, row)) {
+                    keep.push(row as i64);
+                }
+            }
+            let idx = Series::from_i64(keep);
+            f.take(&idx).map(OdsFrame::into_value).map_err(e)
+        }
+        "drop_null" => {
+            let f = want_frame(func, &args, 0)?;
+            let cols = subset_columns(func, f, args.get(1))?;
+            let keep: Vec<i64> = (0..f.n_rows())
+                .filter(|&row| {
+                    !cols
+                        .iter()
+                        .any(|c| matches!(c.scalar_at(row), Scalar::Null))
+                })
+                .map(|row| row as i64)
+                .collect();
+            let idx = Series::from_i64(keep);
+            f.take(&idx).map(OdsFrame::into_value).map_err(e)
+        }
         "group_by" => {
             let f = want_frame(func, &args, 0)?;
             let keys = string_list(func, &args, 1)?;
@@ -861,6 +989,76 @@ fn records_to_frame(records: &[Value]) -> Result<Frame, String> {
         pairs.push((name, col));
     }
     Frame::new(pairs).map_err(e)
+}
+
+/// The columns a subset-taking verb should consider: the named ones, or
+/// every column when the argument was omitted.
+fn subset_columns<'a>(
+    func: &str,
+    frame: &'a Frame,
+    arg: Option<&Value>,
+) -> Result<Vec<&'a Series>, String> {
+    match arg {
+        None | Some(Value::Unit) => Ok(frame.columns().iter().collect()),
+        Some(Value::List(items)) => {
+            let mut cols = Vec::with_capacity(items.len());
+            for item in items.iter() {
+                let name = match item {
+                    Value::String(s) => s.as_ref().clone(),
+                    other => {
+                        return Err(format!(
+                            "ods.{}: each column name must be a String, got {}",
+                            func,
+                            other.type_name()
+                        ));
+                    }
+                };
+                cols.push(frame.column(&name).map_err(|_| {
+                    format!(
+                        "ods.{}: no column '{}' in this Frame. It has: {}",
+                        func,
+                        name,
+                        frame.names().join(", ")
+                    )
+                })?);
+            }
+            Ok(cols)
+        }
+        Some(other) => Err(format!(
+            "ods.{}: the second argument is a list of column names, got {}",
+            func,
+            other.type_name()
+        )),
+    }
+}
+
+/// A row's identity across `cols`, as bytes that cannot be confused.
+///
+/// Each field is length-prefixed rather than separator-joined, so no
+/// value can impersonate a field boundary — `["a,b", "c"]` and
+/// `["a", "b,c"]` are different rows and must hash differently.
+fn row_key(cols: &[&Series], row: usize) -> Vec<u8> {
+    let mut key = Vec::new();
+    for col in cols {
+        let field = match col.scalar_at(row) {
+            Scalar::Null => None,
+            Scalar::F64(x) => Some(crate::ast::format_float(x)),
+            Scalar::I64(x) => Some(x.to_string()),
+            Scalar::Bool(b) => Some(b.to_string()),
+            Scalar::Str(s) => Some(s.to_string()),
+        };
+        match field {
+            // A distinct tag for null, so it is one value rather than
+            // colliding with the empty string.
+            None => key.push(0u8),
+            Some(text) => {
+                key.push(1u8);
+                key.extend_from_slice(&(text.len() as u64).to_le_bytes());
+                key.extend_from_slice(text.as_bytes());
+            }
+        }
+    }
+    key
 }
 
 /// Stack Frames vertically. Every Frame must carry the same column

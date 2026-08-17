@@ -2154,6 +2154,41 @@ impl HelpSystem {
             "the first n rows of f (n defaults to 10)",
         );
         self.doc(
+            "ods.tail",
+            "ods.tail(f, n = 10)",
+            "Frame",
+            "ods",
+            "the last n rows of f (n defaults to 10)",
+        );
+        self.doc(
+            "ods.rename",
+            "ods.rename(f, mapping)",
+            "Frame",
+            "ods",
+            "f with columns renamed, given a Map of old name to new name",
+        );
+        self.doc(
+            "ods.drop",
+            "ods.drop(f, names)",
+            "Frame",
+            "ods",
+            "a Frame without the named columns (the complement of select)",
+        );
+        self.doc(
+            "ods.distinct",
+            "ods.distinct(f, names = every column)",
+            "Frame",
+            "ods",
+            "f with duplicate rows removed, keeping the first occurrence",
+        );
+        self.doc(
+            "ods.drop_null",
+            "ods.drop_null(f, names = every column)",
+            "Frame",
+            "ods",
+            "f without the rows that are null in any of the named columns",
+        );
+        self.doc(
             "ods.to_records",
             "ods.to_records(f)",
             "List",

@@ -1310,8 +1310,9 @@ buffer; a **Frame** is a table of named, equal-length Series. Operators
 are vectorized (`s * 2.0` runs one kernel over the whole column;
 `s > 2` yields a Bool mask for `ods.filter`), nulls propagate through
 arithmetic and are skipped by reductions, and the Frame verbs —
-`read_csv`, `select`, `with_column`, `filter`, `sort_by`, `group_by`,
-`join`, `to_records` — all chain with `|>`. CSV and JSON lines each have
+`read_csv`, `select`, `drop`, `rename`, `with_column`, `filter`,
+`distinct`, `sort_by`, `group_by`, `join`, `to_records` — all chain
+with `|>`. CSV and JSON lines each have
 a text parser, a file reader, a streaming reader, and a serializer; the
 calls that reach the filesystem are the module's only ones that demand
 the `fs` capability, and the text parsers and serializers stay pure.
@@ -1351,9 +1352,10 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Files | `read_csv_file(path)` · `write_csv(f, path)` · `to_csv(f)` · `read_jsonl(text)` · `read_jsonl_file(path)` · `write_jsonl(f, path)` · `to_jsonl(f)` |
 | Streaming | `open_csv(path)` · `open_jsonl(path)` — then `next_chunk(r, n)` · `rows_read(r)` · `at_end(r)`, the same verbs for either |
 | Native format | `write_frame(f, path)` · `read_frame(path, columns)` · `frame_info(path)` — exact types, faster loads, one column at a time |
-| Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` |
+| Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `tail(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` |
 | Subscript | `f["name"]` a column · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (negatives from the end) |
-| Shape | `select(f, names)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
+| Shape | `select(f, names)` · `drop(f, names)` · `rename(f, mapping)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
+| Whole rows | `distinct(f, names = all)` · `drop_null(f, names = all)` — duplicates and missing data, first occurrence kept |
 | Aggregate / join | `group_by(f, key, aggs)` · `join(a, b, on, on_b = on)` · `join_left(a, b, on, on_b = on)` · `concat(frames)` |
 | Masks | `eq(s, v)` · `ne(s, v)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL |
 

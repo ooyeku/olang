@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **DP3 Tier 1: `rename`, `drop`, `distinct`, `tail`, frame-level
+  `drop_null`.** The five verbs a first pipeline reaches for before any
+  of the ones the original DP3 list named. `ods.rename(f, mapping)`
+  renames any number of columns from a Map, refusing an unknown name and
+  refusing a target that already exists — its immediate use is undoing
+  the `_right` suffix a colliding join leaves behind, which until now
+  made the joined column unnameable. `ods.drop(f, names)` is `select`'s
+  complement, and survives a new column arriving upstream where the
+  equivalent `select` would silently discard it. `ods.tail(f, n = 10)`
+  answers `head`; asking for more rows than exist returns the whole
+  Frame. `ods.distinct(f, names = all)` removes duplicate rows keeping
+  the first occurrence, and `ods.drop_null(f, names = all)` removes rows
+  that are null anywhere — both over whole rows, both accepting a column
+  subset. Row identity length-prefixes each field rather than joining
+  with a separator, so no value can impersonate a field boundary and a
+  null never collides with an empty string.
+
+  Frame-level `fill_null` was on the Tier 1 list and is deliberately not
+  here: `ods.with_column(f, "amount", ods.fill_null(f["amount"], 0.0))`
+  already expresses it through the subscript added in 0.66, and a second
+  spelling of an existing operation is surface area without capability.
+
 ### Changed
 
 - **DP1c closed without work, on measurement.** The lane assumed

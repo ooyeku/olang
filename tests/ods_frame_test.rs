@@ -1594,3 +1594,172 @@ ods.to_list(ods.concat([kept, kept])["k"])
     )
     .expect("tier agreement");
 }
+
+// ── DP3 Tier 1: the verbs a first pipeline hits immediately ───────────
+
+#[test]
+fn rename_makes_a_collided_join_usable() {
+    // The motivating case. `join` suffixes a collision `_right`, and
+    // until `rename` existed there was no way to give the column the
+    // name the rest of the pipeline wants.
+    let out = eval(
+        r#"
+let sales = ods.read_csv("id,amount\n1,10.0\n2,20.0\n")
+let costs = ods.read_csv("id,amount\n1,3.0\n2,4.0\n")
+let j = ods.rename(ods.join(sales, costs, "id"), #{"amount_right": "cost"})
+show([ods.columns(j), ods.to_list(j["amount"] - j["cost"])])
+"#,
+        None,
+    )
+    .expect("rename");
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"id\", \"amount\", \"cost\"], [7.0, 16.0]]\"".to_string()
+    );
+}
+
+#[test]
+fn rename_refuses_an_unknown_or_colliding_name() {
+    let err = eval(
+        r#"ods.rename(ods.read_csv("a\n1\n"), #{"nope": "b"})"#,
+        None,
+    )
+    .expect_err("unknown column");
+    assert!(
+        err.contains("no column 'nope'") && err.contains("It has: a"),
+        "{err}"
+    );
+
+    // Two columns of one name would be indistinguishable.
+    let err = eval(
+        r#"ods.rename(ods.read_csv("a,b\n1,2\n"), #{"a": "b"})"#,
+        None,
+    )
+    .expect_err("collision");
+    assert!(err.contains("would collide"), "{err}");
+}
+
+#[test]
+fn drop_is_the_complement_of_select() {
+    // Naming what to remove survives a column being added upstream;
+    // listing everything to keep silently discards it.
+    let out = eval(
+        r#"
+let f = ods.read_csv("a,b,c\n1,2,3\n")
+show([ods.columns(ods.drop(f, ["b"])), ods.columns(ods.drop(f, ["a", "c"]))])
+"#,
+        None,
+    )
+    .expect("drop");
+    assert_eq!(out.to_string(), "\"[[\"a\", \"c\"], [\"b\"]]\"".to_string());
+    let err =
+        eval(r#"ods.drop(ods.read_csv("a\n1\n"), ["nope"])"#, None).expect_err("unknown column");
+    assert!(err.contains("no column 'nope'"), "{err}");
+}
+
+#[test]
+fn tail_takes_the_last_rows_and_defaults_to_ten() {
+    let mut csv = String::from("i\n");
+    for i in 0..30 {
+        csv.push_str(&format!("{}\n", i));
+    }
+    let out = eval(
+        &format!(
+            "let f = ods.read_csv({:?})\nshow([ods.n_rows(ods.tail(f)), \
+             ods.to_list(ods.tail(f, 3)[\"i\"])])",
+            csv
+        ),
+        None,
+    )
+    .expect("tail");
+    assert_eq!(out.to_string(), "\"[10, [27, 28, 29]]\"".to_string());
+
+    // Asking for more rows than exist yields the whole frame rather than
+    // an error — `tail(f, 1000)` on a short frame is a reasonable ask.
+    let out = eval(
+        r#"ods.n_rows(ods.tail(ods.read_csv("i\n1\n2\n"), 1000))"#,
+        None,
+    )
+    .expect("over-long tail");
+    assert_eq!(out.to_string(), "2".to_string());
+}
+
+#[test]
+fn distinct_keeps_the_first_occurrence() {
+    // Order matters: a reader scanning the result expects the rows in the
+    // order the data presented them, not in hash order.
+    let out = eval(
+        r#"
+let f = ods.read_csv("r,v\neast,1\nwest,2\neast,1\nnorth,3\nwest,9\n")
+show([ods.to_list(ods.distinct(f)["r"]), ods.to_list(ods.distinct(f, ["r"])["v"])])
+"#,
+        None,
+    )
+    .expect("distinct");
+    // Whole-row distinct drops only the exact repeat; subset distinct
+    // keeps the first row for each region, so west's v is 2, not 9.
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"east\", \"west\", \"north\", \"west\"], [1, 2, 3]]\"".to_string()
+    );
+}
+
+#[test]
+fn distinct_does_not_confuse_a_field_boundary() {
+    // Row identity is length-prefixed rather than separator-joined, so no
+    // value can impersonate a boundary: ["a,b", "c"] and ["a", "b,c"] are
+    // different rows and must both survive.
+    let out = eval(
+        r#"
+let f = ods.read_csv("x,y\n\"a,b\",c\na,\"b,c\"\n")
+ods.n_rows(ods.distinct(f))
+"#,
+        None,
+    )
+    .expect("distinct");
+    assert_eq!(out.to_string(), "2".to_string());
+}
+
+#[test]
+fn distinct_treats_null_as_its_own_value() {
+    // A null must not collide with the empty string, or a frame holding
+    // both would lose a row. Built directly rather than parsed: CSV reads
+    // an empty cell and a quoted "" alike as null, so the distinction
+    // cannot be expressed in the text form.
+    let out = eval(
+        r#"
+let f = ods.frame([["x", ["", (), ""]], ["tag", ["a", "b", "c"]]])
+show([ods.n_rows(f), ods.n_rows(ods.distinct(f, ["x"])), ods.null_count(f["x"])])
+"#,
+        None,
+    )
+    .expect("distinct nulls");
+    // Three rows, two distinct x values ("" and null), so two kept.
+    assert_eq!(out.to_string(), "\"[3, 2, 1]\"".to_string());
+}
+
+#[test]
+fn drop_null_removes_rows_with_missing_data() {
+    let out = eval(
+        r#"
+let f = ods.read_csv("a,b\n1,x\n,y\n2,\n3,z\n")
+show([ods.n_rows(ods.drop_null(f)), ods.n_rows(ods.drop_null(f, ["a"]))])
+"#,
+        None,
+    )
+    .expect("drop_null");
+    // Whole-row: only rows 1 and 4 are complete. On `a` alone: 3 survive.
+    assert_eq!(out.to_string(), "\"[2, 3]\"".to_string());
+}
+
+#[test]
+fn the_tier_one_verbs_agree_across_tiers() {
+    assert_tier_transparent(
+        r#"
+let f = ods.read_csv("r,v\neast,1\nwest,2\neast,1\n")
+let g = ods.rename(ods.drop_null(ods.distinct(f)), #{"v": "value"})
+[ods.columns(g), ods.to_list(ods.tail(g, 1)["value"])]
+"#,
+    )
+    .expect("tier agreement");
+}

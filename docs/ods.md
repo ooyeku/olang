@@ -665,17 +665,81 @@ let full = ods.with_column(sales, "revenue",
 println(to_string(ods.columns(full)))
 ```
 
+`ods.drop(f, names)` is the complement of `select`: it names the
+columns to remove rather than the ones to keep. The distinction matters
+when the Frame's shape is not fully known at the point the code is
+written — a `drop` survives a new column arriving upstream, where the
+equivalent `select` would silently discard it.
+
+`ods.rename(f, mapping)` takes a Map of old name to new name and
+renames as many columns as it is given in one pass. It refuses a name
+that is not in the Frame, and refuses a target name that already
+exists, since two columns of one name could not afterwards be told
+apart. Its most common use is the `_right` suffix a colliding join
+leaves behind:
+
+```olang
+let sales = ods.frame([["id", [1, 2]], ["amount", [10.0, 20.0]]])
+let costs = ods.frame([["id", [1, 2]], ["amount", [3.0, 4.0]]])
+let j = ods.join(sales, costs, "id") |> ods.rename(#{"amount_right": "cost"})
+println(to_string(ods.to_list(j["amount"] - j["cost"])))    // [7.0, 16.0]
+```
+
 On the row axis, `ods.filter(f, mask)` keeps rows where a Bool series
 is true (build the mask from any column), `ods.take(f, idx)` gathers
-rows by index, `ods.head(f, n)` keeps the first `n`, and
-`ods.sort_by(f, col, descending)` sorts the whole table by one column,
-nulls last either way:
+rows by index, `ods.head(f, n)` keeps the first `n` and `ods.tail(f, n)`
+the last `n` (both defaulting to ten), and `ods.sort_by(f, col,
+descending)` sorts the whole table by one column, nulls last either way:
 
 ```olang
 let sales = ods.read_csv("region,amount\neast,25.5\nwest,320.0\neast,80.0\n")
 let amount = ods.column(sales, "amount")
 let big = sales |> ods.filter(amount > 50.0) |> ods.sort_by("amount", true)
 println(to_string(ods.to_list(ods.column(big, "region"))))    // [west, east]
+```
+
+Asking `tail` for more rows than the Frame holds returns the whole
+Frame rather than an error, which is what makes `ods.tail(f, 1000)` a
+usable way to say "the end of this, however long it is".
+
+### Duplicates and missing rows
+
+Two verbs work on whole rows rather than columns. `ods.distinct(f)`
+removes duplicate rows, keeping the first occurrence of each — order
+is preserved, because a reader scanning the result expects the rows in
+the order the data presented them. `ods.drop_null(f)` removes the rows
+that are null anywhere. Both take an optional list of column names to
+consider instead of every column:
+
+```olang
+let f = ods.read_csv("region,day,amount\neast,mon,1.0\neast,tue,2.0\nwest,mon,3.0\n")
+println(to_string(ods.n_rows(ods.distinct(f))))              // 3 — no exact repeats
+println(to_string(ods.to_list(ods.distinct(f, ["region"])["day"])))    // [mon, mon]
+```
+
+Restricting `distinct` to a subset keeps the *first whole row* for each
+distinct combination of those columns, so the columns outside the
+subset come along unchanged rather than being aggregated. When the
+question is which values occur rather than which rows, `ods.group_by`
+is the verb that answers it.
+
+Row identity is computed over the raw column values with each field
+length-prefixed rather than joined by a separator, so no value can
+impersonate a field boundary: a row of `["a,b", "c"]` and a row of
+`["a", "b,c"]` are distinct, and a null is distinct from an empty
+string. Note that the CSV reader cannot express that last distinction —
+it reads both an empty cell and a quoted `""` as null — so it is
+visible only on Frames built in memory.
+
+Frame-level null filling is not a separate verb: `ods.fill_null`
+operates on a Series, and combining it with subscript and
+`with_column` fills a named column without a second spelling of the
+same operation.
+
+```olang
+let f = ods.frame([["amount", [1.0, (), 3.0]]])
+let filled = ods.with_column(f, "amount", ods.fill_null(f["amount"], 0.0))
+println(to_string(ods.to_list(filled["amount"])))    // [1.0, 0.0, 3.0]
 ```
 
 ### Grouped aggregation
@@ -714,7 +778,7 @@ larger cost — is still sequential; parallelizing it is the next step.
 from each side; `ods.join_left` keeps every left row, filling the
 right side with nulls where nothing matched. Null keys never match
 (the SQL convention), and a column-name collision on the right gains
-a `_right` suffix:
+a `_right` suffix (which `ods.rename` above exists to undo):
 
 ```olang
 let totals = ods.frame([["region", ["east", "west"]], ["total", [105.5, 320.0]]])
