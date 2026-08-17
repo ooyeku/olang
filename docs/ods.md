@@ -437,7 +437,7 @@ strings:
 ```olang
 let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,,4\n")
 println(to_string(ods.columns(sales)))
-println(to_string(ods.null_count(ods.column(sales, "amount"))))   // 1
+println(to_string(ods.null_count(sales["amount"])))   // 1
 ```
 
 Because it takes text, `ods.read_csv("sales.csv")` would once have
@@ -489,7 +489,7 @@ from the sorted union of keys and missing keys becoming nulls:
 let records = unwrap(json.parse("[{\"name\": \"ada\", \"score\": 99}, {\"name\": \"bob\"}]"))
 let f = ods.frame_from_records(records)
 println(to_string(ods.columns(f)))                                // ["name", "score"]
-println(to_string(ods.null_count(ods.column(f, "score"))))        // 1
+println(to_string(ods.null_count(f["score"])))        // 1
 ```
 
 The inverse, `ods.to_records(f)`, turns a Frame back into a list of
@@ -509,7 +509,7 @@ let mut total = 0.0
 loop {
     let chunk = unwrap(ods.next_chunk(r, 50000))
     if ods.n_rows(chunk) == 0 => break
-    total = total + ods.sum(ods.column(chunk, "amount"))
+    total = total + ods.sum(chunk["amount"])
 }
 println(to_string(total))
 ```
@@ -539,7 +539,7 @@ let mut totals = []
 loop {
     let chunk = unwrap(ods.next_chunk(r, 50000))
     if ods.n_rows(chunk) == 0 => break
-    totals = totals + [spawn ods.sum(ods.column(chunk, "amount"))]
+    totals = totals + [spawn ods.sum(chunk["amount"])]
 }
 ```
 
@@ -558,7 +558,7 @@ this is that function with a parser in front of it:
 ```olang
 let f = unwrap(ods.read_jsonl("{\"name\": \"ada\", \"score\": 99}\n{\"name\": \"bob\"}\n"))
 println(to_string(ods.columns(f)))                            // ["name", "score"]
-println(to_string(ods.null_count(ods.column(f, "score"))))    // 1
+println(to_string(ods.null_count(f["score"])))    // 1
 ```
 
 Blank lines are skipped, because a trailing newline is how nearly every
@@ -581,7 +581,7 @@ let mut total = 0.0
 loop {
     let chunk = unwrap(ods.next_chunk(r, 50000))
     if ods.n_rows(chunk) == 0 => break
-    total = total + ods.sum(ods.column(chunk, "amount"))
+    total = total + ods.sum(chunk["amount"])
 }
 ```
 
@@ -804,8 +804,7 @@ combined with column arithmetic, is how derived columns happen:
 
 ```olang
 let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,80.0,4\n")
-let full = ods.with_column(sales, "revenue",
-    ods.column(sales, "amount") * ods.column(sales, "qty"))
+let full = ods.with_column(sales, "revenue", sales["amount"] * sales["qty"])
 println(to_string(ods.columns(full)))
 ```
 
@@ -837,9 +836,8 @@ descending)` sorts the whole table by one column, nulls last either way:
 
 ```olang
 let sales = ods.read_csv("region,amount\neast,25.5\nwest,320.0\neast,80.0\n")
-let amount = ods.column(sales, "amount")
-let big = sales |> ods.filter(amount > 50.0) |> ods.sort_by("amount", true)
-println(to_string(ods.to_list(ods.column(big, "region"))))    // ["west", "east"]
+let big = sales |> ods.filter(sales["amount"] > 50.0) |> ods.sort_by("amount", true)
+println(to_string(ods.to_list(big["region"])))    // ["west", "east"]
 ```
 
 Asking `tail` for more rows than the Frame holds returns the whole
@@ -987,7 +985,7 @@ a `_right` suffix (which `ods.rename` above exists to undo):
 let totals = ods.frame([["region", ["east", "west"]], ["total", [105.5, 320.0]]])
 let rates = ods.frame([["name", ["east", "west"]], ["rate", [0.07, 0.09]]])
 let joined = ods.join(totals, rates, "region", "name")
-let tax = ods.column(joined, "total") * ods.column(joined, "rate")
+let tax = joined["total"] * joined["rate"]
 println(to_string(ods.to_list(tax)))
 ```
 

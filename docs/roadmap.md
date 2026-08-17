@@ -577,6 +577,40 @@ correspondence. A comment it declines to check costs a little coverage;
 one it wrongly accepted would cost the guard its credibility.
 
 
+**R1, fourth sitting.** Two lanes: the idiom the chapter taught but did
+not follow, and a coverage question the existing guards ask only in one
+direction.
+
+`ods.md` gained a "Reaching a column" section in 0.66 explaining that
+`f["amount"]` *is* how a column is reached — and then every example
+after it went on calling `ods.column(f, "amount")`, six times before the
+section and three after. Worse, `ods.column` is never introduced in the
+chapter's prose at all, so a reader met an unexplained function six
+times before being taught the explained way to do the same thing. The
+examples now use the subscript throughout, and `column(f, name)` is
+named in the stdlib reference as the call form of it, which it had also
+been missing from.
+
+The coverage question: `doc_references_test` checks doc → binary, that
+every name the book drops resolves. Nothing checked binary → doc, that
+every function the binary registers is named somewhere. Enumerating all
+430 found three that are not: `ods.version()`, now documented, and
+`ods.probe`/`ods.probe_tag`, which are Phase 0's plumbing fixture
+sitting in the public surface. Removing them is a 1.0 surface decision
+rather than a documentation one, so it is logged rather than done.
+
+Worth recording because it bears on whether that check should become
+permanent: the ad-hoc version of it gave three wrong answers before a
+right one. It reported zero (it called `keys`, which does not exist, and
+silently enumerated nothing), then 116 (it missed that reference tables
+list bare backticked names), then five (it missed that
+`random.randstr(n) (+ _alpha _alnum _numeric)` documents four functions
+in one table row). Every one of those looked plausible. A guard built on
+the obvious implementation would be wrong in exactly the direction that
+gets a guard switched off, so the reverse check stays manual until
+someone can make it careful enough.
+
+
 | Lane | Work | Status |
 |---|---|---|
 | R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | **in progress** — mechanical checks built and clean; `stability.md`, `pitfalls.md`, `tooling.md` and the `language.md`/`ods.md` claim errors corrected, output comments now guarded; the long reference chapters remain to be read end to end |

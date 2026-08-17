@@ -1319,8 +1319,7 @@ the `fs` capability, and the text parsers and serializers stay pure.
 
 ```olang
 let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,80.0,4\n")
-let full = ods.with_column(sales, "revenue",
-    ods.column(sales, "amount") * ods.column(sales, "qty"))
+let full = ods.with_column(sales, "revenue", sales["amount"] * sales["qty"])
 let summary = full
     |> ods.group_by("region", [["total", "sum", "revenue"], ["n", "count"]])
     |> ods.sort_by("total", true)
@@ -1356,7 +1355,8 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Streaming | `open_csv(path)` · `open_jsonl(path)` — then `next_chunk(r, n)` · `rows_read(r)` · `at_end(r)`, the same verbs for either |
 | Native format | `write_frame(f, path)` · `read_frame(path, columns)` · `frame_info(path)` — exact types, faster loads, one column at a time |
 | Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `tail(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` |
-| Subscript | `f["name"]` a column · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (negatives from the end) |
+| Version | `ods.version()` — the engine's version string, worth quoting in a bug report |
+| Subscript | `f["name"]` a column · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (negatives from the end) · `column(f, name)` is the same as `f[name]`, for when a call reads better than a subscript |
 | Shape | `select(f, names)` · `drop(f, names)` · `rename(f, mapping)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
 | Whole rows | `distinct(f, names = all)` · `drop_null(f, names = all)` — duplicates and missing data, first occurrence kept |
 | Reshape | `pivot(f, index, columns, values, agg)` long→wide · `unpivot(f, ids, value_columns = the rest)` wide→long, emitting `name`/`value` |

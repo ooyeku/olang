@@ -177,6 +177,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The ods chapter now uses the subscript it teaches.** `ods.md` gained
+  a section in 0.66 explaining that `f["amount"]` is how a column is
+  reached, then went on calling `ods.column(f, "amount")` in every
+  example around it — a function the chapter never introduces in prose,
+  so a reader met it six times before being taught the explained way to
+  do the same thing. The examples use the subscript throughout, and
+  `column(f, name)` is now named in the stdlib reference, which had also
+  been missing it. `ods.version()` is documented for the first time.
+
 - **`olang bench --help` now lists the flags it accepts.** `--runs`,
   `--save`, `--against`, and `--fail-on-regress` are parsed by the
   benchmark runner itself out of forwarded arguments, so clap knew
