@@ -1341,6 +1341,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Comparisons | `eq(a, b)` · `ne(a, b)` — elementwise masks between two Series (against a *scalar*, use the `s == v` / `s != v` operators) |
 | Nulls | `is_null(s)` (mask) · `fill_null(s, v)` · `null_count(s)` |
 | Reductions | `sum` `mean` `var` `std` `min` `max` `median` (skip nulls; `var`/`std` are sample) · `quantile(s, q)` · `cumsum(s)` · `dot(a, b)` |
+| Windows | `shift(s, by)` (nulls at the edge) · `cum_max` · `cum_min` · `rank(s, method = "min")` — min/max/average/ordinal/dense · `rolling(s, window, agg)`, null until the window fills |
 | Distinct | `unique(s)` (first-seen order) · `n_unique(s)` · `value_counts(s)` → a value/count Frame, most frequent first |
 | Convert type | `cast(s, "Float"\|"Int"\|"Bool"\|"String")` — what the target cannot hold becomes null, so `null_count` reports what was lost |
 | Order / select | `sort(s)` (nulls last) · `argsort(s)` (sorting indices) · `take(s, idx)` (gather) · `get(s, i)` (negative counts from end) |

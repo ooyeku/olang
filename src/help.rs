@@ -1818,6 +1818,41 @@ impl HelpSystem {
             "replace every null in s with v",
         );
         self.doc(
+            "ods.shift",
+            "ods.shift(s, by)",
+            "Series",
+            "ods",
+            "move values `by` positions down (negative moves up); vacated slots are null",
+        );
+        self.doc(
+            "ods.cum_max",
+            "ods.cum_max(s)",
+            "Series",
+            "ods",
+            "the running maximum, alongside cumsum",
+        );
+        self.doc(
+            "ods.cum_min",
+            "ods.cum_min(s)",
+            "Series",
+            "ods",
+            "the running minimum, alongside cumsum",
+        );
+        self.doc(
+            "ods.rank",
+            "ods.rank(s, method = \"min\")",
+            "Series",
+            "ods",
+            "the rank of each element; method is min, max, average, ordinal, or dense",
+        );
+        self.doc(
+            "ods.rolling",
+            "ods.rolling(s, window, agg)",
+            "Series",
+            "ods",
+            "a trailing-window aggregate; the first window-1 elements are null",
+        );
+        self.doc(
             "ods.unique",
             "ods.unique(s)",
             "Series",

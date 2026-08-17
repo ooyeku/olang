@@ -2275,3 +2275,172 @@ let wide = ods.pivot(ods.read_csv("{LONG_CSV}"), "region", "quarter", "amount", 
     ))
     .expect("tier agreement");
 }
+
+// ── DP3 Tier 3c: window functions ─────────────────────────────────────
+
+#[test]
+fn shift_moves_a_column_and_leaves_nulls_at_the_edge() {
+    // Nulls rather than a wrapped value, because the window has an edge:
+    // the row before the first row does not exist. That makes
+    // `s - shift(s, 1)` a difference whose first element is correctly
+    // unknown, which is why there is no separate `diff` verb.
+    let out = eval(
+        r#"
+let s = ods.series([4, 1, 7, 1, 9])
+show([ods.to_list(ods.shift(s, 1)), ods.to_list(ods.shift(s, -1)),
+      ods.to_list(s - ods.shift(s, 1)), ods.to_list(ods.shift(s, 99))])
+"#,
+        None,
+    )
+    .expect("shift");
+    assert_eq!(
+        out.to_string(),
+        "\"[[(), 4, 1, 7, 1], [1, 7, 1, 9, ()], [(), -3, 6, -6, 8], [(), (), (), (), ()]]\""
+            .to_string()
+    );
+}
+
+#[test]
+fn cum_max_and_cum_min_run_alongside_cumsum() {
+    let out = eval(
+        r#"
+let s = ods.series([4, 1, 7, 1, 9])
+show([ods.to_list(ods.cum_max(s)), ods.to_list(ods.cum_min(s)), ods.to_list(ods.cumsum(s))])
+"#,
+        None,
+    )
+    .expect("cum");
+    assert_eq!(
+        out.to_string(),
+        "\"[[4, 4, 7, 7, 9], [4, 1, 1, 1, 1], [4, 5, 12, 13, 22]]\"".to_string()
+    );
+}
+
+#[test]
+fn every_rank_method_distributes_its_ties() {
+    // The five methods differ only in what they do with the two 1s, so
+    // one column shows all of it. Sorted, the values are 1, 1, 4, 7, 9.
+    let out = eval(
+        r#"
+let s = ods.series([4, 1, 7, 1, 9])
+show([ods.to_list(ods.rank(s, "min")), ods.to_list(ods.rank(s, "max")),
+      ods.to_list(ods.rank(s, "average")), ods.to_list(ods.rank(s, "ordinal")),
+      ods.to_list(ods.rank(s, "dense")), ods.to_list(ods.rank(s))])
+"#,
+        None,
+    )
+    .expect("rank");
+    assert_eq!(
+        out.to_string(),
+        "\"[[3, 1, 4, 1, 5], [3, 2, 4, 2, 5], [3.0, 1.5, 4.0, 1.5, 5.0], [3, 1, 4, 2, 5], \
+         [2, 1, 3, 1, 4], [3, 1, 4, 1, 5]]\""
+            .to_string()
+    );
+}
+
+#[test]
+fn rank_leaves_nulls_unranked_and_stays_an_int_unless_averaged() {
+    // Nulls are skipped by every other reduction; giving them a position
+    // would place them somewhere silently. And only `average` can make a
+    // half, so the other methods stay Int and can be used as indices.
+    let out = eval(
+        r#"
+let s = ods.frame([["x", [3.0, (), 1.0, 2.0]]])["x"]
+show([ods.to_list(ods.rank(s)), ods.null_count(ods.rank(s)),
+      to_string(ods.rank(s)) |> str.contains("Int"),
+      to_string(ods.rank(s, "average")) |> str.contains("Float")])
+"#,
+        None,
+    )
+    .expect("rank");
+    assert_eq!(
+        out.to_string(),
+        "\"[[3, (), 1, 2], 1, true, true]\"".to_string()
+    );
+}
+
+#[test]
+fn rolling_is_null_until_the_window_is_full() {
+    // Reporting a partial reduction as if it were whole is how a chart
+    // lies at its left edge, so the first window-1 elements are null.
+    let out = eval(
+        r#"
+let s = ods.series([1.0, 2.0, 3.0, 4.0, 5.0])
+show([ods.to_list(ods.rolling(s, 3, "sum")), ods.to_list(ods.rolling(s, 3, "mean")),
+      ods.to_list(ods.rolling(s, 3, "max")), ods.to_list(ods.rolling(s, 1, "sum"))])
+"#,
+        None,
+    )
+    .expect("rolling");
+    assert_eq!(
+        out.to_string(),
+        "\"[[(), (), 6.0, 9.0, 12.0], [(), (), 2.0, 3.0, 4.0], [(), (), 3.0, 4.0, 5.0], \
+         [1.0, 2.0, 3.0, 4.0, 5.0]]\""
+            .to_string()
+    );
+}
+
+#[test]
+fn a_rolling_window_skips_nulls_the_way_every_reduction_does() {
+    let out = eval(
+        r#"
+let s = ods.frame([["x", [1.0, (), 3.0, 4.0]]])["x"]
+show([ods.to_list(ods.rolling(s, 2, "mean")), ods.to_list(ods.rolling(s, 2, "count")),
+      ods.to_list(ods.rolling(s, 2, "sum"))])
+"#,
+        None,
+    )
+    .expect("rolling nulls");
+    // Position 1's window is [1.0, null]: the mean of the one valid
+    // element, and a count of 1. An all-null window would sum to null
+    // rather than to zero — no data is not the same as zero.
+    assert_eq!(
+        out.to_string(),
+        "\"[[(), 1.0, 3.0, 3.5], [(), 1, 1, 2], [(), 1.0, 3.0, 7.0]]\"".to_string()
+    );
+}
+
+#[test]
+fn the_window_verbs_refuse_what_they_cannot_answer() {
+    let cases: &[(&str, &str)] = &[
+        (r#"ods.rolling(ods.series([1.0]), 0, "sum")"#, "at least 1"),
+        (
+            r#"ods.rolling(ods.series([1.0]), 2, "nope")"#,
+            "is not an aggregation",
+        ),
+        (
+            r#"ods.rolling(ods.series(["a", "b"]), 2, "sum")"#,
+            "needs a numeric column",
+        ),
+        (
+            r#"ods.rank(ods.series([1]), "nope")"#,
+            "is not a ranking method",
+        ),
+        (
+            r#"ods.cum_max(ods.series(["a"]))"#,
+            "needs a numeric column",
+        ),
+        (r#"ods.shift(ods.series([1]), "x")"#, "must be an Int"),
+    ];
+    for (source, wanted) in cases {
+        let err = eval(source, None)
+            .err()
+            .unwrap_or_else(|| panic!("{source} should have failed"));
+        assert!(
+            err.contains(wanted),
+            "expected {wanted:?} in the error for {source}, got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn the_window_verbs_agree_across_tiers() {
+    assert_tier_transparent(
+        r#"
+let s = ods.series([4, 1, 7, 1, 9])
+[ods.to_list(ods.shift(s, 2)), ods.to_list(ods.cum_max(s)),
+ ods.to_list(ods.rank(s, "average")), ods.to_list(ods.rolling(s, 2, "mean"))]
+"#,
+    )
+    .expect("tier agreement");
+}

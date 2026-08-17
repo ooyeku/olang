@@ -421,6 +421,238 @@ impl Frame {
 }
 
 // ---------------------------------------------------------------------
+// Windows
+// ---------------------------------------------------------------------
+
+/// How a rank distributes the positions that tie.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RankMethod {
+    /// 1, 2, 2, 4 — the competition ranking, and what "rank" means
+    /// unqualified.
+    Min,
+    /// 1, 3, 3, 4 — ties take the last position they span.
+    Max,
+    /// 1, 2.5, 2.5, 4 — ties share the mean of the positions they span.
+    Average,
+    /// 1, 2, 3, 4 — ties broken by row order, so every rank is distinct.
+    Ordinal,
+    /// 1, 2, 2, 3 — the next distinct value gets the next integer.
+    Dense,
+}
+
+impl RankMethod {
+    pub fn parse(name: &str) -> Option<RankMethod> {
+        Some(match name {
+            "min" => RankMethod::Min,
+            "max" => RankMethod::Max,
+            "average" => RankMethod::Average,
+            "ordinal" => RankMethod::Ordinal,
+            "dense" => RankMethod::Dense,
+            _ => return None,
+        })
+    }
+}
+
+impl Series {
+    /// Move values `by` positions down the column, filling what is
+    /// vacated with nulls. A negative `by` moves them up.
+    ///
+    /// Nulls rather than a wrapped value, because a window has an edge:
+    /// the row before the first row does not exist, and saying so is
+    /// the honest answer. `s - ods.shift(s, 1)` is then a difference
+    /// whose first element is null, which is correct.
+    pub fn shift(&self, by: i64) -> Result<Series> {
+        let n = self.len() as i64;
+        let idx: Vec<Option<usize>> = (0..n)
+            .map(|i| {
+                let from = i - by;
+                (0..n).contains(&from).then_some(from as usize)
+            })
+            .collect();
+        Ok(gather_optional(self, &idx))
+    }
+
+    /// The running maximum (or minimum), the shape `cumsum` already has:
+    /// element `i` reduces `0..=i`. A null contributes nothing and takes
+    /// the running value so far, so the result has no nulls after the
+    /// first valid element.
+    pub fn cum_extreme(&self, want_max: bool) -> Result<Series> {
+        if matches!(self.dtype(), crate::DType::Str | crate::DType::Bool) {
+            return Err(OdsError::InvalidArgument(format!(
+                "cum_max/cum_min: needs a numeric column, got {}",
+                self.dtype()
+            )));
+        }
+        let n = self.len();
+        let better = |a: f64, b: f64| if want_max { a > b } else { a < b };
+        let mut running: Option<f64> = None;
+        let mut out: Vec<Option<f64>> = Vec::with_capacity(n);
+        for i in 0..n {
+            let v = match self.scalar_at(i) {
+                Scalar::F64(x) => Some(x),
+                Scalar::I64(x) => Some(x as f64),
+                _ => None,
+            };
+            if let Some(x) = v
+                && running.is_none_or(|r| better(x, r))
+            {
+                running = Some(x);
+            }
+            out.push(running);
+        }
+        Ok(match self.dtype() {
+            crate::DType::I64 => {
+                Series::from_i64_options(out.into_iter().map(|o| o.map(|x| x as i64)).collect())
+            }
+            _ => Series::from_f64_options(out),
+        })
+    }
+
+    /// The rank of each element, smallest first. Nulls rank as null:
+    /// they are skipped by every other reduction, and giving them a
+    /// position would silently place them somewhere.
+    pub fn rank(&self, method: RankMethod) -> Result<Series> {
+        let n = self.len();
+        // Order the valid positions. `argsort` puts nulls last, which is
+        // exactly the tail this then ignores.
+        let order = self.argsort()?;
+        let positions: Vec<usize> = (0..order.len())
+            .filter_map(|i| match order.scalar_at(i) {
+                Scalar::I64(row) => Some(row as usize),
+                _ => None,
+            })
+            .filter(|&row| !matches!(self.scalar_at(row), Scalar::Null))
+            .collect();
+
+        let mut out: Vec<Option<f64>> = vec![None; n];
+        let mut i = 0;
+        let mut dense = 0i64;
+        while i < positions.len() {
+            // The run of equal values starting at i.
+            let mut j = i + 1;
+            while j < positions.len()
+                && scalars_equal(self.scalar_at(positions[j]), self.scalar_at(positions[i]))
+            {
+                j += 1;
+            }
+            dense += 1;
+            for (k, &row) in positions[i..j].iter().enumerate() {
+                out[row] = Some(match method {
+                    RankMethod::Min => (i + 1) as f64,
+                    RankMethod::Max => j as f64,
+                    RankMethod::Average => ((i + 1 + j) as f64) / 2.0,
+                    RankMethod::Ordinal => (i + k + 1) as f64,
+                    RankMethod::Dense => dense as f64,
+                });
+            }
+            i = j;
+        }
+        // Only `average` can produce a half, so the others stay Int and
+        // can be used as indices without a cast.
+        Ok(if method == RankMethod::Average {
+            Series::from_f64_options(out)
+        } else {
+            Series::from_i64_options(out.into_iter().map(|o| o.map(|x| x as i64)).collect())
+        })
+    }
+
+    /// A trailing-window aggregate: element `i` reduces the `window`
+    /// elements ending at `i`. The first `window - 1` elements are null,
+    /// because the window is not yet full and reporting a partial
+    /// reduction as if it were whole is how a chart lies at its left
+    /// edge.
+    ///
+    /// Nulls inside a window are skipped, exactly as the whole-column
+    /// reductions skip them, so a window with two valid elements of
+    /// three means the mean of two.
+    ///
+    /// Cost is one reduction per element — O(n × window). The
+    /// incremental alternative accumulates float drift that a fresh sum
+    /// does not, which would make a rolling mean disagree with the
+    /// `sum` of the same window. Correctness first; if a large window on
+    /// a large column ever shows up in a measurement, that is the point
+    /// to revisit it.
+    pub fn rolling(&self, window: usize, op: AggOp) -> Result<Series> {
+        if window == 0 {
+            return Err(OdsError::InvalidArgument(
+                "rolling: window must be at least 1".to_string(),
+            ));
+        }
+        let n = self.len();
+        if op != AggOp::Count && matches!(self.dtype(), crate::DType::Str | crate::DType::Bool) {
+            return Err(OdsError::InvalidArgument(format!(
+                "rolling: {:?} needs a numeric column, got {}",
+                op,
+                self.dtype()
+            )));
+        }
+        let value_at = |i: usize| match self.scalar_at(i) {
+            Scalar::F64(x) => Some(x),
+            Scalar::I64(x) => Some(x as f64),
+            _ => None,
+        };
+        let reduce = |lo: usize, hi: usize| -> Option<f64> {
+            let vals = (lo..hi).filter_map(value_at);
+            match op {
+                AggOp::Count => Some((lo..hi).filter(|&i| value_at(i).is_some()).count() as f64),
+                AggOp::Sum => {
+                    let mut any = false;
+                    let mut total = 0.0;
+                    for v in vals {
+                        any = true;
+                        total += v;
+                    }
+                    // An all-null window sums to null, not to zero: no
+                    // data is not the same measurement as zero.
+                    any.then_some(total)
+                }
+                AggOp::Mean => {
+                    let (mut total, mut count) = (0.0, 0usize);
+                    for v in vals {
+                        total += v;
+                        count += 1;
+                    }
+                    (count > 0).then(|| total / count as f64)
+                }
+                AggOp::Min => vals.fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.min(v)))),
+                AggOp::Max => vals.fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.max(v)))),
+            }
+        };
+        let out: Vec<Option<f64>> = (0..n)
+            .map(|i| {
+                (i + 1 >= window)
+                    .then(|| reduce(i + 1 - window, i + 1))
+                    .flatten()
+            })
+            .collect();
+        // Count is always a count; mean is always a fraction; the rest
+        // keep the column's own type, as the whole-column reductions do.
+        Ok(match op {
+            AggOp::Count => {
+                Series::from_i64_options(out.into_iter().map(|o| o.map(|x| x as i64)).collect())
+            }
+            AggOp::Mean => Series::from_f64_options(out),
+            _ if self.dtype() == crate::DType::I64 => {
+                Series::from_i64_options(out.into_iter().map(|o| o.map(|x| x as i64)).collect())
+            }
+            _ => Series::from_f64_options(out),
+        })
+    }
+}
+
+/// Value equality for ranking, where two nulls never reach this and NaN
+/// is not a concern (argsort has already ordered them).
+fn scalars_equal(a: Scalar, b: Scalar) -> bool {
+    match (a, b) {
+        (Scalar::F64(x), Scalar::F64(y)) => x == y,
+        (Scalar::I64(x), Scalar::I64(y)) => x == y,
+        (Scalar::Bool(x), Scalar::Bool(y)) => x == y,
+        (Scalar::Str(x), Scalar::Str(y)) => x == y,
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------
 // Reshape
 // ---------------------------------------------------------------------
 

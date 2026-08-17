@@ -32,7 +32,7 @@ pub mod plot;
 pub mod stats;
 
 pub use bitmap::{Bitmap, merge_validity};
-pub use frame::{AggOp, AggSpec, Frame, JoinHow};
+pub use frame::{AggOp, AggSpec, Frame, JoinHow, RankMethod};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

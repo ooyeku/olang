@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **DP3 Tier 3c: `shift`, `cum_max`/`cum_min`, `rank`, `rolling`.** The
+  window functions, which close DP3.
+
+  `ods.shift(s, by)` moves values down the column, filling what is
+  vacated with nulls — not a wrapped value, because a window has an edge
+  and the row before the first row does not exist. A difference then
+  falls out of the operators already there (`s - ods.shift(s, 1)`), which
+  is why there is no separate `diff` verb.
+
+  `ods.cum_max` and `ods.cum_min` are the running extremes, the shape
+  `cumsum` already had. `ods.rank(s, method)` ranks smallest first with
+  the five standard tie treatments — min, max, average, ordinal, dense —
+  defaulting to `"min"`, the competition ranking "rank" means
+  unqualified. Nulls rank as null, since every other reduction skips
+  them and giving them a position would place them somewhere silently.
+  Only `average` can produce a half, so the other methods return an Int
+  column usable as indices without a cast.
+
+  `ods.rolling(s, window, agg)` is a trailing-window aggregate. The
+  first `window - 1` elements are null: the window is not yet full, and
+  reporting a partial reduction as a whole one is how a chart lies at
+  its left edge. Nulls inside a window are skipped exactly as the
+  whole-column reductions skip them, and an all-null window sums to null
+  rather than to zero, since no data is not the measurement zero.
+
+  It recomputes each window rather than keeping a running total, at
+  O(n × window). The incremental form accumulates float drift a fresh
+  sum does not, which would make a rolling mean disagree with the `mean`
+  of the same window — so correctness first, and the cost is stated in
+  the docs rather than hidden. If a wide window over a long column shows
+  up in a measurement, that is the point to revisit it, the same
+  discipline DP1c settled.
+
 - **DP3 Tier 3b: `pivot` and `unpivot`.** The two shapes of the same
   data — long, which is what a database returns and what `group_by` and
   the plotting verbs want, and wide, which is what a person reads — and

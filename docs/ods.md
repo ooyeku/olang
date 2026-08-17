@@ -236,6 +236,65 @@ println(to_string(ods.to_list(ods.cumsum(s))))    // [4, 5, 12, 14]
 println(to_string(ods.dot(s, s)))                 // 4²+1²+7²+2²
 ```
 
+### Windows
+
+Four verbs look at a column's neighbourhood rather than the whole of it.
+
+`ods.shift(s, by)` moves values down the column, filling what is vacated
+with nulls; a negative `by` moves them up. Nulls rather than a wrapped
+value, because a window has an edge and the row before the first row
+does not exist. That makes a difference fall out of the operators
+already there, which is why there is no separate `diff` verb:
+
+```olang
+let s = ods.series([4, 1, 7, 1, 9])
+println(to_string(ods.to_list(ods.shift(s, 1))))       // [(), 4, 1, 7, 1]
+println(to_string(ods.to_list(s - ods.shift(s, 1))))   // [(), -3, 6, -6, 8]
+```
+
+`ods.cum_max(s)` and `ods.cum_min(s)` are the running maximum and
+minimum, the shape `ods.cumsum` already had.
+
+`ods.rank(s, method)` ranks smallest first. Nulls rank as null — they
+are skipped by every other reduction, and giving them a position would
+place them somewhere without saying so. The method decides only what
+happens to values that tie, and defaults to `"min"`, the competition
+ranking that "rank" means unqualified:
+
+| method | ties among four values |
+|---|---|
+| `"min"` (default) | 1, 2, 2, 4 — competition ranking |
+| `"max"` | 1, 3, 3, 4 — ties take the last position they span |
+| `"average"` | 1, 2.5, 2.5, 4 — ties share the mean of their positions |
+| `"ordinal"` | 1, 2, 3, 4 — broken by row order, every rank distinct |
+| `"dense"` | 1, 2, 2, 3 — the next distinct value gets the next integer |
+
+Only `"average"` can produce a half, so every other method returns an
+Int column that can be used as indices without a cast.
+
+`ods.rolling(s, window, agg)` is a trailing-window aggregate: element
+`i` reduces the `window` elements ending at `i`, with `agg` one of
+`count`, `sum`, `mean`, `min`, `max`. The first `window - 1` elements
+are null, because the window is not yet full and reporting a partial
+reduction as a whole one is how a chart lies at its left edge. Nulls
+inside a window are skipped, exactly as the whole-column reductions skip
+them, so a window holding two valid values of three gives the mean of
+two:
+
+```olang
+let s = ods.series([1.0, 2.0, 3.0, 4.0, 5.0])
+println(to_string(ods.to_list(ods.rolling(s, 3, "mean"))))    // [(), (), 2.0, 3.0, 4.0]
+println(to_string(ods.to_list(ods.rolling(s, 3, "max"))))     // [(), (), 3.0, 4.0, 5.0]
+```
+
+`rolling` computes each window afresh, so it costs one reduction per
+element — O(n × window). The incremental alternative, which keeps a
+running total and subtracts the element leaving the window, accumulates
+float drift a fresh sum does not, and would make a rolling mean disagree
+with the `mean` of the same window. Correctness first; if a wide window
+over a long column shows up in a measurement, that is the point to
+revisit it.
+
 ### Distinct values
 
 `ods.unique(s)` gives the distinct values in first-seen order,

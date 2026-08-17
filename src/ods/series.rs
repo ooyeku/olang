@@ -18,7 +18,7 @@
 
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
-use olang_ods::{ArithOp, CmpOp, DType, Scalar, Series};
+use olang_ods::{AggOp, ArithOp, CmpOp, DType, RankMethod, Scalar, Series};
 use std::any::Any;
 
 #[derive(Debug)]
@@ -328,6 +328,11 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("value_counts", 1),
     ("cast", 2),
     ("sample", 2),
+    ("shift", 2),
+    ("cum_max", 1),
+    ("cum_min", 1),
+    ("rank", 2),
+    ("rolling", 3),
     ("cumsum", 1),
     ("map", 2),
     ("dot", 2),
@@ -341,6 +346,9 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("not", 1),
     ("ne", 2),
 ];
+
+/// The ranking methods, in the order the error lists them.
+const RANK_METHODS: &[&str] = &["min", "max", "average", "ordinal", "dense"];
 
 /// The type names `cast` accepts, which are the names `schema` reports.
 const DTYPE_NAMES: &[&str] = &["Float", "Int", "Bool", "String"];
@@ -388,7 +396,14 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Option<Result<Value, String>> {
     Some(dispatch_inner(func, args, expected))
 }
 
-fn dispatch_inner(func: &str, args: Vec<Value>, expected: usize) -> Result<Value, String> {
+fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<Value, String> {
+    // "rank" unqualified means the competition ranking (1, 2, 2, 4) —
+    // the one a reader assumes when no method is named. Stated here
+    // rather than inside the arm, so the arity check and the default
+    // cannot drift apart.
+    if func == "rank" && args.len() + 1 == expected {
+        args.push(Value::String(std::sync::Arc::new("min".to_string())));
+    }
     arity(func, &args, expected)?;
     let e = |err: olang_ods::OdsError| err.to_string();
     match func {
@@ -536,6 +551,77 @@ fn dispatch_inner(func: &str, args: Vec<Value>, expected: usize) -> Result<Value
             let s = want_series(func, &args, 0)?;
             let idx = crate::ods::frame::sample_indices(func, s.len(), args.get(1))?;
             s.take(&idx).map(make_series_value).map_err(e)
+        }
+        // ── windows ──
+        "shift" => {
+            let s = want_series(func, &args, 0)?;
+            match &args[1] {
+                Value::Integer(by) => s.shift(*by).map(make_series_value).map_err(e),
+                other => Err(format!(
+                    "ods.shift: the offset must be an Int, got {}",
+                    other.type_name()
+                )),
+            }
+        }
+        "cum_max" | "cum_min" => want_series(func, &args, 0)?
+            .cum_extreme(func == "cum_max")
+            .map(make_series_value)
+            .map_err(e),
+        "rank" => {
+            let s = want_series(func, &args, 0)?;
+            let name = match &args[1] {
+                Value::String(name) => name.as_ref().clone(),
+                other => {
+                    return Err(format!(
+                        "ods.rank: the method must be a String — one of {}. Got {}",
+                        RANK_METHODS.join(", "),
+                        other.type_name()
+                    ));
+                }
+            };
+            let method = RankMethod::parse(&name).ok_or_else(|| {
+                format!(
+                    "ods.rank: '{}' is not a ranking method. Expected one of {}",
+                    name,
+                    RANK_METHODS.join(", ")
+                )
+            })?;
+            s.rank(method).map(make_series_value).map_err(e)
+        }
+        "rolling" => {
+            let s = want_series(func, &args, 0)?;
+            let window = match &args[1] {
+                Value::Integer(w) if *w >= 1 => *w as usize,
+                Value::Integer(w) => {
+                    return Err(format!(
+                        "ods.rolling: the window must be at least 1, got {}",
+                        w
+                    ));
+                }
+                other => {
+                    return Err(format!(
+                        "ods.rolling: the window must be an Int, got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            let op_name = match &args[2] {
+                Value::String(name) => name.as_ref().clone(),
+                other => {
+                    return Err(format!(
+                        "ods.rolling: the aggregation must be a String, got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            let op = AggOp::parse(&op_name).ok_or_else(|| {
+                format!(
+                    "ods.rolling: '{}' is not an aggregation. Expected one of \
+                     count, sum, mean, min, max",
+                    op_name
+                )
+            })?;
+            s.rolling(window, op).map(make_series_value).map_err(e)
         }
         "quantile" => {
             let s = want_series(func, &args, 0)?;
