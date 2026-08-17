@@ -30,26 +30,51 @@ companion tool `otc`.
 
 ```bash
 otc new myapp             # application: olang.toml + src/main.ol
-otc new geometry --lib    # library: olang.toml + index.ol at the root
+otc new geometry --lib    # library: olang.toml + index.ol + lib/
 ```
 
 Both shapes come with a README, a `.gitignore`, and a working `test`
 block, and the generated source is parse-checked before it is written.
 The difference is the entry point. An application's life is
-`olang src/main.ol`; a library's public API lives in `index.ol`:
+`olang src/main.ol`; a library's public API lives in `index.ol`, over
+implementation modules in `lib/`:
+
+```text
+geometry/
+  olang.toml
+  index.ol        the public API — what `use geometry` finds
+  lib/area.ol     implementation
+```
+
+`index.ol` has to sit at the package root, because that is where the
+resolver looks. Keeping it to imports and re-exports means the package's
+whole surface reads in one screen:
 
 ```olang no-run
-// geometry/index.ol — `share` marks the public API;
-// anything unshared stays private to the package.
-share fn area(w, h) = w * h
-share let ORIGIN = (0, 0)
+// geometry/index.ol
+use lib.area { area }
 
-fn helper(x) = x + 1        // private: invisible to consumers
+share fn rectangle(w, h) = area(w, h)
+share let ORIGIN = (0, 0)
+```
+
+```olang no-run
+// geometry/lib/area.ol — `share` here makes a name visible to the rest
+// of the package; only what index.ol re-exports is public.
+share fn area(w, h) = w * h
+
+fn helper(x) = x + 1        // private even within the package
 
 test "area works" {
     assert_eq(area(3, 4), 12)
 }
 ```
+
+Nothing forces the split — a one-file library that `share`s directly from
+`index.ol` is still a valid package, and the resolver does not care. The
+scaffold starts with `lib/` because a library that grows without one puts
+everything in the root module by default, and the seam is harder to
+introduce later than to keep.
 
 That is all a consumable library is: an `olang.toml` (so the resolver can
 find the package and name it) plus a root module with `share`d bindings.

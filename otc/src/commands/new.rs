@@ -4,7 +4,15 @@
 //! Two shapes, matching how the module resolver finds code:
 //! - application (default): entry point at `src/main.ol`, run directly.
 //! - library (`--lib`): public API in `index.ol` at the package root, which
-//!   is where `use <name>` looks when another package depends on this one.
+//!   is where `use <name>` looks when another package depends on this one,
+//!   over implementation modules in `lib/`.
+//!
+//! The library shape is deliberately two files rather than one. `index.ol`
+//! has to sit at the root because that is where the resolver looks, but a
+//! library that grows puts everything there by default and ends up with
+//! one long file and no seam. Starting with `lib/` present makes the
+//! second module an obvious addition rather than a refactor, and it makes
+//! `index.ol` what it should be: the list of what the package exports.
 
 use anyhow::{Context, Result};
 use olang::pkg::manifest::{Manifest, PackageMeta};
@@ -41,20 +49,30 @@ pub fn execute(name: String, lib: bool, verbose: bool) -> Result<()> {
         .save(root)
         .map_err(|e| anyhow::anyhow!("Failed to write olang.toml: {}", e))?;
 
-    let (source_rel, source) = if lib {
-        ("index.ol", lib_index_source(&name))
+    let sources: Vec<(&str, String)> = if lib {
+        fs::create_dir(root.join("lib")).context("Failed to create lib directory")?;
+        vec![
+            ("index.ol", lib_index_source(&name)),
+            ("lib/greet.ol", lib_module_source(&name)),
+        ]
     } else {
         fs::create_dir(root.join("src")).context("Failed to create src directory")?;
-        ("src/main.ol", app_main_source(&name))
+        vec![("src/main.ol", app_main_source(&name))]
     };
 
     // The scaffold's promise is that it always generates working code —
     // refuse to write a program the current parser rejects.
-    olang::parser::Parser::new()
-        .parse(&source)
-        .map_err(|e| anyhow::anyhow!("Generated {} does not parse: {}", source_rel, e))?;
-    fs::write(root.join(source_rel), source)
-        .with_context(|| format!("Failed to write {}", source_rel))?;
+    for (rel, source) in &sources {
+        olang::parser::Parser::new()
+            .parse(source)
+            .map_err(|e| anyhow::anyhow!("Generated {} does not parse: {}", rel, e))?;
+        fs::write(root.join(rel), source).with_context(|| format!("Failed to write {}", rel))?;
+    }
+    let source_rel = sources
+        .iter()
+        .map(|(rel, _)| *rel)
+        .collect::<Vec<_>>()
+        .join(", ");
 
     let readme = if lib {
         lib_readme_source(&name)
@@ -105,8 +123,23 @@ test "doubling works" {{
 
 fn lib_index_source(name: &str) -> String {
     format!(
-        r#"// {name} — a shared library. `share` marks the public API;
-// anything unshared stays private to the package.
+        r#"// {name} — the public API. This file is what `use {name}` finds,
+// so keeping it to imports and re-exports makes the package's surface
+// readable in one screen. The implementation lives in lib/.
+
+use lib.greet {{ greet }}
+
+share fn hello(who) = greet(who)
+"#
+    )
+}
+
+fn lib_module_source(name: &str) -> String {
+    format!(
+        r#"// {name}/lib/greet.ol — an implementation module.
+//
+// `share` here makes a name visible to the rest of the package; only what
+// index.ol re-exports becomes part of the public API.
 
 share fn greet(who) = `Hello, ${{who}}!`
 
@@ -150,8 +183,17 @@ fn lib_readme_source(name: &str) -> String {
     format!(
         r#"# {name}
 
-An olang library. The public API lives in `index.ol` — everything marked
-`share` is importable by packages that depend on this one.
+An olang library.
+
+```text
+index.ol        the public API — what `use {name}` finds
+lib/greet.ol    implementation
+```
+
+`index.ol` sits at the package root because that is where the resolver
+looks; keeping it to imports and re-exports means the package's surface
+reads in one screen. Add modules under `lib/` and re-export from
+`index.ol` what callers should see.
 
 ```bash
 olang test             # run the library's tests
