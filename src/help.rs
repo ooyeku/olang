@@ -1986,6 +1986,27 @@ impl HelpSystem {
             "whether the reader has reached the end of its file",
         );
         self.doc(
+            "ods.write_frame",
+            "ods.write_frame(f, path)",
+            "Result<Unit, Error>",
+            "ods",
+            "write a Frame in olang's native columnar format: types survive exactly, the load is a read rather than a parse, and one column can be fetched without the others. Requires the fs capability at write level",
+        );
+        self.doc(
+            "ods.read_frame",
+            "ods.read_frame(path, columns = all)",
+            "Result<Frame, Error>",
+            "ods",
+            "read a native columnar file. Pass a list of column names to decode only those, in that order — the rest are skipped by the byte lengths in the header. Requires the fs capability at read level",
+        );
+        self.doc(
+            "ods.frame_info",
+            "ods.frame_info(path)",
+            "Result<Frame, Error>",
+            "ods",
+            "the schema of a native columnar file — column, dtype, nulls, bytes — read from its text header without loading the data. Requires the fs capability at read level",
+        );
+        self.doc(
             "ods.describe",
             "ods.describe(f)",
             "Frame",

@@ -37,6 +37,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`ods.head(f)` defaults to 10 rows.** The verb typed most often at the
   REPL was the one that raised most often, because it demanded a count.
 
+- **A native columnar file format (Campaign 2, DP2 — the last lane).**
+  CSV and JSON lines are interchange with the outside world and both pay
+  for it: every load re-parses text and re-infers types, and neither can
+  record what a column *was*. A column of zero-padded codes written to
+  CSV comes back as integers with the padding gone.
+
+  | | |
+  |---|---|
+  | `ods.write_frame(f, path)` | write a Frame → `Result<Unit>` |
+  | `ods.read_frame(path, columns = all)` | read one back → `Result<Frame>` |
+  | `ods.frame_info(path)` | its schema, from the header alone → `Result<Frame>` |
+
+  Types survive exactly, the load is a read rather than a parse, and the
+  optional column list decodes only what is named — the rest is stepped
+  over using the byte lengths in the header. Over 500,000 rows and six
+  columns: **CSV 138ms, columnar 50ms, one column 26ms**, and the file is
+  15MB against the CSV's 17MB.
+
+  Arrow and Parquet were declined: both are a dependency and both are
+  opaque, which is the wrong trade for a language whose case is that the
+  artifact should be inspectable. The header is UTF-8 text, one line per
+  column, readable with `head`:
+
+  ```text
+  olang-columns 1
+  rows 500000
+  columns 6
+  col "id" Int enc=plain nulls=0 bytes=4000000
+  col "region" String enc=dict nulls=0 bytes=2000066
+  data
+  ```
+
+  `enc` is how a String column is stored, and it exists because the
+  obvious layout lost. Writing each row's text with its own offset made
+  the file *larger than the CSV* — 24MB against 17MB — since an eight-byte
+  offset costs more than the four characters it points at, and repetition
+  is the normal case in a table. A repeating column is now written once as
+  a dictionary of its distinct values plus one small code per row. The
+  writer chooses by computing both sizes and taking the smaller, so there
+  is no threshold to tune and no case where the choice is a guess.
+
 - **A Frame is subscriptable: `f["amount"]`, `f[mask]`, `s[i]`.** Reaching
   a column was the most repeated gesture in data code and the most
   verbose: `ods.column` and `ods.get` together were **13.6% of all 937

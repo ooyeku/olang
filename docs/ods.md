@@ -452,6 +452,67 @@ loop — which keeps the promise the CSV reader makes from its header, and
 means a pipeline written against a chunk needs no special case for its
 last iteration.
 
+### The native format
+
+CSV and JSON lines are interchange with the outside world, and both pay
+for it. Every load re-parses text and re-infers types, and neither can
+record what a column *was*: a column of zero-padded codes written to CSV
+comes back as integers, with the padding gone.
+
+```olang
+let codes = ods.frame([["zip", ["007", "042", "100"]]])
+println(to_string(ods.to_list(ods.read_csv(ods.to_csv(codes))["zip"])))   // [7, 42, 100]
+```
+
+`ods.write_frame` and `ods.read_frame` are the pair to use when the
+reader is going to be olang. Types survive exactly, the load is a read
+rather than a parse, and a single column can be fetched without touching
+the others:
+
+```olang no-run
+unwrap(ods.write_frame(sales, "sales.olc"))
+let all = unwrap(ods.read_frame("sales.olc"))
+let some = unwrap(ods.read_frame("sales.olc", ["region", "revenue"]))
+```
+
+The second argument names the columns to decode, in the order wanted;
+everything else is stepped over using the byte lengths in the header.
+That is what a columnar layout on disk buys, and it is measurable: over
+500,000 rows and six columns, a CSV load takes 138ms and the same data
+from a columnar file takes 50ms — 26ms for one column. The file is also
+slightly smaller than the CSV, 15MB against 17MB.
+
+Arrow and Parquet were the alternatives and were declined. Both would be
+a dependency, and both are opaque — you cannot look at the file and see
+what is in it, which is the wrong trade for a language whose case is that
+the artifact should be inspectable. So the header is UTF-8 text, readable
+with `head`:
+
+```text
+olang-columns 1
+rows 500000
+columns 6
+col "id" Int enc=plain nulls=0 bytes=4000000
+col "region" String enc=dict nulls=0 bytes=2000066
+col "amount" Float enc=plain nulls=0 bytes=4000000
+data
+```
+
+`ods.frame_info(path)` reads exactly that much and returns it as a Frame,
+so a program can ask what is in a file — its columns, their types, how
+many nulls each holds, and how many bytes each occupies — without loading
+any of it.
+
+`enc` is how a String column is stored. Repetition is the normal case in
+a table: a `region` column is a handful of distinct values across a
+million rows, and writing each row's text separately costs more in
+offsets than the text itself is worth — enough to make the file *larger*
+than the CSV it came from. So a repeating column is written once as a
+dictionary of its distinct values plus one small code per row. The writer
+picks between the two by computing both sizes and taking the smaller,
+which means there is no threshold to tune and no case where the choice is
+merely a guess.
+
 ### Looking at one
 
 Printing a Frame prints a table. This is the first thing an exploratory

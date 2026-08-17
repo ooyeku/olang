@@ -8,6 +8,7 @@
 //! all thin tables over the engine (L2 of the layer cake). See
 //! `docs/design/ods.md`.
 
+mod columns;
 mod frame;
 mod plot;
 mod series;

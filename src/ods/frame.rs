@@ -122,6 +122,9 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("write_csv", 2),
     ("to_jsonl", 1),
     ("write_jsonl", 2),
+    ("read_frame", 2),
+    ("write_frame", 2),
+    ("frame_info", 1),
     ("frame_from_records", 1),
     ("to_records", 1),
     ("columns", 1),
@@ -189,12 +192,22 @@ fn e(err: olang_ods::OdsError) -> String {
     err.to_string()
 }
 
-/// Functions whose final declared argument may be omitted. `head` is the
-/// one verb typed constantly at the REPL, where `ods.head(f)` is what a
-/// hand reaches for; the default is stated here rather than buried in the
-/// arm so the arity check and the default cannot drift apart.
-const OPTIONAL_TAIL: &[(&str, usize)] = &[("head", DEFAULT_HEAD)];
-const DEFAULT_HEAD: usize = 10;
+/// Functions whose final declared argument may be omitted, and what it
+/// defaults to. `ods.head(f)` is what a hand reaches for at the REPL, and
+/// `ods.read_frame(path)` should not demand a column list to mean "all of
+/// them". Each default is stated here rather than buried in its arm, so
+/// the arity check and the default cannot drift apart.
+fn default_tail(func: &str) -> Option<Value> {
+    match func {
+        "head" => Some(Value::Integer(DEFAULT_HEAD)),
+        // Unit reads as "unspecified", which `wanted_columns` turns into
+        // every column. An empty list would be ambiguous with asking for
+        // no columns at all.
+        "read_frame" => Some(Value::Unit),
+        _ => None,
+    }
+}
+const DEFAULT_HEAD: i64 = 10;
 
 pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
     let expected = FUNCTIONS
@@ -202,10 +215,10 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
         .find(|(n, _)| *n == func)
         .map(|(_, a)| *a)
         .expect("caller checked membership");
-    if let Some((_, default)) = OPTIONAL_TAIL.iter().find(|(n, _)| *n == func)
-        && args.len() + 1 == expected
+    if args.len() + 1 == expected
+        && let Some(default) = default_tail(func)
     {
-        args.push(Value::Integer(*default as i64));
+        args.push(default);
     }
     if args.len() != expected {
         return Err(format!(
@@ -380,6 +393,40 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
             match std::fs::write(&path, to_jsonl(f)) {
                 Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
                 Err(err) => Ok(open_error("write_jsonl", &path, err)),
+            }
+        }
+        // The native columnar format: types survive the round trip, the
+        // load is a read rather than a parse, and a single column can be
+        // fetched without touching the others.
+        "write_frame" => {
+            let f = want_frame(func, &args, 0)?;
+            let path = want_string(func, &args, 1)?;
+            match std::fs::write(&path, super::columns::encode(f)) {
+                Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
+                Err(err) => Ok(open_error("write_frame", &path, err)),
+            }
+        }
+        "read_frame" => {
+            let path = want_string(func, &args, 0)?;
+            // Misuse of the argument raises; a bad *file* is a Result,
+            // because the caller chose the file but wrote the argument.
+            let wanted = super::columns::wanted_columns(args.get(1))?;
+            match std::fs::read(&path) {
+                Err(err) => Ok(open_error("read_frame", &path, err)),
+                Ok(bytes) => match super::columns::decode(&bytes, wanted.as_deref()) {
+                    Ok(frame) => Ok(Value::Ok(Box::new(OdsFrame::into_value(frame)))),
+                    Err(msg) => Ok(open_error("read_frame", &path, msg)),
+                },
+            }
+        }
+        "frame_info" => {
+            let path = want_string(func, &args, 0)?;
+            match std::fs::read(&path) {
+                Err(err) => Ok(open_error("frame_info", &path, err)),
+                Ok(bytes) => match super::columns::info(&bytes) {
+                    Ok(frame) => Ok(Value::Ok(Box::new(OdsFrame::into_value(frame)))),
+                    Err(msg) => Ok(open_error("frame_info", &path, msg)),
+                },
             }
         }
         "frame_from_records" => {

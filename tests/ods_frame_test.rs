@@ -1057,3 +1057,329 @@ fn short_floats_are_left_exactly_as_they_are() {
     assert!(!text.contains("significant digits"), "{text}");
     assert!(text.contains("25.5"), "{text}");
 }
+
+// ── The native columnar format ────────────────────────────────────────
+
+/// A path in a fresh directory for a columnar file.
+fn olc_path(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("olang_olc_{}_{}", tag, std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join("frame.olc")
+}
+
+#[test]
+fn a_frame_round_trips_through_the_columnar_format() {
+    // Every dtype, and a null in each — the property the whole format
+    // exists for, since CSV cannot carry either faithfully.
+    let path = olc_path("round");
+    let src = format!(
+        r#"
+let f = ods.read_csv("s,i,x,b\na,1,2.5,true\n,,,\nc,3,4.5,false\n")
+unwrap(ods.write_frame(f, "{p}"))
+show(unwrap(ods.read_frame("{p}")) == f)
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("round trip");
+    assert_eq!(out.to_string(), "\"true\"".to_string());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn column_types_survive_the_round_trip() {
+    // The concrete cost of text interchange: a String column of zero-
+    // padded codes comes back from CSV as Int, with the padding gone —
+    // a silent corruption of postcodes, part numbers, and account ids.
+    // The columnar format records the type, so it cannot happen.
+    let path = olc_path("types");
+    let src = format!(
+        r#"
+let f = ods.frame([["zip", ["007", "042", "100"]]])
+unwrap(ods.write_frame(f, "{p}"))
+let back = unwrap(ods.read_frame("{p}"))
+let viacsv = ods.read_csv(ods.to_csv(f))
+show([ods.to_list(back["zip"]), ods.to_list(viacsv["zip"])])
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("types");
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"007\", \"042\", \"100\"], [7, 42, 100]]\"".to_string()
+    );
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn reading_one_column_skips_the_others() {
+    // The point of a columnar layout on disk. The named columns come
+    // back in the order asked for, not the order stored.
+    let path = olc_path("project");
+    let src = format!(
+        r#"
+let f = ods.read_csv("a,b,c\n1,2,3\n4,5,6\n")
+unwrap(ods.write_frame(f, "{p}"))
+let some = unwrap(ods.read_frame("{p}", ["c", "a"]))
+show([ods.columns(some), ods.to_list(some["c"])])
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("projection");
+    assert_eq!(out.to_string(), "\"[[\"c\", \"a\"], [3, 6]]\"".to_string());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn a_projection_naming_an_absent_column_is_an_err() {
+    let path = olc_path("absent");
+    let src = format!(
+        r#"
+unwrap(ods.write_frame(ods.read_csv("a\n1\n"), "{p}"))
+match ods.read_frame("{p}", ["nope"]) {{ Err(e) => e, v => "LEAKED" }}
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("refusal");
+    let text = out.to_string();
+    assert!(text.contains("no column 'nope'"), "{text}");
+    assert!(text.contains("It has: a"), "{text}");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn frame_info_describes_a_file_without_loading_it() {
+    // The openness payoff: what is in this file, answered from the
+    // header alone.
+    let path = olc_path("info");
+    let src = format!(
+        r#"
+let f = ods.read_csv("region,amount\neast,1.5\nwest,\n")
+unwrap(ods.write_frame(f, "{p}"))
+let info = unwrap(ods.frame_info("{p}"))
+show([ods.columns(info), ods.to_list(info["column"]), ods.to_list(info["nulls"])])
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("info");
+    let text = out.to_string();
+    assert!(
+        text.contains("[\"column\", \"dtype\", \"nulls\", \"bytes\"]"),
+        "{text}"
+    );
+    assert!(text.contains("[\"region\", \"amount\"], [0, 1]"), "{text}");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn the_header_is_readable_text() {
+    // "Readable rather than a black box" is the reason this format is
+    // not Parquet, so it is a test rather than a claim in a comment.
+    let path = olc_path("header");
+    let src = format!(
+        r#"
+let f = ods.read_csv("region,n\neast,1\nwest,2\n")
+unwrap(ods.write_frame(f, "{p}"))
+""
+"#,
+        p = path.to_string_lossy()
+    );
+    eval(&src, None).expect("write");
+    let bytes = std::fs::read(&path).expect("read");
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(200)]).to_string();
+    assert!(head.starts_with("olang-columns 1\n"), "{head}");
+    assert!(head.contains("rows 2\n"), "{head}");
+    assert!(head.contains("col \"region\" String enc="), "{head}");
+    assert!(head.contains("col \"n\" Int enc=plain nulls=0"), "{head}");
+    assert!(head.contains("\ndata\n"), "{head}");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn a_repeating_string_column_is_dictionary_encoded() {
+    // Repetition is the normal case in a table. Storing each row's text
+    // separately made the file larger than the CSV it came from, so the
+    // encoder compares both layouts and writes the smaller.
+    let mut repeating = String::from("region,unique\n");
+    for i in 0..500 {
+        repeating.push_str(&format!("{},{}\n", ["east", "west"][i % 2], i));
+    }
+    let path = olc_path("dict");
+    let src = format!(
+        "unwrap(ods.write_frame(ods.read_csv({:?}), \"{p}\"))\n\"\"",
+        repeating,
+        p = path.to_string_lossy()
+    );
+    eval(&src, None).expect("write");
+    let head = String::from_utf8_lossy(&std::fs::read(&path).unwrap()[..200]).to_string();
+    assert!(head.contains("col \"region\" String enc=dict"), "{head}");
+    // And it must still be the same data.
+    let back = eval(
+        &format!(
+            "take(ods.to_list(unwrap(ods.read_frame(\"{p}\", [\"region\"]))[\"region\"]), 3)",
+            p = path.to_string_lossy()
+        ),
+        None,
+    )
+    .expect("read back");
+    assert_eq!(
+        back.to_string(),
+        "[\"east\", \"west\", \"east\"]".to_string()
+    );
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn a_column_of_distinct_strings_stays_plain() {
+    // The other side of the same choice: a dictionary of unique values
+    // is strictly bigger, so it must not be picked.
+    let mut distinct = String::from("s\n");
+    for i in 0..500 {
+        distinct.push_str(&format!("value-{}\n", i));
+    }
+    let path = olc_path("plain");
+    let src = format!(
+        "unwrap(ods.write_frame(ods.read_csv({:?}), \"{p}\"))\n\"\"",
+        distinct,
+        p = path.to_string_lossy()
+    );
+    eval(&src, None).expect("write");
+    let head = String::from_utf8_lossy(&std::fs::read(&path).unwrap()[..120]).to_string();
+    assert!(head.contains("col \"s\" String enc=plain"), "{head}");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn a_dictionary_column_with_nulls_round_trips() {
+    // The two mechanisms compose: a validity bitmap in front of codes.
+    let mut text = String::from("region\n");
+    for i in 0..100 {
+        text.push_str(if i % 5 == 0 {
+            "\n"
+        } else if i % 2 == 0 {
+            "east\n"
+        } else {
+            "west\n"
+        });
+    }
+    let path = olc_path("dictnull");
+    let src = format!(
+        r#"
+let f = ods.read_csv({text:?})
+unwrap(ods.write_frame(f, "{p}"))
+show(unwrap(ods.read_frame("{p}")) == f)
+"#,
+        text = text,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("round trip");
+    assert_eq!(out.to_string(), "\"true\"".to_string());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn awkward_column_names_survive_the_header() {
+    // The header is line-oriented, so a name holding a quote, a space, or
+    // a newline would break it if it were not JSON-quoted.
+    let path = olc_path("names");
+    let src = format!(
+        r#"
+let f = ods.frame([
+    ["has space", [1]],
+    ["has\"quote", [2]],
+    ["has\nnewline", [3]],
+])
+unwrap(ods.write_frame(f, "{p}"))
+show(ods.columns(unwrap(ods.read_frame("{p}"))))
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("names");
+    let text = out.to_string();
+    assert!(text.contains("has space"), "{text}");
+    assert!(text.contains("newline"), "{text}");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn a_frame_with_no_rows_round_trips() {
+    let path = olc_path("empty");
+    let src = format!(
+        r#"
+let f = ods.read_csv("a,b\n")
+unwrap(ods.write_frame(f, "{p}"))
+let back = unwrap(ods.read_frame("{p}"))
+show([ods.columns(back), [ods.n_rows(back)]])
+"#,
+        p = path.to_string_lossy()
+    );
+    let out = eval(&src, None).expect("empty");
+    assert_eq!(out.to_string(), "\"[[\"a\", \"b\"], [0]]\"".to_string());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn a_file_that_is_not_ours_is_an_err_not_a_crash() {
+    // The caller chose the file, so its contents are input. Every
+    // malformed shape must land on Err rather than a panic.
+    let dir = std::env::temp_dir().join(format!("olang_olc_bad_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cases = [
+        ("plain.txt", "hello, this is not a frame\n".as_bytes().to_vec()),
+        (
+            "version.olc",
+            b"olang-columns 99\nrows 1\ncolumns 0\ndata\n".to_vec(),
+        ),
+        (
+            "truncated.olc",
+            b"olang-columns 1\nrows 4\ncolumns 1\ncol \"a\" Int enc=plain nulls=0 bytes=32\ndata\n\x01".to_vec(),
+        ),
+        (
+            "badenc.olc",
+            b"olang-columns 1\nrows 0\ncolumns 1\ncol \"a\" Int enc=rle nulls=0 bytes=0\ndata\n".to_vec(),
+        ),
+    ];
+    for (name, bytes) in cases {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let src = format!(
+            "show(is_err(ods.read_frame(\"{p}\")))",
+            p = path.to_string_lossy()
+        );
+        let out =
+            eval(&src, None).unwrap_or_else(|err| panic!("{name} raised instead of Err: {err}"));
+        assert_eq!(out.to_string(), "\"true\"".to_string(), "{name}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_bad_projection_argument_is_misuse_and_raises() {
+    // The path is the caller's input; the second argument is something
+    // they wrote. Wrong input is a Result, wrong code raises.
+    let path = olc_path("badarg");
+    let src = format!(
+        r#"
+unwrap(ods.write_frame(ods.read_csv("a\n1\n"), "{p}"))
+ods.read_frame("{p}", "a")
+"#,
+        p = path.to_string_lossy()
+    );
+    let err = eval(&src, None).expect_err("must raise");
+    assert!(err.contains("list of column names"), "{err}");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn the_columnar_format_agrees_across_tiers() {
+    let path = olc_path("tier");
+    assert_tier_transparent(&format!(
+        r#"
+let f = ods.frame([["n", [1, 2, 3]], ["s", ["a", "b", "a"]]])
+unwrap(ods.write_frame(f, "{p}"))
+ods.to_list(unwrap(ods.read_frame("{p}", ["s"]))["s"])
+"#,
+        p = path.to_string_lossy()
+    ))
+    .expect("tier agreement");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}

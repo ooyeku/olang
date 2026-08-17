@@ -414,11 +414,19 @@ pub fn required(full_name: &str) -> Option<CapUse> {
     // that take text (`read_csv`, `read_jsonl`) stay pure and ungated.
     if matches!(
         full_name,
-        "ods.read_csv_file" | "ods.open_csv" | "ods.read_jsonl_file" | "ods.open_jsonl"
+        "ods.read_csv_file"
+            | "ods.open_csv"
+            | "ods.read_jsonl_file"
+            | "ods.open_jsonl"
+            | "ods.read_frame"
+            | "ods.frame_info"
     ) {
         return Some(CapUse::FsRead);
     }
-    if matches!(full_name, "ods.write_csv" | "ods.write_jsonl") {
+    if matches!(
+        full_name,
+        "ods.write_csv" | "ods.write_jsonl" | "ods.write_frame"
+    ) {
         return Some(CapUse::FsWrite);
     }
     if full_name.starts_with("proc.") || full_name == "os.exec" {
@@ -696,6 +704,9 @@ mod tests {
         assert_eq!(required("ods.open_csv"), Some(CapUse::FsRead));
         assert_eq!(required("ods.read_jsonl_file"), Some(CapUse::FsRead));
         assert_eq!(required("ods.open_jsonl"), Some(CapUse::FsRead));
+        assert_eq!(required("ods.read_frame"), Some(CapUse::FsRead));
+        // Reading only a header still opens the file.
+        assert_eq!(required("ods.frame_info"), Some(CapUse::FsRead));
         // The text parsers reach nothing and stay ungated.
         assert_eq!(required("ods.read_jsonl"), None);
         // `next_chunk` reads from a handle already obtained under a grant,
@@ -705,6 +716,7 @@ mod tests {
         assert_eq!(required("ods.next_chunk"), None);
         assert_eq!(required("ods.write_csv"), Some(CapUse::FsWrite));
         assert_eq!(required("ods.write_jsonl"), Some(CapUse::FsWrite));
+        assert_eq!(required("ods.write_frame"), Some(CapUse::FsWrite));
         assert_eq!(required("ods.read_csv"), None);
         assert_eq!(required("ods.to_csv"), None);
         assert_eq!(required("ods.group_by"), None);

@@ -189,12 +189,12 @@ the corpus if Campaign 1 lands first.
 | Lane | Work | Status |
 |---|---|---|
 | DP1c — parallel group keys | Parallelize the group-identification pass of `group_by`, which now dominates its runtime; the aggregation pass is already parallel. | planned |
-| DP2 — IO breadth | Read CSV from files and as a bounded-memory stream; JSON-lines input; a columnar interchange format; `to_csv` and file output. The end-to-end input-to-output story. | **file IO, streaming, and JSON lines shipped**; the columnar format remains |
+| DP2 — IO breadth | Read CSV from files and as a bounded-memory stream; JSON-lines input; a columnar interchange format; `to_csv` and file output. The end-to-end input-to-output story. | **shipped** |
 | DP2b — ergonomics | Subscript syntax for Frames and Series, and the orientation verbs (`describe`, `schema`). Reaching a column was 13.6% of every `ods` call in the corpus and the most verbose thing in it. | **shipped** |
 | DP3 — verb completeness | Window functions, reshape (wide/long, pivot), additional join kinds and aggregations, and string and categorical column operations. | planned |
 | DP4 — flagship and benchmark | A realistic end-to-end ETL example wired to `plot`, and a reproducible benchmark against pandas and Polars with methodology and hardware documented in [The data stack](ods.md). | planned |
 
-**DP2's file IO, streaming, and JSON lines shipped.** `ods.read_csv_file`,
+**DP2 shipped.** `ods.read_csv_file`,
 `ods.to_csv`, and `ods.write_csv` close the loop the chapter described but
 the stack could not finish, and `ods.open_csv` / `ods.next_chunk` process
 a file larger than memory: measured over a 1M-row CSV, the whole-file read
@@ -255,10 +255,26 @@ computed column is wide enough to push two other columns out of the
 width budget. Floats longer than twelve characters now print to six
 significant digits, reported in the footer like every other cap.
 
-The columnar interchange format is settled as a native, self-describing
-olang format rather than Arrow or Parquet: no dependency, and the format
-is readable rather than a black box, which is the same argument the rest
-of the project makes. Arrow interop is logged as a post-1.0 candidate.
+The columnar format closed the lane, built as decided: a native,
+self-describing olang format rather than Arrow or Parquet, because both
+would be a dependency and both are opaque. `ods.write_frame`,
+`ods.read_frame`, and `ods.frame_info` carry it. The header is UTF-8
+text, one line per column, so `head` answers what is in a file, and
+`frame_info` returns that same header as a Frame without reading the
+data. Over 500,000 rows and six columns a CSV load takes 138ms against
+50ms columnar, 26ms for a single column, in a file that is also smaller
+— 15MB against 17MB. Arrow interop remains a post-1.0 candidate.
+
+The size figure took a second pass, and the first one is the more useful
+record: the obvious layout — every row's string with its own offset —
+produced a file *larger than the CSV*, 24MB against 17MB, because an
+eight-byte offset costs more than the four characters it points at.
+Repetition is the normal case in a table, so a repeating String column is
+now written once as a dictionary plus one code per row, chosen by
+computing both sizes and taking the smaller. There is no threshold to
+tune. The general shape of that lesson is the one DP3 should carry: a
+columnar format's win is an *encoding* win, and the encoding slot in the
+header (`enc=`) is where later ones go.
 
 Acceptance: a streaming job processes input larger than memory; the
 benchmark is reproducible from the repository; the flagship example ships in
