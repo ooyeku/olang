@@ -153,7 +153,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   already expresses it through the subscript added in 0.66, and a second
   spelling of an existing operation is surface area without capability.
 
+### Added
+
+- **`tests/doc_outputs_test.rs` — a `// comment` that states an output
+  must state the real one.** The book had two guards: one proving its
+  programs run, one proving the names it drops exist. Neither looked at
+  the *value* a comment claimed a line prints, so an example could run
+  perfectly while teaching something false. Fourteen did.
+
+  A list of strings prints with its quotes, and seven comments wrote them
+  bare (`// [west, east]` for `["west", "east"]`). A Float column prints
+  with its `.0`, and five dropped it. `show` on an enum variant qualifies
+  it — `Color.Blue`, not `Blue`. And three comments naming a regression's
+  true coefficient read as claims about a line printing something else.
+
+  These are the comments a reader trusts most, being the only place the
+  book says what a value *is* rather than what a function does. The
+  guard's design problem is telling a claimed value from a note, since
+  most comments are notes and flagging them would make it a check someone
+  switches off: it accepts only what is unambiguously a value, and skips
+  any block where a `println` emitted more than one line rather than
+  guessing at the correspondence.
+
 ### Fixed
+
+- **`olang bench --help` now lists the flags it accepts.** `--runs`,
+  `--save`, `--against`, and `--fail-on-regress` are parsed by the
+  benchmark runner itself out of forwarded arguments, so clap knew
+  nothing about them and printed no options at all — leaving the book as
+  the only place they existed.
+
+- **`olang doc --md` corrected to `--markdown` in the book.** The flag
+  `docs/tooling.md` documented twice has never existed under that name.
 
 - **Four documentation claims that were true of an older olang** (R1's
   prose pass, second sitting). Found by probing rather than reading:

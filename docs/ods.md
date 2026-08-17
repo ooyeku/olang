@@ -109,7 +109,7 @@ zeros, and `ods.linspace(a, b, n)` is `n` evenly spaced floats from
 
 ```olang
 let x = ods.linspace(0.0, 1.0, 5)
-println(to_string(ods.to_list(x)))       // [0, 0.25, 0.5, 0.75, 1]
+println(to_string(ods.to_list(x)))       // [0.0, 0.25, 0.5, 0.75, 1.0]
 ```
 
 ### Arithmetic is elementwise
@@ -197,7 +197,7 @@ let missing = map_get(#{}, "absent")              // Unit → null
 let s = ods.series([1.0, missing, 3.0])
 println(to_string(ods.null_count(s)))             // 1
 println(to_string(ods.null_count(s * 2.0)))       // propagates: still 1
-println(to_string(ods.mean(s)))                   // skips: 2
+println(to_string(ods.mean(s)))                   // skips the null: 2.0
 ```
 
 Three tools manage them. `ods.null_count(s)` counts, `ods.is_null(s)`
@@ -208,7 +208,7 @@ copy with every null replaced:
 let missing = map_get(#{}, "absent")
 let s = ods.series([1.0, missing, 3.0])
 let filled = ods.fill_null(s, 0.0)
-println(to_string(ods.to_list(filled)))           // [1, 0, 3]
+println(to_string(ods.to_list(filled)))           // [1.0, 0.0, 3.0]
 println(to_string(ods.to_list(ods.is_null(s))))   // [false, true, false]
 ```
 
@@ -232,7 +232,7 @@ is the inner product.
 let s = ods.series([4.0, 1.0, 7.0, 2.0])
 println(to_string(ods.min(s)) + " .. " + to_string(ods.max(s)))
 println(to_string(ods.median(s)))                 // 3.0
-println(to_string(ods.to_list(ods.cumsum(s))))    // [4, 5, 12, 14]
+println(to_string(ods.to_list(ods.cumsum(s))))    // [4.0, 5.0, 12.0, 14.0]
 println(to_string(ods.dot(s, s)))                 // 4²+1²+7²+2²
 ```
 
@@ -305,7 +305,7 @@ appearance so the result is deterministic:
 
 ```olang
 let s = ods.series(["west", "east", "east", "north", "east"])
-println(to_string(ods.to_list(ods.unique(s))))    // [west, east, north]
+println(to_string(ods.to_list(ods.unique(s))))    // ["west", "east", "north"]
 println(to_string(ods.n_unique(s)))               // 3
 println(to_string(ods.to_list(ods.value_counts(s)["count"])))    // [3, 1, 1]
 ```
@@ -488,7 +488,7 @@ from the sorted union of keys and missing keys becoming nulls:
 ```olang
 let records = unwrap(json.parse("[{\"name\": \"ada\", \"score\": 99}, {\"name\": \"bob\"}]"))
 let f = ods.frame_from_records(records)
-println(to_string(ods.columns(f)))                                // [name, score]
+println(to_string(ods.columns(f)))                                // ["name", "score"]
 println(to_string(ods.null_count(ods.column(f, "score"))))        // 1
 ```
 
@@ -557,7 +557,7 @@ this is that function with a parser in front of it:
 
 ```olang
 let f = unwrap(ods.read_jsonl("{\"name\": \"ada\", \"score\": 99}\n{\"name\": \"bob\"}\n"))
-println(to_string(ods.columns(f)))                            // [name, score]
+println(to_string(ods.columns(f)))                            // ["name", "score"]
 println(to_string(ods.null_count(ods.column(f, "score"))))    // 1
 ```
 
@@ -760,7 +760,7 @@ or four conditions rather than two, and `ods.not` inverts one:
 ```olang
 let f = ods.read_csv("quality,kwh\nok,5.0\nfail,7.0\nok,-1.0\nok,9.0\n")
 let usable = f[ods.all_of([ods.eq(f["quality"], "ok"), f["kwh"] > 0.0])]
-println(to_string(ods.to_list(usable["kwh"])))               // [5, 9]
+println(to_string(ods.to_list(usable["kwh"])))               // [5.0, 9.0]
 ```
 
 `ods.eq` and `ods.ne` are equality as a *mask*, taking either another
@@ -839,7 +839,7 @@ descending)` sorts the whole table by one column, nulls last either way:
 let sales = ods.read_csv("region,amount\neast,25.5\nwest,320.0\neast,80.0\n")
 let amount = ods.column(sales, "amount")
 let big = sales |> ods.filter(amount > 50.0) |> ods.sort_by("amount", true)
-println(to_string(ods.to_list(ods.column(big, "region"))))    // [west, east]
+println(to_string(ods.to_list(ods.column(big, "region"))))    // ["west", "east"]
 ```
 
 Asking `tail` for more rows than the Frame holds returns the whole
@@ -858,7 +858,7 @@ consider instead of every column:
 ```olang
 let f = ods.read_csv("region,day,amount\neast,mon,1.0\neast,tue,2.0\nwest,mon,3.0\n")
 println(to_string(ods.n_rows(ods.distinct(f))))              // 3 — no exact repeats
-println(to_string(ods.to_list(ods.distinct(f, ["region"])["day"])))    // [mon, mon]
+println(to_string(ods.to_list(ods.distinct(f, ["region"])["day"])))    // ["mon", "mon"]
 ```
 
 Restricting `distinct` to a subset keeps the *first whole row* for each
@@ -935,7 +935,7 @@ happens to nulls; what `pivot` adds is the scatter.
 let sales = ods.read_csv(
     "region,quarter,amount\neast,Q1,10.0\neast,Q2,20.0\nwest,Q1,5.0\neast,Q1,3.0\n")
 let wide = ods.pivot(sales, "region", "quarter", "amount", "sum")
-println(to_string(ods.columns(wide)))          // [region, Q1, Q2]
+println(to_string(ods.columns(wide)))          // ["region", "Q1", "Q2"]
 println(to_string(ods.to_list(wide["Q1"])))    // [13.0, 5.0] — east's two Q1 rows summed
 println(to_string(ods.to_list(wide["Q2"])))    // [20.0, ()] — west never reported Q2
 ```
@@ -961,8 +961,8 @@ upstream, where naming the value columns would leave it behind.
 ```olang
 let wide = ods.frame([["region", ["east", "west"]], ["Q1", [13.0, 5.0]], ["Q2", [20.0, 1.0]]])
 let long = ods.unpivot(wide, "region")
-println(to_string(ods.columns(long)))            // [region, name, value]
-println(to_string(ods.to_list(long["name"])))    // [Q1, Q1, Q2, Q2]
+println(to_string(ods.columns(long)))            // ["region", "name", "value"]
+println(to_string(ods.to_list(long["name"])))    // ["Q1", "Q1", "Q2", "Q2"]
 ```
 
 The value columns stack into one column, so they must share a type.
@@ -1105,9 +1105,9 @@ let y = x1 * 2.0 + x2 * -1.0 + noise + 3.0    // truth: b0=3, b1=2, b2=-1
 
 let fit = stats.lm(y, [x1, x2])
 let coef = map_get(fit, "coef")
-println("intercept ≈ " + to_string(math.round(ods.get(coef, 0))))   // 3
-println("b1 ≈ " + to_string(math.round(ods.get(coef, 1))))          // 2
-println("b2 ≈ " + to_string(math.round(ods.get(coef, 2))))          // -1
+println("intercept ≈ " + to_string(math.round(ods.get(coef, 0))))   // true value: 3
+println("b1 ≈ " + to_string(math.round(ods.get(coef, 1))))          // true value: 2
+println("b2 ≈ " + to_string(math.round(ods.get(coef, 2))))          // true value: -1
 println("r2 = " + to_string(map_get(fit, "r2") > 0.5))
 ```
 

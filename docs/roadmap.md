@@ -511,9 +511,75 @@ claims that are true of an older olang, explanations that no longer match
 the implementation's reasoning, and examples that run but teach the wrong
 idiom. That is the prose pass, and it is what R1 mostly is.
 
+**R1, second sitting.** The prose pass, run as *probing* rather than
+reading: for each falsifiable claim the book makes, write the program it
+implies and see whether the binary agrees. That found four errors a
+reader would have hit and no extractor could have caught, because each
+is a sentence about behavior rather than a name or an example.
+
+`stability.md` — the chapter that says it is authoritative wherever any
+other text disagrees — carried the worst. Its "Reserved — parses today,
+semantics later" section listed two constructs and neither parses:
+`A & B` is a parse error, and the second bullet says in its own text
+that it is not accepted, contradicting the heading above it. The `caps`
+module, shipped in C3, appeared in no list. Its enforcement section
+predated both guards the 1.0 audit built. And its semver illustration
+still read 0.25 → 0.26.
+
+`pitfalls.md` warned that `for _ in ...` is a parse error. It has not
+been since the papercut batch; the pitfall told readers to avoid
+something that works. What is true, and was documented nowhere, is that
+an identifier may not *begin* with an underscore — so `_unused`, the
+convention half the languages a reader comes from use for exactly this,
+fails with `expected the end of the file`, naming neither the underscore
+nor the line's real problem.
+
+`language.md` was behind on two capabilities from the same batch: `for`
+iterates tuples (`par for` still does not, and its own paragraph was
+already correct), and `()` is a literal — the way a Unit is written down
+rather than arrived at, which is what makes a missing map key comparable
+to anything.
+
+The lesson for the rest of the pass: the errors cluster in sentences
+that were true when written. Prefer the claims a program can falsify,
+and write that program.
+
+**R1, third sitting.** Carrying that lesson further, and finding the one
+class of error the existing guards structurally could not see.
+
+Two tool claims were wrong. `tooling.md` documented `olang doc --md`
+twice; the flag is `--markdown`. And `olang bench`'s four real flags
+were invisible to `olang bench --help`, because the runner parses them
+itself out of forwarded arguments and clap knows nothing about them — so
+the book was the only place they existed. That is a gap in the tool
+rather than in the book, and the tool now prints them.
+
+Then the class no existing guard could see. `doc_examples_test` proves
+the book's programs *run*; `doc_references_test` proves the names it
+drops *exist*. Neither looks at the value a `// comment` claims a line
+prints, so an example could run perfectly while teaching something
+false. Fourteen did. A list of strings prints with its quotes and the
+book wrote seven of them bare (`// [west, east]` for `["west",
+"east"]`); a Float column prints with its `.0` and five comments dropped
+it; `show` on an enum variant qualifies it (`Color.Blue`, not `Blue`);
+and three comments naming a regression's true coefficient read as claims
+about a line that prints something else entirely.
+
+These are the comments a reader trusts most, because they are the only
+place the book says what a value *is* rather than what a function does.
+So the check is now permanent: `tests/doc_outputs_test.rs` runs every
+block that claims a value and compares. Its whole design problem is
+telling a claimed value from a note — most comments are notes, and
+flagging those would make it a guard someone switches off — so it
+accepts only what is unambiguously a value, and skips any block where a
+`println` emitted more than one line rather than guessing at the
+correspondence. A comment it declines to check costs a little coverage;
+one it wrongly accepted would cost the guard its credibility.
+
+
 | Lane | Work | Status |
 |---|---|---|
-| R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | **in progress** — mechanical checks built and clean; prose pass remains |
+| R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | **in progress** — mechanical checks built and clean; `stability.md`, `pitfalls.md`, `tooling.md` and the `language.md`/`ods.md` claim errors corrected, output comments now guarded; the long reference chapters remain to be read end to end |
 | R2 — the 1.0 contract | [Stability and compatibility](stability.md) is rewritten as the 1.0 compatibility contract: what is frozen, what semver means from here, and the support expectations for each surface. | planned |
 | R3 — release | The 1.0 release itself: final gates, the CHANGELOG's 1.0 entry, and version 1.0.0. | planned |
 

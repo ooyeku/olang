@@ -30,7 +30,7 @@ tool `otc` and are described in
 | `olang caps [path]` | Show the capability grant a program or binary carries |
 | `olang record <file>` | Run a program and record its inputs to a `.olt` trace |
 | `olang replay <trace>` | Re-run a recorded `.olt` timeline bit-for-bit |
-| `olang doc [path]` | Generate HTML (or `--md` Markdown) API reference |
+| `olang doc [path]` | Generate HTML (or `--markdown` Markdown) API reference |
 | `olang bench` | Run benchmarks |
 | `olang lsp` | Start the language server (LSP over stdio) |
 
@@ -371,7 +371,7 @@ Generate an API reference from doc comments:
 ```bash
 olang doc src/                    # → doc.html (themed, browsable)
 olang doc lib/ -o api.html        # choose the output file
-olang doc lib/ --md > API.md      # Markdown to stdout instead
+olang doc lib/ --markdown > API.md   # Markdown to stdout instead
 ```
 
 The convention is source-level, and every doc comment is already a

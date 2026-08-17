@@ -282,7 +282,7 @@ fn name(c) = match c {
     Green => "green",
     other => "other: " + show(other)   // `other` binds; a typo like `Gren` would too
 }
-println(name(Blue))   // other: Blue
+println(name(Blue))   // other: Color.Blue
 ```
 
 ## A block's bindings end with the block

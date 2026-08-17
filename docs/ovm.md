@@ -449,8 +449,8 @@ is what environment-threading code lives on, so these ten earn their
 second implementation and are held to the differential suite like
 everything else.
 
-The enabled set spans the core builtins below plus the pure `math`
-module (33 functions), the pure `str` module (30 functions), and `show`:
+The enabled set spans the core builtins below, plus the pure functions
+of `math` (33 of its 42) and all 30 of `str`, plus `show`:
 
 | Group | Builtins |
 |---|---|

@@ -112,7 +112,7 @@ A decimal point is required; scientific notation is supported:
 
 ```olang
 println(to_string(3.14))
-println(to_string(1.5e3))     // 1500
+println(to_string(1.5e3))     // 1500.0
 println(to_string(2.5e-1))    // 0.25
 ```
 
