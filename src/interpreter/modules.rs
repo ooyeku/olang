@@ -241,7 +241,7 @@ impl Interpreter {
                 if has_wildcard {
                     // Import all shared objects from the module
                     if let Value::Struct { fields, .. } = module {
-                        for (name, value) in fields {
+                        for (name, value) in fields.iter() {
                             self.environment.define(name.clone(), value.clone());
                             crate::log::get_logger().debug(
                                 "interpreter",
@@ -726,7 +726,7 @@ impl Interpreter {
                                         crate::ast::UseItem::Wildcard => {
                                             // For wildcard re-exports, import all exports from the module
                                             if let Value::Struct { fields, .. } = &module {
-                                                for (name, value) in fields {
+                                                for (name, value) in fields.iter() {
                                                     exports.insert(name.clone(), value.clone());
                                                 }
                                             }
@@ -765,7 +765,7 @@ impl Interpreter {
 
             let module = Value::Struct {
                 type_name: "Module".to_string(),
-                fields: exports,
+                fields: std::sync::Arc::new(exports),
             };
 
             // Feature 8: Cache the module with smart caching enhancements

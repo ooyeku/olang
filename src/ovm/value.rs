@@ -813,9 +813,12 @@ impl OvmValue {
             }
 
             Value::Struct { type_name, fields } => {
+                // The fields are behind an Arc now, so this borrows and
+                // clones each value rather than consuming the map — the
+                // caller's struct may still be alive and shared.
                 let pairs: Vec<(String, OvmValue)> = fields
-                    .into_iter()
-                    .map(|(k, v)| (k, Self::from_ast(v)))
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
                     .collect();
                 let struct_obj = StructObject::from_pairs(&type_name, pairs);
 
@@ -1045,7 +1048,7 @@ impl OvmValue {
                 }
                 Ok(Value::Struct {
                     type_name: gc_ptr.type_name().to_string(),
-                    fields,
+                    fields: std::sync::Arc::new(fields),
                 })
             }
             ValueData::Range(gc_ptr) => Ok(Value::Range {

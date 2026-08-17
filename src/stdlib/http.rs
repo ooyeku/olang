@@ -77,7 +77,7 @@ pub fn create_http_module() -> Value {
 
     Value::Struct {
         type_name: "Module".to_string(),
-        fields: module,
+        fields: std::sync::Arc::new(module),
     }
 }
 
@@ -139,7 +139,7 @@ fn http_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
                     Ok(Value::Ok(Box::new(Value::Struct {
                         type_name: "HttpResponse".to_string(),
-                        fields: response_map,
+                        fields: std::sync::Arc::new(response_map),
                     })))
                 }
                 Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -192,7 +192,7 @@ fn http_post(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
                     Ok(Value::Ok(Box::new(Value::Struct {
                         type_name: "HttpResponse".to_string(),
-                        fields: response_map,
+                        fields: std::sync::Arc::new(response_map),
                     })))
                 }
                 Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -245,7 +245,7 @@ fn http_put(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
                     Ok(Value::Ok(Box::new(Value::Struct {
                         type_name: "HttpResponse".to_string(),
-                        fields: response_map,
+                        fields: std::sync::Arc::new(response_map),
                     })))
                 }
                 Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -291,7 +291,7 @@ fn http_delete(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
                     Ok(Value::Ok(Box::new(Value::Struct {
                         type_name: "HttpResponse".to_string(),
-                        fields: response_map,
+                        fields: std::sync::Arc::new(response_map),
                     })))
                 }
                 Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -370,7 +370,7 @@ fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
                     Ok(Value::Ok(Box::new(Value::Struct {
                         type_name: "HttpResponse".to_string(),
-                        fields: response_map,
+                        fields: std::sync::Arc::new(response_map),
                     })))
                 }
                 Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -534,7 +534,7 @@ fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
 
     Value::Struct {
         type_name: "HttpRequest".to_string(),
-        fields,
+        fields: std::sync::Arc::new(fields),
     }
 }
 
@@ -634,7 +634,7 @@ fn render_handler_result(value: &Value, keep_alive: bool, fs: crate::caps::FsCap
             let mut headers = Vec::new();
             match fields.get("headers") {
                 Some(Value::Struct { fields: hs, .. }) => {
-                    for (k, v) in hs {
+                    for (k, v) in hs.iter() {
                         headers.push((k.clone(), header_value_text(v)));
                     }
                 }
@@ -1017,13 +1017,13 @@ fn http_response(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         "headers".to_string(),
         Value::Struct {
             type_name: "Headers".to_string(),
-            fields: HashMap::new(),
+            fields: std::sync::Arc::new(HashMap::new()),
         },
     );
 
     Ok(Value::Struct {
         type_name: "HttpResponse".to_string(),
-        fields: response_map,
+        fields: std::sync::Arc::new(response_map),
     })
 }
 
@@ -1051,7 +1051,7 @@ fn http_response_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
     // Headers may be a map literal (`#{ "Content-Type": "..." }`) — the only
     // way to write keys containing `-` — or an anonymous object.
     let headers = match &args[2] {
-        Value::Struct { fields, .. } => fields.clone(),
+        Value::Struct { fields, .. } => fields.as_ref().clone(),
         Value::Map(m) => m.as_ref().clone(),
         _ => return Err("response_with_headers: headers must be a map or object".into()),
     };
@@ -1066,13 +1066,13 @@ fn http_response_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
         "headers".to_string(),
         Value::Struct {
             type_name: "Headers".to_string(),
-            fields: headers,
+            fields: std::sync::Arc::new(headers),
         },
     );
 
     Ok(Value::Struct {
         type_name: "HttpResponse".to_string(),
-        fields: response_map,
+        fields: std::sync::Arc::new(response_map),
     })
 }
 
@@ -1120,7 +1120,7 @@ fn parse_url(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
             Ok(Value::Ok(Box::new(Value::Struct {
                 type_name: "UrlInfo".to_string(),
-                fields: url_map,
+                fields: std::sync::Arc::new(url_map),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -1140,7 +1140,7 @@ fn encode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     match &args[0] {
         Value::Struct { fields, .. } => {
             let mut query_pairs = Vec::new();
-            for (key, value) in fields {
+            for (key, value) in fields.iter() {
                 let value_str = match value {
                     Value::String(s) => s.as_ref().clone(),
                     Value::Integer(n) => n.to_string(),
@@ -1195,7 +1195,7 @@ fn decode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
     Ok(Value::Struct {
         type_name: "QueryParams".to_string(),
-        fields: params,
+        fields: std::sync::Arc::new(params),
     })
 }
 
@@ -1222,7 +1222,7 @@ mod tests {
     fn struct_val(type_name: &str, fields: HashMap<String, Value>) -> Value {
         Value::Struct {
             type_name: type_name.to_string(),
-            fields,
+            fields: std::sync::Arc::new(fields),
         }
     }
 
@@ -1531,7 +1531,7 @@ mod tests {
         fields.insert("body_file".to_string(), string_val("/etc/hostname"));
         let resp = Value::Struct {
             type_name: "Response".to_string(),
-            fields,
+            fields: std::sync::Arc::new(fields),
         };
         // fs = None: denied.
         let denied = String::from_utf8(render_handler_result(

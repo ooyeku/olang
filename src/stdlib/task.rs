@@ -100,7 +100,7 @@ pub fn create_task_module() -> Value {
     }
     Value::Struct {
         type_name: "Module".to_string(),
-        fields: module,
+        fields: std::sync::Arc::new(module),
     }
 }
 

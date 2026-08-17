@@ -78,13 +78,13 @@ pub fn namespace() -> Value {
             family.to_string(),
             Value::Struct {
                 type_name: "Module".to_string(),
-                fields: fam,
+                fields: std::sync::Arc::new(fam),
             },
         );
     }
     Value::Struct {
         type_name: "Module".to_string(),
-        fields: module,
+        fields: std::sync::Arc::new(module),
     }
 }
 

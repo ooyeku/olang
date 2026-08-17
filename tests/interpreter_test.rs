@@ -225,3 +225,29 @@ test "nested failure" {
     let result = interpreter.eval_program(program);
     assert!(result.is_err(), "a failing nested assertion must be caught");
 }
+
+#[test]
+fn a_struct_shares_its_fields_rather_than_copying_them() {
+    // `Value::Struct` held a bare HashMap while `Map` beside it held an
+    // Arc, so every clone of a struct — and a value is cloned on every
+    // bind, every pass, every return — rebuilt the whole field map. This
+    // asserts the representation directly, since the cost is invisible in
+    // a result.
+    use olang::ast::Value;
+    let mut fields = std::collections::HashMap::new();
+    fields.insert("payload".to_string(), Value::Integer(1));
+    let original = Value::Struct {
+        type_name: "Box".to_string(),
+        fields: std::sync::Arc::new(fields),
+    };
+    let copy = original.clone();
+    match (&original, &copy) {
+        (Value::Struct { fields: a, .. }, Value::Struct { fields: b, .. }) => {
+            assert!(
+                std::sync::Arc::ptr_eq(a, b),
+                "cloning a struct must share its fields, not rebuild them"
+            );
+        }
+        _ => panic!("both must be structs"),
+    }
+}

@@ -2708,11 +2708,11 @@ impl BuiltinFunctions {
                 Ok(Value::Map(std::sync::Arc::new(new_map)))
             }
             Value::Struct { type_name, fields } => {
-                let mut new_fields = fields.clone();
+                let mut new_fields = fields.as_ref().clone();
                 new_fields.insert(key, value);
                 Ok(Value::Struct {
                     type_name: type_name.clone(),
-                    fields: new_fields,
+                    fields: std::sync::Arc::new(new_fields),
                 })
             }
             _ => Err(InterpreterError::TypeError {
@@ -2845,11 +2845,11 @@ impl BuiltinFunctions {
                 Ok(Value::Map(std::sync::Arc::new(new_map)))
             }
             Value::Struct { type_name, fields } => {
-                let mut new_fields = fields.clone();
+                let mut new_fields = fields.as_ref().clone();
                 new_fields.remove(&key);
                 Ok(Value::Struct {
                     type_name: type_name.clone(),
-                    fields: new_fields,
+                    fields: std::sync::Arc::new(new_fields),
                 })
             }
             _ => Err(InterpreterError::TypeError {

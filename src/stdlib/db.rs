@@ -60,7 +60,7 @@ pub fn create_db_module() -> Value {
 
     Value::Struct {
         type_name: "Module".to_string(),
-        fields: module,
+        fields: std::sync::Arc::new(module),
     }
 }
 
@@ -206,7 +206,7 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     fields.insert("path".to_string(), string(path));
     Ok(ok(Value::Struct {
         type_name: "Connection".to_string(),
-        fields,
+        fields: std::sync::Arc::new(fields),
     }))
 }
 

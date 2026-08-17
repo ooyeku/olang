@@ -2185,7 +2185,7 @@ impl Repl {
                 Value::Struct { type_name, fields } => {
                     println!("  {}: {}", "Struct type".bright_blue(), type_name);
                     println!("  {}: {} fields", "Field count".bright_blue(), fields.len());
-                    for (field_name, field_value) in fields {
+                    for (field_name, field_value) in fields.iter() {
                         println!(
                             "    {}: {} = {}",
                             field_name.bright_magenta(),

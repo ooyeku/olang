@@ -501,7 +501,14 @@ pub enum Value {
     Builtin(BuiltinFunction),
     Struct {
         type_name: String,
-        fields: HashMap<String, Value>,
+        /// `Arc`, like the `Map` two lines up. Without it a struct passed
+        /// to a function copied every field, so the language punished its
+        /// own type system: a recursive structure written the readable
+        /// way — `type Node = struct { k, v, l, r }` — copied the whole
+        /// tree on every descent, and bare lists were the only way to get
+        /// a tree that behaved like one. Reads are unaffected; `Arc`
+        /// derefs to the same map.
+        fields: Arc<HashMap<String, Value>>,
     },
     // Range values for range expressions like 1..50
     Range {

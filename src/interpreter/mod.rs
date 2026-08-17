@@ -2274,7 +2274,7 @@ impl Interpreter {
 
         Ok(Value::Struct {
             type_name: struct_literal.type_name.clone(),
-            fields,
+            fields: std::sync::Arc::new(fields),
         })
     }
 
@@ -2292,7 +2292,7 @@ impl Interpreter {
         // Use a generic type name for anonymous objects
         Ok(Value::Struct {
             type_name: "Object".to_string(),
-            fields,
+            fields: std::sync::Arc::new(fields),
         })
     }
 
@@ -3248,7 +3248,7 @@ mod tests {
         // Cache a module
         let test_module = Value::Struct {
             type_name: "Module".to_string(),
-            fields: HashMap::new(),
+            fields: std::sync::Arc::new(HashMap::new()),
         };
 
         interpreter
@@ -3323,11 +3323,11 @@ mod tests {
         // Cache some modules with dependencies
         let module_a = Value::Struct {
             type_name: "Module".to_string(),
-            fields: HashMap::new(),
+            fields: std::sync::Arc::new(HashMap::new()),
         };
         let module_b = Value::Struct {
             type_name: "Module".to_string(),
-            fields: HashMap::new(),
+            fields: std::sync::Arc::new(HashMap::new()),
         };
 
         interpreter
@@ -3390,7 +3390,7 @@ mod tests {
         // Cache some modules
         let test_module = Value::Struct {
             type_name: "Module".to_string(),
-            fields: HashMap::new(),
+            fields: std::sync::Arc::new(HashMap::new()),
         };
 
         interpreter

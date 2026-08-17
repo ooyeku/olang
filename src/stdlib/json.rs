@@ -89,7 +89,7 @@ pub fn create_json_module() -> Value {
 
     Value::Struct {
         type_name: "Module".to_string(),
-        fields: module,
+        fields: std::sync::Arc::new(module),
     }
 }
 
@@ -788,7 +788,7 @@ pub(crate) fn json_to_olang_value(json_value: serde_json::Value) -> Value {
             }
             Value::Struct {
                 type_name: "JsonObject".to_string(),
-                fields,
+                fields: std::sync::Arc::new(fields),
             }
         }
     }
@@ -819,7 +819,7 @@ pub(crate) fn olang_value_to_json(value: &Value) -> Result<serde_json::Value, Js
         }
         Value::Struct { fields, .. } => {
             let mut obj = serde_json::Map::new();
-            for (key, value) in fields {
+            for (key, value) in fields.iter() {
                 obj.insert(key.clone(), olang_value_to_json(value)?);
             }
             Ok(serde_json::Value::Object(obj))

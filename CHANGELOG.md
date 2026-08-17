@@ -331,6 +331,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A struct shares its fields instead of copying them.**
+  `Value::Struct` held a bare `HashMap` while `Value::Map` directly beside
+  it held an `Arc`, so every clone of a struct rebuilt the whole field map
+  — and a value is cloned on every bind, every argument pass, every
+  return. Structs now hold `Arc<HashMap<..>>` like maps and lists do.
+
+  **This is not the whole of the reported problem.** A review measured a
+  struct argument costing 129ms against a list's 1ms and attributed it to
+  this representation; the representation was indeed wrong, but fixing it
+  did not move that number. Bisecting further: with `--no-ovm` the two are
+  *identical* — 4ms and 5ms — and the gap only appears with the bytecode
+  tier enabled. The penalty is therefore in the tier boundary rather than
+  in the value, and is tracked separately.
+
 - **Assertions work inside a nested block.** They were parsed only as a
   direct child of a test block, so `assert_eq` inside an `if`, a `for`,
   or a `while` fell through to an ordinary call and failed with

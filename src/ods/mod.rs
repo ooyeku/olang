@@ -91,7 +91,7 @@ impl OvmModule for OdsModule {
             "ods".to_string(),
             Value::Struct {
                 type_name: "Module".to_string(),
-                fields: module,
+                fields: std::sync::Arc::new(module),
             },
         )]
     }
@@ -179,7 +179,7 @@ impl OvmModule for PlotModule {
             "plot".to_string(),
             Value::Struct {
                 type_name: "Module".to_string(),
-                fields: module,
+                fields: std::sync::Arc::new(module),
             },
         )]
     }

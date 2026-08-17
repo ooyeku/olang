@@ -127,7 +127,7 @@ pub fn create_fs_module() -> Value {
 
     Value::Struct {
         type_name: "Module".to_string(),
-        fields: module,
+        fields: std::sync::Arc::new(module),
     }
 }
 
@@ -830,7 +830,7 @@ fn file_info(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
             Ok(Value::Ok(Box::new(Value::Struct {
                 type_name: "FileInfo".to_string(),
-                fields: info,
+                fields: std::sync::Arc::new(info),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

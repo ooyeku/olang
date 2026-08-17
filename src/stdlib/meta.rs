@@ -37,7 +37,7 @@ pub fn create_meta_module() -> Value {
     module.insert("parse".to_string(), builtin("parse", 1));
     Value::Struct {
         type_name: "Module".to_string(),
-        fields: module,
+        fields: std::sync::Arc::new(module),
     }
 }
 

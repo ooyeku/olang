@@ -112,7 +112,7 @@ pub fn create_os_module() -> Value {
 
     Value::Struct {
         type_name: "Module".to_string(),
-        fields: module,
+        fields: std::sync::Arc::new(module),
     }
 }
 
@@ -257,7 +257,7 @@ fn os_list_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
     Ok(Value::Struct {
         type_name: "EnvironmentVariables".to_string(),
-        fields: env_vars,
+        fields: std::sync::Arc::new(env_vars),
     })
 }
 
@@ -497,7 +497,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Some(options) = args.get(2) {
         let fields = match options {
             Value::Map(m) => m.as_ref().clone(),
-            Value::Struct { fields, .. } => fields.clone(),
+            Value::Struct { fields, .. } => fields.as_ref().clone(),
             _ => {
                 return Err("os.exec: options must be a map or object"
                     .to_string()
@@ -571,7 +571,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             fields.insert("stderr".to_string(), Value::String(Arc::new(stderr)));
             Ok(Value::Ok(Box::new(Value::Struct {
                 type_name: "ExecResult".to_string(),
-                fields,
+                fields: std::sync::Arc::new(fields),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

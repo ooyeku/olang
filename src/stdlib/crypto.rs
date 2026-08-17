@@ -151,7 +151,7 @@ pub fn create_crypto_module() -> Value {
 
     Value::Struct {
         type_name: "Module".to_string(),
-        fields: module,
+        fields: std::sync::Arc::new(module),
     }
 }
 
@@ -1005,7 +1005,7 @@ fn crypto_generate_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
 
     Ok(Value::Ok(Box::new(Value::Struct {
         type_name: "KeyPair".to_string(),
-        fields: key_pair,
+        fields: std::sync::Arc::new(key_pair),
     })))
 }
 
@@ -1070,7 +1070,7 @@ fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
 
             Ok(Value::Ok(Box::new(Value::Struct {
                 type_name: "PublicKey".to_string(),
-                fields: key_struct,
+                fields: std::sync::Arc::new(key_struct),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

@@ -80,7 +80,7 @@ pub fn create_proc_module() -> Value {
     }
     Value::Struct {
         type_name: "Module".to_string(),
-        fields: module,
+        fields: std::sync::Arc::new(module),
     }
 }
 
@@ -109,7 +109,7 @@ fn handle(id: i64) -> Value {
     fields.insert("id".to_string(), Value::Integer(id));
     Value::Struct {
         type_name: "Process".to_string(),
-        fields,
+        fields: std::sync::Arc::new(fields),
     }
 }
 
@@ -182,7 +182,7 @@ fn parse_opts(
 ) -> Result<(Option<String>, Vec<(String, String)>, Option<String>), Value> {
     let fields = match value {
         Value::Map(m) => m.as_ref().clone(),
-        Value::Struct { fields, .. } => fields.clone(),
+        Value::Struct { fields, .. } => fields.as_ref().clone(),
         _ => return Err(err(format!("{}: options must be a map or object", who))),
     };
     let mut cwd = None;
@@ -420,7 +420,7 @@ fn proc_wait(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             fields.insert("code".to_string(), Value::Integer(code));
             Ok(ok(Value::Struct {
                 type_name: "Exit".to_string(),
-                fields,
+                fields: std::sync::Arc::new(fields),
             }))
         }
         Err(e) => Ok(err(format!("wait: {}", e))),
@@ -610,6 +610,6 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     );
     Ok(ok(Value::Struct {
         type_name: "Pipeline".to_string(),
-        fields,
+        fields: std::sync::Arc::new(fields),
     }))
 }

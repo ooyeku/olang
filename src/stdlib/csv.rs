@@ -112,7 +112,7 @@ pub fn create_csv_module() -> Value {
 
     Value::Struct {
         type_name: "Module".to_string(),
-        fields: module,
+        fields: std::sync::Arc::new(module),
     }
 }
 
@@ -237,7 +237,7 @@ fn csv_parse_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
                 }
                 objects.push(Value::Struct {
                     type_name: "CsvRow".to_string(),
-                    fields: obj,
+                    fields: std::sync::Arc::new(obj),
                 });
             }
             Err(e) => {
@@ -1214,7 +1214,7 @@ mod tests {
     fn struct_val(type_name: &str, fields: HashMap<String, Value>) -> Value {
         Value::Struct {
             type_name: type_name.to_string(),
-            fields,
+            fields: std::sync::Arc::new(fields),
         }
     }
 
