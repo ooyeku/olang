@@ -177,6 +177,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`docs/ovm.md` credited two test suites for a guarantee that has
+  three.** The chapter's correctness policy is the statement
+  `tier_agreement_test.rs` was built to enforce — the harness quotes it
+  by name — and the harness was missing from the list. It is the third
+  chapter found with a stale suite list, after `stability.md` and
+  `internals.md`.
+
+  In the compiler, `src/ovm/bytecode.rs` introduced its
+  compilable-builtin set by saying higher-order builtins are excluded
+  "because a function argument cannot reach the VM", then listed `map`,
+  `filter`, `reduce`, and `fold` 130 lines later under a note explaining
+  that they became reachable. The leading comment is what a reader meets
+  first.
+
 - **`docs/internals.md` documented a gate that does not test the
   workspace.** "Gates for every change: `cargo test --release`" — but the
   repository root is both a package and the workspace root, so a bare

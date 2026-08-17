@@ -195,7 +195,7 @@ the interpreter, which is why enabling the tier can never break a program.
 
 **Promotion may never change what a program does.** Everything the VM cannot
 handle is rejected at compile time rather than approximated at runtime. This
-rule is enforced by two test suites:
+rule is enforced by three test suites:
 
 - `tests/bytecode_differential_test.rs` runs programs through
   *both* the interpreter and the VM and asserts identical results —
@@ -207,6 +207,16 @@ rule is enforced by two test suites:
   without the tier enabled and asserts the observable results match,
   including mixed programs where some functions are promoted and others are
   not, transitive and mutual recursion, and function redefinition.
+- `tests/tier_agreement_test.rs` runs the *corpus* — every runnable
+  example in this book and every standalone example program — under
+  `--no-ovm` and under `--ovm-tier=1`, comparing stdout, stderr, and
+  exit status. It exists because the two suites above call functions
+  that a person thought to write down, and the first divergence it
+  found was one nobody would have: the interpreter read `()` as Unit
+  while the compiler built a zero-element tuple, so a hot function
+  comparing `x == ()` answered differently from a cold one. Nothing
+  failed. The fast tier simply won, and it was noticed by accident
+  while adding an unrelated feature.
 
 The contract covers more than results: **runtime error traces are
 tier-identical too**. When a program dies at depth, the reported error

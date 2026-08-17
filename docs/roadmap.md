@@ -645,6 +645,42 @@ are bare scripts, and `run_all.ol` finds either by looking for the
 `main.ol`.
 
 
+**R1, sixth sitting.** `ovm.md`, and a comment in the compiler it
+describes.
+
+The chapter's correctness policy said the no-divergence rule "is
+enforced by two test suites". It is three, and the third is the one this
+chapter's own promise called into being: `tier_agreement_test.rs` quotes
+`docs/ovm.md` in its header. Naming only the per-function suites
+understated the guarantee in precisely the section that states it. The
+entry now says why both scales are needed, using the divergence that
+motivated the harness — the interpreter reading `()` as Unit while the
+compiler built a zero-element tuple, so a hot function comparing
+`x == ()` answered differently from a cold one, and nothing failed.
+
+That is now the third chapter found listing a stale set of test suites
+(`stability.md` and `internals.md` were the others). The pattern is
+consistent enough to name: prose that enumerates the project's own
+machinery goes stale silently, because adding a test never prompts
+anyone to re-read the paragraph that counts them.
+
+In the compiler itself, `src/ovm/bytecode.rs` introduced its
+compilable-builtin set with "Higher-order builtins (map, filter,
+reduce, ...) are excluded because a function argument cannot reach the
+VM" — and then listed `map`, `filter`, `reduce`, and `fold` 130 lines
+below, under a note explaining they became reachable once non-capturing
+lambdas compiled to function values. Both exclusions in the leading
+comment had been lifted; only the later note said so, which anyone
+reading the list top-down would meet second.
+
+One thing checked and deliberately left: the chapter's limitation 3
+distinguishes a "native set" from builtins that "bridge" at a value
+round trip. `builtin_names` turned out to gate something else — whether
+a call compiles at all — so confirming or correcting that sentence needs
+more of the dispatch path read than this sitting covered. Left as
+written rather than rewritten on a guess.
+
+
 | Lane | Work | Status |
 |---|---|---|
 | R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | **in progress** — mechanical checks built and clean; `stability.md`, `pitfalls.md`, `tooling.md` and the `language.md`/`ods.md` claim errors corrected, output comments now guarded; the long reference chapters remain to be read end to end |

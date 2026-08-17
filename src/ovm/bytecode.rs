@@ -876,11 +876,17 @@ pub enum VmException {
 
 impl BytecodeVm {
     pub fn new() -> Self {
-        // Only builtins that take value arguments and return values the OVM
-        // model represents losslessly. Higher-order builtins (map, filter,
-        // reduce, ...) are excluded because a function argument cannot reach
-        // the VM, and map/group_by are excluded because a Map does not survive
-        // the round trip back to an AST value.
+        // Builtins whose calls the compiler will emit rather than refuse.
+        //
+        // The original rule was "value arguments and losslessly
+        // representable results", which excluded the higher-order builtins
+        // (a function argument could not reach the VM) and the map builders
+        // (a Map did not survive the round trip). Both exclusions have since
+        // been lifted — non-capturing lambdas compile to function values, and
+        // maps round-trip — so `map`, `filter`, `reduce`, `fold`, and the map
+        // builtins are all in the list below, each with a note at its group.
+        // `group_by` is the one still held out, because it returns a Map keyed
+        // by arbitrary values.
         let builtin_names: std::collections::HashSet<String> = [
             // conversion and inspection
             "to_string",
