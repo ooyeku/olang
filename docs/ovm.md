@@ -149,7 +149,7 @@ A function is eligible when its body uses only the subset the VM implements:
   interpreter, which owns arity errors, default parameters, and the
   non-callable error. Function values round-trip the tier boundary
   (wrapped verbatim), so higher-order user functions promote
-- calls to ANY native stdlib module function (`db.query`, `fs.read`,
+- calls to ANY native stdlib module function (`db.query`, `fs.read_file`,
   `json.parse`, `col.frequencies`, `re.find`, ...): the module resolves
   in the closure to its Module value, the function's existence is
   validated at compile time against the module's own field set, and the

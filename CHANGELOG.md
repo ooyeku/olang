@@ -331,6 +331,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The book is checked against the implementation, not just proofread
+  (Campaign 4, R1 — first sitting).** Running a chapter's code blocks
+  proves the *examples* work; it says nothing about the much larger
+  surface the prose names in passing, which is where a rename quietly
+  leaves a lie behind.
+
+  Two guards now cover it, and both found something:
+
+  - **Every function the book names must resolve.** 322 references
+    extracted from the prose and checked. One was wrong: `ovm.md` cited
+    `fs.read`, which has been `fs.read_file` for a long time. The
+    extractor deliberately skips the shapes that only look like calls
+    — file names (`ods.md`, `olang-dom.js`) and glob prose
+    (`str.parse_*`) — because a guard with false positives is a guard
+    that gets switched off, and a self-test pins that behaviour.
+  - **`packages.md` and `tooling.md` now have their examples run.** They
+    had runnable code that nothing executed — the packaging and tooling
+    instructions a new user follows first.
+
+  One reference is exempted by name with its reason: `ods.fma` appears in
+  the data-stack design record as a future option, pre-approved if a
+  stated gate trips. Naming unbuilt options concretely is what makes a
+  design record useful; listing the exemption is what stops an
+  accidental reference to a removed function hiding among them.
+
 - **Fixed: a struct argument cost 80x a list's on the compiled tier.**
   Passing a struct holding 5,000 elements to a hot function took 129ms
   against the same data in a list at 1ms. With `--no-ovm` the two were

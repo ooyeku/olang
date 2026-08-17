@@ -445,9 +445,32 @@ relying on hand-written cases.
 
 ## Campaign 4 — 1.0 readiness
 
+**R1, first sitting.** The audit began mechanically rather than by
+reading, on the theory that a person re-reading 10,000 lines finds fewer
+errors than a check that runs on every commit — and that the check keeps
+working afterwards.
+
+Two guards exist now. `tests/doc_references_test.rs` extracts every
+`module.function` the book names — 322 of them — and resolves each
+against the real binary; it found `ovm.md` citing `fs.read`, which has
+been `fs.read_file` since long before 0.60. `tests/doc_examples_test.rs`
+gained `packages.md` and `tooling.md`, whose runnable examples nothing
+had ever executed, and which carry the instructions a new user follows
+first.
+
+A check on removed constructs (`async`, `await`, `Promise`, `try`,
+`catch`) found only correct historical mentions — "no longer has",
+"ordinary identifiers" — so the semantics releases are reflected
+accurately.
+
+What remains is the part no extractor can do: reading each chapter for
+claims that are true of an older olang, explanations that no longer match
+the implementation's reasoning, and examples that run but teach the wrong
+idiom. That is the prose pass, and it is what R1 mostly is.
+
 | Lane | Work | Status |
 |---|---|---|
-| R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | planned |
+| R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | **in progress** — mechanical checks built and clean; prose pass remains |
 | R2 — the 1.0 contract | [Stability and compatibility](stability.md) is rewritten as the 1.0 compatibility contract: what is frozen, what semver means from here, and the support expectations for each surface. | planned |
 | R3 — release | The 1.0 release itself: final gates, the CHANGELOG's 1.0 entry, and version 1.0.0. | planned |
 

@@ -161,3 +161,17 @@ fn pitfalls_chapter_examples_work() {
 fn demo_md_examples() {
     run_doc_file("docs/demo.md", include_str!("../docs/demo.md"));
 }
+
+// The book's remaining chapters with runnable examples. They had none of
+// their code exercised until the 1.0 audit noticed the gap: an example
+// nothing runs is a claim nothing checks, and these two carry the
+// packaging and tooling instructions a new user follows first.
+#[test]
+fn packages_chapter_examples_work() {
+    run_doc_file("docs/packages.md", include_str!("../docs/packages.md"));
+}
+
+#[test]
+fn tooling_chapter_examples_work() {
+    run_doc_file("docs/tooling.md", include_str!("../docs/tooling.md"));
+}
