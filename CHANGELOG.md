@@ -37,6 +37,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`ods.head(f)` defaults to 10 rows.** The verb typed most often at the
   REPL was the one that raised most often, because it demanded a count.
 
+- **A Frame is subscriptable: `f["amount"]`, `f[mask]`, `s[i]`.** Reaching
+  a column was the most repeated gesture in data code and the most
+  verbose: `ods.column` and `ods.get` together were **13.6% of all 937
+  `ods` calls in this repository**, and `ods.column(raw, "amount") *
+  ods.column(raw, "quantity")` is 62 characters to say one multiply.
+
+  ```olang
+  let sales = ods.with_column(raw, "revenue", raw["amount"] * raw["quantity"])
+  let big   = sales[sales["revenue"] > 100.0]
+  ```
+
+  | subscript | means |
+  |---|---|
+  | `f["amount"]` | the column, as a Series |
+  | `f[mask]` | the rows a Bool Series keeps |
+  | `f[0]` | **refused**, naming `ods.head` / `ods.take` |
+  | `s[3]`, `s[-1]` | the element; negatives count from the end, as in lists |
+
+  Two meanings for one subscript, told apart by the key's type. Refusing
+  the third is the point: pandas spells column selection, row filtering,
+  positional slicing, and an error all `df[x]`, which is why `.loc` and
+  `.iloc` had to be invented on top of it.
+
+  A column name that is not there raises — a literal name in the source
+  is a claim about the data's shape, and a wrong claim is a wrong program
+  — and the message lists the columns that do exist. Subscripting is
+  read-only; there is no `f["a"] = x`, because Frames are values and an
+  assignment that silently produced a copy would be a trap.
+
+  The mechanism is one trait method, `NativeObject::index`, defaulting to
+  `None`, reached from the index path of *both* tiers. Any native value
+  can now define its own subscript; the ones that don't keep the
+  language's existing error.
+
+- **`ods.describe(f)` and `ods.schema(f)`.** After `head`, `describe` is
+  the first thing typed against unfamiliar data. Both return a **Frame**
+  rather than a map, so they print as tables and can themselves be
+  sorted, filtered, and written out. `describe` gives count, nulls, mean,
+  std, and the five-number summary per column; `schema` gives name, type,
+  and null count, for a Frame too wide to summarize. A Frame has one type
+  per column, so the numeric statistics are null for String and Bool
+  columns rather than absent — a result whose shape depended on its input
+  would push the branch onto every caller.
+
 - **`ods` reads and writes JSON lines (Campaign 2, DP2).** One JSON
   object per line is what log shippers, event queues, and export jobs
   emit, and the stack could not read any of it.
@@ -211,6 +255,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `row.catch`, and `fn await_all(ts)` all parse.
 
 ### Fixed
+
+- **A long float no longer pushes columns off a printed table.** A
+  computed column carries full `f64` precision — a standard deviation of
+  `173.98078198467783` — which is wide enough to cost a table two other
+  columns. Floats whose full form exceeds twelve characters are shown to
+  six significant digits, and the footer says so, like every other cap
+  the renderer applies. Values that already fit are untouched, so an
+  ordinary table carries no footnote.
 
 - **`ods.read_csv` given a path now says so.** `read_csv` takes CSV
   *text*, so `ods.read_csv("data/sales.csv")` parsed the path itself: a

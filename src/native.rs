@@ -56,6 +56,23 @@ pub trait NativeObject: fmt::Debug + Send + Sync {
     fn confined_to(&self) -> Option<std::thread::ThreadId> {
         None
     }
+
+    /// Subscript this value: what `value[key]` evaluates to.
+    ///
+    /// `None` — the default — means the type is not subscriptable and the
+    /// language's own "cannot be indexed" error stands. `Some(Err(..))`
+    /// is a native that *is* subscriptable but was given a key it cannot
+    /// use, and its message is far more useful than the generic one: a
+    /// Frame can say which columns it actually has.
+    ///
+    /// Reaching a column is the single most repeated gesture in data
+    /// code — `ods.column` and `ods.get` are 13% of all `ods` calls in
+    /// this repository — so it earns syntax. It stays read-only: there is
+    /// no matching `index_set`, because native values here are immutable
+    /// and a `f["a"] = x` that silently returned a copy would be a trap.
+    fn index(&self, _key: &Value) -> Option<Result<Value, String>> {
+        None
+    }
 }
 
 /// Shared handle to a native value: the single allocation both tiers hold.

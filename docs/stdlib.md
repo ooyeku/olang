@@ -1350,7 +1350,8 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Build | `frame(columns)` · `frame_from_records(records)` · `read_csv(text)` |
 | Files | `read_csv_file(path)` · `write_csv(f, path)` · `to_csv(f)` · `read_jsonl(text)` · `read_jsonl_file(path)` · `write_jsonl(f, path)` · `to_jsonl(f)` |
 | Streaming | `open_csv(path)` · `open_jsonl(path)` — then `next_chunk(r, n)` · `rows_read(r)` · `at_end(r)`, the same verbs for either |
-| Inspect | `columns(f)` · `column(f, name)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `to_records(f)` |
+| Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` |
+| Subscript | `f["name"]` a column · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (negatives from the end) |
 | Shape | `select(f, names)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
 | Aggregate / join | `group_by(f, key, aggs)` · `join(a, b, key)` · `join_left(a, b, key)` |
 

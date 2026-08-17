@@ -190,6 +190,7 @@ the corpus if Campaign 1 lands first.
 |---|---|---|
 | DP1c — parallel group keys | Parallelize the group-identification pass of `group_by`, which now dominates its runtime; the aggregation pass is already parallel. | planned |
 | DP2 — IO breadth | Read CSV from files and as a bounded-memory stream; JSON-lines input; a columnar interchange format; `to_csv` and file output. The end-to-end input-to-output story. | **file IO, streaming, and JSON lines shipped**; the columnar format remains |
+| DP2b — ergonomics | Subscript syntax for Frames and Series, and the orientation verbs (`describe`, `schema`). Reaching a column was 13.6% of every `ods` call in the corpus and the most verbose thing in it. | **shipped** |
 | DP3 — verb completeness | Window functions, reshape (wide/long, pivot), additional join kinds and aggregations, and string and categorical column operations. | planned |
 | DP4 — flagship and benchmark | A realistic end-to-end ETL example wired to `plot`, and a reproducible benchmark against pandas and Polars with methodology and hardware documented in [The data stack](ods.md). | planned |
 
@@ -228,6 +229,31 @@ written for the reader: `chan.send` now refuses any confined value without
 naming the types it knows, so the reader was refused at the channel
 boundary before a line was written for it, and the next such handle will
 be too.
+
+**DP2b shipped.** `f["amount"]`, `f[mask]`, and `s[i]` replace the
+gesture that measurement showed dominates data code: `ods.column` and
+`ods.get` were 13.6% of the 937 `ods` calls in this repository. The
+mechanism is one trait method — `NativeObject::index`, defaulting to
+`None` — reached from the index path of both tiers, so every native value
+can now define a subscript and the ones that don't keep the language's
+existing error.
+
+The subscript takes two keys and refuses a third. A String selects a
+column, a Bool Series selects rows, and a row *position* is refused
+outright, naming `ods.head` and `ods.take`. That refusal is what keeps
+each subscript to one reading — pandas spells all four of column
+selection, row filtering, positional slicing, and an error as `df[x]`,
+which is why `.loc` and `.iloc` had to be invented on top of it. This is
+the general lesson for the rest of DP3: copy the gestures, not the
+overloading.
+
+`ods.describe` and `ods.schema` answer "what is in this table" in one
+call, and both return Frames rather than maps, so the table renderer
+carries them and they compose with every other verb. Building `describe`
+immediately found a defect in that renderer: full `f64` precision on a
+computed column is wide enough to push two other columns out of the
+width budget. Floats longer than twelve characters now print to six
+significant digits, reported in the footer like every other cap.
 
 The columnar interchange format is settled as a native, self-describing
 olang format rather than Arrow or Parquet: no dependency, and the format

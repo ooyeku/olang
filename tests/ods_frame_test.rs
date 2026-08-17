@@ -864,3 +864,196 @@ ods.to_jsonl(f)
     )
     .expect("tier agreement");
 }
+
+// ── Subscript ─────────────────────────────────────────────────────────
+
+#[test]
+fn a_frame_is_indexed_by_column_name() {
+    // The gesture this exists for: `ods.column` and `ods.get` were 13% of
+    // every ods call in the repository before it.
+    let out = eval(
+        r#"
+let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\n")
+ods.to_list(sales["amount"])
+"#,
+        None,
+    )
+    .expect("index");
+    assert_eq!(out.to_string(), "[25.5, 320.0]".to_string());
+}
+
+#[test]
+fn indexed_columns_compose_into_derived_columns() {
+    let out = eval(
+        r#"
+let sales = ods.read_csv("amount,qty\n25.5,10\n320.0,3\n")
+let full = ods.with_column(sales, "revenue", sales["amount"] * sales["qty"])
+ods.to_list(full["revenue"])
+"#,
+        None,
+    )
+    .expect("derive");
+    assert_eq!(out.to_string(), "[255.0, 960.0]".to_string());
+}
+
+#[test]
+fn a_frame_is_indexed_by_a_mask() {
+    // Two meanings for one subscript, disjoint by the key's type — the
+    // thing pandas gets wrong by also overloading it with position.
+    let out = eval(
+        r#"
+let sales = ods.read_csv("region,amount\neast,25.5\nwest,320.0\neast,80.0\n")
+ods.to_list(sales[sales["amount"] > 50.0]["region"])
+"#,
+        None,
+    )
+    .expect("mask");
+    assert_eq!(out.to_string(), "[\"west\", \"east\"]".to_string());
+}
+
+#[test]
+fn a_missing_column_names_the_columns_that_exist() {
+    // A column name written into the source that is not in the data is a
+    // bug, not input, so it raises — and the message answers the question
+    // the author is about to ask.
+    let err =
+        eval(r#"ods.read_csv("a,b\n1,2\n")["nope"]"#, None).expect_err("missing column must raise");
+    assert!(err.contains("no column 'nope'"), "{err}");
+    assert!(err.contains("a, b"), "{err}");
+}
+
+#[test]
+fn a_frame_refuses_a_row_position_and_names_the_verb() {
+    // Refusing `f[0]` is the whole reason `[]` stays unambiguous here.
+    let err = eval(r#"ods.read_csv("a\n1\n")[0]"#, None).expect_err("must refuse");
+    assert!(err.contains("not by row position"), "{err}");
+    assert!(err.contains("ods.head"), "{err}");
+}
+
+#[test]
+fn a_series_is_indexed_by_position() {
+    let out = eval(
+        r#"
+let s = ods.series([10, 20, 30])
+show([s[0], s[2], s[-1]])
+"#,
+        None,
+    )
+    .expect("series index");
+    assert_eq!(out.to_string(), "\"[10, 30, 30]\"".to_string());
+    let err = eval("ods.series([1, 2])[5]", None).expect_err("out of bounds");
+    assert!(err.contains("out of bounds"), "{err}");
+}
+
+#[test]
+fn a_series_indexed_by_name_points_back_at_the_frame() {
+    let err = eval(r#"ods.series([1, 2])["amount"]"#, None).expect_err("must refuse");
+    assert!(err.contains("indexed by position"), "{err}");
+}
+
+#[test]
+fn subscripting_agrees_across_tiers() {
+    // The hook lives on NativeObject and is reached from both tiers'
+    // index paths, which is what this asserts rather than assumes.
+    assert_tier_transparent(
+        r#"
+let sales = ods.read_csv("a,b\n1,2\n3,4\n")
+ods.to_list(sales[sales["a"] > 1]["b"])
+"#,
+    )
+    .expect("tier agreement");
+    assert_tier_transparent("ods.series([1, 2, 3])[-1]").expect("tier agreement");
+}
+
+#[test]
+fn a_value_that_is_not_subscriptable_says_what_it_is() {
+    let err = eval(
+        r#"
+let r = unwrap(ods.open_csv("/nope/x.csv"))
+r[0]
+"#,
+        None,
+    )
+    .expect_err("open fails first");
+    // The open is what fails here; the point is only that indexing a
+    // non-subscriptable native does not panic.
+    assert!(!err.is_empty());
+}
+
+// ── describe and schema ───────────────────────────────────────────────
+
+#[test]
+fn describe_summarizes_every_column() {
+    // A Frame rather than a map, so it prints as a table and can itself
+    // be sorted, filtered, and written out.
+    let out = eval(
+        r#"
+let f = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,,4\n")
+let d = ods.describe(f)
+show([ods.columns(d), ods.to_list(d["column"]), ods.to_list(d["nulls"])])
+"#,
+        None,
+    )
+    .expect("describe");
+    let text = out.to_string();
+    assert!(
+        text.contains("\"mean\", \"std\", \"min\", \"q25\", \"median\", \"q75\", \"max\""),
+        "{text}"
+    );
+    assert!(text.contains("[\"region\", \"amount\", \"qty\"]"), "{text}");
+    assert!(text.contains("[0, 1, 0]"), "{text}");
+}
+
+#[test]
+fn describe_leaves_non_numeric_statistics_null() {
+    // One type per column means the alternative is two shapes of result
+    // depending on the input, and a caller branching on the shape of a
+    // summary is worse off than one reading nulls.
+    let out = eval(
+        r#"
+let d = ods.describe(ods.read_csv("s,n\nx,1\ny,2\n"))
+show([ods.null_count(d["mean"]), ods.to_list(d["max"])])
+"#,
+        None,
+    )
+    .expect("describe");
+    assert_eq!(out.to_string(), "\"[1, [(), 2.0]]\"".to_string());
+}
+
+#[test]
+fn schema_is_describe_without_the_arithmetic() {
+    let out = eval(
+        r#"
+let s = ods.schema(ods.read_csv("a,b,c\n1,x,true\n"))
+show([ods.columns(s), ods.to_list(s["dtype"])])
+"#,
+        None,
+    )
+    .expect("schema");
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"column\", \"dtype\", \"nulls\"], [\"Int\", \"String\", \"Bool\"]]\"".to_string()
+    );
+}
+
+#[test]
+fn a_long_float_is_shortened_and_the_table_says_so() {
+    // A computed column routinely carries seventeen digits, and one such
+    // column is wide enough to push two others off the table. The cap is
+    // reported like every other cap the renderer applies.
+    let text = rendered(r#"to_string(ods.describe(ods.read_csv("n\n25.5\n320.0\n12.25\n")))"#);
+    assert!(text.contains("floats to 6 significant digits"), "{text}");
+    assert!(!text.contains("173.98078198467783"), "{text}");
+    for line in box_lines(&text) {
+        assert!(line.chars().count() <= 100, "{line}");
+    }
+}
+
+#[test]
+fn short_floats_are_left_exactly_as_they_are() {
+    // The shortening must not touch a value that already fits, or every
+    // ordinary table would carry the footnote.
+    let text = rendered(r#"to_string(ods.read_csv("n\n25.5\n320.0\n"))"#);
+    assert!(!text.contains("significant digits"), "{text}");
+    assert!(text.contains("25.5"), "{text}");
+}

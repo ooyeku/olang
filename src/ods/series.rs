@@ -72,6 +72,35 @@ impl NativeObject for OdsSeries {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    /// `s[3]` is the element, `s[-1]` counts from the end — the same rule
+    /// lists and strings already follow, so a column reads like the list
+    /// it stands in for. Nulls come back as unit.
+    fn index(&self, key: &Value) -> Option<Result<Value, String>> {
+        Some(match key {
+            Value::Integer(i) => {
+                let len = self.0.len() as i64;
+                let pos = if *i < 0 { len + *i } else { *i };
+                if pos < 0 || pos >= len {
+                    Err(format!(
+                        "index {} out of bounds for a Series of length {}",
+                        i, len
+                    ))
+                } else {
+                    Ok(scalar_to_value(self.0.scalar_at(pos as usize)))
+                }
+            }
+            Value::String(name) => Err(format!(
+                "a Series is indexed by position, not by name. Reach the \
+                 column from its Frame first: f[\"{}\"]",
+                name
+            )),
+            other => Err(format!(
+                "a Series is indexed by an Int, got {}",
+                other.type_name()
+            )),
+        })
+    }
 }
 
 // ---------------------------------------------------------------------

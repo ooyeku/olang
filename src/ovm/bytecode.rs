@@ -4176,6 +4176,23 @@ impl BytecodeVm {
     fn execute_index_get(object: &OvmValue, index: &OvmValue) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
 
+        // A native value gets first refusal on its own subscript, and it
+        // is asked before the integer-index requirement below — a Frame
+        // is indexed by column name, which is the whole point.
+        if let ValueData::Native(handle) = &object.data {
+            let key = index
+                .to_ast()
+                .map_err(|err| BytecodeError::TypeError(err.to_string()))?;
+            return match handle.0.index(&key) {
+                Some(Ok(value)) => Ok(OvmValue::from_ast(value)),
+                Some(Err(message)) => Err(BytecodeError::RuntimeError(message)),
+                None => Err(BytecodeError::TypeError(format!(
+                    "A {} cannot be indexed",
+                    handle.0.type_name()
+                ))),
+            };
+        }
+
         let idx = match &index.data {
             ValueData::Integer(i) => *i,
             _ => {

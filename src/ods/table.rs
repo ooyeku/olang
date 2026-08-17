@@ -20,6 +20,12 @@ const MAX_CELL: usize = 28;
 /// Budget for the printed width, in characters. Columns that would push
 /// the table past it are dropped and counted in the footer.
 const MAX_WIDTH: usize = 100;
+/// Significant digits a float is shown to when its full form is longer
+/// than `FLOAT_FULL`. A computed column — a mean, a standard deviation —
+/// routinely carries seventeen digits, and one such column is wide enough
+/// to push two others off the table.
+const FLOAT_DIGITS: i32 = 6;
+const FLOAT_FULL: usize = 12;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Align {
@@ -59,11 +65,49 @@ fn truncate(text: &str) -> String {
     format!("{}…", kept)
 }
 
-fn cell(scalar: Scalar) -> String {
+/// A float shown to `FLOAT_DIGITS` significant digits. Returns `None`
+/// when the full form already fits, so the caller can tell whether any
+/// value in the table was shortened and say so.
+fn shorten_float(x: f64) -> Option<String> {
+    let full = crate::ast::format_float(x);
+    if display_width(&full) <= FLOAT_FULL {
+        return None;
+    }
+    if x == 0.0 || !x.is_finite() {
+        return None;
+    }
+    let magnitude = x.abs().log10().floor() as i32;
+    // Beyond the digits a decimal form can carry, scientific notation is
+    // the shorter *and* the more readable of the two.
+    if !(-6..12).contains(&magnitude) {
+        return Some(format!("{:.*e}", (FLOAT_DIGITS - 1) as usize, x));
+    }
+    let decimals = (FLOAT_DIGITS - 1 - magnitude).clamp(0, 17) as usize;
+    let mut text = format!("{:.*}", decimals, x);
+    if text.contains('.') {
+        while text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.push('0');
+        }
+    }
+    Some(text)
+}
+
+fn cell(scalar: Scalar, shortened: &mut bool) -> String {
     truncate(&match scalar {
         // Floats go through the language's own formatter so a Frame and a
-        // `println` of the same number never disagree.
-        Scalar::F64(x) => crate::ast::format_float(x),
+        // `println` of the same number never disagree — unless the full
+        // form is long enough to distort the table, in which case the
+        // footer says the column was shortened.
+        Scalar::F64(x) => match shorten_float(x) {
+            Some(short) => {
+                *shortened = true;
+                short
+            }
+            None => crate::ast::format_float(x),
+        },
         Scalar::I64(x) => x.to_string(),
         Scalar::Bool(b) => b.to_string(),
         Scalar::Str(s) => s.to_string(),
@@ -96,13 +140,14 @@ pub fn render(frame: &Frame) -> String {
     let plan = row_plan(n_rows);
 
     // Build every column that might be shown, then decide how many fit.
+    let mut shortened = false;
     let mut columns: Vec<(Align, Vec<String>)> = Vec::with_capacity(n_cols);
     for (name, series) in frame.names().iter().zip(frame.columns()) {
         let align = Align::of(series.dtype());
         let mut body = vec![truncate(name), series.dtype().to_string()];
         for entry in &plan {
             body.push(match entry {
-                Some(i) => cell(series.scalar_at(*i)),
+                Some(i) => cell(series.scalar_at(*i), &mut shortened),
                 None => "…".to_string(),
             });
         }
@@ -167,6 +212,9 @@ pub fn render(frame: &Frame) -> String {
     }
     if shown < n_cols {
         notes.push(format!("{} columns not shown", n_cols - shown));
+    }
+    if shortened {
+        notes.push(format!("floats to {} significant digits", FLOAT_DIGITS));
     }
     if !notes.is_empty() {
         out.push(format!("… {}", notes.join(", ")));

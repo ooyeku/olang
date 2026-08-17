@@ -1406,6 +1406,17 @@ impl Interpreter {
                             })
                         }
                     }
+                    // A native value gets first refusal on its own
+                    // subscript, before either generic error: a Frame
+                    // indexed by a name it does not have can say which
+                    // names it does have.
+                    (Value::Native(handle), key) => match handle.0.index(&key) {
+                        Some(Ok(value)) => Ok(value),
+                        Some(Err(message)) => Err(InterpreterError::RuntimeError { message }),
+                        None => Err(InterpreterError::TypeError {
+                            message: format!("A {} cannot be indexed", handle.0.type_name()),
+                        }),
+                    },
                     (_, Value::Integer(_)) => Err(InterpreterError::TypeError {
                         message: "Only lists, tuples, and strings can be indexed".to_string(),
                     }),

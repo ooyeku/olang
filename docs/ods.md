@@ -484,10 +484,65 @@ which is what makes the result of a `sort_by` readable at a glance.
 
 `ods.head(f, n)` takes the first `n` rows, and `n` defaults to 10, so
 `ods.head(f)` is the whole gesture. `ods.columns(f)` lists the column
-names, `ods.column(f, name)` extracts one column as a Series, and
-`ods.n_rows` and `ods.n_cols` give the dimensions. Extracting a column
-and computing on it is the fundamental Frame move — the table organizes
-the columns; the Series operations do the work.
+names, and `ods.n_rows` and `ods.n_cols` give the dimensions.
+
+`ods.describe(f)` summarizes every column at once — count, nulls, mean,
+standard deviation, and the five-number summary. It returns a *Frame*,
+not a map, so it prints as a table and can itself be sorted, filtered, or
+written to a file:
+
+```olang
+let f = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\n")
+println(to_string(ods.describe(f)))
+```
+
+A Frame has one type per column, so the numeric statistics are null for
+String and Bool columns rather than absent — the alternative is a result
+whose *shape* depends on the input, and a caller that has to branch on
+the shape of a summary is worse off than one reading nulls.
+`ods.schema(f)` is the same thing without the arithmetic — name, type,
+and null count per column — for a Frame too wide to summarize
+comfortably.
+
+### Reaching a column
+
+Extracting a column and computing on it is the fundamental Frame move —
+the table organizes the columns; the Series operations do the work — so
+it has syntax:
+
+```olang
+let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\n")
+let full = ods.with_column(sales, "revenue", sales["amount"] * sales["qty"])
+println(to_string(ods.to_list(full["revenue"])))
+```
+
+`f["amount"]` is the column as a Series. A Series takes a position:
+`s[0]` is its first element and `s[-1]` its last, the same rule lists and
+strings follow, so a column reads like the list it stands in for.
+
+A Frame also takes a mask, which is how filtering reads:
+
+```olang
+let sales = ods.read_csv("region,amount\neast,25.5\nwest,320.0\neast,80.0\n")
+let big = sales[sales["amount"] > 50.0]
+println(to_string(ods.to_list(big["region"])))
+```
+
+Two meanings for one subscript, told apart by the key's *type* — a
+String selects a column, a Bool Series selects rows. A row *position* is
+refused outright, naming `ods.head` and `ods.take` instead. That refusal
+is the point: pandas spells column selection, row filtering, positional
+slicing, and an error all `df[x]`, which is why `.loc` and `.iloc` had to
+be invented on top. Here every subscript has exactly one reading.
+
+A column name that is not in the Frame raises rather than returning a
+`Result`, and says what the Frame does have. A literal name written into
+the source is a claim about the data's shape; when the claim is wrong the
+program is wrong, which is the 0.64 rule for misuse.
+
+Subscripting is read-only. There is no `f["a"] = x`: Frames are values,
+every verb returns a new one, and an assignment that silently produced a
+copy would be a trap. Use `ods.with_column`.
 
 ### Shaping columns and rows
 

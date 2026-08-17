@@ -1986,6 +1986,20 @@ impl HelpSystem {
             "whether the reader has reached the end of its file",
         );
         self.doc(
+            "ods.describe",
+            "ods.describe(f)",
+            "Frame",
+            "ods",
+            "summary statistics per column — count, nulls, mean, std, min, q25, median, q75, max — as a Frame, so it prints as a table and can be sorted or written out. Numeric statistics are null for String and Bool columns",
+        );
+        self.doc(
+            "ods.schema",
+            "ods.schema(f)",
+            "Frame",
+            "ods",
+            "name, type, and null count per column: describe without the arithmetic, for a Frame too wide to summarize",
+        );
+        self.doc(
             "ods.open_jsonl",
             "ods.open_jsonl(path)",
             "Result<Reader, Error>",
@@ -2043,7 +2057,7 @@ impl HelpSystem {
         );
         self.doc(
             "ods.column",
-            "ods.column(f, name)",
+            "ods.column(f, name)  //  or f[name]",
             "Series",
             "ods",
             "the named column of f as a Series",

@@ -10,11 +10,11 @@ let path = if len(args) > 1 => args[1] else => "data/sales.csv"
 
 // ── load: CSV text → typed Frame ──
 let raw = ods.read_csv(unwrap(fs.read_file(path)))
-let revenue = ods.column(raw, "amount") * ods.column(raw, "quantity")
-let sales = ods.with_column(raw, "revenue", revenue)
+let sales = ods.with_column(raw, "revenue", raw["amount"] * raw["quantity"])
 
 println("═══ sales data processor ═══")
 println("records: " + to_string(ods.n_rows(sales)))
+println(to_string(ods.describe(sales)))
 
 // ── revenue by region ──
 let by_region = sales
@@ -26,8 +26,8 @@ for rec in ods.to_records(by_region) {
 }
 
 // ── totals ──
-let total = ods.sum(ods.column(sales, "revenue"))
-let units = ods.sum(ods.column(sales, "quantity"))
+let total = ods.sum(sales["revenue"])
+let units = ods.sum(sales["quantity"])
 println("── totals ──")
 println("  revenue: $" + to_string(total))
 println("  units:   " + to_string(units))
@@ -39,7 +39,7 @@ println("  top sale: " + map_get(top, "product") + " in " + map_get(top, "region
 let report = {
     total_revenue: total,
     total_units: units,
-    regions: ods.to_list(ods.column(by_region, "region")),
+    regions: ods.to_list(by_region["region"]),
     top_product: map_get(top, "product")
 }
 let out = unwrap(json.stringify(report))

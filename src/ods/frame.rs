@@ -51,6 +51,50 @@ impl NativeObject for OdsFrame {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    /// `f["amount"]` is the column; `f[mask]` is the rows the mask keeps.
+    ///
+    /// Two meanings, disjoint by the key's type, which is what keeps this
+    /// from being pandas' `df[x]` — there, one subscript means column for
+    /// a string, row filter for a mask, positional for a slice, and an
+    /// error for an integer, which is why `.loc` and `.iloc` had to be
+    /// invented. Here an integer is refused outright and named its verb.
+    fn index(&self, key: &Value) -> Option<Result<Value, String>> {
+        Some(match key {
+            Value::String(name) => match self.0.column(name) {
+                Ok(col) => Ok(make_series_value(col.clone())),
+                // A column name written into the source that is not there
+                // is a mistake in the program, not input the caller chose,
+                // so it raises — and it says what is available, which is
+                // the fact the author needs.
+                Err(_) => Err(format!(
+                    "no column '{}' in this Frame. It has: {}",
+                    name,
+                    self.0.names().join(", ")
+                )),
+            },
+            Value::Native(_) => match super::series::series_of(key) {
+                Some(mask) => self
+                    .0
+                    .filter(mask)
+                    .map(OdsFrame::into_value)
+                    .map_err(|err| err.to_string()),
+                None => Err(format!(
+                    "a Frame is indexed by a column name or a Bool mask, got a {}",
+                    key.type_name()
+                )),
+            },
+            Value::Integer(_) => Err(
+                "a Frame is indexed by column, not by row position. For rows, \
+                 use ods.head(f, n) or ods.take(f, indices)"
+                    .to_string(),
+            ),
+            other => Err(format!(
+                "a Frame is indexed by a column name or a Bool mask, got {}",
+                other.type_name()
+            )),
+        })
+    }
 }
 
 pub fn frame_of(value: &Value) -> Option<&Frame> {
@@ -88,6 +132,8 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("with_column", 3),
     ("sort_by", 3),
     ("head", 2),
+    ("describe", 1),
+    ("schema", 1),
     ("group_by", 3),
     ("join", 4),
     ("join_left", 4),
@@ -432,6 +478,17 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
             };
             Ok(OdsFrame::into_value(f.head(n)))
         }
+        // Orientation: what is in this table, and what shape is it in.
+        // Both return Frames rather than maps so they print as tables and
+        // can themselves be sorted, filtered, and written out.
+        "describe" => {
+            let f = want_frame(func, &args, 0)?;
+            describe(f)
+        }
+        "schema" => {
+            let f = want_frame(func, &args, 0)?;
+            schema(f)
+        }
         "group_by" => {
             let f = want_frame(func, &args, 0)?;
             let keys = string_list(func, &args, 1)?;
@@ -735,6 +792,86 @@ fn records_to_frame(records: &[Value]) -> Result<Frame, String> {
         pairs.push((name, col));
     }
     Frame::new(pairs).map_err(e)
+}
+
+/// Per-column summary statistics, one row per column.
+///
+/// The numeric statistics are null for String and Bool columns rather
+/// than absent: a Frame has one type per column, so the alternative is
+/// two shapes of result depending on the input, and a caller that has to
+/// branch on the shape of a summary is worse off than one reading nulls.
+fn describe(frame: &Frame) -> Result<Value, String> {
+    let n = frame.n_cols();
+    let mut names = Vec::with_capacity(n);
+    let mut dtypes = Vec::with_capacity(n);
+    let mut counts = Vec::with_capacity(n);
+    let mut nulls = Vec::with_capacity(n);
+    // One Vec per statistic, each holding Value::Unit where the column is
+    // not numeric — which is how `series_from_list` spells a null.
+    let mut stats: Vec<Vec<Value>> = (0..7).map(|_| Vec::with_capacity(n)).collect();
+
+    for (name, col) in frame.names().iter().zip(frame.columns()) {
+        names.push(Value::String(Arc::new(name.clone())));
+        dtypes.push(Value::String(Arc::new(col.dtype().to_string())));
+        let null_count = col.null_count();
+        counts.push(Value::Integer((col.len() - null_count) as i64));
+        nulls.push(Value::Integer(null_count as i64));
+
+        let numeric = matches!(col.dtype(), olang_ods::DType::F64 | olang_ods::DType::I64);
+        let values: [Option<f64>; 7] = if numeric {
+            let scalar_f64 = |s: Scalar| match s {
+                Scalar::F64(x) => Some(x),
+                Scalar::I64(x) => Some(x as f64),
+                _ => None,
+            };
+            [
+                col.mean(false).ok().flatten(),
+                col.std(false).ok().flatten(),
+                col.min().ok().and_then(scalar_f64),
+                col.quantile(0.25).ok().flatten(),
+                col.quantile(0.5).ok().flatten(),
+                col.quantile(0.75).ok().flatten(),
+                col.max().ok().and_then(scalar_f64),
+            ]
+        } else {
+            [None; 7]
+        };
+        for (slot, value) in stats.iter_mut().zip(values) {
+            slot.push(value.map(Value::Float).unwrap_or(Value::Unit));
+        }
+    }
+
+    let labels = ["mean", "std", "min", "q25", "median", "q75", "max"];
+    let mut pairs = vec![
+        ("column".to_string(), series_from_list(&names)?),
+        ("dtype".to_string(), series_from_list(&dtypes)?),
+        ("count".to_string(), series_from_list(&counts)?),
+        ("nulls".to_string(), series_from_list(&nulls)?),
+    ];
+    for (label, column) in labels.iter().zip(stats) {
+        pairs.push((label.to_string(), series_from_list(&column)?));
+    }
+    Frame::new(pairs).map(OdsFrame::into_value).map_err(e)
+}
+
+/// Name, type, and null count per column — `describe` without the
+/// arithmetic, for a Frame too wide to summarize comfortably.
+fn schema(frame: &Frame) -> Result<Value, String> {
+    let mut names = Vec::with_capacity(frame.n_cols());
+    let mut dtypes = Vec::with_capacity(frame.n_cols());
+    let mut nulls = Vec::with_capacity(frame.n_cols());
+    for (name, col) in frame.names().iter().zip(frame.columns()) {
+        names.push(Value::String(Arc::new(name.clone())));
+        dtypes.push(Value::String(Arc::new(col.dtype().to_string())));
+        nulls.push(Value::Integer(col.null_count() as i64));
+    }
+    Frame::new(vec![
+        ("column".to_string(), series_from_list(&names)?),
+        ("dtype".to_string(), series_from_list(&dtypes)?),
+        ("nulls".to_string(), series_from_list(&nulls)?),
+    ])
+    .map(OdsFrame::into_value)
+    .map_err(e)
 }
 
 // ── streaming ─────────────────────────────────────────────────────
