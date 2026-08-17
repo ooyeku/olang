@@ -49,10 +49,12 @@ a file system, a network, or a browser.
 ## Conventions
 
 **Modules are always in scope.** `str.trim(...)`, `json.parse(...)`, and the
-rest work without any `use`. (The olang-source modules `colx`, `mathx`, and `cli`
-are the exception: import them with `use colx` / `use cli`.) A `use str` still works —
-useful when you want the import list of a file to be explicit — but is
-never required.
+rest work without any `use`. The exception is everything written in olang
+itself and embedded in the binary — the modules `colx` and `mathx` and
+the packages `cli`, `term`, `ui`, `viz`, and `dash` — which are imported
+with a bare `use colx` / `use term`. A `use str` still works — useful
+when you want the import list of a file to be explicit — but is never
+required for the native modules.
 
 **One environment note:** `fs`, `os`, `http`, and `db` need an operating
 system and are absent from the browser playground build, where calling

@@ -177,6 +177,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Five corrections from R1's final sitting, closing the book audit.**
+  `introduction.md` warned of a breaking release that already shipped
+  and told projects to pin against a migration now in the past.
+  `openness.md`'s closing line promised Campaign 3 as future work; it
+  shipped in full. `language.md` carried the third home of the
+  "intersection annotations exist for future use" claim (they do not
+  parse; unions have had semantics since 0.50), and its keyword appendix
+  said `for` iterates maps (it does not) while omitting tuples (it
+  does). `stdlib.md`'s conventions named three modules as needing `use`;
+  it is seven — `term`, `ui`, `viz`, and `dash` also do, verified by
+  probing all of them. With these, R1 is complete: every chapter read or
+  probed against the binary, roughly thirty corrections across eight
+  sittings, and four permanent guards holding what a test can hold.
+
 - **`docs/types.md` repeated a claim its source chapter had already
   corrected.** It said intersection annotations "parse today and gain
   semantics later" — false, they are a parse error — and linked to the

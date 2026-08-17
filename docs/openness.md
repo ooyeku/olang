@@ -113,6 +113,8 @@ The three capabilities depend on four design decisions:
 | A small, explicit effect boundary | A single place to record inputs and to enforce capabilities (open execution and open artifacts). |
 | Source-carrying binaries | No decompilation is required to read a binary (open artifacts). |
 
-The remaining openness work — capability enforcement on every execution
-tier — is planned as
-[Campaign 3 of the roadmap](roadmap.md#campaign-3--capabilities-on-every-tier).
+Capability enforcement runs on every execution tier —
+[Campaign 3 of the roadmap](roadmap.md#campaign-3--capabilities-on-every-tier)
+shipped it: checks live at the single dispatch point all tiers share, so
+a restricted program keeps full speed, and the `caps` module lets a
+program read its own grant and branch *before* attempting a gated call.

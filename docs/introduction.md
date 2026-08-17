@@ -100,12 +100,13 @@ documented behavior is locked by an executed example, and the execution
 tiers are verified against each other on every change.
 
 Two considerations apply before 1.0. The third-party package ecosystem is
-small, so programs rely chiefly on the standard library. And one deliberate
-breaking release is planned before the compatibility contract freezes (see
-the [roadmap](roadmap.md)); a project that cannot absorb that migration
-should pin its olang version until 1.0. The
-[Stability and compatibility](stability.md) chapter is the authoritative
-statement of what is stable today.
+small, so programs rely chiefly on the standard library. And while the
+language surface is closed — the two deliberate breaking releases the
+[roadmap](roadmap.md) planned have both shipped, with migration guides in
+the CHANGELOG — the 1.0 compatibility contract has not yet formally
+frozen, so the guarantees are the ones the
+[Stability and compatibility](stability.md) chapter states today, which
+is the authoritative statement of what is stable.
 
 ## How to read this book
 

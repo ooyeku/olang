@@ -715,9 +715,62 @@ examples doc-tested, its links live. First chapter through the pass
 with nothing to correct.
 
 
+**R1, eighth sitting — the audit closes.** The remaining chapters, read
+end to end: `introduction.md`, `installation.md`, `README.md`,
+`editors.md`, `openness.md`, `demo.md`, `packages.md`, `wasm.md`, and
+the reference halves of `language.md` and `stdlib.md` that earlier
+sittings' probes had not reached. Every command the chapters give was
+run, every scaffold shape diffed against what the tool generates,
+record/replay round-tripped, the shebang and `--version` claims
+executed.
+
+Five more corrections, all the same species as before:
+
+- `introduction.md` warned that "one deliberate breaking release is
+  planned before the compatibility contract freezes" and told projects
+  to pin against the migration. Both planned breaking releases shipped
+  (0.48 and the 0.61–0.65 semantics arc); the warning was advice to
+  brace for the past.
+- `openness.md` closed by saying capability enforcement on every tier
+  "is planned as Campaign 3". Campaign 3 shipped, all three lanes. The
+  chapter's last sentence promised as future the thing the chapter
+  exists to describe.
+- `language.md` said union and intersection annotations "exist in the
+  grammar for future use" — the *third* home of the claim corrected in
+  `stability.md` and `types.md`, missed because it phrases the claim
+  differently. Unions have had semantics since 0.50; intersections do
+  not parse.
+- `language.md`'s keyword appendix said `for` iterates maps. It does
+  not — `Cannot iterate over Map` — and the appendix omitted tuples,
+  which it does iterate. The `for` section itself was already right;
+  the appendix's one-line summary had drifted from its own chapter.
+- `stdlib.md`'s conventions named `colx`, `mathx`, and `cli` as the
+  modules needing `use`. It is seven: `term`, `ui`, `viz`, and `dash`
+  need it too, verified by probing all seven bare and imported.
+
+Chapters that survived their read-through untouched: `installation.md`,
+`README.md`, `editors.md`, `packages.md` (every `otc` command run),
+`demo.md` (one duplicated nav line removed), `wasm.md` (build steps
+diffed against the Makefile), `STYLE.md`.
+
+**What the audit was, in the end.** Four permanent guards now hold what
+they can: every example runs, every named function resolves, every
+claimed output is the real one, every cross-chapter anchor lands. The
+prose pass covered what they cannot: eight sittings, every chapter,
+thirty-odd corrections. The consistent finding — worth carrying into
+how future docs are written — is that errors live almost exclusively in
+sentences that were true when written: claims about the project's own
+machinery (gates, suite lists, file maps), claims of absence that a
+later feature made false, and warnings about futures that arrived. A
+claim about the *language* almost never rotted; a claim about the
+*project* almost always eventually did. The durable fix was never
+re-reading; it was making the claim executable, and where that was
+impossible, writing it so its truth does not depend on the calendar.
+
+
 | Lane | Work | Status |
 |---|---|---|
-| R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | **in progress** — mechanical checks built and clean; `stability.md`, `pitfalls.md`, `tooling.md` and the `language.md`/`ods.md` claim errors corrected, output comments now guarded; the long reference chapters remain to be read end to end |
+| R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | **done** — eight sittings: every chapter read or probed against the binary, ~30 corrections, four permanent guards (`doc_examples`, `doc_references`, `doc_outputs`, `doc_anchors`) |
 | R2 — the 1.0 contract | [Stability and compatibility](stability.md) is rewritten as the 1.0 compatibility contract: what is frozen, what semver means from here, and the support expectations for each surface. | planned |
 | R3 — release | The 1.0 release itself: final gates, the CHANGELOG's 1.0 entry, and version 1.0.0. | planned |
 

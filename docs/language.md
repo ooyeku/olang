@@ -1271,8 +1271,10 @@ variant constructors — see [Modules](#modules-and-sharing).
 
 Union type *declarations* (`type Id = Int | String`) are not accepted;
 discriminated unions are written as enums or as objects with a `kind` field.
-Union and intersection *annotations* exist in the grammar for future use.
-See [Stability](stability.md) for the full experimental list.
+Union *annotations* (`x: Int | String`) are not in this list — they have
+had semantics since 0.50 ([Types](types.md)). Intersection annotations
+(`A & B`) are not accepted at all; writing one is a parse error. See
+[Stability](stability.md) for the full list.
 
 ## Traits
 
@@ -1789,7 +1791,7 @@ Each keyword and contextual word, in one line:
 | `type` | *(contextual)* Declare a `struct` or `enum` type |
 | `if` / `else` | Conditional *expression* — `if cond => a else => b` |
 | `match` | Pattern-match an expression over arms |
-| `for` | Iterate over a list, range, string, or map |
+| `for` | Iterate over a list, tuple, range, or string (for a map, iterate `entries(m)`) |
 | `while` | Loop while a condition holds |
 | `loop` | Loop forever until `break` |
 | `break` / `continue` | Exit a loop (optionally with a value) / skip to the next iteration |
