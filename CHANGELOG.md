@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **DP1c closed without work, on measurement.** The lane assumed
+  `group_by`'s key-identification pass dominates its runtime. Over
+  2,000,000 rows it does not: grouping into 4 groups takes 10ms and into
+  64 groups 9ms — memory-bandwidth territory, where threads do not help.
+  The pass only costs anything (196ms) when nearly every row is its own
+  group, which is a `sort_by` wearing a `group_by` costume, and which is
+  also the case where parallelising is hardest: ids are assigned in
+  first-seen order and the output row order depends on it, so a parallel
+  version needs a merge that orders 2M distinct keys by their global
+  minimum first-seen row. The numbers are recorded in the roadmap so the
+  question is not reopened from the same wrong premise.
+
+- **DP3 respec'd by evidence rather than category.** The original list
+  (window functions, reshape, further joins) predated anything trying to
+  use the data stack in anger. DP4's flagship then found four missing
+  verbs that were not on it — `concat`, mask combination, the join-key
+  default, scalar `eq`/`ne` — all of which a first pipeline cannot do
+  without. DP3 is now tiered: what the next pipeline hits immediately
+  (`rename`, `drop`, `distinct`, `tail`, frame-level null handling), what
+  it reaches for once `describe` has shown the shape (`value_counts`,
+  `unique`, `median`, `cast`, `sample`), and the original list held until
+  a real workload asks for it.
+
+
 ## [0.66.0] - 2026-08-17
 
 ### Added

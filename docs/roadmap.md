@@ -188,10 +188,10 @@ the corpus if Campaign 1 lands first.
 
 | Lane | Work | Status |
 |---|---|---|
-| DP1c — parallel group keys | Parallelize the group-identification pass of `group_by`, which now dominates its runtime; the aggregation pass is already parallel. | planned |
+| DP1c — parallel group keys | Parallelize the group-identification pass of `group_by`. | **closed — measured, not needed** (see below) |
 | DP2 — IO breadth | Read CSV from files and as a bounded-memory stream; JSON-lines input; a columnar interchange format; `to_csv` and file output. The end-to-end input-to-output story. | **shipped** |
 | DP2b — ergonomics | Subscript syntax for Frames and Series, and the orientation verbs (`describe`, `schema`). Reaching a column was 13.6% of every `ods` call in the corpus and the most verbose thing in it. | **shipped** |
-| DP3 — verb completeness | Window functions, reshape (wide/long, pivot), additional join kinds and aggregations, and string and categorical column operations. | planned |
+| DP3 — verb completeness | Respec'd against what a real pipeline reached for. **Tier 1** (a first pipeline cannot proceed without them): `rename`, `drop`, `distinct`, `tail`, frame-level `drop_null`/`fill_null`. **Tier 2** (reached for once the shape of the data is understood): `value_counts`, `unique`/`n_unique`, `median`, `cast`, `sample`. **Tier 3** (the original list, deferred until something asks): window functions, reshape/pivot, further join kinds. | planned |
 | DP4 — flagship and benchmark | A realistic end-to-end ETL example wired to `plot`, and a reproducible benchmark against pandas and Polars with methodology and hardware documented in [The data stack](ods.md). | **flagship shipped**; the benchmark remains |
 
 **DP2 shipped.** `ods.read_csv_file`,
@@ -279,6 +279,49 @@ header (`enc=`) is where later ones go.
 Acceptance: a streaming job processes input larger than memory; the
 benchmark is reproducible from the repository; the flagship example ships in
 `examples/` and runs in the harness.
+
+**DP1c is closed without work, on evidence.** The lane assumed the
+group-identification pass dominates `group_by`'s runtime. Measured over
+2,000,000 rows:
+
+| grouping | time |
+|---|---|
+| 4 groups | 10ms |
+| 64 groups | 9ms |
+| 2,000,000 groups (every row distinct) | 196ms |
+| bare `sum`, no grouping | 0ms |
+
+The key pass costs nothing at the cardinality `group_by` is actually for.
+Grouping 2M rows into 4 or 64 is ~10ms either way — memory-bandwidth
+territory, where threads do not help. The cost only appears when nearly
+every row is its own group, which is a `sort_by` in a `group_by` costume.
+
+That case is also where parallelising is hardest and least rewarding.
+`group_ids_single` assigns ids in *first-seen order* and the output row
+order depends on it, so a parallel version needs per-chunk local maps plus
+a merge that orders distinct keys by their global minimum first-seen row
+— and with 2M distinct keys the merge is the work. The lane would have
+added a correctness-sensitive ordering dance to speed up the one shape
+nobody should use `group_by` for.
+
+Recorded rather than deleted, so the question is not reopened from the
+same wrong premise. If a profile ever shows the key pass dominating a real
+workload, that profile — not this assumption — is the thing to act on.
+
+**DP3 is respec'd.** The original list (window functions, reshape,
+further joins) was written before anything had tried to use the stack in
+anger. DP4's flagship then found four verbs missing that were not on that
+list at all — `concat`, mask combination, the join-key default, and
+scalar `eq`/`ne` — and all four turned out to be things a first pipeline
+cannot do without. They shipped with the flagship.
+
+So DP3 is now ordered by evidence rather than by category. Tier 1 is what
+the next pipeline will hit immediately: `rename` and `drop` (a join that
+collides names currently leaves you no way to fix it), `distinct`, `tail`,
+and frame-level null handling. Tier 2 is what a reader reaches for once
+`describe` has shown them the shape. Tier 3 is the original list, held
+until a real workload asks — the same discipline that turned out to be
+right about DP1c.
 
 **DP4's flagship shipped, and it earned its place by breaking things.**
 [`examples/meterflow/`](../examples/meterflow/) streams JSON-lines
