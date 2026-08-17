@@ -247,16 +247,26 @@ let smallest = if len(xs) > 0 => show(min(xs)) else => "none"
 println(smallest)   // 1
 ```
 
-## `for` needs a real binding — `_` is not one
+## `_` discards; it never binds, and no name may start with it
 
-A `for` loop must bind a name, even one you do not use. `for _ in ...` is
-a **parse error**; pick a throwaway name like `i` instead. (`_` *is* a
-valid wildcard in `match` and `let` — the asymmetry is real.)
+`_` is the discard everywhere it is accepted — `for _ in ...`, `let _ =
+...`, and a `match` arm — and in every case it means *there is no name
+here*. Referring to `_` in the body that follows is a parse error, not a
+lookup of some anonymous value:
 
 ```olang
-for i in range(0, 3) { print("x") }   // use `i`, not `_`
+for _ in range(0, 3) { print("x") }   // fine: the element is discarded
 println("")
 ```
+
+The rule that catches people is next to it: **an identifier cannot begin
+with an underscore.** `_unused`, `_tmp`, and `_name` are all parse
+errors, so the convention many languages use to mark a deliberately
+unused binding is unavailable here. Worse, the error reads `expected the
+end of the file` rather than naming the underscore, because the parser
+has stopped seeing a statement at all. If a `let` line draws that error,
+check whether the name starts with `_`; drop the underscore, or use a
+bare `_` if the value really is unwanted.
 
 ## A bare name in a `match` pattern is a binding
 

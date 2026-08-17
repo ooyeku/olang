@@ -250,6 +250,18 @@ let pending
 println(typeof(pending))   // Unit
 ```
 
+`()` is also a literal, which is how a Unit is written down rather than
+arrived at. It is the value a function with nothing to return gives
+back, what `map_get` yields for a missing key, and what a null becomes
+when it crosses in from JSON or a data column — so being able to write
+it is what makes those comparable:
+
+```olang
+let nothing = ()
+println(to_string(nothing == ()))                  // true
+println(to_string(map_get(#{ "a": 1 }, "zz") == ()))   // true
+```
+
 ### Destructuring
 
 `let` patterns destructure tuples and lists, with `...rest` capturing a
@@ -842,7 +854,8 @@ println(to_string(n))   // 128
 
 ### `for`
 
-Iterates lists, ranges, and strings (by character), binding each element:
+Iterates lists, tuples, ranges, and strings (by character), binding each
+element:
 
 ```olang
 let mut total = 0

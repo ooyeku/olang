@@ -42,7 +42,7 @@ declarations, traits and impls, `Result` + `?`, modules (`use`/`share`
 in all documented forms), `test` blocks, and the standard-library
 modules `str`, `col`, `math`, `json`, `toml`, `csv`, `re`, `dates`,
 `time`, `base64`, `fs`, `os`, `db`, `random`, `crypto`, `chan`, `task`,
-`cell`, `proc`, `meta`, and the global builtins. The
+`cell`, `proc`, `meta`, `caps`, and the global builtins. The
 embedded olang modules (`colx`, `mathx`) and packages (`cli`, `term`, `ui`,
 `viz`, `dash`) follow the same append-mostly rule.
 
@@ -160,21 +160,26 @@ surface is closed for 1.0.
   mutability commitment above, but it is the newest surface in the
   language and the least exercised by real programs.
 
-### Reserved — parses today, semantics later
+### Reserved — not accepted, and additive if they ever are
 
-- Intersection (`A & B`) type annotations
-- Union type *declarations* (`type X = A | B`) are not yet accepted —
-  union and literal-type *annotations* gained semantics in 0.50 and
-  are covered by the gradual-typing bullet above
+Two type-level forms are named in the grammar's design but rejected by
+the parser today. Writing either is a parse error, not a construct
+waiting for semantics:
 
-Reserved constructs are safe to avoid entirely; when they gain semantics it
-will be additive.
+- Intersection type annotations (`A & B`)
+- Union type *declarations* (`type X = A | B`). Union and literal-type
+  *annotations* are a different thing and do have semantics — they
+  gained them in 0.50 and are covered by the gradual-typing bullet
+  above.
+
+Both are safe to avoid entirely, which is the only option. If either is
+ever accepted it will be additive, since no program can contain one now.
 
 
 ## Versioning
 
 olang follows [semver](https://semver.org) with a pre-1.0 mapping: **minor
-versions** (0.25 → 0.26) may add features and fix bugs whose old behavior
+versions** (0.66 → 0.67) may add features and fix bugs whose old behavior
 was undocumented or wrong; **patch versions** are fixes only. Anything that
 would break a documented example is deferred to a hypothetical 1.0 — and
 the intent is that nothing needs to.
@@ -186,12 +191,22 @@ short-circuiting, `?` aborting instead of propagating) is recorded in
 ## How this is enforced
 
 - Every code block in the book runs in CI (`doc_examples_test`).
+- Every `module.function` the book *names in passing* is resolved against
+  the real binary (`doc_references_test`). Running the examples proves
+  the examples; this covers the far larger surface the prose mentions
+  without demonstrating, which is where a rename quietly leaves a lie.
 - Every fixed bug lands with a regression test (one file per area under
   `tests/`).
 - The examples — real programs — run end-to-end via
   `examples/run_all.ol` and `example_programs_test`.
-- Tier agreement is tested directly (`bytecode_tier_test` and friends), and
-  `colx`/`mathx` differential tests exercise the language against its own
+- Tier agreement is tested two ways. `bytecode_tier_test` and
+  `bytecode_differential_test` call individual functions on both tiers;
+  `tier_agreement_test` runs every runnable book example and every
+  standalone example program as a whole program under `--no-ovm` and
+  under `--ovm-tier=1` and diffs stdout, stderr, and exit status. The
+  second exists because the first cannot catch a divergence that needs a
+  whole program to express — and the first one found was exactly that.
+- `colx`/`mathx` differential tests exercise the language against its own
   stdlib.
 
 If you find documented behavior that does not match the implementation,
