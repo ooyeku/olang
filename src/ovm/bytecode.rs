@@ -98,10 +98,32 @@ pub struct BytecodeVm {
     /// arguments does not malloc on every call.
     arg_pool: Vec<Vec<OvmValue>>,
     /// Function *values* compiled on demand for the native higher-order
-    /// path, keyed by body-allocation identity and validated by Weak
-    /// upgrade (a freed-and-reused address yields a dead Weak, never a
-    /// stale hit). `None` records a failed compile so it is not retried.
-    hof_cache: HashMap<usize, (std::sync::Weak<Expr>, Option<FunctionId>)>,
+    /// path, keyed by *body and captured-environment* allocation identity
+    /// and validated by Weak upgrade (a freed-and-reused address yields a
+    /// dead Weak, never a stale hit). `None` records a failed compile so
+    /// it is not retried.
+    ///
+    /// The environment must be part of the key. `compile_function_with_
+    /// closure` bakes the captures into the compiled body, so two closures
+    /// from one factory — same lambda body, different captures — are
+    /// different compiled functions. Keying on the body alone made the
+    /// second closure run the first one's captures:
+    ///
+    /// ```text
+    /// fn apply(f, x) = f(x)
+    /// fn adder(k) = (n) => n + k
+    /// apply(adder(1), 0)      // 1
+    /// apply(adder(100), 0)    // 1   — was 100 on the interpreter
+    /// ```
+    #[allow(clippy::type_complexity)]
+    hof_cache: HashMap<
+        (usize, usize),
+        (
+            std::sync::Weak<Expr>,
+            std::sync::Weak<im::HashMap<String, crate::ast::Value>>,
+            Option<FunctionId>,
+        ),
+    >,
     /// Declared struct shapes (type name -> field names), mirrored from the
     /// interpreter's registry so struct literals validate at compile time
     /// with exactly the interpreter's rules.
@@ -3263,10 +3285,18 @@ impl BytecodeVm {
             return None;
         }
 
-        let key = Arc::as_ptr(&func.body) as usize;
-        if let Some((weak, cached)) = self.hof_cache.get(&key)
-            && let Some(live) = weak.upgrade()
-            && Arc::ptr_eq(&live, &func.body)
+        // Both halves of the identity: the body decides what the code is,
+        // the captured environment decides what it closes over, and the
+        // compiled artifact depends on both.
+        let key = (
+            Arc::as_ptr(&func.body) as usize,
+            Arc::as_ptr(&func.closure) as usize,
+        );
+        if let Some((body_weak, env_weak, cached)) = self.hof_cache.get(&key)
+            && let Some(live_body) = body_weak.upgrade()
+            && Arc::ptr_eq(&live_body, &func.body)
+            && let Some(live_env) = env_weak.upgrade()
+            && Arc::ptr_eq(&live_env, &func.closure)
         {
             return *cached;
         }
@@ -3297,8 +3327,14 @@ impl BytecodeVm {
         if self.hof_cache.len() >= 512 {
             self.hof_cache.clear();
         }
-        self.hof_cache
-            .insert(key, (Arc::downgrade(&func.body), result));
+        self.hof_cache.insert(
+            key,
+            (
+                Arc::downgrade(&func.body),
+                Arc::downgrade(&func.closure),
+                result,
+            ),
+        );
         result
     }
 

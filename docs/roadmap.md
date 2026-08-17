@@ -397,25 +397,28 @@ the call. The grant a program reads is the *caller's*, so attenuated
 dependency code sees its own — the same classification the gate uses,
 asked as a question instead of enforced as a refusal.
 
-## Known open — tier agreement
+## Tier agreement, tested
 
 `docs/ovm.md` promises that a lower tier which cannot reproduce the
 interpreter's result refuses to run rather than diverging. That promise
-is currently broken, and the break is a release blocker for 1.0.
+is now enforced by `tests/tier_agreement_test.rs`, which runs the corpus
+through both engines and diffs the output.
 
-`tests/tier_agreement_test.rs` runs the corpus through both engines and
-diffs the output. On its first full run it found `examples/parser`
-answering differently on the compiled tier: two closures built from the
-same higher-order combinator diverge, the second behaving as though it
-captured the first one's argument. A reviewer had reported exactly this
-after ~8,000 lines of use; eight attempts to reduce it to a snippet all
-failed, because reducing it makes it disappear. That is a clue about
-where the fault lives — it needs a whole program, several combinators
-deep, to surface.
+On its first full run it found `examples/parser` answering differently on
+the compiled tier, and the fault was real: the on-demand compile cache
+for higher-order calls was keyed on a function body's allocation identity
+alone, while the compiled artifact also bakes in the captured
+environment. Two closures from one factory therefore collided, and the
+second ran the first's captures — silently, on the default execution
+path, in the idiom the language most advertises.
 
-The harness stays, the failing case stays as the reproduction, and the
-test carries `#[ignore]` with the reason named. Fixing it un-ignores the
-test; nothing else counts as done.
+A reviewer had reported exactly this after ~8,000 lines of use. Eight
+attempts to reduce it to a snippet failed, because it needs a *shared
+call site*: calling a closure directly takes a path that carries captures
+explicitly, so the fault only appears when a combinator invokes it. That
+is why a whole-program harness found in one run what targeted testing had
+missed, and the argument for keeping the corpus in the loop rather than
+relying on hand-written cases.
 
 ## Campaign 4 — 1.0 readiness
 

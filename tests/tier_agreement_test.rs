@@ -261,30 +261,7 @@ fn every_runnable_book_example_agrees_across_tiers() {
     check(doc_cases(), "docs");
 }
 
-/// Currently failing, and left failing on purpose is not an option — so
-/// it is ignored with the reason stated, and un-ignoring it is the
-/// definition of done.
-///
-/// `examples/parser` diverges: two closures built from the same
-/// higher-order combinator (`many1`) give different answers on the
-/// compiled tier, the second behaving as though it captured the first
-/// one's argument. `word "olang"` yields "olang" interpreted and ""
-/// compiled; `1 + 2 * 3` evaluates to 7 interpreted and a parse error
-/// compiled.
-///
-/// This is the failure a reviewer reported after ~8,000 lines — "every
-/// comparator factory, every partial application is affected the second a
-/// program builds two of them" — which eight hand-written attempts failed
-/// to reproduce. It needs a real program: reducing it to a single file,
-/// or to a two-file module, makes it disappear. That is itself a clue
-/// about where the fault lives, and the reason the reproduction stays a
-/// whole example rather than a synthetic snippet.
-///
-/// `docs/ovm.md` promises that a tier which cannot reproduce the
-/// interpreter's result refuses to run rather than diverging. Here it
-/// runs, and diverges.
 #[test]
-#[ignore = "known open: examples/parser diverges — OVM closure capture shared between instances"]
 fn every_standalone_example_program_agrees_across_tiers() {
     check(example_cases(), "examples");
 }

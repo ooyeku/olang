@@ -331,6 +331,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Fixed: two closures from one factory shared their captures on the
+  compiled tier (silent wrong answers).** The bug a reviewer called a
+  release blocker, found by the harness below and fixed here.
+
+  ```olang
+  fn apply(f, x) = f(x)
+  fn adder(k) = (n) => n + k
+  println(show(apply(adder(1), 0)) + " " + show(apply(adder(100), 0)))
+  ```
+
+  Interpreter: `1 100`. Compiled tier: **`1 1`**.
+
+  The compiled tier caches functions it compiles on demand for the
+  higher-order path, and the key was the body's allocation identity
+  alone. But `compile_function_with_closure` bakes the captured
+  environment *into* the compiled body, so two closures from one factory
+  — same lambda body, different captures — are different compiled
+  functions that the cache treated as one. The second ran the first's
+  captures. The key is now (body, environment), with the same Weak-upgrade
+  validation the body already had so a freed-and-reused address cannot
+  produce a stale hit.
+
+  It took a shared call site to surface: calling a closure directly takes
+  a path that carries captures explicitly. That is why it hid from eight
+  hand-written reductions and only appeared in a parser-combinator
+  program, where every parser is invoked through a combinator.
+
 - **Whole-program tier agreement is now tested, and it found a real
   divergence on its first run.** `docs/ovm.md` promises that a tier which
   cannot reproduce the interpreter's result refuses to run rather than
@@ -351,10 +378,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `word "olang"` yields `olang` interpreted and `""` compiled, and
   `1 + 2 * 3` evaluates to `7` interpreted and a parse error compiled.
   This is the failure a reviewer reported after ~8,000 lines and which
-  eight hand-written attempts failed to reproduce — reducing it to a
-  single file, or to a two-file module, makes it disappear. The bug is
-  open; the test that finds it is `#[ignore]`d with that reason stated,
-  and un-ignoring it is the definition of done.
+  eight hand-written attempts failed to reproduce. It is fixed above, and
+  the harness that found it runs unignored.
 
 - **A program can read its own capability grant (Campaign 3, C3).**
   A denial still stops the program — that is deliberate and unchanged.

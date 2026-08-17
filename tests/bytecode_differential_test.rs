@@ -553,3 +553,38 @@ fn math_domain_errors_agree_across_tiers() {
     assert_same("fn f(x) = math.log2(x)", "f", &floats(&[-1.0]));
     assert_same("fn f(x) = math.log10(x)", "f", &floats(&[0.0]));
 }
+
+/// Two closures from one factory, called through a shared higher-order
+/// function, must not share captures.
+///
+/// The compiled tier caches functions it compiles on demand for the
+/// higher-order path, and the key was the body's allocation identity
+/// alone. `compile_function_with_closure` bakes the captured environment
+/// *into* the compiled body, so two closures from one factory — same
+/// lambda body, different captures — are different compiled functions
+/// that the cache treated as one. The second closure ran the first's
+/// captures, silently.
+///
+/// It needed a shared call site to surface: calling the closures directly
+/// takes a different path that carries captures explicitly. That is why
+/// this reproduces with `apply` and not without it, and why the failure
+/// hid until a parser-combinator program ran through the corpus.
+#[test]
+fn two_closures_from_one_factory_keep_their_own_captures() {
+    let source = r#"
+fn apply(f, x) = f(x)
+fn adder(k) = (n) => n + k
+fn probe() = {
+    let a1 = adder(1)
+    let a100 = adder(100)
+    apply(a1, 0) * 1000 + apply(a100, 0)
+}
+"#;
+    let interpreted = interpreter_result(source, "probe", &[]).expect("interpreter");
+    let compiled = bytecode_result(source, "probe", &[]).expect("bytecode");
+    assert_eq!(
+        interpreted, compiled,
+        "the second closure must use its own capture, not the first's"
+    );
+    assert_eq!(interpreted, Value::Integer(1100));
+}
