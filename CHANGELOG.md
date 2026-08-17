@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-08-17
+
 ### Added
 
 - **A Frame prints as a table.** `display()` gave a shape and a type
