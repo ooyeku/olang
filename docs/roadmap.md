@@ -397,6 +397,29 @@ the call. The grant a program reads is the *caller's*, so attenuated
 dependency code sees its own — the same classification the gate uses,
 asked as a question instead of enforced as a refusal.
 
+## The tier boundary, priced
+
+A struct passed to a hot function cost 80x what the same data cost in a
+list — 129ms against 1ms — while `--no-ovm` measured the two as
+identical. The gap was entirely the interpreter/OVM boundary: the
+argument-conversion cache, which lets an unchanged value cross once
+instead of once per call, covered lists and nothing else. A struct
+re-converted its whole payload on every call.
+
+The cache now covers every Arc-backed compound value, keyed on variant
+and allocation together. Structs cross as cheaply as lists, and the
+workaround a reviewer had been forced into — rewriting every data
+structure as an untyped list, because the readable `type Node = struct
+{...}` form was O(n) per descent — is no longer necessary.
+
+Two lessons worth keeping. The first is that the fix depended on a change
+that had already been made and reported as *not* fixing anything: giving
+struct fields an `Arc` did not move the benchmark, but it gave structs
+the stable allocation identity the cache needed. The second is that the
+original diagnosis — "structs are deep-copied" — was right about the
+representation and wrong about the cost, and only bisecting with
+`--no-ovm` separated them.
+
 ## Tier agreement, tested
 
 `docs/ovm.md` promises that a lower tier which cannot reproduce the

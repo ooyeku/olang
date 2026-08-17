@@ -24,6 +24,69 @@ use crate::ast::{Function, FunctionDecl, Value};
 use crate::ovm::bytecode::{BytecodeError, BytecodeVm};
 use crate::ovm::{FunctionId, OvmValue};
 
+/// The allocation a cached conversion belongs to, held weakly.
+///
+/// A cache keyed on an address alone is unsound: the allocation can die
+/// and a new one land at the same address. Holding a `Weak` to the exact
+/// original and re-checking pointer identity on every hit makes a stale
+/// entry impossible — a dead allocation fails to upgrade, and a live one
+/// at a reused address fails `ptr_eq`.
+///
+/// One variant per Arc-backed compound `Value`, because the weak type
+/// differs per payload. A value whose contents could change behind the
+/// pointer must never be listed here; every variant below is immutable.
+enum CachedOwner {
+    List(Weak<Vec<Value>>),
+    Tuple(Weak<Vec<Value>>),
+    Map(Weak<std::collections::HashMap<String, Value>>),
+    Struct(Weak<std::collections::HashMap<String, Value>>),
+}
+
+impl CachedOwner {
+    /// The cache key and the weak handle, for a value worth caching.
+    /// `None` for scalars, where conversion is already trivial and an
+    /// entry would cost more than it saves.
+    fn of(value: &Value) -> Option<(usize, CachedOwner)> {
+        match value {
+            Value::List(items) => Some((
+                Arc::as_ptr(items) as *const u8 as usize,
+                CachedOwner::List(Arc::downgrade(items)),
+            )),
+            Value::Tuple(items) => Some((
+                Arc::as_ptr(items) as *const u8 as usize,
+                CachedOwner::Tuple(Arc::downgrade(items)),
+            )),
+            Value::Map(fields) => Some((
+                Arc::as_ptr(fields) as *const u8 as usize,
+                CachedOwner::Map(Arc::downgrade(fields)),
+            )),
+            Value::Struct { fields, .. } => Some((
+                Arc::as_ptr(fields) as *const u8 as usize,
+                CachedOwner::Struct(Arc::downgrade(fields)),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Is this cache entry still about exactly this value? Variant *and*
+    /// allocation must match: two different `Value`s can share an address
+    /// only if one is dead, and a struct must not answer for a map that
+    /// happens to sit where it used to.
+    fn still_is(&self, value: &Value) -> bool {
+        match (self, value) {
+            (CachedOwner::List(w), Value::List(items))
+            | (CachedOwner::Tuple(w), Value::Tuple(items)) => {
+                w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, items))
+            }
+            (CachedOwner::Map(w), Value::Map(fields))
+            | (CachedOwner::Struct(w), Value::Struct { fields, .. }) => {
+                w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, fields))
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Default number of calls before a function is considered hot.
 pub const DEFAULT_PROMOTION_THRESHOLD: u32 = 50;
 
@@ -78,13 +141,20 @@ pub struct BytecodeTier {
     stats: TierStats,
     /// Emit a line when a function is promoted (for --ovm-stats / debugging)
     verbose: bool,
-    /// Pointer-identity cache for argument conversion. Arc-backed lists are
-    /// immutable, so a list already converted (and validated representable)
-    /// converts for free on every later call — a hot function taking a large
-    /// list no longer pays a deep Value->OvmValue walk per call. Entries are
-    /// keyed by allocation address and validated with a Weak upgrade, so a
-    /// freed-and-reused address can never produce a stale hit.
-    arg_cache: HashMap<usize, (Weak<Vec<Value>>, OvmValue)>,
+    /// Pointer-identity cache for argument conversion. Every Arc-backed
+    /// compound value is immutable, so one already converted (and validated
+    /// representable) converts for free on every later call — a hot
+    /// function taking a large value no longer pays a deep Value->OvmValue
+    /// walk per call. Entries are keyed by allocation address and validated
+    /// with a Weak upgrade, so a freed-and-reused address can never produce
+    /// a stale hit.
+    ///
+    /// This covered lists only, which made a struct argument 20x more
+    /// expensive than the same data in a list: passing a struct holding
+    /// 5,000 elements to a hot function cost 84ms against a list's 1ms,
+    /// entirely in re-converting the same unchanged value 2,000 times.
+    /// Every variant with a stable allocation now shares the cache.
+    arg_cache: HashMap<usize, (CachedOwner, OvmValue)>,
 }
 
 impl BytecodeTier {
@@ -520,17 +590,15 @@ impl BytecodeTier {
     }
 
     /// Convert one argument for the VM, or None if it isn't representable.
-    /// Arc-backed lists hit the pointer-identity cache: the same (immutable)
-    /// list converts once, not once per call. Correctness of a hit is
-    /// guaranteed by the Weak upgrade — if the original allocation died, the
-    /// upgrade fails and the entry is replaced; if it is alive, the address
-    /// identifies exactly that list.
+    /// Arc-backed compound values hit the pointer-identity cache: the same
+    /// (immutable) value converts once, not once per call. Correctness of a
+    /// hit is guaranteed by the Weak upgrade — if the original allocation
+    /// died, the upgrade fails and the entry is replaced; if it is alive,
+    /// the address identifies exactly that value.
     fn convert_arg(&mut self, arg: &Value) -> Option<OvmValue> {
-        if let Value::List(items) = arg {
-            let key = Arc::as_ptr(items) as *const u8 as usize;
-            if let Some((weak, cached)) = self.arg_cache.get(&key)
-                && let Some(live) = weak.upgrade()
-                && Arc::ptr_eq(&live, items)
+        if let Some((key, owner)) = CachedOwner::of(arg) {
+            if let Some((cached_owner, cached)) = self.arg_cache.get(&key)
+                && cached_owner.still_is(arg)
             {
                 return Some(cached.clone());
             }
@@ -543,8 +611,7 @@ impl BytecodeTier {
             if self.arg_cache.len() >= 512 {
                 self.arg_cache.clear();
             }
-            self.arg_cache
-                .insert(key, (Arc::downgrade(items), converted.clone()));
+            self.arg_cache.insert(key, (owner, converted.clone()));
             return Some(converted);
         }
         if !Self::is_representable(arg) {
@@ -556,6 +623,105 @@ impl BytecodeTier {
 
 #[cfg(test)]
 mod tests {
+    use super::CachedOwner;
+
+    /// The cache is keyed on an address, which is only sound because a
+    /// `Weak` proves the entry still describes *that* allocation. These
+    /// pin the two ways it could go wrong.
+    #[test]
+    fn a_cached_owner_recognises_its_own_value() {
+        let list = Value::List(Arc::new(vec![Value::Integer(1)]));
+        let (_, owner) = CachedOwner::of(&list).expect("lists are cached");
+        assert!(owner.still_is(&list));
+
+        let other = Value::List(Arc::new(vec![Value::Integer(1)]));
+        assert!(
+            !owner.still_is(&other),
+            "an equal-but-distinct allocation must not hit"
+        );
+    }
+
+    #[test]
+    fn a_cached_owner_rejects_a_different_variant() {
+        // A struct and a map share a payload type, so without the variant
+        // check a struct entry could answer for a map at a reused address.
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("a".to_string(), Value::Integer(1));
+        let fields = Arc::new(fields);
+        let as_struct = Value::Struct {
+            type_name: "T".to_string(),
+            fields: fields.clone(),
+        };
+        let as_map = Value::Map(fields);
+        let (skey, owner) = CachedOwner::of(&as_struct).expect("structs are cached");
+        let (mkey, _) = CachedOwner::of(&as_map).expect("maps are cached");
+        assert_eq!(skey, mkey, "same allocation, so the addresses match");
+        assert!(owner.still_is(&as_struct));
+        assert!(
+            !owner.still_is(&as_map),
+            "the variant must be part of the identity"
+        );
+    }
+
+    #[test]
+    fn a_cached_owner_goes_stale_when_its_value_dies() {
+        let owner = {
+            let list = Value::List(Arc::new(vec![Value::Integer(1)]));
+            CachedOwner::of(&list).expect("cached").1
+        };
+        let fresh = Value::List(Arc::new(vec![Value::Integer(1)]));
+        assert!(
+            !owner.still_is(&fresh),
+            "a dead allocation must never produce a hit"
+        );
+    }
+
+    /// Structs must cross the tier boundary as cheaply as lists. They did
+    /// not: the conversion cache covered lists only, so a struct argument
+    /// re-converted its whole payload on every call — 84ms against a
+    /// list's 1ms for the same 5,000 elements. The bound is deliberately
+    /// loose (a timing test that is tight is a flaky test); the regression
+    /// it guards was 80x, not 8x.
+    #[test]
+    fn a_struct_argument_is_not_dramatically_worse_than_a_list() {
+        use crate::Interpreter;
+        use crate::Parser;
+
+        let source = r#"
+type Box = struct { payload: [Int] }
+let mut big = []
+for i in 0..2000 { big = big + [i] }
+let boxed = Box { payload: big }
+let listed = [big]
+fn touch_s(b) = len(b.payload)
+fn touch_l(l) = len(l[0])
+let t0 = time.monotonic_ms()
+let mut a = 0
+for i in 0..500 { a = a + touch_s(boxed) }
+let t1 = time.monotonic_ms()
+let mut b = 0
+for i in 0..500 { b = b + touch_l(listed) }
+let t2 = time.monotonic_ms()
+[t1 - t0, t2 - t1]
+"#;
+        let program = Parser::new().parse(source).expect("parses");
+        let mut interpreter = Interpreter::new();
+        interpreter.enable_bytecode_tier(2, false);
+        let out = interpreter.eval_program(program).expect("runs");
+        let (struct_ms, list_ms) = match &out {
+            Value::List(v) => match (&v[0], &v[1]) {
+                (Value::Integer(s), Value::Integer(l)) => (*s, *l),
+                _ => panic!("expected two timings, got {out:?}"),
+            },
+            _ => panic!("expected a list, got {out:?}"),
+        };
+        assert!(
+            struct_ms <= list_ms.max(4) * 8,
+            "a struct argument cost {struct_ms}ms against a list's {list_ms}ms — \
+             the tier conversion cache has stopped covering structs"
+        );
+    }
+
     use super::*;
     use crate::ast::{BinaryOp, Expr, Parameter};
     use std::sync::Arc;

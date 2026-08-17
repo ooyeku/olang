@@ -331,6 +331,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Fixed: a struct argument cost 80x a list's on the compiled tier.**
+  Passing a struct holding 5,000 elements to a hot function took 129ms
+  against the same data in a list at 1ms. With `--no-ovm` the two were
+  identical (4ms and 5ms), which located it: the cost was the tier
+  boundary, not the value.
+
+  `BytecodeTier::convert_arg` caches converted arguments by allocation
+  identity so an unchanged value crosses once rather than once per call —
+  but the cache covered `Value::List` alone. Everything else fell through
+  to a full `Value -> OvmValue` walk on every call, so a struct
+  re-converted its entire payload 3,000 times. The cache now covers every
+  Arc-backed compound value (list, tuple, map, struct) through one
+  `CachedOwner` type that carries the variant as well as the weak handle,
+  so a struct entry can never answer for a map that happens to sit at the
+  same address.
+
+  Measured after: **129ms -> 1ms**, identical to the list. A struct-node
+  binary tree of 65,536 nodes now walks 30 times in 116ms.
+
+  A review had reported this as "the language punishes its own type
+  system" — an AVL tree written the readable way, with `type Node =
+  struct {...}`, was O(n) per descent, so every structure had to be
+  rewritten as an untyped list. That workaround is no longer needed. The
+  `Arc` on struct fields shipped earlier this week, which did *not* fix
+  the symptom on its own, is what made the fix possible: it gave structs
+  the stable allocation identity the cache keys on.
+
 - **Fixed: two closures from one factory shared their captures on the
   compiled tier (silent wrong answers).** The bug a reviewer called a
   release blocker, found by the harness below and fixed here.
