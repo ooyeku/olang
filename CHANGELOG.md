@@ -177,6 +177,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`docs/internals.md` documented a gate that does not test the
+  workspace.** "Gates for every change: `cargo test --release`" — but the
+  repository root is both a package and the workspace root, so a bare
+  `cargo test` tests `olang` alone and never reaches the `olang-ods`
+  engine crate's property tests or `otc`'s. A kernel change could pass
+  every documented gate and ship broken. Corrected to `--workspace`, with
+  the reason stated.
+
+  The same chapter described `List(Arc<[Value]>)`; it is
+  `Arc<Vec<Value>>`, and the difference is load-bearing — a boxed slice
+  cannot grow, so the in-place append fusion olang ships would be
+  impossible under the representation documented. Its repository map was
+  missing eight files including three shipped campaigns (`caps.rs`,
+  `timeline.rs`, `scoping.rs`), and its testing table credited
+  `example_programs_test.rs` with example files that no longer exist
+  while listing neither the whole-program tier harness nor either doc
+  guard.
+
 - **The ods chapter now uses the subscript it teaches.** `ods.md` gained
   a section in 0.66 explaining that `f["amount"]` is how a column is
   reached, then went on calling `ods.column(f, "amount")` in every

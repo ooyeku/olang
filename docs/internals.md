@@ -99,7 +99,15 @@ both ways, compare. The differential suites
 (`tests/bytecode_differential_test.rs`, `tests/bytecode_tier_test.rs`,
 `tests/jit_test.rs`) do exactly that, over arithmetic edge cases,
 overflow errors, aliasing, recursion, and every guard boundary the JIT
-has. This is the same shape every mature tiered VM (V8, JSC, LuaJIT,
+has. `tests/tier_agreement_test.rs` asks the same question at the other
+scale: it runs every runnable example in this book and every standalone
+example program as a *whole program* under `--no-ovm` and under
+`--ovm-tier=1`, and diffs stdout, stderr, and exit status. Both are
+needed. A per-function test cannot express a divergence that takes a
+whole program to produce, and the first divergence the whole-program
+harness found was exactly that shape — a closure whose captures were
+shared between instances, which needed one call site reached twice to
+show at all. This is the same shape every mature tiered VM (V8, JSC, LuaJIT,
 PyPy) converged on: keep the simplest tier forever, because it is the
 semantic reference, the deopt target, and the one component you can
 reason about when the others disagree.
@@ -214,11 +222,24 @@ whitelist and the measured results.
 ## The value model
 
 `Value` (in `src/ast.rs`) is a clone-friendly enum: `Integer`, `Float`,
-`String(Arc<String>)`, `Boolean`, `List(Arc<[Value]>)`, `Tuple`,
-`Map(Arc<HashMap>)`, `Struct { type_name, fields }` (also used for anonymous
+`String(Arc<String>)`, `Boolean`, `List(Arc<Vec<Value>>)`,
+`Tuple(Arc<Vec<Value>>)`, `Map(Arc<HashMap>)`,
+`Struct { type_name, fields: Arc<HashMap> }` (also used for anonymous
 objects, modules, and parsed JSON objects), `Enum` / `EnumConstructor`,
 `Function` (parameters, body, closure snapshot), `Builtin`, `Ok` / `Err`,
 `Range`, `Unit`.
+
+Two of those `Arc`s are load-bearing rather than incidental, and both
+were arrived at by measurement. A list is `Arc<Vec<Value>>` rather than
+`Arc<[Value]>`: a boxed slice cannot grow, so `xs = xs + [item]` in a
+loop would have to reallocate every iteration, where `Arc::make_mut` on
+a uniquely-held `Vec` pushes in place. Reads are identical, since a
+`Vec` derefs to the same slice. And a struct's fields are behind an
+`Arc` for the same reason a map's are: without it, passing a struct to
+a function copied every field, so the language punished its own type
+system — a recursive type written the readable way copied the whole
+tree on every descent, and bare lists were the only way to get a tree
+that behaved like one.
 
 Conventions the code relies on:
 
@@ -318,10 +339,13 @@ that owns it:
 | Layer | Where | What it protects |
 |---|---|---|
 | Doc examples | `doc_examples_test.rs` | every `olang` block in README + book chapters parses and runs |
-| Example programs | `example_programs_test.rs` | the curated `examples/*.ol` keep working |
+| Example programs | `example_programs_test.rs` | every `examples/demo` module parses, and a bounded soak run keeps its invariants |
 | Self-hosted harness | `examples/run_all.ol` | every example (incl. packages) runs in a real subprocess |
 | Differential | `embedded_stdlib_test.rs` | `colx`/`mathx` agree with `col`/`math` |
-| Tier consistency | `bytecode_tier_test.rs` and friends | OVM results match the interpreter |
+| Tier consistency | `bytecode_tier_test.rs` and friends | OVM results match the interpreter, function by function |
+| Whole-program tiers | `tier_agreement_test.rs` | every book example and example program gives the same stdout, stderr, and exit status on both tiers |
+| Doc references | `doc_references_test.rs` | every `module.function` the book names in passing resolves |
+| Doc outputs | `doc_outputs_test.rs` | every `// comment` claiming a printed value states the real one |
 | JIT parity | `jit_test.rs` | every guard edge agrees byte-for-byte, tiered vs interpreted |
 | Engine properties | `ods_*_test.rs` (+ `olang-ods` unit tests) | Series/Frame/stats kernels against naive references and scipy constants |
 | Feature regression | one file per fixed bug area | fixed bugs stay fixed |
@@ -334,9 +358,16 @@ The examples directory is that method's sediment — each program exists
 because building it made the language better, and keeps running in CI
 so it stays true.
 
-Gates for every change: `cargo test --release`, `cargo clippy --release
---all-targets` (zero warnings), `cargo fmt --check`, and — for anything
-user-visible — verify through the installed binary, in both tiers.
+Gates for every change: `cargo test --workspace`, `cargo clippy
+--workspace --all-targets` (zero warnings), `cargo fmt --check`, and —
+for anything user-visible — verify through the installed binary, in both
+tiers.
+
+`--workspace` is the load-bearing part. The repository root is both a
+package and the workspace root, so a bare `cargo test` builds and tests
+`olang` alone: the engine crate's property tests under `olang-ods/`, and
+`otc`'s, never run. A change to a kernel could pass every gate and still
+be broken.
 
 ## How to add things
 
@@ -355,9 +386,11 @@ refuses (never silently diverges). Add cases to `analyze.rs` match arms
 runnable example — the doc test will hold you to it. Check
 [Stability](stability.md) first: syntax changes must be additive.
 
-**An example program**: a directory under `examples/` with `olang.toml` and
-`main.ol` — `run_all.ol` discovers it automatically. Register it in
-`examples/README.md`.
+**An example program**: a directory under `examples/` with a `main.ol`.
+An `olang.toml` makes it a package, which about half the examples are and
+half do not need — `run_all.ol` discovers either, by looking for the
+`main.ol`. Register it in `examples/README.md`, which is also where the
+website's example gallery gets its entries.
 
 ## Repository map
 
@@ -369,9 +402,13 @@ src/
   interpreter/            reference semantics (core eval, environment,
                           modules, patterns, ops, errors, spawn registry)
   analyze.rs              static hints (unused/undefined)
+  scoping.rs              lexical scope + mutability validation (the 0.61 rules)
+  resolve.rs              slot resolution: identifiers → frame slots
   builtin.rs              global builtins
   stdlib/                 native modules + embedded/ (olang-source)
   native.rs               module registry for native values (both tiers)
+  caps.rs                 capability manifests + per-dependency attenuation
+  timeline.rs             the Open Timeline: record / replay a run's inputs
   ods/                    the data stack modules: series, frame, stats, plot
   ovm/                    bytecode tier: compiler (bytecode.rs), value
                           model (value.rs), tier manager (tier.rs),
@@ -383,7 +420,9 @@ src/
   tools/                  olang test (test_runner.rs), olang fmt (fmt.rs),
                           olang check (check.rs), olang lsp (lsp.rs)
   repl.rs, help.rs        interactive mode
+  test_framework.rs       the `test` block runtime
   clock.rs, output.rs     native/wasm seams (time, print routing)
+  log.rs, version.rs      diagnostics routing, build version
 olang-ods/                pure-Rust engine crate behind src/ods/
 playground/               cdylib crate: the language as wasm for the website
 website/                  static site incl. /playground

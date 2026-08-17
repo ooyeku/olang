@@ -611,6 +611,40 @@ gets a guard switched off, so the reverse check stays manual until
 someone can make it careful enough.
 
 
+**R1, fifth sitting.** `internals.md`, the chapter that exists to
+explain *why* the runtime is built as it is — and therefore the one where
+a stale explanation is hardest to notice, because the prose still reads
+as reasoning.
+
+Its documented gate was wrong in a way that matters. "Gates for every
+change: `cargo test --release`" — but the repository root is both a
+package and the workspace root, so a bare `cargo test` builds and tests
+`olang` alone. The engine crate's property tests under `olang-ods/`, and
+`otc`'s, never run. Someone could change a kernel, pass every gate the
+book states, and ship it broken. The gate is `--workspace`, and the
+chapter now says why.
+
+The value model described `List(Arc<[Value]>)`. It is `Arc<Vec<Value>>`,
+and the difference is load-bearing rather than pedantic: a boxed slice
+cannot grow, so the in-place append fusion the language ships would be
+impossible under the representation the book described. The struct
+variant likewise omitted its `Arc`, which is the fix that stopped a
+struct argument from copying every field.
+
+The repository map was missing eight files, three of them whole shipped
+campaigns: `caps.rs` (capabilities), `timeline.rs` (record/replay), and
+`scoping.rs` (the 0.61 scope and mutability rules). A reader using the
+map to find the capability model would conclude there wasn't one.
+
+The testing table still credited `example_programs_test.rs` with "the
+curated `examples/*.ol`", which have not existed since they were folded
+into `examples/demo`, and listed neither the whole-program tier harness
+nor either doc guard. And "an example program is a directory with
+`olang.toml` and `main.ol`" overstates: 17 of 28 are packages, the rest
+are bare scripts, and `run_all.ol` finds either by looking for the
+`main.ol`.
+
+
 | Lane | Work | Status |
 |---|---|---|
 | R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | **in progress** — mechanical checks built and clean; `stability.md`, `pitfalls.md`, `tooling.md` and the `language.md`/`ods.md` claim errors corrected, output comments now guarded; the long reference chapters remain to be read end to end |
