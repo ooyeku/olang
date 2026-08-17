@@ -358,7 +358,8 @@ language does not offer. The `caps` module closes that gap:
 ```olang
 let plan = if caps.allowed("fs") => "cache to disk" else => "in memory"
 println(caps.level("fs"))        // "none" | "read" | "full"
-println(show(caps.granted()))    // the whole grant, as a map
+let all = caps.granted()         // the whole grant, as a map
+println(show(map_get(all, "net")))
 ```
 
 `caps.allowed` answers for the **caller**, not the application: code in an

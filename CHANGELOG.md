@@ -331,6 +331,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Whole-program tier agreement is now tested, and it found a real
+  divergence on its first run.** `docs/ovm.md` promises that a tier which
+  cannot reproduce the interpreter's result refuses to run rather than
+  diverging — the basis for trusting a runtime that swaps engines under a
+  program. Until now that was checked only by hand-written snippets
+  calling one function with one set of arguments.
+
+  `tests/tier_agreement_test.rs` runs the real binary over the real
+  corpus — every runnable book example and the standalone example
+  programs — under `--no-ovm` and `--ovm-tier=1`, and diffs stdout,
+  stderr and exit status together. Elapsed times and throughputs are
+  masked, since running faster is the point; everything else is compared
+  verbatim.
+
+  It found `examples/parser` diverging. Two closures built from the same
+  higher-order combinator give different answers on the compiled tier,
+  the second behaving as though it captured the first one's argument:
+  `word "olang"` yields `olang` interpreted and `""` compiled, and
+  `1 + 2 * 3` evaluates to `7` interpreted and a parse error compiled.
+  This is the failure a reviewer reported after ~8,000 lines and which
+  eight hand-written attempts failed to reproduce — reducing it to a
+  single file, or to a two-file module, makes it disappear. The bug is
+  open; the test that finds it is `#[ignore]`d with that reason stated,
+  and un-ignoring it is the definition of done.
+
 - **A program can read its own capability grant (Campaign 3, C3).**
   A denial still stops the program — that is deliberate and unchanged.
   What was missing is the other branch: a program that can degrade could
