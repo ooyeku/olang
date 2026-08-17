@@ -673,12 +673,46 @@ lambdas compiled to function values. Both exclusions in the leading
 comment had been lifted; only the later note said so, which anyone
 reading the list top-down would meet second.
 
-One thing checked and deliberately left: the chapter's limitation 3
-distinguishes a "native set" from builtins that "bridge" at a value
-round trip. `builtin_names` turned out to gate something else — whether
-a call compiles at all — so confirming or correcting that sentence needs
-more of the dispatch path read than this sitting covered. Left as
-written rather than rewritten on a guess.
+One claim needed a second look before it could be trusted: the
+chapter's limitation 3 distinguishes a "native set" from builtins that
+"bridge" at a value round trip. `builtin_names` — the first list found —
+gates something else (whether a call compiles at all), but the actual
+native arms in `try_native_higher_order` turned out to be exactly the
+set the chapter names, with `fold` and `reduce` absent and therefore
+bridging, as it says. Verified correct in the seventh sitting.
+
+
+**R1, seventh sitting.** The sixth sitting's open thread, closed; a
+claim that survived its own correction; and the guard that class earns.
+
+The open thread first: ovm.md's limitation 3 distinguishes a "native
+set" of builtins from ones that "bridge" at a value round trip, and the
+sixth sitting could not verify it because the first list found
+(`builtin_names`) gates something else. The real native arms live in
+`try_native_higher_order`, and they are exactly the set the chapter
+names — with `fold` and `reduce` absent and therefore bridging, as it
+says. The sentence was right; it is now also checked.
+
+Then the find. types.md still said intersection annotations "parse
+today and gain semantics later" — the same false claim corrected in
+stability.md two sittings ago — and linked to the anchor of the heading
+that correction renamed. The claim had one home in each chapter; the
+anchor was the thread between them, and nothing checked the thread. So
+a correction in one chapter silently broke a link in another, which is
+the general shape: **a heading rename is an API change for every other
+chapter**.
+
+That class is mechanical, so it is now guarded:
+`tests/doc_anchors_test.rs` indexes every heading in the book (377),
+slugifies them by the same convention the website's renderer uses, and
+verifies every `chapter.md#anchor` link lands. The guard was proven
+able to detect a break before being trusted — pointed at a nonsense
+anchor, it fails naming the file, line, and anchor — because a guard
+that has never failed has never been tested.
+
+tour.md was read end to end and survives: its claims are current, its
+examples doc-tested, its links live. First chapter through the pass
+with nothing to correct.
 
 
 | Lane | Work | Status |

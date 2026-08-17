@@ -177,6 +177,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`docs/types.md` repeated a claim its source chapter had already
+  corrected.** It said intersection annotations "parse today and gain
+  semantics later" — false, they are a parse error — and linked to the
+  anchor of the `stability.md` heading whose correction renamed it. A
+  heading rename is an API change for every chapter that links to it,
+  and nothing checked those links; `tests/doc_anchors_test.rs` now does,
+  indexing every heading and verifying every `chapter.md#anchor` in the
+  book. The guard was proven able to detect a break before being
+  trusted.
+
 - **`docs/ovm.md` credited two test suites for a guarantee that has
   three.** The chapter's correctness policy is the statement
   `tier_agreement_test.rs` was built to enforce — the harness quotes it

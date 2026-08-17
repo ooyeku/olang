@@ -330,10 +330,12 @@ Knowing the boundaries tells you what an annotation cannot promise:
   side's *base* type; structure inside the payload (list elements, a
   nested Result's own payload) is the checker's territory, like every
   other deep promise.
-- **Reserved forms** — intersection (`A & B`) annotations parse today
-  and gain semantics later
-  ([Stability](stability.md#reserved--parses-today-semantics-later)).
-  Unions and literal types both left this list in 0.50.
+- **Reserved forms** — intersection (`A & B`) annotations are not
+  accepted at all: writing one is a parse error, not an unenforced
+  promise
+  ([Stability](stability.md#reserved--not-accepted-and-additive-if-they-ever-are)).
+  Unions and literal types both left the reserved list in 0.50, when
+  they gained semantics.
 - **The checker never speculates.** No inference across module
   boundaries, no narrowing from `if typeof(x) == ...`, no guesses about
   dynamic code. Anything short of proof is silence.
