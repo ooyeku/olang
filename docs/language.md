@@ -692,6 +692,29 @@ let langs = [
 println(to_string(len(langs)))
 ```
 
+### Subscripting beyond the built-in collections
+
+`[i]` is not limited to the types above. A native value — one supplied by
+a module implemented in Rust — may define what its own subscript means,
+and the data stack's do:
+
+```olang
+let sales = ods.read_csv("region,amount\neast,25.5\nwest,320.0\n")
+println(to_string(ods.to_list(sales["amount"])))   // a Frame takes a column name
+println(to_string(sales["amount"][1]))             // a Series takes a position
+```
+
+A value that defines no subscript reports that it cannot be indexed,
+naming its type. Subscripting is always read-only: there is no
+`value[k] = x` for a native value, because these values are immutable and
+an assignment that silently produced a copy would be a trap.
+
+The rule such a type is expected to follow is the one the Frame follows:
+**one key, one reading.** A Frame accepts a String (a column) and a Bool
+mask (rows), which are disjoint by type, and refuses a row position
+outright rather than adding a third meaning. See
+[The Data Stack](ods.md#reaching-a-column).
+
 ### Tuples
 
 Fixed-shape groups, indexed positionally:
@@ -876,6 +899,15 @@ A [cell](stdlib.md#cell--mutable-locations) is deliberately not the
 answer here, unlike the closure case: cells are confined to the thread
 that created them, so one made outside the loop is unreachable from a
 worker.
+
+Confinement is a property a value carries, not a rule about cells. Any
+value holding a mutable location declares itself confined, and every
+crossing then refuses it without knowing what it is: reading one from a
+`spawn`ed task fails, and `chan.send` refuses to carry it. A streaming
+[CSV or JSON-lines reader](ods.md#files-larger-than-memory) is the second
+such value — it holds a file position — and it inherited both refusals
+without a line of code written for it. To use one across threads, read on
+the thread that opened it and send the *rows*.
 
 ```olang no-run
 par for (i, chunk) in enumerate(chunks) {

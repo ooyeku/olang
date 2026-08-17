@@ -282,6 +282,23 @@ execution tiers at once. Its proving instance is the ods data stack
 one shared Arc — a refcount bump, never a conversion — so the lossy
 round-trip failure mode is unrepresentable for them.
 
+Two hooks on the `NativeObject` trait exist so that a property belongs to
+the *value* rather than to a list of types kept somewhere else, and both
+default to "no", so an existing implementation is unaffected by either:
+
+- `confined_to()` names the thread a value belongs to. `spawn` and
+  `chan.send` ask the value instead of naming the types they know, so a
+  new value holding mutable state is refused at every crossing the moment
+  it answers. The streaming reader inherited both refusals from the
+  `cell` that came before it without code of its own.
+- `index(key)` defines what `value[key]` means, and is reached from the
+  index path of both tiers. A value that does not implement it keeps the
+  language's own "cannot be indexed" error.
+
+The pattern is the point: each is a question asked of the value, so the
+correctness of a new native type is a property of that type rather than a
+list elsewhere that someone must remember to extend.
+
 ## Errors
 
 `InterpreterError` (thiserror) covers user-visible failures; the REPL and

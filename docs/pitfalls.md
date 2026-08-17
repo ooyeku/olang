@@ -209,8 +209,32 @@ Three things `[]` does *not* do:
 - **No slicing.** `xs[1..3]` is a runtime type error — use `take`/`skip`
   (`take(skip(xs, 1), 2)`).
 - **Maps are not subscriptable.** `m["k"]` fails; use `map_get(m, "k")`.
+  A Frame *is* — `f["amount"]` is its column — which is easy to
+  over-generalize: the string subscript belongs to the data stack's types,
+  not to maps.
 - **No index- or field-assignment.** `xs[0] = 5` and `p.x = 5` do not
-  parse — build a new value (`map_set`, list concatenation, a fresh struct).
+  parse — build a new value (`map_set`, list concatenation, a fresh
+  struct). This holds for Frames too: `f["a"] = x` is not the way to add
+  a column; `ods.with_column(f, "a", x)` is.
+
+## `ods.read_csv` takes text; `ods.read_csv_file` takes a path
+
+The two are one word apart and do different things, and the mistake used
+to be silent. `ods.read_csv` parses CSV *text*, so handing it a path
+parsed the path itself — a Frame with one column literally named
+`data/sales.csv`, zero rows, and no error anywhere. Nothing failed until
+some later operation returned an answer that made no sense.
+
+```olang no-run
+let sales = unwrap(ods.read_csv_file("data/sales.csv"))     // from disk
+let sales = ods.read_csv(unwrap(fs.read_file("data/sales.csv")))  // from text
+```
+
+A single-line argument ending in `.csv`, `.tsv`, or `.txt` is now refused
+outright, naming `read_csv_file` and `open_csv`. The same pairing holds
+for JSON lines: `ods.read_jsonl` takes text, `ods.read_jsonl_file` takes
+a path. The file-reading halves require the `fs` capability; the text
+parsers reach nothing and need no grant.
 
 ## Empty-collection builtins raise
 

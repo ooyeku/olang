@@ -298,11 +298,20 @@ net = false        # even if a future version tries to
 ```
 
 File access that happens *through* another module is confined under `fs`
-too, so `db` and `net` are not latent filesystem capabilities: opening a
-file-backed database (`db.open` on a path, or a `db` query that runs
-`ATTACH`) requires `fs`, and an `http.serve` handler that returns a
+too, so `db`, `net`, and `ods` are not latent filesystem capabilities:
+opening a file-backed database (`db.open` on a path, or a `db` query that
+runs `ATTACH`) requires `fs`, and an `http.serve` handler that returns a
 `body_file` is refused unless the program may read files. An in-memory
 database (`:memory:`) needs no `fs`.
+
+The data stack is gated the same way and at the level it actually uses.
+`ods.read_csv_file`, `ods.read_jsonl_file`, `ods.open_csv`, and
+`ods.open_jsonl` require `fs` at read level; `ods.write_csv` and
+`ods.write_jsonl` require it at write level. Every other function in
+`ods`, `stats`, and `plot` — including the parsers that take text,
+`ods.read_csv` and `ods.read_jsonl` — reaches nothing and needs no grant.
+That split is deliberate: a data module that could be handed a path would
+be a filesystem capability under another name.
 
 Enforcement is by *attribution*: when code that lives in `leftpad`'s
 directory calls a gated builtin, `leftpad`'s grant applies — the
