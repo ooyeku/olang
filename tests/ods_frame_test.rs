@@ -2022,3 +2022,99 @@ show([ok(100000, 5), ok(100, 25), ok(100, 26), ok(100, 100), ok(1, 1), ok(10, 0)
         "\"[true, true, true, true, true, true]\"".to_string()
     );
 }
+
+// ── DP3 Tier 3a: the rest of the join kinds ───────────────────────────
+
+const JOIN_L: &str = r#"ods.frame([["k", ["east", "west", ()]], ["v", [1, 2, 3]]])"#;
+const JOIN_R: &str = r#"ods.frame([["k", ["east", "north", ()]], ["n", [10, 20, 30]]])"#;
+
+#[test]
+fn a_full_join_keeps_both_sides_and_coalesces_the_key() {
+    let out = eval(
+        &format!(
+            r#"
+let j = ods.join_full({JOIN_L}, {JOIN_R}, "k")
+show([ods.to_list(j["k"]), ods.to_list(j["v"]), ods.to_list(j["n"])])
+"#
+        ),
+        None,
+    )
+    .expect("join_full");
+    // The three left rows first, then the right rows nothing matched.
+    // "north" reaches the key column from the right side — without the
+    // coalesce the column identifying the row would be null exactly
+    // where the reader needs it. Null keys match nothing on either side,
+    // so both null-keyed rows survive unpaired.
+    assert_eq!(
+        out.to_string(),
+        "\"[[\"east\", \"west\", (), \"north\", ()], [1, 2, 3, (), ()], [10, (), (), 20, 30]]\""
+            .to_string()
+    );
+}
+
+#[test]
+fn a_semi_join_asks_existence_without_multiplying() {
+    // The difference that makes semi worth having: an inner join against
+    // a right side with three matching rows returns three rows; semi
+    // returns the one left row, once.
+    let out = eval(
+        r#"
+let l = ods.frame([["k", ["east", "west"]], ["v", [1, 2]]])
+let r = ods.frame([["k", ["east", "east", "east"]], ["n", [1, 2, 3]]])
+show([ods.n_rows(ods.join(l, r, "k")), ods.n_rows(ods.join_semi(l, r, "k")),
+      ods.columns(ods.join_semi(l, r, "k"))])
+"#,
+        None,
+    )
+    .expect("join_semi");
+    assert_eq!(out.to_string(), "\"[3, 1, [\"k\", \"v\"]]\"".to_string());
+}
+
+#[test]
+fn semi_and_anti_partition_the_left_frame() {
+    // Every left row is in exactly one of them — the property that makes
+    // the pair usable for "which of these are known" questions.
+    let out = eval(
+        &format!(
+            r#"
+let l = {JOIN_L}
+let s = ods.join_semi(l, {JOIN_R}, "k")
+let a = ods.join_anti(l, {JOIN_R}, "k")
+show([ods.n_rows(s) + ods.n_rows(a) == ods.n_rows(l),
+      ods.to_list(s["v"]), ods.to_list(a["v"])])
+"#
+        ),
+        None,
+    )
+    .expect("semi/anti");
+    // A null key matches nothing, so the null-keyed row lands in anti —
+    // the same rule every other join kind follows.
+    assert_eq!(out.to_string(), "\"[true, [1], [2, 3]]\"".to_string());
+}
+
+#[test]
+fn a_full_join_refuses_mismatched_key_types() {
+    // Keys hash by type, so an Int column never matches a Float one. The
+    // other kinds simply find nothing; a full join returns rows anyway,
+    // which is exactly when a mismatch would be papered over silently.
+    let err = eval(
+        r#"ods.join_full(ods.frame([["k", [1]]]), ods.frame([["k", [1.0]]]), "k")"#,
+        None,
+    )
+    .expect_err("refused");
+    assert!(err.contains("same type") && err.contains("Int"), "{err}");
+}
+
+#[test]
+fn every_join_kind_agrees_across_tiers() {
+    assert_tier_transparent(&format!(
+        r#"
+let l = {JOIN_L}
+let r = {JOIN_R}
+[ods.n_rows(ods.join(l, r, "k")), ods.n_rows(ods.join_left(l, r, "k")),
+ ods.n_rows(ods.join_full(l, r, "k")), ods.n_rows(ods.join_semi(l, r, "k")),
+ ods.n_rows(ods.join_anti(l, r, "k")), ods.to_list(ods.join_full(l, r, "k")["k"])]
+"#
+    ))
+    .expect("tier agreement");
+}

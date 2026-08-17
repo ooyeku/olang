@@ -2280,6 +2280,27 @@ impl HelpSystem {
             "inner hash join of a and b on one key column from each side",
         );
         self.doc(
+            "ods.join_full",
+            "ods.join_full(a, b, on, on_b = on)",
+            "Frame",
+            "ods",
+            "every row from both sides; the key column takes whichever side has it",
+        );
+        self.doc(
+            "ods.join_semi",
+            "ods.join_semi(a, b, on, on_b = on)",
+            "Frame",
+            "ods",
+            "the rows of a that have a match in b, once each, a's columns only",
+        );
+        self.doc(
+            "ods.join_anti",
+            "ods.join_anti(a, b, on, on_b = on)",
+            "Frame",
+            "ods",
+            "the rows of a that have no match in b, a's columns only",
+        );
+        self.doc(
             "ods.join_left",
             "ods.join_left(a, b, on_a, on_b)",
             "Frame",

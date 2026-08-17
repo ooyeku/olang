@@ -873,6 +873,35 @@ let tax = ods.column(joined, "total") * ods.column(joined, "rate")
 println(to_string(ods.to_list(tax)))
 ```
 
+Three more kinds complete the set. `ods.join_full(a, b, on)` keeps every
+row from both sides, filling the other side's columns with nulls where
+nothing matched; its key column takes whichever side has a value, so a
+row that came only from the right is still identified by its key rather
+than being null in the one column that says what it is. Because a full
+join returns rows even when nothing matched, it is the one kind where
+mismatched key types would be silently papered over — so it refuses
+them, where the other kinds simply find nothing.
+
+`ods.join_semi(a, b, on)` and `ods.join_anti(a, b, on)` ask about
+existence rather than combination: semi keeps the rows of `a` that have
+a match, anti keeps those that do not, and both return `a`'s columns
+alone. The distinction from an inner join is the multiplication — where
+`b` has three rows for a key, an inner join returns three rows and a
+semi join returns one:
+
+```olang
+let orders = ods.frame([["customer", ["ada", "bob"]], ["total", [10.0, 20.0]]])
+let payments = ods.frame([["customer", ["ada", "ada"]], ["paid", [4.0, 6.0]]])
+println(to_string(ods.n_rows(ods.join(orders, payments, "customer"))))       // 2
+println(to_string(ods.n_rows(ods.join_semi(orders, payments, "customer"))))  // 1
+println(to_string(ods.to_list(ods.join_anti(orders, payments, "customer")["customer"])))
+```
+
+Every kind follows the same null rule: a null key matches nothing. So a
+null-keyed left row appears in a left, full, or anti join and never in
+an inner or semi one, and semi and anti always partition the left frame
+between them.
+
 On a large left frame (50,000+ rows) the join's probe runs across every
 CPU core — each left row is looked up independently, and the chunks are
 concatenated in row order, so the parallel result is identical to the

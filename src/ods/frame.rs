@@ -146,6 +146,9 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("group_by", 3),
     ("join", 4),
     ("join_left", 4),
+    ("join_full", 4),
+    ("join_semi", 4),
+    ("join_anti", 4),
 ];
 
 fn want_frame<'a>(func: &str, args: &'a [Value], idx: usize) -> Result<&'a Frame, String> {
@@ -218,7 +221,7 @@ fn default_tail(func: &str, args: &[Value]) -> Option<Value> {
         // repeating it was pure ceremony. The default is the *other*
         // side's name rather than a constant, which is why this takes the
         // arguments.
-        "join" | "join_left" => args.get(2).cloned(),
+        "join" | "join_left" | "join_full" | "join_semi" | "join_anti" => args.get(2).cloned(),
         _ => None,
     }
 }
@@ -694,15 +697,17 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
                 .map(OdsFrame::into_value)
                 .map_err(e)
         }
-        "join" | "join_left" => {
+        "join" | "join_left" | "join_full" | "join_semi" | "join_anti" => {
             let l = want_frame(func, &args, 0)?;
             let r = want_frame(func, &args, 1)?;
             let left_on = want_string(func, &args, 2)?;
             let right_on = want_string(func, &args, 3)?;
-            let how = if func == "join" {
-                JoinHow::Inner
-            } else {
-                JoinHow::Left
+            let how = match func {
+                "join" => JoinHow::Inner,
+                "join_left" => JoinHow::Left,
+                "join_full" => JoinHow::Full,
+                "join_semi" => JoinHow::Semi,
+                _ => JoinHow::Anti,
             };
             l.join(r, &left_on, &right_on, how)
                 .map(OdsFrame::into_value)

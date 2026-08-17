@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **DP3 Tier 3a: `join_full`, `join_semi`, `join_anti`.** The rest of the
+  join kinds, completing the set `join` and `join_left` started.
+
+  `join_full` keeps every row from both sides. Its key column takes
+  whichever side has a value, so a row that came only from the right is
+  still identified by its key instead of being null in the one column
+  that says what it is. It is also the only kind where mismatched key
+  types matter: keys hash by type, so an Int column never matches a Float
+  one, and the other kinds simply find nothing — a full join returns rows
+  anyway, which is exactly when the mismatch would be papered over. So it
+  refuses, naming both types.
+
+  `join_semi` and `join_anti` ask about existence rather than
+  combination, returning the left frame's columns alone. The distinction
+  from an inner join is the multiplication: where the right side has
+  three rows for a key, an inner join returns three and a semi join
+  returns one. Every kind keeps the same null rule — a null key matches
+  nothing — so semi and anti always partition the left frame between
+  them, which is tested.
+
 - **DP3 Tier 2: `value_counts`, `unique`/`n_unique`, `median`, `cast`,
   `sample`.** What a pipeline reaches for once `describe` has shown it the
   shape of the data.

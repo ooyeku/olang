@@ -1359,7 +1359,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Shape | `select(f, names)` · `drop(f, names)` · `rename(f, mapping)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
 | Whole rows | `distinct(f, names = all)` · `drop_null(f, names = all)` — duplicates and missing data, first occurrence kept |
 | Sample | `sample(f, n)` (also on a Series) — n random rows, without replacement, in original order; seeded by `random.seed` |
-| Aggregate / join | `group_by(f, key, aggs)` · `join(a, b, on, on_b = on)` · `join_left(a, b, on, on_b = on)` · `concat(frames)` |
+| Aggregate / join | `group_by(f, key, aggs)` · `join` (inner) · `join_left` · `join_full` · `join_semi` · `join_anti` — all `(a, b, on, on_b = on)` · `concat(frames)` |
 | Masks | `eq(s, v)` · `ne(s, v)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL |
 
 The stack has its own chapter, **[The Data Stack](ods.md)**: why the

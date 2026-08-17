@@ -105,6 +105,15 @@ impl AggOp {
 pub enum JoinHow {
     Inner,
     Left,
+    /// Every row from both sides. Unmatched rows on either side keep
+    /// their own columns and take nulls in the other side's.
+    Full,
+    /// Left rows that have at least one match, once each, left columns
+    /// only — the existence question, without the multiplication an
+    /// inner join would apply when the right side has duplicates.
+    Semi,
+    /// Left rows that have no match, left columns only.
+    Anti,
 }
 
 impl Frame {
@@ -309,11 +318,87 @@ impl Frame {
             }
         }
 
+        // Semi and anti ask about existence rather than combination, so
+        // they answer with a subset of the left frame — no right columns,
+        // and no multiplication when a key repeats on the right.
+        if matches!(how, JoinHow::Semi | JoinHow::Anti) {
+            let want_match = how == JoinHow::Semi;
+            let rows: Vec<i64> = (0..lkey.len())
+                .filter(|&i| {
+                    // A null key matches nothing, which puts a null-keyed
+                    // left row in the anti result and never in the semi
+                    // one — the same rule the other kinds follow.
+                    key_at(lkey, i).is_some_and(|k| table.contains_key(&k)) == want_match
+                })
+                .map(|i| i as i64)
+                .collect();
+            return self.take(&Series::from_i64(rows));
+        }
+
         // The probe: each left row is looked up independently in the
         // read-only table, so the loop parallelizes across left rows on a
         // large frame — the join's dominant cost. Chunks are concatenated in
         // row order, so the result is bit-identical to the sequential path.
-        let (left_idx, right_idx) = join_probe(lkey, &table, how, lkey.len());
+        // A full join probes as a left join and then appends what the
+        // right side had left over.
+        let probe_how = if how == JoinHow::Full {
+            JoinHow::Left
+        } else {
+            how
+        };
+        let (left_idx, right_idx) = join_probe(lkey, &table, probe_how, lkey.len());
+
+        if how == JoinHow::Full {
+            let mut matched = vec![false; rkey.len()];
+            for r in right_idx.iter().flatten() {
+                matched[*r] = true;
+            }
+            // Right rows nothing matched, in row order — including any
+            // with a null key, since a null matched nothing.
+            let orphans: Vec<usize> = (0..rkey.len()).filter(|&r| !matched[r]).collect();
+
+            let left_rows: Vec<Option<usize>> = left_idx
+                .iter()
+                .map(|&i| Some(i as usize))
+                .chain(orphans.iter().map(|_| None))
+                .collect();
+            let right_rows: Vec<Option<usize>> = right_idx
+                .iter()
+                .copied()
+                .chain(orphans.iter().map(|&r| Some(r)))
+                .collect();
+
+            let mut pairs: Vec<(String, Series)> = Vec::new();
+            for (name, col) in self.names.iter().zip(self.cols.iter()) {
+                if name == left_on {
+                    // The key column must carry the right side's value on
+                    // an orphan row. Without this the one column that says
+                    // which row this is would be null exactly where the
+                    // reader needs it.
+                    pairs.push((
+                        name.clone(),
+                        coalesce(
+                            &gather_optional(col, &left_rows),
+                            &gather_optional(rkey, &right_rows),
+                        )?,
+                    ));
+                } else {
+                    pairs.push((name.clone(), gather_optional(col, &left_rows)));
+                }
+            }
+            for (name, col) in right.names.iter().zip(right.cols.iter()) {
+                if name == right_on {
+                    continue;
+                }
+                let out_name = if self.names.contains(name) {
+                    format!("{}_right", name)
+                } else {
+                    name.clone()
+                };
+                pairs.push((out_name, gather_optional(col, &right_rows)));
+            }
+            return Frame::new(pairs);
+        }
 
         let lidx = Series::from_i64(left_idx);
         let mut pairs: Vec<(String, Series)> = Vec::new();
@@ -856,6 +941,64 @@ fn gather_optional(col: &Series, idx: &[Option<usize>]) -> Series {
                 .collect(),
         ),
     }
+}
+
+/// `a` where it is present, `b` where it is null. Used for a full join's
+/// key column, where each output row has the value from exactly one side.
+///
+/// The two sides must have the same type. They already do whenever the
+/// join found anything at all — keys hash by type, so an Int column and
+/// a Float column never match each other — but a full join returns rows
+/// even when nothing matched, which is exactly when a mismatch would
+/// otherwise be silently papered over.
+fn coalesce(a: &Series, b: &Series) -> Result<Series> {
+    if a.dtype() != b.dtype() {
+        return Err(OdsError::InvalidArgument(format!(
+            "join: a full join needs both key columns to have the same type, \
+             got {} on the left and {} on the right",
+            a.dtype(),
+            b.dtype()
+        )));
+    }
+    let pick = |i: usize| match a.scalar_at(i) {
+        Scalar::Null => b.scalar_at(i),
+        v => v,
+    };
+    let n = a.len();
+    Ok(match a.dtype() {
+        crate::DType::F64 => Series::from_f64_options(
+            (0..n)
+                .map(|i| match pick(i) {
+                    Scalar::F64(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        crate::DType::I64 => Series::from_i64_options(
+            (0..n)
+                .map(|i| match pick(i) {
+                    Scalar::I64(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        crate::DType::Bool => Series::from_bool_options(
+            (0..n)
+                .map(|i| match pick(i) {
+                    Scalar::Bool(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        crate::DType::Str => Series::from_str_options(
+            (0..n)
+                .map(|i| match pick(i) {
+                    Scalar::Str(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+    })
 }
 
 fn col_valid(col: &Series, i: usize) -> bool {
