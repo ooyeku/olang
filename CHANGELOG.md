@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Template strings no longer strip leading whitespace.** `` `  x` ``
+  evaluated to `"x"` — the leading spaces and tabs vanished, asymmetric
+  with trailing and interior whitespace, which were always preserved. The
+  cause was one character in the grammar: `template_string` was a plain
+  rule, so pest consumed the implicit `WHITESPACE` between the opening
+  backtick and the content; it is now compound-atomic. The bug was
+  pre-existing and had been silently eating the indentation of report
+  lines like `` `  utilization ${bar}` `` in `examples/demo`; those now
+  render with their intended indent. Found while migrating the corpus off
+  `+ to_string(...)` (below), where every indented line hit it.
+
 ## [0.67.0] - 2026-08-17
 
 ### Changed

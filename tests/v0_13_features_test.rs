@@ -622,3 +622,31 @@ fn test_data_processing_pipeline_v013() {
         olang::ast::Value::String("Processing order".to_string().into())
     );
 }
+
+/// A template that begins with whitespace keeps it. While `template_string`
+/// was a plain pest rule, the implicit WHITESPACE rule was consumed between
+/// the opening backtick and the content, so `  x` evaluated to "x" — leading
+/// spaces and tabs silently vanished, asymmetric with trailing and interior
+/// whitespace, which were always preserved. This bit an indented-report
+/// idiom (`` `  label ${v}` ``) and quietly stripped the indent. The rule is
+/// now compound-atomic; this pins that every position of whitespace survives.
+#[test]
+fn template_preserves_leading_whitespace() {
+    let parser = Parser::new();
+    let cases = [
+        ("`  lead`", "  lead"),
+        ("`\ttab`", "\ttab"),
+        ("`trail  `", "trail  "),
+        ("`a  b`", "a  b"),
+        ("`  ${1}  mid  ${2}  `", "  1  mid  2  "),
+    ];
+    for (source, expected) in cases {
+        let program = parser.parse(source).expect("parse");
+        let result = Interpreter::new().eval_program(program).expect("eval");
+        assert_eq!(
+            result,
+            olang::ast::Value::String(expected.to_string().into()),
+            "template {source} should evaluate to {expected:?}"
+        );
+    }
+}

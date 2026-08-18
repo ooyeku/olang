@@ -24,7 +24,13 @@ integer     = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ !(ASCII_ALP
 float       = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")*)? ~ !(ASCII_ALPHA | "_") }
 string      = @{ "\"" ~ string_char* ~ "\"" }
 raw_string  = @{ "r\"" ~ ("\\\"" | (!"\"" ~ ANY))* ~ "\"" }
-template_string = { "`" ~ template_raw_content ~ "`" }
+// Compound-atomic (`$`): no implicit WHITESPACE is consumed between the
+// opening backtick and the content, so a template that begins with a
+// space or tab keeps it — `  x` is "  x", not "x". Leading whitespace was
+// silently stripped while this was a plain rule, asymmetric with trailing
+// and interior whitespace, which are preserved. Inner tokens are still
+// produced, so `template_raw_content` remains findable.
+template_string = ${ "`" ~ template_raw_content ~ "`" }
 template_raw_content = @{ (!"`" ~ ANY)* }
 string_char = { !("\"" | "\\") ~ ANY | escape_sequence }
 
