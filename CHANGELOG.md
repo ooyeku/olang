@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.67.0] - 2026-08-17
+
 ### Changed
 
 - **`docs/stability.md` rewritten as the 1.0 compatibility contract
@@ -4668,7 +4670,9 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.65.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.67.0...HEAD
+[0.67.0]: https://github.com/ooyeku/olang/compare/v0.66.0...v0.67.0
+[0.66.0]: https://github.com/ooyeku/olang/compare/v0.65.0...v0.66.0
 [0.65.0]: https://github.com/ooyeku/olang/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/ooyeku/olang/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/ooyeku/olang/compare/v0.62.0...v0.63.0
