@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A capability leak across the thread boundary (OM1).** Campaign 3's C1
+  moved capability enforcement to the single dispatch point both tiers
+  share, and measured it free on the main thread. It left a hole across
+  threads. A worker — `spawn`, `par_map`, `par for`, or an `http.serve`
+  handler — runs its own interpreter with its own bytecode tier, built by
+  `thread_safe_clone`, and that clone carried the capability *table* but
+  never seeded it into the worker's tier. A promoted function in a
+  dependency denied `fs` could therefore read the filesystem from a
+  spawned thread and return the bytes, while the identical direct call on
+  the main thread was correctly refused. The leak was invisible to every
+  test that did not cross a thread boundary.
+
+  The same gap ran in reverse for `--trace-caps`: a worker's effects
+  never reached the profile, so `--trace-caps --write` would author a
+  manifest omitting them and then, on the next run, deny them. One fix —
+  seed the worker tier's gate, and share the trace set (a `Arc<Mutex>`)
+  onto the worker rather than starting it empty — closes both. A
+  restricted `fib(30)`×4 across spawned workers still runs at full tier
+  speed (12 ms, versus ~19 s interpreted), so enforcement remains one
+  branch per call, not a tier downgrade. Three tests forge the leak.
+
 ### Added
 
 - **DP3 Tier 3c: `shift`, `cum_max`/`cum_min`, `rank`, `rolling`.** The

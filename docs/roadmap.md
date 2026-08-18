@@ -378,6 +378,24 @@ Measured on `fib(30)`: a `--deny`-restricted run went from 1497 ms to
 4 ms, matching the unrestricted run exactly. An unrestricted run pays one
 branch per call for the attribution stack.
 
+**C1's separately-tracked follow-on, OM1, closed a hole C1 left across
+the thread boundary.** C1 put the gate on the main thread's tier. A
+worker thread — `spawn`, `par_map`, `par for`, an `http.serve` handler —
+runs its own interpreter with its own bytecode tier, built fresh by
+`thread_safe_clone`, and that clone carried the grant *table* but never
+seeded it into the worker's tier. So a promoted function in a dependency
+denied `fs` could read the filesystem from a spawned thread and return
+the bytes, while the identical direct call on the main thread was
+correctly refused — a leak invisible to every test that did not cross a
+thread. The same gap ran in reverse: `--trace-caps` could not see a
+worker's effects, so `--trace-caps --write` would author a manifest that
+omitted them and then denied them. One fix — seed the worker tier's gate
+and share the trace set (`Arc<Mutex>`) onto the worker — closed both,
+and `fib(30)`×4 across spawned workers runs at 12 ms with the manifest
+active, identical to unrestricted and ~1500× the interpreter, so the
+gate still costs nothing but a branch. Three tests forge the leak rather
+than assert the fix.
+
 **C3 was respecified after 0.65.** It read "a capability denial is a
 runtime error recoverable at a `catch` boundary, consistent with D8" —
 written before the lane that removed `catch` and corrected D8. Rewriting

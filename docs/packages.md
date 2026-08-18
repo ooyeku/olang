@@ -440,7 +440,11 @@ declared in, the bytecode tier keeps a stack of those files as it
 executes, and the gate reads the innermost one — the same attribution the
 interpreter takes from its own call stack. A promoted function in an
 attenuated dependency is therefore judged by *that dependency's* grant,
-exactly as the interpreted one was.
+exactly as the interpreted one was — and this holds across threads: a
+dependency's code reached through `spawn`, `par_map`, `par for`, or an
+`http.serve` handler runs on a worker with its own bytecode tier, and
+that tier carries the same gate, so a worker cannot exercise a
+capability the main thread would have been refused.
 
 A capability-restricted run keeps the full tier and the full speed. This
 was not always true: a manifest used to switch the bytecode tier off,

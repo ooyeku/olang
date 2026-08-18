@@ -770,3 +770,123 @@ fs = false
     );
     let _ = std::fs::remove_dir_all(&real);
 }
+
+/// A spawned worker runs its own interpreter with its own bytecode tier.
+/// C1 put the gate on the main thread's tier; this pins that a *worker's*
+/// tier carries it too. It is a real leak, not a hypothetical: before the
+/// fix, `spawn peek()` on a dependency denied `fs` read `/etc/hosts` and
+/// returned its contents, because the worker's fresh tier had no
+/// capability table and its bridge interpreter ran unrestricted. The
+/// direct call was correctly denied on the main thread, so the hole was
+/// invisible to every test that did not cross a thread boundary.
+#[test]
+fn a_denial_survives_the_spawn_boundary() {
+    let ws = workspace("spawn_caps");
+    write(
+        &ws.join("lib/olang.toml"),
+        "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n",
+    );
+    write(
+        &ws.join("lib/index.ol"),
+        "share fn peek() = unwrap(fs.read_file(\"/etc/hosts\"))\n",
+    );
+    write(
+        &ws.join("app/olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n\
+         [dependencies]\nlib = { path = \"../lib\" }\n\n\
+         [capabilities]\nfs = \"read\"\n\n\
+         [capabilities.dependencies.lib]\nfs = false\n",
+    );
+    // The dependency's read runs on a worker thread. A leak prints the
+    // file; enforcement makes `task.join` return an Err naming the dep.
+    write(
+        &ws.join("app/main.ol"),
+        "use lib { peek }\n\
+         let t = spawn peek()\n\
+         match task.join(t) { Err(e) => println(\"denied: \" + e), v => println(\"LEAK: \" + v) }\n",
+    );
+    let out = Command::new(olang())
+        .current_dir(ws.join("app"))
+        .arg("main.ol")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("LEAK")
+            && stdout.contains("denied")
+            && stdout.contains("dependency 'lib'"),
+        "a spawned dependency escaped its attenuation: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// The same hole in the other direction: `--trace-caps` builds the set a
+/// program exercised, and `--trace-caps --write` authors a manifest from
+/// it. If a worker's effects are invisible to the profile, the authored
+/// manifest omits them — and then *denies* the very capability the
+/// program needs on its next run. So a worker's use must reach the trace.
+#[test]
+fn trace_caps_sees_a_spawned_workers_effects() {
+    let dir = workspace("spawn_trace");
+    write(
+        &dir.join("olang.toml"),
+        "[package]\nname = \"p\"\nversion = \"1.0.0\"\n",
+    );
+    // No manifest restriction — the run succeeds; we are testing the
+    // profile, not the gate. The fs read happens only on the worker.
+    write(
+        &dir.join("main.ol"),
+        "let t = spawn fs.exists(\"/tmp\")\n\
+         match task.join(t) { Err(e) => 0, v => 0 }\n",
+    );
+    let out = Command::new(olang())
+        .current_dir(&dir)
+        .args(["--trace-caps", "main.ol"])
+        .output()
+        .unwrap();
+    let combined =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(
+        combined.contains("fs"),
+        "the profile must record a worker's fs use, or --trace-caps --write \
+         authors a manifest that denies it: {combined}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A worker keeps the compiled tier's speed with the gate active — the
+/// "no speed penalty" half of the lane. Enforcement rides one branch per
+/// builtin call, not a tier downgrade, so a manifest must not push
+/// spawned work back onto the tree-walker. Timing is coarse on purpose:
+/// the interpreter path is ~1500x slower, so any generous ceiling
+/// separates "kept the tier" from "silently fell back".
+#[test]
+fn a_manifest_does_not_cost_a_worker_its_tier() {
+    let dir = workspace("spawn_speed");
+    write(
+        &dir.join("olang.toml"),
+        "[package]\nname = \"p\"\nversion = \"1.0.0\"\n\n[capabilities]\nfs = false\n",
+    );
+    write(
+        &dir.join("main.ol"),
+        "fn fib(n) = if n < 2 => n else => fib(n - 1) + fib(n - 2)\n\
+         let ws = range(0, 4) |> map((i) => spawn fib(30))\n\
+         let s = ws |> map((w) => match task.join(w) { Err(e) => 0, v => v })\n\
+         println(to_string(fold(s, 0, (a, b) => a + b)))\n",
+    );
+    let start = std::time::Instant::now();
+    let out = Command::new(olang())
+        .current_dir(&dir)
+        .arg("main.ol")
+        .output()
+        .unwrap();
+    let elapsed = start.elapsed();
+    assert!(out.status.success(), "run failed: {:?}", out);
+    // fib(30)x4 is milliseconds on the tier, tens of seconds interpreted.
+    // Two seconds is far above the former and far below the latter.
+    assert!(
+        elapsed.as_secs() < 2,
+        "a manifest pushed spawned work off the tier: {elapsed:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

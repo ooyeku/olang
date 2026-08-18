@@ -1934,6 +1934,19 @@ impl Interpreter {
                         tier.note_function(name, func);
                     }
                 }
+                // The gate rides the tier's bridge interpreter, so a fresh
+                // worker tier without it enforces nothing — a promoted
+                // function on a worker thread would reach `fs`/`net`/`db`
+                // unrestricted even under an attenuating manifest. Seed it
+                // here so a spawned or par-mapped dependency is judged by
+                // the same grant it would be on the main thread. Same for
+                // the `--trace-caps` set (a shareable Arc): a worker's
+                // effects must reach the profile, or `--trace-caps --write`
+                // authors a manifest that omits them and then denies them.
+                tier.set_capabilities(self.caps.clone());
+                if let Some(trace) = self.caps_trace.clone() {
+                    tier.set_caps_trace(trace);
+                }
                 Box::new(tier)
             }),
             trait_impls: self.trait_impls.clone(),
@@ -1945,11 +1958,16 @@ impl Interpreter {
             // Coverage is single-threaded: worker clones don't record.
             coverage: None,
             coverage_file_stack: Vec::new(),
-            // Capabilities follow the code onto every thread.
+            // Capabilities follow the code onto every thread — the gate
+            // (above, seeded into the worker tier) and the grant table both.
             caps: self.caps.clone(),
-            // The profiler is single-threaded (like coverage / timeline);
-            // worker clones do not record.
-            caps_trace: None,
+            // The `--trace-caps` set is shared, not per-thread: a capability
+            // a worker exercises is one the *program* exercised, and manifest
+            // authoring (`--trace-caps --write`) must see it. The Arc<Mutex>
+            // makes the shared write safe; coverage and the timeline stay
+            // single-threaded because they are per-line and per-run, not
+            // per-program.
+            caps_trace: self.caps_trace.clone(),
             caps_path_cache: HashMap::new(),
             // The timeline does not span worker threads (v1 records a
             // single thread of effects); workers run live.
