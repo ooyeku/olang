@@ -78,7 +78,7 @@ fn bi_ls(state, args) = {
         if long => {
             match fs.file_info(target) {
                 Ok(info) => done(state, "- " + str.pad_start(to_string(map_get(info, "size")), 10, " ") + "  " + target + "\n", 0),
-                Err(e) => fail(state, "ls: " + target + ": " + to_string(e))
+                Err(e) => fail(state, `ls: ${target}: ${e}`)
             }
         } else => done(state, target + "\n", 0)
     } else => match fs.list_dir(target) {
@@ -325,7 +325,7 @@ fn bi_rm(state, args) = {
             match r {
                 Ok(v) => {},
                 Err(e) => {
-                    out = out + "rm: " + p + ": " + to_string(e) + "\n"
+                    out = out + `rm: ${p}: ${e}` + "\n"
                     code = 1
                 }
             }
@@ -338,7 +338,7 @@ fn bi_two(state, args, name, op) = {
     if len(args) != 2 => fail(state, name + ": usage: " + name + " source dest")
     else => match op(args[0], args[1]) {
         Ok(v) => done(state, "", 0),
-        Err(e) => fail(state, name + ": " + to_string(e))
+        Err(e) => fail(state, `${name}: ${e}`)
     }
 }
 

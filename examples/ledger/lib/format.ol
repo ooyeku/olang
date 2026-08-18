@@ -26,7 +26,7 @@ share fn money(cents: Int) = {
     let sign = if cents < 0 => "-" else => ""
     let a = if cents < 0 => 0 - cents else => cents
     let frac = a % 100
-    let frac_s = if frac < 10 => "0" + to_string(frac) else => to_string(frac)
+    let frac_s = if frac < 10 => `0${frac}` else => to_string(frac)
     sign + "$" + thousands(a / 100) + "." + frac_s
 }
 

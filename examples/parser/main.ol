@@ -23,7 +23,7 @@ println("")
 println("═══ arithmetic evaluator ═══")
 fn show(text) = {
     let r = evaluate(text)
-    let out = if r.ok => to_string(r.value) else => "parse error at column " + to_string(r.at)
+    let out = if r.ok => to_string(r.value) else => `parse error at column ${r.at}`
     println("  " + str.pad_end(text, 20, " ") + " = " + out)
 }
 

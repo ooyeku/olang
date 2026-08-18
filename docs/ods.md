@@ -98,7 +98,7 @@ let a = ods.series([1, 2, 3])            // Int
 let b = ods.series([1, 2.5, 3])          // Float — ints widen
 let c = ods.series(1..6)                 // ranges work directly
 let d = ods.series(["east", "west"])     // String
-println(typeof(a) + " of length " + to_string(ods.len(c)))
+println(`${typeof(a)} of length ${ods.len(c)}`)
 ```
 
 Mixing strings with numbers, or booleans with numbers, is an error —
@@ -230,7 +230,7 @@ is the inner product.
 
 ```olang
 let s = ods.series([4.0, 1.0, 7.0, 2.0])
-println(to_string(ods.min(s)) + " .. " + to_string(ods.max(s)))
+println(`${ods.min(s)} .. ${ods.max(s)}`)
 println(to_string(ods.median(s)))                 // 3.0
 println(to_string(ods.to_list(ods.cumsum(s))))    // [4.0, 5.0, 12.0, 14.0]
 println(to_string(ods.dot(s, s)))                 // 4²+1²+7²+2²
@@ -400,7 +400,7 @@ counts from the end — and `ods.len(s)` is the length:
 
 ```olang
 let s = ods.series([10, 20, 30])
-println(to_string(ods.get(s, 0)) + " " + to_string(ods.get(s, -1)))
+println(`${ods.get(s, 0)} ${ods.get(s, -1)}`)
 println(to_string(ods.len(s)))
 ```
 
@@ -426,7 +426,7 @@ let f = ods.frame([
     ["region", ["east", "west", "east"]],
     ["amount", [25.5, 320.0, 80.0]],
 ])
-println(to_string(ods.n_rows(f)) + " x " + to_string(ods.n_cols(f)))
+println(`${ods.n_rows(f)} x ${ods.n_cols(f)}`)
 ```
 
 `ods.read_csv` parses CSV *text*, inferring each column's type:
@@ -900,8 +900,7 @@ let summary = sales
     |> ods.group_by("region", [["total", "sum", "amount"], ["n", "count"]])
     |> ods.sort_by("total", true)
 for rec in ods.to_records(summary) {
-    println(map_get(rec, "region") + ": " + to_string(map_get(rec, "total"))
-        + " over " + to_string(map_get(rec, "n")) + " sales")
+    println(`${map_get(rec, "region")}: ${map_get(rec, "total")} over ${map_get(rec, "n")} sales`)
 }
 ```
 
@@ -1042,9 +1041,7 @@ standard deviation, minimum, quartiles, and maximum in one map.
 let missing = map_get(#{}, "absent")
 let s = ods.series([5.1, 4.9, 6.2, 5.7, missing, 5.5])
 let d = stats.describe(s)
-println("n=" + to_string(map_get(d, "count"))
-    + " nulls=" + to_string(map_get(d, "null_count"))
-    + " median=" + to_string(map_get(d, "median")))
+println(`n=${map_get(d, "count")} nulls=${map_get(d, "null_count")} median=${map_get(d, "median")}`)
 ```
 
 `stats.corr(a, b)` and `stats.cov(a, b)` measure how two columns move
@@ -1063,9 +1060,8 @@ against that null mean. Both return `t`, `df`, and `p_value`:
 let a = ods.series([5.1, 4.9, 6.2, 5.7, 5.5, 4.8, 5.9, 6.1])
 let b = ods.series([4.2, 4.8, 4.5, 5.0, 4.4, 4.1, 4.9])
 let t = stats.t_test(a, b)
-println("p = " + to_string(map_get(t, "p_value")))
-println("means: " + to_string(map_get(t, "mean_a"))
-    + " vs " + to_string(map_get(t, "mean_b")))
+println(`p = ${map_get(t, "p_value")}`)
+println(`means: ${map_get(t, "mean_a")} vs ${map_get(t, "mean_b")}`)
 ```
 
 Read the p-value for what it is: the probability of a gap at least
@@ -1103,10 +1099,10 @@ let y = x1 * 2.0 + x2 * -1.0 + noise + 3.0    // truth: b0=3, b1=2, b2=-1
 
 let fit = stats.lm(y, [x1, x2])
 let coef = map_get(fit, "coef")
-println("intercept ≈ " + to_string(math.round(ods.get(coef, 0))))   // true value: 3
-println("b1 ≈ " + to_string(math.round(ods.get(coef, 1))))          // true value: 2
-println("b2 ≈ " + to_string(math.round(ods.get(coef, 2))))          // true value: -1
-println("r2 = " + to_string(map_get(fit, "r2") > 0.5))
+println(`intercept ≈ ${math.round(ods.get(coef, 0))}`)   // true value: 3
+println(`b1 ≈ ${math.round(ods.get(coef, 1))}`)          // true value: 2
+println(`b2 ≈ ${math.round(ods.get(coef, 2))}`)          // true value: -1
+println(`r2 = ${map_get(fit, "r2") > 0.5}`)
 ```
 
 The result map carries the full coefficient table as parallel Series —
@@ -1323,8 +1319,7 @@ let boot = par_map(range(0, 4), (chunk) => {
     means
 })
 let means = ods.series(flatten(boot))
-println("95% CI: [" + to_string(math.round(ods.quantile(means, 0.025)))
-    + ", " + to_string(math.round(ods.quantile(means, 0.975))) + "]")
+println(`95% CI: [${math.round(ods.quantile(means, 0.025))}, ${math.round(ods.quantile(means, 0.975))}]`)
 ```
 
 Two complete worked programs extend these patterns to full scale:

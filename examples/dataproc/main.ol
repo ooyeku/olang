@@ -13,7 +13,7 @@ let raw = ods.read_csv(unwrap(fs.read_file(path)))
 let sales = ods.with_column(raw, "revenue", raw["amount"] * raw["quantity"])
 
 println("═══ sales data processor ═══")
-println("records: " + to_string(ods.n_rows(sales)))
+println(`records: ${ods.n_rows(sales)}`)
 println(to_string(ods.describe(sales)))
 
 // ── revenue by region ──
@@ -30,7 +30,7 @@ let total = ods.sum(sales["revenue"])
 let units = ods.sum(sales["quantity"])
 println("── totals ──")
 println("  revenue: $" + to_string(total))
-println("  units:   " + to_string(units))
+println(`  units:   ${units}`)
 
 let top = head(sales |> ods.sort_by("revenue", true) |> ods.head(1) |> ods.to_records())
 println("  top sale: " + map_get(top, "product") + " in " + map_get(top, "region") + " ($" + to_string(map_get(top, "revenue")) + ")")

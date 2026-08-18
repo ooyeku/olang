@@ -57,7 +57,7 @@ share fn to_html(md) = {
         else if heading_level(line) > 0 => {
             let level = heading_level(line)
             let text = str.substring(line, level + 1, str.length(line))
-            let tag = "h" + to_string(level)
+            let tag = `h${level}`
             out = out + ["<" + tag + ">" + render_inline(str.trim(text)) + "</" + tag + ">"]
             i = i + 1
         }

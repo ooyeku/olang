@@ -51,17 +51,17 @@ for r in results { total = total + r.ms }
 
 // ── report ──
 let bar = str.repeat("─", 60)
-println("olang benchmark  (" + to_string(size) + " elements per workload)")
+println(`olang benchmark  (${size} elements per workload)`)
 println(bar)
 println("  " + rpad("workload", 24) + lpad("time", 9) + lpad("share", 8) + "   checksum")
 println(bar)
 for r in results {
     let pct = if total > 0 => (r.ms * 100) / total else => 0
     println("  " + rpad(r.name, 24)
-        + lpad(to_string(r.ms) + " ms", 9)
-        + lpad(to_string(pct) + "%", 8)
+        + lpad(`${r.ms} ms`, 9)
+        + lpad(`${pct}%`, 8)
         + "   " + show(r.check))
 }
 println(bar)
-println("  " + rpad("total", 24) + lpad(to_string(total) + " ms", 9)
-    + "      over " + to_string(len(results)) + " workloads")
+println("  " + rpad("total", 24) + lpad(`${total} ms`, 9)
+    + `      over ${len(results)} workloads`)

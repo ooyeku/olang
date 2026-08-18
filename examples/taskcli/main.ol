@@ -45,8 +45,8 @@ fn run(a) = {
             // A colored summary line and a term.table for the breakdown —
             // both fall back to plain text automatically when piped.
             println(term.bold(to_string(s.total)) + " tasks · "
-                + term.green(to_string(s.done) + " done") + " · "
-                + term.yellow(to_string(s.open) + " open"))
+                + term.green(`${s.done} done`) + " · "
+                + term.yellow(`${s.open} open`))
             let rows = map(sort(map_keys(s.by_priority)),
                 (p) => [p, to_string(map_get(s.by_priority, p))])
             println(term.table(["priority", "count"], rows))

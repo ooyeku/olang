@@ -73,28 +73,28 @@ share fn check(schema, data, path) = {
             let item_schema = map_get(schema, "items")
             let mut i = 0
             for elem in data {
-                errs = errs + check(item_schema, elem, path + "[" + to_string(i) + "]")
+                errs = errs + check(item_schema, elem, `${path}[${i}]`)
                 i = i + 1
             }
         }
         if map_has_key(schema, "minItems") && (len(data) < map_get(schema, "minItems")) =>
-            { errs = errs + [path + ": has " + to_string(len(data)) + " items, needs at least " + to_string(map_get(schema, "minItems"))] }
+            { errs = errs + [`${path}: has ${len(data)} items, needs at least ${map_get(schema, "minItems")}`] }
         if map_has_key(schema, "maxItems") && (len(data) > map_get(schema, "maxItems")) =>
-            { errs = errs + [path + ": has " + to_string(len(data)) + " items, allows at most " + to_string(map_get(schema, "maxItems"))] }
+            { errs = errs + [`${path}: has ${len(data)} items, allows at most ${map_get(schema, "maxItems")}`] }
     }
 
     if is_number(data) => {
         if map_has_key(schema, "minimum") && (data < map_get(schema, "minimum")) =>
-            { errs = errs + [path + ": " + to_string(data) + " is below minimum " + to_string(map_get(schema, "minimum"))] }
+            { errs = errs + [`${path}: ${data} is below minimum ${map_get(schema, "minimum")}`] }
         if map_has_key(schema, "maximum") && (data > map_get(schema, "maximum")) =>
-            { errs = errs + [path + ": " + to_string(data) + " is above maximum " + to_string(map_get(schema, "maximum"))] }
+            { errs = errs + [`${path}: ${data} is above maximum ${map_get(schema, "maximum")}`] }
     }
 
     if json_type(data) == "string" => {
         if map_has_key(schema, "minLength") && (str.length(data) < map_get(schema, "minLength")) =>
-            { errs = errs + [path + ": length " + to_string(str.length(data)) + " is below minLength " + to_string(map_get(schema, "minLength"))] }
+            { errs = errs + [`${path}: length ${str.length(data)} is below minLength ${map_get(schema, "minLength")}`] }
         if map_has_key(schema, "maxLength") && (str.length(data) > map_get(schema, "maxLength")) =>
-            { errs = errs + [path + ": length " + to_string(str.length(data)) + " is above maxLength " + to_string(map_get(schema, "maxLength"))] }
+            { errs = errs + [`${path}: length ${str.length(data)} is above maxLength ${map_get(schema, "maxLength")}`] }
     }
 
     errs

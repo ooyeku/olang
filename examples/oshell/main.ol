@@ -40,7 +40,7 @@ fn run_stage(state, argv, input) = {
             },
             Err(e) => {
                 let msg = match path_lookup(argv[0]) {
-                    Ok(found) => "oshell: " + argv[0] + ": " + to_string(e),
+                    Ok(found) => `oshell: ${argv[0]}: ${e}`,
                     Err(nf) => "oshell: command not found: " + argv[0]
                 }
                 println(msg)
@@ -57,7 +57,7 @@ fn run_pipeline(state, link) = {
         match fs.read_file(link.in_file) {
             Ok(text) => text,
             Err(e) => {
-                println("oshell: " + link.in_file + ": " + to_string(e))
+                println(`oshell: ${link.in_file}: ${e}`)
                 ""
             }
         }
@@ -80,7 +80,7 @@ fn run_pipeline(state, link) = {
         match w {
             Ok(v) => {},
             Err(e) => {
-                println("oshell: " + link.out_file + ": " + to_string(e))
+                println(`oshell: ${link.out_file}: ${e}`)
                 code = 1
             }
         }

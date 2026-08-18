@@ -88,7 +88,7 @@ fn show_tail(text) = {
 }
 
 // ── run every target ──
-println("running " + to_string(len(targets)) + " example programs")
+println(`running ${len(targets)} example programs`)
 println("")
 
 let started = time.monotonic_ms()

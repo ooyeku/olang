@@ -11,10 +11,10 @@ let results = jobs |> map(task.join)
 
 println("── all completed (concurrently) ──")
 for r in results {
-    println("  " + str.pad_end(r.name, 8, " ") + to_string(r.ms) + "ms")
+    println(`  ${str.pad_end(r.name, 8, " ")}${r.ms}ms`)
 }
 let slowest = col.max_by(results, (r) => r.ms)
-println("slowest: " + slowest.name + " at " + to_string(slowest.ms) + "ms (total wall time ~ this, not the sum)")
+println(`slowest: ${slowest.name} at ${slowest.ms}ms (total wall time ~ this, not the sum)`)
 
 // ── Timeouts: give each fetch a 100ms budget ────────────────────────
 // The budget bounds how long we wait. A task that blows it keeps running.
@@ -22,7 +22,7 @@ println("── with a 100ms timeout budget ──")
 for spec in [("fast", 40), ("slow", 250)] {
     let (name, latency) = spec
     let outcome = with_timeout(name, latency, 100)
-    let verdict = if outcome.name == "TIMEOUT" => "timed out (still running)" else => "ok (" + to_string(outcome.ms) + "ms)"
+    let verdict = if outcome.name == "TIMEOUT" => "timed out (still running)" else => `ok (${outcome.ms}ms)`
     println("  " + str.pad_end(name, 6, " ") + verdict)
 }
 

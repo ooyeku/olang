@@ -30,7 +30,7 @@ fn parse_row(line) = {
 let records = rows |> map(parse_row)
 
 println("═══ sales data processor (records) ═══")
-println("records: " + to_string(len(records)))
+println(`records: ${len(records)}`)
 
 // ── revenue per row, total, and per-region totals, by fold ──
 let with_rev = records
@@ -51,4 +51,4 @@ for region in sort(map_keys(by_region)) {
 }
 println("── totals ──")
 println("  revenue: $" + to_string(total))
-println("  units:   " + to_string(units))
+println(`  units:   ${units}`)

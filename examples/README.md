@@ -85,6 +85,16 @@ you care about.
   version of this pipeline ran 50× slower at 200k rows — the measurement
   that opens [the Data Stack chapter](../docs/ods.md), which teaches every
   verb this program uses.)
+- [`timeseries/`](timeseries/) — analysis over *ordered* data, the
+  sequence counterpart to `dataproc`'s bag: where each row's answer
+  depends on the rows around it. A service's daily latency over four
+  weeks (generated deterministically, no file) is run through the window
+  verbs — a 7-day moving average with `rolling`, day-over-day change with
+  `shift`, a running worst-case with `cum_max`, and a severity `rank` —
+  each added as a column, so the incident hidden in the noise surfaces by
+  ordering rather than by a hand-picked threshold. A `group_by` by weekday
+  sits alongside to show the sequence and bag views answering different
+  questions over one frame. `test` blocks pin the windows
 - [`template/`](template/) — a mustache-style template engine self-hosted in
   olang: a lexer, a parser building a nested node tree over a shared `Node`
   ADT (`lib/ast.ol`), and a renderer walking it against a JSON context.

@@ -50,7 +50,7 @@ for month in months {
         let mut i = 0
         while i < p[3] {
             let day = random.randint(1, 28)
-            let day_s = if day < 10 => "0" + to_string(day) else => to_string(day)
+            let day_s = if day < 10 => `0${day}` else => to_string(day)
             create_transaction(conn, #{
                 "date": month + "-" + day_s,
                 "amount_cents": 0 - random.randint(p[1], p[2]),
@@ -67,5 +67,4 @@ for month in months {
     unwrap(put_budget(conn, cat_id("Entertainment"), month, 15000))
 }
 
-println("seeded " + to_string(made) + " transactions and 12 budgets across "
-    + to_string(len(months)) + " months into " + db_path)
+println(`seeded ${made} transactions and 12 budgets across ${len(months)} months into ${db_path}`)

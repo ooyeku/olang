@@ -22,7 +22,7 @@ share fn area(shape) = match shape {
     _ => 0.0
 }
 
-share fn describe(shape) = shape.kind + " with area " + to_string(area(shape))
+share fn describe(shape) = `${shape.kind} with area ${area(shape)}`
 
 // ── A private helper (not shared) — Newton's method for sqrt ────────
 fn sqrt_approx(n) = {

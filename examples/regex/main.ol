@@ -8,7 +8,7 @@ use lib.matcher { matches, find, find_all }
 fn demo(pat, s) = {
     let re = parse(pat)
     let f = find(re, s)
-    let verdict = if f.found => "matched \"" + f.text + "\" at " + to_string(f.start)
+    let verdict = if f.found => `matched "${f.text}" at ${f.start}`
         else => "no match"
     println("  " + str.pad_end("/" + pat + "/", 16, " ") + str.pad_end("\"" + s + "\"", 22, " ") + verdict)
 }

@@ -4,7 +4,7 @@ use model { priority_label }
 share fn format_task(task) = {
     let mark = if map_get(task, "done") == 1 => "[x]" else => "[ ]"
     let pri = priority_label(map_get(task, "priority"))
-    mark + " #" + to_string(map_get(task, "id")) + " (" + pri + ") " + map_get(task, "title")
+    `${mark} #${map_get(task, "id")} (${pri}) ${map_get(task, "title")}`
 }
 
 // A stats summary over a task list, using col + pipelines.

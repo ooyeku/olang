@@ -99,7 +99,7 @@ sign and `_` separators for readability:
 
 ```olang
 println(to_string(1_000_000))
-println(to_string(0xff) + " " + to_string(0b1010) + " " + to_string(0o17))
+println(`${0xff} ${0b1010} ${0o17}`)
 println(to_string(-42))
 ```
 
@@ -271,7 +271,7 @@ list's remainder:
 let (x, y) = (3, 4)
 let [first, second] = [10, 20]
 let [head, ...tail] = [1, 2, 3, 4]
-println(to_string(x + y + first + second + head) + " tail: " + to_string(tail))
+println(`${x + y + first + second + head} tail: ${tail}`)
 ```
 
 Struct patterns work in `let` too:
@@ -552,7 +552,7 @@ A pipeline `a |> f(b)` evaluates like the call it desugars to,
 and a `Float` produces a `Float`:
 
 ```olang
-println(to_string(7 / 2) + " " + to_string(7 % 3) + " " + to_string(7.0 / 2))
+println(`${7 / 2} ${7 % 3} ${7.0 / 2}`)
 println(to_string(2 + 0.5))
 ```
 
@@ -624,8 +624,8 @@ println(to_string(ok))
 On integers: and `&`, or `|`, xor `^`, shifts `<<` `>>`:
 
 ```olang
-println(to_string(6 & 3) + " " + to_string(6 | 3) + " " + to_string(6 ^ 3))
-println(to_string(1 << 4) + " " + to_string(32 >> 2))
+println(`${6 & 3} ${6 | 3} ${6 ^ 3}`)
+println(`${1 << 4} ${32 >> 2}`)
 ```
 
 ### String and list `+`
@@ -635,7 +635,7 @@ and a string is a type error, not a silent coercion — convert the number
 with `to_string(...)` first:
 
 ```olang
-println("count: " + to_string(42))
+println(`count: ${42}`)
 println(to_string([1, 2] + [3]))
 let mut acc = []
 acc = acc + ["grown"]        // the idiomatic append
@@ -688,7 +688,7 @@ concatenate with `+`, and transform with the higher-order builtins:
 
 ```olang
 let xs = [3, 1, 4, 1, 5]
-println(to_string(xs[0]) + " len=" + to_string(len(xs)))
+println(`${xs[0]} len=${len(xs)}`)
 println(to_string(sort(xs)))
 println(to_string(xs |> map((x) => x * 2) |> filter((x) => x > 4)))
 println(to_string(xs |> fold(0, (acc, x) => acc + x)))
@@ -745,7 +745,7 @@ let (lo, hi) = (3, 9)
 println(to_string(hi - lo))
 
 for (name, score) in zip(["ada", "bob"], [99, 82]) {
-    println(name + ": " + to_string(score))
+    println(`${name}: ${score}`)
 }
 
 fn quadrant(p) = match p {
@@ -766,8 +766,8 @@ returns a new map:
 let scores = #{ "ada": 99, "bob": 82 }
 println(to_string(map_get(scores, "ada")))
 let scores2 = map_set(scores, "cyn", 91)
-println(to_string(map_len(scores)) + " then " + to_string(map_len(scores2)))
-println(to_string(map_has_key(scores, "cyn")) + "/" + to_string(map_has_key(scores2, "cyn")))
+println(`${map_len(scores)} then ${map_len(scores2)}`)
+println(`${map_has_key(scores, "cyn")}/${map_has_key(scores2, "cyn")}`)
 println(to_string(sort(map_keys(scores2))))
 ```
 
@@ -788,7 +788,7 @@ println(to_string(map_get(obj, key)))
 
 ```olang
 let user = { name: "ada", age: 36 }
-println(user.name + " is " + to_string(user.age))
+println(`${user.name} is ${user.age}`)
 ```
 
 Objects and maps differ: object fields are identifiers accessed with dot;
@@ -1035,7 +1035,7 @@ be a block, so `fn f(x) = { ... }` is the multi-statement form:
 fn double(x) = x * 2
 fn describe(n) = {
     let d = double(n)
-    "double of " + to_string(n) + " is " + to_string(d)
+    `double of ${n} is ${d}`
 }
 println(describe(21))
 ```
@@ -1074,7 +1074,7 @@ let complex = (x) => {
     let y = x * x
     y + 1
 }
-println(to_string(inc(1)) + " " + make() + " " + to_string(complex(3)))
+println(`${inc(1)} ${make()} ${complex(3)}`)
 ```
 
 Functions are first-class values: store them in variables, lists, maps, and
@@ -1246,7 +1246,7 @@ fn area(s) = match s {
     Rect(w, h) => w * h,
     Unknown => 0.0
 }
-println(to_string(area(Rect(3.0, 4.0))) + " " + to_string(area(Unknown)))
+println(`${area(Rect(3.0, 4.0))} ${area(Unknown)}`)
 ```
 
 Enums are recursive — a variant can hold values of its own type — which is
@@ -1291,7 +1291,7 @@ trait Greet {
 type Robot = struct { id: Int }
 type Human = struct {}
 
-impl Greet for Robot { fn name(self) = "unit-" + to_string(self.id) }
+impl Greet for Robot { fn name(self) = `unit-${self.id}` }
 impl Greet for Human {
     fn name(self) = "friend"
     fn hello(self) = "hey there"                         // override
@@ -1338,7 +1338,7 @@ fn safe_div(a, b) = if b == 0 => Err("division by zero") else => Ok(a / b)
 
 let good = safe_div(10, 2)
 let bad = safe_div(1, 0)
-println(to_string(is_ok(good)) + " " + to_string(is_err(bad)))
+println(`${is_ok(good)} ${is_err(bad)}`)
 ```
 
 ### Consuming results
@@ -1349,7 +1349,7 @@ Pattern match, or use the helper builtins:
 fn safe_div(a, b) = if b == 0 => Err("division by zero") else => Ok(a / b)
 
 let msg = match safe_div(10, 3) {
-    Ok(v) => "got " + to_string(v),
+    Ok(v) => `got ${v}`,
     Err(e) => "failed: " + e
 }
 println(msg)
@@ -1727,7 +1727,7 @@ value the function produces, and a `let` annotation checks the bound
 value — with the same clear error on every execution tier:
 
 ```olang no-run
-fn label(n: Int) -> String = "#" + to_string(n)
+fn label(n: Int) -> String = `#${n}`
 label("seven")
 // Type error: parameter 'n' of label expects Int, got String
 ```
@@ -1777,7 +1777,7 @@ of the same name coexist:
 ```olang
 let type = "a value"          // an ordinary binding
 type Point = struct { x: Int }   // still a type declaration
-println(type + " / " + to_string(Point { x: 1 }.x))
+println(`${type} / ${Point { x: 1 }.x}`)
 ```
 
 They work as field names too: `row.type` and `row.error` parse.

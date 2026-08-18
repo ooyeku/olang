@@ -78,7 +78,7 @@ let scores = #{ "ada": 99 }          // map: arbitrary string keys
 let user = { name: "ada", age: 36 }  // object: fixed fields, dot access
 
 println(to_string(list[0] + pair[0] + pair[1]))
-println(user.name + " scored " + to_string(map_get(scores, "ada")))
+println(`${user.name} scored ${map_get(scores, "ada")}`)
 ```
 
 ### Values never change
@@ -95,7 +95,7 @@ println(to_string(grown))        // [1, 2, 3]
 
 let m = #{ "a": 1 }
 let m2 = map_set(m, "b", 2)      // a new map
-println(to_string(map_len(m)) + " then " + to_string(map_len(m2)))
+println(`${map_len(m)} then ${map_len(m2)}`)
 ```
 
 A binding declared `let mut` can be reassigned; a plain `let` cannot,
@@ -221,7 +221,7 @@ fn parse(line) = {
 }
 
 let r = parse("north,2026-08-01,21.5")
-println(r.station + ": " + to_string(r.temp))
+println(`${r.station}: ${r.temp}`)
 println(typeof(r))   // Reading
 ```
 
@@ -260,7 +260,7 @@ trait Report {
 }
 
 impl Report for Reading {
-    fn line(self) = self.station + " at " + to_string(self.temp)
+    fn line(self) = `${self.station} at ${self.temp}`
 }
 impl Report for Gap {
     fn line(self) = self.station + " (no reading)"
@@ -439,7 +439,7 @@ let summary = f
     |> ods.sort_by("avg", true)
 
 for rec in ods.to_records(summary) {
-    println(map_get(rec, "station") + ": " + to_string(map_get(rec, "avg")))
+    println(`${map_get(rec, "station")}: ${map_get(rec, "avg")}`)
 }
 ```
 
@@ -452,7 +452,7 @@ HTTP:
 let north = ods.series([21.5, 19.0, 23.5])
 let south = ods.series([24.0, 18.5, 22.0])
 let t = stats.t_test(north, south)
-println("p = " + to_string(map_get(t, "p_value") < 1.0))
+println(`p = ${map_get(t, "p_value") < 1.0}`)
 
 let x = ods.series([1.0, 2.0, 3.0])
 let svg = plot.line(x, north, #{ "title": "north station" })
@@ -529,7 +529,7 @@ let readings = log |> map(parse) |> filter(is_ok) |> map(unwrap)
 let rejected = len(log) - len(readings)
 
 let rows = readings
-    |> map((r) => r.station + "," + r.day + "," + to_string(r.temp))
+    |> map((r) => `${r.station},${r.day},${r.temp}`)
 let f = ods.read_csv("station,day,temp\n" + join(rows, "\n"))
 let summary = f |> ods.group_by("station", [["avg", "mean", "temp"], ["n", "count"]])
 

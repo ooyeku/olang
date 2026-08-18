@@ -20,6 +20,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   render with their intended indent. Found while migrating the corpus off
   `+ to_string(...)` (below), where every indented line hit it.
 
+### Changed
+
+- **The corpus is migrated off the `+ to_string(...)` string-building
+  idiom to template strings** — both the examples (~80 sites, 25 files)
+  and the book (53 sites across `types`, `tour`, `language`, `ods`, and
+  `stdlib`). `"count: " + to_string(n)` becomes `` `count: ${n}` ``;
+  templates auto-stringify any value, so the explicit conversion — the
+  most visible friction in day-to-day olang — disappears from label and
+  report strings. Two cases are deliberately kept as `to_string`: a value
+  used as a standalone string (a map key, a function argument), and —
+  subtly — the interpolation of a value that *might be a String*, because
+  `to_string("x")` renders `"x"` with quotes while `${x}` renders it
+  unquoted, so they are not equivalent there (this is why `stdlib.md`'s
+  `show` vs `to_string` teaching block is untouched). The book migration
+  is verified byte-for-byte by `doc_examples_test` and `doc_outputs_test`.
+  The additive mechanism (template strings) already existed; this
+  displaces the habit.
+
+### Added
+
+- **`examples/timeseries` — analysis over ordered data.** The sequence
+  counterpart to the bag examples (`dataproc`, `meterflow`), and the
+  first program to exercise the window verbs shipped in 0.67 (`rolling`,
+  `shift`, `cum_max`/`cum_min`, `rank`), which until now had only
+  unit-test coverage. A service's daily latency over four weeks —
+  generated deterministically, so the run reproduces and the `test`
+  blocks can pin the windows — is run through a 7-day moving average, a
+  day-over-day delta, a running worst-case, and a severity rank, each
+  added as a column, so an incident hidden in the weekly noise surfaces
+  by ordering rather than a hand-picked threshold. Discovered by
+  `run_all.ol`, covered by `tier_agreement_test`, and in the website
+  gallery.
+
 ## [0.67.0] - 2026-08-17
 
 ### Changed

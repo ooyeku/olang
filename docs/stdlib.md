@@ -151,7 +151,7 @@ println(show(len([1, 2, 3])) + " " + show(len("abcd")))
 
 ```olang
 println(to_string(range(1, 5)))
-println(to_string(cons(0, [1, 2])) + " " + to_string(flatten([[1], [2, 3]])))
+println(`${cons(0, [1, 2])} ${flatten([[1], [2, 3]])}`)
 println(to_string(chunk([1, 2, 3, 4, 5], 2)))
 println(to_string(zip([1, 2], ["a", "b"])))
 println(to_string(group_by([1, 2, 3, 4], (x) => x % 2)))
@@ -167,7 +167,7 @@ println(to_string(group_by([1, 2, 3, 4], (x) => x % 2)))
 
 ```olang
 let xs = [4, 1, 7]
-println(to_string(sum(xs)) + " " + to_string(min(xs)) + " " + to_string(max(xs)))
+println(`${sum(xs)} ${min(xs)} ${max(xs)}`)
 println(to_string(clamp(15, 0, 10)))
 ```
 
@@ -409,9 +409,9 @@ float functions compile all the way to native code in hot loops; see
 | Constants | `math.PI` `math.E` `math.TAU` `math.SQRT_2` `math.SQRT_3` `math.LN_2` `math.LN_10` `math.LOG2_E` `math.LOG10_E` |
 
 ```olang
-println(to_string(math.pow(2, 10)) + " " + to_string(math.sqrt(2.25)))
-println(to_string(math.gcd(12, 18)) + " " + to_string(math.factorial(5)))
-println(to_string(math.round(2.6)) + " " + to_string(math.fract(2.75)))
+println(`${math.pow(2, 10)} ${math.sqrt(2.25)}`)
+println(`${math.gcd(12, 18)} ${math.factorial(5)}`)
+println(`${math.round(2.6)} ${math.fract(2.75)}`)
 println(to_string((math.PI > 3.14159) && (math.TAU > 6.28)))
 ```
 
@@ -439,7 +439,7 @@ rounding core (`abs` through `sqrt`, plus `PI`) — smaller in scope than
 
 ```olang
 let doc = unwrap(json.parse("{\"name\": \"ada\", \"tags\": [\"x\", \"y\"], \"age\": 36}"))
-println(doc.name + " has " + to_string(len(doc.tags)) + " tags")
+println(`${doc.name} has ${len(doc.tags)} tags`)
 println(to_string(map_get(doc, "age")))          // dynamic key access
 let out = unwrap(json.stringify({ ok: true, n: 1 }))
 println(out)
@@ -488,7 +488,7 @@ name (all cells are strings — convert explicitly).
 let raw = "name,score\nada,99\nbob,82"
 let rows = unwrap(csv.parse_with_headers(raw))
 let total = rows |> fold(0, (acc, r) => acc + unwrap(str.parse_int(r.score)))
-println(rows[0].name + ", total " + to_string(total))
+println(`${rows[0].name}, total ${total}`)
 ```
 
 ## `re` — regular expressions
@@ -534,8 +534,8 @@ ISO-8601 strings in, ISO-8601 strings out; fallible operations return
 let d = unwrap(dates.date(2026, 8, 7))
 let later = unwrap(dates.add_days(d, 30))
 println(d + " + 30d = " + later)
-println("leap 2028: " + to_string(dates.is_leap_year(2028)))
-println("days apart: " + to_string(unwrap(dates.diff_days(d, later))))
+println(`leap 2028: ${dates.is_leap_year(2028)}`)
+println(`days apart: ${unwrap(dates.diff_days(d, later))}`)
 ```
 
 `unwrap(dates.timestamp(dates.now()))` is the idiom for "seconds since
@@ -688,7 +688,7 @@ while going {
         Err(e) => { going = false }
     }
 }
-println(to_string(total) + " from " + to_string(task.join(worker)) + " squares")
+println(`${total} from ${task.join(worker)} squares`)
 ```
 
 ## `random` — randomness
@@ -1142,7 +1142,7 @@ unwrap(db.commit(conn))
 
 let rows = unwrap(db.query(conn, "SELECT name, points FROM scores ORDER BY points DESC"))
 for row in rows {
-    println(map_get(row, "name") + ": " + to_string(map_get(row, "points")))
+    println(`${map_get(row, "name")}: ${map_get(row, "points")}`)
 }
 unwrap(db.close(conn))
 ```
@@ -1326,7 +1326,7 @@ let summary = full
     |> ods.group_by("region", [["total", "sum", "revenue"], ["n", "count"]])
     |> ods.sort_by("total", true)
 for rec in ods.to_records(summary) {
-    println(map_get(rec, "region") + ": " + to_string(map_get(rec, "total")))
+    println(`${map_get(rec, "region")}: ${map_get(rec, "total")}`)
 }
 ```
 
@@ -1387,7 +1387,7 @@ reproducible.
 let a = ods.series([5.1, 4.9, 6.2, 5.7, 5.5, 4.8, 5.9, 6.1])
 let b = ods.series([4.2, 4.8, 4.5, 5.0, 4.4, 4.1, 4.9])
 let t = stats.t_test(a, b)
-println("p = " + to_string(map_get(t, "p_value")))
+println(`p = ${map_get(t, "p_value")}`)
 println(to_string(stats.norm.ppf(0.975, 0.0, 1.0)))   // 1.9599...
 ```
 

@@ -39,7 +39,7 @@ language. An annotation, wherever it appears, changes the contract from
 documentation to enforcement:
 
 ```olang
-fn label(n: Int) -> String = "#" + to_string(n)
+fn label(n: Int) -> String = `#${n}`
 println(label(7))
 ```
 

@@ -25,9 +25,9 @@ fn row(i) = {
     let r = regions[random.randint(0, len(regions) - 1)]
     let p = random.randint(0, len(products) - 1)
     let q = random.randint(1, 12)
-    r + "," + products[p] + "," + to_string(prices[p]) + "," + to_string(q)
+    `${r},${products[p]},${prices[p]},${q}`
 }
 let lines = ["region,product,amount,quantity"] + (range(rows) |> map(row))
 
 unwrap(fs.write_file(out, str.join(lines, "\n") + "\n"))
-println("wrote " + to_string(rows) + " rows to " + out)
+println(`wrote ${rows} rows to ${out}`)
