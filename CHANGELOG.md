@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`docs/stability.md` rewritten as the 1.0 compatibility contract
+  (R2).** The chapter now opens as the contract itself rather than a
+  "stable in shape" status note. Its versioning section states what a
+  major, minor, and patch release each mean from 1.0 onward, with the
+  breaking-change bar made concrete: a change breaks compatibility
+  exactly when it makes a documented example fail in CI, so "is this
+  breaking?" is a test result, not a judgment call. It defines the
+  deprecation policy (an alias for at least one minor release) and the
+  bug-fix-is-not-a-break distinction, and adds a per-surface guarantee
+  table saying what a user can rely on at each stability tier. The
+  surface freeze it describes is already real; 1.0 changes the version
+  number and the promise's formality, not the code.
+
 ### Added
 
 - **Eight pre-1.0 bug-hunt regressions** in `bytecode_tier_test.rs`. A

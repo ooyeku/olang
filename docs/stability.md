@@ -2,17 +2,24 @@
 
 Part of [the olang book](README.md) · [Architecture and internals](internals.md)
 
-This chapter is the authoritative statement of olang's capabilities. Where
-the README, an old comment, or any other text disagrees with what is written
-here and in the reference chapters, this document is correct.
+This chapter is olang's **compatibility contract**: the authoritative
+statement of what is guaranteed, what may still change, and what a version
+number means. Where the README, an old comment, or any other text disagrees
+with what is written here and in the reference chapters, this document is
+correct.
 
-olang's core language is now considered **stable in shape**: the syntax and
-behavior documented in [the language reference](language.md) and
-[the stdlib reference](stdlib.md) are a commitment, not a snapshot.
-Development from here focuses on optimization, new features, and stability,
-not on changing what already works.
+The language surface is **closed**. The syntax and behavior documented in
+[the language reference](language.md) and [the stdlib reference](stdlib.md)
+are a commitment, not a snapshot: the two deliberate breaking releases the
+[roadmap](roadmap.md) planned — gradual-typing enforcement in 0.48 and the
+scope, mutability, stdlib-convention, and error-model changes across
+0.61–0.65 — have both shipped, each with a migration guide in the
+CHANGELOG. What remains before the 1.0 tag is this contract and the release
+mechanics, not further changes to what already works. The guarantees below
+hold now and are what 1.0 commits to permanently; the [semver
+contract](#versioning) states what could ever change them and at what cost.
 
-## The commitment
+## The 1.0 commitment
 
 1. **Documented syntax keeps parsing.** A program written against the
    language reference continues to parse in future releases. New syntax is
@@ -29,7 +36,19 @@ not on changing what already works.
    `--no-ovm` and the default tiered execution — bytecode or JIT — is a
    bug. Optimization work must be invisible.
 
-## Stability tiers
+## What each surface guarantees
+
+Not every part of olang carries the same promise, and the honest thing is
+to say which carries which. Four tiers, from the frozen core outward:
+
+| Tier | What you can rely on | Examples |
+|---|---|---|
+| **Stable** | Syntax and behavior are frozen. A documented program keeps parsing and keeps giving the same result, under the semver contract above. | the core language, the listed stdlib modules |
+| **Stable in behavior, evolving in scope** | Every documented function behaves as written, permanently. The *set* of functions grows additively; nothing existing changes. | concurrency, the OVM/JIT tiers, the data stack, gradual typing |
+| **Experimental** | The model is settled and tested, but the surface may still gain fields or grow. Build on it; expect additions, not removals. | capabilities, `http.serve`, `dom`, `cell`, `testing` session state |
+| **Reserved** | Not accepted at all. Writing one is a parse error, and if it ever gains meaning that will be purely additive. | intersection annotations, union *declarations* |
+
+The rest of this section is the detail behind each tier.
 
 ### Stable
 
@@ -87,9 +106,10 @@ serving. `try` and `catch` are ordinary identifiers, as are `async`,
 `await`, and `Promise` — the reserved-word list is fifteen words plus
 seven contextual ones, and is not expected to change again.
 
-These rules are now part of the commitment above and will not change
-again. Campaign 1 of [the roadmap](roadmap.md) is complete; the language
-surface is closed for 1.0.
+These rules are part of the commitment above and are permanent under the
+[semver contract](#versioning): changing any of them would be a 2.0, and
+2.0 is the version that is not meant to happen. Campaign 1 of
+[the roadmap](roadmap.md) — the language surface — is complete and closed.
 
 ### Stable in behavior, evolving in scope
 
@@ -178,15 +198,45 @@ ever accepted it will be additive, since no program can contain one now.
 
 ## Versioning
 
-olang follows [semver](https://semver.org) with a pre-1.0 mapping: **minor
-versions** (0.66 → 0.67) may add features and fix bugs whose old behavior
-was undocumented or wrong; **patch versions** are fixes only. Anything that
-would break a documented example is deferred to a hypothetical 1.0 — and
-the intent is that nothing needs to.
+olang follows [semver](https://semver.org). From 1.0 onward a version
+number means exactly this:
 
-Behavior that changed because it was a *bug* (e.g. `&&` not
-short-circuiting, `?` aborting instead of propagating) is recorded in
-[CHANGELOG.md](../CHANGELOG.md) under Fixed, with the reasoning.
+- **Patch** (`1.0.0 → 1.0.1`) — bug fixes only. No new surface, no changed
+  behavior for a program that was relying on documented behavior.
+- **Minor** (`1.0 → 1.1`) — additive. New functions, new modules, new
+  syntax that does not change how any existing program parses or runs.
+  Everything in [the commitment](#the-10-commitment) still holds.
+- **Major** (`1.0 → 2.0`) — the only version that may break a documented
+  program, and the bar is deliberately high: a change that would break a
+  documented example is a 2.0 change, not a 1.x one, no matter how small.
+  The intent is that 2.0 never needs to happen; it exists so the promise
+  above can be absolute rather than hedged.
+
+**What "breaking" means, precisely.** A change breaks compatibility if a
+program written against this book — its syntax, its documented behavior,
+its stdlib signatures and `Result` conventions — stops parsing, stops
+running, or produces a different result. This is not a matter of judgment:
+every documented example is executed in CI (`doc_examples_test`), so a
+breaking change is a *failing test*, and shipping it in anything below a
+major version is a release bug.
+
+**Deprecation.** If a stdlib function ever has to be renamed, the old name
+stays as an alias for at least one minor release, with a deprecation note
+in its documentation and the CHANGELOG. A name is never removed in the
+same release it is deprecated.
+
+**Bug fixes are not breaking changes.** Behavior that changed because it
+was a *bug* — `&&` not short-circuiting, `?` aborting instead of
+propagating — is a fix, not a break, and lands in a minor or patch
+release. Such changes are recorded in [CHANGELOG.md](../CHANGELOG.md)
+under Fixed, with the reasoning, so the distinction between "we fixed
+what was wrong" and "we changed what was right" is always on the record.
+
+**Before the 1.0 tag.** The surface is already frozen; the version number
+has not yet caught up. Until 1.0.0 is tagged, minor releases (`0.66 →
+0.67`) remain additive and fix-only in practice, and the contract above is
+the one they already honor. The 1.0 release changes the number and the
+promise's *formality*, not the code's behavior.
 
 ## How this is enforced
 
@@ -210,4 +260,6 @@ short-circuiting, `?` aborting instead of propagating) is recorded in
   stdlib.
 
 If you find documented behavior that does not match the implementation,
-that is a bug in one of them — please file it; the book is the contract.
+that is a bug in one of them — please file it. The book is the contract,
+and this chapter is where the contract is stated; every other chapter is
+bound by it.
