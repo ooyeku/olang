@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Eight pre-1.0 bug-hunt regressions** in `bytecode_tier_test.rs`. A
+  differential fuzzer ran ~10,000 generated programs under `--no-ovm`
+  and `--ovm-tier=1` and found no tier divergence across arithmetic,
+  closures, strings, structs, `Result`/`?`, loops, `cell`, enums, and
+  nested data. The hunt's durable output is the seams it swept that the
+  suite had never named as concrete cases: a JIT deopt on a kind change
+  (int-specialized function called later with a float), an overflow
+  guard firing inside a hot function, signed division and remainder,
+  a float accumulator whose rounding error must match bit-for-bit, and a
+  loop snapshotting closures — the shape of the capture bug the harness
+  caught earlier. Each is now pinned identical on both tiers.
+
 ### Fixed
 
 - **A capability leak across the thread boundary (OM1).** Campaign 3's C1

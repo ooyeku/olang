@@ -3868,3 +3868,123 @@ f(3, 4) + f(5, 6) + f(7, 8)
 "#,
     );
 }
+
+// ── Pre-1.0 bug-hunt regressions ──────────────────────────────────────
+//
+// A differential fuzzer ran ~10,000 generated programs under `--no-ovm`
+// and `--ovm-tier=1` and found no tier divergence; these pin the seams
+// that fuzzing swept but the suite never named as concrete cases. Each
+// is a shape where a tier *could* plausibly diverge — a JIT deopt on a
+// kind change, an overflow guard inside a hot function, a closure's
+// captured snapshot — and each is asserted identical on both tiers.
+
+#[test]
+fn a_function_specialized_for_ints_handles_a_later_float_call() {
+    // The JIT specializes `add` for i64 across 200 hot calls, then a
+    // f64 call must deopt to bytecode and still give the float answer,
+    // not a reinterpreted-bits integer.
+    assert_tier_transparent(
+        r#"
+fn add(a, b) = a + b
+let mut s = 0
+let mut i = 0
+while i < 200 { s = s + add(i, 1); i = i + 1 }
+[add(s, 0), add(1.5, 2.5)]
+"#,
+    );
+}
+
+#[test]
+fn a_polymorphic_function_interleaves_int_and_float_calls() {
+    assert_tier_transparent(
+        r#"
+fn dbl(x) = x + x
+[dbl(3), dbl(2.5), dbl(3), dbl(4.5)]
+"#,
+    );
+}
+
+#[test]
+fn an_overflow_guard_fires_the_same_inside_a_hot_function() {
+    // 2^62 is representable; the next doubling overflows. Both tiers must
+    // agree on where the guard trips — a native multiply that wrapped
+    // instead of trapping would diverge from the interpreter here.
+    assert_tier_transparent(
+        r#"
+fn pow2(n) = if n <= 0 => 1 else => 2 * pow2(n - 1)
+pow2(62)
+"#,
+    );
+    // And the overflowing call fails on both tiers, not just one.
+    assert_tier_transparent(
+        r#"
+fn pow2(n) = if n <= 0 => 1 else => 2 * pow2(n - 1)
+pow2(64)
+"#,
+    );
+}
+
+#[test]
+fn a_struct_field_read_on_a_hot_path_agrees_across_tiers() {
+    assert_tier_transparent(
+        r#"
+type V = struct { x: Int }
+fn getx(v) = v.x
+let mut t = 0
+let mut i = 0
+while i < 150 { t = t + getx(V { x: i }); i = i + 1 }
+t
+"#,
+    );
+}
+
+#[test]
+fn a_recursive_int_result_feeds_a_float_caller_identically() {
+    assert_tier_transparent(
+        r#"
+fn cnt(n) = if n <= 0 => 0 else => 1 + cnt(n - 1)
+fn scale(n) = to_float(cnt(n)) * 0.5
+scale(20)
+"#,
+    );
+}
+
+#[test]
+fn a_loop_snapshotting_closures_captures_distinct_values_on_both_tiers() {
+    // The shape of the closure-capture bug the tier-agreement harness
+    // found earlier: a snapshot per iteration must stay distinct after
+    // promotion, not collapse to one shared cell.
+    assert_tier_transparent(
+        r#"
+let mut fns = []
+let mut i = 0
+while i < 4 { let snap = i * i; fns = fns + [(() => snap)]; i = i + 1 }
+fns |> map((f) => f())
+"#,
+    );
+}
+
+#[test]
+fn signed_division_and_remainder_agree_across_tiers() {
+    // Truncated division: the remainder takes the dividend's sign. A
+    // native path using a different rounding rule would diverge.
+    assert_tier_transparent(
+        r#"
+fn dm(a, b) = [a / b, a % b]
+[dm(-7, 2), dm(7, -2), dm(-7, -2), dm(7, 2)]
+"#,
+    );
+}
+
+#[test]
+fn a_float_accumulator_in_a_hot_loop_matches_the_interpreter_bit_for_bit() {
+    // Float addition is not associative; if the JIT reordered or used
+    // an FMA the interpreter did not, the last bits would differ. The
+    // answer here is deliberately one that carries rounding error.
+    assert_tier_transparent(
+        r#"
+fn acc(n, s) = if n <= 0 => s else => acc(n - 1, s + 0.1)
+acc(100, 0.0)
+"#,
+    );
+}

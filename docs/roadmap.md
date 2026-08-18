@@ -786,6 +786,24 @@ re-reading; it was making the claim executable, and where that was
 impossible, writing it so its truth does not depend on the calendar.
 
 
+**Pre-1.0 bug hunt.** A differential fuzzer generated ~10,000 small
+programs and ran each under `--no-ovm` and `--ovm-tier=1`, diffing
+stdout, stderr, and exit status — the tier-agreement contract at fuzz
+scale. Across arithmetic, closures, strings, structs, `Result`/`?`,
+loops, `cell`, enums, and nested data it found **no divergence**. Around
+forty hand-built edge probes then swept the seams a generator reaches
+poorly: JIT deopt on a kind change, overflow guards inside hot
+functions, `cell` confinement across a `spawn`, signed division, unicode
+length, negative zero, deep recursion at the 1000-frame limit — all
+correct and all tier-identical. The hunt's lasting output is eight
+regressions in `bytecode_tier_test.rs` pinning those seams as concrete
+cases. The one real leak of the campaign, OM1, was found by boundary
+*reasoning* rather than fuzzing — a reminder that the classes a fuzzer
+cannot express (what crosses a thread, what a manifest attenuates) still
+need a person to think about the boundary, which is where this hunt
+spent the rest of its attention and came up clean.
+
+
 | Lane | Work | Status |
 |---|---|---|
 | R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | **done** — eight sittings: every chapter read or probed against the binary, ~30 corrections, four permanent guards (`doc_examples`, `doc_references`, `doc_outputs`, `doc_anchors`) |
