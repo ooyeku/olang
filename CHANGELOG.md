@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A malformed contextual-keyword declaration no longer reports the
+  keyword as an undefined variable.** `error`, `share`, `test`, and
+  `trait` are contextual keywords — ordinary identifiers everywhere else —
+  so when their declaration form does not parse, the parser falls back to
+  reading the keyword as a variable reference. Writing `error E { code:
+  Int }` (an error type is variants, not struct fields) therefore failed
+  with "Undefined variable: error", which sends a reader to look for a
+  missing binding rather than at the malformed declaration. The error
+  message now recognizes these four keywords and points at the correct
+  declaration form. It is the flip side of the contextual-keyword design:
+  freeing the names for use as identifiers means a broken declaration
+  misparses as one. Found during a soak pass over the error model (the
+  model itself — `error` types, `?`, structural recovery via `task.join`
+  — is sound).
+
 - **An undeclared type in an annotation is reported as unknown, not as a
   value mismatch.** A field, parameter, return, or `let` annotation naming
   a type that was never declared — `f: Widget` where no `Widget` exists —

@@ -158,10 +158,37 @@ impl IntuitiveErrorFormatter {
                 root_error,
                 suggested_fix,
             } => self.format_dependency_chain_error(chain, root_error, suggested_fix),
+            InterpreterError::UndefinedVariable { name } => self.format_undefined_variable(name),
             _ => {
                 // Default formatting for other errors
                 format!("{}", error)
             }
+        }
+    }
+
+    /// An undefined variable whose name is a *contextual* keyword is almost
+    /// always a malformed declaration: `error`, `share`, `test`, and `trait`
+    /// are ordinary identifiers, so when their declaration form does not
+    /// parse the parser falls back to reading the keyword as a variable —
+    /// and the reader is told the keyword is undefined rather than that the
+    /// declaration is malformed. Point them at the declaration form.
+    fn format_undefined_variable(&self, name: &str) -> String {
+        let base = format!("Undefined variable: {}", name);
+        let form = match name {
+            "error" => Some(
+                "`error` declares an error type — `error Name { Variant, WithPayload: { field: Type } }`. \
+                 A malformed one parses as this variable instead.",
+            ),
+            "share" => Some(
+                "`share` exports a declaration — `share fn ...`, `share type ...`, or `share use ...`.",
+            ),
+            "test" => Some("`test` declares a test block — `test \"name\" { ... }`."),
+            "trait" => Some("`trait` declares a trait — `trait Name { fn method(self) -> T }`."),
+            _ => None,
+        };
+        match form {
+            Some(hint) => format!("{base}\n\nHelp:\n  • Did you mean a declaration? {hint}"),
+            None => base,
         }
     }
 
@@ -453,6 +480,42 @@ impl IntuitiveErrorFormatter {
             .take(self.max_suggestions)
             .map(|(suggestion, _)| suggestion)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod undefined_variable_hints {
+    use super::IntuitiveErrorFormatter;
+    use crate::interpreter::errors::InterpreterError;
+
+    fn message(name: &str) -> String {
+        IntuitiveErrorFormatter::default().format_error(&InterpreterError::UndefinedVariable {
+            name: name.to_string(),
+        })
+    }
+
+    #[test]
+    fn a_contextual_keyword_points_at_its_declaration() {
+        // A malformed `error`/`share`/`test`/`trait` declaration parses as a
+        // reference to the keyword-as-variable, so "undefined variable"
+        // misdirects. Each names its declaration form instead.
+        for kw in ["error", "share", "test", "trait"] {
+            let m = message(kw);
+            assert!(
+                m.contains("Did you mean a declaration?"),
+                "{kw} should hint at its declaration: {m}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordinary_undefined_variable_gets_no_declaration_hint() {
+        let m = message("foo");
+        assert!(m.contains("Undefined variable: foo"));
+        assert!(
+            !m.contains("Did you mean a declaration?"),
+            "a plain name must not be mistaken for a keyword: {m}"
+        );
     }
 }
 
