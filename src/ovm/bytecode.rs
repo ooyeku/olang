@@ -133,6 +133,11 @@ pub struct BytecodeVm {
     /// run time so a field value whose runtime type does not match its
     /// declared annotation is the same error the interpreter raises.
     struct_field_checks: HashMap<String, HashMap<String, crate::ast::FieldTypeCheck>>,
+    /// Declared enum *type* names, mirrored from the interpreter alongside
+    /// struct_defs, so the tier's annotation enforcement can tell an unknown
+    /// type from a real mismatch and report it the same way — an undeclared
+    /// name in an annotation matches nothing, and blaming the value misleads.
+    enum_type_names: std::collections::HashSet<String>,
     /// User function VALUES by name, mirrored from the tier's
     /// declarations. Used when a lambda's free variable is a registered
     /// function: the compiled body calls it through the registry, but the
@@ -1051,6 +1056,7 @@ impl BytecodeVm {
             arg_pool: Vec::new(),
             hof_cache: HashMap::new(),
             struct_defs: HashMap::new(),
+            enum_type_names: std::collections::HashSet::new(),
             struct_field_checks: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
             known_function_values: HashMap::new(),
@@ -1213,6 +1219,36 @@ impl BytecodeVm {
     pub fn note_unit_variant(&mut self, name: String) -> bool {
         self.builtin_interpreter = None;
         self.unit_variant_names.insert(name)
+    }
+
+    /// Mirror a declared enum's type name, so `is_declared_type` recognizes
+    /// it and an annotation naming it is a real type, not an unknown one.
+    pub fn note_enum_type(&mut self, name: String) -> bool {
+        self.enum_type_names.insert(name)
+    }
+
+    /// A struct or enum the program declared. Shared by the four annotation
+    /// enforcement sites to distinguish an unknown type from a mismatch.
+    fn is_declared_type(&self, name: &str) -> bool {
+        self.struct_defs.contains_key(name) || self.enum_type_names.contains(name)
+    }
+
+    /// Error text for a failed annotation check, identical to the
+    /// interpreter's `annotation_error` so the two tiers never disagree.
+    fn annotation_error(
+        &self,
+        site: &str,
+        check: &crate::ast::FieldTypeCheck,
+        expected: &str,
+        got: &str,
+    ) -> String {
+        match check.named_type() {
+            Some(name) if !self.is_declared_type(name) => format!(
+                "{site} names unknown type '{name}' — declare it with \
+                 `type {name} = struct {{ ... }}` (or `enum`), or annotate with a known type"
+            ),
+            _ => format!("{site} expects {expected}, got {got}"),
+        }
     }
 
     pub fn register_function(&mut self, name: String, func_id: FunctionId) {
@@ -1501,9 +1537,11 @@ impl BytecodeVm {
                         // check and its early error return skips the pop —
                         // the frame stays visible. Mirror the leak.
                         self.error_trace_leak = bytecode.debug_info.function_name.clone();
-                        return Err(BytecodeError::TypeError(format!(
-                            "parameter '{}' of {} expects {}, got {}",
-                            bytecode.param_names[i], fn_name, expected, got
+                        return Err(BytecodeError::TypeError(self.annotation_error(
+                            &format!("parameter '{}' of {}", bytecode.param_names[i], fn_name),
+                            check,
+                            &expected,
+                            &got,
                         )));
                     }
                 }
@@ -1623,9 +1661,11 @@ impl BytecodeVm {
                         // check and its early error return skips the pop —
                         // the frame stays visible. Mirror the leak.
                         self.error_trace_leak = bytecode.debug_info.function_name.clone();
-                        return Err(BytecodeError::TypeError(format!(
-                            "parameter '{}' of {} expects {}, got {}",
-                            bytecode.param_names[i], fn_name, expected, got
+                        return Err(BytecodeError::TypeError(self.annotation_error(
+                            &format!("parameter '{}' of {}", bytecode.param_names[i], fn_name),
+                            check,
+                            &expected,
+                            &got,
                         )));
                     }
                 }
@@ -2199,9 +2239,11 @@ impl BytecodeVm {
                                 .function_name
                                 .as_deref()
                                 .unwrap_or("<fn>");
-                            return Err(BytecodeError::TypeError(format!(
-                                "return value of {} expects {}, got {}",
-                                fn_name, expected, got
+                            return Err(BytecodeError::TypeError(self.annotation_error(
+                                &format!("return value of {}", fn_name),
+                                check,
+                                &expected,
+                                &got,
                             )));
                         }
                     }
@@ -2285,9 +2327,14 @@ impl BytecodeVm {
                             if let Some((expected, got)) =
                                 check.check_value(actual, payload, fn_arity, scalar)
                             {
-                                return Err(BytecodeError::TypeError(format!(
-                                    "field '{}' of {} expects {}, got {}",
-                                    shape.field_names[i], shape.type_name, expected, got
+                                return Err(BytecodeError::TypeError(self.annotation_error(
+                                    &format!(
+                                        "field '{}' of {}",
+                                        shape.field_names[i], shape.type_name
+                                    ),
+                                    check,
+                                    &expected,
+                                    &got,
                                 )));
                             }
                         }
@@ -3395,6 +3442,11 @@ impl BytecodeVm {
                 self.struct_defs.clone(),
                 self.struct_field_checks.clone(),
                 self.unit_variant_names.clone(),
+                // The bridge dispatches builtins; it never constructs a user
+                // struct or checks a user function's parameter annotations,
+                // so it never reaches the annotation enforcer and needs no
+                // enum-type registry of its own.
+                std::collections::HashSet::new(),
             );
             self.builtin_interpreter = Some(interp);
         }

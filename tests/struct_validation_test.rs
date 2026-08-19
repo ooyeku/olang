@@ -192,3 +192,76 @@ match p { Point { x, y } => x * y }
 "#;
     assert_eq!(eval(src).unwrap(), Value::Integer(35));
 }
+
+// ── Unknown type names in annotations ─────────────────────────────────
+//
+// A `FieldTypeCheck` for a bare custom name is `Named(name)`, enforced by
+// comparing runtime type names — so an *undeclared* name matches nothing
+// and used to blame the value: `field 'f' of T expects Widget, got Int`,
+// which sends a reader to debug the value when the annotation is the
+// problem. The enforcer now knows the declared struct and enum names, so
+// it says the annotation names an unknown type instead — the same way
+// constructing an undeclared struct already reports one.
+
+#[test]
+fn an_undeclared_field_type_is_reported_as_unknown() {
+    let err = eval("type T = struct { f: Widget }\nlet t = T { f: 42 }\n").unwrap_err();
+    assert!(
+        err.contains("names unknown type 'Widget'"),
+        "should blame the annotation, not the value: {err}"
+    );
+}
+
+#[test]
+fn a_real_field_mismatch_still_blames_the_value() {
+    // The unknown-type path must not swallow a genuine mismatch: Int is a
+    // real type, so a String in an Int field is still "expects Int, got".
+    let err = eval("type T = struct { f: Int }\nlet t = T { f: \"hi\" }\n").unwrap_err();
+    assert!(err.contains("expects Int, got String"), "{err}");
+}
+
+#[test]
+fn a_declared_enum_is_a_known_field_type() {
+    // The enum-name registry is what makes this a mismatch and not an
+    // "unknown type": Color is declared, so a wrong value against it is an
+    // ordinary "expects Color, got Int".
+    let err = eval(
+        "type Color = enum { Red, Green }\n\
+         type Box = struct { c: Color }\n\
+         let b = Box { c: 42 }\n",
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("expects Color, got Int") && !err.contains("unknown type"),
+        "a declared enum must be a known type: {err}"
+    );
+}
+
+#[test]
+fn a_forward_referenced_field_type_is_not_unknown() {
+    // Enforcement is lazy (at construction), so a type declared later is
+    // known by the time it is checked — the fix must not break this.
+    let out = eval(
+        "type A = struct { b: B }\n\
+         type B = struct { v: Int }\n\
+         let a = A { b: B { v: 7 } }\n\
+         a.b.v\n",
+    )
+    .unwrap();
+    assert_eq!(out, Value::Integer(7));
+}
+
+#[test]
+fn unknown_type_at_param_return_and_let_sites() {
+    for src in [
+        "fn f(x: Widget) = x\nf(5)\n",
+        "fn f(x) -> Widget = x\nf(5)\n",
+        "let x: Widget = 5\n",
+    ] {
+        let err = eval(src).unwrap_err();
+        assert!(
+            err.contains("names unknown type 'Widget'"),
+            "site should report unknown type: {src} -> {err}"
+        );
+    }
+}

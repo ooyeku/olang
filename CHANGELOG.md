@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **An undeclared type in an annotation is reported as unknown, not as a
+  value mismatch.** A field, parameter, return, or `let` annotation naming
+  a type that was never declared — `f: Widget` where no `Widget` exists —
+  reduced to a name-comparison check that nothing matched, so enforcement
+  blamed the value: `field 'f' of T expects Widget, got Int`. A reader who
+  typoed a type name or referenced one they forgot to declare was sent to
+  debug the value. It now says the annotation names an unknown type, the
+  same way constructing an undeclared struct already reports one. The
+  enforcer learned the declared enum *type* names (struct names it already
+  had), so it can tell an unknown type from a real mismatch — a wrong value
+  against a declared `enum` is still an ordinary "expects Color, got Int".
+  Fixed identically on both engines: the interpreter's four enforcement
+  sites and the bytecode tier's four, so the two never disagree. Forward
+  references still resolve (enforcement is lazy, at construction). The
+  static checker (`olang check`) still words this as a mismatch; correcting
+  it there needs a verified-complete type registry across imports and is
+  left as its own task. Found during a `cell` stress pass.
+
 - **Template strings no longer strip leading whitespace.** `` `  x` ``
   evaluated to `"x"` — the leading spaces and tabs vanished, asymmetric
   with trailing and interior whitespace, which were always preserved. The

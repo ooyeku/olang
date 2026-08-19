@@ -143,6 +143,15 @@ pub struct Interpreter {
     /// test whenever some `b` already in scope happened to hold a unit variant.
     unit_variant_names: HashSet<String>,
 
+    /// Declared enum *type* names (not variants). A field/parameter/return
+    /// annotation naming a struct or enum reduces to `FieldTypeCheck::Named`,
+    /// which is enforced by comparing runtime type names — so an *undeclared*
+    /// name matches nothing and produced a misleading "expects X, got Y".
+    /// Struct names live in `struct_defs`; this holds the enum names, and the
+    /// two together let the enforcer tell an unknown type from a real
+    /// mismatch and say so.
+    enum_type_names: HashSet<String>,
+
     /// Test-runner mode (`olang test`): when on, `test` blocks record their
     /// outcome here and execution continues past failures instead of
     /// aborting. When off (normal runs), a failing test block is an error —
@@ -257,6 +266,7 @@ impl Interpreter {
             trait_defaults: HashMap::new(),
             type_traits: HashMap::new(),
             unit_variant_names: HashSet::new(),
+            enum_type_names: HashSet::new(),
             test_mode: false,
             test_results: Vec::new(),
             coverage: None,
@@ -713,7 +723,11 @@ impl Interpreter {
         }
     }
 
-    fn check_param_types(func: &Function, arguments: &[Value]) -> Result<(), InterpreterError> {
+    fn check_param_types(
+        &self,
+        func: &Function,
+        arguments: &[Value],
+    ) -> Result<(), InterpreterError> {
         for (index, check) in func.param_checks.iter().enumerate() {
             if let (Some(check), Some(arg)) = (check, arguments.get(index)) {
                 let (actual, payload, fn_arity) = Self::value_view(arg);
@@ -730,9 +744,11 @@ impl Interpreter {
                         .map(|p| p.name.as_str())
                         .unwrap_or("?");
                     return Err(InterpreterError::TypeError {
-                        message: format!(
-                            "parameter '{}' of {} expects {}, got {}",
-                            param, fn_name, expected, got
+                        message: self.annotation_error(
+                            &format!("parameter '{}' of {}", param, fn_name),
+                            check,
+                            &expected,
+                            &got,
                         ),
                     });
                 }
@@ -742,7 +758,7 @@ impl Interpreter {
     }
 
     /// Enforce a declared return type on the value a call produced.
-    fn check_return_type(func: &Function, value: &Value) -> Result<(), InterpreterError> {
+    fn check_return_type(&self, func: &Function, value: &Value) -> Result<(), InterpreterError> {
         if let Some(check) = &func.return_check {
             let (actual, payload, fn_arity) = Self::value_view(value);
             if let Some((expected, got)) = check.check_value(
@@ -753,9 +769,11 @@ impl Interpreter {
             ) {
                 let fn_name = func.name.as_deref().unwrap_or("<lambda>");
                 return Err(InterpreterError::TypeError {
-                    message: format!(
-                        "return value of {} expects {}, got {}",
-                        fn_name, expected, got
+                    message: self.annotation_error(
+                        &format!("return value of {}", fn_name),
+                        check,
+                        &expected,
+                        &got,
                     ),
                 });
             }
@@ -844,9 +862,11 @@ impl Interpreter {
                     _ => "value",
                 };
                 return Err(InterpreterError::TypeError {
-                    message: format!(
-                        "let binding '{}' expects {}, got {}",
-                        binding, expected, got
+                    message: self.annotation_error(
+                        &format!("let binding '{}'", binding),
+                        &check,
+                        &expected,
+                        &got,
                     ),
                 });
             }
@@ -1564,6 +1584,9 @@ impl Interpreter {
     /// carry the same trait/struct/variant tables the program declared, or the
     /// call diverges from the tree-walk (a spurious "Field not found"). The VM
     /// mirrors these facts as declarations evaluate and installs them here.
+    // One setter per parallel declaration registry; bundling them into a
+    // struct would only move the argument list, not shorten it.
+    #[allow(clippy::too_many_arguments)]
     pub fn seed_bridge_state(
         &mut self,
         trait_impls: HashMap<(String, String), Function>,
@@ -1572,6 +1595,7 @@ impl Interpreter {
         struct_defs: HashMap<String, Vec<String>>,
         struct_field_checks: HashMap<String, HashMap<String, crate::ast::FieldTypeCheck>>,
         unit_variant_names: HashSet<String>,
+        enum_type_names: HashSet<String>,
     ) {
         self.trait_impls = trait_impls;
         self.trait_defaults = trait_defaults;
@@ -1579,6 +1603,36 @@ impl Interpreter {
         self.struct_defs = struct_defs;
         self.struct_field_checks = struct_field_checks;
         self.unit_variant_names = unit_variant_names;
+        self.enum_type_names = enum_type_names;
+    }
+
+    /// Is `name` a declared type — a struct or an enum? Primitive checks
+    /// never reach here (they are their own `FieldTypeCheck` variants), so a
+    /// `Named` check that is neither a known struct nor a known enum names a
+    /// type that does not exist, and the enforcer says so.
+    fn is_declared_type(&self, name: &str) -> bool {
+        self.struct_defs.contains_key(name) || self.enum_type_names.contains(name)
+    }
+
+    /// The error text for a failed annotation check at `site`. When the
+    /// declared type is a named type that was never declared, the value is
+    /// not the problem — the annotation is — so it says "unknown type"
+    /// rather than "expects X, got Y", the way construction already reports
+    /// an undeclared struct name.
+    fn annotation_error(
+        &self,
+        site: &str,
+        check: &crate::ast::FieldTypeCheck,
+        expected: &str,
+        got: &str,
+    ) -> String {
+        match check.named_type() {
+            Some(name) if !self.is_declared_type(name) => format!(
+                "{site} names unknown type '{name}' — declare it with \
+                 `type {name} = struct {{ ... }}` (or `enum`), or annotate with a known type"
+            ),
+            _ => format!("{site} expects {expected}, got {got}"),
+        }
     }
 
     /// Give a bridge interpreter the capability context of the compiled
@@ -1661,7 +1715,7 @@ impl Interpreter {
                 // promises); runs before the tier so every execution path
                 // sees the same boundary.
                 if !func.param_checks.is_empty() {
-                    Self::check_param_types(&func, &arguments)?;
+                    self.check_param_types(&func, &arguments)?;
                 }
 
                 // Hot-function promotion: run on the bytecode tier when the
@@ -1781,7 +1835,7 @@ impl Interpreter {
                 // produced (explicit return or final expression alike).
                 let result = match result {
                     Ok(v) => {
-                        Self::check_return_type(&func, &v)?;
+                        self.check_return_type(&func, &v)?;
                         Ok(v)
                     }
                     other => other,
@@ -1953,6 +2007,7 @@ impl Interpreter {
             trait_defaults: self.trait_defaults.clone(),
             type_traits: self.type_traits.clone(),
             unit_variant_names: self.unit_variant_names.clone(),
+            enum_type_names: self.enum_type_names.clone(),
             test_mode: false,
             test_results: Vec::new(),
             // Coverage is single-threaded: worker clones don't record.
@@ -2151,6 +2206,14 @@ impl Interpreter {
         // language is dynamically typed, so a generic variant constructs for
         // any argument type. The static side is the type checker's concern.
         if let TypeDefinition::Enum { variants } = &type_decl.definition {
+            // Remember the enum's type name so an annotation naming it is
+            // recognized as a real type (and a name that is *not* declared
+            // is reported as unknown rather than as a value mismatch). The
+            // tier keeps its own mirror, for its own enforcement sites.
+            self.enum_type_names.insert(type_decl.name.clone());
+            if let Some(tier) = self.bytecode_tier.as_mut() {
+                tier.note_enum_type(type_decl.name.clone());
+            }
             for variant in variants {
                 let value = match &variant.data {
                     None => {
@@ -2280,9 +2343,14 @@ impl Interpreter {
                     Self::scalar_view(&value),
                 ) {
                     return Err(InterpreterError::TypeError {
-                        message: format!(
-                            "field '{}' of {} expects {}, got {}",
-                            field_value.name, struct_literal.type_name, expected, got
+                        message: self.annotation_error(
+                            &format!(
+                                "field '{}' of {}",
+                                field_value.name, struct_literal.type_name
+                            ),
+                            check,
+                            &expected,
+                            &got,
                         ),
                     });
                 }

@@ -258,6 +258,12 @@ impl BytecodeTier {
         }
     }
 
+    /// Mirror a declared enum's type name so the tier recognizes it in an
+    /// annotation (and reports a name that is *not* declared as unknown).
+    pub fn note_enum_type(&mut self, name: String) {
+        self.vm.note_enum_type(name);
+    }
+
     /// Record a user function declaration so calls to it can be compiled.
     pub fn note_function(&mut self, name: String, func: Function) {
         // Already known to be ambiguous: a second module's same-named function

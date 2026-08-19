@@ -891,6 +891,18 @@ impl FieldTypeCheck {
 
     /// The declared type's name, as it must appear as a value's runtime type
     /// name to satisfy the field.
+    ///
+    /// If this check is a bare declared-type name — a struct or enum — its
+    /// name, so the enforcer can ask whether that type actually exists and
+    /// report "unknown type 'X'" rather than blaming the value when it does
+    /// not. A union or built-in check has no single such name.
+    pub fn named_type(&self) -> Option<&str> {
+        match self {
+            Self::Named(name) => Some(name),
+            _ => None,
+        }
+    }
+
     pub fn expected_name(&self) -> &str {
         match self {
             Self::Int => "Int",
