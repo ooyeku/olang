@@ -247,6 +247,29 @@ let smallest = if len(xs) > 0 => show(min(xs)) else => "none"
 println(smallest)   // 1
 ```
 
+## `to_string` quotes a string; `show` and `${}` do not
+
+`to_string(v)` renders a value's *shape* — a string comes back **with its
+quotes**, so `to_string("ada")` is `"ada"`, not `ada`. This surprises
+people arriving from languages where the `to_string`/`toString`/`str`
+name means the bare human form (Rust's `"ada".to_string()` is bare `ada`).
+In olang that bare form is `show`, and template interpolation uses it:
+
+```olang
+let name = "ada"
+println(to_string(name))     // "ada"   — quoted (repr form)
+println(show(name))          // ada     — bare (display form)
+println(`hi, ${name}`)       // hi, ada — interpolation is bare too
+```
+
+The rule of thumb: build human output with a template (`` `hi, ${name}` ``)
+or `show`; reach for `to_string` when you *want* the quotes — a debug dump
+or an error message, where `"ada"` reads more clearly than a bare word
+that might be empty or contain spaces. The two differ only on a top-level
+string: on numbers, bools, lists, and maps they are identical (and a list
+of strings quotes its elements either way, so `show(["a", "b"])` is still
+`["a", "b"]`).
+
 ## `_` discards; it never binds, and no name may start with it
 
 `_` is the discard everywhere it is accepted — `for _ in ...`, `let _ =
