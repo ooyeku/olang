@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Three common-mistake error messages now point at the fix instead of
+  describing the runtime's fallback** — one coherent error-UX pass over
+  the diagnostics a newcomer hits first:
+  - Calling a method with no `impl` said "Field 'area' not found",
+    conflating a method with a struct field. It now says "no method
+    'area' for T", and when the declaring trait is known, "the trait S
+    declares it, but there is no `impl S for T`".
+  - Iterating a map said "Cannot iterate over Map({\"a\": Integer(1)})",
+    leaking the interpreter's internal Debug shape. It now names the type
+    and suggests `for (k, v) in entries(m)`.
+  - Indexing a map or struct with `[]` said "Index must be an integer".
+    It now says a Map is read with `map_get(m, key)` and a struct by
+    field, since `[]` never applies to them.
+
+  Each is fixed identically on the interpreter and the bytecode tier, so
+  the two engines word the error the same — the tier-transparency the
+  execution model promises. Surfaced by a soak pass that found the same
+  shape of misdirection repeatedly: olang's happy paths are sound, and
+  the rough edges cluster in diagnostics for plausible mistakes.
+
 - **A malformed contextual-keyword declaration no longer reports the
   keyword as an undefined variable.** `error`, `share`, `test`, and
   `trait` are contextual keywords — ordinary identifiers everywhere else —

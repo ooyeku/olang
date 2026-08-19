@@ -2448,7 +2448,7 @@ impl BytecodeVm {
                         // No field, no method: the interpreter's generic path
                         // evaluates the field access, which raises the
                         // missing-field / non-struct error.
-                        return Err(match Self::execute_get_field(&receiver, method) {
+                        return Err(match self.execute_get_field(&receiver, method) {
                             Err(e) => e,
                             Ok(_) => BytecodeError::RuntimeError(
                                 "method dispatch reached an impossible state".to_string(),
@@ -2907,7 +2907,7 @@ impl BytecodeVm {
                     };
                     let result = match hit {
                         Some(value) => value,
-                        None => Self::get_field_slow(bytecode, *name_const, object_value, cache)?,
+                        None => self.get_field_slow(bytecode, *name_const, object_value, cache)?,
                     };
                     self.execution_state.set_register(*dst, result)?;
                 }
@@ -4058,9 +4058,19 @@ impl BytecodeVm {
             }
             // Strings iterate by character, matching the interpreter.
             ValueData::String(s) => Ok(s.chars().count() as i64),
-            _ => Err(BytecodeError::TypeError(
-                "Cannot iterate over this value".to_string(),
-            )),
+            _ => {
+                let hint = match &source.data {
+                    ValueData::Map(_) | ValueData::Struct(_) => {
+                        " — iterate its pairs with `for (k, v) in entries(m)`"
+                    }
+                    _ => "",
+                };
+                Err(BytecodeError::TypeError(format!(
+                    "cannot iterate over a {}{}",
+                    source.type_name(),
+                    hint
+                )))
+            }
         }
     }
 
@@ -4093,9 +4103,19 @@ impl BytecodeVm {
                     index: idx,
                     length: s.chars().count(),
                 }),
-            _ => Err(BytecodeError::TypeError(
-                "Cannot iterate over this value".to_string(),
-            )),
+            _ => {
+                let hint = match &source.data {
+                    ValueData::Map(_) | ValueData::Struct(_) => {
+                        " — iterate its pairs with `for (k, v) in entries(m)`"
+                    }
+                    _ => "",
+                };
+                Err(BytecodeError::TypeError(format!(
+                    "cannot iterate over a {}{}",
+                    source.type_name(),
+                    hint
+                )))
+            }
         }
     }
 
@@ -4218,6 +4238,7 @@ impl BytecodeVm {
     #[cold]
     #[inline(never)]
     fn get_field_slow(
+        &self,
         bytecode: &CompiledBytecode,
         name_const: u32,
         object: &OvmValue,
@@ -4240,21 +4261,43 @@ impl BytecodeVm {
         {
             cache.store(st.shape.id, idx);
         }
-        Self::execute_get_field(object, name)
+        self.execute_get_field(object, name)
     }
 
     /// Field access by name, matching `Interpreter::eval_field_access`
     /// exactly: struct/object/module fields look up by name; a module reports
     /// a "Function not found" message, a struct a "Field not found" one; a
     /// non-struct is a type error.
-    fn execute_get_field(object: &OvmValue, field: &str) -> Result<OvmValue, BytecodeError> {
+    /// Identical to `Interpreter::no_field_or_method`, so the two engines
+    /// word a missing field/method the same way (tier agreement).
+    fn no_field_or_method(&self, type_name: &str, field: &str) -> String {
+        let declaring_trait = self
+            .trait_defaults
+            .keys()
+            .find(|(_, method)| method == field)
+            .map(|(t, _)| t.as_str());
+        let impld_elsewhere = self.trait_impls.keys().any(|(_, method)| method == field);
+        match (declaring_trait, impld_elsewhere) {
+            (Some(t), _) => format!(
+                "no method '{field}' for {type_name}: the trait {t} declares it, but there is \
+                 no `impl {t} for {type_name}`"
+            ),
+            (None, true) => format!(
+                "no method '{field}' for {type_name}: it is a trait method implemented for other \
+                 types but not this one — add an `impl ... for {type_name}`"
+            ),
+            (None, false) => format!("{type_name} has no field or method '{field}'"),
+        }
+    }
+
+    fn execute_get_field(&self, object: &OvmValue, field: &str) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
         match &object.data {
             ValueData::Struct(s) => s.field(field).cloned().ok_or_else(|| {
                 if s.type_name() == "Module" {
                     BytecodeError::TypeError(format!("Function '{}' not found in module", field))
                 } else {
-                    BytecodeError::TypeError(format!("Field '{}' not found", field))
+                    BytecodeError::TypeError(self.no_field_or_method(s.type_name(), field))
                 }
             }),
             _ => Err(BytecodeError::TypeError(format!(
@@ -4287,6 +4330,21 @@ impl BytecodeVm {
             };
         }
 
+        match &object.data {
+            ValueData::Map(_) => {
+                return Err(BytecodeError::TypeError(
+                    "a Map is not indexed with `[]`; read a key with `map_get(m, key)`".to_string(),
+                ));
+            }
+            ValueData::Struct(_) => {
+                return Err(BytecodeError::TypeError(
+                    "a struct or object is read by field (`value.name`) or with \
+                     `map_get(value, name)`, not with `[]`"
+                        .to_string(),
+                ));
+            }
+            _ => {}
+        }
         let idx = match &index.data {
             ValueData::Integer(i) => *i,
             _ => {

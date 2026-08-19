@@ -1441,6 +1441,19 @@ impl Interpreter {
                             message: format!("A {} cannot be indexed", handle.0.type_name()),
                         }),
                     },
+                    // A map (or struct/object) is read by key, not position:
+                    // `[]` never applies, so say so rather than complaining
+                    // about the key's type.
+                    (Value::Map(_), _) => Err(InterpreterError::TypeError {
+                        message: "a Map is not indexed with `[]`; read a key with \
+                                  `map_get(m, key)`"
+                            .to_string(),
+                    }),
+                    (Value::Struct { .. }, _) => Err(InterpreterError::TypeError {
+                        message: "a struct or object is read by field (`value.name`) or with \
+                                  `map_get(value, name)`, not with `[]`"
+                            .to_string(),
+                    }),
                     (_, Value::Integer(_)) => Err(InterpreterError::TypeError {
                         message: "Only lists, tuples, and strings can be indexed".to_string(),
                     }),
@@ -2412,6 +2425,32 @@ impl Interpreter {
         Ok(Value::Map(std::sync::Arc::new(map)))
     }
 
+    /// The message for accessing a name that a struct does not have as a
+    /// field. If the name is a *method* — one some trait declares (seen as a
+    /// default body, or as an `impl` on another type) — then the fix is an
+    /// `impl`, not a field, so it says so instead of reporting a missing
+    /// field. `value.method()` reaches this path when method resolution
+    /// found no `impl`, so this is exactly where "no field 'a'" misled.
+    fn no_field_or_method(&self, type_name: &str, field: &str) -> String {
+        let declaring_trait = self
+            .trait_defaults
+            .keys()
+            .find(|(_, method)| method == field)
+            .map(|(t, _)| t.as_str());
+        let impld_elsewhere = self.trait_impls.keys().any(|(_, method)| method == field);
+        match (declaring_trait, impld_elsewhere) {
+            (Some(t), _) => format!(
+                "no method '{field}' for {type_name}: the trait {t} declares it, but there is \
+                 no `impl {t} for {type_name}`"
+            ),
+            (None, true) => format!(
+                "no method '{field}' for {type_name}: it is a trait method implemented for other \
+                 types but not this one — add an `impl ... for {type_name}`"
+            ),
+            (None, false) => format!("{type_name} has no field or method '{field}'"),
+        }
+    }
+
     fn eval_field_access(
         &mut self,
         object: &crate::ast::Expr,
@@ -2435,7 +2474,7 @@ impl Interpreter {
                         .get(field)
                         .cloned()
                         .ok_or_else(|| InterpreterError::TypeError {
-                            message: format!("Field '{}' not found", field),
+                            message: self.no_field_or_method(&type_name, field),
                         })
                 }
             }
@@ -2687,9 +2726,24 @@ impl Interpreter {
 
                 result
             }
-            _ => Err(InterpreterError::TypeError {
-                message: format!("Cannot iterate over {:?}", iterable_value),
-            }),
+            _ => {
+                // Never dump the value's Debug representation — it leaks the
+                // internal `Map({"a": Integer(1)})` shape. Name the type, and
+                // point a map at the pairs form, which is the usual intent.
+                let hint = match &iterable_value {
+                    Value::Map(_) | Value::Struct { .. } => {
+                        " — iterate its pairs with `for (k, v) in entries(m)`"
+                    }
+                    _ => "",
+                };
+                Err(InterpreterError::TypeError {
+                    message: format!(
+                        "cannot iterate over a {}{}",
+                        iterable_value.type_name(),
+                        hint
+                    ),
+                })
+            }
         }
     }
 

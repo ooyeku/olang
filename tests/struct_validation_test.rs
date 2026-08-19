@@ -265,3 +265,61 @@ fn unknown_type_at_param_return_and_let_sites() {
         );
     }
 }
+
+// ── Error-UX pass: common mistakes get a message that points at the fix ──
+
+#[test]
+fn a_missing_method_is_reported_as_a_method_not_a_field() {
+    // `value.method()` where no impl exists reached the field-access error
+    // and said "Field 'area' not found" — misdirecting to a missing field.
+    let err = eval(
+        "trait S { fn area(self) -> Float }\n\
+         type C = struct { r: Float }\n\
+         type T = struct { x: Int }\n\
+         impl S for C { fn area(self) = self.r }\n\
+         T { x: 1 }.area()\n",
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("no method 'area' for T") && !err.contains("Field 'area' not found"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_missing_method_names_the_declaring_trait_when_it_can() {
+    let err = eval(
+        "trait G { fn base(self) -> Int\n  fn hi(self) = self.base() + 1 }\n\
+         type T = struct { x: Int }\n\
+         T { x: 1 }.hi()\n",
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("the trait G declares it") && err.contains("impl G for T"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_genuinely_absent_name_says_field_or_method() {
+    let err = eval("type T = struct { x: Int }\nT { x: 1 }.nope\n").unwrap_err();
+    assert!(err.contains("T has no field or method 'nope'"), "{err}");
+}
+
+#[test]
+fn iterating_a_map_points_at_entries_without_leaking_the_debug_shape() {
+    let err = eval("for k in #{ \"a\": 1 } { println(k) }\n").unwrap_err();
+    assert!(
+        err.contains("entries(m)") && !err.contains("Integer("),
+        "should suggest entries and not leak the Debug repr: {err}"
+    );
+}
+
+#[test]
+fn indexing_a_map_points_at_map_get() {
+    let err = eval("let m = #{ \"a\": 1 }\nm[\"a\"]\n").unwrap_err();
+    assert!(
+        err.contains("map_get(m, key)") && err.contains("not indexed with"),
+        "{err}"
+    );
+}
