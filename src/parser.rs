@@ -271,7 +271,38 @@ impl Parser {
         }
     }
 
+    /// Parse a program, expanding macros (docs/macros.md). This is the
+    /// entry every execution path uses — files, the REPL, doc tests,
+    /// `olang build` — so a program with `meta fn`/`@` in it behaves the
+    /// same everywhere. Macro-free source (the overwhelmingly common
+    /// case) pays a substring scan and nothing else.
     pub fn parse(&self, input: &str) -> Result<Program, ParseError> {
+        let program = self.parse_raw(input)?;
+        // Cheap pre-filter before the authoritative AST check: no `@` and
+        // no `meta` token means no macro constructs can exist.
+        if !(input.contains('@') || input.contains("meta")) {
+            return Ok(program);
+        }
+        if !crate::expand::program_uses_macros(&program) {
+            return Ok(program);
+        }
+        let expanded = crate::expand::expand_source(input)
+            .map_err(|message| ParseError::InvalidSyntax { message })?;
+        let program = self.parse_raw(&expanded)?;
+        if crate::expand::program_uses_macros(&program) {
+            return Err(ParseError::InvalidSyntax {
+                message: "macro expansion left unexpanded macro constructs (internal error)"
+                    .to_string(),
+            });
+        }
+        Ok(program)
+    }
+
+    /// Parse without macro expansion — the raw program as written. This
+    /// is what `meta.parse` exposes (the Open AST shows source as the
+    /// author wrote it, `@` sites and all) and what the expander itself
+    /// uses between rounds.
+    pub fn parse_raw(&self, input: &str) -> Result<Program, ParseError> {
         // A UTF-8 BOM (files from Windows editors) is invisible in every
         // editor but fails the grammar at 1:1 with a baffling caret at
         // nothing. Strip it before parsing.
@@ -331,6 +362,56 @@ impl Parser {
     fn build_statement(&self, pair: Pair<Rule>) -> Result<Statement, ParseError> {
         match pair.as_rule() {
             Rule::let_decl => Ok(Statement::LetDecl(self.build_let_decl(pair.into_inner())?)),
+            // Macros (experimental): both carry byte spans so the expander
+            // can splice over exactly the text this parse saw.
+            Rule::meta_fn_decl => {
+                let span = (pair.as_span().start(), pair.as_span().end());
+                let inner = pair
+                    .into_inner()
+                    .find(|p| p.as_rule() == Rule::function_decl)
+                    .ok_or_else(|| ParseError::InvalidSyntax {
+                        message: "meta fn: missing function declaration".to_string(),
+                    })?;
+                Ok(Statement::MetaFnDecl {
+                    decl: self.build_function_decl(inner.into_inner())?,
+                    span,
+                })
+            }
+            Rule::decorated_type_decl => {
+                let span = (pair.as_span().start(), pair.as_span().end());
+                let line = pair.as_span().start_pos().line_col().0 as u32;
+                let mut decorators = Vec::new();
+                let mut decl_src = String::new();
+                for part in pair.into_inner() {
+                    match part.as_rule() {
+                        Rule::decorator => {
+                            let dline = part.as_span().start_pos().line_col().0 as u32;
+                            let mut inner = part.into_inner();
+                            let name = inner
+                                .next()
+                                .map(|p| p.as_str().to_string())
+                                .unwrap_or_default();
+                            let args_src = inner
+                                .flat_map(|p| p.into_inner())
+                                .map(|a| a.as_str().trim().to_string())
+                                .collect();
+                            decorators.push(crate::ast::Decorator {
+                                name,
+                                args_src,
+                                line: dline,
+                            });
+                        }
+                        Rule::type_decl => decl_src = part.as_str().to_string(),
+                        _ => {}
+                    }
+                }
+                Ok(Statement::DecoratedTypeDecl {
+                    decorators,
+                    decl_src,
+                    span,
+                    line,
+                })
+            }
             Rule::function_decl => Ok(Statement::FunctionDecl(
                 self.build_function_decl(pair.into_inner())?,
             )),
@@ -959,6 +1040,28 @@ impl Parser {
             Rule::map_literal => self.build_map_literal(pair.into_inner()),
             Rule::literal => self.build_literal(pair.into_inner()),
             Rule::identifier => Ok(Expr::Identifier(pair.as_str().to_string())),
+            Rule::macro_call => {
+                let span = (pair.as_span().start(), pair.as_span().end());
+                let line = pair.as_span().start_pos().line_col().0 as u32;
+                let mut inner = pair.into_inner();
+                let name = inner
+                    .next()
+                    .map(|p| p.as_str().to_string())
+                    .unwrap_or_default();
+                // The single arg_list child, if present; each argument is
+                // carried as its source text (already validated by this
+                // parse — the total-parse law).
+                let args_src = inner
+                    .flat_map(|p| p.into_inner())
+                    .map(|a| a.as_str().trim().to_string())
+                    .collect();
+                Ok(Expr::MacroCall {
+                    name,
+                    args_src,
+                    span,
+                    line,
+                })
+            }
             Rule::block => self.build_block(pair.into_inner()),
             Rule::paren_expr => self.build_paren_expr(pair.into_inner()),
             Rule::expr => self.build_expr(pair.into_inner()),

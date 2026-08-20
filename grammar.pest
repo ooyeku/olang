@@ -60,7 +60,18 @@ paren_expr  = { "(" ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ expr)* ~ NL* ~ ")" }
 
 // Program structure - Put share_decl and use_decl BEFORE expr to ensure they are matched first
 program     = { SOI ~ NL* ~ (statement ~ (";" | NL)* )* ~ EOI }
-statement   = { share_decl | use_decl | test_decl | error_type_decl | trait_decl | impl_decl | type_decl | let_decl | function_decl | assertion | expr }
+statement   = { meta_fn_decl | share_decl | use_decl | test_decl | error_type_decl | trait_decl | impl_decl | decorated_type_decl | type_decl | let_decl | function_decl | assertion | expr }
+
+// ── macros (experimental) ─────────────────────────────────────────────
+// `meta fn` declares a function that exists only at expansion time, and
+// `@name` invokes one: as an expression (`@retry(3, body)`) or stacked
+// above a type declaration (`@json`). `meta` and `@` are additive: `meta`
+// stays an ordinary identifier everywhere else, and `@` was previously
+// unused, so no existing program changes meaning. See docs/macros.md.
+meta_fn_decl = { "meta" ~ function_decl }
+decorator = { "@" ~ identifier ~ ("(" ~ arg_list? ~ ")")? }
+decorated_type_decl = { (decorator ~ NL*)+ ~ type_decl }
+macro_call = { "@" ~ identifier ~ "(" ~ arg_list? ~ ")" }
 function_decl = { "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ NL* ~ expr }
 
 // Share and use declarations - defined EARLY to get precedence
@@ -170,7 +181,7 @@ named_arg = { identifier ~ ":" ~ expr }
 postfix_op = { "?" }
 
 // Primary expressions
-primary     = { lambda | spawn_expr | match_expr | if_expr | struct_literal | anonymous_object | map_literal | literal | identifier | paren_expr | block }
+primary     = { lambda | spawn_expr | match_expr | if_expr | struct_literal | anonymous_object | map_literal | literal | macro_call | identifier | paren_expr | block }
 
 // Lambda functions
 lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ NL* ~ (block | expr) }

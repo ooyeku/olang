@@ -217,6 +217,15 @@ you care about.
   program's imports and every bare `unwrap(...)` grouped by enclosing
   function — a linter as a script rather than a compiler change, which is
   the "open code" pillar of [openness](../docs/openness.md)
+- [`macros/`](macros/) — the macro system dogfooded (experimental,
+  [the Macros chapter](../docs/macros.md)): `@bake` evaluates an
+  expression at expansion time and splices the result as a literal —
+  compile-time computation in one userland line; `@unless` adds control
+  flow the language "doesn't have"; `@dbg` prints an expression's source
+  and value; and a `@json` derive reads a type's fields through
+  `meta.parse` and generates its serializer. `olang expand main.ol`
+  shows the program the runtime actually receives; `test` blocks pin
+  baked-equals-runtime and the derive's output
 - [`markdown/`](markdown/) — a markdown→HTML converter: a block parser
   (`lib/blocks.ol` — headings, lists, blockquotes, fenced code, rules,
   paragraphs) over a recursive inline renderer (`lib/inline.ol` — `code`,

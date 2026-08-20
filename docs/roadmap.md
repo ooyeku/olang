@@ -822,6 +822,25 @@ checklist is empty.
 | R2 — the 1.0 contract | [Stability and compatibility](stability.md) is rewritten as the 1.0 compatibility contract: what is frozen, what semver means from here, and the support expectations for each surface. | **done** — the chapter now opens as the contract, states MAJOR/MINOR/PATCH precisely (a breaking change is a failing `doc_examples_test`, so it is a fact not a judgment), defines breaking and deprecation, and adds a per-surface guarantee table |
 | R3 — release | The 1.0 release itself: final gates, the CHANGELOG's 1.0 entry, and version 1.0.0. | **held — soaking 0.67.0 first** |
 
+## The post-1.0 flagship: macros — prototyped
+
+The direction settled during the soak: "open language" completes as
+*extensibility through meta*. The language stays frozen so the AST
+format is a permanent contract, and macros grow the language from
+userland. The design is five laws — every site says `@`; a macro never
+reaches beyond its site; the parse is total (one grammar, forever);
+expansion is pure (enforced, in meta mode, at the same dispatch
+chokepoint as the capability gate); expansion cannot hide (`olang
+expand`, call-site error attribution). The prototype shipped
+experimental in 0.68: `meta fn`, expression macros and `type`
+decorators, `meta.eval`/`meta.lit`/`meta.fresh`, the `examples/macros`
+flagship, a 20-case matrix, and a book chapter (docs/macros.md).
+Deliberately excluded, as design rather than deferral: token/reader
+macros, macro-defined operators, whole-program reflection at expansion
+time, and effectful expansion. Post-1.0 work: decorators on `fn`/`let`,
+imported macro packages, LSP expansion mapping, and quote blocks if
+string templates prove insufficient.
+
 ## Frozen until 1.0
 
 The following surfaces receive bug fixes, documentation corrections, and

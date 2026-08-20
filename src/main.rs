@@ -270,6 +270,16 @@ enum Commands {
         \x20 --save FILE         store the medians as a baseline\n\
         \x20 --against FILE      compare against a saved baseline\n\
         \x20 --fail-on-regress   exit non-zero if anything got slower")]
+    /// Show a file after macro expansion (docs/macros.md)
+    ///
+    /// Prints the program as the interpreter will actually run it: every
+    /// `@` site replaced by what its `meta fn` returned, and the meta fns
+    /// themselves blanked out. A macro-free file prints unchanged.
+    Expand {
+        /// The .ol file to expand
+        file: PathBuf,
+    },
+
     Bench {
         /// Arguments forwarded to the benchmark runner
         #[arg(
@@ -499,6 +509,25 @@ fn run() -> i32 {
             olang::tools::doc::run(&paths, &output, markdown)
         }
 
+        Some(Commands::Expand { file }) => {
+            let code = match std::fs::read_to_string(&file) {
+                Ok(source) => match olang::expand::expand_source(&source) {
+                    Ok(expanded) => {
+                        print!("{}", expanded);
+                        0
+                    }
+                    Err(message) => {
+                        eprintln!("olang expand: {}", message);
+                        1
+                    }
+                },
+                Err(e) => {
+                    eprintln!("olang expand: cannot read {}: {}", file.display(), e);
+                    2
+                }
+            };
+            std::process::exit(code)
+        }
         Some(Commands::Bench { args }) => olang::tools::bench::run(&args),
 
         Some(Commands::Lsp) => match olang::tools::lsp::run() {

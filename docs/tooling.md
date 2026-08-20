@@ -31,6 +31,7 @@ tool `otc` and are described in
 | `olang record <file>` | Run a program and record its inputs to a `.olt` trace |
 | `olang replay <trace>` | Re-run a recorded `.olt` timeline bit-for-bit |
 | `olang doc [path]` | Generate HTML (or `--markdown` Markdown) API reference |
+| `olang expand FILE` | Print a file after [macro expansion](macros.md) — the program the runtime actually receives |
 | `olang bench` | Run benchmarks |
 | `olang lsp` | Start the language server (LSP over stdio) |
 

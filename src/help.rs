@@ -1520,6 +1520,42 @@ impl HelpSystem {
     /// The `meta` module: the program as data (the Open AST).
     fn add_meta_functions(&mut self) {
         self.add_function(FunctionDoc {
+            name: "meta.eval".to_string(),
+            description: "Evaluate olang source in a fresh, pure interpreter and return the program's final value. Runs in meta mode — no filesystem, network, processes, clock, or randomness — so the result is a deterministic function of the source. This is the compute half of compile-time evaluation: a meta fn calls it on an argument's source and splices the result with meta.lit (docs/macros.md).".to_string(),
+            syntax: "meta.eval(source)".to_string(),
+            parameters: vec!["source: String - olang source text to evaluate".to_string()],
+            return_type: "Result<value, Error>".to_string(),
+            examples: vec![
+                r#"unwrap(meta.eval("2 + 3"))  // 5"#.to_string(),
+                r#"meta.eval("fs.read_file(...)")  // Err: not available at expansion time"#.to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.lit".to_string(), "meta.parse".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "meta.lit".to_string(),
+            description: "Render a value as olang source that evaluates back to it: strings escaped, floats with their point, containers recursive, map keys in sorted order so output is reproducible. A value with no literal form (a function, a native handle) is an error. The generation half of compile-time evaluation (docs/macros.md).".to_string(),
+            syntax: "meta.lit(value)".to_string(),
+            parameters: vec!["value - the value to render as source".to_string()],
+            return_type: "String".to_string(),
+            examples: vec![
+                r#"meta.lit([1, 2.5, "a"])  // the list as source text"#.to_string(),
+                "unwrap(meta.eval(meta.lit(v))) == v  // the round trip".to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.eval".to_string(), "show".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "meta.fresh".to_string(),
+            description: "A name no program writes by hand, for macro-generated temporaries that must not collide with call-site bindings (docs/macros.md). Each call yields a distinct name built from the prefix.".to_string(),
+            syntax: "meta.fresh(prefix)".to_string(),
+            parameters: vec!["prefix: String - a readable stem for the generated name".to_string()],
+            return_type: "String".to_string(),
+            examples: vec![r#"meta.fresh("tmp")  // "tmp_m0", then "tmp_m1", ..."#.to_string()],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.eval".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "meta.parse".to_string(),
             description: "Parse olang source into its syntax tree as ordinary olang values: a list of kind-tagged node maps. The AST shapes are a stable, documented format, so linters, codemods, and import extractors are written in olang rather than as compiler changes. Read nodes with map_get; every node carries a \"kind\" key and a \"line\" number.".to_string(),
             syntax: "meta.parse(source)".to_string(),

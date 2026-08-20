@@ -836,6 +836,19 @@ reconstruct one. See
 [`examples/metatool`](../examples/metatool/main.ol) for a linter that
 counts bare `unwrap()` calls per function.
 
+Three functions serve [the macro system](macros.md) and stand on their
+own: `meta.eval(source)` evaluates source in a fresh, pure interpreter
+(no filesystem, network, processes, clock, or randomness) and returns
+`Result` — a deterministic, sandboxed eval; `meta.lit(value)` renders a
+value as source text that evaluates back to it, with strings escaped and
+map keys sorted so the output is reproducible; and `meta.fresh(prefix)`
+yields a name no program writes by hand, for generated temporaries.
+
+```olang
+println(to_string(unwrap(meta.eval("2 + 3"))))     // 5
+println(meta.lit([1, "a"]))                        // [1, "a"]
+```
+
 ## `os` — operating system
 
 The process's view of its world: arguments, environment, directories,

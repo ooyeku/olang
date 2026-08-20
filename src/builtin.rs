@@ -557,6 +557,11 @@ impl BuiltinFunctions {
         if let Some(message) = interpreter.capability_denial(name) {
             return Err(InterpreterError::RuntimeError { message });
         }
+        // The expansion purity gate (meta mode): same chokepoint, same
+        // reasoning — every builtin passes here on either tier.
+        if let Some(message) = interpreter.expansion_denial(name) {
+            return Err(InterpreterError::RuntimeError { message });
+        }
         // The filesystem sub-gate: a `db.open` on a file, or a `db` query
         // running `ATTACH`, touches the filesystem and must satisfy `fs`
         // too — otherwise `db` would be a latent filesystem capability.

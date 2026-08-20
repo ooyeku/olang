@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Macros: `meta fn` and `@` — extending olang in olang
+  (experimental).** A `meta fn` runs at load time: it receives the
+  source text of its arguments, returns source text, and the parser
+  splices the result over the `@` site before the interpreter or any
+  tier sees the program. Five laws govern the whole system: every
+  expansion site says `@` (no invisible macros — the blast radius of a
+  macro is the set of sites that name it); importing a macro never
+  changes code that doesn't say `@`; the parse is total (arguments are
+  ordinary olang under the one frozen grammar — no token or reader
+  macros, ever); expansion is pure (meta fns run in meta mode, where
+  `fs`, `http`, `db`, `proc`, `os`, `time`, `random`, `task`, `chan`,
+  `spawn`, and the parallel builtins refuse — so expansion is a
+  deterministic function of the source, and record/replay is exact);
+  and expansion cannot hide (`olang expand` prints the program the
+  runtime receives, meta fns blanked with line numbers preserved,
+  errors naming the macro and call-site line).
+
+  Two invocation forms: `@name(args)` in expression position, and
+  `@name` stacked above a `type` declaration (the derive form — the
+  macro receives the declaration's source, reads its fields through
+  `meta.parse`, and returns the declaration plus generated code;
+  stacked decorators apply nearest-first). Macro output may contain
+  further `@` sites, expanded on later rounds under a 16-round fuel
+  with the loop named on exhaustion.
+
+  Three new `meta` functions complete the loop: `meta.eval(source)`
+  evaluates source in the same pure sandbox and returns `Result` —
+  with `meta.lit(value)`, which renders a value back into source, that
+  is compile-time computation in userland (`meta fn bake(e) =
+  meta.lit(unwrap(meta.eval(e)))`); `meta.fresh(prefix)` yields
+  collision-free names for generated temporaries. The Open AST's
+  `type` node now carries its definition (struct fields with their
+  annotations, enum variants, union members), which derive macros
+  read; `meta.parse` stays the pre-expansion view, showing `@` sites
+  as `macro_call` nodes.
+
+  The syntax is additive: `@` was previously unused, and `meta` stays
+  an ordinary identifier everywhere except directly before `fn`.
+  Expansion happens inside `Parser::parse`, so files, the REPL, doc
+  tests, and `olang build` all agree; macro-free source pays a
+  substring scan and nothing else. Generated code is ordinary code —
+  checked, promoted, and capability-gated like anything handwritten.
+  Documented in a new book chapter (docs/macros.md), demonstrated in
+  `examples/macros` (`@bake`, `@unless`, `@dbg`, a `@json` derive),
+  and pinned by a 20-case test matrix plus the tier-agreement corpus.
+
 ### Fixed
 
 - **Three common-mistake error messages now point at the fix instead of

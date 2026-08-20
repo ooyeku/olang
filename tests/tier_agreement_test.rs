@@ -116,6 +116,7 @@ fn example_cases() -> Vec<Case> {
         "parmap",
         "workflow",
         "timeseries",
+        "macros",
     ] {
         let dir = root.join(name);
         for entry in ["main.ol", "index.ol"] {

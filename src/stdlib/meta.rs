@@ -35,6 +35,9 @@ use std::collections::HashMap;
 pub fn create_meta_module() -> Value {
     let mut module = HashMap::new();
     module.insert("parse".to_string(), builtin("parse", 1));
+    module.insert("eval".to_string(), builtin("eval", 1));
+    module.insert("lit".to_string(), builtin("lit", 1));
+    module.insert("fresh".to_string(), builtin("fresh", 1));
     Value::Struct {
         type_name: "Module".to_string(),
         fields: std::sync::Arc::new(module),
@@ -54,6 +57,9 @@ pub fn call_meta_function(
 ) -> Result<Value, Box<dyn std::error::Error>> {
     match name {
         "parse" => meta_parse(args),
+        "eval" => meta_eval(args),
+        "lit" => meta_lit(args),
+        "fresh" => meta_fresh(args),
         _ => Err(format!("Unknown meta function: {}", name).into()),
     }
 }
@@ -64,7 +70,7 @@ fn meta_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Some(Value::String(s)) => s.as_str().to_string(),
         _ => return Err("meta.parse: expected a source string".into()),
     };
-    match crate::parser::Parser::new().parse(&source) {
+    match crate::parser::Parser::new().parse_raw(&source) {
         Ok(program) => {
             let nodes: Vec<Value> = program.statements.iter().map(stmt_to_value).collect();
             Ok(Value::Ok(Box::new(list(nodes))))
@@ -94,6 +100,41 @@ fn names(v: &[String]) -> Value {
 // ── Statements ──────────────────────────────────────────────────────
 fn stmt_to_value(stmt: &Statement) -> Value {
     match stmt {
+        Statement::MetaFnDecl { decl, .. } => {
+            let mut m_v = match stmt_to_value(&Statement::FunctionDecl(decl.clone())) {
+                Value::Map(inner) => (*inner).clone(),
+                _ => std::collections::HashMap::new(),
+            };
+            m_v.insert("kind".to_string(), s("meta_fn"));
+            Value::Map(std::sync::Arc::new(m_v))
+        }
+        Statement::DecoratedTypeDecl {
+            decorators,
+            decl_src,
+            ..
+        } => map(vec![
+            ("kind", s("decorated_type")),
+            (
+                "decorators",
+                Value::List(std::sync::Arc::new(
+                    decorators
+                        .iter()
+                        .map(|d| {
+                            map(vec![
+                                ("name", s(&d.name)),
+                                (
+                                    "args",
+                                    Value::List(std::sync::Arc::new(
+                                        d.args_src.iter().map(|a| s(a)).collect(),
+                                    )),
+                                ),
+                            ])
+                        })
+                        .collect(),
+                )),
+            ),
+            ("decl", s(decl_src)),
+        ]),
         Statement::Located { line, column, stmt } => {
             // Attach position to the inner node.
             let inner = stmt_to_value(stmt);
@@ -108,11 +149,49 @@ fn stmt_to_value(stmt: &Statement) -> Value {
         Statement::Expression(e) => map(vec![("kind", s("expr")), ("value", expr_to_value(e))]),
         Statement::LetDecl(d) => let_to_value(d, false),
         Statement::FunctionDecl(d) => fn_to_value(d, false),
-        Statement::TypeDecl(d) => map(vec![
-            ("kind", s("type")),
-            ("name", s(&d.name)),
-            ("type_params", names(&d.type_params)),
-        ]),
+        Statement::TypeDecl(d) => {
+            // The definition rides along: a derive macro reading a type's
+            // fields is the whole reason to parse a type declaration.
+            let mut entries = vec![
+                ("kind", s("type")),
+                ("name", s(&d.name)),
+                ("type_params", names(&d.type_params)),
+            ];
+            match &d.definition {
+                crate::ast::TypeDefinition::Struct { fields } => {
+                    entries.push(("definition", s("struct")));
+                    entries.push((
+                        "fields",
+                        list(
+                            fields
+                                .iter()
+                                .map(|f| {
+                                    map(vec![
+                                        ("name", s(&f.name)),
+                                        ("type", s(&f.field_type.display_source())),
+                                    ])
+                                })
+                                .collect(),
+                        ),
+                    ));
+                }
+                crate::ast::TypeDefinition::Enum { variants } => {
+                    entries.push(("definition", s("enum")));
+                    entries.push((
+                        "variants",
+                        list(variants.iter().map(|v| s(&v.name)).collect()),
+                    ));
+                }
+                crate::ast::TypeDefinition::Union { types } => {
+                    entries.push(("definition", s("union")));
+                    entries.push((
+                        "types",
+                        list(types.iter().map(|t| s(&t.display_source())).collect()),
+                    ));
+                }
+            }
+            map(entries)
+        }
         Statement::ErrorTypeDecl(d) => map(vec![("kind", s("error")), ("name", s(&d.name))]),
         Statement::ShareDecl(d) => share_to_value(d),
         Statement::UseDecl(d) => use_to_value(d),
@@ -229,6 +308,14 @@ fn pattern_name(p: &Pattern) -> String {
 // ── Expressions ─────────────────────────────────────────────────────
 fn expr_to_value(e: &Expr) -> Value {
     match e {
+        Expr::MacroCall { name, args_src, .. } => map(vec![
+            ("kind", s("macro_call")),
+            ("name", s(name)),
+            (
+                "args",
+                Value::List(std::sync::Arc::new(args_src.iter().map(|a| s(a)).collect())),
+            ),
+        ]),
         Expr::Integer(n) => map(vec![("kind", s("int")), ("value", Value::Integer(*n))]),
         Expr::Float(f) => map(vec![("kind", s("float")), ("value", Value::Float(*f))]),
         Expr::String(text) => map(vec![("kind", s("str")), ("value", s(text))]),
@@ -521,6 +608,136 @@ fn call_target(callee: &Expr) -> String {
         }
         _ => String::new(),
     }
+}
+
+/// `meta.eval(source)` — evaluate olang source in a fresh, pure
+/// interpreter and return the program's final value. The evaluation
+/// runs in meta mode: no filesystem, network, processes, clock, or
+/// randomness — the same sandbox meta fns themselves run in, so a value
+/// computed here is a deterministic function of the source. Parse and
+/// runtime failures come back as `Err(message)`, since malformed source
+/// is a condition the caller can handle.
+fn meta_eval(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let source = match args.first() {
+        Some(Value::String(text)) => text.as_str().to_string(),
+        other => {
+            return Err(format!(
+                "meta.eval: expected a source string, got {}",
+                other.map(|v| v.type_name()).unwrap_or_default()
+            )
+            .into());
+        }
+    };
+    let program = match crate::parser::Parser::new().parse(&source) {
+        Ok(p) => p,
+        Err(e) => return Ok(Value::Err(Box::new(s(&format!("{}", e))))),
+    };
+    let mut interp = crate::interpreter::Interpreter::new();
+    interp.set_meta_mode(true);
+    match interp.eval_program(program) {
+        Ok(v) => Ok(Value::Ok(Box::new(v))),
+        Err(e) => Ok(Value::Err(Box::new(s(&format!("{}", e))))),
+    }
+}
+
+/// `meta.lit(value)` — render a value as olang source that evaluates
+/// back to it. The generation half of `@bake`: evaluate at expansion
+/// time, splice the result as a literal. Strings are escaped, floats
+/// keep their `.0`, and containers recurse. A value with no literal
+/// form (a function, a native handle) is an error, because there is no
+/// honest source text for it.
+fn meta_lit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let value = args.first().ok_or("meta.lit: expected a value")?;
+    Ok(s(&render_literal(value)?))
+}
+
+fn render_literal(v: &Value) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(match v {
+        Value::Integer(n) => n.to_string(),
+        Value::Float(f) => crate::ast::format_float(*f),
+        Value::Boolean(b) => b.to_string(),
+        Value::Unit => "()".to_string(),
+        Value::String(text) => {
+            let mut out = String::with_capacity(text.len() + 2);
+            out.push('"');
+            for c in text.chars() {
+                match c {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    other => out.push(other),
+                }
+            }
+            out.push('"');
+            out
+        }
+        Value::List(items) => {
+            let parts: Result<Vec<_>, _> = items.iter().map(render_literal).collect();
+            format!("[{}]", parts?.join(", "))
+        }
+        Value::Tuple(items) => {
+            let parts: Result<Vec<_>, _> = items.iter().map(render_literal).collect();
+            format!("({})", parts?.join(", "))
+        }
+        Value::Map(entries) => {
+            // Deterministic order, so expansion output is reproducible.
+            let mut keys: Vec<_> = entries.keys().collect();
+            keys.sort();
+            let parts: Result<Vec<_>, _> = keys
+                .iter()
+                .map(|k| {
+                    render_literal(entries.get(*k).expect("key exists"))
+                        .map(|rendered| format!("{}: {}", render_key(k), rendered))
+                })
+                .collect();
+            format!("#{{{}}}", parts?.join(", "))
+        }
+        Value::Ok(inner) => format!("Ok({})", render_literal(inner)?),
+        Value::Err(inner) => format!("Err({})", render_literal(inner)?),
+        other => {
+            return Err(format!(
+                "meta.lit: a {} has no literal source form",
+                other.type_name()
+            )
+            .into());
+        }
+    })
+}
+
+fn render_key(k: &str) -> String {
+    let mut out = String::with_capacity(k.len() + 2);
+    out.push('"');
+    for c in k.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// `meta.fresh(prefix)` — a name no program writes by hand, for macro
+/// temporaries that must not collide with call-site bindings. The
+/// counter is process-wide; expansion visits sites in text order, so a
+/// given program yields the same names on every run.
+fn meta_fresh(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let prefix = match args.first() {
+        Some(Value::String(text)) => text.as_str().to_string(),
+        other => {
+            return Err(format!(
+                "meta.fresh: expected a name prefix as a String, got {}",
+                other.map(|v| v.type_name()).unwrap_or_default()
+            )
+            .into());
+        }
+    };
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Ok(s(&format!("{}_m{}", prefix, n)))
 }
 
 #[cfg(test)]

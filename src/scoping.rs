@@ -152,6 +152,9 @@ impl Validator {
 
     fn stmt(&mut self, stmt: &Statement) {
         match stmt {
+            // Macros are expanded away before scoping normally runs; on a
+            // raw parse they bind nothing and contain no runtime names.
+            Statement::MetaFnDecl { .. } | Statement::DecoratedTypeDecl { .. } => {}
             Statement::Located {
                 line,
                 column,
@@ -303,6 +306,7 @@ impl Validator {
 
     fn expr(&mut self, e: &Expr) {
         match e {
+            Expr::MacroCall { .. } => {}
             Expr::Assignment { target, value } => self.assign(target, value),
             Expr::LocalAssign { name, value, .. } => self.assign(name, value),
 

@@ -150,6 +150,16 @@ These rules are part of the commitment above and are permanent under the
 
 ### Experimental — may change or be completed
 
+- **Macros (`meta fn`, `@`, `olang expand`).** New in 0.68 and the most
+  recent surface in the language ([Macros](macros.md)). The five laws —
+  `@`-visible sites, no reach beyond the site, total parse, pure
+  expansion, inspectable output — are the settled design; the invocation
+  surface (expressions and `type` decorators today) and the `meta`
+  helpers (`eval`, `lit`, `fresh`) may still grow. The syntax was added
+  additively: `@` was previously unused and `meta` remains an ordinary
+  identifier everywhere except directly before `fn`, so no pre-macro
+  program changed meaning.
+
 - **Capabilities and the transparent binary.** The `[capabilities]`
   manifest, per-dependency attenuation, `--deny`, and `olang inspect`
   are new: the model (opt-in restriction, shrink-only attenuation,

@@ -52,6 +52,32 @@ pub enum Statement {
     TestDecl(TestDecl),
     TraitDecl(TraitDecl),
     ImplDecl(ImplDecl),
+    /// A `meta fn` declaration — a function that exists only at expansion
+    /// time (docs/macros.md). Never evaluated at runtime: the expander
+    /// strips it from the program source, and `span` (byte offsets into
+    /// the source) is what lets it do that with line count preserved.
+    MetaFnDecl {
+        decl: FunctionDecl,
+        span: (usize, usize),
+    },
+    /// One or more `@name` decorators stacked above a `type` declaration.
+    /// The declaration rides as source text: the expander hands it to each
+    /// macro innermost-first and replaces the whole span with the result.
+    DecoratedTypeDecl {
+        decorators: Vec<Decorator>,
+        decl_src: String,
+        span: (usize, usize),
+        line: u32,
+    },
+}
+
+/// One `@name` or `@name(args)` above a declaration. Arguments are the
+/// source text of each expression, validated by the parse that built this.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Decorator {
+    pub name: String,
+    pub args_src: Vec<String>,
+    pub line: u32,
 }
 
 impl PartialEq for Statement {
@@ -67,6 +93,21 @@ impl PartialEq for Statement {
             (Statement::TestDecl(a), Statement::TestDecl(b)) => a == b,
             (Statement::TraitDecl(a), Statement::TraitDecl(b)) => a == b,
             (Statement::ImplDecl(a), Statement::ImplDecl(b)) => a == b,
+            (Statement::MetaFnDecl { decl: a, .. }, Statement::MetaFnDecl { decl: b, .. }) => {
+                a == b
+            }
+            (
+                Statement::DecoratedTypeDecl {
+                    decorators: da,
+                    decl_src: sa,
+                    ..
+                },
+                Statement::DecoratedTypeDecl {
+                    decorators: db,
+                    decl_src: sb,
+                    ..
+                },
+            ) => da == db && sa == sb,
             _ => false,
         }
     }
@@ -172,6 +213,16 @@ pub struct Parameter {
 /// Expression types supported by Olang
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Expr {
+    /// `@name(args)` — a macro invocation (docs/macros.md), gone before
+    /// the interpreter or any tier sees the program. Arguments are the
+    /// source text of each argument expression; `span` is the call's byte
+    /// range in the source, which is what the expander splices over.
+    MacroCall {
+        name: String,
+        args_src: Vec<String>,
+        span: (usize, usize),
+        line: u32,
+    },
     // Literals
     Integer(i64),
     Float(f64),

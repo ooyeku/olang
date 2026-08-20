@@ -169,6 +169,11 @@ pub struct Interpreter {
     coverage: Option<HashMap<String, std::collections::BTreeSet<u32>>>,
     coverage_file_stack: Vec<Option<String>>,
 
+    /// Meta mode: this interpreter is running `meta fn` bodies at macro
+    /// expansion time (src/expand.rs). The effectful and nondeterministic
+    /// modules refuse, so expansion is a pure function of the source.
+    meta_mode: bool,
+
     /// Capability enforcement (`[capabilities]` in olang.toml, embedded
     /// bundle manifests, or `--deny`). None = everything allowed, and the
     /// gate costs a single branch. When Some, `coverage_file_stack` is
@@ -272,6 +277,7 @@ impl Interpreter {
             coverage: None,
             coverage_file_stack: Vec::new(),
             caps: None,
+            meta_mode: false,
             caps_trace: None,
             caps_path_cache: HashMap::new(),
             timeline: None,
@@ -470,6 +476,21 @@ impl Interpreter {
         self.safepoint_poll()?;
 
         match statement {
+            // Safety net: macros are expanded away in Parser::parse. A meta
+            // construct reaching evaluation means the program bypassed
+            // expansion (built by hand, or a bug) — refuse loudly rather
+            // than half-running it.
+            Statement::MetaFnDecl { .. } => Err(InterpreterError::RuntimeError {
+                message: "a `meta fn` reached the interpreter without expansion — \
+                          parse the program with Parser::parse (which expands macros), \
+                          not a hand-built AST"
+                    .to_string(),
+            }),
+            Statement::DecoratedTypeDecl { .. } => Err(InterpreterError::RuntimeError {
+                message: "a decorated declaration reached the interpreter without \
+                          expansion — parse the program with Parser::parse"
+                    .to_string(),
+            }),
             Statement::Located { line, column, stmt } => {
                 // Position discipline: push this statement's span for the
                 // duration of its evaluation (nested blocks push deeper
@@ -943,6 +964,13 @@ impl Interpreter {
 
     fn eval_expr(&mut self, expr: &Expr) -> Result<Value, InterpreterError> {
         match expr {
+            Expr::MacroCall { name, .. } => Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "macro '@{}' reached the interpreter without expansion — parse the \
+                     program with Parser::parse (which expands macros)",
+                    name
+                ),
+            }),
             Expr::Integer(n) => Ok(Value::Integer(*n)),
             Expr::Float(x) => Ok(Value::Float(*x)),
             Expr::String(s) => Ok(Value::String(s.clone())),
@@ -1463,6 +1491,13 @@ impl Interpreter {
                 }
             }
             Expr::Spawn(expression) => {
+                if self.meta_mode {
+                    return Err(InterpreterError::RuntimeError {
+                        message: "spawn is not available at expansion time: a meta fn is a \
+                                  pure function of its arguments (docs/macros.md)"
+                            .to_string(),
+                    });
+                }
                 // Real background execution: the expression evaluates on its
                 // own OS thread against a thread-safe clone of this
                 // interpreter — the same worker pattern http.serve uses. The
@@ -2029,6 +2064,7 @@ impl Interpreter {
             // Capabilities follow the code onto every thread — the gate
             // (above, seeded into the worker tier) and the grant table both.
             caps: self.caps.clone(),
+            meta_mode: self.meta_mode,
             // The `--trace-caps` set is shared, not per-thread: a capability
             // a worker exercises is one the *program* exercised, and manifest
             // authoring (`--trace-caps --write`) must see it. The Arc<Mutex>
@@ -3188,6 +3224,56 @@ impl Interpreter {
     /// Take the timeline back out (to write the trace at end of run).
     pub fn take_timeline(&mut self) -> Option<crate::timeline::Timeline> {
         self.timeline.take()
+    }
+
+    /// Enter meta mode (macro expansion). See `expansion_denial`.
+    pub fn set_meta_mode(&mut self, on: bool) {
+        self.meta_mode = on;
+    }
+
+    /// The purity gate for macro expansion: in meta mode, the modules
+    /// that reach the outside world or the clock refuse. Checked at the
+    /// same dispatch chokepoint as the capability gate, so nothing
+    /// bridges around it. None = allowed; Some(message) = refused.
+    pub fn expansion_denial(&self, full_name: &str) -> Option<String> {
+        if !self.meta_mode {
+            return None;
+        }
+        const BLOCKED_PREFIXES: &[&str] = &[
+            "fs.", "http.", "db.", "proc.", "os.", "time.", "random.", "task.", "chan.",
+        ];
+        const BLOCKED_NAMES: &[&str] = &["par_map", "par_filter"];
+        if BLOCKED_PREFIXES.iter().any(|p| full_name.starts_with(p))
+            || BLOCKED_NAMES.contains(&full_name)
+        {
+            return Some(format!(
+                "{} is not available at expansion time: a meta fn is a pure \
+                 function of its arguments, so macro expansion is deterministic \
+                 and reproducible (docs/macros.md)",
+                full_name
+            ));
+        }
+        None
+    }
+
+    /// Call a function bound in the global environment by name — the
+    /// expander's entry for invoking a meta fn.
+    pub fn call_named_function(
+        &mut self,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, InterpreterError> {
+        let function =
+            self.environment
+                .get(name)
+                .ok_or_else(|| InterpreterError::RuntimeError {
+                    message: format!(
+                        "no meta fn named '{}' — declare it with `meta fn {}(...) = ...` \
+                     in this file, above its first use",
+                        name, name
+                    ),
+                })?;
+        self.call_function_optimized(&function, args)
     }
 
     pub fn set_capabilities(&mut self, table: crate::caps::CapTable) {
