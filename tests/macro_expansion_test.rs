@@ -282,3 +282,43 @@ fn a_macro_free_file_is_untouched_by_expansion() {
     assert!(!olang::expand::program_uses_macros(&program));
     assert_eq!(olang::expand::expand_source(source).expect("no-op"), source);
 }
+
+// ── hardening regressions from the first adversarial probe ────────────
+
+#[test]
+fn unicode_in_a_meta_fn_body_survives_stripping() {
+    // Stripping blanks whole spans byte-by-byte; multibyte characters in
+    // a meta fn's body (π here) must not corrupt the text.
+    let out = eval(
+        "meta fn greet(name) = `\"héllo π, \" + ${name}`\n\
+         @greet(\"wörld\")\n",
+    )
+    .expect("unicode strip");
+    assert_eq!(out, Value::String("héllo π, wörld".to_string().into()));
+}
+
+#[test]
+fn output_with_a_trailing_comment_is_refused_at_the_site() {
+    // `2 + 1 // note` parses alone but swallows the call site's `)` when
+    // spliced inline. The paren-probe validation catches it and blames
+    // the macro, instead of an unattributed whole-file parse error.
+    let err = eval(
+        "meta fn f(x) = `${x} + 1  // note`\n\
+         println(to_string(@f(2)))\n",
+    )
+    .expect_err("trailing comment must be refused");
+    assert!(
+        err.contains("@f") && err.contains("does not splice"),
+        "{err}"
+    );
+}
+
+#[test]
+fn multi_line_block_output_splices_into_an_expression() {
+    let out = eval(
+        "meta fn wrap(e) = `{\n    let v = ${e}\n    v + v\n}`\n\
+         @wrap(21)\n",
+    )
+    .expect("block output");
+    assert_eq!(out, Value::Integer(42));
+}

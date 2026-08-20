@@ -138,13 +138,18 @@ pub fn expand_source(source: &str) -> Result<String, String> {
                 .collect();
             let out = call_meta_fn(&mut interp, &c.name, args)
                 .map_err(|e| format!("@{} (line {}): {}", c.name, c.line, e))?;
-            // Validate the fragment now, so a bad macro is blamed at its
-            // site rather than surfacing as a parse error of the whole
-            // file next round. An expression fragment is a one-statement
-            // program.
-            parser.parse_raw(&out).map_err(|e| {
+            // Validate the fragment as it will actually compose: wrapped
+            // in parentheses, the way it sits inside the surrounding
+            // expression. This catches what a bare parse cannot — output
+            // ending in a `//` comment parses alone but swallows the
+            // call site's closing token when spliced inline. Failing
+            // here blames the macro at its site instead of surfacing as
+            // an unattributed whole-file error next round.
+            parser.parse_raw(&format!("({})\n", out)).map_err(|e| {
                 format!(
-                    "@{} (line {}) generated source that does not parse:\n{}\n── generated ──\n{}",
+                    "@{} (line {}) generated source that does not splice as an \
+                     expression (a trailing // comment in the output is the usual \
+                     cause):\n{}\n── generated ──\n{}",
                     c.name, c.line, e, out
                 )
             })?;
