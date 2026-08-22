@@ -250,6 +250,31 @@ everything the inner ones generated — which is why a decorator that
 generates `test` blocks (like `examples/derives`' `@arbitrary`) goes
 outermost: its tests land after every function they call.
 
+## Argument order
+
+Arguments are expanded before the macro runs: by the time a meta fn
+receives its argument, the source is macro-free. `@bake(@twice(4))`
+hands `bake` the text `((4) * 2)`, never the text `@twice(4)` — the
+applicative order function calls follow, to any nesting depth, under
+the same fuel that bounds whole-file expansion. The rule exists because
+a macro may *inspect* or *evaluate* its argument, not merely splice it;
+without the guarantee, `meta.eval` would meet raw `@` text and fail,
+while splicing macros would appear to work only because their output is
+re-expanded on the next round.
+
+## Real libraries in the corpus
+
+Three macro libraries ship as examples, each imported with `use` by a
+real program: [`examples/derives`](../examples/derives/) (serialization,
+builders, and generated tests from one type declaration),
+[`examples/instrument`](../examples/instrument/) (`@memo`, `@trace`,
+`@timed`, `@dbg` — instrumentation as generated code rather than
+runtime machinery), and [`examples/contracts`](../examples/contracts/)
+(`@require`/`@ensure` contracts that quote their own source, and
+`@fmtc`, a format string checked against its arguments before the
+program loads). All three run under the example harness and the
+tier-agreement corpus.
+
 ## In the editor
 
 The language server is expansion-aware. Syntax diagnostics come from

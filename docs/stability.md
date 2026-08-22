@@ -164,7 +164,10 @@ These rules are part of the commitment above and are permanent under the
   directly before `fn`, so no pre-macro program changed meaning.
 
   Graduation to stable requires, and is blocked on, all of: a macro
-  fuzzer corpus an order of magnitude larger run clean; runtime error
+  fuzzer corpus an order of magnitude larger run clean (**done** —
+  10,000 generated macro programs: expansion determinism, tier
+  agreement, and clean refusal checked per seed; the run surfaced and
+  fixed one real defect, nested macro calls in arguments); runtime error
   spans source-mapped to `@` sites (**done** — every expanded line
   carries its origin, and errors point into the file as written, naming
   the generating macro); LSP expansion awareness (**done** — the
@@ -172,7 +175,12 @@ These rules are part of the commitment above and are permanent under the
   to the buffer, generated-code findings name their macro, and expansion
   failures are diagnostics at their site); and at least three
   substantial macro libraries used by real programs in the corpus
-  (`examples/derives` is the first).
+  (**done** — `examples/derives`, `examples/instrument`, and
+  `examples/contracts`, all imported with `use`, all under the harness
+  and the tier corpus). Every listed criterion is now met; the
+  graduation itself is a deliberate act for a later session, not an
+  automatic consequence — experimental status holds until it is
+  explicitly lifted.
   Until then the expansion engine's internals — the round/fuel model,
   the source-text exchange format's exact whitespace behavior — may
   change in ways `olang expand` output would show.

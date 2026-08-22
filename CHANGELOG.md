@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Two more macro libraries, completing the graduation corpus:**
+  `examples/instrument` (`@memo` — a function rewritten into a cache
+  around its own body, recursion memoizing itself, with a generated
+  `_cache_size()` so tests pin the cache rather than the clock;
+  `@trace`; `@timed`; `@dbg` printing an expression's own source) and
+  `examples/contracts` (`@require`/`@ensure` contracts that quote the
+  violated condition, and `@fmtc`, a format string whose placeholder
+  count is checked against its arguments at load). Both imported with
+  `use`, both under the harness and the tier-agreement corpus.
+
+- **The macro fuzzer corpus: 10,000 generated programs run clean** —
+  expansion determinism (expand twice, byte-identical), tier agreement
+  (interpreter vs compiled, whole-program diff), and clean refusal (no
+  panics, no internal errors) checked per seed.
+
+### Fixed
+
+- **Nested macro calls in arguments — found by the fuzzer within its
+  first hundred seeds.** `@bake(@twice(4))` handed `bake` the raw text
+  `@twice(4)`: the site collector cannot see nested calls (arguments
+  travel as text), so macros that inspect or evaluate their argument met
+  unexpanded `@` source, while template-splicing macros worked only
+  because their output was re-expanded next round. Arguments are now
+  expanded before the macro runs — applicative order, the rule function
+  calls follow, to any depth under the same fuel. The rule is documented
+  in the chapter; three regressions pin it.
+
 - **The language server is expansion-aware** — the second graduation
   criterion, done. Syntax diagnostics keep coming from the file as
   written (positions always match the buffer); the semantic pass now

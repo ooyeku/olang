@@ -118,6 +118,8 @@ fn example_cases() -> Vec<Case> {
         "timeseries",
         "derives",
         "macros",
+        "instrument",
+        "contracts",
     ] {
         let dir = root.join(name);
         for entry in ["main.ol", "index.ol"] {

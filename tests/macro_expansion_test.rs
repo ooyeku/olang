@@ -672,3 +672,48 @@ fn the_line_map_tracks_origins_through_rounds() {
     // Line 4 is untouched and still maps to 4.
     assert_eq!(exp.line_origins[3], LineOrigin::Original(4));
 }
+
+// ── applicative argument expansion (found by the macro fuzzer) ────────
+
+#[test]
+fn nested_macro_arguments_are_expanded_before_the_macro_runs() {
+    // `@bake(@twice(4))`: bake evaluates its argument at expansion time,
+    // so it must receive `((4) * 2)`, not the raw text `@twice(4)`. The
+    // site collector cannot see nested calls (arguments are text), so
+    // the expander expands arguments applicatively — every macro
+    // receives macro-free source. Before this rule, macros that inspect
+    // or evaluate their argument met raw `@` text; template-splicing
+    // macros only worked because their output was re-expanded by luck.
+    let out = eval(
+        "meta fn twice(e) = `((${e}) * 2)`\n\
+         meta fn bake(e) = meta.lit(unwrap(meta.eval(e)))\n\
+         @bake(@twice(4))\n",
+    )
+    .expect("nested arg");
+    assert_eq!(out, Value::Integer(8));
+}
+
+#[test]
+fn deeply_nested_arguments_expand_to_any_depth() {
+    let out = eval(
+        "meta fn inc(e) = `((${e}) + 1)`\n\
+         meta fn bake(e) = meta.lit(unwrap(meta.eval(e)))\n\
+         @bake(@inc(@inc(@inc(0))))\n",
+    )
+    .expect("deep nesting");
+    assert_eq!(out, Value::Integer(3));
+}
+
+#[test]
+fn a_string_inspecting_macro_receives_macro_free_source() {
+    // str.length of the argument text: with raw `@` text it would count
+    // the unexpanded call; applicative order means it measures the
+    // expanded expression.
+    let out = eval(
+        "meta fn nine(e) = `9`\n\
+         meta fn arglen(e) = meta.lit(str.length(e))\n\
+         @arglen(@nine(12345))\n",
+    )
+    .expect("inspecting macro");
+    assert_eq!(out, Value::Integer(1));
+}

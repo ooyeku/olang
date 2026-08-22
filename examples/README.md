@@ -233,6 +233,19 @@ you care about.
   `meta.parse` and generates its serializer. `olang expand main.ol`
   shows the program the runtime actually receives; `test` blocks pin
   baked-equals-runtime and the derive's output
+- [`instrument/`](instrument/) — zero-cost instrumentation as an imported
+  macro library: `@memo` rewrites a function into a cache around its own
+  body (recursion memoizes itself — `fib(80)` in a millisecond, with a
+  generated `_cache_size()` so the test pins the cache rather than the
+  clock), `@trace` logs calls and returns, `@timed` wall-clocks any
+  expression, and `@dbg` prints an expression's own source next to its
+  value. `olang expand main.ol` shows every line the macros added
+- [`contracts/`](contracts/) — checked boundaries as an imported macro
+  library: `@require`/`@ensure` contracts that quote the violated
+  condition's source (text no runtime function could recover), and
+  `@fmtc`, a format string whose placeholder count is checked against its
+  arguments at load — the mismatch every logging library meets in
+  production, refused before the program runs
 - [`markdown/`](markdown/) — a markdown→HTML converter: a block parser
   (`lib/blocks.ol` — headings, lists, blockquotes, fenced code, rules,
   paragraphs) over a recursive inline renderer (`lib/inline.ol` — `code`,

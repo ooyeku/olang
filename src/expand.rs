@@ -302,22 +302,25 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
             });
         }
 
-        // Expand innermost-first: a call site whose span contains another
-        // site waits for the inner one. Splice from the end of the text
-        // backwards so earlier offsets stay valid.
-        let all_spans: Vec<(usize, usize)> = calls.iter().map(|c| c.span).collect();
+        // Arguments are expanded before the macro runs: a nested call
+        // (`@bake(@twice(4))`) is invisible to the site collector — the
+        // argument is carried as text — so it is expanded HERE, and every
+        // macro receives macro-free source. Applicative order, the same
+        // rule function calls follow; without it, a macro that inspects
+        // or evaluates its argument would meet raw `@` text, while a
+        // template-splicing macro would work only by re-expansion luck.
         let mut splices: Vec<(usize, usize, String, String)> = Vec::new();
 
         for c in &calls {
-            let is_leaf = !all_spans.iter().any(|s| s.0 > c.span.0 && s.1 <= c.span.1);
-            if !is_leaf {
-                continue;
-            }
-            let args: Vec<Value> = c
-                .args_src
-                .iter()
-                .map(|a| Value::String(std::sync::Arc::new(a.clone())))
-                .collect();
+            let args: Vec<Value> = {
+                let mut expanded_args = Vec::with_capacity(c.args_src.len());
+                for a in &c.args_src {
+                    let ex = expand_fragment(&parser, &mut interp, &known_macros, a)
+                        .map_err(|e| format!("@{} (line {}): {}", c.name, c.line, e))?;
+                    expanded_args.push(Value::String(std::sync::Arc::new(ex)));
+                }
+                expanded_args
+            };
             let out = call_meta_fn(&mut interp, &known_macros, &c.name, args)
                 .map_err(|e| format!("@{} (line {}): {}", c.name, c.line, e))?;
             // Validate the fragment as it will actually compose: wrapped
@@ -339,20 +342,16 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
         }
 
         for d in &decorated {
-            let inner = all_spans.iter().any(|s| s.0 > d.span.0 && s.1 <= d.span.1);
-            if inner {
-                continue;
-            }
             // Nearest decorator first: the one directly above the
             // declaration transforms it, the next wraps that result.
             let mut cur = d.decl_src.clone();
             for (name, extra, line) in d.decorators.iter().rev() {
                 let mut args: Vec<Value> = vec![Value::String(std::sync::Arc::new(cur.clone()))];
-                args.extend(
-                    extra
-                        .iter()
-                        .map(|a| Value::String(std::sync::Arc::new(a.clone()))),
-                );
+                for a in extra {
+                    let ex = expand_fragment(&parser, &mut interp, &known_macros, a)
+                        .map_err(|e| format!("@{} (line {}): {}", name, line, e))?;
+                    args.push(Value::String(std::sync::Arc::new(ex)));
+                }
                 cur = call_meta_fn(&mut interp, &known_macros, name, args)
                     .map_err(|e| format!("@{} (line {}): {}", name, line, e))?;
                 parser.parse_raw(&cur).map_err(|e| {
@@ -418,6 +417,51 @@ fn expansion_interpreter() -> crate::interpreter::Interpreter {
     let mut interp = crate::interpreter::Interpreter::new();
     interp.set_meta_mode(true);
     interp
+}
+
+/// Expand the macro calls inside one source fragment (a macro argument),
+/// returning macro-free source. Recursion handles nesting of any depth,
+/// bounded by the same fuel discipline as whole-file rounds. A fragment
+/// that does not parse on its own (a named argument, say) is returned
+/// unchanged — the outer splice validation owns real errors.
+fn expand_fragment(
+    parser: &Parser,
+    interp: &mut crate::interpreter::Interpreter,
+    known: &std::collections::HashSet<String>,
+    fragment: &str,
+) -> Result<String, String> {
+    let mut text = fragment.to_string();
+    for _ in 0..FUEL {
+        let Ok(program) = parser.parse_raw(&text) else {
+            return Ok(text);
+        };
+        let (_, calls, _) = collect_sites(&program, &text);
+        if calls.is_empty() {
+            return Ok(text);
+        }
+        let mut splices: Vec<(usize, usize, String)> = Vec::new();
+        for c in &calls {
+            let mut args = Vec::with_capacity(c.args_src.len());
+            for a in &c.args_src {
+                let ex = expand_fragment(parser, interp, known, a)?;
+                args.push(Value::String(std::sync::Arc::new(ex)));
+            }
+            let out = call_meta_fn(interp, known, &c.name, args)
+                .map_err(|e| format!("@{}: {}", c.name, e))?;
+            parser.parse_raw(&format!("({})\n", out)).map_err(|e| {
+                format!(
+                    "@{} generated source that does not splice as an expression:\n{}\n── generated ──\n{}",
+                    c.name, e, out
+                )
+            })?;
+            splices.push((c.span.0, c.span.1, out));
+        }
+        splices.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
+        for (start, end, replacement) in splices {
+            text.replace_range(start..end, &replacement);
+        }
+    }
+    Err("macro expansion inside an argument did not terminate".to_string())
 }
 
 fn call_meta_fn(
