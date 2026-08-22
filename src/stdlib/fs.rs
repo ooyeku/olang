@@ -246,7 +246,9 @@ fn read_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
     match fs::read(path_str) {
-        Ok(contents) => Ok(Value::Ok(Box::new(crate::stdlib::bytes::to_value(contents)))),
+        Ok(contents) => Ok(Value::Ok(Box::new(crate::stdlib::bytes::to_value(
+            contents,
+        )))),
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "Failed to read file '{}': {}",
             path_str, e

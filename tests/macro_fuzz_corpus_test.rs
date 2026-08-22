@@ -76,7 +76,7 @@ fn gen_program(seed: u64) -> String {
     // A two-argument macro is only in scope on some seeds.
     let with_m2 = rng.below(2) == 0;
     let m2 = if with_m2 {
-        format!("meta fn m2(a, b) = `(${{a}}) + (${{b}})`\n")
+        "meta fn m2(a, b) = `(${a}) + (${b})`\n".to_string()
     } else {
         String::new()
     };

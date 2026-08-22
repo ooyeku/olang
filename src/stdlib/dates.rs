@@ -388,7 +388,10 @@ fn parse_date_flexible(s: &str) -> Result<NaiveDate, Box<dyn std::error::Error>>
 /// Usage: dates.now() -> "2024-06-15T14:30:00+00:00"
 fn dates_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Err(misuse(format!("now expects 0 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "now expects 0 arguments, got {}",
+            args.len()
+        )));
     }
 
     let now = crate::clock::local_now_fixed();
@@ -399,7 +402,10 @@ fn dates_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: dates.utc_now() -> "2024-06-15T14:30:00Z"
 fn dates_utc_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Err(misuse(format!("utc_now expects 0 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "utc_now expects 0 arguments, got {}",
+            args.len()
+        )));
     }
 
     let now = crate::clock::utc_now();
@@ -410,7 +416,10 @@ fn dates_utc_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: dates.today() -> "2024-06-15"
 fn dates_today(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Err(misuse(format!("today expects 0 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "today expects 0 arguments, got {}",
+            args.len()
+        )));
     }
 
     let today = crate::clock::local_now_fixed().date_naive();
@@ -421,7 +430,10 @@ fn dates_today(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: dates.date(2024, 6, 15) -> "2024-06-15"
 fn dates_date(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
-        return Err(misuse(format!("date expects 3 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "date expects 3 arguments, got {}",
+            args.len()
+        )));
     }
 
     let year = match &args[0] {
@@ -452,11 +464,19 @@ fn dates_date(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: dates.parse("2024-06-15") -> Result<Date, Error>
 fn dates_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("parse expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "parse expects 1 argument, got {}",
+            args.len()
+        )));
     }
     let s = match &args[0] {
         Value::String(s) => s.as_ref(),
-        other => return Err(misuse(format!("parse: argument must be a string, got {}", other.type_name()))),
+        other => {
+            return Err(misuse(format!(
+                "parse: argument must be a string, got {}",
+                other.type_name()
+            )));
+        }
     };
     parse_date_flexible(s).map(date_value)
 }
@@ -465,7 +485,10 @@ fn dates_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: dates.datetime(2024, 6, 15, 14, 30, 0) -> "2024-06-15T14:30:00"
 fn dates_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 6 {
-        return Err(misuse(format!("datetime expects 6 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "datetime expects 6 arguments, got {}",
+            args.len()
+        )));
     }
 
     let year = match &args[0] {
@@ -518,7 +541,10 @@ fn dates_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 /// Usage: dates.time(14, 30, 0) -> "14:30:00"
 fn dates_time(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
-        return Err(misuse(format!("time expects 3 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "time expects 3 arguments, got {}",
+            args.len()
+        )));
     }
 
     let hour = match &args[0] {
@@ -546,7 +572,10 @@ fn dates_time(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: dates.parse_date("2024-06-15") -> "2024-06-15"
 fn dates_parse_date(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("parse_date expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "parse_date expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let date_str = match &args[0] {
@@ -568,7 +597,10 @@ fn dates_parse_date(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
 /// Usage: dates.parse_datetime("2024-06-15T14:30:00") -> "2024-06-15T14:30:00"
 fn dates_parse_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("parse_datetime expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "parse_datetime expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let datetime_str = match &args[0] {
@@ -596,7 +628,10 @@ fn dates_parse_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
 /// Usage: dates.parse_time("14:30:00") -> "14:30:00"
 fn dates_parse_time(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("parse_time expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "parse_time expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let time_str = match &args[0] {
@@ -618,7 +653,10 @@ fn dates_parse_time(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
 /// Usage: dates.format_date("2024-06-15", "%B %d, %Y") -> "June 15, 2024"
 fn dates_format_date(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Err(misuse(format!("format_date expects 2 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "format_date expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     let (date, _) = date_arg(&args[0], "format_date: first argument")?;
@@ -636,7 +674,10 @@ fn dates_format_date(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
 /// Usage: dates.format_datetime("2024-06-15T14:30:00", "%B %d, %Y at %I:%M %p") -> "June 15, 2024 at 02:30 PM"
 fn dates_format_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Err(misuse(format!("format_datetime expects 2 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "format_datetime expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     let datetime_str = match &args[0] {
@@ -659,7 +700,10 @@ fn dates_format_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::
 /// Usage: dates.format_time("14:30:00", "%I:%M %p") -> "02:30 PM"
 fn dates_format_time(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Err(misuse(format!("format_time expects 2 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "format_time expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     let time_str = match &args[0] {
@@ -691,7 +735,10 @@ fn dates_format_time(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
 /// Usage: dates.add_days("2024-06-15", 7) -> "2024-06-22"
 fn dates_add_days(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Err(misuse(format!("add_days expects 2 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "add_days expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     let (date, native) = date_arg(&args[0], "add_days: first argument")?;
@@ -717,7 +764,10 @@ fn dates_add_days(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 /// Usage: dates.add_weeks("2024-06-15", 2) -> "2024-06-29"
 fn dates_add_weeks(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Err(misuse(format!("add_weeks expects 2 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "add_weeks expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     let weeks = match &args[1] {
@@ -735,7 +785,10 @@ fn dates_add_weeks(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 /// Usage: dates.add_months("2024-06-15", 3) -> "2024-09-15"
 fn dates_add_months(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Err(misuse(format!("add_months expects 2 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "add_months expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     let (date, native) = date_arg(&args[0], "add_months: first argument")?;
@@ -778,7 +831,10 @@ fn dates_add_months(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
 /// Usage: dates.add_years("2024-06-15", 1) -> "2025-06-15"
 fn dates_add_years(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Err(misuse(format!("add_years expects 2 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "add_years expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     let years = match &args[1] {
@@ -796,7 +852,10 @@ fn dates_add_years(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 /// Usage: dates.diff_days("2024-06-22", "2024-06-15") -> 7
 fn dates_diff_days(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Err(misuse(format!("diff_days expects 2 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "diff_days expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     let (date1, _) = date_arg(&args[0], "diff_days: first argument")?;
@@ -810,7 +869,10 @@ fn dates_diff_days(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 /// Usage: dates.year("2024-06-15") -> 2024
 fn dates_year(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("year expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "year expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let (date, _) = date_arg(&args[0], "year: argument")?;
@@ -822,7 +884,10 @@ fn dates_year(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: dates.month("2024-06-15") -> 6
 fn dates_month(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("month expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "month expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let (date, _) = date_arg(&args[0], "month: argument")?;
@@ -834,7 +899,10 @@ fn dates_month(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: dates.day("2024-06-15") -> 15
 fn dates_day(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("day expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "day expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let (date, _) = date_arg(&args[0], "day: argument")?;
@@ -846,7 +914,10 @@ fn dates_day(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: dates.hour("2024-06-15T14:30:00") -> 14
 fn dates_hour(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("hour expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "hour expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let datetime_str = match &args[0] {
@@ -863,7 +934,10 @@ fn dates_hour(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: dates.minute("2024-06-15T14:30:00") -> 30
 fn dates_minute(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("minute expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "minute expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let datetime_str = match &args[0] {
@@ -880,7 +954,10 @@ fn dates_minute(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: dates.second("2024-06-15T14:30:45") -> 45
 fn dates_second(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("second expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "second expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let datetime_str = match &args[0] {
@@ -897,7 +974,10 @@ fn dates_second(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Usage: dates.weekday("2024-06-15") -> 6 (Saturday)
 fn dates_weekday(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("weekday expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "weekday expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let (date, _) = date_arg(&args[0], "weekday: argument")?;
@@ -919,7 +999,10 @@ fn dates_weekday(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// Usage: dates.is_leap_year(2024) -> true
 fn dates_is_leap_year(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("is_leap_year expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "is_leap_year expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let year = match &args[0] {
@@ -935,17 +1018,28 @@ fn dates_is_leap_year(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
 /// Usage: dates.days_in_month(2024, 2) -> 29
 fn dates_days_in_month(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Err(misuse(format!("days_in_month expects 2 arguments, got {}", args.len())));
+        return Err(misuse(format!(
+            "days_in_month expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     let year = match &args[0] {
         Value::Integer(y) => *y as i32,
-        _ => return Err(misuse("days_in_month: first argument (year) must be an integer")),
+        _ => {
+            return Err(misuse(
+                "days_in_month: first argument (year) must be an integer",
+            ));
+        }
     };
 
     let month = match &args[1] {
         Value::Integer(m) => *m as u32,
-        _ => return Err(misuse("days_in_month: second argument (month) must be an integer")),
+        _ => {
+            return Err(misuse(
+                "days_in_month: second argument (month) must be an integer",
+            ));
+        }
     };
 
     if !(1..=12).contains(&month) {
@@ -972,7 +1066,10 @@ fn dates_days_in_month(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Er
 /// Usage: dates.timestamp("2024-06-15T14:30:00") -> 1718461800
 fn dates_timestamp(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("timestamp expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "timestamp expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let datetime_str = match &args[0] {
@@ -990,7 +1087,10 @@ fn dates_timestamp(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 /// Usage: dates.from_timestamp(1718461800) -> "2024-06-15T14:30:00"
 fn dates_from_timestamp(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(misuse(format!("from_timestamp expects 1 argument, got {}", args.len())));
+        return Err(misuse(format!(
+            "from_timestamp expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let timestamp = match &args[0] {

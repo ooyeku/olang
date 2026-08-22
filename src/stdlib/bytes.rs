@@ -47,7 +47,12 @@ impl NativeObject for BytesObject {
         // A hex preview, capped: value displays are for humans and logs,
         // and a megabyte of hex is neither.
         const PREVIEW: usize = 16;
-        let head: String = self.0.iter().take(PREVIEW).map(|b| format!("{b:02x}")).collect();
+        let head: String = self
+            .0
+            .iter()
+            .take(PREVIEW)
+            .map(|b| format!("{b:02x}"))
+            .collect();
         if self.0.len() > PREVIEW {
             format!("b\"{head}…\" ({} bytes)", self.0.len())
         } else {
@@ -96,12 +101,12 @@ pub fn to_value(bytes: Vec<u8>) -> Value {
 /// Pull the byte slice back out of a value, or say what it was.
 pub fn bytes_of(value: &Value) -> Result<&[u8], String> {
     match value {
-        Value::Native(h) => h
-            .0
-            .as_any()
-            .downcast_ref::<BytesObject>()
-            .map(|b| b.0.as_slice())
-            .ok_or_else(|| format!("expected Bytes, got a {} handle", h.0.type_name())),
+        Value::Native(h) => {
+            h.0.as_any()
+                .downcast_ref::<BytesObject>()
+                .map(|b| b.0.as_slice())
+                .ok_or_else(|| format!("expected Bytes, got a {} handle", h.0.type_name()))
+        }
         other => Err(format!("expected Bytes, got {}", other.type_name())),
     }
 }
@@ -149,7 +154,10 @@ pub fn call_bytes_function(
 
 fn one_arg<'a>(args: &'a [Value], name: &str) -> Result<&'a Value, String> {
     if args.len() != 1 {
-        return Err(format!("bytes.{name} expects 1 argument, got {}", args.len()));
+        return Err(format!(
+            "bytes.{name} expects 1 argument, got {}",
+            args.len()
+        ));
     }
     Ok(&args[0])
 }

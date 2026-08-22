@@ -530,25 +530,24 @@ fn run() -> i32 {
                 // point is showing the same program those consumers see, so
                 // it must not resolve differently just because the CWD is
                 // elsewhere.
-                Ok(source) => match olang::expand::expand_source_mapped_with_dir(
-                    &source,
-                    file.parent(),
-                )
-                .map(|e| e.text)
-                {
-                    Ok(expanded) => {
-                        if diff {
-                            print_expansion_diff(&source, &expanded);
-                        } else {
-                            print!("{}", expanded);
+                Ok(source) => {
+                    match olang::expand::expand_source_mapped_with_dir(&source, file.parent())
+                        .map(|e| e.text)
+                    {
+                        Ok(expanded) => {
+                            if diff {
+                                print_expansion_diff(&source, &expanded);
+                            } else {
+                                print!("{}", expanded);
+                            }
+                            0
                         }
-                        0
+                        Err(message) => {
+                            eprintln!("olang expand: {}", message);
+                            1
+                        }
                     }
-                    Err(message) => {
-                        eprintln!("olang expand: {}", message);
-                        1
-                    }
-                },
+                }
                 Err(e) => {
                     eprintln!("olang expand: cannot read {}: {}", file.display(), e);
                     2

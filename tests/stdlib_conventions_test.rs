@@ -135,8 +135,14 @@ fn lookups_return_unit_for_absence() {
     // One convention for "not there": the value, or Unit. Never -1, never
     // a Result — those shapes belong to positions that exist and to
     // operations that fail.
-    assert_eq!(run("show(map_get(#{ \"a\": 1 }, \"zz\") == ())").unwrap(), "true");
-    assert_eq!(run("show(str.index_of(\"abc\", \"z\") == ())").unwrap(), "true");
+    assert_eq!(
+        run("show(map_get(#{ \"a\": 1 }, \"zz\") == ())").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        run("show(str.index_of(\"abc\", \"z\") == ())").unwrap(),
+        "true"
+    );
     assert_eq!(
         run("show(str.last_index_of(\"abc\", \"z\") == ())").unwrap(),
         "true"
@@ -151,7 +157,10 @@ fn unit_equality_is_total() {
     // answers true for an Int rather than raising. Cross-kind equality
     // between two present kinds still raises, and ordering against Unit
     // still raises — only the presence question is total.
-    assert_eq!(run("show(str.index_of(\"abc\", \"a\") != ())").unwrap(), "true");
+    assert_eq!(
+        run("show(str.index_of(\"abc\", \"a\") != ())").unwrap(),
+        "true"
+    );
     assert_eq!(run("show(1 == ())").unwrap(), "false");
     assert_eq!(run("show(\"x\" != ())").unwrap(), "true");
     assert_eq!(run("show(() == ())").unwrap(), "true");
@@ -163,8 +172,14 @@ fn unit_equality_is_total() {
 
 #[test]
 fn map_get_or_is_the_lookup_with_default() {
-    assert_eq!(run("show(map_get_or(#{ \"a\": 1 }, \"a\", 0))").unwrap(), "1");
-    assert_eq!(run("show(map_get_or(#{ \"a\": 1 }, \"z\", 42))").unwrap(), "42");
+    assert_eq!(
+        run("show(map_get_or(#{ \"a\": 1 }, \"a\", 0))").unwrap(),
+        "1"
+    );
+    assert_eq!(
+        run("show(map_get_or(#{ \"a\": 1 }, \"z\", 42))").unwrap(),
+        "42"
+    );
     // Unit IS absence, so a stored Unit takes the default too — the
     // convention is one rule, not a distinguishable special case.
     assert_eq!(
@@ -172,10 +187,7 @@ fn map_get_or_is_the_lookup_with_default() {
         "42"
     );
     // Objects read like maps, exactly as map_get does.
-    assert_eq!(
-        run("show(map_get_or({ x: 5 }, \"x\", 0))").unwrap(),
-        "5"
-    );
+    assert_eq!(run("show(map_get_or({ x: 5 }, \"x\", 0))").unwrap(), "5");
 }
 
 #[test]

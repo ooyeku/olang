@@ -1634,6 +1634,16 @@ impl HelpSystem {
                 "map_get(#{ \"a\": 1 }, \"a\")  // 1",
             ),
             (
+                "map_get_or",
+                "map_get_or(map, key, default)",
+                "Any",
+                "Maps",
+                "The value under key, or the default when the key is absent — the \
+                 one-call form of the missing-key-with-default idiom (map_get \
+                 returns Unit for absence, which unwrap_or cannot take).",
+                "map_get_or(#{ \"a\": 1 }, \"z\", 0)  // 0",
+            ),
+            (
                 "map_has_key",
                 "map_has_key(map, key)",
                 "Bool",
@@ -4112,8 +4122,9 @@ impl HelpSystem {
         });
         self.add_function(FunctionDoc {
             name: "str.index_of".to_string(),
-            description: "Character index of the first match, or Unit when absent (test with != ())."
-                .to_string(),
+            description:
+                "Character index of the first match, or Unit when absent (test with != ())."
+                    .to_string(),
             syntax: "str.index_of(s, sub)".to_string(),
             parameters: vec![],
             return_type: "Int | ()".to_string(),
@@ -4126,8 +4137,9 @@ impl HelpSystem {
         });
         self.add_function(FunctionDoc {
             name: "str.last_index_of".to_string(),
-            description: "Character index of the last match, or Unit when absent (test with != ())."
-                .to_string(),
+            description:
+                "Character index of the last match, or Unit when absent (test with != ())."
+                    .to_string(),
             syntax: "str.last_index_of(s, sub)".to_string(),
             parameters: vec![],
             return_type: "Int | ()".to_string(),
@@ -5614,7 +5626,8 @@ impl HelpSystem {
             examples: vec![
                 "unwrap(dates.date(2024, 6, 15))  // a Date; displays as 2024-06-15".to_string(),
                 "let birthday = unwrap(dates.date(1990, 5, 15))".to_string(),
-                "unwrap(dates.date(2024, 6, 15)) < unwrap(dates.date(2024, 7, 1))  // true".to_string(),
+                "unwrap(dates.date(2024, 6, 15)) < unwrap(dates.date(2024, 7, 1))  // true"
+                    .to_string(),
             ],
             category: "Dates".to_string(),
             see_also: vec!["dates.parse".to_string(), "dates.datetime".to_string()],

@@ -81,7 +81,10 @@ fn bytes_to_string_is_a_result_not_a_raise() {
 
 #[test]
 fn base64_and_crypto_accept_bytes() {
-    assert_eq!(run("base64.encode(bytes.from_string(\"hi\"))").unwrap(), "aGk=");
+    assert_eq!(
+        run("base64.encode(bytes.from_string(\"hi\"))").unwrap(),
+        "aGk="
+    );
     assert_eq!(
         run("show(bytes.to_list(unwrap(base64.decode_bytes(\"AAH/\"))))").unwrap(),
         "[0, 1, 255]"
@@ -96,9 +99,18 @@ fn base64_and_crypto_accept_bytes() {
 
 #[test]
 fn date_is_a_first_class_value() {
-    assert_eq!(run("typeof(unwrap(dates.date(2026, 8, 7)))").unwrap(), "Date");
-    assert_eq!(run("show(unwrap(dates.date(2026, 8, 7)))").unwrap(), "2026-08-07");
-    assert_eq!(run("typeof(unwrap(dates.parse(\"2026-08-07\")))").unwrap(), "Date");
+    assert_eq!(
+        run("typeof(unwrap(dates.date(2026, 8, 7)))").unwrap(),
+        "Date"
+    );
+    assert_eq!(
+        run("show(unwrap(dates.date(2026, 8, 7)))").unwrap(),
+        "2026-08-07"
+    );
+    assert_eq!(
+        run("typeof(unwrap(dates.parse(\"2026-08-07\")))").unwrap(),
+        "Date"
+    );
 }
 
 #[test]
@@ -109,7 +121,10 @@ fn date_operators_work() {
     assert_eq!(run(&format!("{base}show((d + 30) - d)")).unwrap(), "30");
     assert_eq!(run(&format!("{base}show(d < d + 1)")).unwrap(), "true");
     assert_eq!(
-        run(&format!("{base}show(d == unwrap(dates.parse(\"2026-08-07\")))")).unwrap(),
+        run(&format!(
+            "{base}show(d == unwrap(dates.parse(\"2026-08-07\")))"
+        ))
+        .unwrap(),
         "true"
     );
 }
@@ -140,10 +155,7 @@ fn date_string_parsing_is_uniformly_flexible() {
         run("show(is_ok(dates.add_days(dates.now(), 1)))").unwrap(),
         "true"
     );
-    assert_eq!(
-        run("show(is_ok(dates.year(dates.now())))").unwrap(),
-        "true"
-    );
+    assert_eq!(run("show(is_ok(dates.year(dates.now())))").unwrap(), "true");
 }
 
 #[test]
@@ -162,7 +174,10 @@ fn dates_misuse_raises_instead_of_returning_err() {
         run("show(is_err(dates.parse(\"not a date\")))").unwrap(),
         "true"
     );
-    assert_eq!(run("show(is_err(dates.date(2026, 13, 1)))").unwrap(), "true");
+    assert_eq!(
+        run("show(is_err(dates.date(2026, 13, 1)))").unwrap(),
+        "true"
+    );
 }
 
 // ── HTTP client options ───────────────────────────────────────────────

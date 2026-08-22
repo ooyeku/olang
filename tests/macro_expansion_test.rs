@@ -145,7 +145,10 @@ fn meta_mode_refuses_the_effectful_world() {
             "show(ods.write_csv(ods.read_csv(\"a\\n1\\n\"), \"/tmp/meta-escape.csv\"))",
             "ods.write_csv",
         ),
-        ("show(ods.read_csv_file(\"/etc/hosts\"))", "ods.read_csv_file"),
+        (
+            "show(ods.read_csv_file(\"/etc/hosts\"))",
+            "ods.read_csv_file",
+        ),
     ] {
         let err = eval(&format!(
             "meta fn evil(x) = {{ let v = {call}; `1` }}\nlet y = @evil(0)\n"
@@ -162,10 +165,8 @@ fn meta_mode_refuses_the_effectful_world() {
 fn meta_mode_refuses_par_for() {
     // `par for` is a syntax form, not a builtin name, so the old name
     // denylist never saw it — `spawn` had this gate, `par for` did not.
-    let err = eval(
-        "meta fn evil(x) = { par for i in [1, 2] { i } \n `1` }\nlet y = @evil(0)\n",
-    )
-    .expect_err("par for in meta mode");
+    let err = eval("meta fn evil(x) = { par for i in [1, 2] { i } \n `1` }\nlet y = @evil(0)\n")
+        .expect_err("par for in meta mode");
     assert!(
         err.contains("not available at expansion time"),
         "par for must refuse at expansion time: {err}"
