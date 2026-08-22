@@ -25,6 +25,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`olang lsp` rejected the `--stdio` flag every LSP client passes by
+  convention — so the server had never once started inside VS Code.**
+  clap exited with "unexpected argument" before the first protocol
+  byte; the client retried into startFailed; the editor showed nothing.
+  Found by installing the extension and reading the extension host's
+  logs — no protocol test could see it, because tests spawned the
+  server without the flag. The flag is now accepted (stdio is the only
+  transport, so it changes nothing), and every protocol test spawns
+  `olang lsp --stdio` exactly as real clients do. The editor chapter
+  documents the failure signature, since a stale binary on PATH
+  (`~/.cargo/bin` shadowing a newer install) reproduces it.
+
+- **Both editor clients resolve the binary beyond `PATH`.** GUI-launched
+  editors inherit launchd's minimal PATH, which contains none of the
+  places olang installs to. VS Code and Zed now try the explicit
+  setting, then PATH, then `~/.olang`, `~/.cargo/bin`,
+  `/usr/local/bin`, and `/opt/homebrew/bin`, and say what they tried on
+  failure. The abandoned `editors/zed-olang` twin (wrong repository
+  URL, duplicate language id) is removed, and the Zed grammar pin moved
+  from a months-old revision to the current one, picking up the
+  template/raw-string/macro tokens.
+
 - **Positions now cross the LSP wire in UTF-16 code units, the
   protocol's default.** The server was char-indexed end to end, so any
   non-ASCII earlier in a line — a `π`, an arrow, an emoji — shifted

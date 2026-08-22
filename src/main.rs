@@ -295,7 +295,16 @@ enum Commands {
     },
 
     /// Start the language server (LSP over stdio)
-    Lsp,
+    Lsp {
+        /// Accepted for editor-client compatibility: vscode-languageclient
+        /// and other LSP clients append `--stdio` by convention. Stdio is
+        /// the only transport, so the flag changes nothing — but rejecting
+        /// it made the server exit before the first protocol byte, which
+        /// is why the extension never worked: clap killed `olang lsp
+        /// --stdio` with "unexpected argument" on every start.
+        #[arg(long)]
+        stdio: bool,
+    },
 
     /// Run a program file — the file-first form `olang <file> [args]`
     #[command(external_subcommand)]
@@ -538,7 +547,7 @@ fn run() -> i32 {
         }
         Some(Commands::Bench { args }) => olang::tools::bench::run(&args),
 
-        Some(Commands::Lsp) => match olang::tools::lsp::run() {
+        Some(Commands::Lsp { stdio: _ }) => match olang::tools::lsp::run() {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("language server error: {e}");

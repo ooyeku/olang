@@ -76,6 +76,20 @@ The grammar reference in `extension.toml` points at this repository
 (`editors/tree-sitter-olang`), so the dev-extension flow needs the repo
 present locally or the ref pushed.
 
+### If the server does not start
+
+The client resolves the `olang` binary in order: the `olang.serverPath`
+setting, then `PATH`, then the well-known install locations (`~/.olang`,
+`~/.cargo/bin`, `/usr/local/bin`, `/opt/homebrew/bin`) — a GUI-launched
+editor often carries a minimal `PATH` that contains none of them. When
+nothing resolves, the extension says so with a button to the setting
+rather than failing silently. One historical trap worth knowing: LSP
+clients append `--stdio` to the server command by convention, and
+versions of `olang` before 0.69 rejected the flag and exited before the
+first protocol byte — if the output channel shows
+`unexpected argument '--stdio'`, an old binary is being resolved
+(`~/.cargo/bin` shadowing a newer install is the usual culprit).
+
 ## Any other LSP editor
 
 Point your editor's LSP client at the command `olang lsp` for the

@@ -14,9 +14,25 @@ impl zed::Extension for OlangExtension {
         _id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> zed::Result<zed::Command> {
-        let path = worktree
-            .which("olang")
-            .ok_or_else(|| "olang not found on PATH (install it, or add its dir to PATH)".to_string())?;
+        // PATH first, then the well-known install locations. A
+        // GUI-launched Zed inherits launchd's minimal PATH, which holds
+        // none of the places olang installs to — the same silent failure
+        // the VS Code client had.
+        let path = worktree.which("olang").or_else(|| {
+            let home = std::env::var("HOME").ok()?;
+            [
+                format!("{home}/.olang/olang"),
+                format!("{home}/.cargo/bin/olang"),
+                "/usr/local/bin/olang".to_string(),
+                "/opt/homebrew/bin/olang".to_string(),
+            ]
+            .into_iter()
+            .find(|p| std::fs::metadata(p).is_ok())
+        });
+        let path = path.ok_or_else(|| {
+            "olang not found on PATH or in ~/.olang, ~/.cargo/bin, /usr/local/bin,              /opt/homebrew/bin — install olang, or add its directory to PATH"
+                .to_string()
+        })?;
         Ok(zed::Command {
             command: path,
             args: vec!["lsp".to_string()],

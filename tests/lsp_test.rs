@@ -14,7 +14,7 @@ struct Client {
 impl Client {
     fn start() -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_olang"))
-            .arg("lsp")
+            .args(["lsp", "--stdio"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

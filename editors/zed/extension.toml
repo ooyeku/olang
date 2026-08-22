@@ -1,6 +1,6 @@
 id = "olang"
 name = "olang"
-version = "0.1.0"
+version = "0.2.0"
 schema_version = 1
 authors = ["Ola Yeku <ooyeku@gmail.com>"]
 description = "olang language support: highlighting and the built-in language server (olang lsp)."
@@ -13,4 +13,4 @@ languages = ["olang"]
 [grammars.olang]
 repository = "https://github.com/ooyeku/olang"
 path = "editors/tree-sitter-olang"
-rev = "9cfdbba2a1d3363fbce9726b29f05eb2c4f17ce3"
+rev = "139405dda87150b661671fa210cf4e388a8048ef"

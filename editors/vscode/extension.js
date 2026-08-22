@@ -20,9 +20,41 @@ function probeServer(serverPath) {
   });
 }
 
+// Resolve the server binary: the explicit setting first, then PATH, then
+// the well-known install locations. A Dock-launched editor gets launchd's
+// minimal PATH — /usr/bin:/bin:… — which contains none of the places
+// olang actually installs to, so "just use PATH" is exactly the silent
+// failure this extension used to have.
+const os = require("os");
+const path = require("path");
+
+const WELL_KNOWN = [
+  path.join(os.homedir(), ".olang", "olang"),
+  path.join(os.homedir(), ".cargo", "bin", "olang"),
+  "/usr/local/bin/olang",
+  "/opt/homebrew/bin/olang",
+];
+
+async function resolveServer(configured) {
+  if (configured !== "olang") {
+    return { path: configured, version: await probeServer(configured) };
+  }
+  const onPath = await probeServer("olang");
+  if (onPath !== null) {
+    return { path: "olang", version: onPath };
+  }
+  for (const candidate of WELL_KNOWN) {
+    const v = await probeServer(candidate);
+    if (v !== null) {
+      return { path: candidate, version: v };
+    }
+  }
+  return { path: configured, version: null };
+}
+
 async function activate() {
-  const serverPath = workspace.getConfiguration("olang").get("serverPath", "olang");
-  const version = await probeServer(serverPath);
+  const configured = workspace.getConfiguration("olang").get("serverPath", "olang");
+  const { path: serverPath, version } = await resolveServer(configured);
   if (version === null) {
     const pick = await window.showErrorMessage(
       `olang language server: cannot run '${serverPath}'. Install olang and/or set ` +
