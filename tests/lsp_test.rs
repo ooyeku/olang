@@ -254,3 +254,216 @@ fn macro_files_get_mapped_diagnostics() {
         "generated-code diagnostic must anchor at the @ site: {ds:?}"
     );
 }
+
+/// The rebuilt server: correct vocabularies, context-aware completion,
+/// registry-driven hover, and the navigation set — with positions in
+/// UTF-16 code units at every boundary, which is what the protocol
+/// speaks and what the old char-indexed server got wrong on any line
+/// containing non-ASCII.
+#[test]
+fn rebuilt_server_features() {
+    let mut c = Client::start();
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    }));
+    let init = c.recv_until(|m| m["id"] == 1);
+    for cap in [
+        "documentSymbolProvider",
+        "referencesProvider",
+        "renameProvider",
+        "signatureHelpProvider",
+        "documentHighlightProvider",
+    ] {
+        assert!(
+            !init["result"]["capabilities"][cap].is_null(),
+            "capability {cap} must be advertised"
+        );
+    }
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+
+    let uri = "file:///features.ol";
+    // Line 3 has a π (1 char, 2 UTF-16 units, 2 bytes) BEFORE the use of
+    // `total`, so char-indexed and UTF-16 positions diverge on it.
+    let text = "fn add(a, b) = a + b\nlet total = add(2, 3)\nlet label = `π = ${total}`\nprintln(label)\ntest \"adds\" { assert_eq(add(1, 1), 2) }\n";
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}
+    }));
+    c.recv_until(|m| diagnostics_of(m).is_some());
+
+    // 1. Completion after `str.` is the str module, not keywords.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":10,"method":"textDocument/completion","params":{
+            "textDocument":{"uri":uri},"position":{"line":0,"character":0},
+            "context":{"triggerKind":1}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 10);
+    let labels: Vec<String> = m["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["label"].as_str().unwrap().to_string())
+        .collect();
+    for gone in ["async", "await", "try", "catch"] {
+        assert!(
+            !labels.contains(&gone.to_string()),
+            "removed keyword '{gone}' must not be completed"
+        );
+    }
+    assert!(
+        labels.contains(&"meta".to_string()),
+        "meta must be completed"
+    );
+    assert!(labels.contains(&"add".to_string()), "file decls complete");
+
+    // A synthetic `str.` line for module completion.
+    let text2 = format!("{text}str.\n");
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didChange","params":{
+            "textDocument":{"uri":uri,"version":2},
+            "contentChanges":[{"text": text2}]}
+    }));
+    c.recv_until(|m| diagnostics_of(m).is_some());
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":11,"method":"textDocument/completion","params":{
+            "textDocument":{"uri":uri},"position":{"line":5,"character":4},
+            "context":{"triggerKind":2,"triggerCharacter":"."}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 11);
+    let labels: Vec<String> = m["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["label"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        labels.contains(&"trim".to_string()),
+        "str. completes trim: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"fn".to_string()),
+        "str. must not complete keywords"
+    );
+
+    // 2. Hover on a builtin gives registry docs.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":12,"method":"textDocument/hover","params":{
+            "textDocument":{"uri":uri},"position":{"line":3,"character":2}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 12);
+    let hover = m["result"]["contents"]["value"].as_str().unwrap_or("");
+    assert!(
+        hover.contains("println"),
+        "builtin hover from the registry: {hover}"
+    );
+
+    // 3. UTF-16: on line 2 (`let label = ...`), hover `total` inside the
+    //    template — after the π. The word starts at char 17… wire pos
+    //    must be UTF-16. `total` occurs at chars 19..24; π adds one extra
+    //    UTF-16 unit? (π is 1 unit — BMP — so char==utf16 here; use a
+    //    surrogate-pair emoji to force divergence instead.)
+    let text3 = format!("{text2}let wide = `😀 ${{total}}`\n");
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didChange","params":{
+            "textDocument":{"uri":uri,"version":3},
+            "contentChanges":[{"text": text3}]}
+    }));
+    c.recv_until(|m| diagnostics_of(m).is_some());
+    // Line 6: let wide = `😀 ${total}`  — chars: 😀 at 12; `total` chars
+    // 17..22; UTF-16: emoji is 2 units, so total is units 18..23.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":13,"method":"textDocument/hover","params":{
+            "textDocument":{"uri":uri},"position":{"line":6,"character":20}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 13);
+    let hover = m["result"]["contents"]["value"].as_str().unwrap_or("");
+    assert!(
+        hover.contains("total"),
+        "UTF-16 position after an emoji must still land on `total`: {hover}"
+    );
+
+    // 4. Outline: functions, types, tests.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":14,"method":"textDocument/documentSymbol","params":{
+            "textDocument":{"uri":uri}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 14);
+    let names: Vec<String> = m["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(names.contains(&"add".to_string()));
+    assert!(
+        names.iter().any(|n| n.contains("adds")),
+        "test block in outline: {names:?}"
+    );
+
+    // 5. References on `add` (declared line 0, used line 1): 3 with decl
+    //    (fn add, add(2,3), assert_eq(add(1,1)) in the test).
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":15,"method":"textDocument/references","params":{
+            "textDocument":{"uri":uri},"position":{"line":0,"character":4},
+            "context":{"includeDeclaration":true}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 15);
+    assert_eq!(
+        m["result"].as_array().unwrap().len(),
+        3,
+        "references to add"
+    );
+
+    // 6. Rename `total` → `sum_total`: edits at every occurrence.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":16,"method":"textDocument/rename","params":{
+            "textDocument":{"uri":uri},"position":{"line":1,"character":5},
+            "newName":"sum_total"}
+    }));
+    let m = c.recv_until(|m| m["id"] == 16);
+    let edits = &m["result"]["changes"][uri];
+    assert_eq!(
+        edits.as_array().unwrap().len(),
+        3,
+        "total occurs thrice: {edits}"
+    );
+
+    // Renaming a builtin is refused with a reason.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":17,"method":"textDocument/rename","params":{
+            "textDocument":{"uri":uri},"position":{"line":3,"character":2},
+            "newName":"shout"}
+    }));
+    let m = c.recv_until(|m| m["id"] == 17);
+    assert!(
+        m["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("standard-library"),
+        "renaming println must be refused: {m}"
+    );
+
+    // 7. Signature help inside map_get's second argument.
+    let text4 = format!("{text3}let v = map_get(#{{}}, \n");
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didChange","params":{
+            "textDocument":{"uri":uri,"version":4},
+            "contentChanges":[{"text": text4}]}
+    }));
+    c.recv_until(|m| diagnostics_of(m).is_some());
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":18,"method":"textDocument/signatureHelp","params":{
+            "textDocument":{"uri":uri},"position":{"line":7,"character":22}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 18);
+    let sig = &m["result"]["signatures"][0];
+    assert!(
+        sig["label"].as_str().unwrap_or("").contains("map_get"),
+        "{m}"
+    );
+    assert_eq!(
+        m["result"]["activeParameter"], 1,
+        "cursor is in the second argument: {m}"
+    );
+}

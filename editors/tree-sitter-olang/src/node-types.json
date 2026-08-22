@@ -20,6 +20,11 @@
     "fields": {}
   },
   {
+    "type": "raw_string",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "source_file",
     "named": true,
     "root": true,
@@ -41,6 +46,10 @@
           "named": true
         },
         {
+          "type": "macro",
+          "named": true
+        },
+        {
           "type": "number",
           "named": true
         },
@@ -53,7 +62,15 @@
           "named": true
         },
         {
+          "type": "raw_string",
+          "named": true
+        },
+        {
           "type": "string",
+          "named": true
+        },
+        {
+          "type": "template",
           "named": true
         },
         {
@@ -65,6 +82,11 @@
   },
   {
     "type": "string",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "template",
     "named": true,
     "fields": {}
   },
@@ -82,10 +104,6 @@
   },
   {
     "type": "#",
-    "named": false
-  },
-  {
-    "type": "${",
     "named": false
   },
   {
@@ -189,11 +207,7 @@
     "named": false
   },
   {
-    "type": "async",
-    "named": false
-  },
-  {
-    "type": "await",
+    "type": "`",
     "named": false
   },
   {
@@ -201,13 +215,8 @@
     "named": false
   },
   {
-    "type": "catch",
-    "named": false
-  },
-  {
     "type": "comment",
-    "named": true,
-    "extra": true
+    "named": true
   },
   {
     "type": "continue",
@@ -262,7 +271,15 @@
     "named": false
   },
   {
+    "type": "macro",
+    "named": true
+  },
+  {
     "type": "match",
+    "named": false
+  },
+  {
+    "type": "meta",
     "named": false
   },
   {
@@ -275,6 +292,10 @@
   },
   {
     "type": "par",
+    "named": false
+  },
+  {
+    "type": "r\"",
     "named": false
   },
   {
@@ -303,10 +324,6 @@
   },
   {
     "type": "true",
-    "named": false
-  },
-  {
-    "type": "try",
     "named": false
   },
   {

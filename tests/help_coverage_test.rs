@@ -37,3 +37,28 @@ fn every_callable_module_has_help_entries() {
         "modules with zero :help entries: {missing:?}"
     );
 }
+
+/// Every global builtin the dispatcher accepts has a help entry under its
+/// own name. The language server renders completions, hover, and
+/// signature help from the registry, so a missing entry is a builtin the
+/// editor cannot explain — which is how `map_get` (dispatched since 0.x,
+/// mentioned only in a see_also) went dark in the editor.
+#[test]
+fn every_global_builtin_has_a_help_entry() {
+    let help = HelpSystem::new();
+    // The dispatcher's own list: names `call_builtin` accepts bare.
+    let builtins = olang::builtin::BuiltinFunctions::global_names();
+    let mut missing: Vec<String> = builtins
+        .iter()
+        .filter(|name| help.get_function(name).is_none())
+        .cloned()
+        .collect();
+    missing.sort();
+    assert!(
+        missing.is_empty(),
+        "{} global builtin(s) without help entries — the editor cannot \
+         explain them:\n  {}",
+        missing.len(),
+        missing.join("\n  ")
+    );
+}

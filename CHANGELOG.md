@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The language server grew the navigation set that makes an editor
+  feel alive**: document outline (every `fn`, `meta fn`, `type`,
+  top-level `let`, and `test` block), find-references and document
+  highlight, rename (with refusals that say why — keywords and
+  standard-library names are not yours to rename), and signature help
+  with active-parameter tracking. Completions are context-aware: after
+  `str.` you get the `str` module's functions with signatures and
+  documentation, not keywords. Hover now answers for every documented
+  name — builtins and stdlib functions render from the same registry
+  `:help` prints, so the editor and the REPL never disagree. When a
+  file is mid-edit and unparseable — most moments in a live editor —
+  declarations fall back to a text scan, so hover, navigation, and the
+  outline keep working while you type.
+
+### Fixed
+
+- **Positions now cross the LSP wire in UTF-16 code units, the
+  protocol's default.** The server was char-indexed end to end, so any
+  non-ASCII earlier in a line — a `π`, an arrow, an emoji — shifted
+  every hover, diagnostic, and definition to the right of reality,
+  which is a large part of why the server felt broken in real use.
+  Conversion now happens at every boundary, pinned by a protocol test
+  with a surrogate-pair emoji ahead of the hovered word.
+
+- **Completions offered keywords that left the language.** `async`,
+  `await`, `try`, and `catch` sat in the server's hand-maintained list
+  long after their removal, and `meta` was absent; the module list was
+  missing `cell`, `chan`, `task`, `proc`, `caps`, and `meta`. The
+  vocabularies now come from the grammar's appendix and the help
+  registry, and a test diffs them.
+
+- **Nineteen global builtins had no help entry** — the whole `map_*`
+  family, `show`, `entries`, `take`, `skip`, `concat`, and friends were
+  invisible to `:help` (falling to fuzzy search) and to every editor
+  surface that renders from the registry. All nineteen are documented,
+  and a coverage test now diffs the dispatcher's name list against the
+  registry so the set cannot quietly grow again.
+
+- **The VS Code client failed silently when the binary was missing.**
+  A GUI-launched editor often has a shorter PATH than a shell; the old
+  client called start() and nothing visibly happened. It now probes
+  `olang --version` first and, on failure, shows an actionable error
+  with a button to the `olang.serverPath` setting. The TextMate grammar
+  caught up with the language: template strings with interpolation and
+  escapes, raw strings, `meta fn` and `@` highlighting, numeric bases,
+  and the removed keywords removed. The tree-sitter grammar for Zed
+  gained the same tokens (`template`, `raw_string`, `macro`, `meta`)
+  and dropped the dead keywords, with the parser regenerated and the
+  highlight queries extended.
+
 ## [0.68.0] - 2026-08-22
 
 ### Fixed

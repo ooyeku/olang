@@ -9,19 +9,22 @@ module.exports = grammar({
     source_file: ($) => repeat($._token),
     _token: ($) =>
       choice($.keyword, $.boolean, $.type_identifier, $.identifier,
-             $.number, $.string, $.operator, $.punctuation),
+             $.number, $.template, $.raw_string, $.string, $.macro,
+             $.operator, $.punctuation),
     comment: () => token(seq("//", /.*/)),
     keyword: () =>
       choice("fn","let","mut","type","if","else","match","for","par","while",
-             "loop","break","continue","return","async","await","spawn","try",
-             "catch","error","share","use","struct","enum","test","trait",
+             "loop","break","continue","return","spawn","meta",
+             "error","share","use","struct","enum","test","trait",
              "impl","in"),
     boolean: () => choice("true", "false"),
     type_identifier: () => /[A-Z][A-Za-z0-9_]*/,
     identifier: () => /[a-z_][A-Za-z0-9_]*/,
     number: () => /\d[\d_]*(\.\d[\d_]*)?/,
-    string: ($) =>
-      seq('"', repeat(choice(/[^"\\$]+/, /\\./, seq("${", /[^}]*/, "}"))), '"'),
+    string: () => seq('"', repeat(choice(/[^"\\]+/, /\\./)), '"'),
+    template: () => seq("`", repeat(choice(/[^`\\]+/, /\\./)), "`"),
+    raw_string: () => seq('r"', repeat(choice(/[^"\\]+/, /\\./)), '"'),
+    macro: () => /@[a-z_][A-Za-z0-9_]*/,
     operator: () =>
       choice("|>","=>","->","==","!=","<=",">=","&&","||","..=","..",
              "+","-","*","/","%","<",">","=","!","?"),

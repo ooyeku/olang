@@ -1480,6 +1480,7 @@ impl HelpSystem {
         self.add_recent_stdlib_additions();
         self.add_stdlib_coverage_gaps();
         self.add_embedded_utility_docs();
+        self.add_undocumented_global_docs();
 
         // === meta — the program as data (the Open AST) ===
         self.add_meta_functions();
@@ -1573,6 +1574,181 @@ impl HelpSystem {
                 "map_has_key".to_string(),
             ],
         });
+    }
+
+    /// The globals that had no entry of their own — found when the
+    /// language server started rendering everything from this registry
+    /// and nineteen builtins turned out to be invisible to it (and to
+    /// `:help`, which fell back to fuzzy search for them). The coverage
+    /// test in `tests/help_coverage_test.rs` diffs the dispatcher's name
+    /// list against this registry, so the set can never quietly grow
+    /// again.
+    fn add_undocumented_global_docs(&mut self) {
+        for (name, syntax, ret, category, description, example) in [
+            (
+                "show",
+                "show(value)",
+                "String",
+                "Strings",
+                "The display rendering of a value: strings bare, everything else as to_string.                  The form for building human output — template interpolation uses the same                  rendering. to_string is the repr form, quoting strings.",
+                "show(\"hi\")  // hi (to_string gives \"hi\")",
+            ),
+            (
+                "concat",
+                "concat(a, b)",
+                "List",
+                "Lists",
+                "A new list holding every element of a followed by every element of b.",
+                "concat([1, 2], [3])  // [1, 2, 3]",
+            ),
+            (
+                "take",
+                "take(list, n)",
+                "List",
+                "Lists",
+                "The first n elements, or the whole list when it is shorter than n.",
+                "take([1, 2, 3, 4], 2)  // [1, 2]",
+            ),
+            (
+                "skip",
+                "skip(list, n)",
+                "List",
+                "Lists",
+                "The list without its first n elements; empty when n reaches past the end.",
+                "skip([1, 2, 3, 4], 2)  // [3, 4]",
+            ),
+            (
+                "entries",
+                "entries(map)",
+                "List",
+                "Maps",
+                "The (key, value) pairs of a map or struct-like value, as tuples sorted by                  key — deterministic order, made for `for (k, v) in entries(m)`.",
+                "entries(#{ \"b\": 2, \"a\": 1 })  // [(\"a\", 1), (\"b\", 2)]",
+            ),
+            (
+                "map_get",
+                "map_get(map, key)",
+                "Any",
+                "Maps",
+                "The value under key, or Unit () when the key is absent — a missing key is                  not an error. Reads maps, structs, objects, and parsed JSON uniformly.",
+                "map_get(#{ \"a\": 1 }, \"a\")  // 1",
+            ),
+            (
+                "map_has_key",
+                "map_has_key(map, key)",
+                "Bool",
+                "Maps",
+                "Whether key is present — the way to tell an absent key from one stored                  with a Unit value.",
+                "map_has_key(#{ \"a\": 1 }, \"b\")  // false",
+            ),
+            (
+                "map_keys",
+                "map_keys(map)",
+                "List",
+                "Maps",
+                "Every key, sorted — the same deterministic order entries uses.",
+                "map_keys(#{ \"b\": 2, \"a\": 1 })  // [\"a\", \"b\"]",
+            ),
+            (
+                "map_values",
+                "map_values(map)",
+                "List",
+                "Maps",
+                "Every value, in the sorted-key order map_keys reports.",
+                "map_values(#{ \"b\": 2, \"a\": 1 })  // [1, 2]",
+            ),
+            (
+                "map_len",
+                "map_len(map)",
+                "Int",
+                "Maps",
+                "The number of entries.",
+                "map_len(#{ \"a\": 1 })  // 1",
+            ),
+            (
+                "map_set",
+                "map_set(map, key, value)",
+                "Map",
+                "Maps",
+                "A new map with key bound to value; the original is unchanged, like every                  olang value.",
+                "map_set(#{}, \"a\", 1)  // #{\"a\": 1}",
+            ),
+            (
+                "map_remove",
+                "map_remove(map, key)",
+                "Map",
+                "Maps",
+                "A new map without key; removing an absent key returns an equal map.",
+                "map_remove(#{ \"a\": 1 }, \"a\")  // #{}",
+            ),
+            (
+                "map_merge",
+                "map_merge(a, b)",
+                "Map",
+                "Maps",
+                "A new map holding both maps' entries; where keys collide, b wins.",
+                "map_merge(#{ \"a\": 1 }, #{ \"a\": 2 })  // #{\"a\": 2}",
+            ),
+            (
+                "map_clear",
+                "map_clear(map)",
+                "Map",
+                "Maps",
+                "An empty map of the same shape — equivalent to #{} and present for                  symmetry with the other map builtins.",
+                "map_clear(#{ \"a\": 1 })  // #{}",
+            ),
+            (
+                "map_filtered",
+                "map_filtered(list, predicate, function)",
+                "List",
+                "Higher-Order",
+                "Filter then map in one pass: function applied to each element the                  predicate accepts.",
+                "map_filtered([1, 2, 3, 4], (x) => x % 2 == 0, (x) => x * 10)  // [20, 40]",
+            ),
+            (
+                "implements",
+                "implements(value, trait_name)",
+                "Bool",
+                "Traits",
+                "Whether the value's type has an impl for the named trait (given as a                  String).",
+                "implements(shape, \"Area\")  // true",
+            ),
+            (
+                "set_parallel",
+                "set_parallel(enabled)",
+                "Unit",
+                "Concurrency",
+                "Turn the parallel-capable builtins' thread pool on or off for this                  process.",
+                "set_parallel(false)",
+            ),
+            (
+                "lazy",
+                "lazy(value)",
+                "Any",
+                "Evaluation",
+                "The identity function. olang is eager — the argument is already evaluated                  when lazy receives it — so this defers nothing; it exists for source                  compatibility and force is its inverse in name only.",
+                "force(lazy(5))  // 5",
+            ),
+            (
+                "force",
+                "force(value)",
+                "Any",
+                "Evaluation",
+                "The identity function, paired with lazy. See lazy for why neither defers                  anything.",
+                "force(lazy(5))  // 5",
+            ),
+        ] {
+            self.add_function(FunctionDoc {
+                name: name.to_string(),
+                description: description.to_string(),
+                syntax: syntax.to_string(),
+                parameters: vec![],
+                return_type: ret.to_string(),
+                examples: vec![example.to_string()],
+                category: category.to_string(),
+                see_also: vec![],
+            });
+        }
     }
 
     fn add_process_and_concurrency_docs(&mut self) {
@@ -6484,6 +6660,15 @@ For function-specific syntax, use: {}:help <function_name>{}",
     /// Get all function names (for tab completion)
     pub fn get_function_names(&self) -> Vec<String> {
         self.functions.keys().cloned().collect()
+    }
+
+    /// One function's documentation, by its registered name (bare for
+    /// globals — `"len"` — and module-qualified otherwise — `"str.trim"`).
+    /// The language server renders hovers, completions, and signature
+    /// help from these entries, so `:help`, the book, and the editor all
+    /// speak from the same registry.
+    pub fn get_function(&self, name: &str) -> Option<&FunctionDoc> {
+        self.functions.get(name)
     }
 
     /// Qualified names of every stdlib function documented as returning a

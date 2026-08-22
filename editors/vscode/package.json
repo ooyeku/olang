@@ -2,7 +2,7 @@
   "name": "olang",
   "displayName": "olang",
   "description": "olang language support: syntax highlighting, diagnostics, completions, and formatting via the built-in language server (olang lsp).",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "ooyeku",
   "license": "MIT",
   "icon": "icon.png",

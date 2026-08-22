@@ -1,14 +1,26 @@
 //! `olang lsp` — the language server, speaking LSP over stdio.
 //!
-//! v1 scope, built entirely on machinery the compiler already has:
-//! - Diagnostics on open/change: parse errors (with the parser's own
-//!   line/column info) and analyzer warnings (unused variables, attached
-//!   at their declaration site by text search — the analyzer does not
-//!   yet carry spans).
-//! - Completions: keywords, global builtins, stdlib modules and their
-//!   functions, plus `fn`/`type`/`let` names scanned from the document.
-//! - Whole-document formatting through the `olang fmt` engine (AST-
-//!   verified, whitespace-only).
+//! Everything is built on machinery the compiler already has, and the
+//! documentation the editor shows is the same registry `:help` and the
+//! book speak from:
+//! - Diagnostics on open/change: parse errors, analyzer warnings,
+//!   provable annotation violations — expansion-aware for macro files,
+//!   with positions mapped back to the buffer.
+//! - Completions, context-aware: after `mod.` the module's functions
+//!   (with signatures and docs from the help registry); otherwise
+//!   keywords, globals, modules, and this file's declarations.
+//! - Hover for every documented name: local declarations with the
+//!   checker's type knowledge, and every builtin and stdlib function
+//!   with its signature and description.
+//! - Go to definition (local and cross-module), references, rename,
+//!   document highlight, document symbols (the outline), and signature
+//!   help with active-parameter tracking.
+//! - Whole-document formatting through the `olang fmt` engine.
+//!
+//! Positions cross the wire in UTF-16 code units — the protocol's
+//! default — and are converted at every boundary, so a `π` or an emoji
+//! earlier in a line never shifts a range. Internally everything is
+//! character-indexed.
 //!
 //! The server is intentionally stateless beyond an open-document map:
 //! every edit re-parses whole files (olang files are small; the parser
@@ -32,72 +44,64 @@ use lsp_types::{
 use crate::analyze::Analyzer;
 use crate::parser::{ParseError, Parser as OlangParser};
 
+/// The fifteen reserved words, the eight contextual declaration words,
+/// and the position-contextual particles — the language.md appendix,
+/// exactly. `async`/`await`/`try`/`catch` sat in this list long after
+/// they left the language, so the editor was completing keywords that
+/// error; a test now diffs this list against the appendix's.
 const KEYWORDS: &[&str] = &[
-    "fn", "let", "mut", "type", "if", "else", "match", "for", "par", "while", "loop", "break",
-    "continue", "return", "true", "false", "async", "await", "spawn", "try", "catch", "error",
-    "share", "use", "struct", "enum", "test", "trait", "impl", "in",
+    // reserved
+    "fn", "let", "if", "else", "match", "for", "while", "loop", "break", "continue", "return",
+    "true", "false", "struct", "enum", // contextual declaration words
+    "share", "error", "test", "type", "trait", "impl", "use", "meta",
+    // position-contextual
+    "mut", "par", "in", "spawn", "self",
 ];
 
-const GLOBAL_BUILTINS: &[&str] = &[
-    "print",
-    "println",
-    "show",
-    "to_string",
-    "typeof",
-    "to_int",
-    "to_float",
-    "len",
-    "range",
-    "head",
-    "tail",
-    "take",
-    "skip",
-    "reverse",
-    "sort",
-    "contains",
-    "concat",
-    "cons",
-    "chunk",
-    "flatten",
-    "enumerate",
-    "zip",
-    "group_by",
-    "sum",
-    "min",
-    "max",
-    "average",
-    "clamp",
-    "map",
-    "filter",
-    "par_map",
-    "par_filter",
-    "fold",
-    "reduce",
-    "find",
-    "map_filtered",
-    "split",
-    "join",
-    "starts_with",
-    "ends_with",
-    "map_get",
-    "map_has_key",
-    "map_keys",
-    "map_values",
-    "map_len",
-    "map_set",
-    "map_remove",
-    "map_merge",
-    "map_clear",
-    "entries",
-    "unwrap",
-    "unwrap_or",
-    "implements",
-];
-
+/// Always-in-scope native modules, plus the embedded olang packages
+/// (which need a `use` first — their completion detail says so).
 const MODULES: &[&str] = &[
     "str", "col", "math", "json", "toml", "csv", "re", "dates", "time", "random", "crypto",
-    "base64", "fs", "os", "http", "db", "testing", "ods", "stats", "plot",
+    "base64", "fs", "os", "http", "db", "testing", "ods", "stats", "plot", "cell", "chan", "task",
+    "proc", "caps", "meta",
 ];
+const USE_MODULES: &[&str] = &["cli", "term", "ui", "viz", "dash", "colx", "mathx"];
+
+/// The one help registry, built once: the same entries `:help` renders.
+fn help() -> &'static crate::help::HelpSystem {
+    static HELP: std::sync::OnceLock<crate::help::HelpSystem> = std::sync::OnceLock::new();
+    HELP.get_or_init(crate::help::HelpSystem::new)
+}
+
+// ── UTF-16 boundary layer ─────────────────────────────────────────────
+// The protocol's positions are UTF-16 code units; the server's internal
+// coordinates are character indices. Convert exactly at the wire.
+
+/// Character index for a UTF-16 column on `line`, clamped to its end.
+fn utf16_to_char_col(line: &str, utf16: u32) -> usize {
+    let mut units = 0u32;
+    for (i, ch) in line.chars().enumerate() {
+        if units >= utf16 {
+            return i;
+        }
+        units += ch.len_utf16() as u32;
+    }
+    line.chars().count()
+}
+
+/// UTF-16 column for a character index on `line`.
+fn char_to_utf16_col(line: &str, chars: usize) -> u32 {
+    line.chars().take(chars).map(|c| c.len_utf16() as u32).sum()
+}
+
+/// A wire Range on one line of `text`, from character columns.
+fn utf16_range(text: &str, line: u32, start_char: usize, end_char: usize) -> Range {
+    let l = text.lines().nth(line as usize).unwrap_or("");
+    Range::new(
+        Position::new(line, char_to_utf16_col(l, start_char)),
+        Position::new(line, char_to_utf16_col(l, end_char)),
+    )
+}
 
 pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
@@ -111,6 +115,15 @@ pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
         document_formatting_provider: Some(OneOf::Left(true)),
         hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
+        rename_provider: Some(OneOf::Left(true)),
+        signature_help_provider: Some(lsp_types::SignatureHelpOptions {
+            trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+            retrigger_characters: None,
+            work_done_progress_options: Default::default(),
+        }),
         ..Default::default()
     };
     let init_params = connection.initialize(serde_json::to_value(capabilities)?)?;
@@ -183,8 +196,97 @@ fn handle_request(
                 .get(&params.text_document_position.text_document.uri)
                 .map(String::as_str)
                 .unwrap_or("");
-            let items = completions(text);
+            let items = completions(text, params.text_document_position.position);
             respond(connection, id, &CompletionResponse::Array(items))?;
+        }
+        lsp_types::request::DocumentSymbolRequest::METHOD => {
+            let (id, params): (RequestId, lsp_types::DocumentSymbolParams) =
+                req.extract(lsp_types::request::DocumentSymbolRequest::METHOD)?;
+            let text = docs
+                .get(&params.text_document.uri)
+                .map(String::as_str)
+                .unwrap_or("");
+            respond(
+                connection,
+                id,
+                &lsp_types::DocumentSymbolResponse::Nested(document_symbols(text)),
+            )?;
+        }
+        lsp_types::request::References::METHOD => {
+            let (id, params): (RequestId, lsp_types::ReferenceParams) =
+                req.extract(lsp_types::request::References::METHOD)?;
+            let uri = params.text_document_position.text_document.uri.clone();
+            let text = docs.get(&uri).map(String::as_str).unwrap_or("");
+            let locs: Option<Vec<lsp_types::Location>> =
+                word_at(text, params.text_document_position.position).map(|(word, _)| {
+                    occurrences(text, &word)
+                        .into_iter()
+                        .map(|range| lsp_types::Location {
+                            uri: uri.clone(),
+                            range,
+                        })
+                        .collect()
+                });
+            respond(connection, id, &locs)?;
+        }
+        lsp_types::request::DocumentHighlightRequest::METHOD => {
+            let (id, params): (RequestId, lsp_types::DocumentHighlightParams) =
+                req.extract(lsp_types::request::DocumentHighlightRequest::METHOD)?;
+            let pos = params.text_document_position_params;
+            let text = docs
+                .get(&pos.text_document.uri)
+                .map(String::as_str)
+                .unwrap_or("");
+            let highlights: Option<Vec<lsp_types::DocumentHighlight>> = word_at(text, pos.position)
+                .map(|(word, _)| {
+                    occurrences(text, &word)
+                        .into_iter()
+                        .map(|range| lsp_types::DocumentHighlight { range, kind: None })
+                        .collect()
+                });
+            respond(connection, id, &highlights)?;
+        }
+        lsp_types::request::Rename::METHOD => {
+            let (id, params): (RequestId, lsp_types::RenameParams) =
+                req.extract(lsp_types::request::Rename::METHOD)?;
+            let uri = params.text_document_position.text_document.uri.clone();
+            let text = docs.get(&uri).map(String::as_str).unwrap_or("");
+            match rename(
+                text,
+                params.text_document_position.position,
+                &params.new_name,
+            ) {
+                Ok(edits) => {
+                    let mut changes = std::collections::HashMap::new();
+                    changes.insert(uri, edits);
+                    respond(
+                        connection,
+                        id,
+                        &lsp_types::WorkspaceEdit {
+                            changes: Some(changes),
+                            ..Default::default()
+                        },
+                    )?;
+                }
+                Err(message) => {
+                    let resp = Response::new_err(
+                        id,
+                        lsp_server::ErrorCode::InvalidRequest as i32,
+                        message,
+                    );
+                    connection.sender.send(Message::Response(resp))?;
+                }
+            }
+        }
+        lsp_types::request::SignatureHelpRequest::METHOD => {
+            let (id, params): (RequestId, lsp_types::SignatureHelpParams) =
+                req.extract(lsp_types::request::SignatureHelpRequest::METHOD)?;
+            let pos = params.text_document_position_params;
+            let text = docs
+                .get(&pos.text_document.uri)
+                .map(String::as_str)
+                .unwrap_or("");
+            respond(connection, id, &signature_help(text, pos.position))?;
         }
         lsp_types::request::HoverRequest::METHOD => {
             let (id, params): (RequestId, lsp_types::HoverParams) =
@@ -410,7 +512,7 @@ fn program_diagnostics(
                             let range = decls
                                 .iter()
                                 .find(|(n, _, _)| n == name)
-                                .map(|(n, _, span)| span_range(*span, n.len()))
+                                .map(|(n, _, span)| span_range(text, *span, n.chars().count()))
                                 .or_else(|| find_declaration(text, name))?;
                             Some(Diagnostic {
                                 range,
@@ -433,17 +535,14 @@ fn program_diagnostics(
                         .into_iter()
                         .map(|d| {
                             let line = d.line.saturating_sub(1);
-                            let col = d.column.saturating_sub(1);
+                            let col = d.column.saturating_sub(1) as usize;
                             let severity = if d.warning {
                                 DiagnosticSeverity::WARNING
                             } else {
                                 DiagnosticSeverity::ERROR
                             };
                             Diagnostic {
-                                range: Range::new(
-                                    Position::new(line, col),
-                                    Position::new(line, col + 1),
-                                ),
+                                range: utf16_range(text, line, col, col + 1),
                                 severity: Some(severity),
                                 source: Some("olang".to_string()),
                                 message: d.message,
@@ -481,16 +580,17 @@ fn parse_error_diagnostic(text: &str, e: &ParseError) -> Diagnostic {
         } => (*line, *column, message.clone()),
         other => (1, 1, other.to_string()),
     };
-    // LSP is 0-based; the parser is 1-based. Highlight to end of line.
+    // LSP is 0-based; the parser is 1-based, in characters. Highlight to
+    // end of line, converted to UTF-16 at the wire.
     let l = line.saturating_sub(1) as u32;
-    let c = column.saturating_sub(1) as u32;
+    let c = column.saturating_sub(1);
     let line_len = text
         .lines()
         .nth(l as usize)
-        .map(|s| s.chars().count() as u32)
+        .map(|s| s.chars().count())
         .unwrap_or(c + 1);
     Diagnostic {
-        range: Range::new(Position::new(l, c), Position::new(l, line_len.max(c + 1))),
+        range: utf16_range(text, l, c, line_len.max(c + 1)),
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some("olang".to_string()),
         message,
@@ -504,29 +604,9 @@ fn name_in_error(msg: &str) -> Option<String> {
         .filter(|n| n.chars().all(|c| c.is_alphanumeric() || c == '_'))
 }
 
-/// 0-based range of the first standalone occurrence of `name`.
+/// 0-based wire range of the first standalone occurrence of `name`.
 fn find_identifier(text: &str, name: &str) -> Option<Range> {
-    for (ln, line) in text.lines().enumerate() {
-        let mut start = 0;
-        while let Some(pos) = line[start..].find(name) {
-            let at = start + pos;
-            let before_ok = at == 0
-                || !line[..at]
-                    .chars()
-                    .next_back()
-                    .is_some_and(|c| c.is_alphanumeric() || c == '_');
-            let after = line[at + name.len()..].chars().next();
-            let after_ok = !after.is_some_and(|c| c.is_alphanumeric() || c == '_');
-            if before_ok && after_ok {
-                return Some(Range::new(
-                    Position::new(ln as u32, at as u32),
-                    Position::new(ln as u32, (at + name.len()) as u32),
-                ));
-            }
-            start = at + name.len().max(1);
-        }
-    }
-    None
+    occurrences(text, name).into_iter().next()
 }
 
 /// The declaration site of `name` (`let [mut] name`, `fn name`), falling
@@ -539,10 +619,12 @@ fn find_declaration(text: &str, name: &str) -> Option<Range> {
                 if let Some(rest) = after.strip_prefix(name) {
                     let boundary = rest.chars().next();
                     if !boundary.is_some_and(|c| c.is_alphanumeric() || c == '_') {
-                        let col = kw + prefix.len();
-                        return Some(Range::new(
-                            Position::new(ln as u32, col as u32),
-                            Position::new(ln as u32, (col + name.len()) as u32),
+                        let col_chars = line[..kw + prefix.len()].chars().count();
+                        return Some(utf16_range(
+                            text,
+                            ln as u32,
+                            col_chars,
+                            col_chars + name.chars().count(),
                         ));
                     }
                 }
@@ -554,59 +636,136 @@ fn find_declaration(text: &str, name: &str) -> Option<Range> {
 
 // ── completions ────────────────────────────────────────────────────────
 
-fn completions(text: &str) -> Vec<CompletionItem> {
+/// Context-aware completion. After `mod.` the items are that module's
+/// functions, with signatures and documentation from the help registry —
+/// the same entries `:help` prints. Anywhere else: keywords, global
+/// builtins (from the registry, so nothing rotted survives here),
+/// modules, and this file's own declarations.
+fn completions(text: &str, pos: Position) -> Vec<CompletionItem> {
+    // The module receiver, if the cursor sits right after `name.`.
+    let line = text.lines().nth(pos.line as usize).unwrap_or("");
+    let cursor = utf16_to_char_col(line, pos.character);
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = cursor;
+    // Skip back over the partial word being typed.
+    while i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+        i -= 1;
+    }
+    if i > 0 && chars[i - 1] == '.' {
+        let mut j = i - 1;
+        while j > 0 && (chars[j - 1].is_alphanumeric() || chars[j - 1] == '_') {
+            j -= 1;
+        }
+        let receiver: String = chars[j..i - 1].iter().collect();
+        if MODULES.contains(&receiver.as_str()) || USE_MODULES.contains(&receiver.as_str()) {
+            return module_completions(&receiver);
+        }
+    }
+
     let mut items: Vec<CompletionItem> = Vec::new();
-    let mut push = |label: &str, kind: CompletionItemKind, detail: &str| {
+    for kw in KEYWORDS {
         items.push(CompletionItem {
-            label: label.to_string(),
-            kind: Some(kind),
-            detail: Some(detail.to_string()),
+            label: kw.to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("keyword".to_string()),
             ..Default::default()
         });
-    };
-
-    for kw in KEYWORDS {
-        push(kw, CompletionItemKind::KEYWORD, "keyword");
     }
-    for b in GLOBAL_BUILTINS {
-        push(b, CompletionItemKind::FUNCTION, "builtin");
+    // Global builtins: every registry entry without a module prefix.
+    let mut names = help().get_function_names();
+    names.sort();
+    for name in names {
+        if name.contains('.') {
+            continue;
+        }
+        let doc = help().get_function(&name);
+        items.push(CompletionItem {
+            label: name.clone(),
+            kind: Some(CompletionItemKind::FUNCTION),
+            detail: doc.map(|d| d.syntax.clone()),
+            documentation: doc.map(doc_markup),
+            ..Default::default()
+        });
     }
     for m in MODULES {
-        push(m, CompletionItemKind::MODULE, "stdlib module");
+        items.push(CompletionItem {
+            label: m.to_string(),
+            kind: Some(CompletionItemKind::MODULE),
+            detail: Some("stdlib module".to_string()),
+            ..Default::default()
+        });
     }
-
-    // Document symbols: fn/type/let names from the current text.
+    for m in USE_MODULES {
+        items.push(CompletionItem {
+            label: m.to_string(),
+            kind: Some(CompletionItemKind::MODULE),
+            detail: Some(format!("embedded package (use {m})")),
+            ..Default::default()
+        });
+    }
     let mut seen = std::collections::HashSet::new();
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        for (prefix, kind, detail) in [
-            ("fn ", CompletionItemKind::FUNCTION, "function (this file)"),
-            ("type ", CompletionItemKind::STRUCT, "type (this file)"),
-            ("let mut ", CompletionItemKind::VARIABLE, "variable"),
-            ("let ", CompletionItemKind::VARIABLE, "variable"),
-        ] {
-            if let Some(rest) = trimmed.strip_prefix(prefix) {
-                let name: String = rest
-                    .chars()
-                    .take_while(|c| c.is_alphanumeric() || *c == '_')
-                    .collect();
-                if !name.is_empty() && seen.insert(name.clone()) {
-                    push(&name, kind, detail);
-                }
-                break;
-            }
+    for (name, detail, _) in declarations(text) {
+        if seen.insert(name.clone()) {
+            let kind = if detail.starts_with("fn ") {
+                CompletionItemKind::FUNCTION
+            } else if detail.starts_with("type ") {
+                CompletionItemKind::STRUCT
+            } else {
+                CompletionItemKind::VARIABLE
+            };
+            items.push(CompletionItem {
+                label: name,
+                kind: Some(kind),
+                detail: Some(detail),
+                ..Default::default()
+            });
         }
     }
     items
 }
 
+fn module_completions(module: &str) -> Vec<CompletionItem> {
+    let mut names = help().functions_in_module(module);
+    names.sort();
+    names
+        .into_iter()
+        .map(|qualified| {
+            let doc = help().get_function(&qualified);
+            let label = qualified
+                .rsplit_once('.')
+                .map(|(_, f)| f.to_string())
+                .unwrap_or(qualified.clone());
+            CompletionItem {
+                label,
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: doc.map(|d| d.syntax.clone()),
+                documentation: doc.map(doc_markup),
+                ..Default::default()
+            }
+        })
+        .collect()
+}
+
+fn doc_markup(d: &crate::help::FunctionDoc) -> lsp_types::Documentation {
+    lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {
+        kind: lsp_types::MarkupKind::Markdown,
+        value: format!(
+            "```olang\n{} -> {}\n```\n\n{}",
+            d.syntax, d.return_type, d.description
+        ),
+    })
+}
+
 // ── declarations by span (the spans rung) ──────────────────────────────
 
-/// A top-level declaration's name, kind label, and 1-based span.
+/// A top-level declaration's name, kind label, and 1-based span. When
+/// the file does not parse — which is most moments in a live editor,
+/// mid-keystroke — falls back to a line scan, so hover, definition, and
+/// completion keep working while the user types.
 fn declarations(text: &str) -> Vec<(String, String, (u32, u32))> {
     let parser = OlangParser::new();
     let Ok(program) = parser.parse_raw(text) else {
-        return Vec::new();
+        return scan_declarations(text);
     };
     let mut out = Vec::new();
     for stmt in &program.statements {
@@ -633,17 +792,115 @@ fn declarations(text: &str) -> Vec<(String, String, (u32, u32))> {
                     out.push((name.clone(), format!("let {}", name), span));
                 }
             }
+            Statement::MetaFnDecl { decl, .. } => {
+                if let Some(span) = decl.name_span {
+                    let params: Vec<&str> =
+                        decl.parameters.iter().map(|p| p.name.as_str()).collect();
+                    out.push((
+                        decl.name.clone(),
+                        format!("meta fn {}({})", decl.name, params.join(", ")),
+                        span,
+                    ));
+                }
+            }
             _ => {}
         }
     }
     out
 }
 
-/// The identifier under the cursor (0-based LSP position).
-fn word_at(text: &str, pos: Position) -> Option<String> {
+/// Declarations by text scan — the mid-edit fallback. 1-based spans,
+/// like the parser's.
+fn scan_declarations(text: &str) -> Vec<(String, String, (u32, u32))> {
+    let mut out = Vec::new();
+    for (ln, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let indent = line.chars().count() - trimmed.chars().count();
+        for (prefix, label) in [
+            ("meta fn ", "meta fn"),
+            ("fn ", "fn"),
+            ("type ", "type"),
+            ("let mut ", "let"),
+            ("let ", "let"),
+        ] {
+            if let Some(rest) = trimmed.strip_prefix(prefix) {
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if !name.is_empty() {
+                    let col = indent + prefix.chars().count();
+                    out.push((
+                        name.clone(),
+                        format!("{label} {name}"),
+                        (ln as u32 + 1, col as u32 + 1),
+                    ));
+                }
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// The document outline: every top-level declaration, plus test blocks.
+fn document_symbols(text: &str) -> Vec<lsp_types::DocumentSymbol> {
+    let mut out: Vec<lsp_types::DocumentSymbol> = Vec::new();
+    let mut push = |name: String, detail: String, kind: lsp_types::SymbolKind, range: Range| {
+        #[allow(deprecated)]
+        out.push(lsp_types::DocumentSymbol {
+            name,
+            detail: Some(detail),
+            kind,
+            tags: None,
+            deprecated: None,
+            range,
+            selection_range: range,
+            children: None,
+        });
+    };
+    for (name, detail, span) in declarations(text) {
+        let kind = if detail.starts_with("fn ") || detail.starts_with("meta fn ") {
+            lsp_types::SymbolKind::FUNCTION
+        } else if detail.starts_with("type ") {
+            lsp_types::SymbolKind::STRUCT
+        } else {
+            lsp_types::SymbolKind::VARIABLE
+        };
+        push(
+            name.clone(),
+            detail,
+            kind,
+            span_range(text, span, name.chars().count()),
+        );
+    }
+    // Test blocks, by text scan — like the declarations fallback, this
+    // keeps the outline complete while the file is mid-edit.
+    for (ln, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("test ")
+            && let Some(name) = rest.trim_start().strip_prefix('"')
+            && let Some((name, _)) = name.split_once('"')
+        {
+            let range = utf16_range(text, ln as u32, 0, 4);
+            push(
+                format!("test \"{name}\""),
+                "test block".to_string(),
+                lsp_types::SymbolKind::EVENT,
+                range,
+            );
+        }
+    }
+    out
+}
+
+/// The identifier under the cursor (wire position), and its qualified
+/// form when preceded by `module.` — `("trim", Some("str.trim"))`.
+fn word_at(text: &str, pos: Position) -> Option<(String, Option<String>)> {
     let line = text.lines().nth(pos.line as usize)?;
     let chars: Vec<char> = line.chars().collect();
-    let mut start = (pos.character as usize).min(chars.len());
+    let cursor = utf16_to_char_col(line, pos.character);
+    let mut start = cursor.min(chars.len());
     while start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') {
         start -= 1;
     }
@@ -651,74 +908,114 @@ fn word_at(text: &str, pos: Position) -> Option<String> {
     while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
         end += 1;
     }
-    (end > start).then(|| chars[start..end].iter().collect())
+    if end == start {
+        return None;
+    }
+    let word: String = chars[start..end].iter().collect();
+    let qualified = (start > 0 && chars[start - 1] == '.').then(|| {
+        let mut j = start - 1;
+        while j > 0 && (chars[j - 1].is_alphanumeric() || chars[j - 1] == '_') {
+            j -= 1;
+        }
+        let receiver: String = chars[j..start - 1].iter().collect();
+        format!("{receiver}.{word}")
+    });
+    Some((word, qualified))
 }
 
-fn span_range(span: (u32, u32), name_len: usize) -> Range {
-    let (line, col) = (span.0.saturating_sub(1), span.1.saturating_sub(1));
-    Range::new(
-        Position::new(line, col),
-        Position::new(line, col + name_len as u32),
-    )
+/// Every standalone occurrence of `name` in `text`, as wire ranges.
+/// Word-boundary exact, so `count` never matches `counter`.
+fn occurrences(text: &str, name: &str) -> Vec<Range> {
+    let mut out = Vec::new();
+    for (ln, line) in text.lines().enumerate() {
+        let chars: Vec<char> = line.chars().collect();
+        let target: Vec<char> = name.chars().collect();
+        let mut i = 0;
+        while i + target.len() <= chars.len() {
+            if chars[i..i + target.len()] == target[..] {
+                let before_ok = i == 0 || !(chars[i - 1].is_alphanumeric() || chars[i - 1] == '_');
+                let after = chars.get(i + target.len());
+                let after_ok = !after.is_some_and(|c| c.is_alphanumeric() || *c == '_');
+                if before_ok && after_ok {
+                    out.push(utf16_range(text, ln as u32, i, i + target.len()));
+                    i += target.len();
+                    continue;
+                }
+            }
+            i += 1;
+        }
+    }
+    out
+}
+
+fn span_range(text: &str, span: (u32, u32), name_len: usize) -> Range {
+    // Parser spans are 1-based (line, char-column).
+    let (line, col) = (span.0.saturating_sub(1), span.1.saturating_sub(1) as usize);
+    utf16_range(text, line, col, col + name_len)
 }
 
 fn hover(text: &str, pos: Position, doc_dir: Option<&std::path::Path>) -> Option<lsp_types::Hover> {
-    let word = word_at(text, pos)?;
-    let local = declarations(text).into_iter().find(|(n, _, _)| *n == word);
+    let (word, qualified) = word_at(text, pos)?;
+    // Registry entries first for qualified names (`str.trim`), then local
+    // declarations, then bare registry names, then imported modules.
+    if let Some(q) = &qualified
+        && let Some(d) = help().get_function(q)
+    {
+        return Some(help_hover(d));
+    }
+    if let Some((name, detail, _)) = declarations(text).into_iter().find(|(n, _, _)| *n == word) {
+        let detail = OlangParser::new()
+            .parse_raw(text)
+            .ok()
+            .and_then(|program| crate::tools::check::hover_types(&program).remove(&name))
+            .unwrap_or(detail);
+        return Some(code_hover(detail));
+    }
+    if let Some(d) = help().get_function(&word) {
+        return Some(help_hover(d));
+    }
     // Imported names hover with their module's signature.
-    let (name, detail) = match local {
-        Some((n, d, _)) => (n, d),
-        None => {
-            let (path, src, prog) = crate::tools::check::module_programs(text, doc_dir)
+    let (path, src, prog) = crate::tools::check::module_programs(text, doc_dir)
+        .into_iter()
+        .find(|(_, src, _)| declarations(src).iter().any(|(n, _, _)| *n == word))?;
+    let detail = crate::tools::check::hover_types(&prog)
+        .remove(&word)
+        .or_else(|| {
+            declarations(&src)
                 .into_iter()
-                .find(|(_, src, _)| declarations(src).iter().any(|(n, _, _)| *n == word))?;
-            let detail = crate::tools::check::hover_types(&prog)
-                .remove(&word)
-                .or_else(|| {
-                    declarations(&src)
-                        .into_iter()
-                        .find(|(n, _, _)| *n == word)
-                        .map(|(_, d, _)| d)
-                })?;
-            let from = path
-                .file_name()
-                .map(|f| f.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            (word.clone(), format!("{}    // from {}", detail, from))
-        }
-    };
-    // Upgrade the declaration text with the checker's type knowledge —
-    // annotated signatures rendered in full, unannotated lets with their
-    // inferred types when the checker knows one.
-    let detail = OlangParser::new()
-        .parse_raw(text)
-        .ok()
-        .and_then(|program| crate::tools::check::hover_types(&program).remove(&name))
-        .unwrap_or(detail);
-    Some(lsp_types::Hover {
+                .find(|(n, _, _)| *n == word)
+                .map(|(_, d, _)| d)
+        })?;
+    let from = path
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Some(code_hover(format!("{}    // from {}", detail, from)))
+}
+
+fn code_hover(detail: String) -> lsp_types::Hover {
+    lsp_types::Hover {
         contents: lsp_types::HoverContents::Scalar(lsp_types::MarkedString::LanguageString(
             lsp_types::LanguageString {
                 language: "olang".to_string(),
                 value: detail,
             },
         )),
-        range: Some(span_range_at_cursor(text, pos, &name)),
-    })
+        range: None,
+    }
 }
 
-fn span_range_at_cursor(text: &str, pos: Position, name: &str) -> Range {
-    // Highlight the word under the cursor itself.
-    let line = pos.line;
-    let col = pos.character.saturating_sub(
-        word_at(text, pos)
-            .map(|w| w.len() as u32)
-            .unwrap_or(0)
-            .min(pos.character),
-    );
-    Range::new(
-        Position::new(line, col),
-        Position::new(line, col + name.len() as u32),
-    )
+fn help_hover(d: &crate::help::FunctionDoc) -> lsp_types::Hover {
+    lsp_types::Hover {
+        contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+            kind: lsp_types::MarkupKind::Markdown,
+            value: format!(
+                "```olang\n{} -> {}\n```\n\n{}",
+                d.syntax, d.return_type, d.description
+            ),
+        }),
+        range: None,
+    }
 }
 
 fn definition(
@@ -726,17 +1023,160 @@ fn definition(
     pos: Position,
     doc_dir: Option<&std::path::Path>,
 ) -> Option<(Option<std::path::PathBuf>, Range)> {
-    let word = word_at(text, pos)?;
+    let (word, _) = word_at(text, pos)?;
     if let Some((n, _, span)) = declarations(text).into_iter().find(|(n, _, _)| *n == word) {
-        return Some((None, span_range(span, n.len())));
+        return Some((None, span_range(text, span, n.chars().count())));
     }
-    // Not declared here: jump into the module that declares it.
+    // Not declared here: jump into the module that declares it. The range
+    // converts against the MODULE's text — its lines, its columns.
     for (path, src, _) in crate::tools::check::module_programs(text, doc_dir) {
         if let Some((n, _, span)) = declarations(&src).into_iter().find(|(n, _, _)| *n == word) {
-            return Some((Some(path), span_range(span, n.len())));
+            return Some((Some(path), span_range(&src, span, n.chars().count())));
         }
     }
     None
+}
+
+/// Rename: every standalone occurrence in this file. Refused for names
+/// that are not the user's to change — keywords, builtins, stdlib — and
+/// for invalid identifiers, with a message saying why.
+fn rename(text: &str, pos: Position, new_name: &str) -> Result<Vec<TextEdit>, String> {
+    let Some((word, qualified)) = word_at(text, pos) else {
+        return Err("nothing to rename here".to_string());
+    };
+    if qualified.is_some() || help().get_function(&word).is_some() {
+        return Err(format!(
+            "'{word}' is a standard-library name — it cannot be renamed"
+        ));
+    }
+    if KEYWORDS.contains(&word.as_str()) {
+        return Err(format!("'{word}' is a keyword"));
+    }
+    let valid = new_name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic())
+        && new_name.chars().all(|c| c.is_alphanumeric() || c == '_')
+        && !new_name.starts_with('_');
+    if !valid {
+        return Err(format!(
+            "'{new_name}' is not a valid olang identifier (letter first, then letters, digits, _)"
+        ));
+    }
+    let edits: Vec<TextEdit> = occurrences(text, &word)
+        .into_iter()
+        .map(|range| TextEdit {
+            range,
+            new_text: new_name.to_string(),
+        })
+        .collect();
+    if edits.is_empty() {
+        return Err(format!("'{word}' does not occur in this file"));
+    }
+    Ok(edits)
+}
+
+// ── signature help ─────────────────────────────────────────────────────
+
+/// The callee and active-parameter index for the innermost unclosed call
+/// at the cursor, then its signature from a local declaration or the
+/// registry.
+fn signature_help(text: &str, pos: Position) -> Option<lsp_types::SignatureHelp> {
+    let line = text.lines().nth(pos.line as usize)?;
+    let chars: Vec<char> = line.chars().collect();
+    let cursor = utf16_to_char_col(line, pos.character).min(chars.len());
+
+    // Walk back to the innermost unmatched '(' on this line, counting
+    // top-level commas for the active parameter.
+    let mut depth = 0i32;
+    let mut commas = 0u32;
+    let mut open = None;
+    let mut in_str = false;
+    for i in (0..cursor).rev() {
+        let c = chars[i];
+        if in_str {
+            if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            ')' | ']' => depth += 1,
+            '[' => depth -= 1,
+            ',' if depth == 0 => commas += 1,
+            '(' => {
+                if depth == 0 {
+                    open = Some(i);
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    let open = open?;
+    // The callee name (possibly module-qualified) just before the paren.
+    let mut end = open;
+    while end > 0 && chars[end - 1] == ' ' {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0
+        && (chars[start - 1].is_alphanumeric()
+            || chars[start - 1] == '_'
+            || chars[start - 1] == '.')
+    {
+        start -= 1;
+    }
+    if start == end {
+        return None;
+    }
+    let callee: String = chars[start..end].iter().collect();
+
+    let (label, doc) = if let Some(d) = help().get_function(&callee) {
+        (
+            format!("{} -> {}", d.syntax, d.return_type),
+            Some(d.description.clone()),
+        )
+    } else {
+        let bare = callee.rsplit('.').next().unwrap_or(&callee);
+        let (_, detail, _) = declarations(text).into_iter().find(|(n, _, _)| n == bare)?;
+        (detail, None)
+    };
+
+    // Parameters from the label's parenthesized list.
+    let params: Vec<lsp_types::ParameterInformation> = label
+        .split_once('(')
+        .and_then(|(_, rest)| rest.rsplit_once(')'))
+        .map(|(inner, _)| {
+            inner
+                .split(',')
+                .map(|p| p.trim())
+                .filter(|p| !p.is_empty())
+                .map(|p| lsp_types::ParameterInformation {
+                    label: lsp_types::ParameterLabel::Simple(p.to_string()),
+                    documentation: None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(lsp_types::SignatureHelp {
+        signatures: vec![lsp_types::SignatureInformation {
+            label,
+            documentation: doc.map(|d| {
+                lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {
+                    kind: lsp_types::MarkupKind::Markdown,
+                    value: d,
+                })
+            }),
+            parameters: Some(params),
+            active_parameter: Some(commas),
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(commas),
+    })
 }
 
 // ── formatting ─────────────────────────────────────────────────────────
@@ -746,9 +1186,18 @@ fn format_edits(text: &str) -> Vec<TextEdit> {
     if formatted == text {
         return Vec::new();
     }
-    let last_line = text.lines().count() as u32;
+    // Replace the whole document: end position is the true end of text,
+    // not one line past it.
+    let line_count = text.split('\n').count() as u32;
+    let last = text.split('\n').next_back().unwrap_or("");
     vec![TextEdit {
-        range: Range::new(Position::new(0, 0), Position::new(last_line + 1, 0)),
+        range: Range::new(
+            Position::new(0, 0),
+            Position::new(
+                line_count.saturating_sub(1),
+                char_to_utf16_col(last, last.chars().count()),
+            ),
+        ),
         new_text: formatted,
     }]
 }

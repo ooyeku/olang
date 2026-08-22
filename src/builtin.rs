@@ -32,6 +32,14 @@ impl Default for BuiltinFunctions {
 }
 
 impl BuiltinFunctions {
+    /// Every bare name the dispatcher accepts — the registration table's
+    /// keys. The help-coverage test diffs this against the help registry,
+    /// and the language server treats the registry as the single source
+    /// for what a builtin is, so the two must not drift.
+    pub fn global_names() -> Vec<String> {
+        Self::new().functions.keys().cloned().collect()
+    }
+
     pub fn new() -> Self {
         let mut functions = HashMap::new();
 

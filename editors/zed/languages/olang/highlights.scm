@@ -1,5 +1,8 @@
 (comment) @comment
 (string) @string
+(template) @string
+(raw_string) @string
+(macro) @function.macro
 (number) @number
 (keyword) @keyword
 (boolean) @constant

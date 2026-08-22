@@ -19,7 +19,19 @@ supported editors.
 | Cross-file awareness | `use`d modules are resolved and parsed alongside the open file: imported signatures feed the checker's diagnostics, hover shows an imported function's typed signature (marked `// from <file>`), and go-to-definition crosses into the module |
 | Hover | the declaration with the checker's type knowledge: annotated signatures in full (`fn dist(a: Float, b: Float) -> Float`), and unannotated `let`s with their inferred types when the checker knows one (`let total: Int`) |
 | Go to definition | jumps to the name's declaration — including into the module file that `share`s it |
+| Document outline | every `fn`, `meta fn`, `type`, top-level `let`, and `test` block, live while you type |
+| References / highlight | every standalone occurrence of the name under the cursor |
+| Rename | all occurrences in the file; refuses keywords and standard-library names with a reason |
+| Signature help | the signature and active parameter as you type a call — local functions and every registry entry alike |
 | Formatting | the `olang fmt` engine — AST-verified, whitespace-only |
+
+Positions cross the wire in UTF-16 code units, the protocol's default,
+converted at every boundary — a `π` or an emoji earlier in a line never
+shifts a hover or a diagnostic. Hover, completion documentation, and
+signature help all render from the same registry `:help` prints, so the
+editor and the REPL never disagree about what a function is. When a file
+is mid-edit and does not parse, declarations fall back to a text scan,
+so navigation keeps working while you type.
 
 Positions come from the AST itself: `fn`, `let`, and `type` declarations
 carry the source span of the name they bind.
@@ -30,9 +42,12 @@ and the parser is fast; correctness stays trivial.
 ## VS Code
 
 The extension lives in [`editors/vscode/`](../editors/vscode/) —
-syntax highlighting (TextMate grammar covering `par for`, pipelines,
-template strings, the module names), bracket/indent behavior, and a
-thin client that launches `olang lsp`.
+syntax highlighting (TextMate grammar covering template strings with
+interpolation and escapes, raw strings, `meta fn` and `@` macros,
+pipelines, and the module names), bracket/indent behavior, and a thin
+client that launches `olang lsp`. The client probes the binary before
+starting: a missing or wrong `olang.serverPath` produces an actionable
+error with a button to the setting, instead of silently doing nothing.
 
 To install from the repo:
 

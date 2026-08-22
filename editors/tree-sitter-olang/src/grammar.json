@@ -34,7 +34,19 @@
         },
         {
           "type": "SYMBOL",
+          "name": "template"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "raw_string"
+        },
+        {
+          "type": "SYMBOL",
           "name": "string"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "macro"
         },
         {
           "type": "SYMBOL",
@@ -123,23 +135,11 @@
         },
         {
           "type": "STRING",
-          "value": "async"
-        },
-        {
-          "type": "STRING",
-          "value": "await"
-        },
-        {
-          "type": "STRING",
           "value": "spawn"
         },
         {
           "type": "STRING",
-          "value": "try"
-        },
-        {
-          "type": "STRING",
-          "value": "catch"
+          "value": "meta"
         },
         {
           "type": "STRING",
@@ -218,28 +218,11 @@
             "members": [
               {
                 "type": "PATTERN",
-                "value": "[^\"\\\\$]+"
+                "value": "[^\"\\\\]+"
               },
               {
                 "type": "PATTERN",
                 "value": "\\\\."
-              },
-              {
-                "type": "SEQ",
-                "members": [
-                  {
-                    "type": "STRING",
-                    "value": "${"
-                  },
-                  {
-                    "type": "PATTERN",
-                    "value": "[^}]*"
-                  },
-                  {
-                    "type": "STRING",
-                    "value": "}"
-                  }
-                ]
               }
             ]
           }
@@ -249,6 +232,68 @@
           "value": "\""
         }
       ]
+    },
+    "template": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "`"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "PATTERN",
+                "value": "[^`\\\\]+"
+              },
+              {
+                "type": "PATTERN",
+                "value": "\\\\."
+              }
+            ]
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "`"
+        }
+      ]
+    },
+    "raw_string": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "r\""
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "PATTERN",
+                "value": "[^\"\\\\]+"
+              },
+              {
+                "type": "PATTERN",
+                "value": "\\\\."
+              }
+            ]
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "\""
+        }
+      ]
+    },
+    "macro": {
+      "type": "PATTERN",
+      "value": "@[a-z_][A-Za-z0-9_]*"
     },
     "operator": {
       "type": "CHOICE",
@@ -403,6 +448,5 @@
   "precedences": [],
   "externals": [],
   "inline": [],
-  "supertypes": [],
-  "reserved": {}
+  "supertypes": []
 }
