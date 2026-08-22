@@ -80,6 +80,7 @@ const GLOBAL_BUILTINS: &[&str] = &[
     "starts_with",
     "ends_with",
     "map_get",
+    "map_get_or",
     "map_has_key",
     "map_keys",
     "map_values",
@@ -96,7 +97,7 @@ const GLOBAL_BUILTINS: &[&str] = &[
 
 const MODULES: &[&str] = &[
     "str", "col", "math", "json", "toml", "csv", "re", "dates", "time", "random", "crypto",
-    "base64", "fs", "os", "http", "db", "testing", "ods", "stats", "plot",
+    "base64", "bytes", "fs", "os", "http", "db", "testing", "ods", "stats", "plot",
 ];
 
 pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {

@@ -19,7 +19,7 @@ share fn tokenize(src) = {
     let mut rest = src
     while str.length(rest) > 0 {
         let open = str.index_of(rest, "{{")
-        if open == -1 => {
+        if open == () => {
             // no more tags: the remainder is all literal text
             tokens = tokens + [TText(rest)]
             rest = ""

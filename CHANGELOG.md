@@ -7,6 +7,131 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — the last-mile corrections (deliberate breaking change, the third and final before 1.0)
+
+- **Operator precedence now reads conventionally.** The table, loosest →
+  tightest, is: `||` · `&&` · comparison · `|>` · ranges · `+ -` ·
+  `* / %` · bitwise · unary · postfix. Three orderings changed:
+
+  - `&&` binds tighter than `||` (they shared one level).
+    `a || b && c` is now `a || (b && c)`.
+  - Ranges bind looser than arithmetic. `0..n-1` is now `0..(n-1)`
+    — previously it was `(0..n) - 1`, a runtime error.
+  - The pipeline binds looser than arithmetic and ranges, tighter than
+    comparison (Elixir's placement). `x + 1 |> f` now pipes the sum:
+    it is `f(x + 1)`, not `x + f(1)`. A pipeline's *result* still feeds
+    a comparison: `xs |> len == 3` remains `(xs |> len) == 3`.
+
+  **Migration:** code that parenthesized mixed operators — what the book
+  always advised — is unaffected. Audit unparenthesized `a || b && c`
+  (meaning changes), unparenthesized arithmetic beside `|>` (meaning
+  changes, almost always to what was intended), and `0..(n-1)` bounds
+  (still correct, parentheses now optional). Bitwise precedence is
+  unchanged: `1 << 4 * 2` is still `(1 << 4) * 2`.
+
+- **Loops evaluate to Unit unless `break value` exits them.** `for`,
+  `while`, and `loop` no longer yield the last body iteration's value —
+  that behavior was undocumented, already absent from the bytecode tier
+  (a latent tier divergence), and retaining the value aliased it in a
+  way that defeated the O(n) append fusion for `xs = xs + [..]` bodies.
+  `break v` still makes any loop evaluate to `v`.
+
+- **Absence is Unit — the lookup convention, settled.** A lookup returns
+  the value, or `Unit` when there is nothing there; parsers and I/O
+  return `Result`; misuse raises. Three changes make it real:
+
+  - `str.index_of` / `str.last_index_of` return `Unit` when absent
+    (was `-1` — a sentinel that negative indexing made dangerous:
+    `s[str.index_of(s, x)]` on a miss read the *last* character).
+    **Migration:** `idx == -1` → `idx == ()`; `idx >= 0` → `idx != ()`.
+  - **`x == ()` / `x != ()` is total.** The presence test answers for
+    every value (false/true unless `x` is Unit) instead of raising on a
+    present value — without this, `idx != ()` raised the moment the
+    lookup succeeded. Equality between two present-but-unrelated kinds
+    still raises; ordering against Unit still raises.
+  - New global `map_get_or(m, k, default)` — the lookup-with-default in
+    one call. A stored Unit takes the default too: under this
+    convention a stored Unit *is* absence (use `map_has_key` when the
+    distinction matters).
+
+- **`dates.date(y, m, d)` returns a `Date` value** (was an ISO string
+  inside the `Ok`). The display is the same ISO text, so formatting and
+  printing keep working; code that concatenated the payload as a string
+  should call `show(d)` or use a template. All other date-taking
+  functions accept both forms and answer in kind (below), so no other
+  call site changes.
+
+### Added
+
+- **`Bytes` — binary data as a value.** `bytes.from_list` / `to_list` /
+  `from_string` / `to_string` (Result) / `len` / `slice` / `concat`;
+  `len(b)` and `b[i]` (negative from the end) work; equality is
+  structural; display is a capped hex preview. `fs.read_bytes` /
+  `fs.write_bytes` move it to and from disk under the same fs
+  capability gates as their text twins; `base64.encode` and the
+  `crypto` hashes accept it; `base64.decode_bytes` decodes to it.
+
+- **`Date` — a first-class calendar date.** `dates.date(y, m, d)` and
+  the new `dates.parse(s)` build one; `typeof` says `Date`;
+  comparisons order chronologically; `d2 - d1` is the signed day
+  difference; `d ± n` shifts by days. Every date-taking `dates`
+  function accepts a `Date` or a date string and answers in the
+  caller's kind, so string-based code is unaffected. String parsing is
+  uniformly flexible now — `dates.now()` output works everywhere a
+  date string is accepted (`add_days` previously refused what `year`
+  accepted).
+
+- **The HTTP client can authenticate.** Every client verb takes an
+  optional trailing options map: `"headers"`, `"timeout_ms"`,
+  `"bearer"`, and `"basic": (user, pass)`. Responses now carry a
+  `headers` map (lowercased names). An unknown option key raises
+  rather than being ignored.
+
+- **One effect classification, three consumers** (`src/effects.rs`).
+  The capability gate, macro-expansion purity, and record/replay used
+  to curate three independent lists of "what is effectful", and they
+  had drifted: a `meta fn` could call `dates.now`, `crypto.random_*`,
+  and the `ods` file readers/writers at expansion time — breaking
+  macro Law 4 and, through it, the `--rules` sandbox. All three now
+  ask one table; `par for` gained the meta-mode gate `spawn` already
+  had; `olang expand` resolves macro imports against the file's
+  directory like every other consumer.
+
+- **The fuzzers are committed.** `tests/macro_fuzz_corpus_test.rs` and
+  `tests/tier_fuzz_corpus_test.rs` are seeded, deterministic
+  generators: 150-seed smoke corpora run on every `cargo test`, and
+  the full 10,000-seed campaigns the stability chapter cites are the
+  `#[ignore]`d `*_full_campaign` tests — reproducible rather than
+  historical.
+
+- **Record/replay warns when a thread is spawned.** The timeline
+  covers the main thread only; a recorded or replayed run that starts
+  a task or worker now says so on stderr (once) instead of letting a
+  trace that silently missed worker effects present as a clean,
+  fully-determined run.
+
+- **`dates` misuse raises** (stdlib rule 3). Wrong arity or a
+  wrong-typed argument aborts with a `dates.`-qualified message; before,
+  it came back as `Err`, so `unwrap_or(dates.add_days(d), fallback)`
+  silently swallowed a typo'd call. Data failures (a malformed date
+  string, an invalid component) still return `Result`.
+
+### Fixed
+
+- **The interpreter's "memory allocation limit" is gone.** Top-level
+  code that built a list past 10,000 elements with the documented
+  idiomatic append (`xs = xs + [i]`) aborted with a spurious
+  "Memory allocation limit (10000) exceeded" error — while the same loop
+  inside a function ran fine. The tracking apparatus prevented nothing
+  (the runtime is safe Rust) and is removed outright.
+
+- **Top-level list accumulation is O(n).** The sole-owner append fusion
+  now reaches bindings in the top-level persistent environment, not just
+  function-frame locals: 200,000 appends run in under 100 ms where
+  20,000 previously took seconds (and then hit the limit above).
+  Aliasing is still honored — a snapshot taken before an append forces
+  the copy, on every tier.
+
 ### Added
 
 - **Two more macro libraries, completing the graduation corpus:**

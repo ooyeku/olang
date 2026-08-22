@@ -3007,6 +3007,21 @@ impl BytecodeVm {
             }
         }
 
+        // `x == ()` / `x != ()` is the presence test and is total (0.68),
+        // mirroring the interpreter's rule in eval_binary_op: Unit is the
+        // absence value, so equality against it answers for every value.
+        // Ordering/arithmetic against Unit still falls through to the
+        // type-error arms below, identically to the interpreter.
+        if matches!(left.data, ValueData::Unit) || matches!(right.data, ValueData::Unit) {
+            let both_unit =
+                matches!(left.data, ValueData::Unit) && matches!(right.data, ValueData::Unit);
+            match op {
+                BinaryOp::Equal => return Ok(OvmValue::new_boolean(both_unit)),
+                BinaryOp::NotEqual => return Ok(OvmValue::new_boolean(!both_unit)),
+                _ => {}
+            }
+        }
+
         // Operate directly on ValueData — converting operands through the AST
         // representation on every instruction dominated the dispatch loop.
         let result = match (&left.data, &right.data) {
@@ -3716,6 +3731,11 @@ impl BytecodeVm {
                 ValueData::List(items) => Ok(OvmValue::new_integer(items.len() as i64)),
                 ValueData::Tuple(items) => Ok(OvmValue::new_integer(items.len() as i64)),
                 ValueData::String(st) => Ok(OvmValue::new_integer(st.chars().count() as i64)),
+                // Mirrors the interpreter: a native that declares a length
+                // (Bytes) answers; one that doesn't keeps the same error.
+                ValueData::Native(h) if h.0.length().is_some() => {
+                    Ok(OvmValue::new_integer(h.0.length().unwrap_or(0) as i64))
+                }
                 _ => Err(BytecodeError::TypeError(
                     "len: argument must be a list, string, or tuple".to_string(),
                 )),

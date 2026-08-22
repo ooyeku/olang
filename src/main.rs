@@ -515,7 +515,18 @@ fn run() -> i32 {
 
         Some(Commands::Expand { file, diff }) => {
             let code = match std::fs::read_to_string(&file) {
-                Ok(source) => match olang::expand::expand_source(&source) {
+                // Resolve `use`-imported macro libraries against the file's
+                // own directory, exactly as `olang run`, `olang check`, and
+                // the LSP do — `olang expand` is the command whose whole
+                // point is showing the same program those consumers see, so
+                // it must not resolve differently just because the CWD is
+                // elsewhere.
+                Ok(source) => match olang::expand::expand_source_mapped_with_dir(
+                    &source,
+                    file.parent(),
+                )
+                .map(|e| e.text)
+                {
                     Ok(expanded) => {
                         if diff {
                             print_expansion_diff(&source, &expanded);

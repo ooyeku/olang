@@ -31,6 +31,10 @@ pub fn create_base64_module() -> Value {
     // Core encoding and decoding
     module.insert("encode".to_string(), create_builtin_function("encode", 1));
     module.insert("decode".to_string(), create_builtin_function("decode", 1));
+    module.insert(
+        "decode_bytes".to_string(),
+        create_builtin_function("decode_bytes", 1),
+    );
 
     // URL-safe variants
     module.insert(
@@ -84,6 +88,7 @@ pub fn call_base64_function(
     match name {
         "encode" => base64_encode(args),
         "decode" => base64_decode(args),
+        "decode_bytes" => base64_decode_bytes(args),
         "encode_url_safe" => base64_encode_url_safe(args),
         "decode_url_safe" => base64_decode_url_safe(args),
         "validate" => base64_validate(args),
@@ -94,22 +99,46 @@ pub fn call_base64_function(
     }
 }
 
-/// Encode a string to base64
-/// Usage: base64.encode("Hello, World!") -> Result<String, Error>
+/// The bytes to encode: a String's UTF-8, or a Bytes value's contents —
+/// base64 is fundamentally a bytes-to-text codec, so both are natural.
+fn input_bytes<'a>(v: &'a Value, fname: &str) -> Result<&'a [u8], String> {
+    match v {
+        Value::String(s) => Ok(s.as_ref().as_bytes()),
+        other => crate::stdlib::bytes::bytes_of(other)
+            .map_err(|_| format!("{fname}: argument must be a string or Bytes")),
+    }
+}
+
+/// Encode a string or Bytes to base64
+/// Usage: base64.encode("Hello, World!") -> String
 fn base64_encode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("encode expects 1 argument, got {}", args.len()).into());
     }
+    let encoded = general_purpose::STANDARD.encode(input_bytes(&args[0], "encode")?);
+    Ok(Value::String(Arc::new(encoded)))
+}
 
+/// Decode base64 to raw Bytes — the twin of `decode` for payloads that
+/// are not UTF-8 text.
+/// Usage: base64.decode_bytes("AQID") -> Result<Bytes, Error>
+fn base64_decode_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(format!("decode_bytes expects 1 argument, got {}", args.len()).into());
+    }
     let input = match &args[0] {
-        Value::String(s) => s.as_ref().as_bytes(),
+        Value::String(s) => s.as_ref(),
         _ => {
-            return Err("encode: argument must be a string".to_string().into());
+            return Err("decode_bytes: argument must be a string".to_string().into());
         }
     };
-
-    let encoded = general_purpose::STANDARD.encode(input);
-    Ok(Value::String(Arc::new(encoded)))
+    match general_purpose::STANDARD.decode(input) {
+        Ok(decoded) => Ok(Value::Ok(Box::new(crate::stdlib::bytes::to_value(decoded)))),
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "Base64 decode error: {}",
+            e
+        )))))),
+    }
 }
 
 /// Decode a base64 string
@@ -148,16 +177,7 @@ fn base64_encode_url_safe(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
         return Err(format!("encode_url_safe expects 1 argument, got {}", args.len()).into());
     }
 
-    let input = match &args[0] {
-        Value::String(s) => s.as_ref().as_bytes(),
-        _ => {
-            return Err("encode_url_safe: argument must be a string"
-                .to_string()
-                .into());
-        }
-    };
-
-    let encoded = general_purpose::URL_SAFE.encode(input);
+    let encoded = general_purpose::URL_SAFE.encode(input_bytes(&args[0], "encode_url_safe")?);
     Ok(Value::String(Arc::new(encoded)))
 }
 
@@ -223,16 +243,7 @@ fn base64_encode_no_pad(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
         return Err(format!("encode_no_pad expects 1 argument, got {}", args.len()).into());
     }
 
-    let input = match &args[0] {
-        Value::String(s) => s.as_ref().as_bytes(),
-        _ => {
-            return Err("encode_no_pad: argument must be a string"
-                .to_string()
-                .into());
-        }
-    };
-
-    let encoded = general_purpose::STANDARD_NO_PAD.encode(input);
+    let encoded = general_purpose::STANDARD_NO_PAD.encode(input_bytes(&args[0], "encode_no_pad")?);
     Ok(Value::String(Arc::new(encoded)))
 }
 

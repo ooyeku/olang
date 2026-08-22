@@ -14,12 +14,12 @@ fn heading_level(line) = {
 }
 
 // Is this line an ordered-list item like `12. text`? Returns the dot index
-// (so the text starts at dot + 2), or -1.
+// (so the text starts at dot + 2), or Unit.
 fn ordered_prefix(line) = {
     let dot = str.index_of(line, ". ")
-    if dot <= 0 => -1
+    if (dot == ()) || (dot == 0) => ()
     else if is_ok(str.parse_int(str.substring(line, 0, dot))) => dot
-    else => -1
+    else => ()
 }
 
 fn is_blank(line) = str.length(str.trim(line)) == 0
@@ -84,9 +84,9 @@ share fn to_html(md) = {
             out = out + ["<ul>" + join(items, "") + "</ul>"]
         }
 
-        else if ordered_prefix(line) >= 0 => {
+        else if ordered_prefix(line) != () => {
             let mut items = []
-            while (i < n) && (ordered_prefix(lines[i]) >= 0) {
+            while (i < n) && (ordered_prefix(lines[i]) != ()) {
                 let dot = ordered_prefix(lines[i])
                 let text = str.substring(lines[i], dot + 2, str.length(lines[i]))
                 items = items + ["<li>" + render_inline(text) + "</li>"]
@@ -102,7 +102,7 @@ share fn to_html(md) = {
             while go && (i < n) {
                 let l = lines[i]
                 if is_blank(l) || str.starts_with(l, "```") || (heading_level(l) > 0)
-                    || is_rule(l) || is_quote(l) || is_bullet(l) || (ordered_prefix(l) >= 0) =>
+                    || is_rule(l) || is_quote(l) || is_bullet(l) || (ordered_prefix(l) != ()) =>
                     { go = false }
                 else => { para = para + [str.trim(l)]; i = i + 1 }
             }

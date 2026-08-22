@@ -195,10 +195,15 @@ impl Environment {
         if let Some((_, val)) = self.locals.iter_mut().rev().find(|(n, _)| n == name) {
             return extend_if_sole(val, items);
         }
-        // The persistent map lives behind a structurally-shared `im`
-        // HashMap whose `get_mut` copies on write — no clean in-place
-        // borrow — so top-level accumulation falls back to the copy path.
+        // The persistent map: `im`'s `get_mut` path-copies any node another
+        // snapshot still shares, and a copied node holds a second Arc to the
+        // list — so `extend_if_sole`'s sole-ownership guard refuses exactly
+        // when a closure or clone captured the map, and extends in place
+        // exactly when nothing did. Top-level accumulation is O(n) too.
         if self.variables.contains_key(name) {
+            if let Some(val) = Arc::make_mut(&mut self.variables).get_mut(name) {
+                return extend_if_sole(val, items);
+            }
             return false;
         }
         // Ancestor scope: recurse only when we solely own the parent Arc

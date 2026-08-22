@@ -254,26 +254,30 @@ fn str_split(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(Value::List(parts.into()))
 }
 
-/// Character index of the first byte-match, or -1. Reported in characters so
-/// it composes with char_at and substring.
+/// Character index of the first byte-match, or Unit when absent. Reported
+/// in characters so it composes with char_at and substring.
+///
+/// Unit, not `-1`: absence in olang is Unit (the same value a missing map
+/// key yields), and a `-1` sentinel was actively dangerous here because
+/// indexing counts negative positions from the end — `s[index_of(s, x)]`
+/// on a miss silently read the *last* character. Changed in 0.68 as part
+/// of settling the absence convention; test with `idx != ()`.
 fn str_index_of(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "index_of")?;
     let sub = arg_str(&args, 1, "index_of")?;
-    let idx = match s.find(sub) {
-        Some(byte_idx) => s[..byte_idx].chars().count() as i64,
-        None => -1,
-    };
-    Ok(Value::Integer(idx))
+    Ok(match s.find(sub) {
+        Some(byte_idx) => Value::Integer(s[..byte_idx].chars().count() as i64),
+        None => Value::Unit,
+    })
 }
 
 fn str_last_index_of(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "last_index_of")?;
     let sub = arg_str(&args, 1, "last_index_of")?;
-    let idx = match s.rfind(sub) {
-        Some(byte_idx) => s[..byte_idx].chars().count() as i64,
-        None => -1,
-    };
-    Ok(Value::Integer(idx))
+    Ok(match s.rfind(sub) {
+        Some(byte_idx) => Value::Integer(s[..byte_idx].chars().count() as i64),
+        None => Value::Unit,
+    })
 }
 
 fn str_repeat(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

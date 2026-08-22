@@ -20,6 +20,21 @@ impl Interpreter {
         {
             return result.map_err(|message| InterpreterError::RuntimeError { message });
         }
+        // `x == ()` / `x != ()` is the presence test and is total (0.68):
+        // Unit is the absence value — what a missing map key, an absent
+        // substring, and a JSON null all produce — so asking "is this
+        // nothing?" must be answerable about every value, not only about
+        // values that happen to be absent. Equality between two present
+        // but unrelated kinds remains a type error below; ordering or
+        // arithmetic against Unit falls through to the type error too.
+        if matches!(left, Value::Unit) || matches!(right, Value::Unit) {
+            let both_unit = matches!(left, Value::Unit) && matches!(right, Value::Unit);
+            match op {
+                BinaryOp::Equal => return Ok(Value::Boolean(both_unit)),
+                BinaryOp::NotEqual => return Ok(Value::Boolean(!both_unit)),
+                _ => {}
+            }
+        }
         match (left, op, right) {
             (Value::Integer(a), BinaryOp::Add, Value::Integer(b)) => a
                 .checked_add(b)

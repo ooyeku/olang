@@ -174,65 +174,10 @@ impl Timeline {
     /// on state outside the program's own computation, and that return
     /// pure data (so the result always serializes) — never handles.
     pub fn is_recorded(op: &str) -> bool {
-        // random: every draw consumes hidden RNG state.
-        if let Some(f) = op.strip_prefix("random.") {
-            return !matches!(f, "seed"); // seed is a deterministic state-set
-        }
-        // clocks: wall-clock and monotonic time.
-        matches!(
-            op,
-            "time.now_ms"
-                | "time.monotonic_ms"
-                | "dates.now"
-                | "dates.utc_now"
-                | "dates.today"
-                // environment and console input.
-                | "os.get_env"
-                | "os.list_env"
-                | "os.has_env"
-                | "os.hostname"
-                | "os.username"
-                | "os.home_dir"
-                | "os.temp_dir"
-                | "os.read_line"
-                | "os.stdin"
-                | "os.stdin_lines"
-                | "os.exec"
-                // machine identity and process context — the axes that
-                // differ across machines and runs, so recording them is what
-                // makes a trace portable (a program branching on os.arch()
-                // replays the arch it was recorded on).
-                | "os.os_type"
-                | "os.arch"
-                | "os.family"
-                | "os.path_separator"
-                | "os.args"
-                | "os.cwd"
-                | "os.exe_path"
-                | "os.pid"
-                | "os.is_tty"
-                // filesystem reads: external, mutable state.
-                | "fs.read_file"
-                | "fs.exists"
-                | "fs.is_file"
-                | "fs.is_dir"
-                | "fs.list_dir"
-                | "fs.walk"
-                | "fs.glob"
-                | "fs.file_info"
-                | "fs.file_size"
-                // the network.
-                | "http.get"
-                | "http.post"
-                | "http.put"
-                | "http.delete"
-                | "http.request"
-                // seeded-random crypto.
-                | "crypto.random_bytes"
-                | "crypto.random_hex"
-                | "crypto.generate_key_pair"
-                | "crypto.hash_password"
-        )
+        // The classification lives in `crate::effects` — one table shared
+        // with the capability gate and macro-expansion purity, so the three
+        // policies cannot drift about what counts as nondeterministic.
+        crate::effects::classify(op).recorded
     }
 
     /// A deterministic fingerprint of a recorded call's arguments, so replay

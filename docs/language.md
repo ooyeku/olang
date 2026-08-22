@@ -498,31 +498,52 @@ From loosest to tightest binding:
 
 | Level | Operators | Notes |
 |---|---|---|
-| 1 | `&&` `\|\|` | logical, short-circuit |
-| 2 | `==` `!=` `<` `<=` `>` `>=` | comparison |
-| 3 | `+` `-` | additive |
-| 4 | `*` `/` `%` | multiplicative |
-| 5 | `&` `\|` `^` `<<` `>>` | bitwise |
-| 6 | `\|>` | pipeline |
-| 7 | `..` `..=` | ranges |
-| 8 | `-` `!` (prefix) | unary |
-| 9 | `f(x)` `.field` `[i]` `?` | call, access, index, try |
+| 1 | `\|\|` | logical or, short-circuit |
+| 2 | `&&` | logical and, short-circuit |
+| 3 | `==` `!=` `<` `<=` `>` `>=` | comparison |
+| 4 | `\|>` | pipeline |
+| 5 | `..` `..=` | ranges |
+| 6 | `+` `-` | additive |
+| 7 | `*` `/` `%` | multiplicative |
+| 8 | `&` `\|` `^` `<<` `>>` | bitwise |
+| 9 | `-` `!` (prefix) | unary |
+| 10 | `f(x)` `.field` `[i]` `?` | call, access, index, try |
 
 All binary operators are **left-associative**, and comparisons do not
-chain (`a < b < c` is a type error — write `a < b && b < c`). Three
-orderings differ from C/Rust and are the usual source of precedence bugs:
+chain (`a < b < c` is a type error — write `a < b && b < c`). The
+ordering follows the conventional readings:
 
-- **`&&` and `||` share level 1.** `a || b && c` is `(a || b) && c`, *not*
-  `a || (b && c)`. Parenthesize every mixed `&&`/`||`.
-- **Ranges (level 7) bind tighter than `+`/`-` (level 3).** `0..n-1` parses
-  as `(0..n) - 1` — a range minus an integer, a runtime error. Write
-  `0..(n-1)`.
-- **Bitwise (5) and the pipeline `|>` (6) bind tighter than arithmetic.**
-  `1 << 4 * 2` is `(1 << 4) * 2`, and `x + 1 |> f` is `x + (1 |> f)`.
+- **`&&` binds tighter than `||`.** `a || b && c` is `a || (b && c)`,
+  as in C, Rust, and Python.
+- **Arithmetic feeds a pipeline, and a pipeline feeds a comparison.**
+  `x + 1 |> f` pipes the sum — it is `f(x + 1)` — while
+  `xs |> len == 3` compares the pipeline's result. (This is the
+  pipeline placement Elixir uses.)
+- **Range bounds are arithmetic.** `0..n-1` is `0..(n-1)`, so the
+  everyday loop bound needs no parentheses.
+- **Bitwise (8) binds tighter than arithmetic.** `1 << 4 * 2` is
+  `(1 << 4) * 2` — parenthesize mixed shift/arithmetic expressions.
+
+```olang
+fn double(x) = x * 2
+println(to_string(true || false && false))   // true: && binds tighter
+let n = 5
+println(to_string(2 + 1 |> double))          // 6: the sum is piped
+let mut hits = 0
+for i in 0..n-1 { hits = hits + 1 }
+println(to_string(hits))                     // 4: 0..(n-1)
+```
 
 When in doubt, parenthesize — especially comparisons feeding `&&`, which
 read best fully grouped: `(a >= lo) && (a <= hi)`. See
 [Common Pitfalls](pitfalls.md) for worked examples.
+
+> **History.** Before 0.68, `&&` and `||` shared one level, and `|>` and
+> ranges bound *tighter* than arithmetic — `0..n-1` was a runtime error
+> and `x + 1 |> f` piped only the `1`. Re-ordering them to the readings
+> above was the third and final deliberate pre-1.0 breaking change
+> ([Stability](stability.md)); code that parenthesized mixed operators,
+> as this book always advised, is unaffected.
 
 ### Evaluation order
 
@@ -590,6 +611,13 @@ The precise rules:
   "1"` and `true == 1` raise rather than quietly answering. Convert
   explicitly (`to_string`, `to_int`) when you mean a cross-type
   comparison.
+- **The one exception is Unit.** `x == ()` and `x != ()` answer for
+  *every* value — false and true respectively unless `x` is Unit.
+  Unit is the absence value (a missing map key, an absent substring, a
+  JSON null), so "is this nothing?" must be askable about a value that
+  turned out to be present; requiring the answer to already be known
+  before asking would defeat the question. Ordering against Unit
+  (`x < ()`) is still a type error.
 - **`Result` values are not compared with `==`.** Match on
   `Ok(v)`/`Err(e)` (or test with `is_ok`/`is_err`) and compare the
   payloads — the pattern is clearer than a comparison would be, and it
@@ -666,7 +694,7 @@ full toolkit — `str.substring`, `str.index_of`, `str.char_at`, `str.trim`,
 let s = "  olang  "
 println("[" + str.trim(s) + "]")
 println(str.substring("hello", 1, 4))          // ell
-println(to_string(str.index_of("abc", "z")))   // -1 when absent
+println(to_string(str.index_of("abc", "z")))   // () when absent — test with != ()
 println(join(split("a,b,c", ","), " + "))
 ```
 

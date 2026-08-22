@@ -196,6 +196,16 @@ pub fn call_crypto_function(
     }
 }
 
+/// The bytes to hash: a String's UTF-8, or a Bytes value's contents —
+/// hashing is fundamentally over bytes, so both are accepted.
+fn digest_input<'a>(v: &'a Value, fname: &str) -> Result<&'a [u8], String> {
+    match v {
+        Value::String(s) => Ok(s.as_ref().as_bytes()),
+        other => crate::stdlib::bytes::bytes_of(other)
+            .map_err(|_| format!("{fname}: argument must be a string or Bytes")),
+    }
+}
+
 /// Compute MD5 hash of input
 /// Usage: crypto.md5("hello") -> Result<String, Error>
 fn crypto_md5(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -203,12 +213,7 @@ fn crypto_md5(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("md5 expects 1 argument, got {}", args.len()).into());
     }
 
-    let input = match &args[0] {
-        Value::String(s) => s.as_ref().as_bytes(),
-        _ => {
-            return Err("md5: argument must be a string".to_string().into());
-        }
-    };
+    let input = digest_input(&args[0], "md5")?;
 
     let result = Md5::digest(input);
     let hex_string = hex::encode(result);
@@ -223,12 +228,7 @@ fn crypto_sha1(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("sha1 expects 1 argument, got {}", args.len()).into());
     }
 
-    let input = match &args[0] {
-        Value::String(s) => s.as_ref().as_bytes(),
-        _ => {
-            return Err("sha1: argument must be a string".to_string().into());
-        }
-    };
+    let input = digest_input(&args[0], "sha1")?;
 
     let result = Sha1::digest(input);
     let hex_string = hex::encode(result);
@@ -243,12 +243,7 @@ fn crypto_sha256(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         return Err(format!("sha256 expects 1 argument, got {}", args.len()).into());
     }
 
-    let input = match &args[0] {
-        Value::String(s) => s.as_ref().as_bytes(),
-        _ => {
-            return Err("sha256: argument must be a string".to_string().into());
-        }
-    };
+    let input = digest_input(&args[0], "sha256")?;
 
     let result = Sha256::digest(input);
     let hex_string = hex::encode(result);
@@ -263,12 +258,7 @@ fn crypto_sha512(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         return Err(format!("sha512 expects 1 argument, got {}", args.len()).into());
     }
 
-    let input = match &args[0] {
-        Value::String(s) => s.as_ref().as_bytes(),
-        _ => {
-            return Err("sha512: argument must be a string".to_string().into());
-        }
-    };
+    let input = digest_input(&args[0], "sha512")?;
 
     let result = Sha512::digest(input);
     let hex_string = hex::encode(result);

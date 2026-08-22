@@ -31,6 +31,7 @@ a file system, a network, or a browser.
 - [`chan` — channels](#chan--channels)
 - [`random` — randomness](#random--randomness)
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
+- [`bytes` — binary data](#bytes--binary-data)
 - [`base64` — base64](#base64--base64)
 - [`fs` — file system](#fs--file-system)
 - [`meta` — the program as data](#meta--the-program-as-data-the-open-ast)
@@ -101,6 +102,29 @@ back as `Err`, then `unwrap_or(fs.read_file(path), "")` would swallow a
 typo'd call exactly the way it swallows a missing file, and the default
 would hide the bug indefinitely. Keeping them apart means a `Result` you
 see is always a real condition worth handling.
+
+### Absence is Unit
+
+A fourth rule, settled in 0.68, covers *lookups* — operations where "not
+there" is an ordinary answer rather than a failure: **a lookup returns
+the value, or `Unit` when there is nothing there.** `map_get` on a
+missing key, `str.index_of` on an absent substring, a JSON `null`
+crossing in — all produce the same `()`, tested with `== ()` / `!= ()`.
+(Before 0.68, `str.index_of` returned `-1` — a sentinel that negative
+indexing made genuinely dangerous, since `s[str.index_of(s, x)]` on a
+miss silently read the last character.)
+
+The three shapes never mix: a lookup says `Unit`, a parse or I/O
+operation says `Result`, a misused call raises. And because Unit *is*
+absence, a stored Unit and a missing key are deliberately the same
+answer — when the distinction matters, ask `map_has_key`. For the common
+lookup-with-fallback, `map_get_or` is the one-call form:
+
+```olang
+let m = #{ "a": 1 }
+println(to_string(map_get_or(m, "a", 0)))   // 1
+println(to_string(map_get_or(m, "z", 0)))   // 0 — absent, so the default
+```
 
 ## Global builtins
 
@@ -247,6 +271,7 @@ value.
 | Function | Description |
 |---|---|
 | `map_get(m, k)` | value, or `Unit` when absent |
+| `map_get_or(m, k, default)` | value, or `default` when absent (or stored Unit) |
 | `map_has_key(m, k)` | presence test (distinguishes absent from null) |
 | `map_keys(m)` / `map_values(m)` | key/value lists (unordered) |
 | `entries(m)` | `(key, value)` tuples, sorted by key — for `for (k, v) in` |
@@ -317,7 +342,7 @@ every function returns a new string.
 | `str.char_at(s, i)` | 1-char string, `""` out of bounds |
 | `str.chars(s)` | list of characters |
 | `str.substring(s, from, to)` | half-open slice, clamped |
-| `str.index_of(s, sub)` / `str.last_index_of` | position or `-1` |
+| `str.index_of(s, sub)` / `str.last_index_of` | position, or `()` when absent |
 | `str.contains(s, sub)` / `str.count(s, sub)` | search |
 | `str.starts_with` / `str.ends_with` | affix tests |
 | `str.split(s, sep)` / `str.join(xs, sep)` | list conversion |
@@ -523,19 +548,33 @@ ISO-8601 strings in, ISO-8601 strings out; fallible operations return
 | Group | Functions |
 |---|---|
 | Now | `now` `utc_now` `today` |
-| Build | `date(y, m, d)` `datetime(y, m, d, h, mi, s)` `time(h, mi, s)` |
-| Parse/format | `parse_date` `parse_datetime` `parse_time` `format_date` `format_datetime` `format_time` |
+| Build | `date(y, m, d)` → `Date` · `datetime(y, m, d, h, mi, s)` `time(h, mi, s)` |
+| Parse/format | `parse(s)` → `Date` · `parse_date` `parse_datetime` `parse_time` `format_date` `format_datetime` `format_time` |
 | Fields | `year` `month` `day` `hour` `minute` `second` `weekday` |
-| Arithmetic | `add_days` `add_weeks` `add_months` `add_years` `diff_days` |
+| Arithmetic | `add_days` `add_weeks` `add_months` `add_years` `diff_days` — or Date operators |
 | Epoch | `timestamp(dt)` `from_timestamp(n)` |
 | Facts | `is_leap_year(y)` `days_in_month(y, m)` |
 
+Since 0.68 a date is a first-class **`Date` value**: `dates.date(y, m, d)`
+and `dates.parse(s)` build one, `typeof` says `Date`, it displays as ISO
+(`2026-08-07`), comparisons order chronologically, `d2 - d1` is the day
+difference, and `d + n` / `d - n` shift by days. Every date-taking
+function accepts a `Date` *or* a date string and answers in kind — string
+in, string out (the pre-0.68 behavior, unchanged), `Date` in, `Date`
+out — so existing string-based code keeps working while new code gets a
+real type:
+
 ```olang
 let d = unwrap(dates.date(2026, 8, 7))
-let later = unwrap(dates.add_days(d, 30))
-println(d + " + 30d = " + later)
+let later = d + 30                        // Date + days is a Date
+println(`${d} + 30d = ${later}`)
+println(`ordered: ${d < later}`)
+println(`days apart: ${later - d}`)       // Date - Date is days
 println(`leap 2028: ${dates.is_leap_year(2028)}`)
-println(`days apart: ${unwrap(dates.diff_days(d, later))}`)
+println(`weekday: ${unwrap(dates.weekday(d))}`)
+
+let s = unwrap(dates.add_days("2026-08-07", 30))   // strings still work
+println(s)
 ```
 
 `unwrap(dates.timestamp(dates.now()))` is the idiom for "seconds since
@@ -744,15 +783,46 @@ println(str.substring(crypto.sha256("olang"), 0, 16))
 println(to_string(crypto.secure_compare("abc", "abc")))
 ```
 
+## `bytes` — binary data
+
+Strings are UTF-8 text; `Bytes` (new in 0.68) is the value for everything
+that isn't — an image, an archive, a hash's raw output, a non-UTF-8
+file. A `Bytes` value is immutable, `typeof` says `Bytes`, `len(b)` is
+the byte count, `b[i]` is the byte at `i` as an Int (negative counts
+from the end), equality is structural, and it displays as a capped hex
+preview. `fs.read_bytes`/`fs.write_bytes` move it to and from disk;
+`base64` and the `crypto` hashes accept it.
+
+| Function | Description |
+|---|---|
+| `bytes.from_list(ints)` / `bytes.to_list(b)` | to and from a list of Ints 0..=255 |
+| `bytes.from_string(s)` | a string's UTF-8 bytes |
+| `bytes.to_string(b)` | decode as UTF-8 — `Result`, since bytes may not be text |
+| `bytes.len(b)` | byte count (the global `len` works too) |
+| `bytes.slice(b, from, to)` | half-open, clamped — the shape of `str.substring` |
+| `bytes.concat(a, b)` | concatenation |
+
+```olang
+let b = bytes.from_list([104, 105, 33])
+println(`${len(b)} bytes, first ${b[0]}, last ${b[-1]}`)
+println(unwrap(bytes.to_string(b)))                    // hi!
+println(show(bytes.to_list(bytes.slice(b, 0, 2))))     // [104, 105]
+println(base64.encode(b))                              // aGkh
+println(show(bytes.from_string("hi!") == b))           // true
+```
+
 ## `base64` — base64
 
 Binary-safe text encoding in its three practical variants — standard,
-URL-safe, and unpadded. Encoding always succeeds; decoding returns
-`Result`, since arbitrary text may not be valid base64.
+URL-safe, and unpadded. Encoding always succeeds and takes a string or
+[`Bytes`](#bytes--binary-data); decoding returns `Result`, since
+arbitrary text may not be valid base64 — `decode` yields text,
+`decode_bytes` yields raw bytes.
 
 | Function | Description |
 |---|---|
 | `base64.encode(s)` / `base64.decode(s)` | standard alphabet (decode returns `Result`) |
+| `base64.decode_bytes(s)` | decode to `Bytes` for non-text payloads |
 | `base64.encode_url_safe` / `decode_url_safe` | URL-safe alphabet |
 | `base64.encode_no_pad` / `decode_no_pad` | without `=` padding |
 | `base64.is_valid(s)` / `base64.validate(s)` | checks |
@@ -760,6 +830,7 @@ URL-safe, and unpadded. Encoding always succeeds; decoding returns
 ```olang
 let enc = base64.encode("olang")
 println(enc + " -> " + unwrap(base64.decode(enc)))
+println(show(len(unwrap(base64.decode_bytes(enc)))))   // 5
 ```
 
 ## `fs` — file system
@@ -773,7 +844,7 @@ rather than bugs. (Examples are `no-run`: they touch the disk.)
 
 | Group | Functions |
 |---|---|
-| Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` |
+| Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` — and `read_bytes` / `write_bytes` for [binary data](#bytes--binary-data) |
 | Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
 | Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
 | Paths | `join(parts)` `dirname` `basename` `ext` `abs_path` — pure string surgery (except `abs_path`, which resolves against the current directory and normalizes `.`/`..` without requiring the file to exist) |
@@ -1057,21 +1128,40 @@ than inventing its own idioms: requests are fallible so they return
 `Result`, a response is an ordinary struct-like value, and a server
 handler is just a function from request to response. (`no-run`: network.)
 
-A client response carries `status` (Int), `body` (String), and `success`
-(Bool, true for 2xx):
+A client response carries `status` (Int), `body` (String), `headers`
+(a map of lowercased header name to first value), and `success` (Bool,
+true for 2xx):
 
 | Function | Description |
 |---|---|
-| `http.get(url)` / `http.post(url, body)` / `http.put` / `http.delete` | requests |
-| `http.request(method, url, body)` | any method |
+| `http.get(url[, opts])` / `http.post(url, body[, opts])` / `http.put` / `http.delete` | requests |
+| `http.request(method, url, body[, opts])` | any method |
 | `http.parse_url(url)` | split a URL into parts |
 | `http.encode_query(map)` / `http.decode_query(s)` | query strings |
 | `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
 | `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses |
 
+Every client verb takes an optional trailing **options map** — this is
+how a request carries headers, a timeout, and authentication:
+
+| Option | Meaning |
+|---|---|
+| `"headers"` | map of header name → string value |
+| `"timeout_ms"` | whole-request timeout in milliseconds |
+| `"bearer"` | sets `Authorization: Bearer <token>` |
+| `"basic"` | `(user, password)` tuple: HTTP basic auth |
+
+An unknown option key raises rather than being ignored — a typo'd option
+must not become a request that quietly lacked its auth header.
+
 ```olang no-run
-let resp = unwrap(http.get("https://example.com/api/status"))
+let resp = unwrap(http.get("https://api.example.com/me", #{
+    "bearer": os.get_env("API_TOKEN") |> unwrap,
+    "timeout_ms": 5000,
+    "headers": #{ "accept": "application/json" },
+}))
 println(to_string(resp.status))
+println(show(map_get(resp.headers, "content-type")))
 let data = unwrap(json.parse(resp.body))
 println(data.message)
 ```

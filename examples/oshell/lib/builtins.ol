@@ -202,7 +202,7 @@ fn bi_export(state, args) = {
         let mut code = 0
         for spec in args {
             let eq = str.index_of(spec, "=")
-            if eq > 0 => {
+            if (eq != ()) && (eq > 0) => {
                 os.set_env(str.substring(spec, 0, eq), str.substring(spec, eq + 1, str.length(spec)))
             } else => { code = 1 }
         }
@@ -224,7 +224,7 @@ fn bi_alias(state, args) = {
     } else => {
         let spec = str.join(args, " ")
         let eq = str.index_of(spec, "=")
-        if eq > 0 => {
+        if (eq != ()) && (eq > 0) => {
             let name = str.substring(spec, 0, eq)
             let value = str.substring(spec, eq + 1, str.length(spec))
             done({ aliases: map_set(state.aliases, name, value), history: state.history, last: state.last }, "", 0)

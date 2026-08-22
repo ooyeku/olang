@@ -14,11 +14,11 @@ share fn escape(s) =
 // Escape a URL for use inside a double-quoted attribute.
 fn escape_attr(s) = str.replace(escape(s), "\"", "&quot;")
 
-// Find `needle` in `s` at or after `from`; -1 if absent.
+// Find `needle` in `s` at or after `from`; Unit if absent.
 fn find_from(s, needle, from) = {
     let rest = str.substring(s, from, str.length(s))
     let rel = str.index_of(rest, needle)
-    if rel == -1 => -1 else => from + rel
+    if rel == () => () else => from + rel
 }
 
 share fn render_inline(s) = {
@@ -30,7 +30,7 @@ share fn render_inline(s) = {
         let two = str.substring(s, i, i + 2)
         if c == "`" => {
             let close = find_from(s, "`", i + 1)
-            if close == -1 => { out = out + "`"; i = i + 1 }
+            if close == () => { out = out + "`"; i = i + 1 }
             else => {
                 out = out + "<code>" + escape(str.substring(s, i + 1, close)) + "</code>"
                 i = close + 1
@@ -38,7 +38,7 @@ share fn render_inline(s) = {
         }
         else if two == "**" => {
             let close = find_from(s, "**", i + 2)
-            if close == -1 => { out = out + escape(two); i = i + 2 }
+            if close == () => { out = out + escape(two); i = i + 2 }
             else => {
                 out = out + "<strong>" + render_inline(str.substring(s, i + 2, close)) + "</strong>"
                 i = close + 2
@@ -46,7 +46,7 @@ share fn render_inline(s) = {
         }
         else if c == "*" => {
             let close = find_from(s, "*", i + 1)
-            if close == -1 => { out = out + "*"; i = i + 1 }
+            if close == () => { out = out + "*"; i = i + 1 }
             else => {
                 out = out + "<em>" + render_inline(str.substring(s, i + 1, close)) + "</em>"
                 i = close + 1
@@ -54,8 +54,8 @@ share fn render_inline(s) = {
         }
         else if c == "[" => {
             let mid = find_from(s, "](", i + 1)
-            let close = if mid == -1 => -1 else => find_from(s, ")", mid + 2)
-            if (mid == -1) || (close == -1) => { out = out + "["; i = i + 1 }
+            let close = if mid == () => () else => find_from(s, ")", mid + 2)
+            if (mid == ()) || (close == ()) => { out = out + "["; i = i + 1 }
             else => {
                 let text = str.substring(s, i + 1, mid)
                 let url = str.substring(s, mid + 2, close)

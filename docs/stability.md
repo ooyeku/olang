@@ -10,11 +10,15 @@ correct.
 
 The language surface is **closed**. The syntax and behavior documented in
 [the language reference](language.md) and [the stdlib reference](stdlib.md)
-are a commitment, not a snapshot: the two deliberate breaking releases the
-[roadmap](roadmap.md) planned — gradual-typing enforcement in 0.48 and the
-scope, mutability, stdlib-convention, and error-model changes across
-0.61–0.65 — have both shipped, each with a migration guide in the
-CHANGELOG. What remains before the 1.0 tag is this contract and the release
+are a commitment, not a snapshot: the three deliberate breaking releases —
+gradual-typing enforcement in 0.48, the scope, mutability,
+stdlib-convention, and error-model changes across 0.61–0.65, and the
+operator-precedence and absence-convention corrections in 0.68 — have all
+shipped, each with a migration guide in the CHANGELOG. The 0.68 release
+exists because stability is valuable in proportion to adoption: the old
+precedence table froze three known footguns (`&&`/`||` on one level, `|>`
+and ranges binding tighter than arithmetic) at a moment when fixing them
+was still cheap, and pre-1.0 was the last such moment. What remains before the 1.0 tag is this contract and the release
 mechanics, not further changes to what already works. The guarantees below
 hold now and are what 1.0 commits to permanently; the [semver
 contract](#versioning) states what could ever change them and at what cost.
@@ -65,9 +69,9 @@ modules `str`, `col`, `math`, `json`, `toml`, `csv`, `re`, `dates`,
 embedded olang modules (`colx`, `mathx`) and packages (`cli`, `term`, `ui`,
 `viz`, `dash`) follow the same append-mostly rule.
 
-**Scope and mutability settled in 0.61.0**, as the second and final
-deliberate breaking change before 1.0 (recorded in the CHANGELOG with a
-migration guide). Three rules that were advisory warnings in 0.50–0.60
+**Scope and mutability settled in 0.61.0**, as the second deliberate
+breaking change before 1.0 (recorded in the CHANGELOG with a migration
+guide). Three rules that were advisory warnings in 0.50–0.60
 became enforced errors, checked statically before a program runs and
 therefore identical on every tier:
 
@@ -167,7 +171,13 @@ These rules are part of the commitment above and are permanent under the
   fuzzer corpus an order of magnitude larger run clean (**done** —
   10,000 generated macro programs: expansion determinism, tier
   agreement, and clean refusal checked per seed; the run surfaced and
-  fixed one real defect, nested macro calls in arguments); runtime error
+  fixed one real defect, nested macro calls in arguments. The generator
+  is committed as `tests/macro_fuzz_corpus_test.rs` — a seeded,
+  deterministic corpus whose first 150 seeds run on every `cargo test`
+  and whose full campaign is the `#[ignore]`d
+  `macro_fuzz_full_campaign`; `tests/tier_fuzz_corpus_test.rs` is the
+  equivalent committed form of the tier-differential campaign, so both
+  claims are reproducible rather than historical); runtime error
   spans source-mapped to `@` sites (**done** — every expanded line
   carries its origin, and errors point into the file as written, naming
   the generating macro); LSP expansion awareness (**done** — the

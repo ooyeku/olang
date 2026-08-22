@@ -155,26 +155,40 @@ expr        = { assignment_expr | par_for_loop | for_loop | while_loop | loop_ex
 
 add_op        = { "+" | "-" }
 mul_op        = { "*" | "/" | "%" }
-bitwise_op    = { "&" | "|" | "^" | "<<" | ">>" }
-bool_op       = { "&&" | "||" }
+// `&` must not eat the first character of `&&` (logical-and lives at its
+// own, looser level now), and `|` must not eat the start of `||` or `|>`.
+// Atomic (`@`): the rule must span exactly the operator text — implicit
+// whitespace inside it would widen the span to "& " and the AST builder
+// matches operators by their exact text.
+bitwise_op    = @{ "<<" | ">>" | "^" | ("&" ~ !"&") | ("|" ~ !("|" | ">")) }
+or_op         = { "||" }
+and_op        = { "&&" }
 comp_op       = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
 range_op      = { "..=" | ".." }
 unary_op      = { "-" | "!" }
 
-binary_expr   = { comparison_expr ~ (NL* ~ bool_op ~ NL* ~ comparison_expr)* }
-comparison_expr = { additive_expr ~ (NL* ~ comp_op ~ NL* ~ cmp_rhs)* }
+// Precedence ladder, loosest → tightest (the 0.68 fix — the third and
+// final deliberate pre-1.0 breaking change):
+//   ||  <  &&  <  comparison  <  |>  <  ranges  <  + -  <  * / %  <  bitwise
+// so `a || b && c` is `a || (b && c)`, `x + 1 |> f` pipes the sum, and
+// `0..n-1` is `0..(n-1)`. `|>` sits between comparison and ranges
+// (Elixir's placement): arithmetic feeds a pipeline, and a pipeline's
+// result feeds a comparison — `xs |> len == 3` stays `(xs |> len) == 3`.
+binary_expr   = { and_expr ~ (NL* ~ or_op ~ NL* ~ and_expr)* }
+and_expr      = { comparison_expr ~ (NL* ~ and_op ~ NL* ~ comparison_expr)* }
+comparison_expr = { pipe_expr ~ (NL* ~ comp_op ~ NL* ~ cmp_rhs)* }
 // The right of a comparison is the one place `()` must outrank the
 // nullary-lambda reading. `if t == () => 0 else => 1` means "t is Unit,
 // then this branch" — never "t equals a function" — but ordered choice
 // would otherwise let `lambda` swallow the `=>` that belongs to the `if`.
 // Comparing against a literal function is still writable, parenthesized.
-cmp_rhs = { unit | additive_expr }
-additive_expr = { multiplicative_expr ~ (NL* ~ add_op ~ NL* ~ multiplicative_expr)* }
-multiplicative_expr = { bitwise_expr ~ (NL* ~ mul_op ~ NL* ~ bitwise_expr)* }
-bitwise_expr = { pipe_expr ~ (NL* ~ bitwise_op ~ NL* ~ pipe_expr)* }
+cmp_rhs = { unit | pipe_expr }
 pipe_op       = { "|>" }
 pipe_expr     = { range_expr ~ (NL* ~ pipe_op ~ NL* ~ range_expr)* }
-range_expr    = { unary_expr ~ (range_op ~ unary_expr)? }
+range_expr    = { additive_expr ~ (range_op ~ additive_expr)? }
+additive_expr = { multiplicative_expr ~ (NL* ~ add_op ~ NL* ~ multiplicative_expr)* }
+multiplicative_expr = { bitwise_expr ~ (NL* ~ mul_op ~ NL* ~ bitwise_expr)* }
+bitwise_expr = { unary_expr ~ (NL* ~ bitwise_op ~ NL* ~ unary_expr)* }
 unary_expr    = { unary_op* ~ call_expr }
 call_expr   = { primary ~ ( function_call | ("." ~ identifier) | ("[" ~ expr ~ "]") | postfix_op )* }
 

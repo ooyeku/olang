@@ -451,7 +451,11 @@ Two boundaries worth knowing. Record/replay runs on the interpreter tier
 (the one dispatch point that sees every builtin), so a recorded run
 forgoes the bytecode tier — a debugging tool, not a hot path. And v1
 records a single thread of effects: a program using `spawn`/`par` for
-observable concurrency is outside the model. (Roadmap: `replay --why`,
+observable concurrency is outside the model, and a recorded or replayed
+run that starts a task or worker thread says so — a one-time warning on
+stderr, in both record and replay mode — rather than letting a trace
+that silently missed worker effects present itself as a clean,
+fully-determined run. (Roadmap: `replay --why`,
 which carries value provenance during replay to answer "where did this
 number come from?" — a chain back to the recorded inputs.)
 
