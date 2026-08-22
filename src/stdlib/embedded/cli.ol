@@ -91,7 +91,7 @@ fn parse_core(spec, argv) = {
         if str.starts_with(tok, "--") => {
             let body = strip(tok, "--")
             let eq = str.index_of(body, "=")
-            let has_eq = eq >= 0
+            let has_eq = eq != ()
             let key = if has_eq => str.substring(body, 0, eq) else => body
             let matches = by_long(flags, key)
             if len(matches) == 0 => { return Err("unknown flag: --" + key) }
@@ -119,7 +119,7 @@ fn parse_core(spec, argv) = {
             if str.starts_with(tok, "-") && str.length(tok) > 1 => {
                 let body = strip(tok, "-")
                 let eq = str.index_of(body, "=")
-                let has_eq = eq >= 0
+                let has_eq = eq != ()
                 let ch = if has_eq => str.substring(body, 0, eq) else => body
                 let matches = by_short(flags, ch)
                 if len(matches) == 0 => { return Err("unknown flag: -" + ch) }

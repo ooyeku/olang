@@ -6,8 +6,8 @@ A small number of olang behaviors commonly surprise newcomers, particularly
 programmers arriving from Rust, Python, or JavaScript, where the equivalent
 construct behaves differently. This chapter collects those behaviors in one
 place. Each is intentional; each entry describes the behavior and the idiom
-that works with it. The first three — missing map keys, integer division, and
-the two operator-precedence rules — account for most early confusion.
+that works with it. The first two — missing map keys and integer
+division — account for most early confusion.
 
 ## Missing map keys return Unit, not a Result
 
@@ -20,13 +20,14 @@ map_get(m, "z")               // => ()  (Unit), not Err, not None
 unwrap_or(map_get(m, "z"), 0) // TYPE ERROR: unwrap_or's first arg must be a Result
 ```
 
-`unwrap_or` is for `Result`, so passing it a `Unit` is a type error. Guard
-the lookup with `map_has_key` instead:
+`unwrap_or` is for `Result`, so passing it a `Unit` is a type error. The
+lookup-with-default is `map_get_or`, and `map_has_key` guards the rare
+case where absent and stored-null must be told apart:
 
 ```olang
 let m = #{ "a": 1 }
-let a = if map_has_key(m, "a") => map_get(m, "a") else => 0
-let z = if map_has_key(m, "z") => map_get(m, "z") else => 0
+let a = map_get_or(m, "a", 0)
+let z = map_get_or(m, "z", 0)
 println(show(a) + " " + show(z))   // 1 0
 ```
 
@@ -64,34 +65,30 @@ println(if [1] => "has items" else => "empty")   // has items
 Note the asymmetry: a bare value is fine in `if`, but `&&`/`||` require
 real booleans — `1 && 2` is a type error even though `if 1` is not.
 
-## `&&` and `||` share one precedence level
+## Bitwise operators bind tighter than arithmetic
 
-Unlike C and Rust, `&&` and `||` sit at the **same** precedence and
-associate left-to-right. `true || false && false` parses as
-`(true || false) && false`, which is `false` — not the `true` you would
-get if `&&` bound tighter. **Always parenthesize mixed `&&`/`||`.**
-
-```olang
-println(show(true || false && false))     // false — (true || false) && false
-println(show(true || (false && false)))   // true  — say what you mean
-```
-
-## Ranges bind tighter than `+`/`-`
-
-A range's bounds are parsed *before* arithmetic, so `0..n-1` reads as
-`(0..n) - 1` — a range minus an integer, which is a runtime type error.
-Parenthesize the bound:
+Since 0.69 the precedence table reads conventionally: `&&` binds tighter
+than `||`, range bounds are arithmetic (`0..n-1` is `0..(n-1)`), and
+arithmetic feeds the pipeline (`x + 1 |> f` pipes the sum). The one
+ordering that still differs from C is **bitwise**, which binds tighter
+than `+`/`*`: `1 << 4 * 2` is `(1 << 4) * 2`, i.e. `32`. Parenthesize
+mixed shift/arithmetic expressions; the
+[operator table](language.md#operators-and-precedence) has the full
+ordering.
 
 ```olang
+println(show(true || false && false))    // true — && binds tighter, as expected
 let xs = [10, 20, 30]
-for i in 0..(len(xs) - 1) { print(show(xs[i]) + " ") }   // 10 20
+for i in 0..len(xs)-1 { print(show(xs[i]) + " ") }   // 10 20
 println("")
+println(show(1 << 4 * 2))                // 32 — (1 << 4) * 2: parenthesize these
 ```
 
-The same care applies to bitwise operators and the pipeline `|>`, which
-also bind tighter than arithmetic (`1 << 4 * 2` is `(1 << 4) * 2`, i.e.
-`32`). When in doubt, add parentheses; the [operator table](language.md#operators-and-precedence)
-has the full ordering.
+(Code written before 0.69 against the old table — where `&&`/`||` shared
+a level and ranges and `|>` bound tighter than arithmetic — parses
+differently now; the [CHANGELOG](../CHANGELOG.md) has the migration
+notes. Fully parenthesized code, which this chapter always advised, is
+unaffected.)
 
 ## Parsing returns a `Result`
 

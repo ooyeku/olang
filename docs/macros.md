@@ -48,12 +48,20 @@ a route pattern) rides inside a string literal, where the macro — not
 the parser — gives it meaning.
 
 **4. Expansion is pure.** A meta fn runs on a dedicated interpreter in
-*meta mode*, where the modules that reach the outside world or the clock
-(`fs`, `http`, `db`, `proc`, `os`, `time`, `random`, `task`, `chan`) and
-the parallel constructs refuse with an error. Expansion is therefore a
-deterministic function of the source: the same file expands to the same
-program on every machine, every run — which is what keeps
-[record/replay](openness.md#open-execution-the-timeline) exact.
+*meta mode*, where everything effectful refuses with an error: the
+modules that reach the outside world or the clock (`fs`, `http`, `db`,
+`proc`, `os`, `time`, `random`, `task`, `chan` — including their pure
+helpers, since an effectful module should be entirely absent from
+expansion), every capability-gated call wherever it lives (the `ods`
+file readers and writers), every nondeterministic call the recorder
+would have to capture (`dates.now`, `crypto.random_*`), and the parallel
+constructs (`spawn`, `par_map`, `par_filter`, `par for`). The
+classification is the single table in `src/effects.rs`, shared with the
+capability gate and record/replay, so the three can never drift.
+Expansion is therefore a deterministic function of the source: the same
+file expands to the same program on every machine, every run — which is
+what keeps [record/replay](openness.md#open-execution-the-timeline)
+exact.
 
 **5. Expansion cannot hide.** `olang expand file.ol` prints the program
 the runtime actually receives — every site replaced, every `meta fn`

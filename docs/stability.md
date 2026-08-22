@@ -113,7 +113,12 @@ contextual word never stops being an ordinary identifier.
 meeting every criterion the experimental entry set: source-mapped
 runtime error spans, an expansion-aware language server, a
 ten-thousand-program fuzz corpus run clean, and three macro libraries
-imported by real programs in the corpus. What is frozen is the model,
+imported by real programs in the corpus. Both fuzz campaigns are
+committed as seeded, deterministic generators rather than historical
+claims: `tests/macro_fuzz_corpus_test.rs` and
+`tests/tier_fuzz_corpus_test.rs` run a 150-seed smoke corpus on every
+`cargo test`, and their `#[ignore]`d `*_full_campaign` tests reproduce
+the complete 10,000-seed runs on demand. What is frozen is the model,
 not its incidentals:
 
 - The syntax forms — `meta fn` declarations, `@name(args)` in

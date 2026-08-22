@@ -300,46 +300,6 @@ pub struct CapDenial {
     pub package: Option<String>,
 }
 
-/// Pure helpers inside gated modules: never gated — they compute, they
-/// don't touch the world.
-fn fs_pure(name: &str) -> bool {
-    matches!(name, "join" | "basename" | "dirname" | "ext")
-}
-
-fn fs_read_only(name: &str) -> bool {
-    matches!(
-        name,
-        "read_file"
-            | "exists"
-            | "is_dir"
-            | "is_file"
-            | "list_dir"
-            | "file_info"
-            | "file_size"
-            | "walk"
-            | "glob"
-            | "abs_path"
-    )
-}
-
-fn http_pure(name: &str) -> bool {
-    matches!(name, "encode_query" | "decode_query" | "parse_url")
-}
-
-fn os_env_gated(name: &str) -> bool {
-    matches!(
-        name,
-        "get_env"
-            | "set_env"
-            | "list_env"
-            | "has_env"
-            | "remove_env"
-            | "hostname"
-            | "username"
-            | "home_dir"
-    )
-}
-
 /// The gate: does `caps` permit the builtin `full_name` (e.g.
 /// "fs.write_file")? Returns the denied capability, or None when allowed.
 /// Anything not explicitly gated is allowed — capabilities restrict the
@@ -387,67 +347,12 @@ pub enum CapUse {
 /// call need?" — the two share the same purity predicates so they never
 /// disagree about what counts as an effect.
 pub fn required(full_name: &str) -> Option<CapUse> {
-    if let Some(f) = full_name.strip_prefix("fs.") {
-        if fs_pure(f) {
-            return None;
-        }
-        return Some(if fs_read_only(f) {
-            CapUse::FsRead
-        } else {
-            CapUse::FsWrite
-        });
-    }
-    if let Some(f) = full_name.strip_prefix("http.") {
-        if http_pure(f) {
-            return None;
-        }
-        return Some(CapUse::Net);
-    }
-    if full_name.starts_with("db.") {
-        return Some(CapUse::Db);
-    }
-    // The data stack is pure except where it touches files. Those calls
-    // demand `fs` at the matching level, so a program granted `db` and
-    // `net` but not `fs` cannot read a CSV off disk through `ods` — the
-    // latent-capability hole `db.open` had before it was gated. Every new
-    // reader or writer belongs in one of these two lists; the parsers
-    // that take text (`read_csv`, `read_jsonl`) stay pure and ungated.
-    if matches!(
-        full_name,
-        "ods.read_csv_file"
-            | "ods.open_csv"
-            | "ods.read_jsonl_file"
-            | "ods.open_jsonl"
-            | "ods.read_frame"
-            | "ods.frame_info"
-    ) {
-        return Some(CapUse::FsRead);
-    }
-    if matches!(
-        full_name,
-        "ods.write_csv" | "ods.write_jsonl" | "ods.write_frame"
-    ) {
-        return Some(CapUse::FsWrite);
-    }
-    // Process-affecting calls, whatever module they live in. `os.exit`
-    // was the hole: a dependency denied `proc` could not spawn a process
-    // but could still terminate the host, which is a larger power than
-    // the one it was refused. `proc` means "may affect processes",
-    // including this one.
-    if full_name.starts_with("proc.") || matches!(full_name, "os.exec" | "os.exit") {
-        return Some(CapUse::Proc);
-    }
-    if let Some(f) = full_name.strip_prefix("os.") {
-        if os_env_gated(f) {
-            return Some(CapUse::Env);
-        }
-        // chdir moves the fs cursor — a write-level fs demand.
-        if f == "chdir" {
-            return Some(CapUse::FsWrite);
-        }
-        return None;
-    }
-    None
+    // The classification itself lives in `crate::effects` — ONE table for
+    // this gate, macro-expansion purity, and record/replay, so the three
+    // policies cannot drift (they did: the expansion denylist missed the
+    // `ods` file I/O and `dates.now` for two releases). Reasoning behind
+    // individual rows is documented there.
+    crate::effects::classify(full_name).cap
 }
 
 /// Render a `--trace-caps` report from the set of capabilities a run

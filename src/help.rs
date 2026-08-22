@@ -4112,20 +4112,25 @@ impl HelpSystem {
         });
         self.add_function(FunctionDoc {
             name: "str.index_of".to_string(),
-            description: "Character index of the first match, or -1.".to_string(),
+            description: "Character index of the first match, or Unit when absent (test with != ())."
+                .to_string(),
             syntax: "str.index_of(s, sub)".to_string(),
             parameters: vec![],
-            return_type: "Int".to_string(),
-            examples: vec!["str.index_of(\"hello\", \"llo\") -> 2".to_string()],
+            return_type: "Int | ()".to_string(),
+            examples: vec![
+                "str.index_of(\"hello\", \"llo\") -> 2".to_string(),
+                "str.index_of(\"hello\", \"z\") -> ()".to_string(),
+            ],
             category: "String".to_string(),
             see_also: vec![],
         });
         self.add_function(FunctionDoc {
             name: "str.last_index_of".to_string(),
-            description: "Character index of the last match, or -1.".to_string(),
+            description: "Character index of the last match, or Unit when absent (test with != ())."
+                .to_string(),
             syntax: "str.last_index_of(s, sub)".to_string(),
             parameters: vec![],
-            return_type: "Int".to_string(),
+            return_type: "Int | ()".to_string(),
             examples: vec!["str.last_index_of(\"a-a\", \"a\") -> 2".to_string()],
             category: "String".to_string(),
             see_also: vec![],
@@ -4550,6 +4555,57 @@ impl HelpSystem {
     }
 
     fn add_fs_functions(&mut self) {
+        // The bytes module: immutable binary data.
+        self.doc(
+            "bytes.from_list",
+            "bytes.from_list(ints)",
+            "Bytes",
+            "Bytes",
+            "Build a Bytes value from a list of integers 0..=255. Raises on a non-integer or out-of-range element.",
+        );
+        self.doc(
+            "bytes.to_list",
+            "bytes.to_list(b)",
+            "List",
+            "Bytes",
+            "The bytes as a list of integers 0..=255.",
+        );
+        self.doc(
+            "bytes.from_string",
+            "bytes.from_string(s)",
+            "Bytes",
+            "Bytes",
+            "A string's UTF-8 bytes as a Bytes value.",
+        );
+        self.doc(
+            "bytes.to_string",
+            "bytes.to_string(b)",
+            "Result",
+            "Bytes",
+            "Decode Bytes as UTF-8 text: Ok(string), or Err when the bytes are not valid UTF-8.",
+        );
+        self.doc(
+            "bytes.len",
+            "bytes.len(b)",
+            "Int",
+            "Bytes",
+            "The byte count. The global len(b) answers the same.",
+        );
+        self.doc(
+            "bytes.slice",
+            "bytes.slice(b, from, to)",
+            "Bytes",
+            "Bytes",
+            "Half-open byte slice, clamped to the value's bounds — the same shape as str.substring.",
+        );
+        self.doc(
+            "bytes.concat",
+            "bytes.concat(a, b)",
+            "Bytes",
+            "Bytes",
+            "The concatenation of two Bytes values.",
+        );
+
         // File I/O operations
         self.add_function(FunctionDoc {
             name: "fs.read_file".to_string(),
@@ -4582,6 +4638,21 @@ impl HelpSystem {
             category: "Filesystem".to_string(),
             see_also: vec!["fs.read_file".to_string(), "fs.append_file".to_string()],
         });
+
+        self.doc(
+            "fs.read_bytes",
+            "fs.read_bytes(path)",
+            "Result",
+            "Filesystem",
+            "Read a file's raw bytes — the binary twin of fs.read_file, for content that is not UTF-8 text. Ok(Bytes), or Err with the OS error. Requires the fs capability at read level.",
+        );
+        self.doc(
+            "fs.write_bytes",
+            "fs.write_bytes(path, b)",
+            "Result",
+            "Filesystem",
+            "Write a Bytes value to a file — the binary twin of fs.write_file. Requires the fs capability at write level.",
+        );
 
         self.add_function(FunctionDoc {
             name: "fs.append_file".to_string(),
@@ -5539,15 +5610,23 @@ impl HelpSystem {
                 "month: Int - The month (1-12)".to_string(),
                 "day: Int - The day of month (1-31)".to_string(),
             ],
-            return_type: "String".to_string(),
+            return_type: "Result<Date, Error>".to_string(),
             examples: vec![
-                "dates.date(2024, 6, 15)  // \"2024-06-15\"".to_string(),
-                "let birthday = dates.date(1990, 5, 15)".to_string(),
-                "dates.date(2024, 2, 29)  // \"2024-02-29\" (leap year)".to_string(),
+                "unwrap(dates.date(2024, 6, 15))  // a Date; displays as 2024-06-15".to_string(),
+                "let birthday = unwrap(dates.date(1990, 5, 15))".to_string(),
+                "unwrap(dates.date(2024, 6, 15)) < unwrap(dates.date(2024, 7, 1))  // true".to_string(),
             ],
             category: "Dates".to_string(),
-            see_also: vec!["dates.datetime".to_string(), "dates.time".to_string()],
+            see_also: vec!["dates.parse".to_string(), "dates.datetime".to_string()],
         });
+
+        self.doc(
+            "dates.parse",
+            "dates.parse(s)",
+            "Result",
+            "Dates",
+            "Parse a Date value from a date or datetime string — the canonical constructor from text; accepts every format this module emits. Date values compare chronologically, subtract to day counts (d2 - d1), and shift by days (d + 7).",
+        );
 
         self.add_function(FunctionDoc {
             name: "dates.datetime".to_string(),
@@ -8041,6 +8120,14 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "base64.encode_url_safe".to_string(),
             ],
         });
+
+        self.doc(
+            "base64.decode_bytes",
+            "base64.decode_bytes(s)",
+            "Result",
+            "Base64",
+            "Decode base64 to raw Bytes — the twin of base64.decode for payloads that are not UTF-8 text. base64.encode accepts Bytes as well as strings.",
+        );
 
         self.add_function(FunctionDoc {
             name: "base64.decode".to_string(),

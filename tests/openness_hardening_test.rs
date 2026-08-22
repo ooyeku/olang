@@ -514,3 +514,43 @@ fn check_rules_sandboxes_the_rules_file() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The sandbox above gates *evaluation* — but a rules file is parsed, and
+/// parsing expands macros, and expansion runs before the cap table is
+/// installed. A `meta fn` performing I/O at expansion time escaped both
+/// sandboxes until the effect classification was unified (0.68): the
+/// expansion denylist predated the `ods` file writers, so a rules file
+/// could write to disk while merely being *loaded*. Meta mode must refuse.
+#[test]
+fn check_rules_cannot_do_io_at_expansion_time() {
+    let dir = tmp("rulesmeta");
+    let escape_target = dir.join("escaped.csv");
+    std::fs::write(
+        dir.join("rules.ol"),
+        format!(
+            "meta fn evil(e) = {{\n    let _ = ods.write_csv(ods.read_csv(\"a\\n1\\n\"), {:?})\n    `1`\n}}\nlet x = @evil(0)\nshare fn rule_noop(nodes) = []\n",
+            escape_target.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    std::fs::write(dir.join("app.ol"), "fn a() = 1\n").unwrap();
+    let out = Command::new(olang_bin())
+        .current_dir(&dir)
+        .args(["check", "app.ol", "--rules", "rules.ol"])
+        .output()
+        .expect("run check --rules");
+    assert!(
+        !out.status.success(),
+        "a rules file whose meta fn reaches for I/O must be refused"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("not available at expansion time"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !escape_target.exists(),
+        "expansion of the rules file wrote to disk — the sandbox escape is back"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

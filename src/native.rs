@@ -57,6 +57,14 @@ pub trait NativeObject: fmt::Debug + Send + Sync {
         None
     }
 
+    /// The length `len(value)` reports, when this value has one. `None` —
+    /// the default — keeps the language's "len: argument must be ..."
+    /// error; a sequence-like native (Bytes) answers here and `len`
+    /// works on it in both tiers.
+    fn length(&self) -> Option<usize> {
+        None
+    }
+
     /// Subscript this value: what `value[key]` evaluates to.
     ///
     /// `None` — the default — means the type is not subscriptable and the
@@ -158,6 +166,9 @@ pub fn registered_modules() -> &'static [Arc<dyn OvmModule>] {
         modules.push(Arc::new(crate::ods::OdsModule));
         modules.push(Arc::new(crate::ods::StatsModule));
         modules.push(Arc::new(crate::ods::PlotModule));
+        // Operators for Date values only — the `dates` builtin namespace
+        // itself dispatches through the stdlib path.
+        modules.push(Arc::new(crate::stdlib::dates::DatesModule));
         modules
     });
     &MODULES

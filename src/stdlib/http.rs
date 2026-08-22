@@ -110,233 +110,127 @@ pub fn call_http_function(
     }
 }
 
-/// Make a GET request
-/// Usage: http.get("https://api.example.com/data") -> Result<HttpResponse, Error>
-fn http_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 1 {
-        return Err(format!("get expects 1 argument, got {}", args.len()).into());
-    }
-
-    let url = match &args[0] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Err("get: URL must be a string".to_string().into());
-        }
-    };
-
-    match reqwest::blocking::get(url) {
-        Ok(response) => {
-            let status = response.status().as_u16() as i64;
-            match response.text() {
-                Ok(body) => {
-                    let mut response_map = HashMap::new();
-                    response_map.insert("status".to_string(), Value::Integer(status));
-                    response_map.insert("body".to_string(), Value::String(Arc::new(body)));
-                    response_map.insert(
-                        "success".to_string(),
-                        Value::Boolean((200..300).contains(&status)),
-                    );
-
-                    Ok(Value::Ok(Box::new(Value::Struct {
-                        type_name: "HttpResponse".to_string(),
-                        fields: std::sync::Arc::new(response_map),
-                    })))
-                }
-                Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                    "Failed to read response body: {}",
-                    e
-                )))))),
-            }
-        }
-        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "GET request failed: {}",
-            e
-        )))))),
-    }
+/// Request options, parsed from the optional trailing map every client
+/// verb accepts: `#{ "headers": #{...}, "timeout_ms": Int,
+/// "bearer": String, "basic": (user, pass) }`. An unknown key or a
+/// wrong-typed value raises (a typo'd option silently ignored would be a
+/// request that quietly lacked its auth header).
+#[derive(Default)]
+struct RequestOpts {
+    headers: Vec<(String, String)>,
+    timeout_ms: Option<u64>,
+    bearer: Option<String>,
+    basic: Option<(String, String)>,
 }
 
-/// Make a POST request
-/// Usage: http.post("https://api.example.com/data", "request body") -> Result<HttpResponse, Error>
-fn http_post(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 2 {
-        return Err(format!("post expects 2 arguments, got {}", args.len()).into());
-    }
-
-    let url = match &args[0] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Err("post: URL must be a string".to_string().into());
+fn parse_opts(v: &Value, fname: &str) -> Result<RequestOpts, Box<dyn std::error::Error>> {
+    let entries = match v {
+        Value::Map(entries) => entries,
+        other => {
+            return Err(format!(
+                "{fname}: options must be a map (#{{ \"headers\": ..., \"timeout_ms\": ..., \"bearer\": ..., \"basic\": ... }}), got {}",
+                other.type_name()
+            )
+            .into());
         }
     };
-
-    let body = match &args[1] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Err("post: body must be a string".to_string().into());
-        }
-    };
-
-    let client = reqwest::blocking::Client::new();
-    match client.post(url).body(body.to_string()).send() {
-        Ok(response) => {
-            let status = response.status().as_u16() as i64;
-            match response.text() {
-                Ok(response_body) => {
-                    let mut response_map = HashMap::new();
-                    response_map.insert("status".to_string(), Value::Integer(status));
-                    response_map.insert("body".to_string(), Value::String(Arc::new(response_body)));
-                    response_map.insert(
-                        "success".to_string(),
-                        Value::Boolean((200..300).contains(&status)),
-                    );
-
-                    Ok(Value::Ok(Box::new(Value::Struct {
-                        type_name: "HttpResponse".to_string(),
-                        fields: std::sync::Arc::new(response_map),
-                    })))
+    let mut opts = RequestOpts::default();
+    for (key, value) in entries.iter() {
+        match key.as_str() {
+            "headers" => match value {
+                Value::Map(hs) => {
+                    for (name, val) in hs.iter() {
+                        match val {
+                            Value::String(sv) => {
+                                opts.headers.push((name.clone(), sv.as_ref().clone()))
+                            }
+                            other => {
+                                return Err(format!(
+                                    "{fname}: header '{name}' must be a string, got {}",
+                                    other.type_name()
+                                )
+                                .into());
+                            }
+                        }
+                    }
                 }
-                Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                    "Failed to read response body: {}",
-                    e
-                )))))),
+                other => {
+                    return Err(format!(
+                        "{fname}: \"headers\" must be a map of header name to string, got {}",
+                        other.type_name()
+                    )
+                    .into());
+                }
+            },
+            "timeout_ms" => match value {
+                Value::Integer(ms) if *ms > 0 => opts.timeout_ms = Some(*ms as u64),
+                other => {
+                    return Err(format!(
+                        "{fname}: \"timeout_ms\" must be a positive integer, got {other}"
+                    )
+                    .into());
+                }
+            },
+            "bearer" => match value {
+                Value::String(tok) => opts.bearer = Some(tok.as_ref().clone()),
+                other => {
+                    return Err(format!(
+                        "{fname}: \"bearer\" must be a string token, got {}",
+                        other.type_name()
+                    )
+                    .into());
+                }
+            },
+            "basic" => match value {
+                Value::Tuple(parts) | Value::List(parts) if parts.len() == 2 => {
+                    match (&parts[0], &parts[1]) {
+                        (Value::String(u), Value::String(pw)) => {
+                            opts.basic = Some((u.as_ref().clone(), pw.as_ref().clone()))
+                        }
+                        _ => {
+                            return Err(format!(
+                                "{fname}: \"basic\" must be a (user, password) pair of strings"
+                            )
+                            .into());
+                        }
+                    }
+                }
+                _ => {
+                    return Err(format!(
+                        "{fname}: \"basic\" must be a (user, password) pair of strings"
+                    )
+                    .into());
+                }
+            },
+            other => {
+                return Err(format!(
+                    "{fname}: unknown option \"{other}\" — the options are \"headers\", \"timeout_ms\", \"bearer\", and \"basic\""
+                )
+                .into());
             }
         }
-        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "POST request failed: {}",
-            e
-        )))))),
     }
+    Ok(opts)
 }
 
-/// Make a PUT request
-/// Usage: http.put("https://api.example.com/data", "request body") -> Result<HttpResponse, Error>
-fn http_put(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 2 {
-        return Err(format!("put expects 2 arguments, got {}", args.len()).into());
+/// One request core for every client verb. Network failure is a value
+/// (`Err(message)`); a misused call raises through the dispatcher.
+fn perform(
+    method: &str,
+    url: &str,
+    body: Option<&str>,
+    opts: RequestOpts,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let mut client = reqwest::blocking::Client::builder();
+    if let Some(ms) = opts.timeout_ms {
+        client = client.timeout(std::time::Duration::from_millis(ms));
     }
+    let client = client
+        .build()
+        .map_err(|e| format!("{method}: could not build HTTP client: {e}"))?;
 
-    let url = match &args[0] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Err("put: URL must be a string".to_string().into());
-        }
-    };
-
-    let body = match &args[1] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Err("put: body must be a string".to_string().into());
-        }
-    };
-
-    let client = reqwest::blocking::Client::new();
-    match client.put(url).body(body.to_string()).send() {
-        Ok(response) => {
-            let status = response.status().as_u16() as i64;
-            match response.text() {
-                Ok(response_body) => {
-                    let mut response_map = HashMap::new();
-                    response_map.insert("status".to_string(), Value::Integer(status));
-                    response_map.insert("body".to_string(), Value::String(Arc::new(response_body)));
-                    response_map.insert(
-                        "success".to_string(),
-                        Value::Boolean((200..300).contains(&status)),
-                    );
-
-                    Ok(Value::Ok(Box::new(Value::Struct {
-                        type_name: "HttpResponse".to_string(),
-                        fields: std::sync::Arc::new(response_map),
-                    })))
-                }
-                Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                    "Failed to read response body: {}",
-                    e
-                )))))),
-            }
-        }
-        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "PUT request failed: {}",
-            e
-        )))))),
-    }
-}
-
-/// Make a DELETE request
-/// Usage: http.delete("https://api.example.com/data") -> Result<HttpResponse, Error>
-fn http_delete(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 1 {
-        return Err(format!("delete expects 1 argument, got {}", args.len()).into());
-    }
-
-    let url = match &args[0] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Err("delete: URL must be a string".to_string().into());
-        }
-    };
-
-    let client = reqwest::blocking::Client::new();
-    match client.delete(url).send() {
-        Ok(response) => {
-            let status = response.status().as_u16() as i64;
-            match response.text() {
-                Ok(response_body) => {
-                    let mut response_map = HashMap::new();
-                    response_map.insert("status".to_string(), Value::Integer(status));
-                    response_map.insert("body".to_string(), Value::String(Arc::new(response_body)));
-                    response_map.insert(
-                        "success".to_string(),
-                        Value::Boolean((200..300).contains(&status)),
-                    );
-
-                    Ok(Value::Ok(Box::new(Value::Struct {
-                        type_name: "HttpResponse".to_string(),
-                        fields: std::sync::Arc::new(response_map),
-                    })))
-                }
-                Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                    "Failed to read response body: {}",
-                    e
-                )))))),
-            }
-        }
-        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "DELETE request failed: {}",
-            e
-        )))))),
-    }
-}
-
-/// Make a custom HTTP request
-/// Usage: http.request("GET", "https://api.example.com", "body") -> Result<HttpResponse, Error>
-fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 3 {
-        return Err(format!("request expects 3 arguments, got {}", args.len()).into());
-    }
-
-    let method = match &args[0] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Err("request: method must be a string".to_string().into());
-        }
-    };
-
-    let url = match &args[1] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Err("request: URL must be a string".to_string().into());
-        }
-    };
-
-    let body = match &args[2] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Err("request: body must be a string".to_string().into());
-        }
-    };
-
-    let client = reqwest::blocking::Client::new();
-    let request_builder = match method.to_uppercase().as_str() {
+    let upper = method.to_uppercase();
+    let mut builder = match upper.as_str() {
         "GET" => client.get(url),
         "POST" => client.post(url),
         "PUT" => client.put(url),
@@ -348,26 +242,47 @@ fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    let request_builder =
-        if !body.is_empty() && method.to_uppercase() != "GET" && method.to_uppercase() != "HEAD" {
-            request_builder.body(body.to_string())
-        } else {
-            request_builder
-        };
+    for (name, value) in &opts.headers {
+        builder = builder.header(name, value);
+    }
+    if let Some(token) = &opts.bearer {
+        builder = builder.bearer_auth(token);
+    }
+    if let Some((user, pass)) = &opts.basic {
+        builder = builder.basic_auth(user, Some(pass));
+    }
+    if let Some(body) = body
+        && !body.is_empty()
+        && upper != "GET"
+        && upper != "HEAD"
+    {
+        builder = builder.body(body.to_string());
+    }
 
-    match request_builder.send() {
+    match builder.send() {
         Ok(response) => {
             let status = response.status().as_u16() as i64;
+            // Response headers, lowercased for predictable lookup; the
+            // first value wins for a repeated header.
+            let mut headers = HashMap::new();
+            for (name, value) in response.headers() {
+                let key = name.as_str().to_lowercase();
+                if let Ok(v) = value.to_str() {
+                    headers
+                        .entry(key)
+                        .or_insert_with(|| Value::String(Arc::new(v.to_string())));
+                }
+            }
             match response.text() {
                 Ok(response_body) => {
                     let mut response_map = HashMap::new();
                     response_map.insert("status".to_string(), Value::Integer(status));
                     response_map.insert("body".to_string(), Value::String(Arc::new(response_body)));
+                    response_map.insert("headers".to_string(), Value::Map(Arc::new(headers)));
                     response_map.insert(
                         "success".to_string(),
                         Value::Boolean((200..300).contains(&status)),
                     );
-
                     Ok(Value::Ok(Box::new(Value::Struct {
                         type_name: "HttpResponse".to_string(),
                         fields: std::sync::Arc::new(response_map),
@@ -381,9 +296,91 @@ fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "{} request failed: {}",
-            method, e
+            upper, e
         )))))),
     }
+}
+
+fn str_arg<'a>(v: &'a Value, what: &str) -> Result<&'a str, Box<dyn std::error::Error>> {
+    match v {
+        Value::String(s) => Ok(s.as_ref()),
+        _ => Err(format!("{what} must be a string").into()),
+    }
+}
+
+/// Make a GET request. An optional trailing options map carries headers,
+/// timeout, and auth — see `parse_opts`.
+/// Usage: http.get(url) / http.get(url, #{ "bearer": token })
+fn http_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(format!("get expects 1 or 2 arguments, got {}", args.len()).into());
+    }
+    let url = str_arg(&args[0], "get: URL")?;
+    let opts = match args.get(1) {
+        Some(v) => parse_opts(v, "get")?,
+        None => RequestOpts::default(),
+    };
+    perform("GET", url, None, opts)
+}
+
+/// Make a POST request.
+/// Usage: http.post(url, body) / http.post(url, body, #{ "headers": #{ "content-type": "application/json" } })
+fn http_post(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(format!("post expects 2 or 3 arguments, got {}", args.len()).into());
+    }
+    let url = str_arg(&args[0], "post: URL")?;
+    let body = str_arg(&args[1], "post: body")?;
+    let opts = match args.get(2) {
+        Some(v) => parse_opts(v, "post")?,
+        None => RequestOpts::default(),
+    };
+    perform("POST", url, Some(body), opts)
+}
+
+/// Make a PUT request.
+/// Usage: http.put(url, body) / http.put(url, body, opts)
+fn http_put(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(format!("put expects 2 or 3 arguments, got {}", args.len()).into());
+    }
+    let url = str_arg(&args[0], "put: URL")?;
+    let body = str_arg(&args[1], "put: body")?;
+    let opts = match args.get(2) {
+        Some(v) => parse_opts(v, "put")?,
+        None => RequestOpts::default(),
+    };
+    perform("PUT", url, Some(body), opts)
+}
+
+/// Make a DELETE request.
+/// Usage: http.delete(url) / http.delete(url, opts)
+fn http_delete(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(format!("delete expects 1 or 2 arguments, got {}", args.len()).into());
+    }
+    let url = str_arg(&args[0], "delete: URL")?;
+    let opts = match args.get(1) {
+        Some(v) => parse_opts(v, "delete")?,
+        None => RequestOpts::default(),
+    };
+    perform("DELETE", url, None, opts)
+}
+
+/// Make a request with an explicit method.
+/// Usage: http.request("PATCH", url, body) / http.request(method, url, body, opts)
+fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() < 3 || args.len() > 4 {
+        return Err(format!("request expects 3 or 4 arguments, got {}", args.len()).into());
+    }
+    let method = str_arg(&args[0], "request: method")?;
+    let url = str_arg(&args[1], "request: URL")?;
+    let body = str_arg(&args[2], "request: body")?;
+    let opts = match args.get(3) {
+        Some(v) => parse_opts(v, "request")?,
+        None => RequestOpts::default(),
+    };
+    perform(method, url, Some(body), opts)
 }
 
 /// Start an HTTP server (simplified implementation for basic use)

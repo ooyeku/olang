@@ -132,6 +132,20 @@ fn meta_mode_refuses_the_effectful_world() {
         ("unwrap(fs.read_file(\"/etc/hosts\"))", "fs."),
         ("show(time.monotonic_ms())", "time."),
         ("show(random.random())", "random."),
+        // The drift cases the unified effect classification (src/effects.rs)
+        // closed: each of these was expandable while the timeline already
+        // classified it as nondeterministic, or the capability gate already
+        // classified it as filesystem I/O.
+        ("dates.now()", "dates.now"),
+        ("dates.utc_now()", "dates.utc_now"),
+        ("dates.today()", "dates.today"),
+        ("crypto.random_hex(8)", "crypto.random_hex"),
+        ("show(crypto.random_bytes(4))", "crypto.random_bytes"),
+        (
+            "show(ods.write_csv(ods.read_csv(\"a\\n1\\n\"), \"/tmp/meta-escape.csv\"))",
+            "ods.write_csv",
+        ),
+        ("show(ods.read_csv_file(\"/etc/hosts\"))", "ods.read_csv_file"),
     ] {
         let err = eval(&format!(
             "meta fn evil(x) = {{ let v = {call}; `1` }}\nlet y = @evil(0)\n"
@@ -142,6 +156,20 @@ fn meta_mode_refuses_the_effectful_world() {
             "{what} must refuse at expansion time: {err}"
         );
     }
+}
+
+#[test]
+fn meta_mode_refuses_par_for() {
+    // `par for` is a syntax form, not a builtin name, so the old name
+    // denylist never saw it — `spawn` had this gate, `par for` did not.
+    let err = eval(
+        "meta fn evil(x) = { par for i in [1, 2] { i } \n `1` }\nlet y = @evil(0)\n",
+    )
+    .expect_err("par for in meta mode");
+    assert!(
+        err.contains("not available at expansion time"),
+        "par for must refuse at expansion time: {err}"
+    );
 }
 
 #[test]

@@ -130,7 +130,8 @@ fn humanize_rule(rule: Rule) -> &'static str {
         Rule::add_op
         | Rule::mul_op
         | Rule::bitwise_op
-        | Rule::bool_op
+        | Rule::or_op
+        | Rule::and_op
         | Rule::comp_op
         | Rule::range_op
         | Rule::pipe_op
@@ -606,13 +607,37 @@ impl Parser {
         let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing left operand in binary expression".to_string(),
         })?;
+        let mut expr = self.build_and_expr(first_pair.into_inner())?;
+
+        while let Some(op_pair) = pairs.next() {
+            if let Some(right_pair) = pairs.next() {
+                let op = match op_pair.as_str() {
+                    "||" => BinaryOp::Or,
+                    _ => break,
+                };
+                let right = self.build_and_expr(right_pair.into_inner())?;
+                expr = Expr::BinaryOp {
+                    left: Box::new(expr),
+                    op,
+                    right: Box::new(right),
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+
+    fn build_and_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing left operand in logical-and expression".to_string(),
+        })?;
         let mut expr = self.build_comparison_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
             if let Some(right_pair) = pairs.next() {
                 let op = match op_pair.as_str() {
                     "&&" => BinaryOp::And,
-                    "||" => BinaryOp::Or,
                     _ => break,
                 };
                 let right = self.build_comparison_expr(right_pair.into_inner())?;
@@ -632,7 +657,7 @@ impl Parser {
         let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing left operand in comparison expression".to_string(),
         })?;
-        let mut expr = self.build_additive_expr(first_pair.into_inner())?;
+        let mut expr = self.build_pipe_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
             if let Some(right_pair) = pairs.next() {
@@ -654,10 +679,10 @@ impl Parser {
                         })?;
                         match inner.as_rule() {
                             Rule::unit => Expr::Tuple(std::sync::Arc::new(Vec::new())),
-                            _ => self.build_additive_expr(inner.into_inner())?,
+                            _ => self.build_pipe_expr(inner.into_inner())?,
                         }
                     }
-                    _ => self.build_additive_expr(right_pair.into_inner())?,
+                    _ => self.build_pipe_expr(right_pair.into_inner())?,
                 };
                 expr = Expr::BinaryOp {
                     left: Box::new(expr),
@@ -711,6 +736,8 @@ impl Parser {
                     "%" => BinaryOp::Modulo,
                     _ => break,
                 };
+                // Multiplicative operands sit directly above bitwise in the
+                // ladder, so both sides build through build_bitwise_expr.
                 let right = self.build_bitwise_expr(right_pair.into_inner())?;
                 expr = Expr::BinaryOp {
                     left: Box::new(expr),
@@ -728,7 +755,7 @@ impl Parser {
         let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing left operand in bitwise expression".to_string(),
         })?;
-        let mut expr = self.build_pipe_expr(first_pair.into_inner())?;
+        let mut expr = self.build_unary_expr(first_pair.into_inner())?;
 
         while let Some(op_pair) = pairs.next() {
             if let Some(right_pair) = pairs.next() {
@@ -740,7 +767,7 @@ impl Parser {
                     ">>" => BitwiseOp::Shr,
                     _ => break,
                 };
-                let right = self.build_pipe_expr(right_pair.into_inner())?;
+                let right = self.build_unary_expr(right_pair.into_inner())?;
                 expr = Expr::BitwiseOp {
                     left: Box::new(expr),
                     op,
@@ -782,7 +809,8 @@ impl Parser {
         let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing left operand in range expression".to_string(),
         })?;
-        let mut left = self.build_unary_expr(first_pair.into_inner())?;
+        // Range bounds are additive expressions: `0..n-1` is `0..(n-1)`.
+        let mut left = self.build_additive_expr(first_pair.into_inner())?;
 
         if let Some(pair) = pairs.next() {
             let op_str = pair.as_str();
@@ -791,7 +819,7 @@ impl Parser {
                 let right_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
                     message: "Missing right operand in range expression".to_string(),
                 })?;
-                let right = self.build_unary_expr(right_pair.into_inner())?;
+                let right = self.build_additive_expr(right_pair.into_inner())?;
                 left = Expr::Range {
                     start: Box::new(left),
                     end: Box::new(right),

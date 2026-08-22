@@ -112,6 +112,7 @@ println(show(by_site))
 // column pays for one column. `frame_info` reads the header alone, so a
 // downstream job can see what is in the cache without loading it.
 
+unwrap(fs.create_dir_all("cache"))   // a fresh checkout has no cache/ yet
 unwrap(ods.write_frame(full, "cache/clean.olc"))
 let info = unwrap(ods.frame_info("cache/clean.olc"))
 println("")

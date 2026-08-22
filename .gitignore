@@ -93,3 +93,4 @@ examples/*/ledger
 /dist/*
 !/dist/homebrew/
 editors/vscode/dist/
+examples/meterflow/cache/

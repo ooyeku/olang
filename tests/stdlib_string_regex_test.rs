@@ -31,7 +31,10 @@ fn str_case_and_trim() {
 #[test]
 fn str_search_and_slice() {
     assert_eq!(eval(r#"str.index_of("hello", "llo")"#), Value::Integer(2));
-    assert_eq!(eval(r#"str.index_of("hello", "z")"#), Value::Integer(-1));
+    // Absence is Unit (0.68): the -1 sentinel was dangerous next to
+    // negative indexing, and Unit is what every other lookup answers.
+    assert_eq!(eval(r#"str.index_of("hello", "z")"#), Value::Unit);
+    assert_eq!(eval(r#"str.last_index_of("hello", "z")"#), Value::Unit);
     assert_eq!(s(eval(r#"str.substring("hello world", 6, 11)"#)), "world");
     // substring clamps out-of-range indices rather than failing
     assert_eq!(s(eval(r#"str.substring("hi", 0, 99)"#)), "hi");

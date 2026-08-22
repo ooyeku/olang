@@ -55,6 +55,14 @@ pub fn create_fs_module() -> Value {
         create_builtin_function("write_file", 2),
     );
     module.insert(
+        "read_bytes".to_string(),
+        create_builtin_function("read_bytes", 1),
+    );
+    module.insert(
+        "write_bytes".to_string(),
+        create_builtin_function("write_bytes", 2),
+    );
+    module.insert(
         "append_file".to_string(),
         create_builtin_function("append_file", 2),
     );
@@ -144,6 +152,8 @@ pub fn call_fs_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
     match name {
         "read_file" => read_file(args),
         "write_file" => write_file(args),
+        "read_bytes" => read_bytes(args),
+        "write_bytes" => write_bytes(args),
         "append_file" => append_file(args),
         "exists" => exists(args),
         "join" => path_join(args),
@@ -213,6 +223,51 @@ fn write_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
+    match fs::write(path_str, contents) {
+        Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "Failed to write file '{}': {}",
+            path_str, e
+        )))))),
+    }
+}
+
+/// Read a file's raw bytes — the binary twin of read_file, for content
+/// that is not UTF-8 text (images, archives, protocol payloads).
+/// Usage: fs.read_bytes("/path/to/file.bin") -> Result<Bytes, Error>
+fn read_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(format!("read_bytes expects 1 argument, got {}", args.len()).into());
+    }
+    let path_str = match &args[0] {
+        Value::String(s) => s.as_ref(),
+        _ => {
+            return Err("read_bytes: path must be a string".to_string().into());
+        }
+    };
+    match fs::read(path_str) {
+        Ok(contents) => Ok(Value::Ok(Box::new(crate::stdlib::bytes::to_value(contents)))),
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "Failed to read file '{}': {}",
+            path_str, e
+        )))))),
+    }
+}
+
+/// Write raw bytes to a file — the binary twin of write_file.
+/// Usage: fs.write_bytes("/path/to/file.bin", b) -> Result<Unit, Error>
+fn write_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Err(format!("write_bytes expects 2 arguments, got {}", args.len()).into());
+    }
+    let path_str = match &args[0] {
+        Value::String(s) => s.as_ref(),
+        _ => {
+            return Err("write_bytes: path must be a string".to_string().into());
+        }
+    };
+    let contents = crate::stdlib::bytes::bytes_of(&args[1])
+        .map_err(|e| format!("write_bytes: contents must be Bytes — {e}"))?;
     match fs::write(path_str, contents) {
         Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

@@ -417,6 +417,14 @@ impl BuiltinFunctions {
         );
 
         functions.insert(
+            "map_get_or".to_string(),
+            BuiltinFunction {
+                name: "map_get_or".to_string(),
+                arity: 3,
+            },
+        );
+
+        functions.insert(
             "map_set".to_string(),
             BuiltinFunction {
                 name: "map_set".to_string(),
@@ -742,6 +750,15 @@ impl BuiltinFunctions {
             );
         }
 
+        // Handle bytes functions
+        if let Some(bytes_function) = name.strip_prefix("bytes.") {
+            return crate::stdlib::bytes::call_bytes_function(bytes_function, arguments).map_err(
+                |e| InterpreterError::RuntimeError {
+                    message: e.to_string(),
+                },
+            );
+        }
+
         // Handle base64 functions
         if let Some(base64_function) = name.strip_prefix("base64.") {
             // Remove "base64." prefix
@@ -934,6 +951,7 @@ impl BuiltinFunctions {
             "show" => builtins.show(arguments),
             "entries" => builtins.entries(arguments),
             "map_get" => builtins.map_get(arguments),
+            "map_get_or" => builtins.map_get_or(arguments),
             "map_set" => builtins.map_set(arguments),
             "map_has_key" => builtins.map_has_key(arguments),
             "map_keys" => builtins.map_keys(arguments),
@@ -1124,12 +1142,6 @@ impl BuiltinFunctions {
                 }
 
                 let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
-
-                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large range operations
-                if range_size > 50 {
-                    interpreter.force_memory_cleanup();
-                }
-
                 return Self::process_filter_range(range_vec, function, interpreter);
             }
             _ => {
@@ -1363,6 +1375,11 @@ impl BuiltinFunctions {
             Value::List(items) => Ok(Value::Integer(items.len() as i64)),
             Value::String(s) => Ok(Value::Integer(s.chars().count() as i64)),
             Value::Tuple(items) => Ok(Value::Integer(items.len() as i64)),
+            // A native value may declare a length (Bytes does); one that
+            // doesn't keeps the error below.
+            Value::Native(h) if h.0.length().is_some() => {
+                Ok(Value::Integer(h.0.length().unwrap_or(0) as i64))
+            }
             _ => Err(InterpreterError::TypeError {
                 message: "len: argument must be a list, string, or tuple".to_string(),
             }),
@@ -2696,6 +2713,47 @@ impl BuiltinFunctions {
         };
 
         Ok(map.get(key).cloned().unwrap_or(Value::Unit))
+    }
+
+    /// `map_get_or(m, k, default)` — the value at `k`, or `default` when
+    /// there is nothing there. "Nothing there" means absent *or* Unit:
+    /// under the absence convention (Unit is absence — the value a missing
+    /// key, a JSON null, and an empty branch all produce), a stored Unit
+    /// is not distinguishable from a missing key on purpose, and this
+    /// function is the one-call form of the `map_has_key` guard dance.
+    fn map_get_or(&self, mut args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 3 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 3,
+                got: args.len(),
+            });
+        }
+        let default = args.pop().expect("len checked");
+
+        let map = match Self::field_map(&args[0]) {
+            Some(map) => map,
+            None => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_get_or: first argument must be a map or object".to_string(),
+                });
+            }
+        };
+        let key = match &args[1] {
+            Value::String(s) => s.as_ref(),
+            Value::Integer(i) => &i.to_string(),
+            Value::Float(f) => &f.to_string(),
+            Value::Boolean(b) => &b.to_string(),
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_get_or: key must be string, integer, float, or boolean"
+                        .to_string(),
+                });
+            }
+        };
+        Ok(match map.get(key) {
+            None | Some(Value::Unit) => default,
+            Some(present) => present.clone(),
+        })
     }
 
     fn map_set(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {

@@ -108,14 +108,6 @@ pub struct Interpreter {
     /// line must still authorize `n = 1` on the next.
     scope_bindings: crate::scoping::Predefined,
 
-    // MEMORY MONITORING: Track memory usage to prevent corruption
-    memory_allocations: usize,
-    max_memory_allocations: usize,
-
-    // AGGRESSIVE MEMORY MANAGEMENT: Track large allocations and force cleanup
-    large_allocation_count: usize,
-    last_cleanup_operation: usize,
-
     /// Optional bytecode tier: hot functions are compiled and executed on the
     /// OVM instead of walking the AST. Disabled unless explicitly enabled.
     /// Boxed deliberately: the tier owns the whole VM (compiler, caches,
@@ -258,14 +250,6 @@ impl Interpreter {
             pending_error_location: None,
             pending_error_hint: None,
             scope_bindings: crate::scoping::Predefined::new(),
-
-            // MEMORY MONITORING: Initialize memory tracking
-            memory_allocations: 0,
-            max_memory_allocations: 10000, // Prevent excessive allocations
-
-            // AGGRESSIVE MEMORY MANAGEMENT: Initialize tracking
-            large_allocation_count: 0,
-            last_cleanup_operation: 0,
             bytecode_tier: None,
             trait_impls: HashMap::new(),
             trait_defaults: HashMap::new(),
@@ -976,19 +960,10 @@ impl Interpreter {
             Expr::String(s) => Ok(Value::String(s.clone())),
             Expr::Boolean(b) => Ok(Value::Boolean(*b)),
             Expr::List(items_rc) => {
-                // MEMORY MONITORING: Track list creation to prevent memory corruption
-                self.track_allocation(items_rc.len())?;
-
                 let mut values = Vec::with_capacity(items_rc.len()); // Pre-allocate
                 for item in items_rc.iter() {
                     values.push(self.eval_expr(item)?);
                 }
-
-                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after large list creation
-                if items_rc.len() > 10 {
-                    self.force_memory_cleanup();
-                }
-
                 Ok(Value::List(std::sync::Arc::from(values)))
             }
             Expr::Tuple(items_rc) => {
@@ -1727,8 +1702,6 @@ impl Interpreter {
                 self.call_stack_names
                     .push(func.name.clone().unwrap_or_else(|| "<lambda>".to_string()));
 
-                // MEMORY CLEANUP: Reset memory tracking for each new function call
-                self.reset_memory_tracking();
                 // Count required parameters (those without default values)
                 let required_params = func
                     .parameters
@@ -1893,11 +1866,6 @@ impl Interpreter {
                 self.call_depth -= 1;
                 self.call_stack_names.pop();
 
-                // AGGRESSIVE MEMORY MANAGEMENT: Cleanup after function calls
-                if self.memory_allocations > 5000 {
-                    self.force_memory_cleanup();
-                }
-
                 result
             }
             Value::Builtin(builtin) => {
@@ -1988,14 +1956,6 @@ impl Interpreter {
             call_depth: 0,
             max_call_depth: self.max_call_depth,
 
-            // MEMORY MONITORING: Initialize fresh memory tracking for each thread
-            memory_allocations: 0,
-            max_memory_allocations: self.max_memory_allocations,
-
-            // AGGRESSIVE MEMORY MANAGEMENT: Initialize fresh tracking for each thread
-            large_allocation_count: 0,
-            last_cleanup_operation: 0,
-
             // Each thread profiles independently; the VM is not shared, so
             // the clone gets a fresh, quiet tier with the same promotion
             // policy, and the declaration knowledge the parent accumulated
@@ -2074,8 +2034,24 @@ impl Interpreter {
             caps_trace: self.caps_trace.clone(),
             caps_path_cache: HashMap::new(),
             // The timeline does not span worker threads (v1 records a
-            // single thread of effects); workers run live.
-            timeline: None,
+            // single thread of effects); workers run live. That silently
+            // breaks the "clean replay is proof" property, so crossing a
+            // thread boundary under an attached timeline warns — loudly,
+            // once — instead of letting a non-reproducing trace look clean.
+            timeline: {
+                if self.timeline.is_some() {
+                    static TIMELINE_THREAD_WARNING: std::sync::Once = std::sync::Once::new();
+                    TIMELINE_THREAD_WARNING.call_once(|| {
+                        eprintln!(
+                            "warning: this run is being recorded or replayed, but it started a \
+                             task or worker thread. The timeline covers the main thread only: \
+                             effects on other threads run live, are not captured, and will not \
+                             replay (docs/tooling.md)."
+                        );
+                    });
+                }
+                None
+            },
             struct_defs: self.struct_defs.clone(),
             struct_field_checks: self.struct_field_checks.clone(),
             dependency_map: self.dependency_map.clone(),
@@ -2136,61 +2112,6 @@ impl Interpreter {
         let result = self.eval_expr(expr);
         self.environment = saved;
         result
-    }
-
-    /// MEMORY MONITORING: Track memory allocations to prevent corruption
-    fn track_allocation(&mut self, size: usize) -> Result<(), InterpreterError> {
-        self.memory_allocations += size;
-
-        // AGGRESSIVE MEMORY MANAGEMENT: Track large allocations
-        if size > 100 {
-            self.large_allocation_count += 1;
-
-            // Force cleanup after every 5 large allocations
-            if self.large_allocation_count - self.last_cleanup_operation >= 5 {
-                self.force_memory_cleanup();
-                self.last_cleanup_operation = self.large_allocation_count;
-            }
-        }
-
-        if self.memory_allocations > self.max_memory_allocations {
-            return Err(InterpreterError::RuntimeError {
-                message: format!(
-                    "Memory allocation limit ({}) exceeded. Current allocations: {}. This prevents memory corruption.",
-                    self.max_memory_allocations, self.memory_allocations
-                ),
-            });
-        }
-        Ok(())
-    }
-
-    /// MEMORY CLEANUP: Reset memory tracking between function calls to prevent accumulation
-    fn reset_memory_tracking(&mut self) {
-        self.memory_allocations = 0;
-        // Don't reset call_depth - it needs to be preserved for proper decrementing
-    }
-
-    /// AGGRESSIVE MEMORY MANAGEMENT: Force garbage collection and cleanup
-    pub fn force_memory_cleanup(&mut self) {
-        // Never touch the module cache while a module load is in flight:
-        // the loader pre-caches placeholder entries that anchor relative
-        // `use` resolution — a sibling import resolves against the
-        // placeholder's directory. Clearing mid-load orphaned the chain:
-        // a >10-element list literal in one module's body (this cleanup's
-        // trigger) was enough to make the NEXT import in the importing
-        // file fail with "Cannot find module".
-        if self.module_loading_stack.is_empty() {
-            // Clear module cache to free large amounts of memory
-            self.clear_module_cache();
-            // Perform intelligent cache cleanup to free memory
-            let _ = self.perform_intelligent_cache_cleanup();
-        }
-
-        // Reset all memory tracking
-        self.memory_allocations = 0;
-
-        // Don't clear user environment - it breaks variable scoping
-        // self.clear_user_environment();
     }
 
     fn eval_match(&mut self, value: Value, arms: &[MatchArm]) -> Result<Value, InterpreterError> {
@@ -2798,6 +2719,17 @@ impl Interpreter {
         iterable: &Expr,
         body: &Expr,
     ) -> Result<Value, InterpreterError> {
+        // Same gate as `spawn` and `par_map`: worker interleaving is
+        // scheduling nondeterminism, which expansion must not observe.
+        // (This arm was missing while the gate was a name denylist —
+        // `par for` is a syntax form, not a builtin name.)
+        if self.meta_mode {
+            return Err(InterpreterError::RuntimeError {
+                message: "par for is not available at expansion time: a meta fn is a \
+                          pure function of its arguments (docs/macros.md)"
+                    .to_string(),
+            });
+        }
         let iterable_value = self.eval_expr(iterable)?;
         let items: Vec<Value> = match iterable_value {
             Value::List(items) => items.to_vec(),
@@ -2916,6 +2848,12 @@ impl Interpreter {
         items: impl Iterator<Item = Value>,
         variable: Option<&str>,
     ) -> Result<Value, InterpreterError> {
+        // Loops evaluate to Unit unless `break value` exits them — matching
+        // the bytecode tier ("For loops evaluate to Unit"). Discarding each
+        // body value also matters for performance: retaining it aliased the
+        // body's result across iterations, which defeated the sole-owner
+        // append fusion whenever `xs = xs + [..]` was the body's last
+        // statement (the accumulation loop, exactly).
         let mut last_value = Value::Unit;
         for item in items {
             // Safepoint poll for GC coordination during iteration
@@ -2925,13 +2863,9 @@ impl Interpreter {
                 self.environment.define(name.to_string(), item);
             }
             match self.eval_expr(body) {
-                Ok(v) => last_value = v,
-                // `break value` makes the loop evaluate to that value; a
-                // bare break keeps the last body value (Unit carries both).
+                Ok(_) => {}
                 Err(InterpreterError::BreakSignal(v)) => {
-                    if !matches!(v, Value::Unit) {
-                        last_value = v;
-                    }
+                    last_value = v;
                     break;
                 }
                 Err(InterpreterError::ContinueSignal) => continue,
@@ -2946,6 +2880,8 @@ impl Interpreter {
         condition: &Expr,
         body: &Expr,
     ) -> Result<Value, InterpreterError> {
+        // Unit unless `break value` — see run_loop_body for why body values
+        // are discarded rather than retained.
         let mut last_value = Value::Unit;
 
         loop {
@@ -2960,11 +2896,9 @@ impl Interpreter {
             }
 
             match self.eval_expr(body) {
-                Ok(v) => last_value = v,
+                Ok(_) => {}
                 Err(InterpreterError::BreakSignal(v)) => {
-                    if !matches!(v, Value::Unit) {
-                        last_value = v;
-                    }
+                    last_value = v;
                     break;
                 }
                 Err(InterpreterError::ContinueSignal) => continue,
@@ -2976,20 +2910,15 @@ impl Interpreter {
     }
 
     fn eval_loop(&mut self, body: &Expr) -> Result<Value, InterpreterError> {
-        let mut last_value = Value::Unit;
+        // Unit unless `break value` — see run_loop_body for why body values
+        // are discarded rather than retained.
         loop {
             // Safepoint poll for GC coordination at start of each iteration
             self.safepoint_poll()?;
 
             match self.eval_expr(body) {
-                Ok(v) => last_value = v,
-                Err(InterpreterError::BreakSignal(v)) => {
-                    return Ok(if matches!(v, Value::Unit) {
-                        last_value
-                    } else {
-                        v
-                    });
-                }
+                Ok(_) => {}
+                Err(InterpreterError::BreakSignal(v)) => return Ok(v),
                 Err(InterpreterError::ContinueSignal) => continue,
                 Err(e) => return Err(e),
             }
@@ -3239,13 +3168,12 @@ impl Interpreter {
         if !self.meta_mode {
             return None;
         }
-        const BLOCKED_PREFIXES: &[&str] = &[
-            "fs.", "http.", "db.", "proc.", "os.", "time.", "random.", "task.", "chan.",
-        ];
-        const BLOCKED_NAMES: &[&str] = &["par_map", "par_filter"];
-        if BLOCKED_PREFIXES.iter().any(|p| full_name.starts_with(p))
-            || BLOCKED_NAMES.contains(&full_name)
-        {
+        // The classification lives in `crate::effects`, shared with the
+        // capability gate and record/replay. Anything gated, recorded, or
+        // thread-shaped is refused here — which is what closed the drift
+        // holes (`dates.now`, `crypto.random_*`, `ods` file I/O) that a
+        // locally-curated denylist had accumulated.
+        if crate::effects::expansion_blocked(full_name) {
             return Some(format!(
                 "{} is not available at expansion time: a meta fn is a pure \
                  function of its arguments, so macro expansion is deterministic \
