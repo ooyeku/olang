@@ -95,6 +95,13 @@ you care about.
   ordering rather than by a hand-picked threshold. A `group_by` by weekday
   sits alongside to show the sequence and bag views answering different
   questions over one frame. `test` blocks pin the windows
+- [`derives/`](derives/) — declaration-driven code generation from an
+  *imported macro library* (the macro system's dogfood): one `type Contact`
+  declaration, and `@json`, `@builder`, and `@arbitrary` derive its
+  serializer, its builder API, and a generated test suite — four `test`
+  blocks stamped out at expansion time, discovered by `olang test` like
+  handwritten ones. Delete a field and every derived artifact follows;
+  `olang expand main.ol` shows exactly what the derives produced
 - [`template/`](template/) — a mustache-style template engine self-hosted in
   olang: a lexer, a parser building a nested node tree over a shared `Node`
   ADT (`lib/ast.ol`), and a renderer walking it against a JSON context.

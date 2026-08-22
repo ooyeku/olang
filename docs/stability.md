@@ -153,12 +153,25 @@ These rules are part of the commitment above and are permanent under the
 - **Macros (`meta fn`, `@`, `olang expand`).** New in 0.68 and the most
   recent surface in the language ([Macros](macros.md)). The five laws —
   `@`-visible sites, no reach beyond the site, total parse, pure
-  expansion, inspectable output — are the settled design; the invocation
-  surface (expressions and `type` decorators today) and the `meta`
-  helpers (`eval`, `lit`, `fresh`) may still grow. The syntax was added
-  additively: `@` was previously unused and `meta` remains an ordinary
-  identifier everywhere except directly before `fn`, so no pre-macro
-  program changed meaning.
+  expansion, inspectable output — are the settled design. The invocation
+  surface (expression sites; decorators on `type`, `fn`, and `let`),
+  imported macro libraries via `use`, the template escapes, and the
+  `meta` helpers (`eval`, `lit`, `fresh`) are implemented and hardened —
+  fuzzed for tier agreement and byte-level expansion determinism, with
+  placement rules enforced (top-level meta fns only, no `@` inside a
+  meta fn body). The syntax was added additively: `@` was previously
+  unused and `meta` remains an ordinary identifier everywhere except
+  directly before `fn`, so no pre-macro program changed meaning.
+
+  Graduation to stable requires, and is blocked on, all of: a macro
+  fuzzer corpus an order of magnitude larger run clean; runtime error
+  *spans* mapped to `@` sites (today errors show expanded context with a
+  note, which is aligned but not source-mapped); LSP awareness beyond
+  raw-parse diagnostics; and at least three substantial macro libraries
+  used by real programs in the corpus (`examples/derives` is the first).
+  Until then the expansion engine's internals — the round/fuel model,
+  the source-text exchange format's exact whitespace behavior — may
+  change in ways `olang expand` output would show.
 
 - **Capabilities and the transparent binary.** The `[capabilities]`
   manifest, per-dependency attenuation, `--deny`, and `olang inspect`

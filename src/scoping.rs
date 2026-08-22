@@ -154,7 +154,7 @@ impl Validator {
         match stmt {
             // Macros are expanded away before scoping normally runs; on a
             // raw parse they bind nothing and contain no runtime names.
-            Statement::MetaFnDecl { .. } | Statement::DecoratedTypeDecl { .. } => {}
+            Statement::MetaFnDecl { .. } | Statement::DecoratedDecl { .. } => {}
             Statement::Located {
                 line,
                 column,

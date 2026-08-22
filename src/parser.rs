@@ -280,7 +280,7 @@ impl Parser {
         let program = self.parse_raw(input)?;
         // Cheap pre-filter before the authoritative AST check: no `@` and
         // no `meta` token means no macro constructs can exist.
-        if !(input.contains('@') || input.contains("meta")) {
+        if !(input.contains('@') || crate::expand::has_meta_fn_token(input)) {
             return Ok(program);
         }
         if !crate::expand::program_uses_macros(&program) {
@@ -377,7 +377,7 @@ impl Parser {
                     span,
                 })
             }
-            Rule::decorated_type_decl => {
+            Rule::decorated_decl => {
                 let span = (pair.as_span().start(), pair.as_span().end());
                 let line = pair.as_span().start_pos().line_col().0 as u32;
                 let mut decorators = Vec::new();
@@ -386,26 +386,26 @@ impl Parser {
                     match part.as_rule() {
                         Rule::decorator => {
                             let dline = part.as_span().start_pos().line_col().0 as u32;
-                            let mut inner = part.into_inner();
-                            let name = inner
+                            let name = part
+                                .into_inner()
                                 .next()
                                 .map(|p| p.as_str().to_string())
                                 .unwrap_or_default();
-                            let args_src = inner
-                                .flat_map(|p| p.into_inner())
-                                .map(|a| a.as_str().trim().to_string())
-                                .collect();
+                            // Decorators are bare names (see the grammar);
+                            // args_src stays for a future arguments design.
                             decorators.push(crate::ast::Decorator {
                                 name,
-                                args_src,
+                                args_src: Vec::new(),
                                 line: dline,
                             });
                         }
-                        Rule::type_decl => decl_src = part.as_str().to_string(),
+                        Rule::type_decl | Rule::function_decl | Rule::let_decl => {
+                            decl_src = part.as_str().to_string()
+                        }
                         _ => {}
                     }
                 }
-                Ok(Statement::DecoratedTypeDecl {
+                Ok(Statement::DecoratedDecl {
                     decorators,
                     decl_src,
                     span,
@@ -2990,6 +2990,19 @@ impl Parser {
         let mut chars = content.chars().peekable();
 
         while let Some(ch) = chars.next() {
+            // The three template escapes: \` \$ \\ produce the bare
+            // character (an escaped $ never starts an interpolation). Any
+            // other backslash pair passes through untouched — `\n` stays
+            // two characters, as template literals have always behaved.
+            if ch == '\\' {
+                match chars.peek() {
+                    Some('`') | Some('$') | Some('\\') => {
+                        current_literal.push(chars.next().expect("peeked"));
+                    }
+                    _ => current_literal.push('\\'),
+                }
+                continue;
+            }
             if ch == '$' && chars.peek() == Some(&'{') {
                 // Found interpolation start
                 chars.next(); // consume '{'

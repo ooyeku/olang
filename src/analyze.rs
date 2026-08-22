@@ -117,7 +117,7 @@ impl Analyzer {
             Statement::TraitDecl(_) | Statement::ImplDecl(_) => Ok(()),
             // Macros are gone before analysis normally runs; a raw parse
             // (LSP, meta.parse) treats them as opaque.
-            Statement::MetaFnDecl { .. } | Statement::DecoratedTypeDecl { .. } => Ok(()),
+            Statement::MetaFnDecl { .. } | Statement::DecoratedDecl { .. } => Ok(()),
             Statement::Expression(expr) => self.analyze_expr(expr),
             Statement::LetDecl(let_decl) => {
                 // Analyze the value expression if present
@@ -1147,7 +1147,7 @@ impl Analyzer {
     /// Mark a statement and its contained expressions as reachable
     fn mark_statement_reachable(&mut self, statement: &Statement, reachable: &mut HashSet<usize>) {
         match statement {
-            Statement::MetaFnDecl { .. } | Statement::DecoratedTypeDecl { .. } => {}
+            Statement::MetaFnDecl { .. } | Statement::DecoratedDecl { .. } => {}
             Statement::Located { stmt, .. } => {
                 self.mark_statement_reachable(stmt, reachable);
             }
@@ -1775,7 +1775,7 @@ impl DeadCodeDetector {
         match statement {
             Statement::Located { stmt, .. } => self.mark_statement_reachable(stmt),
             Statement::TraitDecl(_) | Statement::ImplDecl(_) => {}
-            Statement::MetaFnDecl { .. } | Statement::DecoratedTypeDecl { .. } => {}
+            Statement::MetaFnDecl { .. } | Statement::DecoratedDecl { .. } => {}
             Statement::Expression(expr) => {
                 self.mark_expression_reachable(expr);
             }

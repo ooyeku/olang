@@ -390,6 +390,11 @@ pub struct Repl {
     #[allow(dead_code)] // consumed at construction; kept for future diagnostics
     verbose: bool,
     history_file: String,
+    /// Meta fn declarations entered this session, kept as source. A meta
+    /// fn is stripped from every expanded program, so without this a
+    /// macro defined on one line would be gone by the next. Each input
+    /// that uses macros is expanded with these prepended.
+    meta_prelude: Vec<String>,
     help_system: HelpSystem,
     config: ReplConfig,
     multiline_mode: bool,
@@ -490,6 +495,7 @@ impl Repl {
             parser: Parser::new(),
             verbose,
             history_file,
+            meta_prelude: Vec::new(),
             help_system,
             config: ReplConfig::default(),
             multiline_mode: false,
@@ -1747,7 +1753,33 @@ impl Repl {
             }
         }
 
-        let program = self.parser.parse(line)?;
+        // Macro support in the session: meta fns are stripped from every
+        // expanded program, so remember each one's source and prepend the
+        // collection whenever a later input needs expansion. The prelude
+        // contributes nothing at runtime — stripping blanks it — so
+        // non-macro inputs are untouched.
+        let uses_macros = line.contains('@') || crate::expand::has_meta_fn_token(line);
+        if uses_macros && let Ok(raw) = self.parser.parse_raw(line) {
+            for st in &raw.statements {
+                if let crate::ast::Statement::MetaFnDecl { span, .. } = st.unwrapped() {
+                    self.meta_prelude.push(line[span.0..span.1].to_string());
+                }
+            }
+        }
+        let program = if uses_macros && !self.meta_prelude.is_empty() {
+            let with_prelude = format!(
+                "{}
+{}",
+                self.meta_prelude.join(
+                    "
+"
+                ),
+                line
+            );
+            self.parser.parse(&with_prelude)?
+        } else {
+            self.parser.parse(line)?
+        };
 
         if program.statements.is_empty() {
             return Ok(Value::Unit);

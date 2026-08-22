@@ -116,6 +116,7 @@ fn example_cases() -> Vec<Case> {
         "parmap",
         "workflow",
         "timeseries",
+        "derives",
         "macros",
     ] {
         let dir = root.join(name);

@@ -60,7 +60,7 @@ pub fn program_uses_macros(program: &Program) -> bool {
         Ok(v) => v,
         Err(_) => return false,
     };
-    json_has_key(&json, &["MacroCall", "MetaFnDecl", "DecoratedTypeDecl"])
+    json_has_key(&json, &["MacroCall", "MetaFnDecl", "DecoratedDecl"])
 }
 
 fn json_has_key(v: &serde_json::Value, keys: &[&str]) -> bool {
@@ -77,6 +77,9 @@ fn json_has_key(v: &serde_json::Value, keys: &[&str]) -> bool {
 /// Expand `source` to a macro-free program text. Errors are strings that
 /// name the macro and the line of the site that failed.
 pub fn expand_source(source: &str) -> Result<String, String> {
+    // Same source, same program: gensym names restart at zero for every
+    // expansion, so re-parsing a file yields byte-identical output.
+    crate::stdlib::meta::reset_fresh_counter();
     let parser = Parser::new();
     let mut interp = expansion_interpreter();
     let mut text = source.to_string();
@@ -87,9 +90,88 @@ pub fn expand_source(source: &str) -> Result<String, String> {
             .map_err(|e| format!("macro expansion produced text that does not parse:\n{e}"))?;
         let (meta_fns, calls, decorated) = collect_sites(&program, &text);
 
+        // Placement rules, enforced before anything runs. A meta fn is a
+        // top-level declaration: nested in a block it would be stripped
+        // out of a function's body, which cannot mean anything coherent.
+        // And an @ site inside a meta fn's own body is a phase error —
+        // at expansion time a meta fn IS the macro; call it directly.
+        let top_level_spans: std::collections::HashSet<(usize, usize)> = program
+            .statements
+            .iter()
+            .filter_map(|st| match st.unwrapped() {
+                crate::ast::Statement::MetaFnDecl { span, .. } => Some(*span),
+                _ => None,
+            })
+            .collect();
+        for f in &meta_fns {
+            if !top_level_spans.contains(&f.span) {
+                return Err(format!(
+                    "meta fn (line {}) must be a top-level declaration — it exists \
+                     only at expansion time and cannot live inside a function or block",
+                    line_of(&text, f.span.0)
+                ));
+            }
+        }
+        for c in &calls {
+            if meta_fns
+                .iter()
+                .any(|f| c.span.0 >= f.span.0 && c.span.1 <= f.span.1)
+            {
+                return Err(format!(
+                    "@{} (line {}): a macro call inside a meta fn body — at expansion \
+                     time a meta fn is ordinary code, so call {}(...) directly instead",
+                    c.name, c.line, c.name
+                ));
+            }
+        }
+
+        // Imported macros: a top-level `use m` also brings m's top-level
+        // meta fns into the expansion environment, which is what makes a
+        // macro *library* possible. Resolution mirrors the runtime's
+        // common relative forms — m.ol, then m/index.ol, with dots as
+        // directories — against the working directory (the same base a
+        // bare `olang run` resolves from). One level: an imported
+        // module's own imports are its business, not re-walked here.
+        // The module file's content is an expansion input exactly like
+        // the source itself; a missing file is not an error (the module
+        // may exist only for runtime), but an unparseable one is.
+        for u in collect_imports(&program) {
+            let rel = u.join("/");
+            let candidates = [format!("{rel}.ol"), format!("{rel}/index.ol")];
+            let Some(module_src) = candidates
+                .iter()
+                .find_map(|c| std::fs::read_to_string(c).ok())
+            else {
+                continue;
+            };
+            let module_prog = parser.parse_raw(&module_src).map_err(|e| {
+                format!(
+                    "use {}: the imported module does not parse: {e}",
+                    u.join(".")
+                )
+            })?;
+            for st in &module_prog.statements {
+                if let crate::ast::Statement::MetaFnDecl { span, .. } = st.unwrapped() {
+                    let fn_src = module_src[span.0..span.1]
+                        .trim_start()
+                        .strip_prefix("meta")
+                        .unwrap_or(&module_src[span.0..span.1])
+                        .trim_start()
+                        .to_string();
+                    let prog = parser.parse_raw(&fn_src).map_err(|e| {
+                        format!("use {}: imported meta fn does not parse: {e}", u.join("."))
+                    })?;
+                    interp.eval_program(prog).map_err(|e| {
+                        format!("use {}: imported meta fn failed to load: {e}", u.join("."))
+                    })?;
+                }
+            }
+        }
+
         // Define (or redefine) every meta fn for this round. The source
         // still contains them across rounds, so composition works: a
-        // macro's output may call other macros.
+        // macro's output may call other macros. Locals load after imports,
+        // so a local meta fn shadows an imported one of the same name.
         for f in &meta_fns {
             let fn_src = f
                 .src
@@ -275,7 +357,7 @@ fn collect_sites(
                 });
             }
         }
-        "DecoratedTypeDecl" => {
+        "DecoratedDecl" => {
             if let (Some(span), Some(decl_src)) = (span_of(obj), str_of(obj, "decl_src")) {
                 let decorators = obj
                     .get("decorators")
@@ -311,6 +393,54 @@ fn collect_sites(
         _ => {}
     });
     (meta_fns, calls, decorated)
+}
+
+/// Top-level `use` paths, for imported-macro resolution.
+fn collect_imports(program: &Program) -> Vec<Vec<String>> {
+    program
+        .statements
+        .iter()
+        .filter_map(|st| match st.unwrapped() {
+            crate::ast::Statement::UseDecl(u) => Some(u.path.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn line_of(text: &str, byte: usize) -> usize {
+    text[..byte.min(text.len())]
+        .bytes()
+        .filter(|b| *b == b'\n')
+        .count()
+        + 1
+}
+
+/// Does the text contain a `meta fn` declaration token — `meta`, spaces,
+/// `fn` at word boundaries? The cheap pre-filter `Parser::parse` uses so
+/// a file that merely *mentions* meta (a comment, `meta.parse`) does not
+/// pay for AST serialization.
+pub fn has_meta_fn_token(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while let Some(pos) = input[i..].find("meta") {
+        let at = i + pos;
+        let before_ok =
+            at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
+        let mut j = at + 4;
+        while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+            j += 1;
+        }
+        let fn_here = j > at + 4
+            && input[j..].starts_with("fn")
+            && !bytes
+                .get(j + 2)
+                .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_');
+        if before_ok && fn_here {
+            return true;
+        }
+        i = at + 4;
+    }
+    false
 }
 
 fn walk_json(v: &serde_json::Value, f: &mut impl FnMut(&str, &serde_json::Value)) {

@@ -278,6 +278,10 @@ enum Commands {
     Expand {
         /// The .ol file to expand
         file: PathBuf,
+        /// Show only the lines that expansion changed, as removed/added
+        /// hunks, instead of the whole expanded program
+        #[arg(long)]
+        diff: bool,
     },
 
     Bench {
@@ -509,11 +513,15 @@ fn run() -> i32 {
             olang::tools::doc::run(&paths, &output, markdown)
         }
 
-        Some(Commands::Expand { file }) => {
+        Some(Commands::Expand { file, diff }) => {
             let code = match std::fs::read_to_string(&file) {
                 Ok(source) => match olang::expand::expand_source(&source) {
                     Ok(expanded) => {
-                        print!("{}", expanded);
+                        if diff {
+                            print_expansion_diff(&source, &expanded);
+                        } else {
+                            print!("{}", expanded);
+                        }
                         0
                     }
                     Err(message) => {
@@ -2011,6 +2019,35 @@ fn execute_file(
     )
 }
 
+/// Print only what expansion changed: consecutive differing lines as one
+/// hunk, original lines prefixed `-`, expanded lines `+`. Line-based and
+/// deliberately simple — expansion preserves line count everywhere except
+/// decorator splices and multi-line expression output, so hunks stay
+/// small and aligned in practice.
+fn print_expansion_diff(original: &str, expanded: &str) {
+    let a: Vec<&str> = original.lines().collect();
+    let b: Vec<&str> = expanded.lines().collect();
+    let n = a.len().max(b.len());
+    let mut i = 0;
+    while i < n {
+        if a.get(i) == b.get(i) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && a.get(i) != b.get(i) {
+            i += 1;
+        }
+        println!("@@ line {} @@", start + 1);
+        for line in a.iter().take(i.min(a.len())).skip(start) {
+            println!("- {}", line);
+        }
+        for line in b.iter().take(i.min(b.len())).skip(start) {
+            println!("+ {}", line);
+        }
+    }
+}
+
 /// Run a program from source already in hand (a file's contents, or the
 /// program bundled into an `olang build` executable). `file_path` names
 /// it for error messages and cwd-relative module resolution.
@@ -2027,17 +2064,59 @@ fn execute_source(
     trace_caps: Option<bool>,
     logger: &Logger,
 ) -> anyhow::Result<()> {
+    // Macro-bearing programs run as their *expanded* text, so every span
+    // a runtime error carries points into text we can actually show.
+    // Expand here, hand the expanded source to both the parser and the
+    // error display, and say so once — otherwise an error inside
+    // generated code would print context from the file on disk with the
+    // wrong lines under it.
+    let expanded_holder;
+    let mut did_expand = false;
+    let source = if source.contains('@') || olang::expand::has_meta_fn_token(source) {
+        match olang::expand::expand_source(source) {
+            Ok(expanded) if expanded != source => {
+                did_expand = true;
+                expanded_holder = expanded;
+                expanded_holder.as_str()
+            }
+            Ok(same) => {
+                expanded_holder = same;
+                expanded_holder.as_str()
+            }
+            Err(message) => {
+                eprintln!("olang: {}", message);
+                return Err(anyhow::anyhow!("Macro expansion failed"));
+            }
+        }
+    } else {
+        source
+    };
     let program = match OlangParser::new().parse(source) {
         Ok(program) => program,
         Err(e) => {
             show_file_parse_error(&e, file_path, source);
+            if did_expand {
+                eprintln!(
+                    "note: this program contains macros — line numbers and code context \
+                     refer to the expanded program (`olang expand {}`)",
+                    file_path.display()
+                );
+            }
             return Err(anyhow::anyhow!("Parse failed"));
         }
     };
-    execute_program(
+    let result = execute_program(
         program, source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, deny, timeline,
         trace_caps, logger,
-    )
+    );
+    if result.is_err() && did_expand {
+        eprintln!(
+            "note: this program contains macros — line numbers and code context \
+             refer to the expanded program (`olang expand {}`)",
+            file_path.display()
+        );
+    }
+    result
 }
 
 /// Run an already-parsed program. `source` is retained only for error

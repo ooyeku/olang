@@ -31,7 +31,12 @@ raw_string  = @{ "r\"" ~ ("\\\"" | (!"\"" ~ ANY))* ~ "\"" }
 // and interior whitespace, which are preserved. Inner tokens are still
 // produced, so `template_raw_content` remains findable.
 template_string = ${ "`" ~ template_raw_content ~ "`" }
-template_raw_content = @{ (!"`" ~ ANY)* }
+// A backslash escapes the next character, which is what lets a template
+// contain a literal backtick (\`), a literal dollar that will not start
+// an interpolation (\$), and a literal backslash (\\). Any other
+// backslash pair passes through untouched, so `\n` stays two characters
+// — templates have never processed string escapes and still do not.
+template_raw_content = @{ ("\\" ~ ANY | !"`" ~ ANY)* }
 string_char = { !("\"" | "\\") ~ ANY | escape_sequence }
 
 escape_sequence = { "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "0" | "x" ~ ASCII_HEX_DIGIT{2} | "u" ~ ASCII_HEX_DIGIT{4} | "u{" ~ ASCII_HEX_DIGIT+ ~ "}") }
@@ -60,17 +65,24 @@ paren_expr  = { "(" ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ expr)* ~ NL* ~ ")" }
 
 // Program structure - Put share_decl and use_decl BEFORE expr to ensure they are matched first
 program     = { SOI ~ NL* ~ (statement ~ (";" | NL)* )* ~ EOI }
-statement   = { meta_fn_decl | share_decl | use_decl | test_decl | error_type_decl | trait_decl | impl_decl | decorated_type_decl | type_decl | let_decl | function_decl | assertion | expr }
+statement   = { meta_fn_decl | share_decl | use_decl | test_decl | error_type_decl | trait_decl | impl_decl | decorated_decl | type_decl | let_decl | function_decl | assertion | expr }
 
 // ── macros (experimental) ─────────────────────────────────────────────
 // `meta fn` declares a function that exists only at expansion time, and
 // `@name` invokes one: as an expression (`@retry(3, body)`) or stacked
-// above a type declaration (`@json`). `meta` and `@` are additive: `meta`
+// above a type, fn, or let declaration (`@json`, `@trace`). `meta` and `@` are additive: `meta`
 // stays an ordinary identifier everywhere else, and `@` was previously
 // unused, so no existing program changes meaning. See docs/macros.md.
 meta_fn_decl = { "meta" ~ function_decl }
-decorator = { "@" ~ identifier ~ ("(" ~ arg_list? ~ ")")? }
-decorated_type_decl = { (decorator ~ NL*)+ ~ type_decl }
+// A decorator is a BARE `@name` — never with parentheses. That is the
+// whole disambiguation between the two invocation forms: `@f(args)` is
+// an expression macro wherever it appears, including as a statement on
+// the line above a declaration, and `@name` directly above a
+// declaration is a decorator. With optional arguments here, a
+// statement-position `@unless(cond, body)` followed by a `let` parsed
+// as a decorated let and swallowed the declaration as an argument.
+decorator = { "@" ~ identifier ~ !"(" }
+decorated_decl = { (decorator ~ NL*)+ ~ (type_decl | function_decl | let_decl) }
 macro_call = { "@" ~ identifier ~ "(" ~ arg_list? ~ ")" }
 function_decl = { "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ NL* ~ expr }
 

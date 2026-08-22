@@ -322,3 +322,272 @@ fn multi_line_block_output_splices_into_an_expression() {
     .expect("block output");
     assert_eq!(out, Value::Integer(42));
 }
+
+// ── M1: placement rules ───────────────────────────────────────────────
+
+#[test]
+fn a_meta_fn_inside_a_block_is_refused() {
+    let err = eval("fn outer() = {\n    meta fn inner(x) = `${x}`\n    1\n}\nouter()\n")
+        .expect_err("nested meta fn");
+    assert!(err.contains("top-level declaration"), "{err}");
+}
+
+#[test]
+fn a_macro_call_inside_a_meta_fn_body_is_refused() {
+    let err = eval("meta fn a(x) = `${x}`\nmeta fn b(x) = @a(x)\nprintln(to_string(@b(1)))\n")
+        .expect_err("@ inside meta fn");
+    assert!(
+        err.contains("inside a meta fn body") && err.contains("directly"),
+        "{err}"
+    );
+}
+
+#[test]
+fn share_meta_fn_is_an_error_not_a_silent_export() {
+    // Not supported: whatever the failure shape, it must be an error —
+    // never a silently ignored modifier.
+    assert!(eval("share meta fn f(x) = `${x}`\nprintln(to_string(@f(1)))\n").is_err());
+}
+
+// ── M1: determinism ───────────────────────────────────────────────────
+
+#[test]
+fn expansion_is_deterministic_within_a_process() {
+    // meta.fresh resets per expansion, so expanding the same source
+    // twice — in one process — yields byte-identical programs.
+    let src = "meta fn tmp(e) = {\n    let n = meta.fresh(\"t\")\n    `{ let ${n} = ${e}; ${n} + ${n} }`\n}\nprintln(to_string(@tmp(5)))\n";
+    let a = olang::expand::expand_source(src).expect("first");
+    let b = olang::expand::expand_source(src).expect("second");
+    assert_eq!(a, b, "same source must expand identically every time");
+}
+
+// ── M1: the prefilter is precise ──────────────────────────────────────
+
+#[test]
+fn mentioning_meta_or_at_in_data_does_not_trigger_expansion() {
+    // "meta" in a comment, "@" in a string: neither is a macro construct.
+    let out = eval(
+        "// meta.parse is discussed here, and meta  fn is mentioned in prose\n\
+         let email = \"user@example.com\"\n\
+         email\n",
+    )
+    .expect("no expansion");
+    assert_eq!(out, Value::String("user@example.com".to_string().into()));
+    assert!(!olang::expand::has_meta_fn_token(
+        "// the meta fns are meta.parse"
+    ));
+    assert!(olang::expand::has_meta_fn_token("meta fn f(x) = `${x}`"));
+    assert!(olang::expand::has_meta_fn_token("meta\t fn g() = `1`"));
+    assert!(!olang::expand::has_meta_fn_token("metadata fn = 1"));
+}
+
+// ── M2: template escapes ──────────────────────────────────────────────
+
+#[test]
+fn template_escapes_backtick_dollar_backslash() {
+    let out = eval("`tick \\` dollar \\${x} back \\\\ raw \\n`").expect("escapes");
+    assert_eq!(
+        out,
+        Value::String("tick ` dollar ${x} back \\ raw \\n".to_string().into())
+    );
+}
+
+#[test]
+fn a_macro_can_generate_a_template() {
+    // The capability the escapes exist for: macro output containing a
+    // template that interpolates at *runtime*, not at expansion.
+    let out = eval(
+        "meta fn logfmt(tag) = `(m) => \\`[${tag}] \\${m}\\``\n\
+         let log = @logfmt(app)\n\
+         log(\"started\")\n",
+    )
+    .expect("template generation");
+    assert_eq!(out, Value::String("[app] started".to_string().into()));
+}
+
+// ── M2: decorators on fn and let ──────────────────────────────────────
+
+#[test]
+fn a_decorator_on_a_fn_can_wrap_it() {
+    let out = eval(
+        "meta fn noisy(decl) = {\n\
+             let node = head(unwrap(meta.parse(decl)))\n\
+             let name = map_get(node, \"name\")\n\
+             let impl_name = meta.fresh(name)\n\
+             let params = map_get(node, \"params\") |> join(\", \")\n\
+             let renamed = str.replace(decl, `fn ${name}(`, `fn ${impl_name}(`)\n\
+             renamed + `\nfn ${name}(${params}) = ${impl_name}(${params}) * 10`\n\
+         }\n\
+         @noisy\n\
+         fn base(x) = x + 1\n\
+         base(4)\n",
+    )
+    .expect("fn decorator");
+    assert_eq!(out, Value::Integer(50));
+}
+
+#[test]
+fn a_decorator_on_a_let_receives_the_declaration() {
+    let out = eval(
+        "meta fn doubled(decl) = str.replace(decl, \"= \", \"= 2 * \")\n\
+         @doubled\n\
+         let x = 21\n\
+         x\n",
+    )
+    .expect("let decorator");
+    assert_eq!(out, Value::Integer(42));
+}
+
+// ── M2: imported macro libraries ──────────────────────────────────────
+
+#[test]
+fn a_use_import_brings_meta_fns_into_expansion() {
+    let dir = std::env::temp_dir().join(format!("olang_macro_lib_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch");
+    std::fs::write(
+        dir.join("mylib.ol"),
+        "meta fn twice(e) = `((${e}) + (${e}))`\nshare fn unused() = 1\n",
+    )
+    .expect("lib");
+    std::fs::write(
+        dir.join("main.ol"),
+        "use mylib\nprintln(to_string(@twice(20 + 1)))\n",
+    )
+    .expect("main");
+    let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg("run")
+        .arg("main.ol")
+        .current_dir(&dir)
+        .output()
+        .expect("runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("42"),
+        "imported macro must expand: stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // A local meta fn of the same name shadows the imported one.
+    std::fs::write(
+        dir.join("main2.ol"),
+        "use mylib\nmeta fn twice(e) = `(100 * (${e}))`\nprintln(to_string(@twice(2)))\n",
+    )
+    .expect("main2");
+    let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg("run")
+        .arg("main2.ol")
+        .current_dir(&dir)
+        .output()
+        .expect("runs");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("200"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── M2: REPL persistence ──────────────────────────────────────────────
+
+#[test]
+fn the_repl_keeps_meta_fns_across_inputs() {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("repl");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(b"meta fn triple(e) = `(3 * (${e}))`\nprintln(to_string(@triple(14)))\n:quit\n")
+        .expect("write");
+    let out = child.wait_with_output().expect("repl exits");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("42"),
+        "meta fn defined on one line must be usable on a later line: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+// ── M3: expand --diff and error alignment ─────────────────────────────
+
+#[test]
+fn expand_diff_shows_only_changed_lines() {
+    let dir = std::env::temp_dir().join(format!("olang_expand_diff_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch");
+    let f = dir.join("d.ol");
+    std::fs::write(
+        &f,
+        "meta fn inc(e) = `((${e}) + 1)`\nlet untouched = 1\nprintln(to_string(@inc(41)))\n",
+    )
+    .expect("write");
+    let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .args(["expand", f.to_str().unwrap(), "--diff"])
+        .output()
+        .expect("expand");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("+ println(to_string(((41) + 1)))"), "{text}");
+    assert!(
+        !text.contains("untouched"),
+        "unchanged lines must not appear in the diff: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_runtime_error_in_generated_code_notes_the_expansion() {
+    let dir = std::env::temp_dir().join(format!("olang_expand_err_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch");
+    let f = dir.join("e.ol");
+    std::fs::write(
+        &f,
+        "meta fn boom(e) = `(${e}) + nope_undefined`\nprintln(to_string(@boom(1)))\n",
+    )
+    .expect("write");
+    let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg("run")
+        .arg(f.to_str().unwrap())
+        .output()
+        .expect("run");
+    let err = String::from_utf8_lossy(&out.stderr);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), err);
+    assert!(
+        all.contains("nope_undefined") && all.contains("expanded program"),
+        "error must show expanded context and note the expansion: {all}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── edge shapes ───────────────────────────────────────────────────────
+
+#[test]
+fn edge_shapes_expand_correctly() {
+    // No-argument macro.
+    let out = eval("meta fn answer() = `42`\n@answer()\n").expect("no args");
+    assert_eq!(out, Value::Integer(42));
+    // Macro call inside a match arm and a lambda body.
+    let out = eval(
+        "meta fn inc(e) = `((${e}) + 1)`\n\
+         let f = (x) => match x { 1 => @inc(40), other => 0 }\n\
+         f(1)\n",
+    )
+    .expect("nested positions");
+    assert_eq!(out, Value::Integer(41));
+    // Decorators separated by comments.
+    let out = eval(
+        "meta fn keep(decl) = decl\n\
+         @keep\n\
+         // a comment between decorator and declaration\n\
+         @keep\n\
+         type P = struct { x: Int }\n\
+         P { x: 7 }.x\n",
+    )
+    .expect("comment between decorators");
+    assert_eq!(out, Value::Integer(7));
+    // A macro inside a test block body parses and expands.
+    let out = eval(
+        "meta fn four() = `4`\n\
+         test \"macros in tests\" { assert_eq(@four(), 4) }\n\
+         @four()\n",
+    )
+    .expect("macro in test block");
+    assert_eq!(out, Value::Integer(4));
+}

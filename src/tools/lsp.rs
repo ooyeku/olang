@@ -288,7 +288,12 @@ fn doc_dir(uri: &Uri) -> Option<std::path::PathBuf> {
 
 fn diagnostics(text: &str, doc_dir: Option<&std::path::Path>) -> Vec<Diagnostic> {
     let parser = OlangParser::new();
-    match parser.parse(text) {
+    // The LSP parses RAW (no macro expansion): its diagnostics carry
+    // positions into the buffer the editor shows, and expansion rewrites
+    // the text those positions point into. A macro-bearing file gets
+    // parse/scope diagnostics on the source as written; diagnosing
+    // *generated* code is `olang expand` + `olang check`'s job.
+    match parser.parse_raw(text) {
         Err(e) => vec![parse_error_diagnostic(text, &e)],
         Ok(program) => {
             let mut analyzer = Analyzer::new();
@@ -512,7 +517,7 @@ fn completions(text: &str) -> Vec<CompletionItem> {
 /// A top-level declaration's name, kind label, and 1-based span.
 fn declarations(text: &str) -> Vec<(String, String, (u32, u32))> {
     let parser = OlangParser::new();
-    let Ok(program) = parser.parse(text) else {
+    let Ok(program) = parser.parse_raw(text) else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -598,7 +603,7 @@ fn hover(text: &str, pos: Position, doc_dir: Option<&std::path::Path>) -> Option
     // annotated signatures rendered in full, unannotated lets with their
     // inferred types when the checker knows one.
     let detail = OlangParser::new()
-        .parse(text)
+        .parse_raw(text)
         .ok()
         .and_then(|program| crate::tools::check::hover_types(&program).remove(&name))
         .unwrap_or(detail);

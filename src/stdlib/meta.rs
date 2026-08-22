@@ -108,7 +108,7 @@ fn stmt_to_value(stmt: &Statement) -> Value {
             m_v.insert("kind".to_string(), s("meta_fn"));
             Value::Map(std::sync::Arc::new(m_v))
         }
-        Statement::DecoratedTypeDecl {
+        Statement::DecoratedDecl {
             decorators,
             decl_src,
             ..
@@ -720,12 +720,25 @@ fn render_key(k: &str) -> String {
     out
 }
 
+// The `meta.fresh` counter: thread-local, reset at the start of every
+// expansion (`expand::expand_source`). Expansion is single-threaded by
+// construction (meta mode refuses spawn and the parallel builtins), so a
+// thread-local is exactly per-expansion state — same source always
+// yields the same names, and concurrent expansions on other threads
+// (parallel tests, parallel builds) cannot race each other's counters.
+thread_local! {
+    static FRESH_COUNTER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub fn reset_fresh_counter() {
+    FRESH_COUNTER.with(|c| c.set(0));
+}
+
 /// `meta.fresh(prefix)` — a name no program writes by hand, for macro
 /// temporaries that must not collide with call-site bindings. The
-/// counter is process-wide; expansion visits sites in text order, so a
-/// given program yields the same names on every run.
+/// counter is reset per expansion; sites expand in text order, so a
+/// given program yields the same names on every run and every re-parse.
 fn meta_fresh(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let prefix = match args.first() {
         Some(Value::String(text)) => text.as_str().to_string(),
         other => {
@@ -736,7 +749,11 @@ fn meta_fresh(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .into());
         }
     };
-    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let n = FRESH_COUNTER.with(|c| {
+        let n = c.get();
+        c.set(n + 1);
+        n
+    });
     Ok(s(&format!("{}_m{}", prefix, n)))
 }
 

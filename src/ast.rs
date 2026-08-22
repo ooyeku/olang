@@ -60,10 +60,11 @@ pub enum Statement {
         decl: FunctionDecl,
         span: (usize, usize),
     },
-    /// One or more `@name` decorators stacked above a `type` declaration.
+    /// One or more `@name` decorators stacked above a `type`, `fn`, or
+    /// `let` declaration.
     /// The declaration rides as source text: the expander hands it to each
     /// macro innermost-first and replaces the whole span with the result.
-    DecoratedTypeDecl {
+    DecoratedDecl {
         decorators: Vec<Decorator>,
         decl_src: String,
         span: (usize, usize),
@@ -97,12 +98,12 @@ impl PartialEq for Statement {
                 a == b
             }
             (
-                Statement::DecoratedTypeDecl {
+                Statement::DecoratedDecl {
                     decorators: da,
                     decl_src: sa,
                     ..
                 },
-                Statement::DecoratedTypeDecl {
+                Statement::DecoratedDecl {
                     decorators: db,
                     decl_src: sb,
                     ..

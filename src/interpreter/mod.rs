@@ -486,7 +486,7 @@ impl Interpreter {
                           not a hand-built AST"
                     .to_string(),
             }),
-            Statement::DecoratedTypeDecl { .. } => Err(InterpreterError::RuntimeError {
+            Statement::DecoratedDecl { .. } => Err(InterpreterError::RuntimeError {
                 message: "a decorated declaration reached the interpreter without \
                           expansion — parse the program with Parser::parse"
                     .to_string(),

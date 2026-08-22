@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Macro hardening — the M1–M4 campaign** (docs/macros.md), taking the
+  experimental macro system from prototype to usable and reliable:
+
+  - **Macro libraries**: a top-level `use m` brings `m`'s top-level meta
+    fns into the importing file's expansion. `examples/derives` ships
+    the first — `@json`, `@builder`, and `@arbitrary` deriving a
+    serializer, a builder API, and a *generated test suite* from one
+    `type` declaration.
+  - **Decorators on `fn` and `let`**, joining `type` — the wrap pattern
+    (`@noisy`, `@trace`) documented in the chapter.
+  - **Template escapes**: `` \` ``, `\$`, and `\\` produce the bare
+    character; every other backslash pair passes through unchanged. A
+    macro can now generate a template that interpolates at runtime.
+  - **REPL persistence**: a `meta fn` entered in the session stays
+    available to later inputs.
+  - **`olang expand --diff`** prints only the lines expansion changed.
+  - **Error alignment**: a macro-bearing program runs as its expanded
+    text, so error line numbers and code context refer to text that can
+    actually be shown — with a note under any failure pointing at
+    `olang expand`.
+  - **Placement rules enforced**: meta fns are top-level declarations
+    (a clear error anywhere else), and an `@` site inside a meta fn
+    body is a phase error naming the fix.
+  - **Determinism hardened**: `meta.fresh` is per-expansion and
+    thread-local, so the same source expands byte-identically — under
+    parallel test runs and parallel builds too, which a process-global
+    counter (the first design) raced on.
+  - **Fuzzed**: 600 generated macro programs — substitution, wrapping,
+    gensym, and composition shapes — ran clean for tier agreement and
+    cross-process expansion determinism; the only failures were the
+    generator's own deliberately wrong-arity calls, each correctly
+    refused with the site and macro named.
+  - The LSP diagnoses macro files against the *unexpanded* buffer (raw
+    parse), so its positions always match what the editor shows; the
+    parse pre-filter is now token-precise, so a file that merely
+    mentions `meta` in a comment pays nothing.
+
+  `stability.md` now states the graduation criteria for macros leaving
+  experimental status, so "experimental" is a stage with an exit rather
+  than a parking lot.
+
+### Added
+
 - **Macros: `meta fn` and `@` — extending olang in olang
   (experimental).** A `meta fn` runs at load time: it receives the
   source text of its arguments, returns source text, and the parser

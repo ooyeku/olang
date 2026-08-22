@@ -172,12 +172,76 @@ The limits are the design, not gaps in it:
 - A meta fn cannot contain an `@` site in its own body — meta fns call
   each other as ordinary functions instead.
 
-Two practical limitations of the current implementation, stated rather
-than hidden: a template string cannot contain a backtick, so a macro
-that generates a template builds it with string concatenation instead;
-and multi-line expression output shifts the line numbers of what
-follows it in `olang expand`'s view (declaration-level output does not —
-meta fn stripping preserves line count exactly).
+One practical limitation of the current implementation, stated rather
+than hidden: multi-line expression output shifts the line numbers of
+what follows it in `olang expand`'s view (declaration-level output does
+not — meta fn stripping preserves line count exactly). When a program
+that contains macros fails, the error's line numbers and code context
+refer to the *expanded* program — the text the runtime actually ran —
+and a note under the error says so, pointing at `olang expand`.
+
+## Template escapes
+
+A template can contain the three characters that would otherwise be
+structural, each escaped with a backslash: `` \` `` is a literal
+backtick, `\$` is a literal dollar that will not start an
+interpolation, and `\\` is a literal backslash. Every other backslash
+pair passes through untouched — `\n` stays two characters, as template
+literals have always behaved. The escapes are what let a macro generate
+a template that interpolates at *runtime*:
+
+```olang
+meta fn logfmt(tag) = `(m) => \`[${tag}] \${m}\``
+let log = @logfmt(app)
+println(log("started"))   // [app] started
+```
+
+## Macro libraries
+
+A top-level `use m` also brings `m`'s top-level meta fns into the
+importing file's expansion, which is what makes a macro *library*
+possible — [`examples/derives`](../examples/derives/) ships one. The
+module is resolved as `m.ol` or `m/index.ol` (dots as directories)
+relative to the working directory; a local meta fn of the same name
+shadows an imported one, and an imported module's own imports are not
+walked. The module file's content is an expansion input exactly like
+the source itself.
+
+## Decorating functions and lets
+
+`@name` stacks above `fn` and `let` declarations as well as `type`. A
+function decorator receives the declaration source and typically renames
+the original (a textual rename of `fn name(` is enough, and
+`meta.fresh` supplies the new name) and emits a wrapper under the
+original name:
+
+```olang
+meta fn noisy(decl) = {
+    let node = head(unwrap(meta.parse(decl)))
+    let name = map_get(node, "name")
+    let impl_name = meta.fresh(name)
+    let params = map_get(node, "params") |> join(", ")
+    let renamed = str.replace(decl, `fn ${name}(`, `fn ${impl_name}(`)
+    renamed + `
+fn ${name}(${params}) = ${impl_name}(${params}) * 10`
+}
+
+@noisy
+fn base(x) = x + 1
+println(to_string(base(4)))   // 50
+```
+
+Stacked decorators apply nearest-first, so the outermost decorator sees
+everything the inner ones generated — which is why a decorator that
+generates `test` blocks (like `examples/derives`' `@arbitrary`) goes
+outermost: its tests land after every function they call.
+
+## In the REPL
+
+A `meta fn` entered in the REPL persists for the session: later inputs
+that use `@` are expanded with every previously entered meta fn in
+scope. `olang expand file.ol` prints a file's expanded program;
+`--diff` shows only the lines expansion changed.
 
 ## How this composes with the rest of olang
 
