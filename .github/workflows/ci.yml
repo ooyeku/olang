@@ -1,73 +1,88 @@
+# CI, sized for a private repo's Actions bill.
+#
+# Per push: formatting + clippy on Linux, and a workspace build (all
+# targets, so test code must compile) on the two platforms local
+# development never exercises — Linux and Windows. macOS is deliberately
+# absent: it is the development platform, verified by the full local gate
+# on every change, and it bills at 10x on private repos; its CI coverage
+# lives in the release workflow, which fires only on deliberate v* tags.
+#
+# The full test suite does not run per push — the local gates run it on
+# every change already. Dispatch with full_tests=true when a Linux test
+# run is wanted (first-time platform verification, a suspicious failure).
+#
+# Documentation-only pushes skip all of this: prose cannot break a build,
+# and the doc guards live in the test suite, not here.
 name: CI
 
-# PAUSED: automatic push/PR triggers are disabled while GitHub Actions is
-# blocked on account billing (jobs were refused before starting, showing a
-# red X on every push without running). To restore once billing is fixed,
-# re-add the `push`/`pull_request` triggers below (or `git revert` the
-# commit that paused them). `workflow_dispatch` still allows a manual run.
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "website/**"
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  # pull_request:
+    inputs:
+      full_tests:
+        description: "also run cargo test --workspace on Linux"
+        type: boolean
+        default: false
+
+# A superseded push's run is wasted spend; cancel it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
-  test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry and build
-        uses: Swatinem/rust-cache@v2
-
-      # reqwest uses native-tls, which needs OpenSSL headers on Linux
-      - name: Install OpenSSL (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
-
-      - name: Build
-        run: cargo build --workspace --all-targets --verbose
-
-      # Runs the whole suite, including the two suites that keep the bytecode
-      # tier honest:
-      #   bytecode_differential_test — the VM must match the interpreter
-      #   bytecode_tier_test         — promotion must not change results
-      - name: Test
-        run: cargo test --workspace --verbose
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-
-      - name: Cache cargo registry and build
-        uses: Swatinem/rust-cache@v2
-
+      - uses: Swatinem/rust-cache@v2
       - name: Install OpenSSL
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
-
       - name: Formatting
         run: cargo fmt --all -- --check
-
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install OpenSSL (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+  test:
+    name: Test (Linux, on demand)
+    if: github.event_name == 'workflow_dispatch' && inputs.full_tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install OpenSSL
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - name: Test
+        run: cargo test --workspace

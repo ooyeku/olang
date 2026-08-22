@@ -8,16 +8,11 @@
 
 name: Release
 
-# PAUSED: the automatic v* tag trigger is disabled while GitHub Actions is
-# blocked on account billing. Restore by re-adding the `push.tags` trigger
-# below (or `git revert` the pausing commit) once billing is fixed; the
-# release runbook in RELEASING.md assumes this fires on a v* tag.
-# `workflow_dispatch` still allows a manual run against a chosen ref.
 on:
   workflow_dispatch:
-  # push:
-  #   tags:
-  #     - "v*"
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
