@@ -43,7 +43,7 @@ to say which carries which. Four tiers, from the frozen core outward:
 
 | Tier | What you can rely on | Examples |
 |---|---|---|
-| **Stable** | Syntax and behavior are frozen. A documented program keeps parsing and keeps giving the same result, under the semver contract above. | the core language, the listed stdlib modules |
+| **Stable** | Syntax and behavior are frozen. A documented program keeps parsing and keeps giving the same result, under the semver contract above. | the core language, macros, the listed stdlib modules |
 | **Stable in behavior, evolving in scope** | Every documented function behaves as written, permanently. The *set* of functions grows additively; nothing existing changes. | concurrency, the OVM/JIT tiers, the data stack, gradual typing |
 | **Experimental** | The model is settled and tested, but the surface may still gain fields or grow. Build on it; expect additions, not removals. | capabilities, `http.serve`, `dom`, `cell`, `testing` session state |
 | **Reserved** | Not accepted at all. Writing one is a parse error, and if it ever gains meaning that will be purely additive. | intersection annotations, union *declarations* |
@@ -106,6 +106,41 @@ serving. `try` and `catch` are ordinary identifiers, as are `async`,
 `await`, and `Promise` — the reserved-word list is fifteen words plus
 seven contextual ones, and is not expected to change again.
 
+**Macros stabilized in 0.68** ([Macros](macros.md)), graduated after
+meeting every criterion the experimental entry set: source-mapped
+runtime error spans, an expansion-aware language server, a
+ten-thousand-program fuzz corpus run clean, and three macro libraries
+imported by real programs in the corpus. What is frozen is the model,
+not its incidentals:
+
+- The syntax forms — `meta fn` declarations, `@name(args)` in
+  expression position, `@name` decorators stacked on `type`, `fn`, and
+  `let` declarations — and their additive nature (`@` was unused;
+  `meta` is an ordinary identifier except directly before `fn`).
+- The five laws: every expansion site says `@`; a macro reaches only
+  the sites that name it; the parse is total (arguments are ordinary
+  olang under the one grammar, and no token or reader macros will ever
+  exist); expansion is pure, with the effectful and nondeterministic
+  modules refusing at expansion time; expansion cannot hide
+  (`olang expand`, embedded expanded source, site-attributed errors).
+- The exchange contract: a meta fn receives argument and declaration
+  *source text* and returns source text, validated by the parser before
+  splicing; arguments are expanded before the macro runs (applicative
+  order, to any depth); stacked decorators apply nearest-first; only
+  names declared `meta fn` — locally or via `use` — are invocable.
+- The `meta` helpers `eval`, `lit`, and `fresh`, with their documented
+  signatures and semantics, and `meta.parse`'s pre-expansion view.
+- Source-mapped errors as *behavior*: an error in untouched code points
+  at its original line; an error in generated code points at its `@`
+  site and names the macro.
+
+Free to change, deliberately: exact error and diagnostic wording,
+`olang expand`'s whitespace and presentation, the LSP's rendering of
+mapped findings, and the expansion fuel — which may increase but never
+drop below 16 rounds. The blocked-at-expansion module set may grow as
+new effectful modules enter the language (an addition that keeps the
+purity promise), and never shrinks.
+
 These rules are part of the commitment above and are permanent under the
 [semver contract](#versioning): changing any of them would be a 2.0, and
 2.0 is the version that is not meant to happen. Campaign 1 of
@@ -149,41 +184,6 @@ These rules are part of the commitment above and are permanent under the
   their semantics land.
 
 ### Experimental — may change or be completed
-
-- **Macros (`meta fn`, `@`, `olang expand`).** New in 0.68 and the most
-  recent surface in the language ([Macros](macros.md)). The five laws —
-  `@`-visible sites, no reach beyond the site, total parse, pure
-  expansion, inspectable output — are the settled design. The invocation
-  surface (expression sites; decorators on `type`, `fn`, and `let`),
-  imported macro libraries via `use`, the template escapes, and the
-  `meta` helpers (`eval`, `lit`, `fresh`) are implemented and hardened —
-  fuzzed for tier agreement and byte-level expansion determinism, with
-  placement rules enforced (top-level meta fns only, no `@` inside a
-  meta fn body). The syntax was added additively: `@` was previously
-  unused and `meta` remains an ordinary identifier everywhere except
-  directly before `fn`, so no pre-macro program changed meaning.
-
-  Graduation to stable requires, and is blocked on, all of: a macro
-  fuzzer corpus an order of magnitude larger run clean (**done** —
-  10,000 generated macro programs: expansion determinism, tier
-  agreement, and clean refusal checked per seed; the run surfaced and
-  fixed one real defect, nested macro calls in arguments); runtime error
-  spans source-mapped to `@` sites (**done** — every expanded line
-  carries its origin, and errors point into the file as written, naming
-  the generating macro); LSP expansion awareness (**done** — the
-  semantic pass runs on the expanded program with positions mapped back
-  to the buffer, generated-code findings name their macro, and expansion
-  failures are diagnostics at their site); and at least three
-  substantial macro libraries used by real programs in the corpus
-  (**done** — `examples/derives`, `examples/instrument`, and
-  `examples/contracts`, all imported with `use`, all under the harness
-  and the tier corpus). Every listed criterion is now met; the
-  graduation itself is a deliberate act for a later session, not an
-  automatic consequence — experimental status holds until it is
-  explicitly lifted.
-  Until then the expansion engine's internals — the round/fuel model,
-  the source-text exchange format's exact whitespace behavior — may
-  change in ways `olang expand` output would show.
 
 - **Capabilities and the transparent binary.** The `[capabilities]`
   manifest, per-dependency attenuation, `--deny`, and `olang inspect`

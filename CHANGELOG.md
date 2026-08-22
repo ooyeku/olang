@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Macros are stable.** Graduated from experimental with every listed
+  criterion met: source-mapped runtime error spans, an expansion-aware
+  language server, a 10,000-program fuzz corpus run clean, and three
+  macro libraries imported by real programs in the corpus. The
+  compatibility contract now covers the model permanently: the syntax
+  forms (`meta fn`; `@name(args)` expressions; `@name` decorators on
+  `type`, `fn`, and `let`), the five laws, the source-text exchange
+  contract with applicative argument order, the `meta` helpers
+  (`eval`, `lit`, `fresh`) and `meta.parse`'s pre-expansion view, and
+  source-mapped errors as behavior. Deliberately outside the freeze:
+  error and diagnostic wording, `olang expand` presentation, and the
+  expansion fuel above its floor of 16 rounds. Token and reader macros
+  remain excluded by design — the total-parse law is part of the
+  contract, so there will only ever be one grammar.
+
 ### Added
 
 - **Two more macro libraries, completing the graduation corpus:**

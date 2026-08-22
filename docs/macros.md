@@ -3,9 +3,12 @@
 Part of [the olang book](README.md) · [Language reference](language.md) ·
 [Standard library reference](stdlib.md) · [Openness](openness.md)
 
-**Status: experimental.** The design described here is complete and
-enforced, but the surface is new and may still be refined; see
-[Stability](stability.md#experimental--may-change-or-be-completed).
+**Status: stable.** The model described here — the five laws, the
+syntax forms, the source-text exchange contract, applicative argument
+order, and the `meta` helpers — is part of the
+[compatibility contract](stability.md): a documented macro program
+keeps working. Wording of errors, `olang expand` presentation, and the
+LSP's rendering of mapped findings may still improve.
 
 A `meta fn` is a function that runs while a program is being *loaded*,
 not while it runs. It receives the source text of its arguments, returns

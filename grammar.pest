@@ -67,7 +67,7 @@ paren_expr  = { "(" ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ expr)* ~ NL* ~ ")" }
 program     = { SOI ~ NL* ~ (statement ~ (";" | NL)* )* ~ EOI }
 statement   = { meta_fn_decl | share_decl | use_decl | test_decl | error_type_decl | trait_decl | impl_decl | decorated_decl | type_decl | let_decl | function_decl | assertion | expr }
 
-// ── macros (experimental) ─────────────────────────────────────────────
+// ── macros ────────────────────────────────────────────────────────────
 // `meta fn` declares a function that exists only at expansion time, and
 // `@name` invokes one: as an expression (`@retry(3, body)`) or stacked
 // above a type, fn, or let declaration (`@json`, `@trace`). `meta` and `@` are additive: `meta`

@@ -1,4 +1,4 @@
-// macros — extending olang in olang (docs/macros.md, experimental).
+// macros — extending olang in olang (docs/macros.md).
 //
 // A `meta fn` runs at expansion time: it receives the source text of its
 // arguments and returns source text, which the real parser validates and

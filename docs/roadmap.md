@@ -835,6 +835,13 @@ expand`, call-site error attribution). The prototype shipped
 experimental in 0.68: `meta fn`, expression macros and `type`
 decorators, `meta.eval`/`meta.lit`/`meta.fresh`, the `examples/macros`
 flagship, a 20-case matrix, and a book chapter (docs/macros.md).
+**Graduated to stable** after all four criteria were met — source-mapped
+error spans, LSP expansion awareness, a 10,000-program fuzz corpus run
+clean, and three imported macro libraries in the corpus
+(`derives`, `instrument`, `contracts`). The contract now lives in
+[Stability](stability.md): the model is frozen, the incidentals
+(wording, presentation, fuel above its floor) stay free.
+
 Deliberately excluded, as design rather than deferral: token/reader
 macros, macro-defined operators, whole-program reflection at expansion
 time, and effectful expansion. Post-1.0 work: decorators on `fn`/`let`,

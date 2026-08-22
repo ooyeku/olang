@@ -362,7 +362,7 @@ impl Parser {
     fn build_statement(&self, pair: Pair<Rule>) -> Result<Statement, ParseError> {
         match pair.as_rule() {
             Rule::let_decl => Ok(Statement::LetDecl(self.build_let_decl(pair.into_inner())?)),
-            // Macros (experimental): both carry byte spans so the expander
+            // Macros: both carry byte spans so the expander
             // can splice over exactly the text this parse saw.
             Rule::meta_fn_decl => {
                 let span = (pair.as_span().start(), pair.as_span().end());

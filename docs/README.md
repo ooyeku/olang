@@ -28,7 +28,7 @@ For the conventions used throughout the book, see the
 | [Language reference](language.md) | Every construct in detail: values and mutability, evaluation order, operators and precedence, control flow, pattern matching, functions and closures, user-defined types, traits, errors, concurrency, and modules. |
 | [Types and gradual typing](types.md) | Type annotations as enforced promises, runtime enforcement on every tier, the `olang check` static checker, element-type analysis, and incremental adoption. |
 | [Common pitfalls](pitfalls.md) | Behaviors that surprise newcomers — missing map keys, integer division, operator precedence, closure capture, truthiness, indexing — each with the idiom that avoids it. |
-| [Macros](macros.md) | *(experimental)* Extending olang in olang: `meta fn`, `@` invocation, compile-time evaluation with `meta.eval`/`meta.lit`, derives over the Open AST, and the five laws that keep expansion pure, visible, and tool-friendly. |
+| [Macros](macros.md) | Extending olang in olang: `meta fn`, `@` invocation, compile-time evaluation with `meta.eval`/`meta.lit`, derives over the Open AST, and the five laws that keep expansion pure, visible, and tool-friendly. |
 
 ### Part III — The standard library
 
