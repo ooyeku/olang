@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-08-22
+
 ### Changed — the last-mile corrections (deliberate breaking change, the third and final before 1.0)
 
 - **Operator precedence now reads conventionally.** The table, loosest →
