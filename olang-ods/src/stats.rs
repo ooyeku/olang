@@ -343,15 +343,10 @@ pub fn ols(y: &Series, x_cols: &[&Series], par: bool) -> Result<OlsFit> {
     let pairs: Vec<(usize, usize)> = (0..k).flat_map(|i| (0..=i).map(move |j| (i, j))).collect();
     let dot = |a: &[f64], b: &[f64]| -> f64 {
         let mut acc = [0.0f64; 4];
-        let ca = a.chunks_exact(4);
-        let cb = b.chunks_exact(4);
-        let rem: f64 = ca
-            .remainder()
-            .iter()
-            .zip(cb.remainder())
-            .map(|(x, y)| x * y)
-            .sum();
-        for (x4, y4) in ca.zip(cb) {
+        let (ca, ra) = a.as_chunks::<4>();
+        let (cb, rb) = b.as_chunks::<4>();
+        let rem: f64 = ra.iter().zip(rb).map(|(x, y)| x * y).sum();
+        for (x4, y4) in ca.iter().zip(cb) {
             for l in 0..4 {
                 acc[l] += x4[l] * y4[l];
             }

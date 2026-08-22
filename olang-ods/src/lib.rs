@@ -1272,8 +1272,7 @@ impl Series {
 
 fn f64_sum_dense(values: &[f64]) -> f64 {
     let mut acc = [0.0f64; 8];
-    let chunks = values.chunks_exact(8);
-    let rem = chunks.remainder();
+    let (chunks, rem) = values.as_chunks::<8>();
     for c in chunks {
         for k in 0..8 {
             acc[k] += c[k];
@@ -1284,8 +1283,7 @@ fn f64_sum_dense(values: &[f64]) -> f64 {
 
 fn f64_sum_sq_dev_dense(values: &[f64], mean: f64) -> f64 {
     let mut acc = [0.0f64; 8];
-    let chunks = values.chunks_exact(8);
-    let rem = chunks.remainder();
+    let (chunks, rem) = values.as_chunks::<8>();
     for c in chunks {
         for k in 0..8 {
             let d = c[k] - mean;
