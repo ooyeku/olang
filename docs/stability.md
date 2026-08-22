@@ -167,9 +167,12 @@ These rules are part of the commitment above and are permanent under the
   fuzzer corpus an order of magnitude larger run clean; runtime error
   spans source-mapped to `@` sites (**done** — every expanded line
   carries its origin, and errors point into the file as written, naming
-  the generating macro); LSP awareness beyond raw-parse diagnostics;
-  and at least three substantial macro libraries used by real programs
-  in the corpus (`examples/derives` is the first).
+  the generating macro); LSP expansion awareness (**done** — the
+  semantic pass runs on the expanded program with positions mapped back
+  to the buffer, generated-code findings name their macro, and expansion
+  failures are diagnostics at their site); and at least three
+  substantial macro libraries used by real programs in the corpus
+  (`examples/derives` is the first).
   Until then the expansion engine's internals — the round/fuel model,
   the source-text exchange format's exact whitespace behavior — may
   change in ways `olang expand` output would show.

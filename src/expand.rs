@@ -100,6 +100,18 @@ pub fn expand_source(source: &str) -> Result<String, String> {
     expand_source_mapped(source).map(|e| e.text)
 }
 
+/// `expand_source_mapped`, resolving `use` imports relative to `base_dir`
+/// (the directory of the file being expanded) before the working
+/// directory. The run path, `olang check`, and the LSP all know the
+/// file's directory; plain `Parser::parse` (REPL, doc snippets) does not
+/// and uses the working directory alone.
+pub fn expand_source_mapped_with_dir(
+    source: &str,
+    base_dir: Option<&std::path::Path>,
+) -> Result<Expansion, String> {
+    expand_impl(source, base_dir)
+}
+
 /// Rewrite one splice's worth of the line map, before the text itself is
 /// spliced (offsets refer to the current text). The replaced lines map to
 /// the macro that produced them, rooted at the site's original line — and
@@ -137,11 +149,21 @@ fn splice_line_map(
 /// or tracked), and attributes every generated line to the `@` site that
 /// produced it.
 pub fn expand_source_mapped(source: &str) -> Result<Expansion, String> {
+    expand_impl(source, None)
+}
+
+fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expansion, String> {
     // Same source, same program: gensym names restart at zero for every
     // expansion, so re-parsing a file yields byte-identical output.
     crate::stdlib::meta::reset_fresh_counter();
     let parser = Parser::new();
     let mut interp = expansion_interpreter();
+    // Only names declared `meta fn` — locally or in an imported module —
+    // are invocable as macros. Without this registry, an `@` call would
+    // fall through to ANY global binding: `@json` found the stdlib json
+    // module and tried to call it, and `@map(...)` would have handed the
+    // builtin `map` source strings. A macro is a declared thing.
+    let mut known_macros: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut text = source.to_string();
     let mut line_map: Vec<LineOrigin> = (1..=source.matches('\n').count() + 1)
         .map(LineOrigin::Original)
@@ -200,7 +222,12 @@ pub fn expand_source_mapped(source: &str) -> Result<Expansion, String> {
         // may exist only for runtime), but an unparseable one is.
         for u in collect_imports(&program) {
             let rel = u.join("/");
-            let candidates = [format!("{rel}.ol"), format!("{rel}/index.ol")];
+            let names = [format!("{rel}.ol"), format!("{rel}/index.ol")];
+            let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+            if let Some(dir) = base_dir {
+                candidates.extend(names.iter().map(|n| dir.join(n)));
+            }
+            candidates.extend(names.iter().map(std::path::PathBuf::from));
             let Some(module_src) = candidates
                 .iter()
                 .find_map(|c| std::fs::read_to_string(c).ok())
@@ -227,6 +254,9 @@ pub fn expand_source_mapped(source: &str) -> Result<Expansion, String> {
                     interp.eval_program(prog).map_err(|e| {
                         format!("use {}: imported meta fn failed to load: {e}", u.join("."))
                     })?;
+                    if let Some(name) = meta_fn_name(&fn_src) {
+                        known_macros.insert(name);
+                    }
                 }
             }
         }
@@ -249,6 +279,9 @@ pub fn expand_source_mapped(source: &str) -> Result<Expansion, String> {
             interp
                 .eval_program(prog)
                 .map_err(|e| format!("meta fn failed to load: {e}"))?;
+            if let Some(name) = meta_fn_name(&fn_src) {
+                known_macros.insert(name);
+            }
         }
 
         if calls.is_empty() && decorated.is_empty() {
@@ -285,7 +318,7 @@ pub fn expand_source_mapped(source: &str) -> Result<Expansion, String> {
                 .iter()
                 .map(|a| Value::String(std::sync::Arc::new(a.clone())))
                 .collect();
-            let out = call_meta_fn(&mut interp, &c.name, args)
+            let out = call_meta_fn(&mut interp, &known_macros, &c.name, args)
                 .map_err(|e| format!("@{} (line {}): {}", c.name, c.line, e))?;
             // Validate the fragment as it will actually compose: wrapped
             // in parentheses, the way it sits inside the surrounding
@@ -320,7 +353,7 @@ pub fn expand_source_mapped(source: &str) -> Result<Expansion, String> {
                         .iter()
                         .map(|a| Value::String(std::sync::Arc::new(a.clone()))),
                 );
-                cur = call_meta_fn(&mut interp, name, args)
+                cur = call_meta_fn(&mut interp, &known_macros, name, args)
                     .map_err(|e| format!("@{} (line {}): {}", name, line, e))?;
                 parser.parse_raw(&cur).map_err(|e| {
                     format!(
@@ -389,9 +422,16 @@ fn expansion_interpreter() -> crate::interpreter::Interpreter {
 
 fn call_meta_fn(
     interp: &mut crate::interpreter::Interpreter,
+    known: &std::collections::HashSet<String>,
     name: &str,
     args: Vec<Value>,
 ) -> Result<String, String> {
+    if !known.contains(name) {
+        return Err(format!(
+            "no meta fn named '{name}' — declare one with `meta fn {name}(...) = ...` \
+             in this file, or import a module that declares it with `use`"
+        ));
+    }
     let result = interp
         .call_named_function(name, args)
         .map_err(|e| e.to_string())?;
@@ -486,6 +526,15 @@ fn collect_imports(program: &Program) -> Vec<Vec<String>> {
             _ => None,
         })
         .collect()
+}
+
+/// The declared name of a `fn name(...)` source fragment.
+fn meta_fn_name(fn_src: &str) -> Option<String> {
+    let rest = fn_src.trim_start().strip_prefix("fn")?.trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    (end > 0).then(|| rest[..end].to_string())
 }
 
 fn line_of(text: &str, byte: usize) -> usize {

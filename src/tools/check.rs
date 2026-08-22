@@ -57,6 +57,26 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
                 continue;
             }
         };
+        // Expand macros with the FILE's directory as the import base, so
+        // `use`-imported macro libraries resolve the same way they do
+        // when the program runs from its own directory. (Bare
+        // `parser.parse` would expand against the checker's cwd.)
+        let expanded;
+        let source = if source.contains('@') || crate::expand::has_meta_fn_token(&source) {
+            match crate::expand::expand_source_mapped_with_dir(&source, file.parent()) {
+                Ok(e) => {
+                    expanded = e.text;
+                    expanded.clone()
+                }
+                Err(message) => {
+                    eprintln!("{}: {}", file.display(), message);
+                    problems += 1;
+                    continue;
+                }
+            }
+        } else {
+            source
+        };
         let program = match parser.parse(&source) {
             Ok(p) => p,
             Err(e) => {

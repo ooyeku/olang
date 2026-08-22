@@ -2076,7 +2076,7 @@ fn execute_source(
     let mut line_map: Option<Vec<olang::expand::LineOrigin>> = None;
     let mut did_expand = false;
     let source = if source.contains('@') || olang::expand::has_meta_fn_token(source) {
-        match olang::expand::expand_source_mapped(source) {
+        match olang::expand::expand_source_mapped_with_dir(source, file_path.parent()) {
             Ok(expansion) if expansion.text != source => {
                 did_expand = true;
                 line_map = Some(expansion.line_origins);
