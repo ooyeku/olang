@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-08-22
+
 ### Fixed
 
 - **The keyword appendix and the stability chapter still said "seven
