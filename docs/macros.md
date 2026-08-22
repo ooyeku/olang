@@ -107,6 +107,15 @@ Meta fns may call each other as ordinary functions, and a macro's
 bounded by fuel (16 rounds), so a macro that produces itself is an error
 naming the loop rather than a hang.
 
+Macro names are a closed set: only names declared `meta fn` — in the
+file itself, or in a module imported with `use` — are invocable with
+`@`. Any other name, including one that happens to be bound in the
+program (a stdlib module, a builtin, an ordinary function), is refused
+with `no meta fn named 'x'`. An `@` site can therefore never reach
+anything but a declared macro, which is what makes the invocation
+surface auditable: the macros a file can use are exactly its `meta fn`
+declarations plus its imports.
+
 ## Decorators: deriving from declarations
 
 `@name` above a `type` declaration passes the declaration's source to

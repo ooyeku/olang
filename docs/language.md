@@ -1768,9 +1768,11 @@ true false struct enum
 
 Fifteen words, and that is the whole list.
 
-**Seven more that introduce declarations are *contextual*, not
-reserved**: `share`, `error`, `test`, `type`, `trait`, `impl`, and
-`use`. Each only ever appears at the start of its declaration form, and
+**Eight more that introduce declarations are *contextual*, not
+reserved**: `share`, `error`, `test`, `type`, `trait`, `impl`, `use`,
+and `meta` (which introduces a [macro declaration](macros.md) only when
+directly followed by `fn`). Each only ever appears at the start of its
+declaration form, and
 the token after it settles the reading — so a declaration and a variable
 of the same name coexist:
 
@@ -1803,12 +1805,17 @@ Each keyword and contextual word, in one line:
 | `struct` / `enum` | Type-definition forms after `type Name =` |
 | `trait` / `impl` | *(contextual)* Declare a trait / implement it for a type |
 | `test` | *(contextual)* A named test block, run by `olang test` |
+| `meta` | *(contextual)* `meta fn` declares a [macro](macros.md), gone before the program runs |
 
 `mut` and `par` are *contextual* too: `mut` is special only right after
 `let`, and `par` only directly before `for` (`par for x in xs`). `Ok`,
 `Err`, `Result`, and `spawn` are ordinary names with built-in meaning
 rather than reserved words — as are `async`, `await`, `try`, `catch`,
 and `Promise`, which named constructs olang no longer has.
+
+`@name(args)` invokes a [macro](macros.md) in expression position, and
+`@name` above a `type`, `fn`, or `let` declaration decorates it; both
+are resolved and gone before the program runs.
 
 Statement separators are newlines or `;`. Comments are `//` to end of
 line. A leading `#!` line (`#!/usr/bin/env olang`) is host metadata,

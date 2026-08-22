@@ -103,8 +103,11 @@ which never did, despite looking like it — was removed. Recovery is
 spawned task's failure becomes `Err(e)` from `task.join`, and an
 `http.serve` handler's becomes a logged 500 with the server still
 serving. `try` and `catch` are ordinary identifiers, as are `async`,
-`await`, and `Promise` — the reserved-word list is fifteen words plus
-seven contextual ones, and is not expected to change again.
+`await`, and `Promise`. The reserved-word list is fifteen words and
+will not grow — that is the promise that keeps every identifier a
+program uses valid forever. The *contextual* declaration words (eight,
+after `meta` joined in 0.68) may gain members additively, since a
+contextual word never stops being an ordinary identifier.
 
 **Macros stabilized in 0.68** ([Macros](macros.md)), graduated after
 meeting every criterion the experimental entry set: source-mapped

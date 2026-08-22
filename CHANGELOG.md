@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The keyword appendix and the stability chapter still said "seven
+  contextual words" — `meta` is the eighth.** The same class R1 kept
+  finding: prose that counts the project's own machinery goes stale
+  silently. `language.md`'s appendix now lists `meta` (and the `@`
+  forms, with pointers to the macros chapter), and `stability.md` states
+  the durable version of the claim: the fifteen *reserved* words will
+  never grow, while the contextual words may gain members additively,
+  since a contextual word never stops being an ordinary identifier.
+  Also stated in the chapter, from the graduation contract: macro names
+  are a closed set — only declared `meta fn` names are invocable with
+  `@`, so the macros a file can use are exactly its declarations plus
+  its imports.
+
 ### Changed
 
 - **Macros are stable.** Graduated from experimental with every listed
