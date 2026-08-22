@@ -1,6 +1,6 @@
 # Simple Makefile for Olang
 
-.PHONY: build install remove clean test wasm dist
+.PHONY: build install remove clean test wasm dist prepush
 
 WASM_TARGET := wasm32-unknown-unknown
 WASM_ARTIFACT := target/$(WASM_TARGET)/release/olang_playground.wasm
@@ -32,6 +32,22 @@ clean:
 # Run tests
 test:
 	cargo test
+
+# The full pre-push gate, matching what CI checks — with one difference
+# that is the whole point: clippy runs on FRESH fingerprints. Cargo skips
+# re-linting crates whose files have not changed, so a toolchain update
+# that adds a new lint passes locally on stale cache and then fails CI
+# (this happened: chunks_exact_to_as_chunks landed in stable, local
+# clippy reported clean from cache, CI's fresh toolchain refused).
+# Touching each crate root forces every crate through the linter the
+# way CI's clean checkout does. Costs ~a minute over the cached run.
+prepush:
+	cargo fmt --all -- --check
+	@touch src/lib.rs otc/src/main.rs olang-ods/src/lib.rs playground/src/lib.rs
+	cargo clippy --workspace --all-targets -- -D warnings
+	cargo test --workspace
+	cargo build --release
+	cd examples && ../target/release/olang run run_all.ol
 
 # Build the playground wasm and stage it where the consumers load it:
 # the tracker example serves static/olang_playground.wasm, and the
