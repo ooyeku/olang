@@ -165,10 +165,11 @@ These rules are part of the commitment above and are permanent under the
 
   Graduation to stable requires, and is blocked on, all of: a macro
   fuzzer corpus an order of magnitude larger run clean; runtime error
-  *spans* mapped to `@` sites (today errors show expanded context with a
-  note, which is aligned but not source-mapped); LSP awareness beyond
-  raw-parse diagnostics; and at least three substantial macro libraries
-  used by real programs in the corpus (`examples/derives` is the first).
+  spans source-mapped to `@` sites (**done** — every expanded line
+  carries its origin, and errors point into the file as written, naming
+  the generating macro); LSP awareness beyond raw-parse diagnostics;
+  and at least three substantial macro libraries used by real programs
+  in the corpus (`examples/derives` is the first).
   Until then the expansion engine's internals — the round/fuel model,
   the source-text exchange format's exact whitespace behavior — may
   change in ways `olang expand` output would show.

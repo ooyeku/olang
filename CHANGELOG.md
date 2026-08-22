@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Runtime errors in macro programs are source-mapped** — the first
+  graduation criterion, done. Expansion now produces a line map: every
+  line of the expanded program records whether it is untouched source
+  (and which original line) or a macro's output (and which `@` site
+  produced it, surviving composition to the line the author wrote). A
+  runtime error is translated through the map before display: an error
+  in your own code shows your file at the right line with its exact
+  content — immune to the line shift a decorator's generated
+  declarations cause below them — and an error inside generated code
+  points at the `@` site, names the macro, and offers `olang expand`
+  for the generated text. The expanded-program note is gone from the
+  runtime path; it remains only for whole-file parse errors, where no
+  map exists yet.
+
 - **Macro hardening — the M1–M4 campaign** (docs/macros.md), taking the
   experimental macro system from prototype to usable and reliable:
 

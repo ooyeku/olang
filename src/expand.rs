@@ -74,15 +74,78 @@ fn json_has_key(v: &serde_json::Value, keys: &[&str]) -> bool {
     }
 }
 
+/// Where a line of the expanded program came from: untouched source (its
+/// original 1-based line), or a macro's output (attributed to the `@`
+/// site's original line). This is what lets a runtime error inside an
+/// expanded program point back into the file the author is looking at.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LineOrigin {
+    Original(usize),
+    Generated {
+        macro_name: String,
+        site_line: usize,
+    },
+}
+
+/// The expanded program plus its line map: `line_origins[i]` is the
+/// origin of expanded line `i + 1`.
+pub struct Expansion {
+    pub text: String,
+    pub line_origins: Vec<LineOrigin>,
+}
+
 /// Expand `source` to a macro-free program text. Errors are strings that
 /// name the macro and the line of the site that failed.
 pub fn expand_source(source: &str) -> Result<String, String> {
+    expand_source_mapped(source).map(|e| e.text)
+}
+
+/// Rewrite one splice's worth of the line map, before the text itself is
+/// spliced (offsets refer to the current text). The replaced lines map to
+/// the macro that produced them, rooted at the site's original line — and
+/// when the site itself sits in generated text (a macro whose output
+/// called another macro), the root survives, so attribution always lands
+/// on a line the author wrote.
+fn splice_line_map(
+    map: &mut Vec<LineOrigin>,
+    text: &str,
+    span: (usize, usize),
+    replacement: &str,
+    macro_name: &str,
+) {
+    let start_line = line_of(text, span.0);
+    let old_lines = text[span.0..span.1].matches('\n').count() + 1;
+    let new_lines = replacement.matches('\n').count() + 1;
+    let site_line = match map.get(start_line - 1) {
+        Some(LineOrigin::Original(m)) => *m,
+        Some(LineOrigin::Generated { site_line, .. }) => *site_line,
+        None => start_line,
+    };
+    let generated = LineOrigin::Generated {
+        macro_name: macro_name.to_string(),
+        site_line,
+    };
+    let end = (start_line - 1 + old_lines).min(map.len());
+    map.splice(
+        start_line - 1..end,
+        std::iter::repeat_n(generated, new_lines),
+    );
+}
+
+/// `expand_source`, keeping the line map. The map is exact for
+/// declaration-level output and meta fn stripping (both line-preserving
+/// or tracked), and attributes every generated line to the `@` site that
+/// produced it.
+pub fn expand_source_mapped(source: &str) -> Result<Expansion, String> {
     // Same source, same program: gensym names restart at zero for every
     // expansion, so re-parsing a file yields byte-identical output.
     crate::stdlib::meta::reset_fresh_counter();
     let parser = Parser::new();
     let mut interp = expansion_interpreter();
     let mut text = source.to_string();
+    let mut line_map: Vec<LineOrigin> = (1..=source.matches('\n').count() + 1)
+        .map(LineOrigin::Original)
+        .collect();
 
     for _round in 0..FUEL {
         let program = parser
@@ -199,14 +262,18 @@ pub fn expand_source(source: &str) -> Result<String, String> {
                     }
                 }
             }
-            return String::from_utf8(out).map_err(|e| e.to_string());
+            let text = String::from_utf8(out).map_err(|e| e.to_string())?;
+            return Ok(Expansion {
+                text,
+                line_origins: line_map,
+            });
         }
 
         // Expand innermost-first: a call site whose span contains another
         // site waits for the inner one. Splice from the end of the text
         // backwards so earlier offsets stay valid.
         let all_spans: Vec<(usize, usize)> = calls.iter().map(|c| c.span).collect();
-        let mut splices: Vec<(usize, usize, String)> = Vec::new();
+        let mut splices: Vec<(usize, usize, String, String)> = Vec::new();
 
         for c in &calls {
             let is_leaf = !all_spans.iter().any(|s| s.0 > c.span.0 && s.1 <= c.span.1);
@@ -235,7 +302,7 @@ pub fn expand_source(source: &str) -> Result<String, String> {
                     c.name, c.line, e, out
                 )
             })?;
-            splices.push((c.span.0, c.span.1, out));
+            splices.push((c.span.0, c.span.1, out, c.name.clone()));
         }
 
         for d in &decorated {
@@ -262,7 +329,14 @@ pub fn expand_source(source: &str) -> Result<String, String> {
                     )
                 })?;
             }
-            splices.push((d.span.0, d.span.1, cur));
+            // Attribution names the outermost decorator — the one whose
+            // output is the final text of this span.
+            let outer = d
+                .decorators
+                .first()
+                .map(|(n, _, _)| n.clone())
+                .unwrap_or_default();
+            splices.push((d.span.0, d.span.1, cur, outer));
         }
 
         if splices.is_empty() {
@@ -270,8 +344,15 @@ pub fn expand_source(source: &str) -> Result<String, String> {
             // logic is wrong — refuse rather than loop.
             return Err("macro expansion made no progress (internal error)".to_string());
         }
-        splices.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
-        for (start, end, replacement) in splices {
+        splices.sort_by_key(|(start, _, _, _)| std::cmp::Reverse(*start));
+        for (start, end, replacement, macro_name) in splices {
+            splice_line_map(
+                &mut line_map,
+                &text,
+                (start, end),
+                &replacement,
+                &macro_name,
+            );
             text.replace_range(start..end, &replacement);
         }
     }
