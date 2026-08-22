@@ -809,7 +809,7 @@ spent the rest of its attention and came up clean.
 capabilities, and an audited book — so nothing technical blocks the
 release. What R3 waits on is not work but *time*: R2 turned
 `stability.md` into a permanent compatibility contract, and a contract
-is the one thing a 1.0 cannot walk back. Living on 0.67.0 for a soak
+is the one thing a 1.0 cannot walk back. Living on 0.68.0 for a soak
 period — dogfooding the frozen surface, watching for a regret before it
 becomes a promise — is the cheap insurance a same-day cut would forgo.
 1.0 is cut in a later, deliberate session, not reflexively because the
@@ -820,7 +820,7 @@ checklist is empty.
 |---|---|---|
 | R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | **done** — eight sittings: every chapter read or probed against the binary, ~30 corrections, four permanent guards (`doc_examples`, `doc_references`, `doc_outputs`, `doc_anchors`) |
 | R2 — the 1.0 contract | [Stability and compatibility](stability.md) is rewritten as the 1.0 compatibility contract: what is frozen, what semver means from here, and the support expectations for each surface. | **done** — the chapter now opens as the contract, states MAJOR/MINOR/PATCH precisely (a breaking change is a failing `doc_examples_test`, so it is a fact not a judgment), defines breaking and deprecation, and adds a per-surface guarantee table |
-| R3 — release | The 1.0 release itself: final gates, the CHANGELOG's 1.0 entry, and version 1.0.0. | **held — soaking 0.67.0 first** |
+| R3 — release | The 1.0 release itself: final gates, the CHANGELOG's 1.0 entry, and version 1.0.0. | **held — soaking 0.68.0, the macro release, before the contract freezes** |
 
 ## The post-1.0 flagship: macros — prototyped
 
