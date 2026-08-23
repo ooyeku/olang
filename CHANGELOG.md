@@ -36,6 +36,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   macro expansion and coverage runs never fan out; `set_parallel(false)`
   disables it; `OLANG_DEBUG_AUTOPAR=1` explains each decision.
 
+### Added
+
+- **Tail-call elimination on all three tiers (Campaign 5, R4b).** A
+  self-call in tail position — both branches of an `if`, a match arm, a
+  block's final expression, the expression of a `return` — runs in the
+  caller's frame: O(1) stack *and* O(1) logical depth, so tail
+  recursion never meets the depth cap at all. The interpreter
+  trampolines (deciding self-ness by function identity, so a same-named
+  shadow or sibling closure stays an ordinary call, and re-running the
+  full call boundary — arity, bounds, annotations — for every elided
+  frame); the VM rewrites the call to a parameter rebind and a jump to
+  the entry; the JIT compiles that jump as a native loop. Measured: 20
+  calls each 500,000 frames deep in 4ms — tail recursion at native
+  loop speed with unbounded depth — and a single 50M-frame descent in
+  22ms. Elided frames are noted in error traces ("spin (tail calls
+  elided)"), effects keep their order, non-tail recursion still meets
+  the cap identically on both tiers, and an under-applied self-call
+  (leaning on parameter defaults) deliberately takes the ordinary call
+  path, keeping default-expression scoping exactly as it was. One
+  consequence to know: a *runaway* tail recursion — `fn boom(n) =
+  boom(n + 1)` — is now an infinite loop rather than a depth error,
+  because tail calls are iteration; it non-halts exactly as
+  `while true {}` always has. Runaway recursion that needs its frames
+  back still meets the cap as a clean error.
+
 ### Changed
 
 - **The call-depth cap is 100,000 frames (was 1,000) — and it is now a

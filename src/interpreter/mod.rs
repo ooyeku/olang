@@ -79,6 +79,14 @@ pub(crate) fn with_stack_headroom<R>(f: impl FnOnce() -> R) -> R {
 pub(crate) fn with_stack_headroom<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
+
+/// The result of walking a function body's tail positions: an ordinary
+/// value, or a self-call whose evaluated arguments the trampoline in
+/// `call_user_function_inner` rebinds instead of pushing a frame.
+enum TailFlow {
+    Value(Value),
+    SelfCall(Vec<Value>),
+}
 mod patterns;
 pub use errors::{InterpreterError, IntuitiveErrorFormatter};
 
@@ -1722,6 +1730,46 @@ impl Interpreter {
     /// go through. `call_function` used to be the only entry, and it
     /// takes the callee by VALUE: every per-element call cloned the
     /// whole `Function` — its parameter vector, its name, its check
+    /// The checks every call crosses: arity against required and total
+    /// parameters, trait bounds, and declared parameter types. One
+    /// function because an *elided* tail frame must re-run exactly what
+    /// a real frame would have (see the trampoline below) — a drifted
+    /// copy would make deep recursion the one place annotations stop
+    /// being promises.
+    fn check_call_boundary(
+        &mut self,
+        func: &Function,
+        arguments: &[Value],
+    ) -> Result<(), InterpreterError> {
+        let required_params = func
+            .parameters
+            .iter()
+            .filter(|p| p.default_value.is_none())
+            .count();
+        if arguments.len() < required_params {
+            return Err(InterpreterError::ArityMismatch {
+                expected: required_params,
+                got: arguments.len(),
+            });
+        }
+        if arguments.len() > func.parameters.len() {
+            return Err(InterpreterError::ArityMismatch {
+                expected: func.parameters.len(),
+                got: arguments.len(),
+            });
+        }
+        // Trait bounds fail at the boundary with a clear message, not
+        // deep inside the body; declared parameter types run before the
+        // tier so every execution path sees the same boundary.
+        if !func.param_bounds.is_empty() {
+            self.check_param_bounds(func, arguments)?;
+        }
+        if !func.param_checks.is_empty() {
+            self.check_param_types(func, arguments)?;
+        }
+        Ok(())
+    }
+
     /// tables — heap allocations per element, and allocator contention
     /// once a dozen cores did it at once. Borrowing removes the clone;
     /// nothing here needed ownership.
@@ -1754,42 +1802,7 @@ impl Interpreter {
             self.call_stack_names
                 .push(func.name.clone().unwrap_or_else(|| "<lambda>".to_string()));
 
-            // Count required parameters (those without default values)
-            let required_params = func
-                .parameters
-                .iter()
-                .filter(|p| p.default_value.is_none())
-                .count();
-
-            // Check if we have enough arguments for required parameters
-            if arguments.len() < required_params {
-                return Err(InterpreterError::ArityMismatch {
-                    expected: required_params,
-                    got: arguments.len(),
-                });
-            }
-
-            // Check if we have too many arguments
-            if arguments.len() > func.parameters.len() {
-                return Err(InterpreterError::ArityMismatch {
-                    expected: func.parameters.len(),
-                    got: arguments.len(),
-                });
-            }
-
-            // Enforce trait bounds at the call boundary: an argument whose
-            // type does not implement a bounded parameter's trait fails
-            // here with a clear message, not deep inside the body.
-            if !func.param_bounds.is_empty() {
-                self.check_param_bounds(func, &arguments)?;
-            }
-
-            // Enforce declared parameter types (annotations are
-            // promises); runs before the tier so every execution path
-            // sees the same boundary.
-            if !func.param_checks.is_empty() {
-                self.check_param_types(func, &arguments)?;
-            }
+            self.check_call_boundary(func, &arguments)?;
 
             // Hot-function promotion: run on the bytecode tier when the
             // function is eligible, otherwise fall through to the AST walk
@@ -1850,38 +1863,6 @@ impl Interpreter {
                 }
             }
 
-            // Create new environment with current environment as parent
-            let mut new_env = Environment::with_parent(self.environment.clone());
-
-            // Adopt the closure as the environment's flat map in O(1) —
-            // the persistent map is shared, not copied. This was a loop
-            // defining every closure entry (the whole prelude, ~200
-            // entries) on every single call.
-            if !func.closure.is_empty() {
-                new_env.variables = func.closure.clone();
-            }
-
-            // If this is a named function, add it to its own scope for recursion
-            if let Some(name) = &func.name {
-                new_env.define_local(name.clone(), Value::Function(func.clone()));
-            }
-
-            // Parameters are defined over the shared map; copy-on-write
-            // clones only the touched structure
-            for (i, param) in func.parameters.iter().enumerate() {
-                let value = if i < arguments.len() {
-                    arguments[i].clone()
-                } else if let Some(default_expr) = &param.default_value {
-                    self.eval_expr(default_expr)?
-                } else {
-                    return Err(InterpreterError::RuntimeError {
-                        message: format!("Missing argument for parameter {}", param.name),
-                    });
-                };
-
-                new_env.define_local(param.name.clone(), value);
-            }
-
             // Coverage: while this body runs, lines belong to the file
             // the function was defined in, not the caller's file.
             // Capability enforcement rides the same stack — a gated
@@ -1892,14 +1873,86 @@ impl Interpreter {
                 self.coverage_file_stack.push(func.def_file.clone());
             }
 
-            // MEMORY OPTIMIZED: Use scoped evaluation instead of environment replacement
-            let result = match self.eval_expr_with_env(&func.body, new_env) {
-                // `?` hit an Err inside this body: the function returns
-                // that Err to its caller — the early-return semantics.
-                Err(InterpreterError::ErrPropagation(err)) => Ok(err),
-                // `return v` inside this body: the function's value is v.
-                Err(InterpreterError::ReturnSignal(v)) => Ok(v),
-                other => other,
+            // The tail-call trampoline: a self-call in tail position
+            // hands its evaluated arguments back here instead of pushing
+            // a frame, so tail recursion runs in one frame at O(1) stack
+            // *and* O(1) logical depth — the recursion-depth cap measures
+            // frames that are genuinely live. Each elided frame re-runs
+            // the same boundary checks a real frame would.
+            let mut arguments = arguments;
+            let mut tail_frames_elided = false;
+            let result = loop {
+                // Create new environment with current environment as parent
+                let mut new_env = Environment::with_parent(self.environment.clone());
+
+                // Adopt the closure as the environment's flat map in O(1) —
+                // the persistent map is shared, not copied. This was a loop
+                // defining every closure entry (the whole prelude, ~200
+                // entries) on every single call.
+                if !func.closure.is_empty() {
+                    new_env.variables = func.closure.clone();
+                }
+
+                // If this is a named function, add it to its own scope for recursion
+                if let Some(name) = &func.name {
+                    new_env.define_local(name.clone(), Value::Function(func.clone()));
+                }
+
+                // Parameters are defined over the shared map; copy-on-write
+                // clones only the touched structure
+                let mut bind_error = None;
+                for (i, param) in func.parameters.iter().enumerate() {
+                    let value = if i < arguments.len() {
+                        arguments[i].clone()
+                    } else if let Some(default_expr) = &param.default_value {
+                        match self.eval_expr(default_expr) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                bind_error = Some(e);
+                                break;
+                            }
+                        }
+                    } else {
+                        bind_error = Some(InterpreterError::RuntimeError {
+                            message: format!("Missing argument for parameter {}", param.name),
+                        });
+                        break;
+                    };
+
+                    new_env.define_local(param.name.clone(), value);
+                }
+                if let Some(e) = bind_error {
+                    break Err(e);
+                }
+
+                let saved = std::mem::replace(&mut self.environment, new_env);
+                let flow = self.eval_tail_expr(&func.body, func);
+                self.environment = saved;
+
+                match flow {
+                    Ok(TailFlow::Value(v)) => break Ok(v),
+                    Ok(TailFlow::SelfCall(args)) => {
+                        if let Err(e) = self.check_call_boundary(func, &args) {
+                            break Err(e);
+                        }
+                        arguments = args;
+                        // The trace must say frames are missing here, or a
+                        // one-frame stack under a deep recursion reads as
+                        // a lie.
+                        if !tail_frames_elided {
+                            tail_frames_elided = true;
+                            if let Some(top) = self.call_stack_names.last_mut() {
+                                top.push_str(" (tail calls elided)");
+                            }
+                        }
+                    }
+                    // `?` hit an Err inside this body: the function returns
+                    // that Err to its caller — the early-return semantics.
+                    Err(InterpreterError::ErrPropagation(err)) => break Ok(err),
+                    // `return v` inside this body: the function's value is v.
+                    Err(InterpreterError::ReturnSignal(v)) => break Ok(v),
+                    Err(e) => break Err(e),
+                }
             };
 
             if track_coverage {
@@ -2166,21 +2219,184 @@ impl Interpreter {
 
     /// MEMORY OPTIMIZED: Evaluate expression with scoped variables instead of environment replacement
     /// This completely avoids expensive environment moving operations
-    fn eval_expr_with_env(
+    /// Evaluate `expr` — the body of `me` — descending only through
+    /// *tail positions*: both `if` branches, match arms, a block's final
+    /// expression, and the expression of a `return`. A call to `me`
+    /// itself found there evaluates its arguments and hands them back as
+    /// `TailFlow::SelfCall` instead of recursing; everything else
+    /// evaluates exactly as `eval_expr` would (non-tail subexpressions
+    /// *are* evaluated by `eval_expr`). Self is decided by identity —
+    /// the callee's body and closure Arcs are `me`'s own — so a
+    /// same-named shadow or a sibling closure over the same body is a
+    /// normal call, and the probe (an identifier lookup) is pure, so
+    /// deciding costs no double evaluation.
+    fn eval_tail_expr(&mut self, expr: &Expr, me: &Function) -> Result<TailFlow, InterpreterError> {
+        match expr {
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let condition = self.eval_expr(condition)?;
+                let condition_bool = self.to_boolean(&condition)?;
+                if condition_bool {
+                    self.eval_tail_expr(then_branch, me)
+                } else if let Some(else_expr) = else_branch {
+                    self.eval_tail_expr(else_expr, me)
+                } else {
+                    Ok(TailFlow::Value(Value::Unit))
+                }
+            }
+            Expr::Block(statements) => {
+                let Some((last, init)) = statements.split_last() else {
+                    return Ok(TailFlow::Value(Value::Unit));
+                };
+                // Mirror eval_expr's Block scoping exactly: a frame only
+                // when something binds, popped on every path.
+                let scoped = statements.iter().any(Self::statement_binds);
+                if scoped {
+                    self.environment = Environment::with_parent(self.environment.clone());
+                }
+                let mut result = Ok(TailFlow::Value(Value::Unit));
+                for statement in init {
+                    if let Err(e) = self.eval_statement(statement) {
+                        result = Err(e);
+                        break;
+                    }
+                }
+                if result.is_ok() {
+                    result = self.eval_tail_statement(last, me);
+                }
+                if scoped && let Some(parent) = self.environment.parent.take() {
+                    self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
+                }
+                result
+            }
+            Expr::Match { value, arms } => {
+                let value = self.eval_expr(value)?;
+                self.eval_tail_match(value, arms, me)
+            }
+            Expr::Return(value) => match value {
+                Some(e) => self.eval_tail_expr(e, me),
+                None => Ok(TailFlow::Value(Value::Unit)),
+            },
+            Expr::Call { callee, arguments }
+                if matches!(callee.as_ref(), Expr::Identifier(_) | Expr::LocalRef { .. }) =>
+            {
+                let callee_value = self.eval_expr(callee)?;
+                if let Value::Function(target) = &callee_value
+                    && Arc::ptr_eq(&target.body, &me.body)
+                    && Arc::ptr_eq(&target.closure, &me.closure)
+                {
+                    let args = self.resolve_arguments(&callee_value, arguments)?;
+                    // Only a fully applied self-call elides: a defaulted
+                    // parameter's expression evaluates in the *calling*
+                    // frame's environment, which an elided frame no
+                    // longer has. Under-application takes the ordinary
+                    // call path and keeps its exact semantics.
+                    if args.len() == me.parameters.len() {
+                        return Ok(TailFlow::SelfCall(args));
+                    }
+                    return self.call_function(callee_value, args).map(TailFlow::Value);
+                }
+                // Not a self-call: complete it here — same order as the
+                // normal path (callee, then arguments, then call).
+                let arg_values = self.resolve_arguments(&callee_value, arguments)?;
+                self.call_function(callee_value, arg_values)
+                    .map(TailFlow::Value)
+            }
+            _ => self.eval_expr(expr).map(TailFlow::Value),
+        }
+    }
+
+    /// The final statement of a tail-position block. A `Located`
+    /// wrapper keeps its full duties — span for error positions, the
+    /// coverage tally, and the error-location capture (with the live
+    /// call stack, which is where the "tail calls elided" note is
+    /// visible) — exactly as `eval_statement` gives it; only a bare
+    /// expression underneath is walked for tail calls.
+    fn eval_tail_statement(
         &mut self,
-        expr: &Expr,
-        temp_env: Environment,
-    ) -> Result<Value, InterpreterError> {
-        // Swap the environment in and out. temp_env's parent already chains
-        // to the caller's environment, so name resolution is identical to the
-        // previous overlay approach (locals -> closure -> caller chain) —
-        // but without iterating every closure entry twice per call, which
-        // was a full lookup + clone + define + restore of ~200 prelude
-        // entries on every single function call.
-        let saved = std::mem::replace(&mut self.environment, temp_env);
-        let result = self.eval_expr(expr);
-        self.environment = saved;
-        result
+        statement: &Statement,
+        me: &Function,
+    ) -> Result<TailFlow, InterpreterError> {
+        match statement {
+            Statement::Located { line, column, stmt } => {
+                self.stmt_span_stack.push((*line, *column));
+                if self.coverage.is_some() {
+                    let file = self
+                        .coverage_file_stack
+                        .last()
+                        .and_then(|o| o.clone())
+                        .or_else(|| self.current_module_path.clone());
+                    if let (Some(cov), Some(f)) = (self.coverage.as_mut(), file) {
+                        cov.entry(f).or_default().insert(*line);
+                    }
+                }
+                let result = self.eval_tail_statement(stmt, me);
+                if let Err(e) = &result
+                    && self.pending_error_location.is_none()
+                    && !Self::is_control_signal(e)
+                {
+                    self.pending_error_location = Some(crate::ast::ErrorLocation {
+                        line: *line,
+                        column: *column,
+                        call_stack: self.call_stack_names.clone(),
+                        hint: self.pending_error_hint.take(),
+                    });
+                }
+                self.stmt_span_stack.pop();
+                result
+            }
+            Statement::Expression(e) => self.eval_tail_expr(e, me),
+            other => self.eval_statement(other).map(TailFlow::Value),
+        }
+    }
+
+    /// `eval_match`'s twin for tail positions: identical arm selection,
+    /// guard, and binding-scope handling, with the matched arm's
+    /// expression walked for tail calls instead of plainly evaluated.
+    fn eval_tail_match(
+        &mut self,
+        value: Value,
+        arms: &[MatchArm],
+        me: &Function,
+    ) -> Result<TailFlow, InterpreterError> {
+        for arm in arms {
+            let mut bindings = HashMap::new();
+            if self.pattern_matches_bind(&arm.pattern, &value, &mut bindings)? {
+                let guard_passed = if let Some(guard_expr) = &arm.guard {
+                    let parent = self.environment.clone();
+                    self.environment = Environment::with_parent(parent);
+                    for (k, v) in &bindings {
+                        self.environment.define(k.clone(), v.clone());
+                    }
+                    let guard_result = self.eval_expr(guard_expr);
+                    if let Some(parent) = self.environment.parent.take() {
+                        self.environment =
+                            Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
+                    }
+                    self.to_boolean(&guard_result?)?
+                } else {
+                    true
+                };
+
+                if guard_passed {
+                    let parent = self.environment.clone();
+                    self.environment = Environment::with_parent(parent);
+                    for (k, v) in bindings {
+                        self.environment.define(k, v);
+                    }
+                    let result = self.eval_tail_expr(&arm.expression, me);
+                    if let Some(parent) = self.environment.parent.take() {
+                        self.environment =
+                            Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
+                    }
+                    return result;
+                }
+            }
+        }
+        Err(InterpreterError::PatternMatchFailed)
     }
 
     fn eval_match(&mut self, value: Value, arms: &[MatchArm]) -> Result<Value, InterpreterError> {

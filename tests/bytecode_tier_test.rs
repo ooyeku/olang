@@ -459,11 +459,15 @@ bump(9223372036854775807)
 
 #[test]
 fn runaway_recursion_errors_rather_than_crashing() {
+    // `0 + boom(...)` keeps the call out of tail position: a *tail*
+    // runaway is an infinite loop by design (tail calls are iteration —
+    // the same non-halting a `while true {}` earns), but a runaway that
+    // needs its frames back must meet the depth cap as a clean error in
+    // both modes — not a stack overflow abort.
     let src = r#"
-fn boom(n) = boom(n + 1)
+fn boom(n) = 0 + boom(n + 1)
 boom(0)
 "#;
-    // Must be a clean error in both modes — not a stack overflow abort
     assert!(eval(src, None).is_err());
     assert!(eval(src, Some(2)).is_err());
 }

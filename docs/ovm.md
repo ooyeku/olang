@@ -297,6 +297,20 @@ A register machine. Key design points:
   interpreted. The cap is physically reachable: each user call grows the
   Rust stack in segments when headroom runs low, so the limit is the
   number, never the stack.
+- **Tail calls are eliminated on every tier.** A self-call in tail
+  position — an `if` branch, a match arm, a block's final expression,
+  a `return`'s expression — runs in the caller's frame: the
+  interpreter trampolines, the VM rebinds the parameter registers and
+  jumps to the entry, and the JIT compiles that jump as a native loop.
+  Tail recursion therefore runs at any depth on O(1) stack and never
+  meets the depth cap; elided frames are noted in error traces. Self
+  is decided by function identity, so a same-named shadow is an
+  ordinary call, and every elided frame still crosses the full call
+  boundary — arity, trait bounds, and parameter annotations. A runaway
+  *tail* recursion is therefore an infinite loop, not a depth error —
+  tail calls are iteration, and it non-halts exactly as `while true {}`
+  does; runaway recursion that needs its frames back still meets the
+  cap.
 - **Index-based iteration.** `for` compiles to an index loop over `IterLen`
   and `IterGet`, which handle both lists and ranges. A range is never
   materialized, so iterating `0..10000000` costs no memory — matching the

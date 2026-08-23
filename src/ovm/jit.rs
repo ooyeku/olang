@@ -2321,6 +2321,9 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::PatternTestResult { .. }
         | Instruction::ExtractResult { .. }
         | Instruction::CallFn { .. } => true,
+        // A tail self-call is a backward jump to the entry with a
+        // parameter rebind — a native loop once compiled.
+        Instruction::TailCallSelf { .. } => true,
         // Allocation is allowed only in straight-line code (constructors).
         // In a native loop every allocation would live until the call
         // ends — the scratch model's memory cost — and a cap-triggered
@@ -2413,6 +2416,8 @@ fn has_backward_jump(bytecode: &CompiledBytecode) -> bool {
             Instruction::JumpIfTrue { target, .. } | Instruction::JumpIfFalse { target, .. } => {
                 Some(target.0 as usize)
             }
+            // A tail self-call loops back to the entry.
+            Instruction::TailCallSelf { .. } => Some(bytecode.entry_point),
             _ => None,
         };
         matches!(target, Some(t) if t <= i)
@@ -3144,6 +3149,12 @@ fn inst_uses_defs(inst: &Instruction, uses: &mut Vec<u32>, defs: &mut Vec<u32>) 
             uses.push(src.0);
             defs.push(dst.0);
         }
+        I::TailCallSelf { args } => {
+            for (i, a) in args.iter().enumerate() {
+                uses.push(a.0);
+                defs.push(i as u32);
+            }
+        }
         I::AddAssign { target, rhs } => {
             uses.push(target.0);
             uses.push(rhs.0);
@@ -3258,6 +3269,7 @@ fn loop_shape(bytecode: &CompiledBytecode) -> LoopShape {
             Instruction::JumpIfTrue { target, .. } | Instruction::JumpIfFalse { target, .. } => {
                 Some(target.0 as usize)
             }
+            Instruction::TailCallSelf { .. } => Some(bytecode.entry_point),
             _ => None,
         };
         if let Some(t) = target
@@ -3309,6 +3321,7 @@ fn live_in_at(bytecode: &CompiledBytecode, nregs: usize, at: usize) -> Vec<bool>
                     succ(target.0 as usize);
                     succ(pc + 1);
                 }
+                Instruction::TailCallSelf { .. } => succ(bytecode.entry_point),
                 Instruction::Return { .. } | Instruction::MatchFail => {}
                 _ => succ(pc + 1),
             }
@@ -3499,6 +3512,24 @@ impl PlanFn {
             match inst {
                 Instruction::LoadConst { dst, const_idx } => {
                     grow!(self.writes[dst.0 as usize], const_mask(*const_idx));
+                }
+                // A tail self-call is a parallel Move of every argument
+                // into its parameter register; a tuple-kinded argument
+                // refuses (the entry rebind is scalar variables only).
+                Instruction::TailCallSelf { args } => {
+                    for (i, a) in args.iter().enumerate() {
+                        if self.tuples.contains_key(&a.0) {
+                            return None;
+                        }
+                        // Each argument is read (any kind it settles to
+                        // is fine — the constraint that matters is the
+                        // parameter register's own singleton, which the
+                        // write below feeds), and its parameter register
+                        // is written with the argument's kinds.
+                        narrow!(a.0, u16::MAX);
+                        let src_mask = self.writes[a.0 as usize];
+                        grow!(self.writes[i], src_mask);
+                    }
                 }
                 Instruction::Move { dst, src } => {
                     let src_mask = self.writes[src.0 as usize];
@@ -4829,6 +4860,34 @@ fn translate_body(
                 terminated = true;
             }
             Instruction::Nop => {}
+            Instruction::TailCallSelf { args } => {
+                // Read every argument before writing any parameter — an
+                // argument may be the very parameter register it rebinds.
+                let mut vals = Vec::with_capacity(args.len());
+                for a in args {
+                    let Some(v) = r#gen.read(builder, a.0) else {
+                        if jit_debug() {
+                            eprintln!("[jit] tailcall arg read failed: reg {}", a.0);
+                        }
+                        return None;
+                    };
+                    vals.push(v);
+                }
+                for (i, v) in vals.into_iter().enumerate() {
+                    builder.def_var(Variable::from_u32(i as u32), v);
+                }
+                // The entry is always a leader; looping back re-enters
+                // the body with the freshly bound parameters — a native
+                // loop, no frame, no depth spent.
+                let Some(entry) = blocks[bytecode.entry_point] else {
+                    if jit_debug() {
+                        eprintln!("[jit] tailcall: entry block missing");
+                    }
+                    return None;
+                };
+                builder.ins().jump(entry, &[]);
+                terminated = true;
+            }
             Instruction::Move { dst, src } => {
                 if let Some(tk) = inference.tuples.get(&src.0) {
                     if inference.tuples.contains_key(&dst.0) {

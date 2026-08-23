@@ -834,7 +834,7 @@ stack.
 | H3 — parallel data-stack kernels | Parallel CSV/JSONL parsing, parallel sort, the group_by hash pass (documented sequential), thresholds re-measured. | **shipped** — 1M rows: JSONL 4.3× (columnar parse, no row intermediate), CSV 2.7× (quote-aware chunk split), sort_by ~1.9× (parallel argsort + gather); `set_parallel(false)` now governs the engine's own fan-outs |
 | N1 — BigInt | A native BigInt value (the Bytes/Date pattern, num-bigint backend): bigint.of/parse, full operator integration via the native operator hook, mixed Int⊕BigInt promotion, pow/divmod/to_string/to_int. The overflow error points at it. | **shipped** — plus mod_pow/gcd/abs/neg; Int rules preserved exactly (truncation, remainder sign, zero-divisor errors); Floats refuse with a pointer to the explicit door |
 | R4a — stack-headroom recursion guard | The 1,000-frame counter becomes a real stack-headroom check with a configurable hard cap (default ~100k) enforced identically on both tiers. | **shipped** — cap 100k, physically reachable via segmented stack growth; one budget shared across the tier boundary (seeded, so promotion cannot change the depth an error fires at); `--max-depth` |
-| R4b — tail-call elimination | Self-tail-recursive calls become loops on all three tiers: O(1) stack at any depth. Elided tail frames are noted in traces. | planned |
+| R4b — tail-call elimination | Self-tail-recursive calls become loops on all three tiers: O(1) stack at any depth. Elided tail frames are noted in traces. | **shipped** — trampoline / rebind-and-jump / native loop; identity-based self test (shadows stay calls); boundary checks re-run per elided frame; 10M tail frames in 4ms |
 
 
 | Lane | Work | Status |

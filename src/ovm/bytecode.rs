@@ -619,6 +619,15 @@ pub enum Instruction {
     Return {
         value: Option<Register>,
     },
+    /// A self-call in tail position (Campaign 5, R4b): rebind the
+    /// parameter registers and jump to the entry point instead of
+    /// pushing a frame. Rewritten from `CallFn` by the compiler's
+    /// tail-call pass when the call's result flows untouched to a
+    /// `Return`, so tail recursion runs at O(1) stack and O(1) logical
+    /// depth — identically to the interpreter's trampoline.
+    TailCallSelf {
+        args: Vec<Register>,
+    },
 
     // Collection operations
     MakeList {
@@ -2266,6 +2275,56 @@ impl BytecodeVm {
                     }
                 }
 
+                Instruction::TailCallSelf { args } => {
+                    // Collect first: an argument register may be the very
+                    // parameter register it is about to rebind.
+                    let mut values = Vec::with_capacity(args.len());
+                    for reg in args {
+                        values.push(self.execution_state.get_register(*reg)?);
+                    }
+                    // The same boundary a real call would cross — the
+                    // interpreter's trampoline re-checks its elided
+                    // frames too, and annotations must not stop being
+                    // promises at exactly the depth they matter most.
+                    if !bytecode.param_checks.is_empty() {
+                        for (i, check) in bytecode.param_checks.iter().enumerate() {
+                            if let (Some(check), Some(arg)) = (check, values.get(i)) {
+                                let (actual, payload, fn_arity, scalar) = ovm_value_view(arg);
+                                if let Some((expected, got)) =
+                                    check.check_value(actual, payload, fn_arity, scalar)
+                                {
+                                    let fn_name = bytecode
+                                        .debug_info
+                                        .function_name
+                                        .as_deref()
+                                        .unwrap_or("<fn>");
+                                    return Err(BytecodeError::TypeError(self.annotation_error(
+                                        &format!(
+                                            "parameter '{}' of {}",
+                                            bytecode.param_names[i], fn_name
+                                        ),
+                                        check,
+                                        &expected,
+                                        &got,
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                    let arg_count = values.len();
+                    for (i, value) in values.into_iter().enumerate() {
+                        self.execution_state
+                            .set_register(Register(i as u32), value)?;
+                    }
+                    // Registers past the parameters reset to Unit, exactly
+                    // as push_frame leaves them for a real call.
+                    for r in arg_count..bytecode.register_count as usize {
+                        self.execution_state
+                            .set_register(Register(r as u32), OvmValue::new_unit())?;
+                    }
+                    pc = bytecode.entry_point;
+                    continue;
+                }
                 Instruction::Return { value } => {
                     let result = if let Some(reg) = value {
                         self.execution_state.get_register(*reg)?
@@ -4718,6 +4777,11 @@ impl BytecodeCompiler {
 
         instructions = self.optimizer.optimize_instructions(instructions)?;
 
+        // Tail-call elimination: a CallFn back to this very function
+        // whose result flows untouched (through Moves and Jumps) to a
+        // Return is a frame that never needs to exist.
+        Self::eliminate_self_tail_calls(func_id, &mut instructions);
+
         Ok(CompiledBytecode {
             function_id: func_id,
             instructions,
@@ -4746,6 +4810,105 @@ impl BytecodeCompiler {
             optimization_level: 1,
             entry_point: 0,
         })
+    }
+
+    /// Rewrite self-calls in tail position to `TailCallSelf`. A call is
+    /// in tail position when, from the instruction after it, execution
+    /// reaches a `Return` of the call's result having passed only
+    /// through `Move`s of that result and unconditional `Jump`s — the
+    /// exact shape branch merges compile to. Runs after the optimizer,
+    /// on resolved jump offsets.
+    fn eliminate_self_tail_calls(func_id: FunctionId, instructions: &mut [Instruction]) {
+        let mut rewrites = Vec::new();
+        for (i, inst) in instructions.iter().enumerate() {
+            if let Instruction::CallFn {
+                dst,
+                func_id: target,
+                args,
+            } = inst
+                && *target == func_id
+                && Self::result_flows_to_return(instructions, i + 1, *dst)
+            {
+                rewrites.push((i, *dst, args.clone()));
+            }
+        }
+        if rewrites.is_empty() {
+            return;
+        }
+        // The result-flow chain behind each rewritten call is unreachable
+        // (a tail call never falls through), but it still *reads* the
+        // call's result register — which now has no writer, and the JIT's
+        // flow-insensitive qualification would refuse the function over a
+        // read that can never happen. Nop the chain's private prefix; a
+        // shared merge point (anything some other instruction jumps to)
+        // stays, because live paths still flow through it.
+        let mut jump_targets = std::collections::HashSet::new();
+        for inst in instructions.iter() {
+            match inst {
+                Instruction::Jump { target }
+                | Instruction::JumpIfTrue { target, .. }
+                | Instruction::JumpIfFalse { target, .. } => {
+                    jump_targets.insert(target.0 as usize);
+                }
+                _ => {}
+            }
+        }
+        for (i, dst, args) in rewrites {
+            instructions[i] = Instruction::TailCallSelf { args };
+            let mut pc = i + 1;
+            let mut cur = dst;
+            let mut steps = 0usize;
+            while pc < instructions.len() && !jump_targets.contains(&pc) {
+                steps += 1;
+                if steps > instructions.len() {
+                    break;
+                }
+                match &instructions[pc] {
+                    Instruction::Move { dst, src } if *src == cur => {
+                        cur = *dst;
+                        instructions[pc] = Instruction::Nop;
+                        pc += 1;
+                    }
+                    Instruction::Jump { target } => {
+                        let t = target.0 as usize;
+                        instructions[pc] = Instruction::Nop;
+                        pc = t;
+                    }
+                    Instruction::Return { value: Some(r) } if *r == cur => {
+                        instructions[pc] = Instruction::Nop;
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+        }
+    }
+
+    /// Does execution starting at `pc` reach `Return` of `cur` touching
+    /// nothing else? Conservative: any other instruction, a conditional
+    /// jump, or a cycle answers no.
+    fn result_flows_to_return(
+        instructions: &[Instruction],
+        mut pc: usize,
+        mut cur: Register,
+    ) -> bool {
+        let mut steps = 0usize;
+        while pc < instructions.len() {
+            steps += 1;
+            if steps > instructions.len() {
+                return false;
+            }
+            match &instructions[pc] {
+                Instruction::Move { dst, src } if *src == cur => {
+                    cur = *dst;
+                    pc += 1;
+                }
+                Instruction::Jump { target } => pc = target.0 as usize,
+                Instruction::Return { value: Some(r) } => return *r == cur,
+                _ => return false,
+            }
+        }
+        false
     }
 
     fn compile_expression(&mut self, expr: &Expr) -> Result<Register, BytecodeError> {
