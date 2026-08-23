@@ -829,8 +829,8 @@ stack.
 
 | Lane | Work | Status |
 |---|---|---|
-| H1 — compiled-kernel parallelism | `par_map`/`par_filter` workers run the JIT-compiled kernel over chunks instead of per-item interpreter dispatch; parallel cost approaches the JIT's per-item cost, so wall-clock wins start at realistic sizes. | planned |
-| H2 — automatic parallelism for pure bulk ops | Plain `map`/`filter` over large inputs fan out automatically when the kernel is provably pure (the JIT whitelist + effects.rs are the proof). Order-preserving + pure ⇒ bit-identical to sequential ⇒ tier agreement, determinism, and replay hold exactly. Arbitrary-loop auto-parallelism is explicitly excluded. | planned |
+| H1 — compiled-kernel parallelism | `par_map`/`par_filter` workers run the JIT-compiled kernel over chunks instead of per-item interpreter dispatch; parallel cost approaches the JIT's per-item cost, so wall-clock wins start at realistic sizes. | **shipped** — lambdas promote by identity; calls are by-reference; workers localize the kernel's Arcs. 8.43s→0.63s CPU on the 3M benchmark |
+| H2 — automatic parallelism for pure bulk ops | Plain `map`/`filter` over large inputs fan out automatically when the kernel is provably pure (a conservative AST whitelist). Order-preserving + pure ⇒ bit-identical to sequential ⇒ tier agreement, determinism, and replay hold exactly. Arbitrary-loop auto-parallelism is explicitly excluded. | **shipped** — threshold 50k (measured crossover); meta mode and coverage never fan out; 3M map 3.7× wall on 18 cores |
 | H3 — parallel data-stack kernels | Parallel CSV/JSONL parsing, parallel sort, the group_by hash pass (documented sequential), thresholds re-measured. | planned |
 | N1 — BigInt | A native BigInt value (the Bytes/Date pattern, num-bigint backend): bigint.of/parse, full operator integration via the native operator hook, mixed Int⊕BigInt promotion, pow/divmod/to_string/to_int. The overflow error points at it. | planned |
 | R4a — stack-headroom recursion guard | The 1,000-frame counter becomes a real stack-headroom check with a configurable hard cap (default ~100k) enforced identically on both tiers. | planned |

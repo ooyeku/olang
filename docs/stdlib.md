@@ -315,7 +315,7 @@ println(to_string(unwrap_or(Err("nope"), -1)))
 |---|---|
 | `lazy(v)` | identity — olang evaluates eagerly (see note) |
 | `force(v)` | identity — the counterpart of `lazy` |
-| `set_parallel(n)` | thread budget for parallel-capable builtins |
+| `set_parallel(b)` | enable or disable the parallel machinery — explicit (`par_map`) and automatic alike |
 
 **olang is eager.** A builtin receives its argument already evaluated, so
 `lazy` cannot defer anything — both functions are the identity, kept for
@@ -1432,6 +1432,20 @@ for rec in ods.to_records(summary) {
     println(`${map_get(rec, "region")}: ${map_get(rec, "total")}`)
 }
 ```
+
+**Bulk operations parallelize themselves when it is invisible to do
+so.** A `map` or `filter` over 50,000 or more elements whose kernel is
+*provably pure* — a conservative whitelist over its AST: arithmetic,
+control flow, the pure builtins and modules (`math`, `str`, `json`,
+`re`, …), no user-function calls, no effects — fans out across every
+core automatically. Because the kernel is pure and the results are
+joined in order, the outcome is bit-identical to the sequential run:
+same values, same order, same first error, nothing for record/replay to
+see. Anything the proof cannot vouch for stays sequential, so effects
+always happen in element order; `set_parallel(false)` disables the
+fan-out entirely, and `OLANG_DEBUG_AUTOPAR=1` explains any decision.
+Measured on 18 cores: a 3M-element pure map runs ~3.7× faster with no
+change to the program.
 
 ### Series verbs
 

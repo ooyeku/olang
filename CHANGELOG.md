@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Automatic parallelism for provably pure bulk operations (Campaign
+  5, H2).** `map` and `filter` over 50,000+ elements fan out across
+  every core when the kernel passes a conservative purity proof — a
+  whitelist walk over its AST (arithmetic, control flow, pure builtins
+  and modules; any user-function call or effect disqualifies). Pure +
+  order-preserving join means the result is bit-identical to the
+  sequential run — same values, order, and first error; nothing
+  recorded, nothing gated, tier agreement untouched — so the only
+  observable difference is the clock: a 3M-element map runs 3.7× faster
+  on 18 cores with no change to the program. Impure kernels stay
+  sequential (their effects keep element order, which a test pins);
+  macro expansion and coverage runs never fan out; `set_parallel(false)`
+  disables it; `OLANG_DEBUG_AUTOPAR=1` explains each decision.
+
+### Performance
+
+- **Compiled-kernel parallelism (Campaign 5, H1).** Three root causes,
+  each found by measuring: anonymous lambdas never promoted to the
+  compiled tiers ("no stable identity" — but body and closure Arcs are
+  identity, and the HOF cache already keyed on them); every call cloned
+  the entire Function value (parameter vector, name, check tables —
+  per element, allocator-contended across cores); and parallel workers
+  serialized on the shared kernel's atomic reference counts
+  (Weak::upgrade per call from twelve cores). Lambdas now promote by
+  identity, both call entry points share a by-reference
+  `call_user_function`, and each worker gets a `thread_localized`
+  kernel with fresh Arcs. par_map over 3M trivial elements: 8.43s of
+  CPU → 0.63s, wall 0.73 → 0.26; sequential `map` itself 32% faster.
+
+### Fixed
+
+- **`set_parallel(false)` did not disable `par_map`/`par_filter`.** The
+  workers consulted only the thread count, never the enabled flag; the
+  switch now actually switches, and the automatic fan-out honors it too.
+
+- **The purity-verdict cache could hand a new kernel a dead one's
+  verdict.** Keyed by body address alone, a freed body's reused
+  allocation inherited the old verdict (an effectful lambda judged
+  pure, caught by the suite). The cache now holds a Weak and verifies
+  identity by upgrade + pointer equality — the HOF cache's discipline.
+
 ## [0.69.0] - 2026-08-22
 
 ### Changed — the last-mile corrections (deliberate breaking change, the third and final before 1.0)

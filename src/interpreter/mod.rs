@@ -3179,6 +3179,20 @@ impl Interpreter {
         self.meta_mode = on;
     }
 
+    /// Is this interpreter running meta fn bodies (macro expansion)?
+    /// Auto-parallel bulk operations check this: expansion must never
+    /// spawn threads, even for a provably pure kernel.
+    pub fn in_meta_mode(&self) -> bool {
+        self.meta_mode
+    }
+
+    /// Is line coverage being collected? Auto-parallel checks this too:
+    /// worker clones do not record coverage, so fanning out would
+    /// silently drop the kernel's lines from the report.
+    pub fn coverage_active(&self) -> bool {
+        self.coverage.is_some()
+    }
+
     /// The purity gate for macro expansion: in meta mode, the modules
     /// that reach the outside world or the clock refuse. Checked at the
     /// same dispatch chokepoint as the capability gate, so nothing

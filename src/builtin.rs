@@ -1059,8 +1059,16 @@ impl BuiltinFunctions {
             }
         };
 
-        // Sequential evaluation - parallel disabled because interpreter cloning is too expensive
-        // (cloning full interpreter state for each element defeats parallelization benefits)
+        // A provably pure kernel over a large list fans out automatically:
+        // pure + order-preserving concat means the result is bit-identical
+        // to the sequential one, so the only observable difference is the
+        // wall clock. Anything the purity walk cannot vouch for — a user
+        // function, an effect, an unknown construct — stays sequential.
+        if Self::auto_parallel_eligible(list_ref.len(), function, interpreter) {
+            let results = Self::parallel_apply(list_ref, function, interpreter)?;
+            return Ok(Value::List(results.into()));
+        }
+
         let mut result = Vec::with_capacity(list_ref.len());
         for item in list_ref.iter() {
             let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
@@ -1075,7 +1083,10 @@ impl BuiltinFunctions {
         function: &Value,
         interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
-        // Sequential only - parallel disabled due to interpreter cloning overhead
+        if Self::auto_parallel_eligible(range_vec.len(), function, interpreter) {
+            let results = Self::parallel_apply(&range_vec, function, interpreter)?;
+            return Ok(Value::List(results.into()));
+        }
         let mut result = Vec::with_capacity(range_vec.len());
         for item in range_vec.iter() {
             let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
@@ -1089,7 +1100,15 @@ impl BuiltinFunctions {
         function: &Value,
         interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
-        // Sequential only - parallel disabled due to interpreter cloning overhead
+        if Self::auto_parallel_eligible(range_vec.len(), function, interpreter) {
+            let verdicts = Self::parallel_apply(&range_vec, function, interpreter)?;
+            let kept: Vec<Value> = range_vec
+                .into_iter()
+                .zip(verdicts)
+                .filter_map(|(item, v)| matches!(v, Value::Boolean(true)).then_some(item))
+                .collect();
+            return Ok(Value::List(kept.into()));
+        }
         let mut result = Vec::with_capacity(range_vec.len());
         for item in range_vec.iter() {
             let pred = interpreter.call_function_optimized(function, vec![item.clone()])?;
@@ -1151,7 +1170,19 @@ impl BuiltinFunctions {
             }
         };
 
-        // Sequential evaluation - parallel disabled due to interpreter cloning overhead
+        // Same auto-parallel rule as map: a provably pure predicate over a
+        // large list computes verdicts across cores; the zip preserves
+        // order, so the kept set is identical to the sequential one.
+        if Self::auto_parallel_eligible(list_ref.len(), function, interpreter) {
+            let verdicts = Self::parallel_apply(list_ref, function, interpreter)?;
+            let kept: Vec<Value> = list_ref
+                .iter()
+                .zip(verdicts)
+                .filter_map(|(item, v)| matches!(v, Value::Boolean(true)).then(|| item.clone()))
+                .collect();
+            return Ok(Value::List(kept.into()));
+        }
+
         let mut result = Vec::with_capacity(list_ref.len());
         for item in list_ref.iter() {
             let pred = interpreter.call_function_optimized(function, vec![item.clone()])?;
@@ -1206,6 +1237,251 @@ impl BuiltinFunctions {
     /// Every chunk runs on a clone — including the single-threaded
     /// fallback — so `function` always sees spawn's snapshot semantics:
     /// mutations to enclosing state never reach the caller, on any machine.
+    /// Auto-parallel threshold: below this, thread fan-out costs more
+    /// than it returns even for free kernels (measured crossover ~50k on
+    /// an M5 Pro with the cheapest possible kernel; heavier kernels win
+    /// earlier, so the conservative bound is taken from the cheapest).
+    const AUTO_PAR_MIN: usize = 50_000;
+
+    /// May this map/filter fan out automatically? Requires: enough
+    /// elements, parallelism enabled, not macro expansion (threads are
+    /// banned there), not a coverage run (workers do not record), and a
+    /// kernel PROVABLY pure — in which case the parallel result is
+    /// bit-identical to the sequential one, so the fan-out is invisible:
+    /// same values, same order, same first error, nothing recorded,
+    /// nothing gated, tier agreement untouched.
+    fn auto_parallel_eligible(
+        len: usize,
+        function: &Value,
+        interpreter: &crate::interpreter::Interpreter,
+    ) -> bool {
+        let r = len >= Self::AUTO_PAR_MIN
+            && crate::parallel::get_config().enabled
+            && crate::parallel::get_config().max_threads > 1
+            && !interpreter.in_meta_mode()
+            && !interpreter.coverage_active()
+            && Self::kernel_provably_pure(function);
+        // OLANG_DEBUG_AUTOPAR=1 answers "why didn't this parallelize?"
+        if std::env::var("OLANG_DEBUG_AUTOPAR").is_ok() {
+            eprintln!(
+                "autopar? len={} enabled={} thr={} meta={} cov={} pure={} -> {}",
+                len,
+                crate::parallel::get_config().enabled,
+                crate::parallel::get_config().max_threads,
+                interpreter.in_meta_mode(),
+                interpreter.coverage_active(),
+                Self::kernel_provably_pure(function),
+                r
+            );
+        }
+        r
+    }
+
+    /// Conservative purity proof over a kernel's AST, cached by body
+    /// identity. The rule is a WHITELIST: anything not recognized — an
+    /// unknown construct, a call to any user function, a builtin outside
+    /// the pure set — is impure, and the operation stays sequential. A
+    /// false negative costs a missed speedup; a false positive would
+    /// reorder observable effects, so the walk only ever errs sequential.
+    #[doc(hidden)]
+    pub fn kernel_provably_pure(function: &Value) -> bool {
+        use std::collections::HashMap;
+        use std::sync::{LazyLock, Mutex, Weak};
+        // Address alone is not identity: a freed body's allocation can be
+        // reused, handing a new kernel a stale verdict (this happened —
+        // an effectful lambda inherited `pure` from a dead one at the
+        // same address). The Weak upgrade + ptr_eq is the same liveness
+        // discipline the HOF cache uses.
+        type VerdictCache = HashMap<usize, (Weak<crate::ast::Expr>, bool)>;
+        static VERDICTS: LazyLock<Mutex<VerdictCache>> =
+            LazyLock::new(|| Mutex::new(HashMap::new()));
+        let Value::Function(f) = function else {
+            return false;
+        };
+        let key = std::sync::Arc::as_ptr(&f.body) as usize;
+        if let Some((live, v)) = VERDICTS.lock().unwrap().get(&key)
+            && let Some(body) = live.upgrade()
+            && std::sync::Arc::ptr_eq(&body, &f.body)
+        {
+            return *v;
+        }
+        let verdict = Self::expr_is_pure(&f.body);
+        let mut cache = VERDICTS.lock().unwrap();
+        if cache.len() >= 1024 {
+            cache.retain(|_, (w, _)| w.strong_count() > 0);
+        }
+        cache.insert(key, (std::sync::Arc::downgrade(&f.body), verdict));
+        verdict
+    }
+
+    /// Builtins a pure kernel may call bare. Every entry computes a value
+    /// from its arguments and touches nothing else — no I/O, no clock, no
+    /// randomness, no thread-confined state, no stdout.
+    const PURE_KERNEL_CALLS: &'static [&'static str] = &[
+        "len",
+        "show",
+        "to_string",
+        "to_int",
+        "to_float",
+        "typeof",
+        "head",
+        "tail",
+        "cons",
+        "concat",
+        "reverse",
+        "sort",
+        "take",
+        "skip",
+        "flatten",
+        "zip",
+        "enumerate",
+        "chunk",
+        "range",
+        "sum",
+        "min",
+        "max",
+        "average",
+        "contains",
+        "split",
+        "join",
+        "starts_with",
+        "ends_with",
+        "is_ok",
+        "is_err",
+        "unwrap",
+        "unwrap_or",
+        "clamp",
+        "map_get",
+        "map_get_or",
+        "map_has_key",
+        "map_keys",
+        "map_values",
+        "map_len",
+        "map_set",
+        "map_remove",
+        "map_merge",
+        "map_clear",
+        "entries",
+        "implements",
+        "map",
+        "filter",
+        "fold",
+        "reduce",
+        "find",
+        "map_filtered",
+    ];
+
+    /// Modules whose every function is pure computation.
+    const PURE_KERNEL_MODULES: &'static [&'static str] =
+        &["math", "str", "json", "toml", "base64", "re", "col"];
+
+    fn call_target_is_pure(callee: &crate::ast::Expr) -> bool {
+        use crate::ast::Expr;
+        match callee {
+            Expr::Identifier(name) => Self::PURE_KERNEL_CALLS.contains(&name.as_str()),
+            Expr::FieldAccess { object, field: _ } => matches!(
+                object.as_ref(),
+                Expr::Identifier(m) if Self::PURE_KERNEL_MODULES.contains(&m.as_str())
+            ),
+            Expr::Lambda { body, .. } => Self::expr_is_pure(body),
+            _ => false,
+        }
+    }
+
+    fn stmt_is_pure(stmt: &crate::ast::Statement) -> bool {
+        use crate::ast::Statement;
+        match stmt.unwrapped() {
+            Statement::Expression(e) => Self::expr_is_pure(e),
+            Statement::LetDecl(l) => l.value.as_ref().is_none_or(Self::expr_is_pure),
+            _ => false,
+        }
+    }
+
+    fn expr_is_pure(e: &crate::ast::Expr) -> bool {
+        use crate::ast::{Argument, Expr};
+        match e {
+            Expr::Integer(_) | Expr::Float(_) | Expr::String(_) | Expr::Boolean(_) => true,
+            Expr::Identifier(_) => true,
+            // The slot-resolution pass rewrites identifiers into resolved
+            // references; a resolved read is as pure as the name it was.
+            Expr::LocalRef { .. } => true,
+            Expr::List(items) => items.iter().all(Self::expr_is_pure),
+            Expr::Tuple(items) => items.iter().all(Self::expr_is_pure),
+            Expr::Range { start, end, .. } => Self::expr_is_pure(start) && Self::expr_is_pure(end),
+            Expr::BinaryOp { left, right, .. } => {
+                Self::expr_is_pure(left) && Self::expr_is_pure(right)
+            }
+            Expr::UnaryOp { operand, .. } => Self::expr_is_pure(operand),
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::expr_is_pure(condition)
+                    && Self::expr_is_pure(then_branch)
+                    && else_branch.as_deref().is_none_or(Self::expr_is_pure)
+            }
+            Expr::Match { value, arms } => {
+                Self::expr_is_pure(value)
+                    && arms.iter().all(|arm| {
+                        arm.guard.as_deref().is_none_or(Self::expr_is_pure)
+                            && Self::expr_is_pure(&arm.expression)
+                    })
+            }
+            Expr::Block(stmts) => stmts.iter().all(Self::stmt_is_pure),
+            Expr::Call { callee, arguments } => {
+                Self::call_target_is_pure(callee)
+                    && arguments.iter().all(|a| match a {
+                        Argument::Positional(e) => Self::expr_is_pure(e),
+                        Argument::Named { value, .. } => Self::expr_is_pure(value),
+                    })
+            }
+            Expr::Pipeline { left, right } => {
+                Self::expr_is_pure(left)
+                    && match right.as_ref() {
+                        Expr::Call { callee, arguments } => {
+                            Self::call_target_is_pure(callee)
+                                && arguments.iter().all(|a| match a {
+                                    Argument::Positional(e) => Self::expr_is_pure(e),
+                                    Argument::Named { value, .. } => Self::expr_is_pure(value),
+                                })
+                        }
+                        other => Self::call_target_is_pure(other),
+                    }
+            }
+            Expr::Lambda { body, .. } => Self::expr_is_pure(body),
+            Expr::FieldAccess { object, .. } => Self::expr_is_pure(object),
+            Expr::Index { object, index } => {
+                Self::expr_is_pure(object) && Self::expr_is_pure(index)
+            }
+            Expr::TemplateString { parts } => parts.iter().all(|p| match p {
+                crate::ast::TemplatePart::Literal(_) => true,
+                crate::ast::TemplatePart::Interpolation(e) => Self::expr_is_pure(e),
+            }),
+            Expr::ResultOk(inner) | Expr::ResultErr(inner) | Expr::Try(inner) => {
+                Self::expr_is_pure(inner)
+            }
+            Expr::StructLiteral(lit) => lit.fields.iter().all(|f| Self::expr_is_pure(&f.value)),
+            Expr::AnonymousObject { fields } => fields.iter().all(|f| Self::expr_is_pure(&f.value)),
+            Expr::MapLiteral { entries } => entries
+                .iter()
+                .all(|e| Self::expr_is_pure(&e.key) && Self::expr_is_pure(&e.value)),
+            Expr::ForLoop { iterable, body, .. } => {
+                Self::expr_is_pure(iterable) && Self::expr_is_pure(body)
+            }
+            Expr::WhileLoop { condition, body } => {
+                Self::expr_is_pure(condition) && Self::expr_is_pure(body)
+            }
+            Expr::Loop { body } => Self::expr_is_pure(body),
+            Expr::Assignment { value, .. } | Expr::LocalAssign { value, .. } => {
+                Self::expr_is_pure(value)
+            }
+            // Everything else — spawn, par for, macro remnants, constructs
+            // this walk does not know — is impure by default.
+            _ => false,
+        }
+    }
+
     fn parallel_apply(
         items: &[Value],
         function: &Value,
@@ -1217,9 +1493,14 @@ impl BuiltinFunctions {
 
         #[cfg(feature = "native")]
         {
-            let workers = crate::parallel::get_config()
-                .max_threads
-                .clamp(1, items.len());
+            let cfg = crate::parallel::get_config();
+            // `set_parallel(false)` must actually disable the fan-out; the
+            // flag used to be ignored here, so it never did.
+            let workers = if cfg.enabled {
+                cfg.max_threads.clamp(1, items.len())
+            } else {
+                1
+            };
             if workers > 1 {
                 let chunk_size = items.len().div_ceil(workers);
                 let joined: Vec<Result<Vec<Value>, (usize, InterpreterError)>> =
