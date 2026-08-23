@@ -156,6 +156,12 @@ pub struct BytecodeVm {
     /// it behaves identically when it escapes to the interpreter (bridged
     /// builtins, returned values).
     known_function_values: HashMap<String, crate::ast::Function>,
+    /// Bare names bound to more than one distinct function body over the
+    /// run — a nested `fn insert` in two modules, say. The bridge seeds
+    /// its environment only with unambiguous names; a name here would
+    /// bind one module's function (with one call's captures) where
+    /// another module's was meant.
+    ambiguous_function_names: std::collections::HashSet<String>,
     /// Trait dispatch registries, mirrored from the interpreter as
     /// declarations evaluate: (type name, method) → impl method,
     /// (trait name, method) → default method, and type → traits it
@@ -1102,6 +1108,7 @@ impl BytecodeVm {
             struct_field_checks: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
             known_function_values: HashMap::new(),
+            ambiguous_function_names: std::collections::HashSet::new(),
             trait_impls: HashMap::new(),
             trait_defaults: HashMap::new(),
             type_traits: HashMap::new(),
@@ -1150,7 +1157,14 @@ impl BytecodeVm {
     }
 
     /// Record a user function's VALUE for lambda-closure attachment.
+    /// A name rebound to a different body is marked ambiguous — the
+    /// bridge must not resolve it bare.
     pub fn note_function_value(&mut self, name: String, func: crate::ast::Function) {
+        if let Some(existing) = self.known_function_values.get(&name)
+            && !std::sync::Arc::ptr_eq(&existing.body, &func.body)
+        {
+            self.ambiguous_function_names.insert(name.clone());
+        }
         self.known_function_values.insert(name, func);
     }
 
@@ -3673,6 +3687,30 @@ impl BytecodeVm {
     fn ensure_bridge_interpreter(&mut self) {
         if self.builtin_interpreter.is_none() {
             let mut interp = Box::new(crate::interpreter::Interpreter::new());
+            // Tier first: seed_bridge_state forwards the declaration
+            // tables into an existing tier, so order matters here.
+            if std::env::var_os("OLANG_BRIDGE_TIER_OFF").is_none() {
+                interp.enable_bytecode_tier(1, false);
+            }
+            // The bridge must see the same function landscape the VM
+            // does: a module's mutually recursive functions resolve
+            // through the registry (a def-time closure cannot hold a
+            // sibling defined later), and without this seeding the
+            // bridge's tier compiled such a body against a world where
+            // the sibling did not exist — and its tree-walk fallback
+            // missed it too.
+            // Only *unambiguous* names seed the environment: two
+            // modules' private `insert`s must each resolve to their own,
+            // which bare-name seeding cannot promise. The tier registry
+            // gets every name — it carries its own ambiguity guard.
+            for (name, func) in self.known_function_values.clone() {
+                if !self.ambiguous_function_names.contains(&name) {
+                    interp.define_global(&name, crate::ast::Value::Function(func.clone()));
+                }
+                if let Some(tier) = interp.bytecode_tier_mut() {
+                    tier.note_function(name, func);
+                }
+            }
             interp.seed_bridge_state(
                 self.trait_impls.clone(),
                 self.trait_defaults.clone(),
@@ -3686,6 +3724,13 @@ impl BytecodeVm {
                 // enum-type registry of its own.
                 std::collections::HashSet::new(),
             );
+            // The bridge is a full interpreter, and a full interpreter
+            // has a compiled tier (enabled above, before the state
+            // seeding): a function value the VM declines used to strand
+            // everything it called on a tree-walk — the
+            // callback-in-a-harness trap, measured at three orders of
+            // magnitude. Its capabilities are (re)seeded per dispatch by
+            // seed_bridge_caps, which forwards them into this tier.
             self.builtin_interpreter = Some(interp);
         }
     }
@@ -3725,7 +3770,23 @@ impl BytecodeVm {
             );
         }
         self.ensure_bridge_interpreter();
+        // The callee runs a whole user-function body in the bridge: it
+        // must carry the run's capability grant (this path previously
+        // seeded nothing — a declined function value ran ungated) and
+        // the live call depth, so the shared budget holds across the
+        // boundary.
+        let caps = self.caps.clone();
+        let trace = self.caps_trace.clone();
+        let attributed_to = self
+            .caps_file_stack
+            .last()
+            .cloned()
+            .flatten()
+            .map(|f| f.to_string());
+        let depth = self.call_depth as usize;
         let interpreter = self.builtin_interpreter.as_mut().expect("just ensured");
+        interpreter.seed_bridge_caps(caps, trace, attributed_to);
+        interpreter.set_call_depth_base(depth);
         let result = interpreter
             .call_function(callee_ast, ast_args)
             .map_err(|e| BytecodeError::RuntimeError(e.to_string()))?;
@@ -4266,8 +4327,10 @@ impl BytecodeVm {
             .cloned()
             .flatten()
             .map(|f| f.to_string());
+        let depth = self.call_depth as usize;
         let interpreter = self.builtin_interpreter.as_mut().expect("just ensured");
         interpreter.seed_bridge_caps(caps, trace, attributed_to);
+        interpreter.set_call_depth_base(depth);
 
         let result = BuiltinFunctions::call(&self.builtins, name, ast_args, interpreter)
             .map_err(|e| BytecodeError::RuntimeError(e.to_string()))?;
@@ -5501,7 +5564,26 @@ impl BytecodeCompiler {
                 }
                 // User functions shadow builtins (same order as the runtime
                 // path); resolving the id here removes the per-call name hash.
-                if let Some(&func_id) = self.function_registry.get(&function_name) {
+                // But the *closure* shadows the registry when it holds a
+                // DIFFERENT function under this name — lexical scope is
+                // the runtime rule, and a by-value compile (a rebuilt
+                // lambda in the bridge) may close over one module's
+                // private `insert` while the registry's last-noted
+                // `insert` came from another. When closure and registry
+                // agree (the overwhelmingly common case: the closure
+                // snapshot simply contains the global), the registry's
+                // direct CallFn stays.
+                let closure_disagrees = match self.enclosing_closure.get(&function_name) {
+                    Some(Value::Function(f)) => self
+                        .known_function_values
+                        .get(&function_name)
+                        .is_none_or(|known| !std::sync::Arc::ptr_eq(&known.body, &f.body)),
+                    Some(_) => true,
+                    None => false,
+                };
+                if !closure_disagrees
+                    && let Some(&func_id) = self.function_registry.get(&function_name)
+                {
                     self.emitter.instructions.push(Instruction::CallFn {
                         dst: dst_reg,
                         func_id,

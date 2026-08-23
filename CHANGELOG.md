@@ -42,6 +42,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   finishes — one hidden reference that could defeat every sole-owner
   fusion on the following line.
 
+### Fixed
+
+- **The bridge interpreter — where the VM runs function values it
+  declines — was tierless, ungated, and fresh-budgeted (Campaign 7,
+  T1).** Three defects with one root: a callback invoked inside a
+  promoted function stranded everything it called on a tree-walk
+  (measured: 2317ms against 5ms for the same 5M-frame call — the
+  harness/callback trap); the declined-callee path seeded no capability
+  table, so such a callee ran ungated by --deny and manifests; and its
+  call-depth budget started at zero rather than at the caller's live
+  depth. The bridge now carries its own compiled tier — seeded with the
+  program's declaration and function landscape — the grant is re-seeded
+  per dispatch and forwarded into that tier, and the depth base crosses
+  the boundary in both directions.
+
+  Exercising the round-trip surfaced four latent correctness bugs, each
+  fixed on its own merits: `get_slot`'s depth walk returned "undefined"
+  instead of falling back to name resolution when a resolved body ran
+  under a shallower scope chain; a VM closure rebuilt as an AST function
+  lost its *name*, so a rebuilt nested fn could not call itself; a bare
+  name bound to two distinct function bodies (two modules' private
+  `insert`) could hijack each other's call sites, now tracked and never
+  seeded ambiguously; and the compiler resolved a callee through the
+  function registry even when the compiled closure held a *different*
+  function under that name — lexical scope now wins when they disagree.
+  Regression tests pin every property, including the demo's exact
+  nested-fn shape and the two-private-helpers collision.
+
 ### Improved
 
 - **The REPL, end to end.** `:help` opens with a page instead of a wall:

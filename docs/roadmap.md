@@ -857,6 +857,24 @@ snapshot at the cost of one copy.
 | C1 — mutation primitives + auto-availability | `col.set`/`col.swap` with the sole-owner in-place fusion at the assignment site on both tiers (the `xs = xs + [..]` discipline, extended to indexed writes), `col.filled` preallocation, and lazy auto-loading of embedded modules at the undefined-identifier chokepoint. Tier-parity tests. | **shipped** — plus the by-move call fusion (`x = f(x, ...)` passes by move, any user function), by-move argument binding, prompt block-result drops, mutable parameters, and `str.char_code`. The VM compiles the indexed fusion to register-level in-place writes |
 | C2 — the Int-backed structures | `heap` (binary min-heap over one flat list), `dsu` (union-find with path compression and rank), `bitset` (63-bit words) — plus `alg`: iterative stable merge sort, sort-by-key, and the binary-search family. Each module `test`-blocked and differential-tested against Rust references. | **shipped** |
 | C3 — the composed structures | `deque` (ring buffer), `table` (open-addressing hash over flat slot triples), and the graph suite in `alg`: CSR construction, BFS, topological sort, Dijkstra (heap + CSR + flat dist array — the three-structure showcase). A `crunch.ol` stage exercises the lot. | **shipped** — the crunch stage runs a 2,000-task scheduling pipeline through all six modules, cross-checked |
+### Campaign 7 — the tier boundary
+
+The seam between the tiers, dissolved lane by lane. The measured
+starting points: a function value the VM declines strands everything it
+calls on a tree-walk (2317ms vs 5ms for the same 5M-frame call), runs
+ungated by the capability table, and starts its depth budget at zero;
+a whole-list argument converts in full at every try_call (why the
+collections are interpreter-resident); a once-called hot loop never
+meets the JIT; a loop calling a function per iteration loses to V8 40×
+on one core.
+
+| Lane | Work | Status |
+|---|---|---|
+| T1 — the bridge gets a tier | The bridge interpreter (declined function values, bridged builtins) carries its own compiled tier, the run's capability grant re-seeded per dispatch (and forwarded into that tier), and the live call depth — closing a caps bypass and a fresh-budget hole along the way. | **shipped** — 2317ms → 5ms on the callback repro; four regression tests pin speed class, tier agreement, the shared depth budget, and the capability gate |
+| T2 — the argument conversion | Whole-list Value⇄OvmValue conversion at the boundary becomes proportional to use, unlocking compiled-tier collections and the JIT IndexSet lane. | planned |
+| T3 — on-stack replacement | A hot loop compiles at its back-edge, so a once-called function's big loop doesn't live on the VM. | planned |
+| T4 — JIT call inlining | Small callees inline into their JIT callers; the loop-calling-a-function shape stops paying a boundary per iteration. | planned |
+
 | C4 — measurement and polish | Benchmarks against the Rust-backed equivalents published in the module docs; help-registry entries and editor completions for every function; the stdlib.md "Collections, in olang" chapter. A JIT `IndexSet` instruction if the VM-level numbers leave wins on the table. | **shipped** — measured and published (table 46× the builtin map on a hot put/probe loop; plain sorting honestly deferred to the native builtin); 58 help entries; the JIT lane does not apply while the modules are interpreter-resident — it unlocks with the tier-boundary chip |
 
 

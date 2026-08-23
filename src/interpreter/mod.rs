@@ -483,9 +483,16 @@ impl Interpreter {
     /// gets it too. Distance is capped relative to the name's length so
     /// short names don't suggest everything.
     /// Bind a name at the REPL's global scope — the REPL uses this for
-    /// `_`, the last printed result.
+    /// `it`, the last printed result, and the VM's bridge uses it to
+    /// seed the program's function landscape.
     pub fn define_global(&mut self, name: &str, value: Value) {
         self.environment.define(name.to_string(), value);
+    }
+
+    /// The bytecode tier, when one is enabled — the VM's bridge seeds
+    /// its registry through this.
+    pub fn bytecode_tier_mut(&mut self) -> Option<&mut crate::ovm::tier::BytecodeTier> {
+        self.bytecode_tier.as_deref_mut()
     }
 
     fn did_you_mean(&self, name: &str) -> Option<String> {
@@ -1749,6 +1756,37 @@ impl Interpreter {
         self.struct_field_checks = struct_field_checks;
         self.unit_variant_names = unit_variant_names;
         self.enum_type_names = enum_type_names;
+        // The bridge's own tier compiles against the same declaration
+        // landscape: without this forwarding, a bridged fold whose
+        // lambda dispatches a trait method promoted into a VM that had
+        // never heard of the trait.
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            for (name, fields) in self.struct_defs.clone() {
+                let checks = self
+                    .struct_field_checks
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_default();
+                tier.note_struct(name, fields, checks);
+            }
+            for ((type_name, method), func) in self.trait_impls.clone() {
+                tier.note_trait_impl(type_name, method, func);
+            }
+            for ((trait_name, method), func) in self.trait_defaults.clone() {
+                tier.note_trait_default(trait_name, method, func);
+            }
+            for (type_name, traits) in self.type_traits.clone() {
+                for trait_name in traits {
+                    tier.note_type_trait(type_name.clone(), trait_name);
+                }
+            }
+            for name in self.unit_variant_names.clone() {
+                tier.note_unit_variant(name);
+            }
+            for name in self.enum_type_names.clone() {
+                tier.note_enum_type(name);
+            }
+        }
     }
 
     /// Is `name` a declared type — a struct or an enum? Primitive checks
@@ -1800,6 +1838,24 @@ impl Interpreter {
         // a time and `current_caps` reads only the top of this stack.
         self.coverage_file_stack.clear();
         self.coverage_file_stack.push(attributed_to);
+        // The bridge's own tier enforces the same grant: seeding the
+        // fields alone would leave a tier enabled earlier holding the
+        // table from a previous dispatch.
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.set_capabilities(self.caps.clone());
+            if let Some(trace) = self.caps_trace.clone() {
+                tier.set_caps_trace(trace);
+            }
+        }
+    }
+
+    /// Seed the interpreter's frame counter with the frames already live
+    /// in the caller — the bridge-interpreter side of the shared
+    /// call-depth budget (the mirror of the VM's `set_depth_base`), so a
+    /// recursion that crosses the tier boundary in either direction
+    /// errors at exactly the depth a single-tier run would.
+    pub fn set_call_depth_base(&mut self, depth: usize) {
+        self.call_depth = depth;
     }
 
     /// Call a user function by reference — the hot path `map`,

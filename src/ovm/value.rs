@@ -1022,12 +1022,28 @@ impl OvmValue {
             // have produced: the declaration-time closure with the runtime
             // captures layered on top. The body Arc is shared verbatim.
             ValueData::Closure(c) => {
+                if std::env::var_os("OLANG_DEBUG_CLOSURE").is_some() {
+                    eprintln!(
+                        "[closure->ast] params={:?} capture_names={:?} template_closure_keys={:?}",
+                        c.template
+                            .parameters
+                            .iter()
+                            .map(|p| &p.name)
+                            .collect::<Vec<_>>(),
+                        c.capture_names,
+                        c.template.closure.keys().collect::<Vec<_>>()
+                    );
+                }
                 let mut closure_map = (*c.template.closure).clone();
                 for (name, val) in c.capture_names.iter().zip(c.captured.iter()) {
                     closure_map.insert(name.clone(), val.to_ast()?);
                 }
                 Ok(Value::Function(crate::ast::Function {
-                    name: None,
+                    // The template's name survives the round trip: a
+                    // nested fn's self-recursion binds through its name
+                    // at call time, and a rebuilt `insert` that lost it
+                    // could not call itself.
+                    name: c.template.name.clone(),
                     param_checks: crate::ast::param_checks_of(&c.template.parameters, &[]),
                     return_check: None,
                     parameters: c.template.parameters.clone(),

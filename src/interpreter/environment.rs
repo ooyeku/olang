@@ -114,7 +114,17 @@ impl Environment {
     pub fn get_slot(&self, name: &str, depth: u16, slot: u16) -> Option<Value> {
         let mut env = self;
         for _ in 0..depth {
-            env = env.parent.as_deref()?;
+            match env.parent.as_deref() {
+                Some(parent) => env = parent,
+                // The chain is shorter than the resolved depth — a body
+                // resolved in one context executing under another (a
+                // closure rebuilt across the tier boundary). The
+                // verify-and-fall-back contract still holds: resolve by
+                // name. The old `?` here returned None instead, which
+                // surfaced as a spurious "Undefined variable" the moment
+                // the bridge gained a tier and re-ran such bodies.
+                None => return self.get(name),
+            }
         }
         if let Some((slot_name, value)) = env.locals.get(slot as usize)
             && slot_name == name
