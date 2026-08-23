@@ -36,6 +36,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   macro expansion and coverage runs never fan out; `set_parallel(false)`
   disables it; `OLANG_DEBUG_AUTOPAR=1` explains each decision.
 
+### Changed
+
+- **The call-depth cap is 100,000 frames (was 1,000) — and it is now a
+  real number (Campaign 5, R4a).** Each user call grows the Rust stack
+  in segments when headroom runs low (the segmented-stack discipline
+  rustc itself uses), so every depth under the cap is physically
+  reachable — 99,999-deep recursion works even from a thread with a
+  small OS stack, and frame 100,000 raises the clean "Maximum call
+  depth exceeded" error instead of the stack raising a signal.
+  `--max-depth N` moves the cap in either direction. Both tiers now
+  spend from one *shared* budget, seeded across the tier boundary: a
+  recursion that promotes mid-descent previously got a fresh VM budget
+  on top of the interpreter frames it had already spent, so a program
+  near the cap could succeed on one tier and fail on the other. The JIT
+  keeps its native recursion within a fixed 1,000-frame budget (its
+  pre-existing ceiling) and deopts to bytecode beyond it — pure groups
+  re-execute, so deeper recursion is slower, never wrong. The
+  playground keeps its low wasm limit: that stack cannot grow.
+
 ### Performance
 
 - **Parallel data-stack kernels (Campaign 5, H3).** The data stack's

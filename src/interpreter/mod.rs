@@ -44,17 +44,41 @@ mod modules;
 mod ops;
 
 /// The recursion limit that turns runaway recursion into a clean
-/// "maximum call depth exceeded" error. The playground (wasm) build uses a
-/// far lower value: wasm's call stack is much smaller than a native
-/// thread's, and ~1000 deep interpreter frames overflow it *physically* —
-/// a hard trap that poisons the whole wasm instance so every later program
-/// also traps — well before a 1000 limit would fire. A low limit makes the
-/// depth guard win the race, so the playground reports the error and stays
-/// alive.
+/// "maximum call depth exceeded" error. It is a *logical* cap, not a
+/// physical one: each user-function call grows the Rust stack in
+/// segments when headroom runs low (see `with_stack_headroom`), so any
+/// depth under the cap is physically reachable — which is also what
+/// keeps the tiers honest, since the VM's heap-allocated frames would
+/// otherwise sail past a depth where interpreter frames physically
+/// died. `--max-depth` overrides it per run.
+///
+/// The playground (wasm) build uses a far lower value: wasm's call
+/// stack is much smaller than a native thread's and cannot grow, and a
+/// deep interpreter recursion overflows it *physically* — a hard trap
+/// that poisons the whole wasm instance so every later program also
+/// traps. A low limit makes the depth guard win the race, so the
+/// playground reports the error and stays alive.
 #[cfg(feature = "native")]
-pub const DEFAULT_MAX_CALL_DEPTH: usize = 1000;
+pub const DEFAULT_MAX_CALL_DEPTH: usize = 100_000;
 #[cfg(not(feature = "native"))]
 pub const DEFAULT_MAX_CALL_DEPTH: usize = 400;
+
+/// Grow the stack before it runs out, then run `f`. Below 1MB of
+/// headroom a fresh 32MB segment is allocated and execution continues
+/// there — the segmented-stack discipline (rustc's own) that makes deep
+/// recursion a memory question instead of a crash. Costs one stack-
+/// pointer read per call when headroom is fine.
+#[cfg(feature = "native")]
+#[inline]
+pub(crate) fn with_stack_headroom<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(1024 * 1024, 32 * 1024 * 1024, f)
+}
+
+#[cfg(not(feature = "native"))]
+#[inline]
+pub(crate) fn with_stack_headroom<R>(f: impl FnOnce() -> R) -> R {
+    f()
+}
 mod patterns;
 pub use errors::{InterpreterError, IntuitiveErrorFormatter};
 
@@ -1584,11 +1608,24 @@ impl Interpreter {
     /// Promotion never changes program behavior: anything the tier can't
     /// compile (closures, unsupported expressions, unresolved callees) stays
     /// interpreted. See `crate::ovm::tier` and the differential test suite.
+    /// Set the logical call-depth cap (`--max-depth`). Applied to the
+    /// bytecode tier too, present or future, so both tiers raise the
+    /// same "Maximum call depth" error at the same depth.
+    pub fn set_max_call_depth(&mut self, depth: usize) {
+        self.max_call_depth = depth.max(1);
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.set_max_call_depth(self.max_call_depth as u32);
+        }
+    }
+
     pub fn enable_bytecode_tier(&mut self, threshold: u32, verbose: bool) {
         let mut tier = crate::ovm::tier::BytecodeTier::new(threshold).with_verbose(verbose);
         // Order-independent: capabilities may be installed before or after
         // the tier is turned on, and the tier must enforce either way.
         tier.set_capabilities(self.caps.clone());
+        // The tiers share one logical depth cap; a tier created after
+        // --max-depth was applied must inherit it.
+        tier.set_max_call_depth(self.max_call_depth as u32);
         if let Some(trace) = self.caps_trace.clone() {
             tier.set_caps_trace(trace);
         }
@@ -1701,6 +1738,16 @@ impl Interpreter {
                 ),
             });
         }
+        // Every frame under the cap must be physically reachable, or the
+        // cap is a lie the stack tells first.
+        with_stack_headroom(|| self.call_user_function_inner(func, arguments))
+    }
+
+    fn call_user_function_inner(
+        &mut self,
+        func: &Function,
+        arguments: Vec<Value>,
+    ) -> Result<Value, InterpreterError> {
         {
             // Increment call depth for user functions
             self.call_depth += 1;
@@ -1748,9 +1795,12 @@ impl Interpreter {
             // function is eligible, otherwise fall through to the AST walk
             if self.bytecode_tier.is_some() && arguments.len() == func.parameters.len() {
                 let mut tier = self.bytecode_tier.take();
+                // The interpreter's frames (this one included) count
+                // against the same budget the VM spends from.
+                let depth = self.call_depth as u32;
                 let outcome = tier
                     .as_mut()
-                    .map(|t| t.try_call(func, &arguments))
+                    .map(|t| t.try_call_at_depth(func, &arguments, depth))
                     .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
                 self.bytecode_tier = tier;
 

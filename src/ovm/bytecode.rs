@@ -14,6 +14,17 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
+/// The most native frames one JIT call chain may push before it deopts
+/// back to bytecode. The logical call-depth cap is 100k, but jitted
+/// recursion lives on the real Rust stack where headroom below a grown
+/// segment's red zone is only guaranteed to ~1MB — this is the depth
+/// that provably fits it, and exactly the ceiling the JIT lived under
+/// when the cap itself was 1000. JIT groups are pure, so exhaustion
+/// abandons the native run and re-executes on bytecode: deeper pure
+/// recursion is slower, never wrong.
+#[cfg(feature = "native")]
+const JIT_NATIVE_DEPTH_BUDGET: u32 = 1000;
+
 /// Register-based bytecode virtual machine
 pub struct BytecodeVm {
     // Bytecode compiler
@@ -1310,6 +1321,24 @@ impl BytecodeVm {
     /// interpreter — a separate `Interpreter` that dispatches builtins the
     /// VM cannot run natively — is seeded with it before every call, and
     /// so presents the same grant the interpreter tier would.
+    /// Set the logical call-depth cap — kept identical to the
+    /// interpreter's so the tiers raise the same error at the same
+    /// depth.
+    pub fn set_max_call_depth(&mut self, depth: u32) {
+        self.max_call_depth = depth;
+    }
+
+    /// Seed the VM's frame counter with the interpreter frames already
+    /// on the stack. The cap is one logical call depth shared by both
+    /// tiers; without the seed, a recursion that promotes mid-descent
+    /// would get a fresh budget on top of the frames it already spent —
+    /// and a program near the cap would overflow on one tier and
+    /// succeed on the other. Symmetric increments mean the counter is
+    /// back at the seed when the entry call returns.
+    pub fn set_depth_base(&mut self, base: u32) {
+        self.call_depth = base;
+    }
+
     pub fn set_capabilities(&mut self, caps: Option<Arc<crate::caps::CapTable>>) {
         self.caps = caps;
         // The bridge caches its state; drop it so the next dispatch
@@ -1553,7 +1582,10 @@ impl BytecodeVm {
         // deopted) — the bytecode path below is the unchanged fallback.
         #[cfg(feature = "native")]
         if self.jit.has(func_id) {
-            let remaining = self.max_call_depth.saturating_sub(self.call_depth);
+            let remaining = self
+                .max_call_depth
+                .saturating_sub(self.call_depth)
+                .min(JIT_NATIVE_DEPTH_BUDGET);
             // Disjoint field borrows: the JIT plans call graphs through
             // this lookup while it holds &mut self.jit.
             let hot = &self.bytecode_hot;
@@ -1748,7 +1780,10 @@ impl BytecodeVm {
                 }
             }
             if extractable {
-                let remaining = self.max_call_depth.saturating_sub(self.call_depth);
+                let remaining = self
+                    .max_call_depth
+                    .saturating_sub(self.call_depth)
+                    .min(JIT_NATIVE_DEPTH_BUDGET);
                 // Shape specs are only needed to specialize (first call).
                 let mut shapes = std::collections::HashMap::new();
                 if self.jit.is_pending(func_id) {
@@ -1876,6 +1911,16 @@ impl BytecodeVm {
 
     /// Execute bytecode instructions - Complete implementation
     fn execute_bytecode(&mut self, bytecode: &CompiledBytecode) -> Result<OvmValue, BytecodeError> {
+        // Deep VM recursion rides the Rust stack one frame per user call;
+        // the same segmented growth the interpreter uses keeps every
+        // depth under the (shared) logical cap physically reachable.
+        crate::interpreter::with_stack_headroom(|| self.execute_bytecode_inner(bytecode))
+    }
+
+    fn execute_bytecode_inner(
+        &mut self,
+        bytecode: &CompiledBytecode,
+    ) -> Result<OvmValue, BytecodeError> {
         // Count instructions in a local and flush once: a stats-field write in
         // the dispatch loop costs a memory op per instruction executed.
         let mut executed: u64 = 0;

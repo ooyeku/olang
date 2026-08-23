@@ -27,6 +27,7 @@ native = [
     "dep:dirs",
     "dep:rayon",
     "dep:num_cpus",
+    "dep:stacker",
     "dep:lsp-server",
     "dep:lsp-types",
     "dep:cranelift-codegen",
@@ -100,6 +101,7 @@ im = { version = "15.1", features = ["serde"] }  # Persistent/immutable collecti
 rayon = { version = "1.12", optional = true }  # Data parallelism library
 parking_lot = "0.12"   # High-performance synchronization primitives
 num_cpus = { version = "1.16", optional = true }  # CPU core detection
+stacker = { version = "0.1", optional = true }    # segmented stack growth for deep recursion
 num-bigint = "0.4"                                # bigint: arbitrary-precision integers
 num-traits = "0.2"
 

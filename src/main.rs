@@ -104,6 +104,11 @@ struct Cli {
     #[arg(long, help_heading = "Run options")]
     trace_caps: bool,
 
+    /// Maximum call depth before a clean "maximum call depth exceeded"
+    /// error (default 100000). Both execution tiers enforce the same cap.
+    #[arg(long, value_name = "N", help_heading = "Run options")]
+    max_depth: Option<usize>,
+
     /// With --trace-caps, write the suggested [capabilities] block into the
     /// package's olang.toml instead of only printing it. Never overwrites an
     /// existing [capabilities] block.
@@ -642,6 +647,7 @@ fn run_program(
         cli.no_ovm,
         cli.ovm_stats,
         cli.ovm_tier,
+        cli.max_depth,
         deny,
         timeline,
         if cli.trace_caps {
@@ -1369,12 +1375,12 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
                 (None, d) => d,
             };
             execute_program(
-                *program, &source, &path, false, false, false, None, effective, None, None, logger,
-                None,
+                *program, &source, &path, false, false, false, None, None, effective, None, None,
+                logger, None,
             )
         }
         Bundle::Source(source) => execute_source(
-            &source, &path, false, false, false, None, deny, None, None, logger,
+            &source, &path, false, false, false, None, None, deny, None, None, logger,
         ),
     };
     match result {
@@ -2026,6 +2032,7 @@ fn execute_file(
     no_ovm: bool,
     ovm_stats: bool,
     ovm_tier: Option<u32>,
+    max_depth: Option<usize>,
     deny: Option<olang::caps::Caps>,
     timeline: Option<olang::timeline::Timeline>,
     trace_caps: Option<bool>,
@@ -2034,8 +2041,8 @@ fn execute_file(
     let source = std::fs::read_to_string(file_path)
         .map_err(|e| anyhow::anyhow!("cannot read '{}': {}", file_path.display(), e))?;
     execute_source(
-        &source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, deny, timeline, trace_caps,
-        logger,
+        &source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, max_depth, deny, timeline,
+        trace_caps, logger,
     )
 }
 
@@ -2079,6 +2086,7 @@ fn execute_source(
     no_ovm: bool,
     ovm_stats: bool,
     ovm_tier: Option<u32>,
+    max_depth: Option<usize>,
     deny: Option<olang::caps::Caps>,
     timeline: Option<olang::timeline::Timeline>,
     trace_caps: Option<bool>,
@@ -2140,6 +2148,7 @@ fn execute_source(
         no_ovm,
         ovm_stats,
         ovm_tier,
+        max_depth,
         deny,
         timeline,
         trace_caps,
@@ -2161,6 +2170,7 @@ fn execute_program(
     no_ovm: bool,
     ovm_stats: bool,
     ovm_tier: Option<u32>,
+    max_depth: Option<usize>,
     deny: Option<olang::caps::Caps>,
     timeline: Option<olang::timeline::Timeline>,
     trace_caps: Option<bool>,
@@ -2186,6 +2196,10 @@ fn execute_program(
     if !no_ovm {
         let threshold = ovm_tier.unwrap_or(1);
         interpreter.enable_bytecode_tier(threshold, verbose);
+    }
+
+    if let Some(depth) = max_depth {
+        interpreter.set_max_call_depth(depth);
     }
 
     // Set file context for proper module resolution
@@ -2413,6 +2427,7 @@ fn run_replay(trace_path: &std::path::Path, args: &[String], logger: &Logger) ->
         false,
         false,
         false,
+        None,
         None,
         None,
         Some(timeline),

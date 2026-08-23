@@ -189,6 +189,10 @@ impl BytecodeTier {
     /// VM, which seeds it into the bridge interpreter that dispatches
     /// builtins, so a promoted function is gated exactly as the
     /// interpreted one was.
+    pub fn set_max_call_depth(&mut self, depth: u32) {
+        self.vm.set_max_call_depth(depth);
+    }
+
     pub fn set_capabilities(&mut self, caps: Option<Arc<crate::caps::CapTable>>) {
         self.vm.set_capabilities(caps);
     }
@@ -302,6 +306,19 @@ impl BytecodeTier {
     /// (innermost-first), reset on take.
     pub fn take_error_trace(&mut self) -> (Option<(u32, u32)>, Vec<String>, Option<String>) {
         std::mem::take(&mut self.last_error_trace)
+    }
+
+    /// Try to execute `func(args)` on the bytecode VM. `depth_base` is
+    /// the interpreter's current call depth, seeded into the VM so both
+    /// tiers spend from the one shared budget (see `set_depth_base`).
+    pub fn try_call_at_depth(
+        &mut self,
+        func: &Function,
+        args: &[Value],
+        depth_base: u32,
+    ) -> TierOutcome {
+        self.vm.set_depth_base(depth_base);
+        self.try_call(func, args)
     }
 
     /// Try to execute `func(args)` on the bytecode VM.

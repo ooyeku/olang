@@ -41,7 +41,7 @@ nor a flag is taken as a file to run — so `olang report.ol` and `olang
 
 **Run options** (before the file: `olang --watch app.ol`) shape how a
 program runs — `--watch`, `--deny CAPS`, `--record TRACE.olt`,
-`--trace-caps`, `--ovm-tier`, and more. See `olang --help` for the full
+`--trace-caps`, `--ovm-tier`, `--max-depth N`, and more. See `olang --help` for the full
 set. Every command also honors the `OLANG_DENY` environment variable.
 
 ## `olang test`

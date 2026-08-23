@@ -289,9 +289,14 @@ A register machine. Key design points:
 - **Native operand dispatch.** Arithmetic and comparisons match on the value
   representation directly; there is no conversion to and from the AST value
   type inside the loop.
-- **Bounded recursion.** The VM enforces the same 1000-frame call-depth limit
-  as the interpreter, so runaway recursion reports an error instead of
-  overflowing the host stack.
+- **Bounded recursion.** Both tiers spend from one shared call-depth
+  budget — 100,000 frames by default, `--max-depth` to change it. The
+  budget is seeded across the tier boundary (interpreter frames count
+  against the VM's budget and vice versa), so a recursion that promotes
+  mid-descent errors at exactly the same depth it would have errored
+  interpreted. The cap is physically reachable: each user call grows the
+  Rust stack in segments when headroom runs low, so the limit is the
+  number, never the stack.
 - **Index-based iteration.** `for` compiles to an index loop over `IterLen`
   and `IterGet`, which handle both lists and ranges. A range is never
   materialized, so iterating `0..10000000` costs no memory — matching the
