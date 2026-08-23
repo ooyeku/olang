@@ -1,26 +1,11 @@
-# CI, sized for a private repo's Actions bill.
-#
-# Per push: formatting + clippy on Linux, and a workspace build (all
-# targets, so test code must compile) on the two platforms local
-# development never exercises — Linux and Windows. macOS is deliberately
-# absent: it is the development platform, verified by the full local gate
-# on every change, and it bills at 10x on private repos; its CI coverage
-# lives in the release workflow, which fires only on deliberate v* tags.
-#
-# The full test suite does not run per push — the local gates run it on
-# every change already. Dispatch with full_tests=true when a Linux test
-# run is wanted (first-time platform verification, a suspicious failure).
-#
-# Documentation-only pushes skip all of this: prose cannot break a build,
-# and the doc guards live in the test suite, not here.
+# CI, currently manual-only: automatic per-push runs are switched off to
+# keep the Actions bill at zero. The full local gate (make prepush, the
+# workspace suite, run_all) remains the verification on every change;
+# dispatch this workflow by hand when a Linux/Windows build check is
+# wanted. The release workflow still fires only on deliberate v* tags.
 name: CI
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "website/**"
   workflow_dispatch:
     inputs:
       full_tests:
