@@ -1,14 +1,15 @@
 // metro — a transit planner for the fictional city of Arden, built on
-// the bundled collections. Every structure has a load-bearing job:
+// the `collections` module. Every submodule has a load-bearing job:
 //
-//   table    station names to ids (and per-zone ride counts)
-//   alg      the network as flat CSR graphs; Dijkstra for fastest
-//            routes, BFS for fare zones, sort_by_key for the rankings
-//   heap     inside Dijkstra — and directly, draining the departure
-//            board in time order
-//   dsu      service continuity: which stations still reach which when
-//            links close
-//   bitset   the stranded set under a disruption, 63 stations a word
+//   collections.table    station names to ids (and per-zone tallies)
+//   collections.alg      the network as flat CSR graphs; Dijkstra for
+//                        fastest routes, BFS for fare zones,
+//                        sort_by_key and quickselect for the rankings
+//   collections.heap     inside Dijkstra — and directly, draining the
+//                        departure board in time order
+//   collections.dsu      service continuity: which stations still
+//                        reach which when links close
+//   collections.bitset   the stranded set under a disruption
 //
 // Everything is deterministic and self-checking: the planner asserts
 // its own answers (route symmetry, zone accounting, continuity counts)
@@ -22,7 +23,7 @@
 use collections { heap, table, dsu, bitset, alg }
 
 // ── the network ───────────────────────────────────────────────────────
-// Four lines, twenty-six stations, times in minutes between adjacent
+// Four lines, twenty-three stations, times in minutes between adjacent
 // stops. A segment [a, b, mins] runs both ways; lines meet where they
 // share a station, so transfers are free at the platform.
 
