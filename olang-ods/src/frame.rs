@@ -197,6 +197,25 @@ impl Frame {
     }
 
     pub fn take(&self, indices: &Series) -> Result<Frame> {
+        // Each column gathers independently, so a large gather (the
+        // expensive half of sort_by) runs one column per core. Column
+        // order is preserved; the result is identical to the
+        // sequential gather.
+        #[cfg(feature = "parallel")]
+        let cols =
+            if indices.len() >= PAR_TAKE_ROWS && self.cols.len() > 1 && crate::parallel_enabled() {
+                use rayon::prelude::*;
+                self.cols
+                    .par_iter()
+                    .map(|c| c.take(indices))
+                    .collect::<Result<Vec<_>>>()?
+            } else {
+                self.cols
+                    .iter()
+                    .map(|c| c.take(indices))
+                    .collect::<Result<Vec<_>>>()?
+            };
+        #[cfg(not(feature = "parallel"))]
         let cols = self
             .cols
             .iter()
@@ -907,6 +926,10 @@ fn scalar_name(v: Scalar, fmt_f64: &dyn Fn(f64) -> String) -> String {
 #[cfg(feature = "parallel")]
 const PAR_JOIN_ROWS: usize = 50_000;
 
+/// Below this many gathered rows, Frame::take stays sequential.
+#[cfg(feature = "parallel")]
+const PAR_TAKE_ROWS: usize = 100_000;
+
 /// Probe left rows `[lo, hi)` against the built right-key table, producing
 /// `(left_idx, right_idx)` match pairs in left-row order (a matched left row
 /// repeats once per right match; an unmatched row is kept with `None` only
@@ -950,7 +973,7 @@ fn join_probe(
     n: usize,
 ) -> (Vec<i64>, Vec<Option<usize>>) {
     #[cfg(feature = "parallel")]
-    if n >= PAR_JOIN_ROWS {
+    if n >= PAR_JOIN_ROWS && crate::parallel_enabled() {
         use rayon::prelude::*;
         let threads = rayon::current_num_threads().max(1);
         let chunk = n.div_ceil(threads).max(1);
@@ -1133,11 +1156,27 @@ fn group_ids_single(key: &Series) -> (Vec<u32>, usize) {
 }
 
 fn group_ids_multi(key_cols: &[&Series], n: usize) -> (Vec<u32>, usize) {
+    // The composite key per row — a Scalar clone per key column — is the
+    // expensive half of the hash pass, and each row's is independent, so
+    // large frames build them across all cores. The id-assigning insert
+    // loop below stays sequential and in row order, which is what makes
+    // group ids come out in first-seen order — identical to a fully
+    // sequential pass.
+    let build = |i: usize| -> Vec<Option<Key>> { key_cols.iter().map(|c| key_at(c, i)).collect() };
+    #[cfg(feature = "parallel")]
+    let composites: Vec<Vec<Option<Key>>> = if n >= PAR_GROUPBY_ROWS && crate::parallel_enabled() {
+        use rayon::prelude::*;
+        (0..n).into_par_iter().map(build).collect()
+    } else {
+        (0..n).map(build).collect()
+    };
+    #[cfg(not(feature = "parallel"))]
+    let composites: Vec<Vec<Option<Key>>> = (0..n).map(build).collect();
+
     let mut map: FxMap<Vec<Option<Key>>, u32> = FxMap::default();
     let mut ids = Vec::with_capacity(n);
     let mut next: u32 = 0;
-    for i in 0..n {
-        let composite: Vec<Option<Key>> = key_cols.iter().map(|c| key_at(c, i)).collect();
+    for composite in composites {
         let id = *map.entry(composite).or_insert_with(|| {
             let id = next;
             next += 1;
@@ -1203,7 +1242,10 @@ fn accumulate_f64(
     };
 
     #[cfg(feature = "parallel")]
-    if values.len() >= PAR_GROUPBY_ROWS && n_groups <= PAR_GROUPBY_MAX_GROUPS {
+    if values.len() >= PAR_GROUPBY_ROWS
+        && n_groups <= PAR_GROUPBY_MAX_GROUPS
+        && crate::parallel_enabled()
+    {
         use rayon::prelude::*;
         let n = values.len();
         let threads = rayon::current_num_threads().max(1);
@@ -1269,7 +1311,10 @@ fn accumulate_i64(
     };
 
     #[cfg(feature = "parallel")]
-    if values.len() >= PAR_GROUPBY_ROWS && n_groups <= PAR_GROUPBY_MAX_GROUPS {
+    if values.len() >= PAR_GROUPBY_ROWS
+        && n_groups <= PAR_GROUPBY_MAX_GROUPS
+        && crate::parallel_enabled()
+    {
         use rayon::prelude::*;
         let n = values.len();
         let threads = rayon::current_num_threads().max(1);

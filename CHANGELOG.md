@@ -25,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Performance
 
+- **Parallel data-stack kernels (Campaign 5, H3).** The data stack's
+  hot paths fan out across cores, joined in fixed order so results are
+  cell-identical to the sequential run: `read_csv` splits large text at
+  quote-aware record boundaries and parses the runs concurrently
+  (malformed files fall back to the sequential reader so the error and
+  its line number are unchanged); `read_jsonl` parses lines
+  concurrently, reports the lowest-numbered bad line, and — the bigger
+  win — goes straight from parsed JSON into column vectors instead of
+  building a boxed map per line (the old row-shaped intermediate cost
+  more than the parse and tripled peak memory); `sort_by` sorts its
+  index and gathers its columns in parallel; the group-by composite-key
+  build and the join probe fan out too. Measured at 1M rows: JSONL
+  parse 1153ms → 265ms (4.3×), CSV parse 205ms → 75ms (2.7×), sort_by
+  176ms → 93ms. `set_parallel(false)` now governs the data stack's
+  own fan-outs as well, which it previously did not. Seven differential
+  tests pin parallel ≡ sequential, including quoted embedded newlines
+  and error identity.
+
 - **Compiled-kernel parallelism (Campaign 5, H1).** Three root causes,
   each found by measuring: anonymous lambdas never promoted to the
   compiled tiers ("no stable identity" — but body and closure Arcs are

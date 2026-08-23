@@ -940,6 +940,95 @@ fn parse_aggs(value: &Value) -> Result<Vec<AggSpec>, String> {
 /// Parse CSV text (with a header row) into a Frame, inferring each
 /// column's type: all-Int → Int, numeric → Float, true/false → Bool,
 /// otherwise String. Empty cells are null.
+/// Below this many rows, per-column work (type inference, record
+/// gather) stays on one core; the hand-off costs more than it saves.
+const PAR_COLUMNS_MIN_ROWS: usize = 100_000;
+
+/// Below this many lines, JSONL parses on one core.
+const PAR_JSONL_MIN_LINES: usize = 10_000;
+
+/// How many workers the data stack may use for `n` independent items,
+/// honoring `set_parallel` — 1 means "stay sequential".
+fn stack_workers(n: usize) -> usize {
+    #[cfg(feature = "native")]
+    {
+        let cfg = crate::parallel::get_config();
+        if cfg.enabled {
+            cfg.max_threads.clamp(1, n.max(1))
+        } else {
+            1
+        }
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = n;
+        1
+    }
+}
+
+/// Map `f` over `items` on `workers` threads, preserving order: items
+/// split into contiguous chunks, chunk results concatenated in chunk
+/// order, so the output is identical to the sequential map. The
+/// data-stack twin of `parallel_apply` for host-side work (parsing,
+/// column inference) rather than olang kernels.
+fn parallel_map_ordered<T: Send, R: Send>(
+    items: Vec<T>,
+    workers: usize,
+    f: impl Fn(T) -> R + Sync,
+) -> Vec<R> {
+    if workers <= 1 || items.len() <= 1 {
+        return items.into_iter().map(f).collect();
+    }
+    let chunk_size = items.len().div_ceil(workers);
+    let mut chunks: Vec<Vec<T>> = Vec::with_capacity(workers);
+    let mut it = items.into_iter();
+    loop {
+        let chunk: Vec<T> = it.by_ref().take(chunk_size).collect();
+        if chunk.is_empty() {
+            break;
+        }
+        chunks.push(chunk);
+    }
+    let f = &f;
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = chunks
+            .into_iter()
+            .map(|chunk| scope.spawn(move || chunk.into_iter().map(f).collect::<Vec<R>>()))
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("data-stack worker panicked"))
+            .collect()
+    })
+}
+
+/// Byte offsets that split `text` into about `parts` runs of whole CSV
+/// records: each split lands just after a newline that is *outside*
+/// quotes (RFC 4180 — a doubled `""` toggles the quote state twice, so
+/// it nets out). One sequential pass over the bytes; the parse of each
+/// run then fans out.
+fn csv_record_splits(text: &str, parts: usize) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    let stride = bytes.len().div_ceil(parts.max(1)).max(1);
+    let mut splits = vec![0usize];
+    let mut next_target = stride;
+    let mut in_quotes = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'"' => in_quotes = !in_quotes,
+            b'\n' if !in_quotes && i + 1 >= next_target => {
+                if i + 1 < bytes.len() {
+                    splits.push(i + 1);
+                }
+                next_target = (i + 1) + stride;
+            }
+            _ => {}
+        }
+    }
+    splits.push(bytes.len());
+    splits
+}
+
 fn read_csv(text: &str) -> Result<Value, String> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
@@ -950,18 +1039,77 @@ fn read_csv(text: &str) -> Result<Value, String> {
         .iter()
         .map(|h| h.to_string())
         .collect();
-    let mut cells: Vec<Vec<String>> = vec![Vec::new(); headers.len()];
-    for record in reader.records() {
-        let record = record.map_err(|err| format!("ods.read_csv: {}", err))?;
-        for (c, cell) in cells.iter_mut().enumerate() {
-            cell.push(record.get(c).unwrap_or("").to_string());
+
+    // A large file parses across all cores: split at record boundaries,
+    // parse each run with its own reader, and concatenate the runs' cells
+    // in order — cell-identical to one reader over the whole text. Any
+    // parse error falls back to the sequential reader, whose error
+    // carries the true line number.
+    let n_cols = headers.len();
+    let workers = if text.len() >= 4 * 1024 * 1024 {
+        stack_workers(usize::MAX)
+    } else {
+        1
+    };
+    let mut cells: Vec<Vec<String>> = vec![Vec::new(); n_cols];
+    let mut parallel_ok = false;
+    if workers > 1 {
+        let body_start = reader.position().byte() as usize;
+        let splits = csv_record_splits(&text[body_start..], workers);
+        let runs: Vec<&str> = splits
+            .windows(2)
+            .map(|w| &text[body_start + w[0]..body_start + w[1]])
+            .collect();
+        let parsed: Vec<Result<Vec<Vec<String>>, ()>> =
+            parallel_map_ordered(runs, workers, |run| {
+                let mut r = csv::ReaderBuilder::new()
+                    .has_headers(false)
+                    .from_reader(run.as_bytes());
+                let mut cols: Vec<Vec<String>> = vec![Vec::new(); n_cols];
+                for record in r.records() {
+                    let record = record.map_err(|_| ())?;
+                    for (c, col) in cols.iter_mut().enumerate() {
+                        col.push(record.get(c).unwrap_or("").to_string());
+                    }
+                }
+                Ok(cols)
+            });
+        if parsed.iter().all(|p| p.is_ok()) {
+            for chunk in parsed {
+                let chunk = chunk.expect("checked ok above");
+                for (c, col) in chunk.into_iter().enumerate() {
+                    cells[c].extend(col);
+                }
+            }
+            parallel_ok = true;
         }
     }
-    let pairs = headers
-        .into_iter()
-        .zip(cells)
-        .map(|(name, raw)| (name, infer_column(raw)))
-        .collect();
+    if !parallel_ok {
+        for col in cells.iter_mut() {
+            col.clear();
+        }
+        for record in reader.records() {
+            let record = record.map_err(|err| format!("ods.read_csv: {}", err))?;
+            for (c, cell) in cells.iter_mut().enumerate() {
+                cell.push(record.get(c).unwrap_or("").to_string());
+            }
+        }
+    }
+    // Column type inference re-scans every cell up to four times; on a
+    // large file each column infers on its own core. Columns are
+    // independent and the zip order is preserved, so the frame is
+    // identical to the sequential build.
+    let n_rows = cells.first().map(|c| c.len()).unwrap_or(0);
+    let workers = if n_rows >= PAR_COLUMNS_MIN_ROWS {
+        stack_workers(headers.len())
+    } else {
+        1
+    };
+    let pairs = parallel_map_ordered(
+        headers.into_iter().zip(cells).collect(),
+        workers,
+        |(name, raw)| (name, infer_column(raw)),
+    );
     Frame::new(pairs).map(OdsFrame::into_value).map_err(e)
 }
 
@@ -1057,16 +1205,52 @@ fn parse_jsonl_line(line: &str) -> Result<Value, String> {
 }
 
 /// JSON-lines text: one JSON object per line, blank lines skipped.
+///
+/// Every line is an independent document, so a large file parses across
+/// all cores; lines rejoin in order and the *lowest*-numbered bad line
+/// reports, exactly as a sequential loop would. The rows then go
+/// straight from parsed JSON into column vectors — the row-shaped
+/// intermediate this used to build (one boxed map per line) tripled the
+/// file's size in allocations and cost more than the parse itself.
 fn read_jsonl(text: &str) -> Result<Value, String> {
-    let mut records = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
+    let lines: Vec<(usize, &str)> = text
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .collect();
+    let workers = if lines.len() >= PAR_JSONL_MIN_LINES {
+        stack_workers(lines.len())
+    } else {
+        1
+    };
+    let parsed = parallel_map_ordered(lines, workers, |(i, line)| {
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(serde_json::Value::Object(obj)) => Ok(obj),
+            // A row has named fields; a bare array or number has none,
+            // so there is no honest column to put it in.
+            Ok(other) => Err((
+                i,
+                format!(
+                    "each line must be a JSON object, got {}",
+                    match other {
+                        serde_json::Value::Array(_) => "an array",
+                        serde_json::Value::Null => "null",
+                        serde_json::Value::Bool(_) => "a boolean",
+                        serde_json::Value::Number(_) => "a number",
+                        _ => "a string",
+                    }
+                ),
+            )),
+            Err(err) => Err((i, err.to_string())),
         }
-        match parse_jsonl_line(line) {
+    });
+    let mut records = Vec::with_capacity(parsed.len());
+    for item in parsed {
+        match item {
             Ok(rec) => records.push(rec),
             // The line number is the whole diagnostic for a large file.
-            Err(msg) => {
+            // Results are in line order, so the first Err is the lowest.
+            Err((i, msg)) => {
                 return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
                     "ods.read_jsonl: line {}: {}",
                     i + 1,
@@ -1075,7 +1259,75 @@ fn read_jsonl(text: &str) -> Result<Value, String> {
             }
         }
     }
-    records_to_frame(&records).map(|f| Value::Ok(Box::new(OdsFrame::into_value(f))))
+
+    // Columns are the sorted union of keys, missing keys are null —
+    // the same shape frame_from_records gives the same file.
+    let mut name_set: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for rec in &records {
+        for key in rec.keys() {
+            name_set.insert(key.as_str());
+        }
+    }
+    let mut names: Vec<String> = name_set.into_iter().map(String::from).collect();
+    names.sort();
+
+    // Consume the rows into per-column cell vectors, chunk-parallel:
+    // each worker scatters its contiguous run of rows, and the runs
+    // concatenate per column in chunk order, so cells stay in row order.
+    let col_workers = if records.len() >= PAR_COLUMNS_MIN_ROWS {
+        stack_workers(records.len())
+    } else {
+        1
+    };
+    let chunk_size = records.len().div_ceil(col_workers.max(1)).max(1);
+    let mut chunks: Vec<Vec<serde_json::Map<String, serde_json::Value>>> = Vec::new();
+    let mut it = records.into_iter();
+    loop {
+        let chunk: Vec<_> = it.by_ref().take(chunk_size).collect();
+        if chunk.is_empty() {
+            break;
+        }
+        chunks.push(chunk);
+    }
+    let names_ref = &names;
+    let scattered: Vec<Vec<Vec<Value>>> = parallel_map_ordered(chunks, col_workers, |chunk| {
+        let mut cols: Vec<Vec<Value>> = names_ref
+            .iter()
+            .map(|_| Vec::with_capacity(chunk.len()))
+            .collect();
+        for mut rec in chunk {
+            for (k, name) in names_ref.iter().enumerate() {
+                cols[k].push(match rec.remove(name) {
+                    Some(v) => crate::stdlib::json::json_to_olang_value(v),
+                    None => Value::Unit,
+                });
+            }
+        }
+        cols
+    });
+    let n_cols = names.len();
+    let mut columns: Vec<Vec<Value>> = (0..n_cols).map(|_| Vec::new()).collect();
+    for mut chunk_cols in scattered {
+        for (k, col) in chunk_cols.drain(..).enumerate() {
+            columns[k].extend(col);
+        }
+    }
+    let built = parallel_map_ordered(
+        names.into_iter().zip(columns).collect::<Vec<_>>(),
+        stack_workers(n_cols),
+        |(name, cells)| {
+            series_from_list(&cells)
+                .map(|col| (name.clone(), col))
+                .map_err(|err| format!("column '{}': {}", name, err))
+        },
+    );
+    let mut pairs = Vec::with_capacity(built.len());
+    for item in built {
+        pairs.push(item?);
+    }
+    Frame::new(pairs)
+        .map(|f| Value::Ok(Box::new(OdsFrame::into_value(f))))
+        .map_err(e)
 }
 
 /// A Frame as JSON-lines text: one object per row, nulls omitted rather
@@ -1125,8 +1377,16 @@ fn records_to_frame(records: &[Value]) -> Result<Frame, String> {
         }
     }
     names.sort();
-    let mut pairs = Vec::with_capacity(names.len());
-    for name in names {
+    // Each output column gathers and type-checks independently, so on a
+    // large record set the columns build on their own cores; name order
+    // is preserved and the first failing column (in name order) reports,
+    // the same as the sequential loop.
+    let workers = if records.len() >= PAR_COLUMNS_MIN_ROWS {
+        stack_workers(names.len())
+    } else {
+        1
+    };
+    let built = parallel_map_ordered(names, workers, |name| {
         let cells: Vec<Value> = records
             .iter()
             .map(|rec| match rec {
@@ -1135,8 +1395,13 @@ fn records_to_frame(records: &[Value]) -> Result<Frame, String> {
                 _ => unreachable!("validated above"),
             })
             .collect();
-        let col = series_from_list(&cells).map_err(|err| format!("column '{}': {}", name, err))?;
-        pairs.push((name, col));
+        series_from_list(&cells)
+            .map(|col| (name.clone(), col))
+            .map_err(|err| format!("column '{}': {}", name, err))
+    });
+    let mut pairs = Vec::with_capacity(built.len());
+    for item in built {
+        pairs.push(item?);
     }
     Frame::new(pairs).map_err(e)
 }

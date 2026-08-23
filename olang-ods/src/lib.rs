@@ -38,6 +38,30 @@ pub use frame::{AggOp, AggSpec, Frame, JoinHow, RankMethod};
 use rayon::prelude::*;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// The engine-wide parallel switch. Kernels that decide to fan out on
+/// their own (argsort, the join probe, the group-by scatter) consult it
+/// in addition to their size thresholds, so the host language's
+/// `set_parallel(false)` governs the data stack the same way it governs
+/// explicit `par_map`. Kernels that take a `par` flag are already
+/// governed by their caller and do not check it.
+static PARALLEL_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Flip the engine-wide parallel switch (see [`parallel_enabled`]).
+pub fn set_parallel_enabled(on: bool) {
+    PARALLEL_ENABLED.store(on, Ordering::Relaxed);
+}
+
+/// Is the engine allowed to fan out on its own?
+pub fn parallel_enabled() -> bool {
+    PARALLEL_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Below this many rows, argsort stays sequential — the merge passes of a
+/// parallel stable sort cost more than they save.
+#[cfg(feature = "parallel")]
+const PAR_SORT_ROWS: usize = 100_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DType {
@@ -921,14 +945,41 @@ impl Series {
         let n = self.len();
         let (mut valid_idx, null_idx): (Vec<usize>, Vec<usize>) =
             (0..n).partition(|&i| self.is_valid(i));
+        // Large series sort their index across all cores. Rayon's
+        // par_sort_by is stable with the same comparator, so the result
+        // is bit-identical to the sequential path — ties keep original
+        // order either way.
+        #[cfg(feature = "parallel")]
+        let par = n >= PAR_SORT_ROWS && crate::parallel_enabled();
         match self {
             Series::F64 { values, .. } => {
+                #[cfg(feature = "parallel")]
+                if par {
+                    valid_idx.par_sort_by(|&a, &b| values[a].total_cmp(&values[b]));
+                } else {
+                    valid_idx.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
+                }
+                #[cfg(not(feature = "parallel"))]
                 valid_idx.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
             }
             Series::I64 { values, .. } => {
+                #[cfg(feature = "parallel")]
+                if par {
+                    valid_idx.par_sort_by_key(|&i| values[i]);
+                } else {
+                    valid_idx.sort_by_key(|&i| values[i]);
+                }
+                #[cfg(not(feature = "parallel"))]
                 valid_idx.sort_by_key(|&i| values[i]);
             }
             Series::Str { values, .. } => {
+                #[cfg(feature = "parallel")]
+                if par {
+                    valid_idx.par_sort_by(|&a, &b| values[a].cmp(&values[b]));
+                } else {
+                    valid_idx.sort_by(|&a, &b| values[a].cmp(&values[b]));
+                }
+                #[cfg(not(feature = "parallel"))]
                 valid_idx.sort_by(|&a, &b| values[a].cmp(&values[b]));
             }
             Series::Bool { .. } => {

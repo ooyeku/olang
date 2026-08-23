@@ -2733,6 +2733,9 @@ impl BuiltinFunctions {
         match &args[0] {
             Value::Boolean(enabled) => {
                 crate::parallel::set_parallel_enabled(*enabled);
+                // The data-stack engine fans out on its own (sorts, join
+                // probes, group-by scatters); the switch governs it too.
+                olang_ods::set_parallel_enabled(*enabled);
                 Ok(Value::Unit)
             }
             _ => Err(InterpreterError::TypeError {
