@@ -253,6 +253,14 @@ you care about.
   built-in sample, and self-checks its contract with a `test` block on
   every run
 
+- `metro/` — a transit planner for the fictional city of Arden, built
+  on the bundled collections with every structure load-bearing: station
+  registry in a `table`, fastest routes by `alg.dijkstra` over flat CSR,
+  fare zones from BFS rings, a departure board draining a `heap`, a
+  disruption drill answering continuity with `dsu` and the stranded set
+  in a `bitset`, rankings by `sort_by_key` and quickselect — every
+  printed answer asserted as it goes
+
 ## Also in this directory
 
 - `benchmark.ol` — a standalone timing script: loop, arithmetic, and

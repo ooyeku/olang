@@ -41,6 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   finishes — one hidden reference that could defeat every sole-owner
   fusion on the following line.
 
+### Fixed
+
+- **`testing.assert_eq` compared Native values (BigInt, Date, Bytes) as
+  never-equal** — two equal BigInts "failed" with identical expected
+  and actual in the message. Native values now compare by their own
+  structural equality, and maps compare structurally too. Surfaced by
+  hardening `crunch.ol`'s assertions from the tally-only form to
+  `|> unwrap` (the documented idiom for inline scripts), which turned a
+  silently vacuous check into a loud false failure.
+
 ### Changed
 
 - **Function parameters are mutable bindings.** Assigning to a

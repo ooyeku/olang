@@ -33,7 +33,7 @@ fn sum_down(n, acc) = if n <= 0 => acc else => sum_down(n - 1, acc + n)
 
 t0 = time.monotonic_ms()
 let n1 = 5000000 * scale
-testing.assert_eq(sum_down(n1, 0), n1 * (n1 + 1) / 2)
+testing.assert_eq(sum_down(n1, 0), n1 * (n1 + 1) / 2) |> unwrap
 stages = stages + [{ name: "tail recursion", detail: `${n1} frames deep`, ms: time.monotonic_ms() - t0 }]
 
 // ── 2. deep ordinary recursion: the 100k cap is real ──────────────────
@@ -43,7 +43,7 @@ stages = stages + [{ name: "tail recursion", detail: `${n1} frames deep`, ms: ti
 fn probe(n) = if n <= 0 => 0 else => 1 + probe(n - 1)
 
 t0 = time.monotonic_ms()
-testing.assert_eq(probe(90000), 90000)
+testing.assert_eq(probe(90000), 90000) |> unwrap
 stages = stages + [{ name: "deep recursion", detail: "90000 non-tail frames", ms: time.monotonic_ms() - t0 }]
 
 // ── 3. bigint: integers without a ceiling ──────────────────────────────
@@ -52,8 +52,8 @@ stages = stages + [{ name: "deep recursion", detail: "90000 non-tail frames", ms
 // 0.70. The overflow error points here; this is what it points at.
 t0 = time.monotonic_ms()
 let f300 = fold(range(1, 301), bigint.of(1), (acc, i) => acc * i)
-testing.assert_eq(len(to_string(f300)), 615)
-testing.assert_eq(str.substring(to_string(f300), 0, 6), "306057")
+testing.assert_eq(len(to_string(f300)), 615) |> unwrap
+testing.assert_eq(str.substring(to_string(f300), 0, 6), "306057") |> unwrap
 
 let mut fib_a = bigint.of(0)
 let mut fib_b = bigint.of(1)
@@ -62,12 +62,12 @@ for i in range(0, 1000) {
     fib_a = fib_b
     fib_b = next
 }
-testing.assert_eq(len(to_string(fib_a)), 209)
-testing.assert_eq(fib_a % 10000000000, bigint.of(6849228875))
+testing.assert_eq(len(to_string(fib_a)), 209) |> unwrap
+testing.assert_eq(fib_a % 10000000000, bigint.of(6849228875)) |> unwrap
 
 // 1000003 is prime, so 2^1000002 ≡ 1 (mod 1000003).
-testing.assert_eq(bigint.mod_pow(bigint.of(2), bigint.of(1000002), bigint.of(1000003)), bigint.of(1))
-testing.assert_eq(bigint.gcd(f300, bigint.pow(bigint.of(10), 60)), bigint.pow(bigint.of(10), 60))
+testing.assert_eq(bigint.mod_pow(bigint.of(2), bigint.of(1000002), bigint.of(1000003)), bigint.of(1)) |> unwrap
+testing.assert_eq(bigint.gcd(f300, bigint.pow(bigint.of(10), 60)), bigint.pow(bigint.of(10), 60)) |> unwrap
 stages = stages + [{ name: "bigint", detail: "300!, fib(1000), Fermat", ms: time.monotonic_ms() - t0 }]
 
 // ── 4. automatic parallelism: a plain map, every core ─────────────────
@@ -80,7 +80,7 @@ let n4 = 1000000 * scale
 let xs = range(0, n4)
 let squared_sum = xs |> map((x) => x * x % 1000003) |> sum()
 let by_fold = fold(xs, 0, (acc, x) => acc + x * x % 1000003)
-testing.assert_eq(squared_sum, by_fold)
+testing.assert_eq(squared_sum, by_fold) |> unwrap
 stages = stages + [{ name: "auto-parallel map", detail: `${n4} pure elements`, ms: time.monotonic_ms() - t0 }]
 
 // ── 5. explicit parallel kernels: par_map on user functions ───────────
@@ -95,8 +95,8 @@ fn collatz_steps(n, steps) =
 
 t0 = time.monotonic_ms()
 let steps = par_map(range(1, 100000), (n) => collatz_steps(n, 0))
-testing.assert_eq(fold(steps, 0, (a, b) => math.max(a, b)), 350)
-testing.assert_eq(steps[77030], 350)
+testing.assert_eq(fold(steps, 0, (a, b) => math.max(a, b)), 350) |> unwrap
+testing.assert_eq(steps[77030], 350) |> unwrap
 stages = stages + [{ name: "par_map", detail: "collatz to 100000", ms: time.monotonic_ms() - t0 }]
 
 // ── 6. the parallel data stack: parse, group, sort, join ──────────────
@@ -114,26 +114,26 @@ t0 = time.monotonic_ms()
     let csv_text = "id,cat,score\n" + str.join(lines, "\n")
 
     let df = ods.read_csv(csv_text)
-    testing.assert_eq(ods.n_rows(df), n)
+    testing.assert_eq(ods.n_rows(df), n) |> unwrap
 
     let by_cat = ods.group_by(df, ["cat"], [["total", "sum", "score"], ["rows", "count", ""]])
-    testing.assert_eq(ods.n_rows(by_cat), 4)
+    testing.assert_eq(ods.n_rows(by_cat), 4) |> unwrap
 
     // Re-derive alpha's total from the seeds: alpha rows are i % 4 == 0.
     let alpha_expected = range(0, n)
         |> filter((i) => i % 4 == 0)
         |> fold(0, (acc, i) => acc + (i * 1103515245 + 12345) % 100000)
     let alpha_row = ods.filter(by_cat, ods.eq(ods.column(by_cat, "cat"), "alpha"))
-    testing.assert_eq(ods.get(ods.column(alpha_row, "total"), 0), alpha_expected)
+    testing.assert_eq(ods.get(ods.column(alpha_row, "total"), 0), alpha_expected) |> unwrap
 
     // The row count survives a parallel sort and a self-join.
     let sorted = ods.sort_by(df, "score", true)
-    testing.assert_eq(ods.n_rows(sorted), n)
-    testing.assert_eq(ods.get(ods.column(sorted, "score"), 0), fold(seeds, 0, (a, b) => math.max(a, b)))
+    testing.assert_eq(ods.n_rows(sorted), n) |> unwrap
+    testing.assert_eq(ods.get(ods.column(sorted, "score"), 0), fold(seeds, 0, (a, b) => math.max(a, b))) |> unwrap
 
     let dim = ods.frame_from_records(map(range(0, 4), (i) => #{ "cat": cats[i], "rank": i }))
     let joined = ods.join_left(df, dim, "cat")
-    testing.assert_eq(ods.n_rows(joined), n)
+    testing.assert_eq(ods.n_rows(joined), n) |> unwrap
 }
 stages = stages + [{ name: "data stack", detail: `${150000 * scale} CSV rows`, ms: time.monotonic_ms() - t0 }]
 
@@ -161,7 +161,7 @@ t0 = time.monotonic_ms()
     }
     let g = alg.graph(n, edges)
     let order = alg.topo_sort(g) |> unwrap
-    testing.assert_eq(len(order), n)
+    testing.assert_eq(len(order), n) |> unwrap
 
     // Every edge points forward in the order — the topological contract.
     let mut position = col.filled(n, 0)
@@ -172,7 +172,7 @@ t0 = time.monotonic_ms()
     for e in edges {
         if position[e[0]] >= position[e[1]] => { forward = false }
     }
-    testing.assert_eq(forward, true)
+    testing.assert_eq(forward, true) |> unwrap
 
     // Earliest reachable cost from the root, and hop counts agree with
     // reachability.
@@ -182,7 +182,7 @@ t0 = time.monotonic_ms()
     for u in range(0, n) {
         if (dist[u] == -1) != (hops[u] == -1) => { consistent = false }
     }
-    testing.assert_eq(consistent, true)
+    testing.assert_eq(consistent, true) |> unwrap
 
     // Drain the tasks by cost through the heap; verify sorted order.
     let mut h = heap.new()
@@ -199,14 +199,14 @@ t0 = time.monotonic_ms()
         if c < last => { ordered = false }
         last = c
     }
-    testing.assert_eq(ordered, true)
+    testing.assert_eq(ordered, true) |> unwrap
 
     // The completion set is exactly the reachable set.
     let mut reachable = 0
     for u in range(0, n) {
         if dist[u] != -1 => { reachable = reachable + 1 }
     }
-    testing.assert_eq(bitset.count(done), reachable)
+    testing.assert_eq(bitset.count(done), reachable) |> unwrap
 
     // Count tasks by cost band in the flat table; totals re-derived.
     let mut t = table.new()
@@ -220,7 +220,7 @@ t0 = time.monotonic_ms()
     for v in table.values(t) {
         banded = banded + v
     }
-    testing.assert_eq(banded, reachable)
+    testing.assert_eq(banded, reachable) |> unwrap
 
     // Connectivity groups over the undirected edges match bfs
     // reachability from the root for the root's own group.
@@ -232,7 +232,7 @@ t0 = time.monotonic_ms()
     for u in range(0, n) {
         if dsu.connected(d, 0, u) != (hops[u] != -1) => { agree = false }
     }
-    testing.assert_eq(agree, true)
+    testing.assert_eq(agree, true) |> unwrap
 }
 stages = stages + [{ name: "collections", detail: `${2000 * scale}-task pipeline`, ms: time.monotonic_ms() - t0 }]
 

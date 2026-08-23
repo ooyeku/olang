@@ -350,6 +350,15 @@ fn values_equal(a: &Value, b: &Value) -> bool {
         // Allow numeric type coercion
         (Value::Integer(a), Value::Float(b)) => floats_equal(*a as f64, *b),
         (Value::Float(a), Value::Integer(b)) => floats_equal(*a, *b as f64),
+        // Native values (BigInt, Date, Bytes, ...) carry their own
+        // structural equality; without this arm two equal BigInts
+        // "failed" with identical expected and actual in the message.
+        (Value::Native(a), Value::Native(b)) => a == b,
+        (Value::Map(a), Value::Map(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(k, v)| b.get(k).is_some_and(|bv| values_equal(v, bv)))
+        }
         _ => false,
     }
 }
