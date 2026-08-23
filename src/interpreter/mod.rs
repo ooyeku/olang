@@ -1012,16 +1012,16 @@ impl Interpreter {
             Expr::Identifier(name) => match self.environment.get(name) {
                 Some(v) => Ok(v),
                 None => {
-                    // Embedded olang modules are automatically available:
-                    // an unbound name that matches one loads it here, on
-                    // first touch — `heap.push(...)` works in a bare
-                    // script with no `use`, and a program that never
-                    // reaches for a module never pays for it. A user
-                    // binding of the same name wins by construction: a
-                    // bound name never misses. Loading rides the normal
-                    // `use` machinery (and its per-process parsed-AST
-                    // cache), so `use heap` remains equivalent and legal.
-                    if crate::stdlib::embedded::is_embedded(name) {
+                    // The bundled `collections` module is automatically
+                    // available: the unbound name loads it here, on first
+                    // touch — `collections.heap.push(...)` works in a
+                    // bare script with no `use`, and a program that never
+                    // reaches for it never pays for it. A user binding of
+                    // the same name wins by construction: a bound name
+                    // never misses. Loading rides the normal `use`
+                    // machinery (and its per-process parsed-AST cache),
+                    // so `use collections` remains equivalent and legal.
+                    if crate::stdlib::embedded::is_auto(name) {
                         self.eval_use_decl(crate::ast::UseDecl {
                             path: vec![name.clone()],
                             items: Vec::new(),
@@ -1936,13 +1936,16 @@ impl Interpreter {
         // `module.field` on a bare name — because deciding to move
         // means evaluating it before the arguments, and an effectful
         // callee expression would run out of order.
-        let callee_is_lookup = match callee.as_ref() {
-            Expr::Identifier(_) | Expr::LocalRef { .. } => true,
-            Expr::FieldAccess { object, .. } => {
-                matches!(object.as_ref(), Expr::Identifier(_) | Expr::LocalRef { .. })
+        fn is_pure_lookup(e: &Expr) -> bool {
+            match e {
+                Expr::Identifier(_) | Expr::LocalRef { .. } => true,
+                // A field chain over a bare name — `collections.heap.push`
+                // — is still lookups all the way down.
+                Expr::FieldAccess { object, .. } => is_pure_lookup(object),
+                _ => false,
             }
-            _ => false,
-        };
+        }
+        let callee_is_lookup = is_pure_lookup(callee.as_ref());
         if !callee_is_lookup || arguments.is_empty() {
             return None;
         }

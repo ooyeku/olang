@@ -1,6 +1,6 @@
-// alg — the algorithms companion to the bundled collections, written in
-// olang and bundled into the binary. Automatically available:
-// `alg.sort(xs)` works with no `use`.
+// alg — the algorithms companion to the bundled data structures,
+// written in olang: the `collections.alg` submodule. Fully qualified
+// with no `use`, or `use collections { alg }` for the short name.
 //
 // Five families: stable sorting (plain and by key), the binary-search
 // family over sorted lists, selection without sorting, graph traversal

@@ -1,6 +1,6 @@
-// table — a flat hash table with open addressing, written in olang and
-// bundled into the binary. Automatically available: `table.new()` works
-// with no `use`.
+// table — a flat hash table with open addressing, written in olang:
+// the `collections.table` submodule. Fully qualified with no `use`, or
+// `use collections { table }` for the short name.
 //
 // Keys are Ints or Strings; values are any olang value. Against the
 // builtin persistent Map, this table trades structural sharing for flat

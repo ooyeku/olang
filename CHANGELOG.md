@@ -9,14 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Collections, in olang (Campaign 6).** Five data structures and an
-  algorithms module — `heap`, `deque`, `table` (open-addressing hash),
-  `dsu` (union–find), `bitset`, and `alg` (stable merge sort,
-  sort-by-key, the bisect family, quickselect, CSR graphs, BFS,
-  topological sort, Dijkstra) — written entirely in olang, compiled
-  into the binary, and *automatically available*: an unresolved name
-  matching a bundled module loads it on first touch, no `use` needed,
-  no startup cost when unused. One calling convention throughout:
+- **Collections, in olang (Campaign 6).** One `collections` module of
+  six submodules — `collections.heap`, `.deque`, `.table`
+  (open-addressing hash), `.dsu` (union–find), `.bitset`, and `.alg`
+  (stable merge sort, sort-by-key, the bisect family, quickselect, CSR
+  graphs, BFS, topological sort, Dijkstra) — written entirely in olang,
+  compiled into the binary, and *automatically available*: the one name
+  loads on first touch, no `use` needed, no startup cost when unused,
+  and no other global names claimed. `use collections { heap, table }`
+  imports short names where code leans on them. One calling convention throughout:
   operations take the handle first and return it, the caller rebinds
   (`h = heap.push(h, prio, item)`), and reads never rebind. Handles are
   single flat lists with documented layouts; every module carries its

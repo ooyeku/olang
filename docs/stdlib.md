@@ -482,27 +482,34 @@ sanctioned, explicitly lossy conversion.
 
 ## Collections, in olang
 
-Five data structures and an algorithms module, written entirely in
-olang, compiled into the binary, and **automatically available** — an
-unresolved name that matches one loads it on first touch, so
-`heap.push(...)` works in a bare script with no `use`, and a program
-that never reaches for a module never pays for it. (`use heap` remains
-legal and equivalent; a binding of your own with the same name always
-wins.)
+One module — `collections` — of six submodules, written entirely in
+olang, compiled into the binary, and **automatically available**: the
+name loads on first touch, so `collections.heap.push(...)` works in a
+bare script with no `use`, one name is all the library claims on the
+global surface, and a program that never reaches for it never pays for
+it. (A binding of your own named `collections` always wins.)
 
-| Module | Structure | For |
+| Submodule | Structure | For |
 |---|---|---|
-| `heap` | binary min-heap of (priority, item) pairs | Dijkstra, schedulers, top-k, event queues |
-| `deque` | double-ended queue over a ring buffer | BFS frontiers, sliding windows, work lists |
-| `table` | flat hash table, open addressing | counting, indexing, hot single-table loops |
-| `dsu` | disjoint sets (union–find), by rank + compression | connectivity, Kruskal, clustering |
-| `bitset` | dense integer set, 63 members per word | sieves, visited-sets, set algebra |
-| `alg` | sort / bisect / select / graphs / Dijkstra | the classic algorithms over the above |
+| `collections.heap` | binary min-heap of (priority, item) pairs | Dijkstra, schedulers, top-k, event queues |
+| `collections.deque` | double-ended queue over a ring buffer | BFS frontiers, sliding windows, work lists |
+| `collections.table` | flat hash table, open addressing | counting, indexing, hot single-table loops |
+| `collections.dsu` | disjoint sets (union–find), by rank + compression | connectivity, Kruskal, clustering |
+| `collections.bitset` | dense integer set, 63 members per word | sieves, visited-sets, set algebra |
+| `collections.alg` | sort / bisect / select / graphs / Dijkstra | the classic algorithms over the above |
+
+Code that leans on a few submodules imports their short names — the
+idiomatic form:
+
+```olang
+use collections { heap, table }
+```
 
 **One calling convention.** Operations that write take the handle first
 and return the new handle, and you rebind the same name:
 
 ```olang
+use collections { heap }
 let mut h = heap.new()
 h = heap.push(h, 3, "job-a")
 h = heap.push(h, 1, "job-b")

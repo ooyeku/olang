@@ -11,9 +11,12 @@
 /// by dropping a `.ol` file beside this file and listing it here.
 const MODULES: &[(&str, &str)] = &[
     // The bundled collections (Campaign 6): data structures and
-    // algorithms written in olang against the sole-owner fusions, and
-    // automatically available — an unresolved name matching a module
-    // here loads it on first touch, no `use` required.
+    // algorithms written in olang against the sole-owner fusions. One
+    // public module of submodules — `collections.heap`, ... — assembled
+    // by collections.ol from the per-structure sources below, which stay
+    // individually `use`-able (that is how collections.ol and alg.ol
+    // import their siblings) but are not part of the advertised surface.
+    ("collections", include_str!("collections.ol")),
     ("heap", include_str!("heap.ol")),
     ("deque", include_str!("deque.ol")),
     ("bitset", include_str!("bitset.ol")),
@@ -64,6 +67,15 @@ pub fn parsed(name: &str) -> Result<Option<std::sync::Arc<crate::ast::Program>>,
     let arc = std::sync::Arc::new(program);
     cache.lock().unwrap().insert(static_name, arc.clone());
     Ok(Some(arc))
+}
+
+/// The modules that load *automatically* at an unresolved-identifier
+/// miss. Only `collections` — one name on the global surface; its
+/// submodules arrive through it (or through an explicit
+/// `use collections {{ heap, ... }}`). The other embedded modules stay
+/// `use`-able but never claim a bare name on their own.
+pub fn is_auto(name: &str) -> bool {
+    name == "collections"
 }
 
 /// Whether `name` is an embedded module.

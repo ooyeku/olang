@@ -124,24 +124,38 @@ fn shows_of(v: Value) -> String {
 // ── automatic availability ────────────────────────────────────────────
 
 #[test]
-fn bundled_modules_load_with_no_use() {
+fn the_collections_module_loads_with_no_use() {
+    // One name on the global surface, submodules within it — fully
+    // qualified works bare, and the move fusion holds through the
+    // nested field chain.
     assert_eq!(
-        eval_identical("let mut h = heap.new()\nh = heap.push(h, 1, \"x\")\nheap.top_item(h)"),
+        eval_identical(
+            "let mut h = collections.heap.new()\nh = collections.heap.push(h, 1, \"x\")\ncollections.heap.top_item(h)"
+        ),
         Value::String(std::sync::Arc::new("x".to_string()))
     );
 }
 
 #[test]
-fn a_user_binding_of_a_module_name_wins() {
-    assert_eq!(eval_identical("let heap = 7\nheap + 1"), Value::Integer(8));
+fn submodules_import_by_name() {
+    assert_eq!(
+        eval_identical("use collections { dsu }\nlet d = dsu.new(3)\ndsu.groups(d)"),
+        Value::Integer(3)
+    );
 }
 
 #[test]
-fn explicit_use_remains_equivalent() {
+fn a_user_binding_of_the_module_name_wins() {
     assert_eq!(
-        eval_identical("use dsu\nlet d = dsu.new(3)\ndsu.groups(d)"),
-        Value::Integer(3)
+        eval_identical("let collections = 7\ncollections + 1"),
+        Value::Integer(8)
     );
+}
+
+#[test]
+fn the_submodule_names_claim_no_bare_globals() {
+    let err = eval("deque.new()", false).expect_err("bare submodule name must miss");
+    assert!(err.contains("Undefined variable: deque"), "{}", err);
 }
 
 // ── the embedded test blocks run here ─────────────────────────────────
@@ -189,6 +203,7 @@ fn every_bundled_module_passes_its_own_tests() {
 #[test]
 fn heap_drains_in_sorted_order() {
     let src = "\
+use collections { heap, table, dsu, bitset, alg }\n\
 let n = 2000\n\
 let mut h = heap.new()\n\
 for i in range(0, n) {\n\
@@ -212,6 +227,7 @@ fn table_matches_the_builtin_map() {
     // The same seeded workload of puts, overwrites, and removes against
     // the builtin persistent map: sizes and every surviving key agree.
     let src = "\
+use collections { heap, table, dsu, bitset, alg }\n\
 let mut t = table.new()\n\
 let mut m = #{}\n\
 for i in range(0, 600) {\n\
@@ -249,7 +265,7 @@ fn alg_sort_matches_a_rust_reference() {
             .join(", ")
     );
     let src = format!(
-        "let xs = map(range(0, {}), (i) => (i * 1103515245 + 12345) % 10007)\nto_string(alg.sort(xs))",
+        "let xs = map(range(0, {}), (i) => (i * 1103515245 + 12345) % 10007)\nto_string(collections.alg.sort(xs))",
         n
     );
     assert_eq!(shows_of(eval_identical(&src)), want);
@@ -260,6 +276,7 @@ fn dijkstra_agrees_with_bfs_on_unit_weights() {
     // On a graph whose weights are all 1, shortest path length is hop
     // count: dijkstra and bfs must answer identically.
     let src = "\
+use collections { heap, table, dsu, bitset, alg }\n\
 let n = 60\n\
 let mut unweighted = []\n\
 let mut weighted = []\n\
@@ -278,6 +295,7 @@ fn dsu_agrees_with_reachability() {
     // Union a seeded edge set, then check connectivity for every pair
     // against bfs over the same edges (made bidirectional).
     let src = "\
+use collections { heap, table, dsu, bitset, alg }\n\
 let n = 40\n\
 let mut d = dsu.new(n)\n\
 let mut edges = []\n\

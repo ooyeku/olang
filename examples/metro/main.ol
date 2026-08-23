@@ -16,6 +16,11 @@
 //
 // Run:  olang run examples/metro/main.ol
 
+// The planner leans on five submodules; the import gives them their
+// short names (fully qualified `collections.heap.push(...)` needs no
+// `use` at all).
+use collections { heap, table, dsu, bitset, alg }
+
 // ── the network ───────────────────────────────────────────────────────
 // Four lines, twenty-six stations, times in minutes between adjacent
 // stops. A segment [a, b, mins] runs both ways; lines meet where they

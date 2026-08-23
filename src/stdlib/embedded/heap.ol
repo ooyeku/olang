@@ -1,5 +1,6 @@
-// heap — a binary min-heap, written in olang and bundled into the binary.
-// Automatically available: `heap.new()` works with no `use`.
+// heap — a binary min-heap, written in olang: the `collections.heap`
+// submodule. Reach it fully qualified with no `use` at all, or import
+// the short name: `use collections { heap }`.
 //
 // The heap orders (priority, item) pairs by priority — an Int or Float —
 // and each operation touches O(log n) elements. `item` may be any value;

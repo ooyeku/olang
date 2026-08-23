@@ -1,5 +1,6 @@
-// dsu — disjoint sets (union–find), written in olang and bundled into
-// the binary. Automatically available: `dsu.new(n)` works with no `use`.
+// dsu — disjoint sets (union–find), written in olang: the
+// `collections.dsu` submodule. Fully qualified with no `use`, or
+// `use collections { dsu }` for the short name.
 //
 // The structure answers one question fast — "are a and b in the same
 // group?" — while groups merge over time. It is the backbone of Kruskal's

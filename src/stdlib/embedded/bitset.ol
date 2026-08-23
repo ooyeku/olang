@@ -1,6 +1,6 @@
 // bitset — a fixed-capacity set of small non-negative integers, written
-// in olang and bundled into the binary. Automatically available:
-// `bitset.new(n)` works with no `use`.
+// in olang: the `collections.bitset` submodule. Fully qualified with no
+// `use`, or `use collections { bitset }` for the short name.
 //
 // Sixty-three members per word: membership, insertion, and removal are
 // one index plus one mask, and whole-set algebra (union, intersect,

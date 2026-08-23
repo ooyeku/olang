@@ -1,6 +1,6 @@
-// deque — a double-ended queue over a ring buffer, written in olang and
-// bundled into the binary. Automatically available: `deque.new()` works
-// with no `use`.
+// deque — a double-ended queue over a ring buffer, written in olang:
+// the `collections.deque` submodule. Fully qualified with no `use`, or
+// `use collections { deque }` for the short name.
 //
 // Push and pop at either end in O(1): the queue behind breadth-first
 // search, sliding windows, work lists, and anywhere else "first in,

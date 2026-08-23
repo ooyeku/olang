@@ -138,6 +138,7 @@ t0 = time.monotonic_ms()
 stages = stages + [{ name: "data stack", detail: `${150000 * scale} CSV rows`, ms: time.monotonic_ms() - t0 }]
 
 // ── 7. the bundled collections: structures composing, all in olang ────
+use collections { heap, table, dsu, bitset, alg }
 // A task-scheduling pipeline exercising every bundled module at once:
 // dependencies topo-sorted over a CSR graph, earliest starts by
 // Dijkstra over the same edges weighted, a heap draining tasks in
