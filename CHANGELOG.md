@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.70.0] - 2026-08-23
+
 ### Added
 
 - **`bigint` — arbitrary-precision integers (Campaign 5, N1).**
