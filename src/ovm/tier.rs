@@ -312,8 +312,21 @@ impl BytecodeTier {
         // probe three maps with it.
         let name: &str = match &func.name {
             Some(name) => name,
-            // Anonymous lambdas have no stable identity to profile
-            None => return TierOutcome::Fallback,
+            // An anonymous lambda has no name to profile by — but it has
+            // identity: its body and closure Arcs, exactly what the HOF
+            // cache keys on. Compile and run by identity, the same route
+            // ambiguous names take. This is what lets a lambda kernel
+            // (`map((x) => ...)`, a par_map worker's function) run on the
+            // compiled tiers instead of tree-walking every element; a
+            // body the tier cannot take caches its refusal, so the cost
+            // of an uncompilable lambda is one attempt, ever.
+            None => {
+                let arity = func.parameters.len();
+                return match self.vm.hof_function_id(func, arity) {
+                    Some(func_id) => self.run_on_vm(func_id, args, None),
+                    None => TierOutcome::Fallback,
+                };
+            }
         };
 
         if self.rejected.contains(name) {
@@ -889,16 +902,23 @@ let t2 = time.monotonic_ms()
     }
 
     #[test]
-    fn anonymous_functions_are_skipped() {
+    fn anonymous_functions_promote_by_identity() {
+        // A lambda has no name to profile, but its body/closure Arcs are
+        // identity enough: it compiles through the HOF cache and RUNS on
+        // the tier. This used to assert the opposite — anonymous kernels
+        // fell back to the tree walk, which is why `map((x) => ...)` and
+        // every par_map lambda ran an order of magnitude slower than the
+        // same function with a name.
         let mut tier = BytecodeTier::new(1);
         let func = Function {
             name: None,
             ..double_fn()
         };
-        assert!(matches!(
-            tier.try_call(&func, &[Value::Integer(5)]),
-            TierOutcome::Fallback
-        ));
+        match tier.try_call(&func, &[Value::Integer(5)]) {
+            TierOutcome::Ran(Ok(v)) => assert_eq!(v, Value::Integer(10)),
+            TierOutcome::Ran(Err(e)) => panic!("lambda errored on the tier: {e}"),
+            TierOutcome::Fallback => panic!("lambda must run on the tier, not fall back"),
+        }
     }
 
     #[test]

@@ -643,6 +643,22 @@ pub struct Function {
     pub def_file: Option<String>,
 }
 
+impl Function {
+    /// A copy whose `body` and `closure` live behind FRESH Arcs. The
+    /// parallel workers use this: every call touches those two Arcs (the
+    /// HOF cache verifies identity through `Weak::upgrade`, an atomic
+    /// read-modify-write), and when a dozen cores share one kernel value
+    /// they serialize on its reference counts. One localization per
+    /// worker makes the atomics core-local; the body AST is cloned once
+    /// per worker, not per element.
+    pub fn thread_localized(&self) -> Function {
+        let mut f = self.clone();
+        f.body = std::sync::Arc::new((*self.body).clone());
+        f.closure = std::sync::Arc::new((*self.closure).clone());
+        f
+    }
+}
+
 /// Built-in function
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BuiltinFunction {

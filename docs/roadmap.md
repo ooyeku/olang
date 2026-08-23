@@ -816,6 +816,27 @@ becomes a promise — is the cheap insurance a same-day cut would forgo.
 checklist is empty.
 
 
+## Campaign 5 — modern hardware and modern numbers
+
+Three lanes from the 2026-08-22 performance review, all additive, in
+execution order. Measured starting points, on an M5 Pro (18 cores):
+plain `map` over 3M items uses one core; `par_map` on the same work
+uses 11.7 cores but 10× the total CPU for near-zero wall gain (the
+machinery re-enters interpreter dispatch per item instead of running
+the compiled kernel over chunks); `fact(25)` overflows i64; recursion
+dies at a counted 1,000 frames on a thread that already owns 256MB of
+stack.
+
+| Lane | Work | Status |
+|---|---|---|
+| H1 — compiled-kernel parallelism | `par_map`/`par_filter` workers run the JIT-compiled kernel over chunks instead of per-item interpreter dispatch; parallel cost approaches the JIT's per-item cost, so wall-clock wins start at realistic sizes. | planned |
+| H2 — automatic parallelism for pure bulk ops | Plain `map`/`filter` over large inputs fan out automatically when the kernel is provably pure (the JIT whitelist + effects.rs are the proof). Order-preserving + pure ⇒ bit-identical to sequential ⇒ tier agreement, determinism, and replay hold exactly. Arbitrary-loop auto-parallelism is explicitly excluded. | planned |
+| H3 — parallel data-stack kernels | Parallel CSV/JSONL parsing, parallel sort, the group_by hash pass (documented sequential), thresholds re-measured. | planned |
+| N1 — BigInt | A native BigInt value (the Bytes/Date pattern, num-bigint backend): bigint.of/parse, full operator integration via the native operator hook, mixed Int⊕BigInt promotion, pow/divmod/to_string/to_int. The overflow error points at it. | planned |
+| R4a — stack-headroom recursion guard | The 1,000-frame counter becomes a real stack-headroom check with a configurable hard cap (default ~100k) enforced identically on both tiers. | planned |
+| R4b — tail-call elimination | Self-tail-recursive calls become loops on all three tiers: O(1) stack at any depth. Elided tail frames are noted in traces. | planned |
+
+
 | Lane | Work | Status |
 |---|---|---|
 | R1 — book audit | A full pass over the book against the final language: every chapter verified against implementation behavior, every example exercised, the semantics-release changes reflected everywhere. | **done** — eight sittings: every chapter read or probed against the binary, ~30 corrections, four permanent guards (`doc_examples`, `doc_references`, `doc_outputs`, `doc_anchors`) |

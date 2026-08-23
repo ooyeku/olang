@@ -1680,6 +1680,200 @@ impl Interpreter {
         self.coverage_file_stack.push(attributed_to);
     }
 
+    /// Call a user function by reference — the hot path `map`,
+    /// `filter`, the parallel workers, and every higher-order builtin
+    /// go through. `call_function` used to be the only entry, and it
+    /// takes the callee by VALUE: every per-element call cloned the
+    /// whole `Function` — its parameter vector, its name, its check
+    /// tables — heap allocations per element, and allocator contention
+    /// once a dozen cores did it at once. Borrowing removes the clone;
+    /// nothing here needed ownership.
+    pub fn call_user_function(
+        &mut self,
+        func: &Function,
+        arguments: Vec<Value>,
+    ) -> Result<Value, InterpreterError> {
+        if self.call_depth >= self.max_call_depth {
+            return Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
+                    self.max_call_depth
+                ),
+            });
+        }
+        {
+            // Increment call depth for user functions
+            self.call_depth += 1;
+            self.call_stack_names
+                .push(func.name.clone().unwrap_or_else(|| "<lambda>".to_string()));
+
+            // Count required parameters (those without default values)
+            let required_params = func
+                .parameters
+                .iter()
+                .filter(|p| p.default_value.is_none())
+                .count();
+
+            // Check if we have enough arguments for required parameters
+            if arguments.len() < required_params {
+                return Err(InterpreterError::ArityMismatch {
+                    expected: required_params,
+                    got: arguments.len(),
+                });
+            }
+
+            // Check if we have too many arguments
+            if arguments.len() > func.parameters.len() {
+                return Err(InterpreterError::ArityMismatch {
+                    expected: func.parameters.len(),
+                    got: arguments.len(),
+                });
+            }
+
+            // Enforce trait bounds at the call boundary: an argument whose
+            // type does not implement a bounded parameter's trait fails
+            // here with a clear message, not deep inside the body.
+            if !func.param_bounds.is_empty() {
+                self.check_param_bounds(func, &arguments)?;
+            }
+
+            // Enforce declared parameter types (annotations are
+            // promises); runs before the tier so every execution path
+            // sees the same boundary.
+            if !func.param_checks.is_empty() {
+                self.check_param_types(func, &arguments)?;
+            }
+
+            // Hot-function promotion: run on the bytecode tier when the
+            // function is eligible, otherwise fall through to the AST walk
+            if self.bytecode_tier.is_some() && arguments.len() == func.parameters.len() {
+                let mut tier = self.bytecode_tier.take();
+                let outcome = tier
+                    .as_mut()
+                    .map(|t| t.try_call(func, &arguments))
+                    .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
+                self.bytecode_tier = tier;
+
+                if let crate::ovm::tier::TierOutcome::Ran(result) = outcome {
+                    self.call_depth -= 1;
+                    self.call_stack_names.pop();
+                    return match result {
+                        Ok(v) => Ok(v),
+                        Err(message) => {
+                            let err = Self::map_tier_error_message(message);
+                            // The VM tracked where the error happened
+                            // (innermost located statement) and which of
+                            // its frames were live there — splice them
+                            // onto the interpreter's own live stack so
+                            // the report is identical to a pure
+                            // interpreter run.
+                            if self.pending_error_location.is_none()
+                                && !Self::is_control_signal(&err)
+                            {
+                                let (span, frames, leak) = self
+                                    .bytecode_tier
+                                    .as_mut()
+                                    .map(|t| t.take_error_trace())
+                                    .unwrap_or_default();
+                                if let Some((line, column)) = span {
+                                    let mut call_stack = self.call_stack_names.clone();
+                                    call_stack.extend(frames.into_iter().rev());
+                                    self.pending_error_location = Some(crate::ast::ErrorLocation {
+                                        line,
+                                        column,
+                                        call_stack,
+                                        hint: self.pending_error_hint.take(),
+                                    });
+                                } else if let Some(leaked) = leak {
+                                    // No located statement inside the VM:
+                                    // the capture happens at an enclosing
+                                    // interpreter statement — with the
+                                    // parameter-check frame still alive,
+                                    // exactly like the interpreter's own
+                                    // (never-popped) frame.
+                                    self.call_stack_names.push(leaked);
+                                }
+                            }
+                            Err(err)
+                        }
+                    };
+                }
+            }
+
+            // Create new environment with current environment as parent
+            let mut new_env = Environment::with_parent(self.environment.clone());
+
+            // Adopt the closure as the environment's flat map in O(1) —
+            // the persistent map is shared, not copied. This was a loop
+            // defining every closure entry (the whole prelude, ~200
+            // entries) on every single call.
+            if !func.closure.is_empty() {
+                new_env.variables = func.closure.clone();
+            }
+
+            // If this is a named function, add it to its own scope for recursion
+            if let Some(name) = &func.name {
+                new_env.define_local(name.clone(), Value::Function(func.clone()));
+            }
+
+            // Parameters are defined over the shared map; copy-on-write
+            // clones only the touched structure
+            for (i, param) in func.parameters.iter().enumerate() {
+                let value = if i < arguments.len() {
+                    arguments[i].clone()
+                } else if let Some(default_expr) = &param.default_value {
+                    self.eval_expr(default_expr)?
+                } else {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!("Missing argument for parameter {}", param.name),
+                    });
+                };
+
+                new_env.define_local(param.name.clone(), value);
+            }
+
+            // Coverage: while this body runs, lines belong to the file
+            // the function was defined in, not the caller's file.
+            // Capability enforcement rides the same stack — a gated
+            // builtin call is attributed to the file (and so the
+            // package) of the function that made it.
+            let track_coverage = self.coverage.is_some() || self.caps.is_some();
+            if track_coverage {
+                self.coverage_file_stack.push(func.def_file.clone());
+            }
+
+            // MEMORY OPTIMIZED: Use scoped evaluation instead of environment replacement
+            let result = match self.eval_expr_with_env(&func.body, new_env) {
+                // `?` hit an Err inside this body: the function returns
+                // that Err to its caller — the early-return semantics.
+                Err(InterpreterError::ErrPropagation(err)) => Ok(err),
+                // `return v` inside this body: the function's value is v.
+                Err(InterpreterError::ReturnSignal(v)) => Ok(v),
+                other => other,
+            };
+
+            if track_coverage {
+                self.coverage_file_stack.pop();
+            }
+
+            // Enforce the declared return type on whatever the body
+            // produced (explicit return or final expression alike).
+            let result = match result {
+                Ok(v) => {
+                    self.check_return_type(func, &v)?;
+                    Ok(v)
+                }
+                other => other,
+            };
+
+            // Decrement call depth when function completes
+            self.call_depth -= 1;
+            self.call_stack_names.pop();
+
+            result
+        }
+    }
+
     pub fn call_function(
         &mut self,
         callee: Value,
@@ -1696,178 +1890,7 @@ impl Interpreter {
         }
 
         match callee {
-            Value::Function(func) => {
-                // Increment call depth for user functions
-                self.call_depth += 1;
-                self.call_stack_names
-                    .push(func.name.clone().unwrap_or_else(|| "<lambda>".to_string()));
-
-                // Count required parameters (those without default values)
-                let required_params = func
-                    .parameters
-                    .iter()
-                    .filter(|p| p.default_value.is_none())
-                    .count();
-
-                // Check if we have enough arguments for required parameters
-                if arguments.len() < required_params {
-                    return Err(InterpreterError::ArityMismatch {
-                        expected: required_params,
-                        got: arguments.len(),
-                    });
-                }
-
-                // Check if we have too many arguments
-                if arguments.len() > func.parameters.len() {
-                    return Err(InterpreterError::ArityMismatch {
-                        expected: func.parameters.len(),
-                        got: arguments.len(),
-                    });
-                }
-
-                // Enforce trait bounds at the call boundary: an argument whose
-                // type does not implement a bounded parameter's trait fails
-                // here with a clear message, not deep inside the body.
-                if !func.param_bounds.is_empty() {
-                    self.check_param_bounds(&func, &arguments)?;
-                }
-
-                // Enforce declared parameter types (annotations are
-                // promises); runs before the tier so every execution path
-                // sees the same boundary.
-                if !func.param_checks.is_empty() {
-                    self.check_param_types(&func, &arguments)?;
-                }
-
-                // Hot-function promotion: run on the bytecode tier when the
-                // function is eligible, otherwise fall through to the AST walk
-                if self.bytecode_tier.is_some() && arguments.len() == func.parameters.len() {
-                    let mut tier = self.bytecode_tier.take();
-                    let outcome = tier
-                        .as_mut()
-                        .map(|t| t.try_call(&func, &arguments))
-                        .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
-                    self.bytecode_tier = tier;
-
-                    if let crate::ovm::tier::TierOutcome::Ran(result) = outcome {
-                        self.call_depth -= 1;
-                        self.call_stack_names.pop();
-                        return match result {
-                            Ok(v) => Ok(v),
-                            Err(message) => {
-                                let err = Self::map_tier_error_message(message);
-                                // The VM tracked where the error happened
-                                // (innermost located statement) and which of
-                                // its frames were live there — splice them
-                                // onto the interpreter's own live stack so
-                                // the report is identical to a pure
-                                // interpreter run.
-                                if self.pending_error_location.is_none()
-                                    && !Self::is_control_signal(&err)
-                                {
-                                    let (span, frames, leak) = self
-                                        .bytecode_tier
-                                        .as_mut()
-                                        .map(|t| t.take_error_trace())
-                                        .unwrap_or_default();
-                                    if let Some((line, column)) = span {
-                                        let mut call_stack = self.call_stack_names.clone();
-                                        call_stack.extend(frames.into_iter().rev());
-                                        self.pending_error_location =
-                                            Some(crate::ast::ErrorLocation {
-                                                line,
-                                                column,
-                                                call_stack,
-                                                hint: self.pending_error_hint.take(),
-                                            });
-                                    } else if let Some(leaked) = leak {
-                                        // No located statement inside the VM:
-                                        // the capture happens at an enclosing
-                                        // interpreter statement — with the
-                                        // parameter-check frame still alive,
-                                        // exactly like the interpreter's own
-                                        // (never-popped) frame.
-                                        self.call_stack_names.push(leaked);
-                                    }
-                                }
-                                Err(err)
-                            }
-                        };
-                    }
-                }
-
-                // Create new environment with current environment as parent
-                let mut new_env = Environment::with_parent(self.environment.clone());
-
-                // Adopt the closure as the environment's flat map in O(1) —
-                // the persistent map is shared, not copied. This was a loop
-                // defining every closure entry (the whole prelude, ~200
-                // entries) on every single call.
-                if !func.closure.is_empty() {
-                    new_env.variables = func.closure.clone();
-                }
-
-                // If this is a named function, add it to its own scope for recursion
-                if let Some(name) = &func.name {
-                    new_env.define_local(name.clone(), Value::Function(func.clone()));
-                }
-
-                // Parameters are defined over the shared map; copy-on-write
-                // clones only the touched structure
-                for (i, param) in func.parameters.iter().enumerate() {
-                    let value = if i < arguments.len() {
-                        arguments[i].clone()
-                    } else if let Some(default_expr) = &param.default_value {
-                        self.eval_expr(default_expr)?
-                    } else {
-                        return Err(InterpreterError::RuntimeError {
-                            message: format!("Missing argument for parameter {}", param.name),
-                        });
-                    };
-
-                    new_env.define_local(param.name.clone(), value);
-                }
-
-                // Coverage: while this body runs, lines belong to the file
-                // the function was defined in, not the caller's file.
-                // Capability enforcement rides the same stack — a gated
-                // builtin call is attributed to the file (and so the
-                // package) of the function that made it.
-                let track_coverage = self.coverage.is_some() || self.caps.is_some();
-                if track_coverage {
-                    self.coverage_file_stack.push(func.def_file.clone());
-                }
-
-                // MEMORY OPTIMIZED: Use scoped evaluation instead of environment replacement
-                let result = match self.eval_expr_with_env(&func.body, new_env) {
-                    // `?` hit an Err inside this body: the function returns
-                    // that Err to its caller — the early-return semantics.
-                    Err(InterpreterError::ErrPropagation(err)) => Ok(err),
-                    // `return v` inside this body: the function's value is v.
-                    Err(InterpreterError::ReturnSignal(v)) => Ok(v),
-                    other => other,
-                };
-
-                if track_coverage {
-                    self.coverage_file_stack.pop();
-                }
-
-                // Enforce the declared return type on whatever the body
-                // produced (explicit return or final expression alike).
-                let result = match result {
-                    Ok(v) => {
-                        self.check_return_type(&func, &v)?;
-                        Ok(v)
-                    }
-                    other => other,
-                };
-
-                // Decrement call depth when function completes
-                self.call_depth -= 1;
-                self.call_stack_names.pop();
-
-                result
-            }
+            Value::Function(func) => self.call_user_function(&func, arguments),
             Value::Builtin(builtin) => {
                 let name = builtin.name.clone();
                 let builtin_functions = self.builtin_functions.clone();
@@ -2078,11 +2101,7 @@ impl Interpreter {
     ) -> Result<Value, InterpreterError> {
         // Clone only when necessary
         match function {
-            Value::Function(_) => {
-                // For user functions, we still need to clone for now
-                // TODO: Implement reference-based calling
-                self.call_function(function.clone(), args)
-            }
+            Value::Function(func) => self.call_user_function(func, args),
             Value::Builtin(builtin) => {
                 // For builtin functions, we can optimize
                 let name = builtin.name.clone();

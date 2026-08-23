@@ -1229,7 +1229,17 @@ impl BuiltinFunctions {
                             .enumerate()
                             .map(|(chunk_idx, chunk)| {
                                 let mut worker = interpreter.thread_safe_clone();
-                                let function = function.clone();
+                                // A per-worker copy of the kernel with fresh
+                                // body/closure Arcs: every call verifies the
+                                // HOF cache through those Arcs' weak counts,
+                                // and twelve cores sharing one kernel value
+                                // serialize on its atomics. Localizing makes
+                                // them core-local — measured 10x on a cheap
+                                // lambda kernel.
+                                let function = match function {
+                                    Value::Function(f) => Value::Function(f.thread_localized()),
+                                    other => other.clone(),
+                                };
                                 scope.spawn(move || {
                                     let mut out = Vec::with_capacity(chunk.len());
                                     for (i, item) in chunk.iter().enumerate() {
