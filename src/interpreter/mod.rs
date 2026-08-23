@@ -80,6 +80,33 @@ pub(crate) fn with_stack_headroom<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// The message for a missing module member, with the nearest real
+/// member suggested when one is close. Shared wording with the VM's
+/// twin so the tiers report identically.
+pub(crate) fn module_member_miss<'a>(
+    field: &str,
+    members: impl Iterator<Item = &'a str>,
+) -> String {
+    let max_distance = (field.chars().count() / 3).clamp(1, 3);
+    let nearest = members
+        .filter(|m| *m != field)
+        .map(|m| {
+            (
+                crate::interpreter::errors::IntuitiveErrorFormatter::levenshtein_distance(field, m),
+                m,
+            )
+        })
+        .filter(|(d, _)| *d <= max_distance)
+        .min();
+    match nearest {
+        Some((_, m)) => format!(
+            "Function '{}' not found in module — did you mean '{}'?",
+            field, m
+        ),
+        None => format!("Function '{}' not found in module", field),
+    }
+}
+
 /// The result of walking a function body's tail positions: an ordinary
 /// value, or a self-call whose evaluated arguments the trampoline in
 /// `call_user_function_inner` rebinds instead of pushing a frame.
@@ -455,6 +482,12 @@ impl Interpreter {
     /// the closest few — the REPL has had this for typos; file mode now
     /// gets it too. Distance is capped relative to the name's length so
     /// short names don't suggest everything.
+    /// Bind a name at the REPL's global scope — the REPL uses this for
+    /// `_`, the last printed result.
+    pub fn define_global(&mut self, name: &str, value: Value) {
+        self.environment.define(name.to_string(), value);
+    }
+
     fn did_you_mean(&self, name: &str) -> Option<String> {
         let max_distance = (name.chars().count() / 3).clamp(1, 3);
         let mut candidates: Vec<(usize, String)> = self
@@ -2996,12 +3029,16 @@ impl Interpreter {
         match object_value {
             Value::Struct { fields, type_name } => {
                 if type_name == "Module" {
-                    // Handle module function access (e.g., fs.read_file)
+                    // Handle module function access (e.g., fs.read_file).
+                    // A miss names the nearest member — `heap` for
+                    // `headp` — because at a module boundary the mistake
+                    // is almost always a spelling, and the module knows
+                    // its own names.
                     fields
                         .get(field)
                         .cloned()
                         .ok_or_else(|| InterpreterError::TypeError {
-                            message: format!("Function '{}' not found in module", field),
+                            message: module_member_miss(field, fields.keys().map(|k| k.as_str())),
                         })
                 } else {
                     // Handle regular struct field access

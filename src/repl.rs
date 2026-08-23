@@ -215,6 +215,10 @@ impl InteractiveDebugger {
     }
 }
 
+fn olang_interpreter_levenshtein(a: &str, b: &str) -> usize {
+    crate::interpreter::IntuitiveErrorFormatter::levenshtein_distance(a, b)
+}
+
 /// All REPL colon-commands, used for TAB completion of the command word.
 const REPL_COMMANDS: &[&str] = &[
     ":help",
@@ -401,6 +405,11 @@ pub struct Repl {
     multiline_buffer: String,
     command_history: Vec<String>,
     debugger: InteractiveDebugger,
+    /// The rebind tip fires once per session: the first time a bundled
+    /// collection's write operation is called without rebinding its
+    /// handle, the REPL explains the convention instead of letting the
+    /// unchanged variable look like a bug.
+    rebind_tip_shown: bool,
 }
 
 impl Repl {
@@ -502,6 +511,7 @@ impl Repl {
             multiline_buffer: String::new(),
             command_history: Vec::new(),
             debugger: InteractiveDebugger::new(),
+            rebind_tip_shown: false,
         })
     }
 
@@ -559,8 +569,13 @@ impl Repl {
     }
 
     pub fn run(&mut self) -> Result<(), ReplError> {
-        println!("Olang v{}", VERSION);
-        println!("Type ':help' for help or 'quit' to exit");
+        println!(
+            "{} {} — {} for help · {} or ^D to exit",
+            "olang".bold(),
+            VERSION,
+            ":help".cyan(),
+            "quit".cyan()
+        );
         if let Some(pkg) = self.load_packages() {
             println!(
                 "Package '{}' loaded — its dependencies are available via `use`",
@@ -614,6 +629,7 @@ impl Repl {
 
                     match self.eval_line(&code) {
                         Ok(value) => {
+                            self.after_eval(&code, &value);
                             if value != Value::Unit {
                                 if self.config.show_types {
                                     println!(
@@ -675,6 +691,7 @@ impl Repl {
 
             match self.eval_line(line) {
                 Ok(value) => {
+                    self.after_eval(line, &value);
                     if let Some(start) = start_time {
                         let duration = start.elapsed();
                         if value != Value::Unit {
@@ -712,6 +729,56 @@ impl Repl {
         }
 
         Ok(())
+    }
+
+    /// Post-evaluation duties shared by the single-line and multiline
+    /// paths: `_` tracks the last printed value, and a bundled
+    /// collection's write called without the rebind gets the one-time
+    /// tip — the unchanged handle is the convention, not a bug.
+    fn after_eval(&mut self, line: &str, value: &Value) {
+        if *value != Value::Unit {
+            // `it` is the last printed result — `_` would collide with
+            // the wildcard pattern in the grammar.
+            self.interpreter.define_global("it", value.clone());
+        }
+        if !self.rebind_tip_shown && Self::is_unrebound_collection_write(line) {
+            self.rebind_tip_shown = true;
+            println!(
+                "{}",
+                "tip: collection operations return the new handle — rebind it: h = heap.push(h, ...)"
+                    .dimmed()
+            );
+        }
+    }
+
+    /// A line that calls a bundled collection's *write* operation but
+    /// assigns nothing: `heap.push(h, 1, 2)` rather than
+    /// `h = heap.push(h, 1, 2)`. Conservative on purpose — any `=` on
+    /// the line, or a read-only operation, and it stays quiet.
+    fn is_unrebound_collection_write(line: &str) -> bool {
+        if line.contains('=') {
+            return false;
+        }
+        let rest = line.trim_start();
+        let rest = rest.strip_prefix("collections.").unwrap_or(rest);
+        const WRITERS: &[(&str, &[&str])] = &[
+            ("heap.", &["push", "pop", "from_lists"]),
+            (
+                "deque.",
+                &["push_back", "push_front", "pop_back", "pop_front"],
+            ),
+            ("table.", &["put", "remove"]),
+            ("dsu.", &["union"]),
+            ("bitset.", &["add", "remove"]),
+        ];
+        for (module, ops) in WRITERS {
+            if let Some(after) = rest.strip_prefix(module) {
+                return ops
+                    .iter()
+                    .any(|op| after.strip_prefix(op).is_some_and(|t| t.starts_with('(')));
+            }
+        }
+        false
     }
 
     /// Refresh TAB-completion candidates with the current user-defined
@@ -1728,13 +1795,41 @@ impl Repl {
                     println!("Usage: :!<number>");
                 }
             }
+            // A colon in front of a language statement is a natural
+            // reflex (`:use collections`); run the statement rather than
+            // rejecting the reflex.
+            ":use" | ":let" | ":fn" => {
+                let stripped = command.trim_start_matches(':');
+                match self.eval_line(stripped) {
+                    Ok(value) => {
+                        if value != Value::Unit {
+                            repl_print(&value);
+                        }
+                    }
+                    Err(e) => self.show_enhanced_error(&e),
+                }
+            }
             _ => {
-                return Err(ReplError::Parse(ParseError::InvalidSyntax {
-                    message: format!(
-                        "Unknown command: {}. Try ':help', or ':sh <command>' / '!<command>' to run a shell command",
-                        command
+                // Say it plainly, with the nearest real command — not
+                // through the error chain's stacked prefixes.
+                let max_distance = (command_name.chars().count() / 3).clamp(1, 3);
+                let nearest = REPL_COMMANDS
+                    .iter()
+                    .map(|c| (olang_interpreter_levenshtein(command_name, c), *c))
+                    .filter(|(d, _)| *d <= max_distance)
+                    .min();
+                match nearest {
+                    Some((_, c)) => println!(
+                        "unknown command {} — did you mean {}?",
+                        command_name.red(),
+                        c.cyan()
                     ),
-                }));
+                    None => println!(
+                        "unknown command {} — {} lists them. Statements need no colon: `use collections`, `let x = 1`",
+                        command_name.red(),
+                        ":help".cyan()
+                    ),
+                }
             }
         }
         Ok(())

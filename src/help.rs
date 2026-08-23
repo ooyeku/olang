@@ -7230,93 +7230,61 @@ impl HelpSystem {
     fn build_category_index(&mut self) {
         self.categories.clear();
         for (name, func) in &self.functions {
+            // A dotted name's category IS its module — derived, so the
+            // index cannot drift into near-duplicate hand-written
+            // categories ("math" beside "Math", "CSV" beside "csv").
+            // Only global builtins keep their curated category strings.
+            let category = match name.split_once('.') {
+                Some((module, _)) => module.to_string(),
+                None => func.category.clone(),
+            };
             self.categories
-                .entry(func.category.clone())
+                .entry(category)
                 .or_default()
                 .push(name.clone());
         }
     }
 
-    /// Format a brief overview of available categories
-    fn format_category_overview(&self) -> String {
-        let mut categories: Vec<_> = self.categories.keys().collect();
-        categories.sort();
-
-        let mut output = String::new();
-        for (i, category) in categories.iter().enumerate() {
-            if let Some(functions) = self.categories.get(*category) {
-                output.push_str(&format!(
-                    "  {}{}{} ({})",
-                    Colors::CYAN,
-                    category,
-                    Colors::RESET,
-                    functions.len()
-                ));
-                if i < categories.len() - 1 {
-                    output.push_str(", ");
-                }
-                if (i + 1) % 3 == 0 && i < categories.len() - 1 {
-                    output.push('\n');
-                }
-            }
-        }
-        output
-    }
-
     /// Show general help overview
     pub fn show_overview(&self) -> String {
-        format!(
-            "{}=== Olang Interactive Help System ==={}
-
-{}Welcome to Olang!{} This interactive help system provides documentation for all built-in functions and REPL commands.
-
-{}Quick Start:{}
-  :help <function>      - Show detailed help for a specific function
-  :help list            - List all available functions by category  
-  :help examples        - Show practical examples
-  :help syntax          - Show language syntax reference
-
-{}Popular Functions:{}
-  {}println{}, {}print{}       - Output text and values
-  {}map{}, {}filter{}, {}reduce{}  - Transform and process lists  
-  {}range{}, {}length{}, {}head{}  - Work with sequences
-  {}fs.{}, {}http.{}, {}math.{}, {}random.{} - Standard library modules
-
-{}REPL Commands:{}
-  {}:env{}               - Show current environment
-  {}:history{}           - Show command history
-  {}:type <expr>{}       - Check expression type
-  {}:clear{}             - Clear screen or environment
-  :sh <cmd> or !<cmd>  - Run a shell command
-  :cd, :pwd, :ls       - Navigate the filesystem
-  TAB                  - Complete commands, functions, and file paths
-
-{}Categories Available:{}
-{}
-
-Type '{}:help <function>{}' for detailed documentation on any function.
-Type '{}:help list{}' to see all functions organized by category.
-
-{}Happy coding! {}",
-            Colors::BOLD, Colors::RESET,
-            Colors::GREEN, Colors::RESET,
-            Colors::YELLOW, Colors::RESET,
-            Colors::CYAN, Colors::RESET,
-            Colors::BLUE, Colors::RESET, Colors::BLUE, Colors::RESET,
-            Colors::BLUE, Colors::RESET, Colors::BLUE, Colors::RESET, Colors::BLUE, Colors::RESET,
-            Colors::BLUE, Colors::RESET, Colors::BLUE, Colors::RESET, Colors::BLUE, Colors::RESET,
-            Colors::BLUE, Colors::RESET, Colors::BLUE, Colors::RESET, Colors::BLUE, Colors::RESET, Colors::BLUE, Colors::RESET,
-            Colors::MAGENTA, Colors::RESET,
-            Colors::BLUE, Colors::RESET,
-            Colors::BLUE, Colors::RESET,
-            Colors::BLUE, Colors::RESET,
-            Colors::BLUE, Colors::RESET,
-            Colors::YELLOW, Colors::RESET,
-            self.format_category_overview(),
-            Colors::CYAN, Colors::RESET,
-            Colors::CYAN, Colors::RESET,
-            Colors::GREEN, Colors::RESET
-        )
+        let mut o = String::new();
+        let b = Colors::BOLD;
+        let r = Colors::RESET;
+        let c = Colors::CYAN;
+        let y = Colors::YELLOW;
+        let d = Colors::DIM;
+        o.push_str(&format!("\n{b}olang help{r}\n\n"));
+        o.push_str(&format!("  {c}:help <name>{r}     a function's documentation      {d}:help map, :help collections.heap.push{r}\n"));
+        o.push_str(&format!("  {c}:help <module>{r}   a module's functions            {d}:help str, :help collections{r}\n"));
+        o.push_str(&format!(
+            "  {c}:help list{r}       every function, grouped\n"
+        ));
+        o.push_str(&format!(
+            "  {c}:help syntax{r}     language syntax reference\n"
+        ));
+        o.push_str(&format!("  {c}:help examples{r}   worked examples                 {d}:help tutorials for guided ones{r}\n"));
+        o.push_str(&format!(
+            "  {c}:help search <q>{r} find functions by keyword\n\n"
+        ));
+        o.push_str(&format!(
+            "{y}Modules{r} {d}(:help <module> to open one){r}\n"
+        ));
+        o.push_str(&format!("  core       {c}str col math json toml re dates time random crypto base64 bytes bigint{r}\n"));
+        o.push_str(&format!(
+            "  system     {c}fs os proc http db chan task cell caps meta testing{r}\n"
+        ));
+        o.push_str(&format!(
+            "  data       {c}ods stats plot csv collections{r}\n"
+        ));
+        o.push_str(&format!(
+            "  via use    {c}cli term ui viz dash colx mathx{r}\n\n"
+        ));
+        o.push_str(&format!("{y}REPL{r}\n"));
+        o.push_str(&format!("  {c}:env{r} variables    {c}:type <expr>{r} a value's type    {c}:time <expr>{r} wall-clock an expression\n"));
+        o.push_str(&format!("  {c}:history{r} this session    {c}:clear{r} screen or environment    {c}:cd :pwd :ls{r} filesystem\n"));
+        o.push_str(&format!("  {c}:sh <cmd>{r} or {c}!<cmd>{r} shell    {c}TAB{r} completes    {c}it{r} holds the last printed result\n\n"));
+        o.push_str(&format!("Anything without a leading colon is olang: {c}use collections {{ heap }}{r}, {c}let x = 1{r}, {c}1 + 1{r}.\n"));
+        o
     }
 
     /// Format detailed documentation for a function

@@ -42,6 +42,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   finishes — one hidden reference that could defeat every sole-owner
   fusion on the following line.
 
+### Improved
+
+- **The REPL, end to end.** `:help` opens with a page instead of a wall:
+  the commands, a curated module map, and the REPL surface — the
+  category dump (with its case-duplicate drift: "math" beside "Math",
+  "CSV" beside "csv") is gone, because a dotted function's category is
+  now *derived* from its module and cannot drift. A missing module
+  member suggests the nearest real one, identically on both tiers
+  (`collections.headp` → "did you mean 'heap'?"); a mistyped colon
+  command suggests the nearest command, plainly; `:use ...` runs the
+  statement the colon reflex meant. `it` holds the last printed result.
+  And the first bundled-collection write called without rebinding its
+  handle earns a one-time tip explaining the convention — the unchanged
+  variable is the design, not a bug, and now the REPL says so.
+
 ### Fixed
 
 - **`testing.assert_eq` compared Native values (BigInt, Date, Bytes) as

@@ -4538,7 +4538,12 @@ impl BytecodeVm {
         match &object.data {
             ValueData::Struct(s) => s.field(field).cloned().ok_or_else(|| {
                 if s.type_name() == "Module" {
-                    BytecodeError::TypeError(format!("Function '{}' not found in module", field))
+                    // Same wording (and nearest-member suggestion) as the
+                    // interpreter — the tiers must report identically.
+                    BytecodeError::TypeError(crate::interpreter::module_member_miss(
+                        field,
+                        s.iter().map(|(name, _)| name.as_str()),
+                    ))
                 } else {
                     BytecodeError::TypeError(self.no_field_or_method(s.type_name(), field))
                 }

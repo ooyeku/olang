@@ -153,6 +153,21 @@ fn a_user_binding_of_the_module_name_wins() {
 }
 
 #[test]
+fn a_misspelled_member_suggests_the_nearest_real_one() {
+    // `collections.headp` — the classic REPL typo — must name `heap`,
+    // with identical wording on both tiers.
+    for tier in [false, true] {
+        let err = eval("collections.headp.new()", tier).expect_err("must miss");
+        assert!(
+            err.contains("did you mean 'heap'"),
+            "tier={}: {}",
+            tier,
+            err
+        );
+    }
+}
+
+#[test]
 fn the_submodule_names_claim_no_bare_globals() {
     let err = eval("deque.new()", false).expect_err("bare submodule name must miss");
     assert!(err.contains("Undefined variable: deque"), "{}", err);

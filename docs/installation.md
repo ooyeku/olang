@@ -70,9 +70,13 @@ olang> x * 2
 olang> :help
 ```
 
-Commands beginning with a colon control the session; `:help` lists them, and
-`:type <expr>` reports an expression's inferred type. Type `:quit` or press
-Control-D to exit.
+Commands beginning with a colon control the session; `:help` lists them,
+`:type <expr>` reports an expression's type, and `:time <expr>` wall-clocks
+one evaluation. `it` always holds the last printed result. TAB completes
+commands, functions, and file paths; a mistyped command suggests the
+nearest real one, and `:help <module>` opens any module — including
+`collections` and its submodules (`:help collections.heap.push`). Type
+`:quit` or press Control-D to exit.
 
 ## The browser playground
 
