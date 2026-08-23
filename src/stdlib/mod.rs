@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub mod base64;
+pub mod bigint;
 pub mod bytes;
 pub mod caps_mod;
 pub mod cell;
@@ -37,6 +38,7 @@ pub mod toml_mod;
 pub fn get_stdlib() -> HashMap<String, Value> {
     let mut stdlib = HashMap::new();
     stdlib.insert("base64".to_string(), base64::create_base64_module());
+    stdlib.insert("bigint".to_string(), bigint::create_bigint_module());
     stdlib.insert("bytes".to_string(), bytes::create_bytes_module());
     stdlib.insert("meta".to_string(), meta::create_meta_module());
     stdlib.insert("col".to_string(), collections::create_collections_module());

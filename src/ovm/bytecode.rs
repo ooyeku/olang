@@ -3027,17 +3027,17 @@ impl BytecodeVm {
         let result = match (&left.data, &right.data) {
             (ValueData::Integer(a), ValueData::Integer(b)) => match op {
                 BinaryOp::Add => OvmValue::new_integer(a.checked_add(*b).ok_or_else(|| {
-                    BytecodeError::RuntimeError("Integer overflow in addition".to_string())
+                    BytecodeError::RuntimeError("Integer overflow in addition (bigint.of gives arbitrary precision)".to_string())
                 })?),
                 BinaryOp::Subtract => {
                     OvmValue::new_integer(a.checked_sub(*b).ok_or_else(|| {
-                        BytecodeError::RuntimeError("Integer overflow in subtraction".to_string())
+                        BytecodeError::RuntimeError("Integer overflow in subtraction (bigint.of gives arbitrary precision)".to_string())
                     })?)
                 }
                 BinaryOp::Multiply => {
                     OvmValue::new_integer(a.checked_mul(*b).ok_or_else(|| {
                         BytecodeError::RuntimeError(
-                            "Integer overflow in multiplication".to_string(),
+                            "Integer overflow in multiplication (bigint.of gives arbitrary precision)".to_string(),
                         )
                     })?)
                 }
@@ -3047,7 +3047,7 @@ impl BytecodeVm {
                     }
                     // checked_div also rejects i64::MIN / -1, which overflows
                     OvmValue::new_integer(a.checked_div(*b).ok_or_else(|| {
-                        BytecodeError::RuntimeError("Integer overflow in division".to_string())
+                        BytecodeError::RuntimeError("Integer overflow in division (bigint.of gives arbitrary precision)".to_string())
                     })?)
                 }
                 BinaryOp::Modulo => {
@@ -3055,7 +3055,7 @@ impl BytecodeVm {
                         return Err(BytecodeError::ModuloByZero);
                     }
                     OvmValue::new_integer(a.checked_rem(*b).ok_or_else(|| {
-                        BytecodeError::RuntimeError("Integer overflow in modulo".to_string())
+                        BytecodeError::RuntimeError("Integer overflow in modulo (bigint.of gives arbitrary precision)".to_string())
                     })?)
                 }
                 BinaryOp::Equal => OvmValue::new_boolean(a == b),
@@ -3275,7 +3275,10 @@ impl BytecodeVm {
         match (&value.data, &op) {
             (ValueData::Integer(a), UnaryOp::Negate) => {
                 Ok(OvmValue::new_integer(a.checked_neg().ok_or_else(|| {
-                    BytecodeError::RuntimeError("Integer overflow in negation".to_string())
+                    BytecodeError::RuntimeError(
+                        "Integer overflow in negation (bigint.of gives arbitrary precision)"
+                            .to_string(),
+                    )
                 })?))
             }
             (ValueData::Float(a), UnaryOp::Negate) => Ok(OvmValue::new_float(-a)),

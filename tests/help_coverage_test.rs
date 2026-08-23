@@ -23,8 +23,8 @@ fn every_callable_module_has_help_entries() {
     // stack, and the embedded olang modules and packages.
     let modules = [
         "str", "col", "math", "json", "toml", "csv", "re", "dates", "time", "random", "crypto",
-        "base64", "bytes", "fs", "os", "http", "db", "chan", "proc", "testing", "meta", "dom",
-        "ods", "stats", "plot", "colx", "mathx", "cli", "term", "ui", "viz", "dash",
+        "bigint", "base64", "bytes", "fs", "os", "http", "db", "chan", "proc", "testing", "meta",
+        "dom", "ods", "stats", "plot", "colx", "mathx", "cli", "term", "ui", "viz", "dash",
     ];
     let mut missing = Vec::new();
     for m in modules {

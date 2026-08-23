@@ -40,7 +40,8 @@ impl Interpreter {
                 .checked_add(b)
                 .map(Value::Integer)
                 .ok_or_else(|| InterpreterError::RuntimeError {
-                    message: "Integer overflow in addition".to_string(),
+                    message: "Integer overflow in addition (bigint.of gives arbitrary precision)"
+                        .to_string(),
                 }),
             (Value::Float(a), BinaryOp::Add, Value::Float(b)) => Ok(Value::Float(a + b)),
             (Value::Integer(a), BinaryOp::Add, Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
@@ -49,7 +50,9 @@ impl Interpreter {
                 .checked_sub(b)
                 .map(Value::Integer)
                 .ok_or_else(|| InterpreterError::RuntimeError {
-                    message: "Integer overflow in subtraction".to_string(),
+                    message:
+                        "Integer overflow in subtraction (bigint.of gives arbitrary precision)"
+                            .to_string(),
                 }),
             (Value::Float(a), BinaryOp::Subtract, Value::Float(b)) => Ok(Value::Float(a - b)),
             (Value::Integer(a), BinaryOp::Subtract, Value::Float(b)) => {
@@ -62,7 +65,9 @@ impl Interpreter {
                 .checked_mul(b)
                 .map(Value::Integer)
                 .ok_or_else(|| InterpreterError::RuntimeError {
-                    message: "Integer overflow in multiplication".to_string(),
+                    message:
+                        "Integer overflow in multiplication (bigint.of gives arbitrary precision)"
+                            .to_string(),
                 }),
             (Value::Float(a), BinaryOp::Multiply, Value::Float(b)) => Ok(Value::Float(a * b)),
             (Value::Integer(a), BinaryOp::Multiply, Value::Float(b)) => {
@@ -80,7 +85,9 @@ impl Interpreter {
                     // checked_div also rejects i64::MIN / -1, which overflows
                     a.checked_div(b).map(Value::Integer).ok_or_else(|| {
                         InterpreterError::RuntimeError {
-                            message: "Integer overflow in division".to_string(),
+                            message:
+                                "Integer overflow in division (bigint.of gives arbitrary precision)"
+                                    .to_string(),
                         }
                     })
                 }
@@ -121,7 +128,9 @@ impl Interpreter {
                     // checked_rem also rejects i64::MIN % -1, which overflows
                     a.checked_rem(b).map(Value::Integer).ok_or_else(|| {
                         InterpreterError::RuntimeError {
-                            message: "Integer overflow in modulo".to_string(),
+                            message:
+                                "Integer overflow in modulo (bigint.of gives arbitrary precision)"
+                                    .to_string(),
                         }
                     })
                 }
@@ -330,7 +339,9 @@ impl Interpreter {
                 n.checked_neg()
                     .map(Value::Integer)
                     .ok_or_else(|| InterpreterError::RuntimeError {
-                        message: "Integer overflow in negation".to_string(),
+                        message:
+                            "Integer overflow in negation (bigint.of gives arbitrary precision)"
+                                .to_string(),
                     })
             }
             (UnaryOp::Negate, Value::Float(x)) => Ok(Value::Float(-x)),

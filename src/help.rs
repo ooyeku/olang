@@ -1430,6 +1430,7 @@ impl HelpSystem {
 
         // === Math Functions (stdlib) ===
         self.add_math_functions();
+        self.add_bigint_functions();
 
         // === Random Functions (stdlib) ===
         self.add_random_functions();
@@ -5069,6 +5070,138 @@ impl HelpSystem {
     }
 
     /// Add math module documentation
+    fn add_bigint_functions(&mut self) {
+        self.add_function(FunctionDoc {
+            name: "bigint.of".to_string(),
+            description: "Make an arbitrary-precision integer from an Int or a digit string. BigInt values use the ordinary operators (+ - * / % and comparisons); an Int operand promotes on contact. Floats never mix implicitly.".to_string(),
+            syntax: "bigint.of(value)".to_string(),
+            parameters: vec![
+                "value: Int | String - The integer, or its decimal digits (for values beyond Int range)".to_string(),
+            ],
+            return_type: "BigInt".to_string(),
+            examples: vec![
+                "bigint.of(2)  // 2".to_string(),
+                "bigint.of(\"123456789012345678901234567890\")".to_string(),
+                "bigint.of(2) + 1  // 3 — Int promotes to BigInt".to_string(),
+            ],
+            category: "BigInt".to_string(),
+            see_also: vec!["bigint.parse".to_string(), "bigint.to_int".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "bigint.parse".to_string(),
+            description: "Parse a decimal string into a BigInt, as a Result. The twin of bigint.of for data you don't control: a malformed string comes back as Err instead of raising.".to_string(),
+            syntax: "bigint.parse(text)".to_string(),
+            parameters: vec!["text: String - Decimal digits, optionally signed".to_string()],
+            return_type: "Result<BigInt, String>".to_string(),
+            examples: vec![
+                "bigint.parse(\"340282366920938463463374607431768211456\")  // Ok(2^128)".to_string(),
+                "bigint.parse(\"nope\")  // Err(...)".to_string(),
+            ],
+            category: "BigInt".to_string(),
+            see_also: vec!["bigint.of".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "bigint.to_int".to_string(),
+            description: "Convert a BigInt back to a 64-bit Int, as a Result — whether the value fits is a property of the data, not the call.".to_string(),
+            syntax: "bigint.to_int(b)".to_string(),
+            parameters: vec!["b: BigInt | Int - The value to narrow".to_string()],
+            return_type: "Result<Int, String>".to_string(),
+            examples: vec![
+                "bigint.to_int(bigint.of(42))  // Ok(42)".to_string(),
+                "bigint.to_int(bigint.pow(bigint.of(2), 100))  // Err(...)".to_string(),
+            ],
+            category: "BigInt".to_string(),
+            see_also: vec!["bigint.to_float".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "bigint.to_float".to_string(),
+            description: "Convert a BigInt to a Float, rounding to 53 bits of precision. The only sanctioned door between BigInt and Float — the operators refuse to mix them implicitly.".to_string(),
+            syntax: "bigint.to_float(b)".to_string(),
+            parameters: vec!["b: BigInt | Int - The value to convert".to_string()],
+            return_type: "Float".to_string(),
+            examples: vec![
+                "bigint.to_float(bigint.pow(bigint.of(2), 100))  // 1.2676506002282294e30".to_string(),
+            ],
+            category: "BigInt".to_string(),
+            see_also: vec!["bigint.to_int".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "bigint.abs".to_string(),
+            description: "The absolute value of a BigInt.".to_string(),
+            syntax: "bigint.abs(b)".to_string(),
+            parameters: vec!["b: BigInt | Int - The value".to_string()],
+            return_type: "BigInt".to_string(),
+            examples: vec!["bigint.abs(bigint.of(-7))  // 7".to_string()],
+            category: "BigInt".to_string(),
+            see_also: vec!["bigint.neg".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "bigint.neg".to_string(),
+            description:
+                "Negate a BigInt. (Unary minus does not apply to BigInt; 0 - b also works.)"
+                    .to_string(),
+            syntax: "bigint.neg(b)".to_string(),
+            parameters: vec!["b: BigInt | Int - The value".to_string()],
+            return_type: "BigInt".to_string(),
+            examples: vec!["bigint.neg(bigint.of(7))  // -7".to_string()],
+            category: "BigInt".to_string(),
+            see_also: vec!["bigint.abs".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "bigint.pow".to_string(),
+            description: "Raise a BigInt to a non-negative Int power.".to_string(),
+            syntax: "bigint.pow(base, exponent)".to_string(),
+            parameters: vec![
+                "base: BigInt | Int - The base".to_string(),
+                "exponent: Int - Non-negative power".to_string(),
+            ],
+            return_type: "BigInt".to_string(),
+            examples: vec![
+                "bigint.pow(bigint.of(2), 200)  // 1606938044258990275541962092341162602522202993782792835301376".to_string(),
+            ],
+            category: "BigInt".to_string(),
+            see_also: vec!["bigint.mod_pow".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "bigint.mod_pow".to_string(),
+            description: "Modular exponentiation: base^exponent mod modulus, without materializing base^exponent — the workhorse of number-theoretic and cryptographic code.".to_string(),
+            syntax: "bigint.mod_pow(base, exponent, modulus)".to_string(),
+            parameters: vec![
+                "base: BigInt | Int - The base".to_string(),
+                "exponent: BigInt | Int - Non-negative power".to_string(),
+                "modulus: BigInt | Int - Non-zero modulus".to_string(),
+            ],
+            return_type: "BigInt".to_string(),
+            examples: vec![
+                "bigint.mod_pow(bigint.of(7), bigint.of(560), bigint.of(561))  // 1".to_string(),
+            ],
+            category: "BigInt".to_string(),
+            see_also: vec!["bigint.pow".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "bigint.gcd".to_string(),
+            description: "The greatest common divisor of two BigInts (always non-negative)."
+                .to_string(),
+            syntax: "bigint.gcd(a, b)".to_string(),
+            parameters: vec![
+                "a: BigInt | Int - First value".to_string(),
+                "b: BigInt | Int - Second value".to_string(),
+            ],
+            return_type: "BigInt".to_string(),
+            examples: vec!["bigint.gcd(bigint.of(48), 18)  // 6".to_string()],
+            category: "BigInt".to_string(),
+            see_also: vec!["bigint.abs".to_string()],
+        });
+    }
+
     fn add_math_functions(&mut self) {
         // Mathematical constants (these are fields, not functions, but documented for completeness)
         self.add_function(FunctionDoc {

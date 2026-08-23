@@ -145,7 +145,10 @@ impl OvmModule for OdsModule {
                 };
                 Some(match probe.tag.checked_add(n) {
                     Some(tag) => Ok(Value::Native(NativeHandle::new(OdsProbe { tag }))),
-                    None => Err("Integer overflow in addition".to_string()),
+                    None => Err(
+                        "Integer overflow in addition (bigint.of gives arbitrary precision)"
+                            .to_string(),
+                    ),
                 })
             }
             // Equality falls through to the registry's structural

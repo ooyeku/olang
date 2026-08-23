@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`bigint` — arbitrary-precision integers (Campaign 5, N1).**
+  `bigint.of` takes an Int or a digit string; the value then uses the
+  ordinary operators on both tiers, and a plain Int operand promotes to
+  BigInt on contact. The arithmetic follows the Int rules exactly —
+  truncating division, dividend-signed remainder, the same zero-divisor
+  errors — so promoting a computation changes its range and nothing
+  else. Floats never mix implicitly (53 bits of mantissa would silently
+  round the digits BigInt exists to keep); `bigint.to_float` is the one
+  explicit, lossy door. With `parse`, `to_int`, `abs`, `neg`, `pow`,
+  `mod_pow`, and `gcd`; help entries and editor completions included.
+  The Int overflow errors now point at it: "Integer overflow in
+  multiplication (bigint.of gives arbitrary precision)".
+
 - **Automatic parallelism for provably pure bulk operations (Campaign
   5, H2).** `map` and `filter` over 50,000+ elements fan out across
   every core when the kernel passes a conservative purity proof — a

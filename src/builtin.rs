@@ -673,6 +673,14 @@ impl BuiltinFunctions {
             );
         }
 
+        // Handle bigint functions
+        if let Some(bigint_function) = name.strip_prefix("bigint.") {
+            return crate::stdlib::bigint::call_bigint_function(bigint_function, arguments)
+                .map_err(|e| InterpreterError::RuntimeError {
+                    message: e.to_string(),
+                });
+        }
+
         // Handle dates functions
         if let Some(dates_function) = name.strip_prefix("dates.") {
             // Remove "dates." prefix
@@ -1372,8 +1380,9 @@ impl BuiltinFunctions {
     ];
 
     /// Modules whose every function is pure computation.
-    const PURE_KERNEL_MODULES: &'static [&'static str] =
-        &["math", "str", "json", "toml", "base64", "re", "col"];
+    const PURE_KERNEL_MODULES: &'static [&'static str] = &[
+        "math", "str", "json", "toml", "base64", "re", "col", "bigint",
+    ];
 
     fn call_target_is_pure(callee: &crate::ast::Expr) -> bool {
         use crate::ast::Expr;

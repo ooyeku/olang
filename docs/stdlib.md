@@ -20,6 +20,7 @@ a file system, a network, or a browser.
 - [`str` — strings](#str--strings)
 - [`col` / `colx` — collections](#col--colx--collections)
 - [`math` / `mathx` — mathematics](#math--mathx--mathematics)
+- [`bigint` — arbitrary precision](#bigint--arbitrary-precision)
 - [`json` — JSON](#json--json)
 - [`toml` — TOML](#toml--toml)
 - [`csv` — CSV](#csv--csv)
@@ -443,6 +444,40 @@ println(to_string((math.PI > 3.14159) && (math.TAU > 6.28)))
 `mathx` (`use mathx`) is an olang-source module covering the integer and
 rounding core (`abs` through `sqrt`, plus `PI`) — smaller in scope than
 `math`, and differential-tested against it.
+
+## `bigint` — arbitrary precision
+
+Integers without a ceiling. `bigint.of` takes an Int or a string of
+decimal digits; the value then uses the ordinary operators — `+ - * / %`
+and the comparisons — and a plain Int operand promotes to BigInt on
+contact. The arithmetic follows the Int rules exactly (division
+truncates toward zero, the remainder takes the dividend's sign, the same
+zero-divisor errors), so promoting a computation changes its range and
+nothing else. When an Int computation does overflow, the error itself
+points here.
+
+| Function | Does |
+|---|---|
+| `of(x)` | Int or digit-string → BigInt; raises on a malformed string |
+| `parse(s)` | the `Result`-returning twin of `of`, for data you don't control |
+| `to_int(b)` | back to a 64-bit Int, as a `Result` — the value may not fit |
+| `to_float(b)` | to a Float, rounding to 53 bits — the only door to Float |
+| `abs(b)` `neg(b)` | absolute value; negation (unary `-` does not apply to BigInt) |
+| `pow(b, n)` | `b` to a non-negative Int power |
+| `mod_pow(b, e, m)` | `bᵉ mod m` without materializing `bᵉ` |
+| `gcd(a, b)` | greatest common divisor, always non-negative |
+
+```olang
+let f = fold(range(1, 51), bigint.of(1), (acc, i) => acc * i)
+println(f)                        // 50! — 65 digits
+println(bigint.of(2) + 1)         // 3: Int promotes on contact
+println(bigint.mod_pow(bigint.of(7), bigint.of(560), bigint.of(561)))
+```
+
+Floats never mix implicitly: a Float has 53 bits of mantissa, so
+`big * 0.5` would silently round the very digits BigInt exists to keep.
+The operator refuses with a pointer to `bigint.to_float`, the one
+sanctioned, explicitly lossy conversion.
 
 ## `json` — JSON
 

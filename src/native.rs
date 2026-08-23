@@ -169,6 +169,8 @@ pub fn registered_modules() -> &'static [Arc<dyn OvmModule>] {
         // Operators for Date values only — the `dates` builtin namespace
         // itself dispatches through the stdlib path.
         modules.push(Arc::new(crate::stdlib::dates::DatesModule));
+        // Operators for BigInt values — same arrangement as dates.
+        modules.push(Arc::new(crate::stdlib::bigint::BigIntModule));
         modules
     });
     &MODULES

@@ -100,6 +100,8 @@ im = { version = "15.1", features = ["serde"] }  # Persistent/immutable collecti
 rayon = { version = "1.12", optional = true }  # Data parallelism library
 parking_lot = "0.12"   # High-performance synchronization primitives
 num_cpus = { version = "1.16", optional = true }  # CPU core detection
+num-bigint = "0.4"                                # bigint: arbitrary-precision integers
+num-traits = "0.2"
 
 # The language server (src/tools/lsp.rs): `olang lsp` speaks LSP over
 # stdio to editors. Native-only.
