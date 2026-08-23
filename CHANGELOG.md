@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Collections, in olang (Campaign 6).** Five data structures and an
+  algorithms module — `heap`, `deque`, `table` (open-addressing hash),
+  `dsu` (union–find), `bitset`, and `alg` (stable merge sort,
+  sort-by-key, the bisect family, quickselect, CSR graphs, BFS,
+  topological sort, Dijkstra) — written entirely in olang, compiled
+  into the binary, and *automatically available*: an unresolved name
+  matching a bundled module loads it on first touch, no `use` needed,
+  no startup cost when unused. One calling convention throughout:
+  operations take the handle first and return it, the caller rebinds
+  (`h = heap.push(h, prio, item)`), and reads never rebind. Handles are
+  single flat lists with documented layouts; every module carries its
+  own `test` blocks (run by the suite) and reference-grade code
+  documentation. `alg.dijkstra` runs `heap` over a flat weighted graph
+  — the collections composing, all in olang.
+
+- **The mutation primitives beneath them.** `col.set(xs, i, v)`,
+  `col.swap(xs, i, j)`, and `col.filled(n, v)` — and two assignment
+  fusions that make the rebind discipline fast: `x = col.set(x, ...)`
+  writes the list in place when `x` holds the only reference (both
+  tiers — the VM compiles it to a register-level in-place write), and
+  `x = f(x, ...)` passes `x` to any user function *by move*, so a
+  handle crosses a call boundary without a copy. Arguments now also
+  bind into call frames by move rather than clone. Aliasing is never
+  unsafe: a second binding degrades the write to a copy, exactly as the
+  language has always promised. Also `str.char_code`, the code-point
+  primitive olang-written string hashing needed.
+
+- **Blocks drop intermediate results promptly.** A block's non-final
+  statements no longer pin their values until the next statement
+  finishes — one hidden reference that could defeat every sole-owner
+  fusion on the following line.
+
+### Changed
+
+- **Function parameters are mutable bindings.** Assigning to a
+  parameter rebinds the function's own local and never touches the
+  caller (arguments pass by value, as ever). The old rule steered
+  toward shadowing, which pins a second reference — exactly wrong for
+  the collections' rebind convention. Purely permissive: no previously
+  valid program changes meaning.
+
+- **The bundled collection modules are interpreter-resident.** Their
+  operations do O(log n) work against O(n)-sized handles, and the tier
+  boundary converts list arguments in full — so promotion is declined
+  for exactly these modules, where the interpreter's in-place fusions
+  are the faster path end to end.
+
 ## [0.70.0] - 2026-08-23
 
 ### Added

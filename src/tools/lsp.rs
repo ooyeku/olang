@@ -63,7 +63,7 @@ const KEYWORDS: &[&str] = &[
 const MODULES: &[&str] = &[
     "str", "col", "math", "json", "toml", "csv", "re", "dates", "time", "random", "crypto",
     "base64", "bytes", "fs", "os", "http", "db", "testing", "ods", "stats", "plot", "cell", "chan",
-    "task", "proc", "caps", "meta", "bigint",
+    "task", "proc", "caps", "meta", "bigint", "heap", "deque", "bitset", "dsu", "table", "alg",
 ];
 const USE_MODULES: &[&str] = &["cli", "term", "ui", "viz", "dash", "colx", "mathx"];
 

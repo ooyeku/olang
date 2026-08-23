@@ -1431,6 +1431,7 @@ impl HelpSystem {
         // === Math Functions (stdlib) ===
         self.add_math_functions();
         self.add_bigint_functions();
+        self.add_bundled_collections_functions();
 
         // === Random Functions (stdlib) ===
         self.add_random_functions();
@@ -5070,6 +5071,690 @@ impl HelpSystem {
     }
 
     /// Add math module documentation
+    /// The bundled olang-source collections (Campaign 6) and their
+    /// Rust-side primitives: entries drive :help, editor completions,
+    /// hover, and signature help.
+    fn add_bundled_collections_functions(&mut self) {
+        self.add_function(FunctionDoc {
+            name: "col.set".to_string(),
+            description: "The list with element i replaced by v. `xs = col.set(xs, i, v)` writes in place when xs holds the only reference - the collections' write primitive. Negative i counts from the end; out of bounds raises.".to_string(),
+            syntax: "col.set(xs, i, v)".to_string(),
+            parameters: vec![
+                "xs: List".to_string(),
+                "i: Int - index, negatives from the end".to_string(),
+                "v: value".to_string(),
+            ],
+            return_type: "List".to_string(),
+            examples: vec!["col.set([1, 2, 3], 1, 9)  // [1, 9, 3]".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["col.swap".to_string(), "col.filled".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.swap".to_string(),
+            description: "The list with elements i and j exchanged. Fuses to an in-place O(1) swap under `xs = col.swap(xs, i, j)`.".to_string(),
+            syntax: "col.swap(xs, i, j)".to_string(),
+            parameters: vec![
+                "xs: List".to_string(),
+                "i: Int".to_string(),
+                "j: Int".to_string(),
+            ],
+            return_type: "List".to_string(),
+            examples: vec!["col.swap([1, 2, 3], 0, 2)  // [3, 2, 1]".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["col.set".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "col.filled".to_string(),
+            description: "A list of n copies of v - the preallocation primitive flat-array structures build their backing stores with.".to_string(),
+            syntax: "col.filled(n, v)".to_string(),
+            parameters: vec![
+                "n: Int - non-negative length".to_string(),
+                "v: value".to_string(),
+            ],
+            return_type: "List".to_string(),
+            examples: vec!["col.filled(3, 0)  // [0, 0, 0]".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["col.set".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.char_code".to_string(),
+            description:
+                "The Unicode code point of the string's first character, or () for an empty string."
+                    .to_string(),
+            syntax: "str.char_code(s)".to_string(),
+            parameters: vec!["s: String".to_string()],
+            return_type: "Int | Unit".to_string(),
+            examples: vec!["str.char_code(\"A\")  // 65".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.char_at".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "heap.new".to_string(),
+            description: "A new, empty binary min-heap of (priority, item) pairs. Automatically available - no `use` needed. Rebind through every write: h = heap.push(h, p, x).".to_string(),
+            syntax: "heap.new()".to_string(),
+            parameters: vec![],
+            return_type: "Heap handle".to_string(),
+            examples: vec!["let mut h = heap.new()".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["heap.push".to_string(), "heap.pop".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "heap.push".to_string(),
+            description: "The heap with (prio, item) added, O(log n) in place under the rebind convention. prio is an Int or Float; item is any value.".to_string(),
+            syntax: "heap.push(h, prio, item)".to_string(),
+            parameters: vec![
+                "h: Heap handle".to_string(),
+                "prio: Int | Float".to_string(),
+                "item: value".to_string(),
+            ],
+            return_type: "Heap handle".to_string(),
+            examples: vec!["h = heap.push(h, 3, \"job\")".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["heap.pop".to_string(), "heap.top_prio".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "heap.pop".to_string(),
+            description: "The heap with its smallest pair removed. Read top_prio/top_item first; popping an empty heap raises.".to_string(),
+            syntax: "heap.pop(h)".to_string(),
+            parameters: vec![
+                "h: Heap handle".to_string(),
+            ],
+            return_type: "Heap handle".to_string(),
+            examples: vec!["h = heap.pop(h)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["heap.top_prio".to_string(), "heap.top_item".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "heap.top_prio".to_string(),
+            description: "The smallest priority, without removing it.".to_string(),
+            syntax: "heap.top_prio(h)".to_string(),
+            parameters: vec!["h: Heap handle".to_string()],
+            return_type: "Int | Float".to_string(),
+            examples: vec!["heap.top_prio(h)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["heap.top_item".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "heap.top_item".to_string(),
+            description: "The item paired with the smallest priority, without removing it."
+                .to_string(),
+            syntax: "heap.top_item(h)".to_string(),
+            parameters: vec!["h: Heap handle".to_string()],
+            return_type: "value".to_string(),
+            examples: vec!["heap.top_item(h)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["heap.top_prio".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "heap.size".to_string(),
+            description: "The number of pairs in the heap.".to_string(),
+            syntax: "heap.size(h)".to_string(),
+            parameters: vec!["h: Heap handle".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec!["heap.size(h)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["heap.is_empty".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "heap.is_empty".to_string(),
+            description: "True when the heap holds nothing.".to_string(),
+            syntax: "heap.is_empty(h)".to_string(),
+            parameters: vec!["h: Heap handle".to_string()],
+            return_type: "Bool".to_string(),
+            examples: vec!["while !heap.is_empty(h) { ... }".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["heap.size".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "heap.from_lists".to_string(),
+            description: "A heap built from parallel priority and item lists in O(n), against O(n log n) repeated pushes.".to_string(),
+            syntax: "heap.from_lists(prios, items)".to_string(),
+            parameters: vec![
+                "prios: List of Int | Float".to_string(),
+                "items: List".to_string(),
+            ],
+            return_type: "Heap handle".to_string(),
+            examples: vec!["heap.from_lists([3, 1], [\"a\", \"b\"])".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["heap.push".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "deque.new".to_string(),
+            description: "A new, empty double-ended queue over a ring buffer. Automatically available. Rebind through every write: q = deque.push_back(q, x).".to_string(),
+            syntax: "deque.new()".to_string(),
+            parameters: vec![],
+            return_type: "Deque handle".to_string(),
+            examples: vec!["let mut q = deque.new()".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["deque.push_back".to_string(), "deque.pop_front".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "deque.push_back".to_string(),
+            description: "The deque with x appended at the back, amortized O(1).".to_string(),
+            syntax: "deque.push_back(q, x)".to_string(),
+            parameters: vec!["q: Deque handle".to_string(), "x: value".to_string()],
+            return_type: "Deque handle".to_string(),
+            examples: vec!["q = deque.push_back(q, job)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["deque.push_front".to_string(), "deque.pop_back".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "deque.push_front".to_string(),
+            description: "The deque with x prepended at the front, amortized O(1).".to_string(),
+            syntax: "deque.push_front(q, x)".to_string(),
+            parameters: vec!["q: Deque handle".to_string(), "x: value".to_string()],
+            return_type: "Deque handle".to_string(),
+            examples: vec!["q = deque.push_front(q, job)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["deque.push_back".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "deque.pop_front".to_string(),
+            description: "The deque with its front element removed. Read front first; popping an empty deque raises.".to_string(),
+            syntax: "deque.pop_front(q)".to_string(),
+            parameters: vec![
+                "q: Deque handle".to_string(),
+            ],
+            return_type: "Deque handle".to_string(),
+            examples: vec!["q = deque.pop_front(q)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["deque.front".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "deque.pop_back".to_string(),
+            description: "The deque with its back element removed. Read back first; popping an empty deque raises.".to_string(),
+            syntax: "deque.pop_back(q)".to_string(),
+            parameters: vec![
+                "q: Deque handle".to_string(),
+            ],
+            return_type: "Deque handle".to_string(),
+            examples: vec!["q = deque.pop_back(q)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["deque.back".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "deque.front".to_string(),
+            description: "The front element, without removing it.".to_string(),
+            syntax: "deque.front(q)".to_string(),
+            parameters: vec!["q: Deque handle".to_string()],
+            return_type: "value".to_string(),
+            examples: vec!["deque.front(q)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["deque.back".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "deque.back".to_string(),
+            description: "The back element, without removing it.".to_string(),
+            syntax: "deque.back(q)".to_string(),
+            parameters: vec!["q: Deque handle".to_string()],
+            return_type: "value".to_string(),
+            examples: vec!["deque.back(q)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["deque.front".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "deque.size".to_string(),
+            description: "The number of elements.".to_string(),
+            syntax: "deque.size(q)".to_string(),
+            parameters: vec!["q: Deque handle".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec!["deque.size(q)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["deque.is_empty".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "deque.is_empty".to_string(),
+            description: "True when the deque holds nothing.".to_string(),
+            syntax: "deque.is_empty(q)".to_string(),
+            parameters: vec!["q: Deque handle".to_string()],
+            return_type: "Bool".to_string(),
+            examples: vec!["while !deque.is_empty(q) { ... }".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["deque.size".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "deque.to_list".to_string(),
+            description: "The elements front-to-back as a plain list.".to_string(),
+            syntax: "deque.to_list(q)".to_string(),
+            parameters: vec!["q: Deque handle".to_string()],
+            return_type: "List".to_string(),
+            examples: vec!["deque.to_list(q)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "bitset.new".to_string(),
+            description: "A new, empty set of small non-negative integers with capacity n. Automatically available. Rebind through every write: b = bitset.add(b, i).".to_string(),
+            syntax: "bitset.new(n)".to_string(),
+            parameters: vec![
+                "n: Int - capacity, members are 0..n-1".to_string(),
+            ],
+            return_type: "Bitset handle".to_string(),
+            examples: vec!["let mut b = bitset.new(1000)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["bitset.add".to_string(), "bitset.has".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "bitset.add".to_string(),
+            description: "The set with i added, O(1) in place under the rebind convention."
+                .to_string(),
+            syntax: "bitset.add(b, i)".to_string(),
+            parameters: vec![
+                "b: Bitset handle".to_string(),
+                "i: Int in 0..capacity".to_string(),
+            ],
+            return_type: "Bitset handle".to_string(),
+            examples: vec!["b = bitset.add(b, 42)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["bitset.remove".to_string(), "bitset.has".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "bitset.remove".to_string(),
+            description: "The set with i removed (a no-op when absent).".to_string(),
+            syntax: "bitset.remove(b, i)".to_string(),
+            parameters: vec!["b: Bitset handle".to_string(), "i: Int".to_string()],
+            return_type: "Bitset handle".to_string(),
+            examples: vec!["b = bitset.remove(b, 42)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["bitset.add".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "bitset.has".to_string(),
+            description: "True when i is a member.".to_string(),
+            syntax: "bitset.has(b, i)".to_string(),
+            parameters: vec!["b: Bitset handle".to_string(), "i: Int".to_string()],
+            return_type: "Bool".to_string(),
+            examples: vec!["bitset.has(b, 42)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["bitset.count".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "bitset.count".to_string(),
+            description: "The number of members.".to_string(),
+            syntax: "bitset.count(b)".to_string(),
+            parameters: vec!["b: Bitset handle".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec!["bitset.count(b)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["bitset.to_list".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "bitset.capacity".to_string(),
+            description: "The capacity the set was created with.".to_string(),
+            syntax: "bitset.capacity(b)".to_string(),
+            parameters: vec!["b: Bitset handle".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec!["bitset.capacity(b)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["bitset.new".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "bitset.union".to_string(),
+            description: "Members of either set (equal capacities), a word at a time.".to_string(),
+            syntax: "bitset.union(a, b)".to_string(),
+            parameters: vec![
+                "a: Bitset handle".to_string(),
+                "b: Bitset handle".to_string(),
+            ],
+            return_type: "Bitset handle".to_string(),
+            examples: vec!["bitset.union(a, b)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec![
+                "bitset.intersect".to_string(),
+                "bitset.difference".to_string(),
+            ],
+        });
+        self.add_function(FunctionDoc {
+            name: "bitset.intersect".to_string(),
+            description: "Members of both sets (equal capacities).".to_string(),
+            syntax: "bitset.intersect(a, b)".to_string(),
+            parameters: vec![
+                "a: Bitset handle".to_string(),
+                "b: Bitset handle".to_string(),
+            ],
+            return_type: "Bitset handle".to_string(),
+            examples: vec!["bitset.intersect(a, b)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["bitset.union".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "bitset.difference".to_string(),
+            description: "Members of a not in b (equal capacities).".to_string(),
+            syntax: "bitset.difference(a, b)".to_string(),
+            parameters: vec![
+                "a: Bitset handle".to_string(),
+                "b: Bitset handle".to_string(),
+            ],
+            return_type: "Bitset handle".to_string(),
+            examples: vec!["bitset.difference(a, b)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["bitset.union".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "bitset.to_list".to_string(),
+            description: "The members in ascending order, as a list of Ints.".to_string(),
+            syntax: "bitset.to_list(b)".to_string(),
+            parameters: vec!["b: Bitset handle".to_string()],
+            return_type: "List of Int".to_string(),
+            examples: vec!["bitset.to_list(b)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["bitset.count".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "dsu.new".to_string(),
+            description: "A new disjoint-sets (union-find) structure of n elements, each its own group. Automatically available. Rebind through unions: d = dsu.union(d, a, b).".to_string(),
+            syntax: "dsu.new(n)".to_string(),
+            parameters: vec![
+                "n: Int - element count".to_string(),
+            ],
+            return_type: "Dsu handle".to_string(),
+            examples: vec!["let mut d = dsu.new(100)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["dsu.union".to_string(), "dsu.connected".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "dsu.union".to_string(),
+            description: "The structure with a's and b's groups merged - by rank, compressing both walked paths.".to_string(),
+            syntax: "dsu.union(d, a, b)".to_string(),
+            parameters: vec![
+                "d: Dsu handle".to_string(),
+                "a: Int".to_string(),
+                "b: Int".to_string(),
+            ],
+            return_type: "Dsu handle".to_string(),
+            examples: vec!["d = dsu.union(d, 3, 7)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["dsu.connected".to_string(), "dsu.find".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "dsu.find".to_string(),
+            description: "The root representative of x's group. A read - follows links without rewriting them.".to_string(),
+            syntax: "dsu.find(d, x)".to_string(),
+            parameters: vec![
+                "d: Dsu handle".to_string(),
+                "x: Int".to_string(),
+            ],
+            return_type: "Int".to_string(),
+            examples: vec!["dsu.find(d, 3)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["dsu.connected".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "dsu.connected".to_string(),
+            description: "True when a and b are in the same group.".to_string(),
+            syntax: "dsu.connected(d, a, b)".to_string(),
+            parameters: vec![
+                "d: Dsu handle".to_string(),
+                "a: Int".to_string(),
+                "b: Int".to_string(),
+            ],
+            return_type: "Bool".to_string(),
+            examples: vec!["dsu.connected(d, 3, 7)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["dsu.union".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "dsu.size".to_string(),
+            description: "The number of elements (not groups).".to_string(),
+            syntax: "dsu.size(d)".to_string(),
+            parameters: vec!["d: Dsu handle".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec!["dsu.size(d)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["dsu.groups".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "dsu.groups".to_string(),
+            description: "The number of distinct groups.".to_string(),
+            syntax: "dsu.groups(d)".to_string(),
+            parameters: vec!["d: Dsu handle".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec!["dsu.groups(d)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["dsu.union".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "table.new".to_string(),
+            description: "A new, empty flat hash table (open addressing, linear probing). Keys are Ints or Strings; values any value. Automatically available. Rebind through every write: t = table.put(t, k, v).".to_string(),
+            syntax: "table.new()".to_string(),
+            parameters: vec![],
+            return_type: "Table handle".to_string(),
+            examples: vec!["let mut t = table.new()".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["table.put".to_string(), "table.get".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "table.put".to_string(),
+            description:
+                "The table with k set to v (inserted or overwritten), amortized O(1) in place."
+                    .to_string(),
+            syntax: "table.put(t, k, v)".to_string(),
+            parameters: vec![
+                "t: Table handle".to_string(),
+                "k: Int | String".to_string(),
+                "v: value".to_string(),
+            ],
+            return_type: "Table handle".to_string(),
+            examples: vec!["t = table.put(t, \"hits\", 1)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["table.get".to_string(), "table.remove".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "table.get".to_string(),
+            description: "The value under k, or () when absent (Unit is the absence value; use has to distinguish a stored ()).".to_string(),
+            syntax: "table.get(t, k)".to_string(),
+            parameters: vec![
+                "t: Table handle".to_string(),
+                "k: Int | String".to_string(),
+            ],
+            return_type: "value | Unit".to_string(),
+            examples: vec!["table.get(t, \"hits\")".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["table.get_or".to_string(), "table.has".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "table.get_or".to_string(),
+            description: "The value under k, or fallback when absent - the counter pattern: t = table.put(t, k, table.get_or(t, k, 0) + 1).".to_string(),
+            syntax: "table.get_or(t, k, fallback)".to_string(),
+            parameters: vec![
+                "t: Table handle".to_string(),
+                "k: Int | String".to_string(),
+                "fallback: value".to_string(),
+            ],
+            return_type: "value".to_string(),
+            examples: vec!["table.get_or(t, \"hits\", 0)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["table.get".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "table.has".to_string(),
+            description: "True when k is present.".to_string(),
+            syntax: "table.has(t, k)".to_string(),
+            parameters: vec!["t: Table handle".to_string(), "k: Int | String".to_string()],
+            return_type: "Bool".to_string(),
+            examples: vec!["table.has(t, \"hits\")".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["table.get".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "table.remove".to_string(),
+            description: "The table with k removed (a no-op when absent).".to_string(),
+            syntax: "table.remove(t, k)".to_string(),
+            parameters: vec!["t: Table handle".to_string(), "k: Int | String".to_string()],
+            return_type: "Table handle".to_string(),
+            examples: vec!["t = table.remove(t, \"hits\")".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["table.put".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "table.size".to_string(),
+            description: "The number of live entries.".to_string(),
+            syntax: "table.size(t)".to_string(),
+            parameters: vec!["t: Table handle".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec!["table.size(t)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["table.keys".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "table.keys".to_string(),
+            description: "The live keys, in slot order (stable between writes).".to_string(),
+            syntax: "table.keys(t)".to_string(),
+            parameters: vec!["t: Table handle".to_string()],
+            return_type: "List".to_string(),
+            examples: vec!["table.keys(t)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["table.values".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "table.values".to_string(),
+            description: "The live values, in the same slot order as keys.".to_string(),
+            syntax: "table.values(t)".to_string(),
+            parameters: vec!["t: Table handle".to_string()],
+            return_type: "List".to_string(),
+            examples: vec!["table.values(t)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["table.keys".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "alg.sort".to_string(),
+            description: "The list sorted ascending and stable - iterative merge sort, O(n log n) always. Elements must be mutually comparable. Automatically available.".to_string(),
+            syntax: "alg.sort(xs)".to_string(),
+            parameters: vec![
+                "xs: List".to_string(),
+            ],
+            return_type: "List".to_string(),
+            examples: vec!["alg.sort([3, 1, 2])  // [1, 2, 3]".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["alg.sort_by_key".to_string(), "alg.select_kth".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "alg.sort_by_key".to_string(),
+            description: "The list sorted ascending and stable by key_fn(x) - called once per element, never O(n log n) times.".to_string(),
+            syntax: "alg.sort_by_key(xs, key_fn)".to_string(),
+            parameters: vec![
+                "xs: List".to_string(),
+                "key_fn: Function - one argument, returns a comparable key".to_string(),
+            ],
+            return_type: "List".to_string(),
+            examples: vec!["alg.sort_by_key(words, (w) => len(w))".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["alg.sort".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "alg.lower_bound".to_string(),
+            description: "The first index in sorted xs whose element is >= x - the insertion point. len(xs) when all are smaller.".to_string(),
+            syntax: "alg.lower_bound(xs, x)".to_string(),
+            parameters: vec![
+                "xs: sorted List".to_string(),
+                "x: value".to_string(),
+            ],
+            return_type: "Int".to_string(),
+            examples: vec!["alg.lower_bound([1, 3, 3, 7], 3)  // 1".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["alg.upper_bound".to_string(), "alg.bin_search".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "alg.upper_bound".to_string(),
+            description: "The first index in sorted xs whose element is > x. With lower_bound, brackets the run equal to x.".to_string(),
+            syntax: "alg.upper_bound(xs, x)".to_string(),
+            parameters: vec![
+                "xs: sorted List".to_string(),
+                "x: value".to_string(),
+            ],
+            return_type: "Int".to_string(),
+            examples: vec!["alg.upper_bound([1, 3, 3, 7], 3)  // 3".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["alg.lower_bound".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "alg.bin_search".to_string(),
+            description: "The index of x in sorted xs, or () when absent.".to_string(),
+            syntax: "alg.bin_search(xs, x)".to_string(),
+            parameters: vec!["xs: sorted List".to_string(), "x: value".to_string()],
+            return_type: "Int | Unit".to_string(),
+            examples: vec!["alg.bin_search([1, 3, 7], 3)  // 1".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["alg.lower_bound".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "alg.select_kth".to_string(),
+            description: "The k-th smallest element (0-based) without sorting - quickselect, expected O(n). Medians and percentiles when a full sort is more than the question needs.".to_string(),
+            syntax: "alg.select_kth(xs, k)".to_string(),
+            parameters: vec![
+                "xs: List".to_string(),
+                "k: Int".to_string(),
+            ],
+            return_type: "value".to_string(),
+            examples: vec!["alg.select_kth(latencies, len(latencies) / 2)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["alg.sort".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "alg.graph".to_string(),
+            description: "A directed graph of n nodes from an edge list, as a flat CSR handle - build once, traverse many times.".to_string(),
+            syntax: "alg.graph(n, edges)".to_string(),
+            parameters: vec![
+                "n: Int - node count".to_string(),
+                "edges: List of [u, v] pairs".to_string(),
+            ],
+            return_type: "Graph handle".to_string(),
+            examples: vec!["alg.graph(3, [[0, 1], [1, 2]])".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["alg.bfs".to_string(), "alg.topo_sort".to_string(), "alg.wgraph".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "alg.wgraph".to_string(),
+            description: "A weighted directed graph from [u, v, w] triples - the CSR handle with a parallel weight array.".to_string(),
+            syntax: "alg.wgraph(n, edges)".to_string(),
+            parameters: vec![
+                "n: Int".to_string(),
+                "edges: List of [u, v, w] triples".to_string(),
+            ],
+            return_type: "Graph handle".to_string(),
+            examples: vec!["alg.wgraph(3, [[0, 1, 4], [1, 2, 1]])".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["alg.dijkstra".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "alg.bfs".to_string(),
+            description:
+                "Hop distances from src over a graph handle: a list with -1 for unreachable nodes."
+                    .to_string(),
+            syntax: "alg.bfs(g, src)".to_string(),
+            parameters: vec!["g: Graph handle".to_string(), "src: Int".to_string()],
+            return_type: "List of Int".to_string(),
+            examples: vec!["alg.bfs(g, 0)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["alg.dijkstra".to_string(), "alg.topo_sort".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "alg.topo_sort".to_string(),
+            description: "The nodes in topological order as Ok(order), or Err(\"cycle\") - a cycle is data about the input, not a bug.".to_string(),
+            syntax: "alg.topo_sort(g)".to_string(),
+            parameters: vec![
+                "g: Graph handle".to_string(),
+            ],
+            return_type: "Result<List, String>".to_string(),
+            examples: vec!["alg.topo_sort(g) |> unwrap".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["alg.bfs".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "alg.dijkstra".to_string(),
+            description: "Shortest-path distances from src over a weighted graph (non-negative weights): a list with -1 for unreachable nodes. Runs heap over flat CSR - the collections composed.".to_string(),
+            syntax: "alg.dijkstra(g, src)".to_string(),
+            parameters: vec![
+                "g: wgraph handle".to_string(),
+                "src: Int".to_string(),
+            ],
+            return_type: "List".to_string(),
+            examples: vec!["alg.dijkstra(g, 0)".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["alg.bfs".to_string(), "alg.wgraph".to_string()],
+        });
+    }
+
     fn add_bigint_functions(&mut self) {
         self.add_function(FunctionDoc {
             name: "bigint.of".to_string(),

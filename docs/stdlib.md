@@ -21,6 +21,7 @@ a file system, a network, or a browser.
 - [`col` / `colx` — collections](#col--colx--collections)
 - [`math` / `mathx` — mathematics](#math--mathx--mathematics)
 - [`bigint` — arbitrary precision](#bigint--arbitrary-precision)
+- [Collections, in olang](#collections-in-olang)
 - [`json` — JSON](#json--json)
 - [`toml` — TOML](#toml--toml)
 - [`csv` — CSV](#csv--csv)
@@ -478,6 +479,76 @@ Floats never mix implicitly: a Float has 53 bits of mantissa, so
 `big * 0.5` would silently round the very digits BigInt exists to keep.
 The operator refuses with a pointer to `bigint.to_float`, the one
 sanctioned, explicitly lossy conversion.
+
+## Collections, in olang
+
+Five data structures and an algorithms module, written entirely in
+olang, compiled into the binary, and **automatically available** — an
+unresolved name that matches one loads it on first touch, so
+`heap.push(...)` works in a bare script with no `use`, and a program
+that never reaches for a module never pays for it. (`use heap` remains
+legal and equivalent; a binding of your own with the same name always
+wins.)
+
+| Module | Structure | For |
+|---|---|---|
+| `heap` | binary min-heap of (priority, item) pairs | Dijkstra, schedulers, top-k, event queues |
+| `deque` | double-ended queue over a ring buffer | BFS frontiers, sliding windows, work lists |
+| `table` | flat hash table, open addressing | counting, indexing, hot single-table loops |
+| `dsu` | disjoint sets (union–find), by rank + compression | connectivity, Kruskal, clustering |
+| `bitset` | dense integer set, 63 members per word | sieves, visited-sets, set algebra |
+| `alg` | sort / bisect / select / graphs / Dijkstra | the classic algorithms over the above |
+
+**One calling convention.** Operations that write take the handle first
+and return the new handle, and you rebind the same name:
+
+```olang
+let mut h = heap.new()
+h = heap.push(h, 3, "job-a")
+h = heap.push(h, 1, "job-b")
+println(heap.top_item(h))     // job-b
+h = heap.pop(h)
+```
+
+The rebind is load-bearing: it lets the runtime pass the handle *by
+move* and write in place, so pushes, puts, and unions are O(1)–O(log n)
+memory operations, not copies. Reads (`heap.size`, `table.get`,
+`dsu.connected`, ...) take the handle without rebinding. Holding an
+older handle is always legal and always safe — it is a snapshot, and
+the next write through either handle pays a one-time copy; the
+language's aliasing guarantee is never suspended, only the speed
+changes.
+
+**The representation discipline.** Every handle is one flat list with a
+small metadata prefix — a heap is `[size, p0, i0, p1, i1, ...]`, a
+union-find is `[n, parents..., ranks...]`, a graph is CSR offsets and
+targets — so operations are index arithmetic over contiguous memory.
+Each module's source documents its own layout; they read as worked
+examples of writing fast olang.
+
+`alg` prefers **keys to comparators**: `alg.sort_by_key(xs, key_fn)`
+calls `key_fn` once per element and sorts on the extracted keys with
+native comparisons. `alg.dijkstra` is the composed showcase — `heap`
+over a flat weighted graph, entirely in olang.
+
+The primitives underneath — `col.set`, `col.swap`, `col.filled`, and
+the by-move calling convention — are ordinary language surface: your
+own data-structure libraries get the same speed by following the same
+rebind discipline.
+
+**Measured** (release build, M5 Pro, 200k operations): `table` runs a
+put-and-probe workload ~46× faster than driving the builtin persistent
+map through the same loop (5.8s against 269s — flat probing against
+per-write structural copies); `dsu` unions cost ~6µs each; `heap`
+push-and-pop ~36µs a pair. Two honest boundaries: for *plain* sorting
+of a list, the native `sort` builtin remains hundreds of times faster
+than `alg.sort` — reach for `alg` when you need stability, keys, the
+bisect family, or selection — and structure operations run on the
+interpreter by design (the tier boundary would convert a whole handle
+per call), so they are memory-fused microsecond operations, not
+nanosecond ones. Where the builtins already cover a shape natively,
+they stay the fast path; these modules cover the shapes the builtins
+do not.
 
 ## `json` — JSON
 

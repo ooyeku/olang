@@ -836,6 +836,29 @@ stack.
 | R4a — stack-headroom recursion guard | The 1,000-frame counter becomes a real stack-headroom check with a configurable hard cap (default ~100k) enforced identically on both tiers. | **shipped** — cap 100k, physically reachable via segmented stack growth; one budget shared across the tier boundary (seeded, so promotion cannot change the depth an error fires at); `--max-depth` |
 | R4b — tail-call elimination | Self-tail-recursive calls become loops on all three tiers: O(1) stack at any depth. Elided tail frames are noted in traces. | **shipped** — trampoline / rebind-and-jump / native loop; identity-based self test (shadows stay calls); boundary checks re-run per elided frame; 10M tail frames in 4ms |
 
+### Campaign 6 — collections, in olang
+
+A homegrown data-structures-and-algorithms library, written entirely in
+olang, embedded in the binary, and automatically available: an
+unresolved name that matches an embedded module loads it on first
+touch, so `heap.push(...)` works in a bare script with no `use` and no
+startup cost for programs that never reach for it. The performance
+design is representation discipline, not cleverness: every structure is
+a struct handle over flat uniform Int/Float lists (the JIT's
+specialized kinds), kernels are loops or tail recursion (native since
+R4b), APIs take keys rather than comparators (one call per element, not
+O(n log n)), and mutation follows the move discipline the language
+already teaches — rebind the returned handle and the sole-owner guard
+keeps every write in place; hold an old handle and you get a correct
+snapshot at the cost of one copy.
+
+| Lane | Work | Status |
+|---|---|---|
+| C1 — mutation primitives + auto-availability | `col.set`/`col.swap` with the sole-owner in-place fusion at the assignment site on both tiers (the `xs = xs + [..]` discipline, extended to indexed writes), `col.filled` preallocation, and lazy auto-loading of embedded modules at the undefined-identifier chokepoint. Tier-parity tests. | **shipped** — plus the by-move call fusion (`x = f(x, ...)` passes by move, any user function), by-move argument binding, prompt block-result drops, mutable parameters, and `str.char_code`. The VM compiles the indexed fusion to register-level in-place writes |
+| C2 — the Int-backed structures | `heap` (binary min-heap over one flat list), `dsu` (union-find with path compression and rank), `bitset` (63-bit words) — plus `alg`: iterative stable merge sort, sort-by-key, and the binary-search family. Each module `test`-blocked and differential-tested against Rust references. | **shipped** |
+| C3 — the composed structures | `deque` (ring buffer), `table` (open-addressing hash over flat slot triples), and the graph suite in `alg`: CSR construction, BFS, topological sort, Dijkstra (heap + CSR + flat dist array — the three-structure showcase). A `crunch.ol` stage exercises the lot. | **shipped** — the crunch stage runs a 2,000-task scheduling pipeline through all six modules, cross-checked |
+| C4 — measurement and polish | Benchmarks against the Rust-backed equivalents published in the module docs; help-registry entries and editor completions for every function; the stdlib.md "Collections, in olang" chapter. A JIT `IndexSet` instruction if the VM-level numbers leave wins on the table. | **shipped** — measured and published (table 46× the builtin map on a hot put/probe loop; plain sorting honestly deferred to the native builtin); 58 help entries; the JIT lane does not apply while the modules are interpreter-resident — it unlocks with the tier-boundary chip |
+
 
 | Lane | Work | Status |
 |---|---|---|
