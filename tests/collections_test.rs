@@ -153,12 +153,23 @@ fn every_bundled_module_passes_its_own_tests() {
             .expect("parse")
             .unwrap_or_else(|| panic!("{} is not embedded", module));
         // Outside `olang test`, test blocks execute inline as the
-        // program evaluates — so one eval both loads the module and
-        // runs every one of its test blocks, failing loudly.
+        // program evaluates — raises abort, but a failed
+        // `testing.assert_eq` only increments the thread-local tally
+        // (the runner's contract). Check both: the eval result for
+        // raises, the tally delta for quiet assertion failures.
+        let (_, failed_before) = olang::stdlib::testing::tally_snapshot();
         let mut interpreter = Interpreter::new();
         interpreter
             .eval_program((*program).clone())
             .unwrap_or_else(|e| panic!("{}: load or test block failed: {:?}", module, e));
+        let (_, failed_after) = olang::stdlib::testing::tally_snapshot();
+        assert_eq!(
+            failed_after - failed_before,
+            0,
+            "{}: {} assertion(s) failed in its test blocks",
+            module,
+            failed_after - failed_before
+        );
         let mut declared = 0;
         for statement in &program.statements {
             let mut stmt = statement;
