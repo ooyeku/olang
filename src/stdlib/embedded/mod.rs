@@ -10,6 +10,16 @@
 /// Registry of embedded modules: `use <name>` loads this source. Add a module
 /// by dropping a `.ol` file beside this file and listing it here.
 const MODULES: &[(&str, &str)] = &[
+    // The bundled collections (Campaign 6): data structures and
+    // algorithms written in olang against the sole-owner fusions, and
+    // automatically available — an unresolved name matching a module
+    // here loads it on first touch, no `use` required.
+    ("heap", include_str!("heap.ol")),
+    ("deque", include_str!("deque.ol")),
+    ("bitset", include_str!("bitset.ol")),
+    ("dsu", include_str!("dsu.ol")),
+    ("table", include_str!("table.ol")),
+    ("alg", include_str!("alg.ol")),
     ("colx", include_str!("colx.ol")),
     ("mathx", include_str!("mathx.ol")),
     ("ui", include_str!("ui.ol")),

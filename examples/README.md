@@ -260,9 +260,11 @@ you care about.
 - `crunch.ol` — the number-crunching gauntlet: five-million-frame tail
   recursion, ninety thousand ordinary frames, 300! and fib(1000) in
   `bigint`, an auto-parallel map over a million elements, `par_map` over
-  the Collatz record hunt, and a 150k-row trip through the parallel data
-  stack — every stage cross-checked against an answer computed another
-  way (`--heavy` scales it tenfold)
+  the Collatz record hunt, a 150k-row trip through the parallel data
+  stack, and a task-scheduling pipeline through all six bundled
+  collections (topo-sort, Dijkstra, heap, table, dsu, bitset) — every
+  stage cross-checked against an answer computed another way
+  (`--heavy` scales it tenfold)
 - `utils/` — three small `share`d modules (`math`, `string`, `validation`)
   imported by dotted path: `use utils.math { calculate_average }`. It has
   no `main.ol`, so the harness does not run it

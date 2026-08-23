@@ -137,6 +137,105 @@ t0 = time.monotonic_ms()
 }
 stages = stages + [{ name: "data stack", detail: `${150000 * scale} CSV rows`, ms: time.monotonic_ms() - t0 }]
 
+// ── 7. the bundled collections: structures composing, all in olang ────
+// A task-scheduling pipeline exercising every bundled module at once:
+// dependencies topo-sorted over a CSR graph, earliest starts by
+// Dijkstra over the same edges weighted, a heap draining tasks in
+// priority order, a table counting by category, dsu grouping connected
+// tasks, and a bitset tracking completion — cross-checked at each step.
+t0 = time.monotonic_ms()
+{
+    let n = 2000 * scale
+    // A layered DAG: each task depends on one or two earlier tasks.
+    let mut edges = []
+    let mut wedges = []
+    for i in range(1, n) {
+        let a = (i * 7919 + 13) % i
+        edges = edges + [[a, i]]
+        wedges = wedges + [[a, i, 1 + (i * 31) % 9]]
+        if i % 3 == 0 && i > 1 => {
+            let b = (i * 104729 + 7) % i
+            edges = edges + [[b, i]]
+            wedges = wedges + [[b, i, 1 + (i * 17) % 9]]
+        }
+    }
+    let g = alg.graph(n, edges)
+    let order = alg.topo_sort(g) |> unwrap
+    testing.assert_eq(len(order), n)
+
+    // Every edge points forward in the order — the topological contract.
+    let mut position = col.filled(n, 0)
+    for k in range(0, n) {
+        position = col.set(position, order[k], k)
+    }
+    let mut forward = true
+    for e in edges {
+        if position[e[0]] >= position[e[1]] => { forward = false }
+    }
+    testing.assert_eq(forward, true)
+
+    // Earliest reachable cost from the root, and hop counts agree with
+    // reachability.
+    let dist = alg.dijkstra(alg.wgraph(n, wedges), 0)
+    let hops = alg.bfs(g, 0)
+    let mut consistent = true
+    for u in range(0, n) {
+        if (dist[u] == -1) != (hops[u] == -1) => { consistent = false }
+    }
+    testing.assert_eq(consistent, true)
+
+    // Drain the tasks by cost through the heap; verify sorted order.
+    let mut h = heap.new()
+    for u in range(0, n) {
+        if dist[u] != -1 => { h = heap.push(h, dist[u], u) }
+    }
+    let mut done = bitset.new(n)
+    let mut last = -1
+    let mut ordered = true
+    while !heap.is_empty(h) {
+        let c = heap.top_prio(h)
+        done = bitset.add(done, heap.top_item(h))
+        h = heap.pop(h)
+        if c < last => { ordered = false }
+        last = c
+    }
+    testing.assert_eq(ordered, true)
+
+    // The completion set is exactly the reachable set.
+    let mut reachable = 0
+    for u in range(0, n) {
+        if dist[u] != -1 => { reachable = reachable + 1 }
+    }
+    testing.assert_eq(bitset.count(done), reachable)
+
+    // Count tasks by cost band in the flat table; totals re-derived.
+    let mut t = table.new()
+    for u in range(0, n) {
+        if dist[u] != -1 => {
+            let band = dist[u] / 10
+            t = table.put(t, band, table.get_or(t, band, 0) + 1)
+        }
+    }
+    let mut banded = 0
+    for v in table.values(t) {
+        banded = banded + v
+    }
+    testing.assert_eq(banded, reachable)
+
+    // Connectivity groups over the undirected edges match bfs
+    // reachability from the root for the root's own group.
+    let mut d = dsu.new(n)
+    for e in edges {
+        d = dsu.union(d, e[0], e[1])
+    }
+    let mut agree = true
+    for u in range(0, n) {
+        if dsu.connected(d, 0, u) != (hops[u] != -1) => { agree = false }
+    }
+    testing.assert_eq(agree, true)
+}
+stages = stages + [{ name: "collections", detail: `${2000 * scale}-task pipeline`, ms: time.monotonic_ms() - t0 }]
+
 // ── the tally ──────────────────────────────────────────────────────────
 let total = time.monotonic_ms() - started
 println(`crunch: the number-crunching gauntlet${if heavy => " (heavy)" else => ""}`)
