@@ -265,6 +265,69 @@ impl Environment {
 /// aliasing guard — it yields `Some` only when this is the single reference
 /// to the underlying `Vec`, exactly the discipline the string/list AddAssign
 /// fusion uses in the bytecode tier.
+impl Environment {
+    /// Run `f` over the sole-owned Vec behind `name`'s list binding, in
+    /// place. `None` means the binding is missing, is not a list, or is
+    /// aliased — the caller then takes the ordinary copy path, so
+    /// aliasing degrades to a copy, never to a wrong answer. The
+    /// traversal is `try_extend_list`'s; the sole-ownership discipline
+    /// is `extend_if_sole`'s. This is the primitive behind the
+    /// `xs = col.set(xs, i, v)` fusion, which is what lets the
+    /// olang-source collections (heap, table, dsu, ...) write single
+    /// elements at O(1).
+    /// Take `name`'s value out of its slot, leaving Unit — the caller
+    /// side of the move-call fusion (`x = mod.f(x, ...)` passes `x` by
+    /// move so the callee owns it solely). `None` when the binding is
+    /// missing or its scope is shared (an ancestor Arc another frame
+    /// holds): the caller then passes a copy, exactly as before. The
+    /// slot is written again by the assignment that follows; a raised
+    /// error aborts the program before anything can observe the Unit.
+    pub fn take_for_move(&mut self, name: &str) -> Option<Value> {
+        if let Some((_, val)) = self.locals.iter_mut().rev().find(|(n, _)| n == name) {
+            return Some(std::mem::replace(val, Value::Unit));
+        }
+        if self.variables.contains_key(name) {
+            return Arc::make_mut(&mut self.variables)
+                .get_mut(name)
+                .map(|val| std::mem::replace(val, Value::Unit));
+        }
+        if let Some(parent) = self.parent.as_mut()
+            && let Some(p) = Arc::get_mut(parent)
+        {
+            return p.take_for_move(name);
+        }
+        None
+    }
+
+    pub fn try_list_update<R>(
+        &mut self,
+        name: &str,
+        f: impl FnOnce(&mut Vec<Value>) -> R,
+    ) -> Option<R> {
+        fn sole_vec(val: &mut Value) -> Option<&mut Vec<Value>> {
+            if let Value::List(arc) = val {
+                return Arc::get_mut(arc);
+            }
+            None
+        }
+        if let Some((_, val)) = self.locals.iter_mut().rev().find(|(n, _)| n == name) {
+            return sole_vec(val).map(f);
+        }
+        if self.variables.contains_key(name) {
+            if let Some(val) = Arc::make_mut(&mut self.variables).get_mut(name) {
+                return sole_vec(val).map(f);
+            }
+            return None;
+        }
+        if let Some(parent) = self.parent.as_mut()
+            && let Some(p) = Arc::get_mut(parent)
+        {
+            return p.try_list_update(name, f);
+        }
+        None
+    }
+}
+
 fn extend_if_sole(val: &mut Value, items: &[Value]) -> bool {
     if let Value::List(arc) = val
         && let Some(v) = Arc::get_mut(arc)

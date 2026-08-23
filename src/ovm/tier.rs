@@ -321,8 +321,29 @@ impl BytecodeTier {
         self.try_call(func, args)
     }
 
+    /// The embedded collection modules stay interpreter-resident: their
+    /// operations do O(log n) work against O(n)-sized handles, and the
+    /// tier boundary converts every list argument in full — so promotion
+    /// would replace a handful of memory-fused writes with a whole-list
+    /// conversion per call. The interpreter's sole-owner fusions
+    /// (`col.set`, the move call) are exactly what these modules are
+    /// written against. Everything else promotes as before.
+    const INTERPRETER_RESIDENT: &'static [&'static str] = &[
+        "__embedded__/heap",
+        "__embedded__/deque",
+        "__embedded__/bitset",
+        "__embedded__/dsu",
+        "__embedded__/table",
+        "__embedded__/alg",
+    ];
+
     /// Try to execute `func(args)` on the bytecode VM.
     pub fn try_call(&mut self, func: &Function, args: &[Value]) -> TierOutcome {
+        if let Some(def_file) = func.def_file.as_deref()
+            && Self::INTERPRETER_RESIDENT.contains(&def_file)
+        {
+            return TierOutcome::Fallback;
+        }
         // Borrowed, not cloned: `func` is the caller's, independent of
         // `self`, so the lookups below need no owned copy. This used to
         // allocate a String on every call of every named function purely to

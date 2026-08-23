@@ -2108,9 +2108,10 @@ mod tests {
         assert_eq!(d.len(), 1, "{d:?}");
         assert!(!d[0].warning);
         assert!(d[0].message.contains("not declared mutable"));
-        // Parameters and loop variables are immutable.
-        let d = check("fn f(x) = { x = x + 1\n x }\n");
-        assert_eq!(d.len(), 1, "{d:?}");
+        // Parameters rebind (they are the function's own locals — the
+        // collections' `h = heap.push(h, ...)` convention); loop
+        // variables remain immutable.
+        assert!(check("fn f(x) = { x = x + 1\n x }\n").is_empty());
         let d = check("for x in [1] { x = x + 1 }\n");
         assert_eq!(d.len(), 1, "{d:?}");
         // Shadowing with a fresh `let` needs no `mut` — the pipeline idiom.

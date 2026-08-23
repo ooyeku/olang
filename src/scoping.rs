@@ -251,7 +251,14 @@ impl Validator {
         self.boundaries
             .push((self.scopes.len() - 1, Boundary::Function));
         for p in parameters {
-            self.bind(&p.name, false);
+            // Parameters are mutable bindings: they are the function's
+            // own locals, initialized from the arguments, and assigning
+            // one never touches the caller (arguments pass by value).
+            // Rebinding a parameter is also the collections' calling
+            // convention (`h = col.set(h, ...)` inside `heap.push`),
+            // where the shadow the old rule steered people toward would
+            // pin a second reference and defeat the in-place fusion.
+            self.bind(&p.name, true);
         }
         self.expr(body);
         self.boundaries.pop();
@@ -580,10 +587,12 @@ mod tests {
     }
 
     #[test]
-    fn parameters_and_loop_variables_are_immutable() {
-        let e = errors("fn f(x) = { x = 1 }\n");
-        assert_eq!(e.len(), 1, "{e:?}");
-        assert!(e[0].contains("not declared mutable"), "{}", e[0]);
+    fn parameters_rebind_and_loop_variables_are_immutable() {
+        // Parameters are the function's own locals, initialized from
+        // the arguments — rebinding one is legal and never touches the
+        // caller. (The collections' `h = heap.push(h, ...)` convention
+        // depends on it.) Loop variables remain immutable.
+        assert!(errors("fn f(x) = { x = 1 }\n").is_empty());
         let e = errors("for i in 0..3 { i = 9 }\n");
         assert_eq!(e.len(), 1, "{e:?}");
     }

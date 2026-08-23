@@ -45,6 +45,15 @@ pub fn create_collections_module() -> Value {
         module.insert(name.to_string(), create_builtin_function(name, 1));
     }
 
+    // The mutation primitives behind the olang-source collections
+    // (Campaign 6): indexed write, swap, and preallocation. Their copy
+    // semantics live here; the O(1) story is the assignment fusion —
+    // `xs = col.set(xs, i, v)` mutates in place when `xs` holds the
+    // only reference, on both tiers, exactly like `xs = xs + [..]`.
+    module.insert("set".to_string(), create_builtin_function("set", 3));
+    module.insert("swap".to_string(), create_builtin_function("swap", 3));
+    module.insert("filled".to_string(), create_builtin_function("filled", 2));
+
     // zip_with(a, b, combiner)
     module.insert(
         "zip_with".to_string(),
@@ -88,6 +97,9 @@ pub fn call_collections_function(
         "window" => window(args),
         "zip_with" => zip_with(args, interpreter),
         "last" => last(args),
+        "set" => col_set(args),
+        "swap" => col_swap(args),
+        "filled" => col_filled(args),
         _ => Err(InterpreterError::RuntimeError {
             message: format!("Unknown col function: {}", name),
         }),
@@ -115,6 +127,89 @@ fn list_arg<'a>(
             message: format!("col.{}: missing argument {}", func, i + 1),
         }),
     }
+}
+
+/// Resolve an index against a length with the language's indexing rule:
+/// negatives count from the end. Out of bounds raises — a bad index is a
+/// caller's bug, not data (same as `xs[i]`).
+pub(crate) fn resolve_index(func: &str, i: i64, len: usize) -> Result<usize, String> {
+    let resolved = if i < 0 { i + len as i64 } else { i };
+    if resolved < 0 || resolved as usize >= len {
+        return Err(format!(
+            "col.{}: index {} out of bounds for list of length {}",
+            func, i, len
+        ));
+    }
+    Ok(resolved as usize)
+}
+
+fn int_arg(args: &[Value], i: usize, func: &str) -> Result<i64, InterpreterError> {
+    match args.get(i) {
+        Some(Value::Integer(n)) => Ok(*n),
+        Some(other) => Err(InterpreterError::TypeError {
+            message: format!(
+                "col.{}: argument {} must be an Int, got {}",
+                func,
+                i + 1,
+                other.type_name()
+            ),
+        }),
+        None => Err(InterpreterError::RuntimeError {
+            message: format!("col.{}: missing argument {}", func, i + 1),
+        }),
+    }
+}
+
+/// `col.set(xs, i, v)` — the list with element `i` replaced by `v`.
+/// This is the copy path; `xs = col.set(xs, i, v)` fuses to an O(1)
+/// in-place write when `xs` is sole-owned.
+fn col_set(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    let items = list_arg(&args, 0, "set")?;
+    let i = int_arg(&args, 1, "set")?;
+    let at = resolve_index("set", i, items.len())
+        .map_err(|message| InterpreterError::RuntimeError { message })?;
+    let value = args
+        .get(2)
+        .cloned()
+        .ok_or_else(|| InterpreterError::RuntimeError {
+            message: "col.set: missing argument 3".to_string(),
+        })?;
+    let mut out = (**items).clone();
+    out[at] = value;
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `col.swap(xs, i, j)` — the list with elements `i` and `j` exchanged.
+/// Copy path; the assignment fusion makes it O(1) in place.
+fn col_swap(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    let items = list_arg(&args, 0, "swap")?;
+    let i = int_arg(&args, 1, "swap")?;
+    let j = int_arg(&args, 2, "swap")?;
+    let a = resolve_index("swap", i, items.len())
+        .map_err(|message| InterpreterError::RuntimeError { message })?;
+    let b = resolve_index("swap", j, items.len())
+        .map_err(|message| InterpreterError::RuntimeError { message })?;
+    let mut out = (**items).clone();
+    out.swap(a, b);
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `col.filled(n, v)` — a list of `n` copies of `v`: the preallocation
+/// primitive the flat-array structures build their backing stores with.
+fn col_filled(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    let n = int_arg(&args, 0, "filled")?;
+    if n < 0 {
+        return Err(InterpreterError::RuntimeError {
+            message: format!("col.filled: length must be non-negative, got {}", n),
+        });
+    }
+    let value = args
+        .get(1)
+        .cloned()
+        .ok_or_else(|| InterpreterError::RuntimeError {
+            message: "col.filled: missing argument 2".to_string(),
+        })?;
+    Ok(Value::List(Arc::new(vec![value; n as usize])))
 }
 
 fn truthy(value: &Value) -> bool {

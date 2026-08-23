@@ -212,7 +212,12 @@ reassignable when declared `mut`, *values* are never mutable.
 
 - A **binding** is a name-to-value association. Assignment (`counter =
   counter + 1`) points the name at a different value. This is allowed
-  when the binding was declared `let mut`.
+  when the binding was declared `let mut` — and always for function
+  parameters, which are the function's own locals initialized from the
+  arguments: rebinding one never touches the caller. Parameter rebinding
+  is also the collections' calling convention (`h = heap.push(h, ...)`
+  inside a structure's own operations), where a shadow would pin a
+  second reference to the handle and cost the in-place optimization.
 - A **value** — a list, map, struct, string — is immutable. No
   operation modifies a value in place; operations like `map_set`,
   list `+`, and `str.replace` build and return *new* values, sharing

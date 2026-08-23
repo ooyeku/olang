@@ -31,6 +31,7 @@ pub fn create_string_module() -> Value {
         "length",
         "parse_int",
         "parse_float",
+        "char_code",
     ];
     for name in unary {
         module.insert(name.to_string(), create_builtin_function(name, 1));
@@ -108,6 +109,7 @@ pub fn call_string_function(
         "repeat" => str_repeat(args),
         "count" => str_count(args),
         "char_at" => str_char_at(args),
+        "char_code" => str_char_code(args),
         "replace" => str_replace(args, false),
         "replace_first" => str_replace(args, true),
         "substring" => str_substring(args),
@@ -311,6 +313,18 @@ fn str_char_at(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // Out of range yields an empty string, so callers can probe without
     // guarding — total operation
     Ok(ok_string(ch.map(|c| c.to_string()).unwrap_or_default()))
+}
+
+/// The Unicode code point of a string's first character, as an Int —
+/// the primitive under any olang-written string hash (the embedded
+/// `table` module's, for one). An empty string returns Unit, the
+/// absence value, so callers can probe without guarding.
+fn str_char_code(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let s = arg_str(&args, 0, "char_code")?;
+    Ok(match s.chars().next() {
+        Some(c) => Value::Integer(c as i64),
+        None => Value::Unit,
+    })
 }
 
 fn str_replace(args: Vec<Value>, first_only: bool) -> Result<Value, Box<dyn std::error::Error>> {

@@ -1012,6 +1012,24 @@ impl Interpreter {
             Expr::Identifier(name) => match self.environment.get(name) {
                 Some(v) => Ok(v),
                 None => {
+                    // Embedded olang modules are automatically available:
+                    // an unbound name that matches one loads it here, on
+                    // first touch — `heap.push(...)` works in a bare
+                    // script with no `use`, and a program that never
+                    // reaches for a module never pays for it. A user
+                    // binding of the same name wins by construction: a
+                    // bound name never misses. Loading rides the normal
+                    // `use` machinery (and its per-process parsed-AST
+                    // cache), so `use heap` remains equivalent and legal.
+                    if crate::stdlib::embedded::is_embedded(name) {
+                        self.eval_use_decl(crate::ast::UseDecl {
+                            path: vec![name.clone()],
+                            items: Vec::new(),
+                        })?;
+                        if let Some(v) = self.environment.get(name) {
+                            return Ok(v);
+                        }
+                    }
                     self.pending_error_hint = self.did_you_mean(name);
                     Err(InterpreterError::UndefinedVariable { name: name.clone() })
                 }
@@ -1031,6 +1049,12 @@ impl Interpreter {
                 slot,
                 value,
             } => {
+                if let Some(result) = self.try_fused_list_write(name, value) {
+                    return result;
+                }
+                if let Some(result) = self.try_fused_move_call(name, value) {
+                    return result;
+                }
                 let val = self.eval_expr(value)?;
                 match self.environment.set_slot(name, *depth, *slot, val.clone()) {
                     Ok(()) => Ok(val),
@@ -1158,13 +1182,25 @@ impl Interpreter {
                 // lasts. Blocks that declare nothing — the overwhelming
                 // majority, including most loop bodies — skip the frame
                 // entirely, so scoping costs nothing where nothing is bound.
+                // Intermediate statements drop their results before the
+                // next one runs: a retained result is a second Arc on
+                // whatever the statement produced, and one extra reference
+                // is exactly what defeats the sole-owner fusions
+                // (`xs = xs + [..]`, `xs = col.set(xs, i, v)`) on the very
+                // next line. Only the final statement's value is the
+                // block's value.
                 if statements.iter().any(Self::statement_binds) {
                     self.environment = Environment::with_parent(self.environment.clone());
                     let mut result = Ok(Value::Unit);
-                    for statement in statements {
-                        result = self.eval_statement(statement);
-                        if result.is_err() {
-                            break;
+                    if let Some((last, init)) = statements.split_last() {
+                        for statement in init {
+                            if let Err(e) = self.eval_statement(statement) {
+                                result = Err(e);
+                                break;
+                            }
+                        }
+                        if result.is_ok() {
+                            result = self.eval_statement(last);
                         }
                     }
                     // Pop on every path: a `break`, `return`, or `?` leaves
@@ -1175,11 +1211,13 @@ impl Interpreter {
                     }
                     return result;
                 }
-                let mut result = Value::Unit;
-                for statement in statements {
-                    result = self.eval_statement(statement)?;
+                let Some((last, init)) = statements.split_last() else {
+                    return Ok(Value::Unit);
+                };
+                for statement in init {
+                    self.eval_statement(statement)?;
                 }
-                Ok(result)
+                self.eval_statement(last)
             }
             Expr::BinaryOp { left, op, right } => {
                 // The logical operators short-circuit: the right operand is
@@ -1277,6 +1315,12 @@ impl Interpreter {
                 Err(InterpreterError::ReturnSignal(v))
             }
             Expr::Assignment { target, value } => {
+                if let Some(result) = self.try_fused_list_write(target, value) {
+                    return result;
+                }
+                if let Some(result) = self.try_fused_move_call(target, value) {
+                    return result;
+                }
                 // Fuse `xs = xs + [..]` into an in-place extend when xs holds
                 // a sole-owned list — the interpreter half of finding #1,
                 // turning O(n²) accumulation into O(n). Narrowed to a list
@@ -1730,6 +1774,245 @@ impl Interpreter {
     /// go through. `call_function` used to be the only entry, and it
     /// takes the callee by VALUE: every per-element call cloned the
     /// whole `Function` — its parameter vector, its name, its check
+    /// Fuse `x = col.set(x, i, v)` / `x = col.swap(x, i, j)` into an
+    /// in-place write when `x` holds the only reference to its list —
+    /// the indexed twin of the `xs = xs + [..]` extend fusion, and the
+    /// primitive that makes the olang-source collections O(1) per
+    /// write. Returns `None` when the shape doesn't match (the caller
+    /// evaluates normally), `Some(result)` when it does — where an
+    /// aliased or non-list binding has already been finished on the
+    /// ordinary copy path, so the answer is identical either way.
+    ///
+    /// The guards, in order: the callee must be the *builtin* `col.set`
+    /// or `col.swap` (resolved through the environment, so a shadowed
+    /// `col` is somebody else's and declines); all three arguments
+    /// positional, the first naming the assignment target itself; the
+    /// index/value arguments assignment-free, because fusion evaluates
+    /// them before touching `x` and an argument that wrote `x` would
+    /// observe the wrong order.
+    fn try_fused_list_write(
+        &mut self,
+        target: &str,
+        value: &Expr,
+    ) -> Option<Result<Value, InterpreterError>> {
+        let Expr::Call { callee, arguments } = value else {
+            return None;
+        };
+        let Expr::FieldAccess { object, field } = callee.as_ref() else {
+            return None;
+        };
+        if !matches!(object.as_ref(), Expr::Identifier(m) if m == "col")
+            || !matches!(field.as_str(), "set" | "swap")
+            || arguments.len() != 3
+        {
+            return None;
+        }
+        let mut exprs = Vec::with_capacity(3);
+        for argument in arguments {
+            match argument {
+                crate::ast::Argument::Positional(e) => exprs.push(e),
+                crate::ast::Argument::Named { .. } => return None,
+            }
+        }
+        let names_target = matches!(exprs[0], Expr::Identifier(n) if n == target)
+            || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target);
+        if !names_target
+            || !crate::ovm::bytecode::BytecodeCompiler::assignment_free(exprs[1])
+            || !crate::ovm::bytecode::BytecodeCompiler::assignment_free(exprs[2])
+        {
+            return None;
+        }
+        // `col` must still be the builtin module, and the field its
+        // builtin — a user's own `col` binding takes the normal path.
+        let is_builtin = matches!(
+            self.environment.get("col"),
+            Some(Value::Struct { type_name, fields })
+                if type_name == "Module"
+                    && matches!(
+                        fields.get(field.as_str()),
+                        Some(Value::Builtin(b)) if b.name == format!("col.{}", field)
+                    )
+        );
+        if !is_builtin {
+            return None;
+        }
+
+        let swap = field == "swap";
+        let a1 = match self.eval_expr(exprs[1]) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
+        let a2 = match self.eval_expr(exprs[2]) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
+        // Int indexes only on the fused path; anything else falls back
+        // to the builtin, whose type errors are the single source of
+        // truth.
+        let in_place: Option<Result<(), String>> = match (&a1, &a2, swap) {
+            (Value::Integer(i), _, false) => {
+                let i = *i;
+                let v = a2.clone();
+                self.environment.try_list_update(target, |items| {
+                    let at = crate::stdlib::collections::resolve_index("set", i, items.len())?;
+                    items[at] = v;
+                    Ok(())
+                })
+            }
+            (Value::Integer(i), Value::Integer(j), true) => {
+                let (i, j) = (*i, *j);
+                self.environment.try_list_update(target, |items| {
+                    let a = crate::stdlib::collections::resolve_index("swap", i, items.len())?;
+                    let b = crate::stdlib::collections::resolve_index("swap", j, items.len())?;
+                    items.swap(a, b);
+                    Ok(())
+                })
+            }
+            _ => None,
+        };
+        match in_place {
+            Some(Ok(())) => Some(self.environment.get(target).ok_or_else(|| {
+                InterpreterError::UndefinedVariable {
+                    name: target.to_string(),
+                }
+            })),
+            Some(Err(message)) => Some(Err(InterpreterError::RuntimeError { message })),
+            // Aliased or not a list: the ordinary builtin call, with the
+            // already-evaluated arguments (assignment-free, so reading
+            // the target now matches the normal left-to-right order).
+            None => {
+                let current = match self.environment.get(target) {
+                    Some(v) => v,
+                    None => {
+                        return Some(Err(InterpreterError::UndefinedVariable {
+                            name: target.to_string(),
+                        }));
+                    }
+                };
+                let result = crate::stdlib::collections::call_collections_function(
+                    field,
+                    vec![current, a1, a2],
+                    self,
+                );
+                match result {
+                    Ok(val) => {
+                        if let Err(e) = self.environment.set(target, val.clone()).or_else(|_| {
+                            self.environment.define(target.to_string(), val.clone());
+                            Ok::<(), InterpreterError>(())
+                        }) {
+                            return Some(Err(e));
+                        }
+                        Some(Ok(val))
+                    }
+                    Err(e) => Some(Err(e)),
+                }
+            }
+        }
+    }
+
+    /// Fuse `x = f(x, ...)` — a call to a user function that rebinds
+    /// its own first argument — into a *move*: `x` is taken out of its
+    /// slot (leaving Unit) rather than copied, so the callee receives
+    /// the value solely owned and its own writes stay in place. This is
+    /// the calling convention the olang-source collections are written
+    /// against (`h = heap.push(h, p, v)`), and what makes a
+    /// handle-based API O(1) per operation instead of O(n) at every
+    /// call boundary — for any olang library, not only the bundled
+    /// ones. The value that arrives is
+    /// identical; only reference counts differ, which is unobservable
+    /// except as speed. Remaining arguments must be assignment-free
+    /// (they evaluate before the take; one that wrote `x` would observe
+    /// the wrong order), and a shared scope declines the take and calls
+    /// with a copy, exactly as before.
+    fn try_fused_move_call(
+        &mut self,
+        target: &str,
+        value: &Expr,
+    ) -> Option<Result<Value, InterpreterError>> {
+        let Expr::Call { callee, arguments } = value else {
+            return None;
+        };
+        // The callee must be a *pure lookup* — a bare name or a
+        // `module.field` on a bare name — because deciding to move
+        // means evaluating it before the arguments, and an effectful
+        // callee expression would run out of order.
+        let callee_is_lookup = match callee.as_ref() {
+            Expr::Identifier(_) | Expr::LocalRef { .. } => true,
+            Expr::FieldAccess { object, .. } => {
+                matches!(object.as_ref(), Expr::Identifier(_) | Expr::LocalRef { .. })
+            }
+            _ => false,
+        };
+        if !callee_is_lookup || arguments.is_empty() {
+            return None;
+        }
+        let mut exprs = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            match argument {
+                crate::ast::Argument::Positional(e) => exprs.push(e),
+                crate::ast::Argument::Named { .. } => return None,
+            }
+        }
+        let names_target = matches!(exprs[0], Expr::Identifier(n) if n == target)
+            || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target);
+        if !names_target {
+            return None;
+        }
+        if !exprs[1..]
+            .iter()
+            .all(|e| crate::ovm::bytecode::BytecodeCompiler::assignment_free(e))
+        {
+            return None;
+        }
+        // Resolve the callee — a pure lookup (auto-loading the module on
+        // first touch, like any other reference to it). Only a Function
+        // from the module value takes the move path; anything else (a
+        // shadowed name, a builtin) declines.
+        let callee_value = match self.eval_expr(callee) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
+        if !matches!(callee_value, Value::Function(_)) {
+            return None;
+        }
+        let mut args = Vec::with_capacity(exprs.len());
+        // Arguments after the first evaluate before the take, in their
+        // ordinary order.
+        let mut rest = Vec::with_capacity(exprs.len() - 1);
+        for e in &exprs[1..] {
+            match self.eval_expr(e) {
+                Ok(v) => rest.push(v),
+                Err(err) => return Some(Err(err)),
+            }
+        }
+        let moved = match self.environment.take_for_move(target) {
+            Some(v) => v,
+            None => match self.environment.get(target) {
+                Some(v) => v,
+                None => {
+                    return Some(Err(InterpreterError::UndefinedVariable {
+                        name: target.to_string(),
+                    }));
+                }
+            },
+        };
+        args.push(moved);
+        args.extend(rest);
+        let result = self.call_function(callee_value, args);
+        match result {
+            Ok(val) => {
+                if let Err(e) = self.environment.set(target, val.clone()).or_else(|_| {
+                    self.environment.define(target.to_string(), val.clone());
+                    Ok::<(), InterpreterError>(())
+                }) {
+                    return Some(Err(e));
+                }
+                Some(Ok(val))
+            }
+            Err(e) => Some(Err(e)),
+        }
+    }
+
     /// The checks every call crosses: arity against required and total
     /// parameters, trait bounds, and declared parameter types. One
     /// function because an *elided* tail frame must re-run exactly what
@@ -1899,11 +2182,18 @@ impl Interpreter {
                 }
 
                 // Parameters are defined over the shared map; copy-on-write
-                // clones only the touched structure
+                // clones only the touched structure. Arguments bind by
+                // *move* — the vector's slot is left with Unit — so a
+                // value passed here is not also pinned alive by the
+                // argument vector for the whole call. That pin was a
+                // hidden second reference on every argument, and one
+                // extra reference is exactly what turns the callee's
+                // sole-owner writes (`h = col.set(h, ...)`) into a full
+                // copy per operation.
                 let mut bind_error = None;
                 for (i, param) in func.parameters.iter().enumerate() {
                     let value = if i < arguments.len() {
-                        arguments[i].clone()
+                        std::mem::replace(&mut arguments[i], Value::Unit)
                     } else if let Some(default_expr) = &param.default_value {
                         match self.eval_expr(default_expr) {
                             Ok(v) => v,

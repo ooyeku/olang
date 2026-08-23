@@ -383,6 +383,22 @@ pub enum Instruction {
     /// to its string, the executor appends in place, making string
     /// building O(n) instead of O(n^2). Strings are immutable values
     /// with content equality, so identity is unobservable.
+    /// `x = col.set(x, i, v)`, fused (Campaign 6): write one element of
+    /// the list in `target`'s register, in place when the register holds
+    /// the only reference — the indexed twin of AddAssign's extend
+    /// fusion, and the write primitive of the olang-source collections.
+    ListSetAssign {
+        target: Register,
+        index: Register,
+        value: Register,
+    },
+    /// `x = col.swap(x, i, j)`, fused: exchange two elements in place
+    /// under the same sole-owner discipline.
+    ListSwapAssign {
+        target: Register,
+        i: Register,
+        j: Register,
+    },
     AddAssign {
         target: Register,
         rhs: Register,
@@ -1027,6 +1043,12 @@ impl BytecodeVm {
             // map builtins — maps round-trip losslessly now, so builders
             // and readers both bridge safely
             "entries",
+            // Campaign 6 mutation primitives: named here so the compiler
+            // recognizes the real `col.set`/`col.swap` behind the
+            // assignment fusion (and compiles plain calls to CallNamed).
+            "col.set",
+            "col.swap",
+            "col.filled",
             "map_get",
             "map_set",
             "map_remove",
@@ -2046,6 +2068,100 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, result)?;
                 }
 
+                Instruction::ListSetAssign {
+                    target,
+                    index,
+                    value,
+                } => {
+                    use crate::ovm::value::ValueData;
+                    let idx_val = self.execution_state.get_register(*index)?;
+                    let idx = match &idx_val.data {
+                        ValueData::Integer(i) => *i,
+                        _ => {
+                            return Err(BytecodeError::TypeError(format!(
+                                "col.set: argument 2 must be an Int, got {}",
+                                idx_val.type_name()
+                            )));
+                        }
+                    };
+                    let v = self.execution_state.get_register(*value)?;
+                    // Move the list out of its register so a sole owner is
+                    // recognizable; aliased lists copy, exactly like the
+                    // interpreter's fusion and AddAssign's extend.
+                    let target_val = self.execution_state.take_register(*target)?;
+                    if !matches!(target_val.data, ValueData::List(_)) {
+                        let msg = format!(
+                            "col.set: argument 1 must be a list, got {}",
+                            target_val.type_name()
+                        );
+                        self.execution_state.set_register(*target, target_val)?;
+                        return Err(BytecodeError::TypeError(msg));
+                    }
+                    let ValueData::List(mut arc) = target_val.data else {
+                        unreachable!("matched above");
+                    };
+                    let at = crate::stdlib::collections::resolve_index("set", idx, arc.len())
+                        .map_err(BytecodeError::RuntimeError)?;
+                    match std::sync::Arc::get_mut(&mut arc) {
+                        Some(items) => items[at] = v,
+                        None => {
+                            let mut items = (*arc).clone();
+                            items[at] = v;
+                            arc = std::sync::Arc::new(items);
+                        }
+                    }
+                    self.execution_state.set_register(
+                        *target,
+                        OvmValue {
+                            data: ValueData::List(arc),
+                        },
+                    )?;
+                }
+                Instruction::ListSwapAssign { target, i, j } => {
+                    use crate::ovm::value::ValueData;
+                    let read_idx = |vm: &Self, r: Register| -> Result<i64, BytecodeError> {
+                        let v = vm.execution_state.get_register(r)?;
+                        match &v.data {
+                            ValueData::Integer(n) => Ok(*n),
+                            _ => Err(BytecodeError::TypeError(format!(
+                                "col.swap: index must be an Int, got {}",
+                                v.type_name()
+                            ))),
+                        }
+                    };
+                    let ia = read_idx(self, *i)?;
+                    let ib = read_idx(self, *j)?;
+                    let target_val = self.execution_state.take_register(*target)?;
+                    if !matches!(target_val.data, ValueData::List(_)) {
+                        let msg = format!(
+                            "col.swap: argument 1 must be a list, got {}",
+                            target_val.type_name()
+                        );
+                        self.execution_state.set_register(*target, target_val)?;
+                        return Err(BytecodeError::TypeError(msg));
+                    }
+                    let ValueData::List(mut arc) = target_val.data else {
+                        unreachable!("matched above");
+                    };
+                    let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
+                        .map_err(BytecodeError::RuntimeError)?;
+                    let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
+                        .map_err(BytecodeError::RuntimeError)?;
+                    match std::sync::Arc::get_mut(&mut arc) {
+                        Some(items) => items.swap(a, b),
+                        None => {
+                            let mut items = (*arc).clone();
+                            items.swap(a, b);
+                            arc = std::sync::Arc::new(items);
+                        }
+                    }
+                    self.execution_state.set_register(
+                        *target,
+                        OvmValue {
+                            data: ValueData::List(arc),
+                        },
+                    )?;
+                }
                 Instruction::AddAssign { target, rhs } => {
                     use crate::ovm::value::ValueData;
                     let rhs_val = self.execution_state.get_register(*rhs)?;
@@ -5831,6 +5947,53 @@ impl BytecodeCompiler {
                         )));
                     }
                 };
+                // Fuse `x = col.set(x, i, v)` / `x = col.swap(x, i, j)`
+                // into an in-place indexed write — the interpreter fuses
+                // the identical shape, so the tiers stay observationally
+                // identical including the O(1) cost. Guards mirror the
+                // interpreter's: the real builtin (an unshadowed `col`),
+                // three positional args naming the target first, and
+                // assignment-free index/value expressions.
+                if let Expr::Call { callee, arguments } = value.as_ref()
+                    && let Expr::FieldAccess { object, field } = callee.as_ref()
+                    && matches!(object.as_ref(), Expr::Identifier(m)
+                        if m == "col" && !self.local_variables.contains_key(m))
+                    && matches!(field.as_str(), "set" | "swap")
+                    && self.builtin_names.contains(&format!("col.{}", field))
+                    && arguments.len() == 3
+                {
+                    let exprs: Vec<&Expr> = arguments
+                        .iter()
+                        .filter_map(|a| match a {
+                            crate::ast::Argument::Positional(e) => Some(e),
+                            crate::ast::Argument::Named { .. } => None,
+                        })
+                        .collect();
+                    let names_target = exprs.len() == 3
+                        && (matches!(exprs[0], Expr::Identifier(n) if n == target)
+                            || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target));
+                    if names_target
+                        && Self::assignment_free(exprs[1])
+                        && Self::assignment_free(exprs[2])
+                    {
+                        let a1 = self.compile_expression(exprs[1])?;
+                        let a2 = self.compile_expression(exprs[2])?;
+                        self.emitter.instructions.push(if field == "set" {
+                            Instruction::ListSetAssign {
+                                target: target_reg,
+                                index: a1,
+                                value: a2,
+                            }
+                        } else {
+                            Instruction::ListSwapAssign {
+                                target: target_reg,
+                                i: a1,
+                                j: a2,
+                            }
+                        });
+                        return Ok(target_reg);
+                    }
+                }
                 // Fuse the accumulate pattern `x = x + rhs` into AddAssign,
                 // which appends in place when x holds the only reference to
                 // its string. Only when the rhs provably contains no
