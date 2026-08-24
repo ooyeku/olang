@@ -19,9 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   way `take` has since it shipped. Column type inference also stopped
   parsing numeric columns twice (test with one scan, rebuild with a
   second) in favor of keeping what it parses. On the published
-  benchmark: clean 69 ms → 21 ms, filter 39 ms → 14 ms, load 76 ms →
-  70 ms, whole pipeline 223 ms → 145 ms — now 2.1× ahead of pandas
-  end to end. Every stage checksum is unchanged.
+  benchmark: clean 69 ms → 20 ms, filter 39 ms → 13 ms, whole pipeline
+  223 ms → 126 ms. Every stage checksum is unchanged.
+
+- **CSV reads borrow instead of allocating.** An unquoted file now
+  parses into slices of the original text, so a numeric column is
+  parsed straight out of the file and never becomes a `String` — where
+  every cell used to be allocated before anything knew its type. Only
+  columns that really are text allocate. A quote anywhere, or a row
+  whose field count disagrees with the header, falls through to the
+  general parser unchanged, keeping quoting rules and the line numbers
+  in parse errors where they belong. Load of a 1M-row, 6-column file:
+  76 ms → 52 ms, and the pipeline is 2.5× ahead of pandas end to end.
 
 ### Added
 

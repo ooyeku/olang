@@ -2444,3 +2444,94 @@ let s = ods.series([4, 1, 7, 1, 9])
     )
     .expect("tier agreement");
 }
+
+// ── the borrowed CSV read path ──────────────────────────────────────
+//
+// An unquoted file parses into slices of the original text and never
+// allocates a cell it does not keep. Everything it declines — a quote
+// anywhere, a short row — must fall through to the general parser with
+// its behavior and its error messages intact, which is what these pin.
+
+#[test]
+fn quoted_csv_fields_survive_the_fast_path() {
+    // A comma inside quotes is one field, and a newline inside quotes
+    // is one row: both are exactly what the fast path must not decide.
+    let got = eval(
+        r#"
+        let a = ods.read_csv("name,note\nada,\"hello, world\"\nbob,plain\n")
+        let b = ods.read_csv("k,v\nx,\"line1\nline2\"\ny,z\n")
+        [to_string(ods.to_list(ods.column(a, "note"))), to_string(ods.n_rows(b))]
+        "#,
+        None,
+    )
+    .expect("eval");
+    let text = format!("{}", got);
+    assert!(
+        text.contains("hello, world"),
+        "quoted comma must stay one field: {text}"
+    );
+    assert!(
+        text.contains('2'),
+        "quoted newline must stay one row: {text}"
+    );
+}
+
+#[test]
+fn line_endings_blank_lines_and_missing_cells_read_alike() {
+    let got = eval(
+        r#"
+        let crlf = ods.read_csv("a,b\r\n1,2\r\n3,4\r\n")
+        let no_trailing = ods.read_csv("a,b\n1,2\n3,4")
+        let blank_line = ods.read_csv("a,b\n1,2\n\n3,4\n")
+        let header_only = ods.read_csv("a,b\n")
+        let empties = ods.read_csv("a,b\n1,\n,4\n")
+        [
+            ods.sum(ods.column(crlf, "b")),
+            ods.n_rows(no_trailing),
+            ods.n_rows(blank_line),
+            ods.n_rows(header_only),
+            ods.null_count(ods.column(empties, "a")),
+            ods.null_count(ods.column(empties, "b"))
+        ]
+        "#,
+        None,
+    )
+    .expect("eval");
+    // b sums 6 over CRLF rows; two rows each for the next two; no rows
+    // for a header alone; one null in each column of the last.
+    assert_eq!(format!("{}", got), "[6, 2, 2, 0, 1, 1]");
+}
+
+#[test]
+fn a_short_row_still_names_its_line() {
+    // The fast path declines a row whose field count disagrees with the
+    // header precisely so this message keeps coming from the parser
+    // that knows the line number.
+    let err = eval("ods.read_csv(\"a,b,c\\n1,2\\n\")", None).expect_err("must fail");
+    assert!(err.contains("line: 2"), "the line must be named: {err}");
+    assert!(
+        err.contains("2 fields") && err.contains("3 fields"),
+        "both counts must appear: {err}"
+    );
+}
+
+#[test]
+fn a_large_unquoted_file_reads_identically_to_a_small_one() {
+    // Above the parallel threshold the body splits at record boundaries
+    // across cores; the result must equal the same data read whole.
+    let got = eval(
+        r#"
+        fn rows(n) = {
+            let mut out = ["id,label,value"]
+            for i in range(0, n) { out = out + [`${i},name-${i % 7},${i * 2}`] }
+            str.join(out, "\n") + "\n"
+        }
+        let text = rows(120000)
+        let f = ods.read_csv(text)
+        [ods.n_rows(f), ods.sum(ods.column(f, "value")), ods.n_unique(ods.column(f, "label"))]
+        "#,
+        None,
+    )
+    .expect("eval");
+    assert_eq!(format!("{}", got), "[120000, 14399880000, 7]");
+}

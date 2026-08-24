@@ -1377,36 +1377,44 @@ startup is excluded equally.
 
 | Stage | ods | pandas | Polars |
 |---|---|---|---|
-| load (1M-row CSV) | 70 ms | 172 ms | 7 ms |
-| clean (drop nulls, derive) | 21 ms | 53 ms | 5 ms |
-| filter | 14 ms | 8 ms | 5 ms |
-| group (2 keys, 3 aggs) | 33 ms | 50 ms | 9 ms |
+| load (1M-row CSV) | 52 ms | 179 ms | 7 ms |
+| clean (drop nulls, derive) | 20 ms | 53 ms | 5 ms |
+| filter | 13 ms | 9 ms | 6 ms |
+| group (2 keys, 3 aggs) | 35 ms | 51 ms | 8 ms |
 | join (dimension table) | 0 ms | 1 ms | 1 ms |
 | sort | 0 ms | 0 ms | 0 ms |
-| daily (group, sort, rolling 7) | 6 ms | 20 ms | 6 ms |
+| daily (group, sort, rolling 7) | 6 ms | 21 ms | 6 ms |
 | write CSV | 0 ms | 1 ms | 1 ms |
-| **whole pipeline** | **145 ms** | **305 ms** | **35 ms** |
+| **whole pipeline** | **126 ms** | **313 ms** | **34 ms** |
 
 Read plainly: on this workload ods is ahead of pandas end to end
 (2.1×), and Polars — a decade of columnar engineering with a
 multithreaded SIMD CSV reader — is ahead of both.
 
 The first publication of this table (0.71.0) showed 223 ms, and the
-per-stage columns were read as the to-do list they are. Two of the
-three worst rows have since closed most of their gap: `drop_null` asks
-each column's validity bitmap instead of materializing a value per
-cell — a column with no nulls now drops out of the check entirely —
-and frame `filter` runs one column per core, the way `take` already
-did. Those took clean from 69 ms to 21 ms and filter from 39 ms to
-14 ms.
+per-stage columns were read as the to-do list they are. Each of the
+three worst rows has since closed most of its gap:
 
-What remains is `load`, and its cause is structural rather than
-incidental: a cell becomes an owned `String` before its column's type
-is known, so a million-row file allocates once per cell. Polars parses
-into typed buffers directly. Closing that means a string arena and
-type inference ahead of materialization — a change to the `Series`
-representation, recorded here as the next piece of work rather than
-attempted in passing.
+- `drop_null` asks each column's validity bitmap instead of
+  materializing a value per cell, so a column with no nulls drops out
+  of the check entirely: clean 69 ms → 20 ms.
+- Frame `filter` runs one column per core, the way `take` already did:
+  39 ms → 13 ms.
+- An unquoted file now parses into *borrowed slices of the original
+  text*. Only a column that really is text allocates; a numeric column
+  is parsed straight out of the file and never becomes a `String` at
+  all, where every cell used to be allocated before anything knew its
+  type: load 76 ms → 52 ms. A quote anywhere, or a row whose field
+  count disagrees with the header, falls through to the general parser
+  unchanged — quoting rules and the line numbers in parse errors are
+  its business, not the fast path's.
+
+What remains in `load` is the half that is genuinely text: three of
+this file's six columns are strings, and each cell is still an owned
+`String` because that is what `Series::Str` holds. Interning them into
+one arena with offsets — how Polars stores strings — is a change to
+the `Series` representation, recorded here as the next piece of work
+rather than attempted in passing.
 
 To reproduce: `benchmarks/run.sh [reps] [rows]` — the dataset is
 generated deterministically, the engine scripts are stage-for-stage

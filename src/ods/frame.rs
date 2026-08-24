@@ -1014,6 +1014,10 @@ fn parallel_map_ordered<T: Send, R: Send>(
 /// quotes (RFC 4180 — a doubled `""` toggles the quote state twice, so
 /// it nets out). One sequential pass over the bytes; the parse of each
 /// run then fans out.
+/// Files at or above this size parse across cores; below it the split
+/// and merge cost more than the parse they save.
+const PAR_CSV_MIN_BYTES: usize = 4 * 1024 * 1024;
+
 fn csv_record_splits(text: &str, parts: usize) -> Vec<usize> {
     let bytes = text.as_bytes();
     let stride = bytes.len().div_ceil(parts.max(1)).max(1);
@@ -1036,6 +1040,94 @@ fn csv_record_splits(text: &str, parts: usize) -> Vec<usize> {
     splits
 }
 
+/// Split an unquoted CSV body into per-column borrowed slices.
+///
+/// The point is what it does *not* do: no cell becomes an owned
+/// `String`. A numeric column is then parsed straight out of the
+/// original text, and only a column that really is text pays for an
+/// allocation — where the general path allocated every cell before
+/// anything knew what type it was.
+///
+/// Returns `None` for anything the fast path should not decide: a
+/// quote anywhere (the general parser owns escaping), or a row whose
+/// field count disagrees with the header, which the `csv` crate
+/// reports with a line number this function has no business
+/// duplicating.
+fn split_unquoted_rows<'a>(body: &'a str, n_cols: usize) -> Option<Vec<Vec<&'a str>>> {
+    if body.as_bytes().contains(&b'"') {
+        return None;
+    }
+    let mut cols: Vec<Vec<&'a str>> = vec![Vec::new(); n_cols];
+    for line in body.split('\n') {
+        // A trailing newline leaves an empty last piece, and the `csv`
+        // crate skips blank lines rather than reading them as a row of
+        // one empty field.
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.is_empty() {
+            continue;
+        }
+        let mut fields = 0usize;
+        for (i, field) in line.split(',').enumerate() {
+            if i >= n_cols {
+                return None; // more fields than the header declares
+            }
+            cols[i].push(field);
+            fields += 1;
+        }
+        if fields != n_cols {
+            return None; // short row — let the general parser name the line
+        }
+    }
+    Some(cols)
+}
+
+/// The borrowed read path: parse an unquoted body into slices, infer
+/// and build each column from them. Returns `None` when the body is not
+/// one this path may decide, leaving the general parser in charge.
+fn read_csv_borrowed(body: &str, headers: &[String]) -> Option<Result<Value, String>> {
+    let n_cols = headers.len();
+    if n_cols == 0 || body.as_bytes().contains(&b'"') {
+        return None;
+    }
+
+    // Rows split across cores exactly as the general path parses across
+    // them: at record boundaries, results concatenated in order.
+    let workers = if body.len() >= PAR_CSV_MIN_BYTES {
+        stack_workers(usize::MAX)
+    } else {
+        1
+    };
+    let mut cols: Vec<Vec<&str>> = vec![Vec::new(); n_cols];
+    if workers > 1 {
+        let splits = csv_record_splits(body, workers);
+        let runs: Vec<&str> = splits.windows(2).map(|w| &body[w[0]..w[1]]).collect();
+        let parsed = parallel_map_ordered(runs, workers, |run| split_unquoted_rows(run, n_cols));
+        for chunk in parsed {
+            let chunk = chunk?;
+            for (c, col) in chunk.into_iter().enumerate() {
+                cols[c].extend(col);
+            }
+        }
+    } else {
+        cols = split_unquoted_rows(body, n_cols)?;
+    }
+
+    // Columns are independent, so a large file infers one per core —
+    // the same split the general path uses.
+    let n_rows = cols.first().map(|c| c.len()).unwrap_or(0);
+    let workers = if n_rows >= PAR_COLUMNS_MIN_ROWS {
+        stack_workers(n_cols)
+    } else {
+        1
+    };
+    let pairs = parallel_map_ordered(
+        headers.iter().cloned().zip(cols).collect(),
+        workers,
+        |(name, raw)| (name, infer_column(raw)),
+    );
+    Some(Frame::new(pairs).map(OdsFrame::into_value).map_err(e))
+}
+
 fn read_csv(text: &str) -> Result<Value, String> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
@@ -1047,13 +1139,25 @@ fn read_csv(text: &str) -> Result<Value, String> {
         .map(|h| h.to_string())
         .collect();
 
+    let n_cols = headers.len();
+    let body_start = reader.position().byte() as usize;
+
+    // Fast path: an unquoted file needs no owned cell at all. Rows split
+    // into borrowed slices, columns infer from those slices, and only a
+    // column that really is text allocates — where the general path
+    // below allocates every cell before anything knows its type. Any
+    // shape this path declines (a quote, a short row) falls through to
+    // the general parser, whose errors carry the true line number.
+    if let Some(frame) = read_csv_borrowed(&text[body_start..], &headers) {
+        return frame;
+    }
+
     // A large file parses across all cores: split at record boundaries,
     // parse each run with its own reader, and concatenate the runs' cells
     // in order — cell-identical to one reader over the whole text. Any
     // parse error falls back to the sequential reader, whose error
     // carries the true line number.
-    let n_cols = headers.len();
-    let workers = if text.len() >= 4 * 1024 * 1024 {
+    let workers = if text.len() >= PAR_CSV_MIN_BYTES {
         stack_workers(usize::MAX)
     } else {
         1
@@ -1163,14 +1267,15 @@ fn to_csv(f: &Frame) -> String {
 /// every cell twice. A failed attempt still costs only the cells before
 /// the first non-conforming one, because the loop stops there exactly
 /// as `all` short-circuited.
-fn infer_column(raw: Vec<String>) -> Series {
+fn infer_column<S: AsRef<str> + Into<String>>(raw: Vec<S>) -> Series {
     // An all-empty column has no type to infer; it reads as nulls.
-    if raw.iter().all(|s| s.is_empty()) {
+    if raw.iter().all(|s| s.as_ref().is_empty()) {
         return Series::from_str_options(vec![None; raw.len()]);
     }
 
     let mut ints: Vec<Option<i64>> = Vec::with_capacity(raw.len());
     if raw.iter().all(|s| {
+        let s = s.as_ref();
         if s.is_empty() {
             ints.push(None);
             return true;
@@ -1189,6 +1294,7 @@ fn infer_column(raw: Vec<String>) -> Series {
 
     let mut floats: Vec<Option<f64>> = Vec::with_capacity(raw.len());
     if raw.iter().all(|s| {
+        let s = s.as_ref();
         if s.is_empty() {
             floats.push(None);
             return true;
@@ -1206,7 +1312,7 @@ fn infer_column(raw: Vec<String>) -> Series {
     drop(floats);
 
     let mut bools: Vec<Option<bool>> = Vec::with_capacity(raw.len());
-    if raw.iter().all(|s| match s.as_str() {
+    if raw.iter().all(|s| match s.as_ref() {
         "" => {
             bools.push(None);
             true
@@ -1225,9 +1331,17 @@ fn infer_column(raw: Vec<String>) -> Series {
     }
     drop(bools);
 
+    // The one path that must own its cells — and the only one that
+    // allocates in the borrowed fast path.
     Series::from_str_options(
         raw.into_iter()
-            .map(|s| if s.is_empty() { None } else { Some(s) })
+            .map(|s| {
+                if s.as_ref().is_empty() {
+                    None
+                } else {
+                    Some(s.into())
+                }
+            })
             .collect(),
     )
 }
@@ -1974,7 +2088,7 @@ fn next_chunk(reader: &RowReader, n: usize) -> Result<Value, String> {
                 // earlier chunks established.
                 let pairs = columns
                     .iter()
-                    .map(|name| (name.clone(), infer_column(Vec::new())))
+                    .map(|name| (name.clone(), infer_column(Vec::<String>::new())))
                     .collect();
                 Frame::new(pairs).map_err(e)?
             } else {
