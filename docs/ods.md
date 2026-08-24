@@ -1377,24 +1377,36 @@ startup is excluded equally.
 
 | Stage | ods | pandas | Polars |
 |---|---|---|---|
-| load (1M-row CSV) | 76 ms | 175 ms | 7 ms |
-| clean (drop nulls, derive) | 69 ms | 54 ms | 5 ms |
-| filter | 39 ms | 9 ms | 5 ms |
-| group (2 keys, 3 aggs) | 33 ms | 50 ms | 8 ms |
+| load (1M-row CSV) | 70 ms | 172 ms | 7 ms |
+| clean (drop nulls, derive) | 21 ms | 53 ms | 5 ms |
+| filter | 14 ms | 8 ms | 5 ms |
+| group (2 keys, 3 aggs) | 33 ms | 50 ms | 9 ms |
 | join (dimension table) | 0 ms | 1 ms | 1 ms |
 | sort | 0 ms | 0 ms | 0 ms |
-| daily (group, sort, rolling 7) | 6 ms | 20 ms | 7 ms |
+| daily (group, sort, rolling 7) | 6 ms | 20 ms | 6 ms |
 | write CSV | 0 ms | 1 ms | 1 ms |
-| **whole pipeline** | **223 ms** | **308 ms** | **34 ms** |
+| **whole pipeline** | **145 ms** | **305 ms** | **35 ms** |
 
 Read plainly: on this workload ods is ahead of pandas end to end
-(1.4×), and Polars — a decade of columnar engineering with a
-multithreaded SIMD CSV reader — is ahead of both. The gap to Polars is
-concentrated where rows materialize (load, clean, filter); the
-aggregation stages the stack optimizes hardest (group, daily) run
-within a small factor of Polars and ahead of pandas. That is the
-honest position of a data stack written in one campaign, and the
-per-stage table is the to-do list it leaves behind.
+(2.1×), and Polars — a decade of columnar engineering with a
+multithreaded SIMD CSV reader — is ahead of both.
+
+The first publication of this table (0.71.0) showed 223 ms, and the
+per-stage columns were read as the to-do list they are. Two of the
+three worst rows have since closed most of their gap: `drop_null` asks
+each column's validity bitmap instead of materializing a value per
+cell — a column with no nulls now drops out of the check entirely —
+and frame `filter` runs one column per core, the way `take` already
+did. Those took clean from 69 ms to 21 ms and filter from 39 ms to
+14 ms.
+
+What remains is `load`, and its cause is structural rather than
+incidental: a cell becomes an owned `String` before its column's type
+is known, so a million-row file allocates once per cell. Polars parses
+into typed buffers directly. Closing that means a string arena and
+type inference ahead of materialization — a change to the `Series`
+representation, recorded here as the next piece of work rather than
+attempted in passing.
 
 To reproduce: `benchmarks/run.sh [reps] [rows]` — the dataset is
 generated deterministically, the engine scripts are stage-for-stage

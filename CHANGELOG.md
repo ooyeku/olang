@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The pipeline benchmark's two worst in-memory stages, closed.**
+  `drop_null` consulted a materialized value per cell — six million
+  `Scalar` constructions on a 1M-row frame, cloning every string it
+  passed over — where nullness is exactly the validity bitmap: it now
+  asks the bitmap, and a column with no nulls drops out of the check
+  entirely. Frame `filter` ran its columns one after another; columns
+  are independent, so it now runs one per core above 100k rows, the
+  way `take` has since it shipped. Column type inference also stopped
+  parsing numeric columns twice (test with one scan, rebuild with a
+  second) in favor of keeping what it parses. On the published
+  benchmark: clean 69 ms → 21 ms, filter 39 ms → 14 ms, load 76 ms →
+  70 ms, whole pipeline 223 ms → 145 ms — now 2.1× ahead of pandas
+  end to end. Every stage checksum is unchanged.
+
 ### Added
 
 - **`olang profile` — a sampling profiler that knows about tiers.**

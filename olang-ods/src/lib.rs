@@ -305,7 +305,9 @@ impl Series {
         self.len() == 0
     }
 
-    fn validity(&self) -> Option<&Bitmap> {
+    /// The validity bitmap, or `None` when the column has no nulls at
+    /// all — which callers can use as a fast "nothing to check here".
+    pub fn validity(&self) -> Option<&Bitmap> {
         match self {
             Series::F64 { validity, .. }
             | Series::I64 { validity, .. }

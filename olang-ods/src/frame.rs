@@ -228,6 +228,26 @@ impl Frame {
     }
 
     pub fn filter(&self, mask: &Series) -> Result<Frame> {
+        // Columns filter independently against the same mask, so a wide
+        // frame runs one column per core — the gather half of `take`
+        // has worked this way since it shipped, and filtering is the
+        // same shape of work on the same shape of data. Column order is
+        // preserved; the result is identical to the sequential filter.
+        #[cfg(feature = "parallel")]
+        let cols =
+            if mask.len() >= PAR_TAKE_ROWS && self.cols.len() > 1 && crate::parallel_enabled() {
+                use rayon::prelude::*;
+                self.cols
+                    .par_iter()
+                    .map(|c| c.filter(mask))
+                    .collect::<Result<Vec<_>>>()?
+            } else {
+                self.cols
+                    .iter()
+                    .map(|c| c.filter(mask))
+                    .collect::<Result<Vec<_>>>()?
+            };
+        #[cfg(not(feature = "parallel"))]
         let cols = self
             .cols
             .iter()

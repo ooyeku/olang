@@ -683,14 +683,21 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
         "drop_null" => {
             let f = want_frame(func, &args, 0)?;
             let cols = subset_columns(func, f, args.get(1))?;
-            let keep: Vec<i64> = (0..f.n_rows())
-                .filter(|&row| {
-                    !cols
-                        .iter()
-                        .any(|c| matches!(c.scalar_at(row), Scalar::Null))
-                })
-                .map(|row| row as i64)
-                .collect();
+            // Nullness is the validity bitmap, so ask it directly: a
+            // column with no bitmap has no nulls and drops out of the
+            // check entirely, and the columns that remain answer with a
+            // bit test instead of materializing a Scalar per cell (which
+            // cloned every string it passed over).
+            let masks: Vec<&olang_ods::Bitmap> = cols.iter().filter_map(|c| c.validity()).collect();
+            let n_rows = f.n_rows();
+            let keep: Vec<i64> = if masks.is_empty() {
+                (0..n_rows as i64).collect()
+            } else {
+                (0..n_rows)
+                    .filter(|&row| masks.iter().all(|m| m.get(row)))
+                    .map(|row| row as i64)
+                    .collect()
+            };
             let idx = Series::from_i64(keep);
             f.take(&idx).map(OdsFrame::into_value).map_err(e)
         }
@@ -1146,28 +1153,78 @@ fn to_csv(f: &Frame) -> String {
         .unwrap_or_default()
 }
 
+/// Infer a column's type from its cells and build it, in one pass per
+/// candidate type.
+///
+/// The candidate order is unchanged — all-integer, then all-float, then
+/// all-boolean, then string — and so is every result. What changed is
+/// that each attempt *keeps what it parses* instead of testing with one
+/// scan and rebuilding with a second: an integer column used to parse
+/// every cell twice. A failed attempt still costs only the cells before
+/// the first non-conforming one, because the loop stops there exactly
+/// as `all` short-circuited.
 fn infer_column(raw: Vec<String>) -> Series {
-    let non_empty = || raw.iter().filter(|s| !s.is_empty());
-    if non_empty().count() == 0 {
+    // An all-empty column has no type to infer; it reads as nulls.
+    if raw.iter().all(|s| s.is_empty()) {
         return Series::from_str_options(vec![None; raw.len()]);
     }
-    if non_empty().all(|s| s.parse::<i64>().is_ok()) {
-        return Series::from_i64_options(raw.iter().map(|s| s.parse::<i64>().ok()).collect());
+
+    let mut ints: Vec<Option<i64>> = Vec::with_capacity(raw.len());
+    if raw.iter().all(|s| {
+        if s.is_empty() {
+            ints.push(None);
+            return true;
+        }
+        match s.parse::<i64>() {
+            Ok(v) => {
+                ints.push(Some(v));
+                true
+            }
+            Err(_) => false,
+        }
+    }) {
+        return Series::from_i64_options(ints);
     }
-    if non_empty().all(|s| s.parse::<f64>().is_ok()) {
-        return Series::from_f64_options(raw.iter().map(|s| s.parse::<f64>().ok()).collect());
+    drop(ints);
+
+    let mut floats: Vec<Option<f64>> = Vec::with_capacity(raw.len());
+    if raw.iter().all(|s| {
+        if s.is_empty() {
+            floats.push(None);
+            return true;
+        }
+        match s.parse::<f64>() {
+            Ok(v) => {
+                floats.push(Some(v));
+                true
+            }
+            Err(_) => false,
+        }
+    }) {
+        return Series::from_f64_options(floats);
     }
-    if non_empty().all(|s| s == "true" || s == "false") {
-        return Series::from_bool_options(
-            raw.iter()
-                .map(|s| match s.as_str() {
-                    "true" => Some(true),
-                    "false" => Some(false),
-                    _ => None,
-                })
-                .collect(),
-        );
+    drop(floats);
+
+    let mut bools: Vec<Option<bool>> = Vec::with_capacity(raw.len());
+    if raw.iter().all(|s| match s.as_str() {
+        "" => {
+            bools.push(None);
+            true
+        }
+        "true" => {
+            bools.push(Some(true));
+            true
+        }
+        "false" => {
+            bools.push(Some(false));
+            true
+        }
+        _ => false,
+    }) {
+        return Series::from_bool_options(bools);
     }
+    drop(bools);
+
     Series::from_str_options(
         raw.into_iter()
             .map(|s| if s.is_empty() { None } else { Some(s) })
