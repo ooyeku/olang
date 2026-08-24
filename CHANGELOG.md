@@ -36,6 +36,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   mutation ends by resolving, so the lock is never behind the
   manifest.
 
+- **`otc bench`: the project benchmark harness.** Benches are ordinary
+  olang programs in `bench/`; the harness runs each as a fresh
+  subprocess and adds what a stopwatch cannot. A
+  `// bench: sizes = 1000, 4000, 16000` directive turns one bench into
+  a scaling curve run per size, and the harness fits the growth and
+  names it — `~O(n)`, `~O(n log n)`, or `⚠ ~O(n²) — check for a
+  copy-per-iteration` (measured exponent included; process startup is
+  measured and subtracted so small points read true). A `CHECKSUM`
+  line in a bench's output must agree across repetitions or the
+  measurement is refused — a timing whose answer wobbles is measuring
+  something else. Each point reports median, coefficient of variation,
+  and peak RSS (from the child's rusage). `--save`/`--against` keep
+  baselines with a machine fingerprint (cross-machine comparisons warn
+  instead of pretending), `--fail-on-regress` is the CI gate with a
+  noise floor of max(5%, 2×CV), a `TIME <ms>` line lets a bench
+  self-time to exclude startup and setup, and `--profile` reruns the
+  slowest point under `olang profile` so "what regressed" arrives with
+  "where it went".
+
 - **`otc new --web`: the full-stack starter.** One olang process
   serving a SQLite-backed JSON API, the page, and the frontend's own
   olang source, run in the browser through the wasm runtime — the

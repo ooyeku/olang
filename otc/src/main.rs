@@ -72,6 +72,30 @@ enum Commands {
     /// name from any project
     #[command(subcommand)]
     Lib(commands::lib::LibCommand),
+    /// Run the project's benches (bench/*.ol): scaling curves, verified
+    /// answers, peak memory, baselines
+    Bench {
+        /// Only benches whose name contains one of these
+        filter: Vec<String>,
+        /// Timed repetitions per point (default 5)
+        #[arg(long, default_value_t = 5)]
+        runs: usize,
+        /// Override every bench's sizes ("1000,4000,16000")
+        #[arg(long)]
+        sizes: Option<String>,
+        /// Save medians as a baseline JSON
+        #[arg(long, value_name = "FILE")]
+        save: Option<String>,
+        /// Compare against a saved baseline
+        #[arg(long, value_name = "FILE")]
+        against: Option<String>,
+        /// Exit non-zero when any point regresses past the noise floor
+        #[arg(long)]
+        fail_on_regress: bool,
+        /// Rerun the slowest point under `olang profile`
+        #[arg(long)]
+        profile: bool,
+    },
 }
 
 fn main() {
@@ -89,6 +113,23 @@ fn main() {
             commands::project::do_install(frozen, update, verbose)
         }
         Commands::Lib(cmd) => cmd.execute(),
+        Commands::Bench {
+            filter,
+            runs,
+            sizes,
+            save,
+            against,
+            fail_on_regress,
+            profile,
+        } => commands::bench::execute(commands::bench::BenchArgs {
+            filter,
+            runs,
+            sizes,
+            save,
+            against,
+            fail_on_regress,
+            profile,
+        }),
     };
 
     if let Err(e) = result {
