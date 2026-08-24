@@ -18,6 +18,37 @@ COMMENT     = _{ "//" ~ (!NEWLINE ~ ANY)* }
 // reserving them cost more than it bought.
 keyword = { "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "return" | "true" | "false" | "struct" | "enum" }
 
+// Keywords consume only at a word boundary (the mut_kw idiom, applied
+// to every reserved word a rule consumes): without the guard, `breaker`
+// lexed as `break` + `er`, `returns = 5` as `return s`, and every
+// identifier starting with a keyword was one alternation-order change
+// away from silent misparsing. The bare-literal `keyword` list above
+// stays as-is — the identifier rule already wraps it in its own
+// boundary check.
+kw_end      = _{ !(ASCII_ALPHANUMERIC | "_") }
+fn_kw       = @{ "fn" ~ kw_end }
+let_kw      = @{ "let" ~ kw_end }
+if_kw       = @{ "if" ~ kw_end }
+else_kw     = @{ "else" ~ kw_end }
+match_kw    = @{ "match" ~ kw_end }
+for_kw      = @{ "for" ~ kw_end }
+in_kw       = @{ "in" ~ kw_end }
+while_kw    = @{ "while" ~ kw_end }
+loop_kw     = @{ "loop" ~ kw_end }
+break_kw    = @{ "break" ~ kw_end }
+continue_kw = @{ "continue" ~ kw_end }
+return_kw   = @{ "return" ~ kw_end }
+struct_kw   = @{ "struct" ~ kw_end }
+enum_kw     = @{ "enum" ~ kw_end }
+share_kw    = @{ "share" ~ kw_end }
+use_kw      = @{ "use" ~ kw_end }
+type_kw     = @{ "type" ~ kw_end }
+test_kw     = @{ "test" ~ kw_end }
+trait_kw    = @{ "trait" ~ kw_end }
+impl_kw     = @{ "impl" ~ kw_end }
+error_kw    = @{ "error" ~ kw_end }
+par_kw      = @{ "par" ~ kw_end }
+
 // Identifiers and literals - exclude keywords
 identifier  = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_")) ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 integer     = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ !(ASCII_ALPHA | "_") }
@@ -42,7 +73,7 @@ string_char = { !("\"" | "\\") ~ ANY | escape_sequence }
 escape_sequence = { "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "0" | "x" ~ ASCII_HEX_DIGIT{2} | "u" ~ ASCII_HEX_DIGIT{4} | "u{" ~ ASCII_HEX_DIGIT+ ~ "}") }
 template_escape = { "\\" ~ ("`" | "$" | "\\") }
 template_interpolation = { "${" ~ expr ~ "}" }
-boolean     = { "true" | "false" }
+boolean     = @{ ("true" | "false") ~ kw_end }
 char_literal = @{ "'" ~ (!"'" ~ ANY) ~ "'" }
 
 // Enhanced numeric literals
@@ -84,18 +115,18 @@ meta_fn_decl = { "meta" ~ function_decl }
 decorator = { "@" ~ identifier ~ !"(" }
 decorated_decl = { (decorator ~ NL*)+ ~ (type_decl | function_decl | let_decl) }
 macro_call = { "@" ~ identifier ~ "(" ~ arg_list? ~ ")" }
-function_decl = { "fn" ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ NL* ~ expr }
+function_decl = { fn_kw ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ NL* ~ expr }
 
 // Share and use declarations - defined EARLY to get precedence
-share_decl = { "share" ~ (use_decl | function_decl | let_decl | type_decl | trait_decl | impl_decl) }
-use_decl = { "use" ~ use_path ~ ("{" ~ NL* ~ use_list ~ NL* ~ "}")? }
+share_decl = { share_kw ~ (use_decl | function_decl | let_decl | type_decl | trait_decl | impl_decl) }
+use_decl = { use_kw ~ use_path ~ ("{" ~ NL* ~ use_list ~ NL* ~ "}")? }
 use_path = { identifier ~ ("." ~ identifier)* }
 use_list = { use_item ~ (NL* ~ "," ~ NL* ~ use_item)* ~ (NL* ~ ",")? }
 use_item = { wildcard | identifier }
 wildcard = { "*" }
 
 // Test declarations
-test_decl = { "test" ~ string ~ test_block }
+test_decl = { test_kw ~ string ~ test_block }
 test_block = { "{" ~ NL* ~ (test_statement ~ (";" | NL)* )* ~ "}" }
 test_statement = { statement }
 // Assertions are a statement form, not a test-block form. They were once
@@ -115,27 +146,27 @@ assert_true = { "assert_true" ~ "(" ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ string)? ~
 assert_false = { "assert_false" ~ "(" ~ NL* ~ expr ~ (NL* ~ "," ~ NL* ~ string)? ~ NL* ~ ")" }
 
 // Error type declaration (enum-like with variants)
-error_type_decl = { "error" ~ identifier ~ "{" ~ error_variant_list? ~ "}" }
+error_type_decl = { error_kw ~ identifier ~ "{" ~ error_variant_list? ~ "}" }
 error_variant_list = { NL* ~ error_variant ~ (NL* ~ "," ~ NL* ~ error_variant)* ~ NL* ~ ","? ~ NL* }
 error_variant = { identifier ~ (":" ~ (unit_type | ("{" ~ struct_field_list ~ "}")))? }
 
 // Type declarations
-type_decl   = { "type" ~ identifier ~ type_params? ~ "=" ~ type_definition }
+type_decl   = { type_kw ~ identifier ~ type_params? ~ "=" ~ type_definition }
 type_definition = { union_type_def | struct_def | enum_def }
 union_type_def = { type_annotation ~ ("|" ~ type_annotation)+ }
-struct_def  = { "struct" ~ "{" ~ struct_field_list? ~ "}" }
+struct_def  = { struct_kw ~ "{" ~ struct_field_list? ~ "}" }
 struct_field_list = { NL* ~ struct_field ~ (NL* ~ "," ~ NL* ~ struct_field)* ~ NL* ~ ","? ~ NL* }
 struct_field = { identifier ~ ":" ~ type_annotation }
-enum_def    = { "enum" ~ "{" ~ enum_variant_list? ~ "}" }
+enum_def    = { enum_kw ~ "{" ~ enum_variant_list? ~ "}" }
 enum_variant_list = { NL* ~ enum_variant ~ (NL* ~ "," ~ NL* ~ enum_variant)* ~ NL* ~ ","? ~ NL* }
 enum_variant = { identifier ~ (("(" ~ type_annotation ~ ("," ~ type_annotation)* ~ ")") | ("{" ~ struct_field_list ~ "}"))? }
 
 // Function declarations
 
 // Traits (runtime-dispatched interfaces) and their implementations
-trait_decl  = { "trait" ~ identifier ~ "{" ~ NL* ~ (trait_method ~ NL*)* ~ "}" }
-trait_method = { "fn" ~ identifier ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ ("=" ~ NL* ~ expr)? }
-impl_decl   = { "impl" ~ identifier ~ "for" ~ identifier ~ "{" ~ NL* ~ (function_decl ~ NL*)* ~ "}" }
+trait_decl  = { trait_kw ~ identifier ~ "{" ~ NL* ~ (trait_method ~ NL*)* ~ "}" }
+trait_method = { fn_kw ~ identifier ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ ("=" ~ NL* ~ expr)? }
+impl_decl   = { impl_kw ~ identifier ~ for_kw ~ identifier ~ "{" ~ NL* ~ (function_decl ~ NL*)* ~ "}" }
 type_params  = { "<" ~ type_param ~ ("," ~ type_param)* ~ ">" }
 type_param   = { identifier ~ (":" ~ identifier ~ ("+" ~ identifier)*)? }
 param_list   = { NL* ~ parameter ~ (NL* ~ "," ~ NL* ~ parameter)* ~ NL* }
@@ -148,7 +179,7 @@ parameter    = { identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
 // otherwise silently parse as an uninitialized binding plus a stray
 // expression statement.
 mut_kw      = @{ "mut" ~ !(ASCII_ALPHANUMERIC | "_") }
-let_decl    = { "let" ~ mut_kw? ~ pattern ~ (":" ~ type_annotation)? ~ (("=" ~ NL* ~ expr) | &(";" | NEWLINE | COMMENT | "}" | EOI)) }
+let_decl    = { let_kw ~ mut_kw? ~ pattern ~ (":" ~ type_annotation)? ~ (("=" ~ NL* ~ expr) | &(";" | NEWLINE | COMMENT | "}" | EOI)) }
 
 // Expression hierarchy (with proper operator precedence)
 expr        = { assignment_expr | par_for_loop | for_loop | while_loop | loop_expr | break_expr | continue_expr | return_expr | binary_expr }
@@ -216,8 +247,8 @@ lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ NL*
 spawn_expr  = { "spawn" ~ call_expr }
 
 // Pattern matching
-match_expr  = { "match" ~ expr ~ "{" ~ NL* ~ match_arm+ ~ "}" }
-match_arm   = { pattern ~ ("if" ~ expr)? ~ "=>" ~ NL* ~ expr ~ NL* ~ ","? ~ NL* }
+match_expr  = { match_kw ~ expr ~ "{" ~ NL* ~ match_arm+ ~ "}" }
+match_arm   = { pattern ~ (if_kw ~ expr)? ~ "=>" ~ NL* ~ expr ~ NL* ~ ","? ~ NL* }
 pattern     = { or_pattern }
 or_pattern  = { base_pattern ~ ("|" ~ base_pattern)* }
 // `unit` precedes tuple_pattern, which needs at least one element — so
@@ -241,7 +272,7 @@ pattern_wildcard    = { "_" }
 block       = { "{" ~ NL* ~ (statement ~ (";" | NL)* )* ~ "}" }
 
 // Conditionals
-if_expr     = { "if" ~ expr ~ NL* ~ "=>" ~ NL* ~ (block | expr) ~ (NL* ~ "else" ~ NL* ~ (if_expr | ("=>" ~ NL* ~ (block | expr))))? }
+if_expr     = { if_kw ~ expr ~ NL* ~ "=>" ~ NL* ~ (block | expr) ~ (NL* ~ else_kw ~ NL* ~ (if_expr | ("=>" ~ NL* ~ (block | expr))))? }
 
 // Literals
 // `unit` precedes everything that could start with "(": paren_expr needs
@@ -287,7 +318,7 @@ map_entry = { expr ~ ":" ~ expr }
 
 // Loop constructs. The loop binding is a name or a tuple of names —
 // `for (i, x) in enumerate(xs)` destructures each element.
-for_loop    = { "for" ~ (for_binding_tuple | discard | identifier) ~ "in" ~ expr ~ block }
+for_loop    = { for_kw ~ (for_binding_tuple | discard | identifier) ~ in_kw ~ expr ~ block }
 // `_` is a binding that discards. It is not an identifier — identifiers
 // must start with a letter — so a loop that ignores its item needed a
 // throwaway name until this existed.
@@ -295,12 +326,12 @@ discard     = @{ "_" ~ !(ASCII_ALPHANUMERIC | "_") }
 // `par for` fans iterations across worker threads: spawn-style snapshot
 // semantics, an implicit barrier at the end, Unit result. `par` is not a
 // reserved word — it only means something directly before `for`.
-par_for_loop = { "par" ~ "for" ~ (for_binding_tuple | discard | identifier) ~ "in" ~ expr ~ block }
+par_for_loop = { par_kw ~ for_kw ~ (for_binding_tuple | discard | identifier) ~ in_kw ~ expr ~ block }
 for_binding_tuple = { "(" ~ identifier ~ ("," ~ identifier)+ ~ ")" }
-while_loop  = { "while" ~ expr ~ block }
-loop_expr   = { "loop" ~ block }
-break_expr  = { "break" ~ expr? }
-continue_expr = { "continue" }
-return_expr = { "return" ~ expr? }
+while_loop  = { while_kw ~ expr ~ block }
+loop_expr   = { loop_kw ~ block }
+break_expr  = { break_kw ~ expr? }
+continue_expr = { continue_kw }
+return_expr = { return_kw ~ expr? }
 
 assignment_expr = { identifier ~ "=" ~ expr }

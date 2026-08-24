@@ -461,6 +461,8 @@ impl Parser {
     }
 
     fn build_error_type_decl(&self, mut pairs: Pairs<Rule>) -> Result<ErrorTypeDecl, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let name = pairs
             .next()
             .ok_or_else(|| ParseError::InvalidSyntax {
@@ -519,7 +521,43 @@ impl Parser {
         Ok(crate::ast::ErrorVariant { name, fields })
     }
 
+    /// The guarded keyword atomics (`break_kw`, `let_kw`, ...) exist so
+    /// `breaker` and `returns` lex as identifiers, but as named rules
+    /// they emit pairs the older bare literals never did. Builders for
+    /// the rules that consume keywords filter them out at entry; `mut`
+    /// is deliberately absent — its pair is semantic (it marks the
+    /// binding assignable) and is handled explicitly.
+    fn is_kw_pair(rule: Rule) -> bool {
+        matches!(
+            rule,
+            Rule::fn_kw
+                | Rule::let_kw
+                | Rule::if_kw
+                | Rule::else_kw
+                | Rule::match_kw
+                | Rule::for_kw
+                | Rule::in_kw
+                | Rule::while_kw
+                | Rule::loop_kw
+                | Rule::break_kw
+                | Rule::continue_kw
+                | Rule::return_kw
+                | Rule::struct_kw
+                | Rule::enum_kw
+                | Rule::share_kw
+                | Rule::use_kw
+                | Rule::type_kw
+                | Rule::test_kw
+                | Rule::trait_kw
+                | Rule::impl_kw
+                | Rule::error_kw
+                | Rule::par_kw
+        )
+    }
+
     fn build_let_decl(&self, mut pairs: Pairs<Rule>) -> Result<LetDecl, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let mut pattern_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing pattern in let declaration".to_string(),
         })?;
@@ -576,7 +614,7 @@ impl Parser {
                 Rule::while_loop => self.build_while_loop(pair.into_inner()),
                 Rule::loop_expr => self.build_loop_expr(pair.into_inner()),
                 Rule::break_expr => {
-                    let value = match pair.into_inner().next() {
+                    let value = match pair.into_inner().find(|p| !Self::is_kw_pair(p.as_rule())) {
                         Some(inner) => Some(Box::new(self.build_expr(inner.into_inner())?)),
                         None => None,
                     };
@@ -584,7 +622,7 @@ impl Parser {
                 }
                 Rule::continue_expr => Ok(Expr::Continue),
                 Rule::return_expr => {
-                    let value = match pair.into_inner().next() {
+                    let value = match pair.into_inner().find(|p| !Self::is_kw_pair(p.as_rule())) {
                         Some(inner) => Some(Box::new(self.build_expr(inner.into_inner())?)),
                         None => None,
                     };
@@ -1488,6 +1526,8 @@ impl Parser {
     }
 
     fn build_match_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let value = if let Some(pair) = pairs.next() {
             if pair.as_rule() == Rule::expr {
                 self.build_expr(pair.into_inner())?
@@ -1516,6 +1556,8 @@ impl Parser {
     }
 
     fn build_match_arm(&self, mut pairs: Pairs<Rule>) -> Result<MatchArm, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let pattern = if let Some(pair) = pairs.next() {
             self.build_pattern(pair.into_inner())?
         } else {
@@ -2416,6 +2458,8 @@ impl Parser {
     }
 
     fn build_if_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let condition_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing condition in if expression".to_string(),
         })?;
@@ -2461,6 +2505,8 @@ impl Parser {
         &self,
         mut pairs: Pairs<Rule>,
     ) -> Result<crate::ast::TraitDecl, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let name = pairs
             .next()
             .ok_or_else(|| ParseError::InvalidSyntax {
@@ -2482,6 +2528,8 @@ impl Parser {
         &self,
         mut pairs: Pairs<Rule>,
     ) -> Result<crate::ast::TraitMethod, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let name = pairs
             .next()
             .ok_or_else(|| ParseError::InvalidSyntax {
@@ -2508,6 +2556,8 @@ impl Parser {
     }
 
     fn build_impl_decl(&self, mut pairs: Pairs<Rule>) -> Result<crate::ast::ImplDecl, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let trait_name = pairs
             .next()
             .ok_or_else(|| ParseError::InvalidSyntax {
@@ -2561,6 +2611,8 @@ impl Parser {
     }
 
     fn build_function_decl(&self, mut pairs: Pairs<Rule>) -> Result<FunctionDecl, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing name".to_string(),
         })?;
@@ -2610,6 +2662,8 @@ impl Parser {
     }
 
     fn build_type_decl(&self, mut pairs: Pairs<Rule>) -> Result<TypeDecl, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing name".to_string(),
         })?;
@@ -2661,7 +2715,10 @@ impl Parser {
                 Ok(TypeDefinition::Union { types })
             }
             Rule::struct_def => {
-                let fields = if let Some(field_list) = pair.into_inner().next() {
+                let fields = if let Some(field_list) = pair
+                    .into_inner()
+                    .find(|p| p.as_rule() == Rule::struct_field_list)
+                {
                     self.build_struct_field_list(field_list.into_inner())?
                 } else {
                     Vec::new()
@@ -2669,7 +2726,10 @@ impl Parser {
                 Ok(TypeDefinition::Struct { fields })
             }
             Rule::enum_def => {
-                let variants = if let Some(variant_list) = pair.into_inner().next() {
+                let variants = if let Some(variant_list) = pair
+                    .into_inner()
+                    .find(|p| p.as_rule() == Rule::enum_variant_list)
+                {
                     self.build_enum_variant_list(variant_list.into_inner())?
                 } else {
                     Vec::new()
@@ -2856,6 +2916,8 @@ impl Parser {
     }
 
     fn build_for_loop(&self, mut pairs: Pairs<Rule>, parallel: bool) -> Result<Expr, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         // Expected order: binding (identifier or tuple of identifiers),
         // expr (iterable), block (body)
         let binding_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -2939,6 +3001,8 @@ impl Parser {
     }
 
     fn build_while_loop(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         // Expected order: expr (condition), block (body)
         let cond_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing condition in while loop".to_string(),
@@ -2965,6 +3029,8 @@ impl Parser {
     }
 
     fn build_loop_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         // Expected: single block
         let body_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing body in loop expression".to_string(),
@@ -3275,6 +3341,8 @@ impl Parser {
     }
 
     fn build_share_decl(&self, mut pairs: Pairs<Rule>) -> Result<ShareDecl, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let inner_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing declaration in share".to_string(),
         })?;
@@ -3305,6 +3373,8 @@ impl Parser {
     }
 
     fn build_use_decl(&self, mut pairs: Pairs<Rule>) -> Result<UseDecl, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         let path_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing path in use".to_string(),
         })?;
@@ -3350,6 +3420,8 @@ impl Parser {
     }
 
     fn build_test_decl(&self, mut pairs: Pairs<Rule>) -> Result<TestDecl, ParseError> {
+        let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
+
         // Get test name from string literal
         let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing test name".to_string(),

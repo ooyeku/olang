@@ -216,3 +216,67 @@ if n == 1
         "two"
     );
 }
+
+// ── keyword-prefixed identifiers ────────────────────────────────────
+// Every reserved and contextual keyword used to be able to swallow the
+// head of an identifier: `breaker` lexed as `break` + `er`, `returns =
+// 5` as `return s`, and `useful = 1` died in `use_decl`. Keywords now
+// consume only at a word boundary.
+
+#[test]
+fn identifiers_may_start_with_keywords() {
+    let v = eval(
+        "let mut useful = 1\n\
+         useful = useful + 1\n\
+         let mut typed = 2\n\
+         typed = typed + 1\n\
+         let mut shared = 3\n\
+         shared = shared + 1\n\
+         let mut formal = 4\n\
+         formal = formal + 1\n\
+         let mut input = 5\n\
+         input = input + 1\n\
+         let mut matcher = 6\n\
+         matcher = matcher + 1\n\
+         let mut iffy = 7\n\
+         iffy = iffy + 1\n\
+         let mut looped = 8\n\
+         looped = looped + 1\n\
+         [useful, typed, shared, formal, input, matcher, iffy, looped]",
+    );
+    assert_eq!(ints(v), vec![2, 3, 4, 5, 6, 7, 8, 9]);
+}
+
+#[test]
+fn functions_may_be_named_with_keyword_prefixes() {
+    let v = eval(
+        "fn breaker(n) = {\n\
+             let mut i = 0\n\
+             while true { if i >= n => { break } i = i + 1 }\n\
+             i\n\
+         }\n\
+         fn returns(x) = x + 1\n\
+         fn continued(x) = x * 2\n\
+         [breaker(7), returns(9), continued(3)]",
+    );
+    assert_eq!(ints(v), vec![7, 10, 6]);
+}
+
+#[test]
+fn keywords_still_work_with_space_separated_operands() {
+    // The boundary guard must not require the operand to touch the
+    // keyword: `return x`, `break 5`, `if b => ...` all keep a space.
+    let v = eval(
+        "fn f(n) = {\n\
+             let mut i = 0\n\
+             let mut got = 0\n\
+             while true {\n\
+                 if i >= n => { got = loop { break i + 100 } break }\n\
+                 i = i + 1\n\
+             }\n\
+             return got\n\
+         }\n\
+         [f(3)]",
+    );
+    assert_eq!(ints(v), vec![103]);
+}

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Identifiers may start with keywords.** Every reserved and
+  contextual keyword could swallow the head of an identifier —
+  `breaker` lexed as `break` + `er`, `returns = 5` as `return s`, and
+  `useful = 1` failed inside `use_decl` — because grammar rules
+  consumed keywords as bare literals with no word boundary. Every
+  keyword a rule consumes is now a guarded atomic (the `mut_kw` idiom):
+  it matches only when not followed by an identifier character, so
+  `useful`, `typed`, `formal`, `input`, `matcher`, `iffy` and every
+  other keyword-prefixed name parse as the identifiers they are.
+
 ### Added
 
 - **The tier boundary, lane T4: transitive JIT inlining (Campaign 7).**
