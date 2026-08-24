@@ -321,25 +321,49 @@ The run is an ordinary run — same tiers, same capability grant, same
 report names, for every function that appeared:
 
 ```
-   self    total  tier     function
-────────────────────────────────────────────────────────────
-  53.8%    53.8%  vm       format_row
-  38.5%    92.3%  vm       build_chunk
-   7.7%   100.0%  vm       run_all
+  TIME BY TIER
+    native  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    0.4%
+    vm      ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    1.3%
+    interp  █████████████████████████████░░░   90.7%  ← never promoted
+    builtin ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    7.6%
 
-hottest call paths
-────────────────────────────────────────────────────────────
-  53.8%  run_all → build_chunk → format_row
+  FUNCTIONS
+    function                         self   total  samples  tier
+    <lambda in bench>  ██████████░  91.2%   91.2%   12,824  interp
+    map                █░░░░░░░░░░   4.8%    4.8%      672  builtin
+    bench              ░░░░░░░░░░░   0.1%    8.8%       20  vm
+
+  HOTTEST CALL PATHS
+      4.8%  bench → <lambda in bench> → map
 ```
 
-**self** is the share of samples where the function was the one
-running; **total** is the share where it was anywhere on the stack, so
-`total − self` is time in its callees. **tier** is what a profiler for
-a tiered language exists to tell you: `interp` means the function
-never promoted, and is the finding — a hot function on the
-tree-walking interpreter is usually a shape the bytecode compiler
-refused, not a slow algorithm. A function that ran on two tiers (say,
-interpreted before promotion) shows both, as `vm+interp`.
+**TIME BY TIER** is the headline a tiered language owes its reader:
+`interp` is time on the tree-walking interpreter, and a large share
+there is the finding — a hot function that never promoted is usually a
+shape the bytecode compiler refused, not a slow algorithm. `builtin`
+is time inside the standard library, which is Rust: not a tier, and
+not something a program can promote, but time that still has to be
+accounted for.
+
+In **FUNCTIONS**, **self** is the share of samples where the function
+was the one running; **total** is the share where it was anywhere on
+the stack, so `total − self` is time in its callees. A function that
+ran on two tiers (interpreted before promotion, say) shows both, as
+`vm+interp`.
+
+Anonymous functions are named for where they were written —
+`<lambda in bench>` — since a profile full of bare `<lambda>` rows
+says only that the program uses lambdas. A builtin that runs user code
+(`map`, `fold`, `sort_by`) appears in call paths so a lambda always
+has a visible caller, but it is never chosen as the name that
+qualifies one: the useful answer is the function a reader would go
+looking in.
+
+**NOTES** at the end says what the numbers mean when they mean
+something — a large interpreted share and which functions carry it, a
+run too short to draw conclusions from, or work that ran on parallel
+worker threads, where a frame legitimately has no call path above it
+because its caller is on another thread.
 
 Sampling is statistical: a short program yields few samples, and a
 function that never appears was simply never running at a tick.

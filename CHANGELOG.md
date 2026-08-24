@@ -47,6 +47,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   relaxed atomic load per call, with no measurable effect on ordinary
   runs.
 
+  The report leads with **time by tier** (bars for native, vm, interp,
+  and builtin — standard-library time is Rust, and counting it as
+  interpreter time would misattribute the very thing the tool exists
+  to report), then per-function self/total shares with sample counts,
+  the hottest call paths, and closing **notes** that say what the
+  numbers mean when they mean something: a large interpreted share and
+  which functions carry it, a run too short to conclude from, or work
+  that ran on parallel worker threads. Anonymous functions are named
+  for where they were written (`<lambda in bench>`), and a builtin
+  that runs user code (`map`, `fold`) appears in call paths so a
+  lambda always has a visible caller.
+
 - **`olang check` flags unrebound collection writes.** The bundled
   collections are values: `heap.push(h, x)` computes a new heap and
   returns it, so a bare call in statement position is a silent no-op

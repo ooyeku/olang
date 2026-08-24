@@ -612,7 +612,21 @@ impl BuiltinFunctions {
             return Ok(result);
         }
 
-        Self::call_internal_inner(builtins, name, arguments, interpreter)
+        // A builtin that runs user code (map, fold, sort_by — anything
+        // handed a function) gets a profiling frame, so the lambda it
+        // calls has a visible caller. Builtins that take no function
+        // leave no frame: they are Rust, and a frame per `len` would
+        // bury the profile in noise.
+        let profiled = crate::profile::enabled()
+            && arguments
+                .iter()
+                .any(|a| matches!(a, Value::Function(_) | Value::Builtin(_)))
+            && crate::profile::push_builtin(name);
+        let result = Self::call_internal_inner(builtins, name, arguments, interpreter);
+        if profiled {
+            crate::profile::pop();
+        }
+        result
     }
 
     fn call_internal_inner(

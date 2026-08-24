@@ -481,11 +481,16 @@ fn run() -> i32 {
             // differs, so what the profile measures is what `olang run`
             // would have done.
             let record = cli.record.clone();
+            let file_label = file
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| file.display().to_string());
             let session = olang::profile::start(interval);
             let started = std::time::Instant::now();
             let code = run_program(&cli, file, args, record, logger);
             let elapsed = started.elapsed();
-            println!("{}", session.finish(elapsed, top));
+            let label = file_label;
+            println!("{}", session.finish(elapsed, top, &label));
             code
         }
 
