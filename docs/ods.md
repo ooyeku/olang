@@ -1358,6 +1358,49 @@ guidance is simpler than the table: keep computations in Series and
 Frame operations, cross to lists at the edges, and column size stops
 being something to think about.
 
+## The pipeline benchmark
+
+The table above measures kernels. This one measures the whole gesture —
+an end-to-end ETL pass over a 1M-row CSV, written three times with
+identical semantics: in olang on this stack, in pandas, and in Polars
+(`benchmarks/` in the repository). Every stage prints a checksum, and
+the runner refuses a result where any checksum disagrees across engines
+or repetitions, so speed is only ever compared on byte-identical
+answers.
+
+Medians of five runs. Apple M5 Pro (6P+12E, 24 GB), macOS 27.0,
+olang 0.71.0 versus pandas 3.0.5 and Polars 1.44.0 on CPython 3.14.5.
+Each engine runs as it ships: ods under the language's automatic
+parallelism policy, pandas single-threaded, Polars on its default
+thread pool. Times are per-stage, measured inside each process, so
+startup is excluded equally.
+
+| Stage | ods | pandas | Polars |
+|---|---|---|---|
+| load (1M-row CSV) | 76 ms | 175 ms | 7 ms |
+| clean (drop nulls, derive) | 69 ms | 54 ms | 5 ms |
+| filter | 39 ms | 9 ms | 5 ms |
+| group (2 keys, 3 aggs) | 33 ms | 50 ms | 8 ms |
+| join (dimension table) | 0 ms | 1 ms | 1 ms |
+| sort | 0 ms | 0 ms | 0 ms |
+| daily (group, sort, rolling 7) | 6 ms | 20 ms | 7 ms |
+| write CSV | 0 ms | 1 ms | 1 ms |
+| **whole pipeline** | **223 ms** | **308 ms** | **34 ms** |
+
+Read plainly: on this workload ods is ahead of pandas end to end
+(1.4×), and Polars — a decade of columnar engineering with a
+multithreaded SIMD CSV reader — is ahead of both. The gap to Polars is
+concentrated where rows materialize (load, clean, filter); the
+aggregation stages the stack optimizes hardest (group, daily) run
+within a small factor of Polars and ahead of pandas. That is the
+honest position of a data stack written in one campaign, and the
+per-stage table is the to-do list it leaves behind.
+
+To reproduce: `benchmarks/run.sh [reps] [rows]` — the dataset is
+generated deterministically, the engine scripts are stage-for-stage
+identical, and the runner enforces answer equality before reporting a
+single number.
+
 ## The design record
 
 This section records the design of the stack: the problem it was built to

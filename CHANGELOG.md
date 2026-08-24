@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The pipeline benchmark (DP4).** The last open lane of the
+  data-pipeline campaign: an end-to-end ETL pass over a 1M-row CSV —
+  load, clean, derive, filter, two-key group, join, sort, rolling
+  window, write — implemented stage-for-stage identically in ods,
+  pandas, and Polars under `benchmarks/`. Every stage prints a
+  checksum and the runner refuses any result where engines or
+  repetitions disagree, so timings only ever compare byte-identical
+  answers. As measured (Apple M5 Pro, medians of five): ods 223 ms end
+  to end versus pandas 308 ms and Polars 34 ms; the per-stage table,
+  methodology, and hardware are recorded in the data-stack chapter.
+
 ## [0.71.0] - 2026-08-24
 
 ### Fixed
