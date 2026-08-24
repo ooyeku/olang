@@ -33,6 +33,7 @@ tool `otc` and are described in
 | `olang doc [path]` | Generate HTML (or `--markdown` Markdown) API reference |
 | `olang expand FILE` | Print a file after [macro expansion](macros.md) — the program the runtime actually receives |
 | `olang bench` | Run benchmarks |
+| `olang profile <file>` | Run under the sampling profiler; report time per function and tier |
 | `olang lsp` | Start the language server (LSP over stdio) |
 
 Because the tool is file-first, a word that is neither a known command
@@ -303,6 +304,54 @@ max(5%, 2×CV) against the baseline: below that threshold it's noise,
 not news, and prints as `~`. Add `--fail-on-regress` to turn any red
 row into exit code 1 — that flag is what makes a saved baseline a
 standing guard for performance work.
+
+## `olang profile`
+
+Where a program spends its time, per function, **and on which tier**:
+
+```bash
+olang profile report.ol                  # sample at 1 kHz, list the top 20
+olang profile report.ol --interval 200   # finer sampling (microseconds)
+olang profile report.ol --top 40         # a longer table
+olang profile report.ol -- --input big.csv   # the program's own arguments
+```
+
+The run is an ordinary run — same tiers, same capability grant, same
+`os.args()` — with a shadow stack sampled by a background thread. The
+report names, for every function that appeared:
+
+```
+   self    total  tier     function
+────────────────────────────────────────────────────────────
+  53.8%    53.8%  vm       format_row
+  38.5%    92.3%  vm       build_chunk
+   7.7%   100.0%  vm       run_all
+
+hottest call paths
+────────────────────────────────────────────────────────────
+  53.8%  run_all → build_chunk → format_row
+```
+
+**self** is the share of samples where the function was the one
+running; **total** is the share where it was anywhere on the stack, so
+`total − self` is time in its callees. **tier** is what a profiler for
+a tiered language exists to tell you: `interp` means the function
+never promoted, and is the finding — a hot function on the
+tree-walking interpreter is usually a shape the bytecode compiler
+refused, not a slow algorithm. A function that ran on two tiers (say,
+interpreted before promotion) shows both, as `vm+interp`.
+
+Sampling is statistical: a short program yields few samples, and a
+function that never appears was simply never running at a tick.
+Lengthen the workload or shorten `--interval` before reading much into
+small percentages.
+
+Two things the report deliberately folds together. Recursion is one
+frame, not one per level — a call path names places in the program,
+not stack depth. And a function the JIT has **inlined into its caller**
+no longer exists as a frame: its time is attributed to the caller,
+which is where the machine code actually is. If a function you expected
+is missing entirely and its caller shows `native`, inlining is why.
 
 ## `olang build`
 

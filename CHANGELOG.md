@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`olang profile` — a sampling profiler that knows about tiers.**
+  Runs a program normally (same tiers, capabilities, and argv) while a
+  background thread samples a per-thread shadow stack, then reports
+  self time, total time, and the *execution tier* for every function
+  that appeared, plus the hottest call paths. The tier column is the
+  point: a hot function marked `interp` never promoted, which is a
+  different bug from a hot function that is simply doing a lot of
+  work. Recursion folds to one frame and JIT-inlined callees are
+  attributed to their caller, both documented in the tooling chapter.
+  Profiling is off unless asked for — the instrumentation costs one
+  relaxed atomic load per call, with no measurable effect on ordinary
+  runs.
+
 - **`olang check` flags unrebound collection writes.** The bundled
   collections are values: `heap.push(h, x)` computes a new heap and
   returns it, so a bare call in statement position is a silent no-op

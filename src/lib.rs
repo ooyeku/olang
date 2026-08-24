@@ -28,6 +28,7 @@ pub mod parser;
 pub mod pkg;
 #[cfg(not(feature = "native"))]
 pub mod playground;
+pub mod profile; // Sampling profiler behind `olang profile`
 #[cfg(feature = "native")]
 pub mod repl;
 pub mod resolve;

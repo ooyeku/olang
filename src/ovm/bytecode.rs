@@ -1689,10 +1689,21 @@ impl BytecodeVm {
                     .and_then(|s| s.clone())
                     .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
             };
-            if let Some(result) = self
+            let profiled = crate::profile::push(
+                bytecode
+                    .debug_info
+                    .function_name
+                    .as_deref()
+                    .unwrap_or("<anonymous>"),
+                crate::profile::Tier::Native,
+            );
+            let native = self
                 .jit
-                .try_call(func_id, &bytecode, args, remaining, &lookup)
-            {
+                .try_call(func_id, &bytecode, args, remaining, &lookup);
+            if profiled {
+                crate::profile::pop();
+            }
+            if let Some(result) = native {
                 return Ok(result);
             }
         }
@@ -1715,7 +1726,20 @@ impl BytecodeVm {
         self.stats.function_calls += 1;
 
         self.push_caps_frame(&bytecode);
+        // Profiling shadow frame (`olang profile`): off, this is one
+        // relaxed load and a predicted-false branch.
+        let profiled = crate::profile::push(
+            bytecode
+                .debug_info
+                .function_name
+                .as_deref()
+                .unwrap_or("<anonymous>"),
+            crate::profile::Tier::Vm,
+        );
         let result = self.execute_bytecode(&bytecode);
+        if profiled {
+            crate::profile::pop();
+        }
         self.pop_caps_frame();
 
         // Restore the caller's window on both success and error paths
@@ -1769,7 +1793,20 @@ impl BytecodeVm {
         self.stats.bytecode_cache_hits += 1;
         self.stats.function_calls += 1;
         self.push_caps_frame(&bytecode);
+        // Profiling shadow frame (`olang profile`): off, this is one
+        // relaxed load and a predicted-false branch.
+        let profiled = crate::profile::push(
+            bytecode
+                .debug_info
+                .function_name
+                .as_deref()
+                .unwrap_or("<anonymous>"),
+            crate::profile::Tier::Vm,
+        );
         let result = self.execute_bytecode(&bytecode);
+        if profiled {
+            crate::profile::pop();
+        }
         self.pop_caps_frame();
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
@@ -1851,10 +1888,21 @@ impl BytecodeVm {
                     .and_then(|s| s.clone())
                     .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
             };
-            if let Some(result) = self
+            let profiled = crate::profile::push(
+                bytecode
+                    .debug_info
+                    .function_name
+                    .as_deref()
+                    .unwrap_or("<anonymous>"),
+                crate::profile::Tier::Native,
+            );
+            let native = self
                 .jit
-                .try_call(func_id, &bytecode, args, remaining, &lookup)
-            {
+                .try_call(func_id, &bytecode, args, remaining, &lookup);
+            if profiled {
+                crate::profile::pop();
+            }
+            if let Some(result) = native {
                 return Ok(Err(result));
             }
         }
@@ -2334,7 +2382,15 @@ impl BytecodeVm {
                         }
                     }
                 }
-                if let Some(result) = self.jit.try_call_raw_with_shapes(
+                let profiled = crate::profile::push(
+                    bytecode
+                        .debug_info
+                        .function_name
+                        .as_deref()
+                        .unwrap_or("<anonymous>"),
+                    crate::profile::Tier::Native,
+                );
+                let native = self.jit.try_call_raw_with_shapes(
                     func_id,
                     &bytecode,
                     &bits[..arg_regs.len()],
@@ -2347,7 +2403,11 @@ impl BytecodeVm {
                     &result_args,
                     &list_args,
                     &map_args,
-                ) {
+                );
+                if profiled {
+                    crate::profile::pop();
+                }
+                if let Some(result) = native {
                     return Ok(result);
                 }
             }
@@ -2377,7 +2437,20 @@ impl BytecodeVm {
         self.stats.function_calls += 1;
 
         self.push_caps_frame(&bytecode);
+        // Profiling shadow frame (`olang profile`): off, this is one
+        // relaxed load and a predicted-false branch.
+        let profiled = crate::profile::push(
+            bytecode
+                .debug_info
+                .function_name
+                .as_deref()
+                .unwrap_or("<anonymous>"),
+            crate::profile::Tier::Vm,
+        );
         let result = self.execute_bytecode(&bytecode);
+        if profiled {
+            crate::profile::pop();
+        }
         self.pop_caps_frame();
 
         self.execution_state.pop_frame(saved);

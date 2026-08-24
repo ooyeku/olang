@@ -152,6 +152,26 @@ enum Commands {
         rules: Option<PathBuf>,
     },
 
+    /// Run a program under the sampling profiler
+    Profile {
+        /// Program to execute
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Sampling interval in microseconds (default 1000 — one per ms)
+        #[arg(long, value_name = "US", default_value_t = 1000)]
+        interval: u64,
+        /// How many functions to list (default 20)
+        #[arg(long, value_name = "N", default_value_t = 20)]
+        top: usize,
+        /// Arguments passed to the program, readable via os.args()
+        #[arg(
+            value_name = "ARGS",
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        args: Vec<String>,
+    },
+
     /// Format source files in place (or check formatting)
     Fmt {
         /// Files or directories to format (default: current directory)
@@ -448,6 +468,25 @@ fn run() -> i32 {
             olang::stdlib::os::set_script_args(vec!["olang-test".to_string()]);
             let target = path.unwrap_or_else(|| PathBuf::from("."));
             olang::tools::test_runner::run(&target, coverage || coverage_lines, coverage_lines)
+        }
+
+        Some(Commands::Profile {
+            file,
+            interval,
+            top,
+            args,
+        }) => {
+            // The profiled run is an ordinary run: same tiers, same
+            // capability grant, same argv. Only the shadow-stack flag
+            // differs, so what the profile measures is what `olang run`
+            // would have done.
+            let record = cli.record.clone();
+            let session = olang::profile::start(interval);
+            let started = std::time::Instant::now();
+            let code = run_program(&cli, file, args, record, logger);
+            let elapsed = started.elapsed();
+            println!("{}", session.finish(elapsed, top));
+            code
         }
 
         Some(Commands::Check { mut paths, rules }) => {

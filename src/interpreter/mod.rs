@@ -2173,9 +2173,22 @@ impl Interpreter {
                 ),
             });
         }
+        // Profiling shadow frame (`olang profile`). Pushed here, at the
+        // one entry every user call passes through, and marked
+        // Interpreter: if the call is promoted, the tier pushes its own
+        // frame underneath and *that* becomes the sampled leaf, so the
+        // tier column reports where the work actually ran.
+        let profiled = crate::profile::push(
+            func.name.as_deref().unwrap_or("<lambda>"),
+            crate::profile::Tier::Interpreter,
+        );
         // Every frame under the cap must be physically reachable, or the
         // cap is a lie the stack tells first.
-        with_stack_headroom(|| self.call_user_function_inner(func, arguments))
+        let result = with_stack_headroom(|| self.call_user_function_inner(func, arguments));
+        if profiled {
+            crate::profile::pop();
+        }
+        result
     }
 
     fn call_user_function_inner(
