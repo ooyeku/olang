@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The tier boundary, lane T4: transitive JIT inlining (Campaign 7).**
+  The JIT's inliner no longer refuses a small callee just because it
+  has calls of its own: when those calls themselves inline away (a
+  distance function calling a square helper), the callee presents its
+  expanded, call-free form and inlines like any leaf, to two levels of
+  helper-within-helper. Recursive callees bottom out naturally — the
+  recursive call survives expansion, and a form still containing one
+  stays a call. Whitelisted named and builtin calls (`map_get`, float
+  math) pass through the splice unexpanded. A three-level helper chain
+  in a 30M-iteration loop runs 1.9× faster (153ms → 82ms); the
+  transform exists only on the JIT's planning clone, so semantics and
+  stack traces cannot drift, and two differential tests pin exact
+  agreement with the interpreter.
+
+- **REPL `:run` behaves like `olang run`.** The post-run cleanup kept
+  only a hardcoded module list that was missing `str` and `time`, so
+  the second `:run` of a session found its ambient modules wiped
+  ("Undefined variable: str"); every Module-typed binding is now
+  retained. `:run` also installs the file's own argv for the duration
+  (argv[0] is the script path, as `olang run` provides), so a script
+  that resolves paths from `os.args()[0]` — run_all.ol discovers its
+  whole example set that way — works identically under the REPL. The
+  "Generating very large range" warning is gone: it fired at a size
+  the current tiers handle in milliseconds and suggested a feature
+  that does not exist.
+
+- **`meta.parse`/`meta.eval` name the fix for wrong-shaped input.**
+  Passing the `Result` a file read returns now says "got Ok(String) —
+  unwrap the read first: meta.parse(unwrap(f))" instead of the bare
+  rule; other wrong kinds report their type name. A mistyped `mut`
+  (`let m f = ...`) now gets "Did you mean `let mut f`?" from the
+  error-suggestion engine instead of the generic "expected the end of
+  the file".
+
 - **The tier boundary, lane T3: on-stack replacement (Campaign 7).** A
   hot loop inside a function the whole-function JIT refuses — a
   `println` in the prologue, string formatting after the loop — no

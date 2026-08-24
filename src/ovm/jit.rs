@@ -2781,17 +2781,70 @@ fn splice(b: &mut CompiledBytecode, at: usize, replacement: Vec<Instruction>) {
     }
 }
 
-/// Inline calls to tiny leaf callees: no calls of their own, no type
-/// annotations, a handful of instructions. Exposes cross-function
-/// structure (a constructor's fields, a helper's arithmetic) to the
-/// scalar-replacement pass below. The transform only exists on the
-/// JIT's planning clone — the VM's bytecode is untouched, and every
-/// error path deopts to a clean rerun of the original, so semantics
-/// and stack traces cannot drift.
+/// Inline calls to tiny callees: no type annotations, a handful of
+/// instructions, and — since Campaign 7, T4 — calls of their own are no
+/// longer a refusal: a callee whose calls themselves inline away (a
+/// distance function calling a square helper) presents its expanded,
+/// call-free form and inlines like any leaf, to `INLINE_DEPTH` levels.
+/// Exposes cross-function structure (a constructor's fields, a helper's
+/// arithmetic) to the scalar-replacement pass below. The transform only
+/// exists on the JIT's planning clone — the VM's bytecode is untouched,
+/// and every error path deopts to a clean rerun of the original, so
+/// semantics and stack traces cannot drift.
 const INLINE_MAX_CALLEE: usize = 24;
+/// A transitively expanded callee may exceed the per-callee cap by its
+/// own inlined helpers, up to this bound.
+const INLINE_MAX_EXPANDED: usize = 48;
 const INLINE_BUDGET: usize = 256;
+/// How many levels of helper-within-helper expand before a call is a
+/// call. Cycles and self-recursion bottom out here naturally: the
+/// recursive call survives expansion, and a form that still contains
+/// one is refused.
+const INLINE_DEPTH: u32 = 2;
+
+/// The callee as the inliner would splice it: itself when call-free and
+/// small, its expanded form when its own calls inline away, None when
+/// it must stay a call. Named and builtin calls (`map_get`, float math —
+/// everything `whitelist_ok` admits) pass through unexpanded: the
+/// splice mechanics carry them verbatim.
+fn inlinable_form(
+    callee: &Arc<CompiledBytecode>,
+    lookup: &BytecodeLookup,
+    depth: u32,
+) -> Option<Arc<CompiledBytecode>> {
+    let has_fn_call = callee
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallFn { .. }));
+    if !has_fn_call {
+        return (callee.instructions.len() <= INLINE_MAX_CALLEE).then(|| callee.clone());
+    }
+    if depth == 0 || callee.instructions.len() > INLINE_MAX_CALLEE {
+        return None;
+    }
+    let mut form = (**callee).clone();
+    inline_to_depth(&mut form, callee.function_id, lookup, depth - 1);
+    if form
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallFn { .. }))
+        || form.instructions.len() > INLINE_MAX_EXPANDED
+    {
+        return None;
+    }
+    Some(Arc::new(form))
+}
 
 fn inline_leaves(b: &mut CompiledBytecode, self_id: FunctionId, lookup: &BytecodeLookup) {
+    inline_to_depth(b, self_id, lookup, INLINE_DEPTH);
+}
+
+fn inline_to_depth(
+    b: &mut CompiledBytecode,
+    self_id: FunctionId,
+    lookup: &BytecodeLookup,
+    depth: u32,
+) {
     let mut budget = INLINE_BUDGET;
     'rescan: loop {
         for pc in 0..b.instructions.len() {
@@ -2809,23 +2862,19 @@ fn inline_leaves(b: &mut CompiledBytecode, self_id: FunctionId, lookup: &Bytecod
                 continue;
             };
             if callee.instructions.is_empty()
-                || callee.instructions.len() > INLINE_MAX_CALLEE
-                || callee.instructions.len() > budget
                 || callee.entry_point != 0
                 || callee.param_count != args.len()
                 || callee.param_checks.iter().any(|c| c.is_some())
                 || callee.return_check.is_some()
                 || !whitelist_ok(&callee)
                 || has_backward_jump(&callee)
-                || callee.instructions.iter().any(|i| {
-                    matches!(
-                        i,
-                        Instruction::CallFn { .. }
-                            | Instruction::CallNamed { .. }
-                            | Instruction::CallBuiltin { .. }
-                    )
-                })
             {
+                continue;
+            }
+            let Some(callee) = inlinable_form(&callee, lookup, depth) else {
+                continue;
+            };
+            if callee.instructions.len() > budget {
                 continue;
             }
 

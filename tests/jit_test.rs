@@ -1734,3 +1734,43 @@ tally(400) + mtally(400)
 "#,
     );
 }
+
+// ── Campaign 7, T4: transitive inlining ─────────────────────────────
+
+#[test]
+fn helper_chains_inline_transitively_and_agree() {
+    // score → dist2 → sq: three levels of helper. dist2 has a call of
+    // its own, so the pre-T4 inliner refused it; now sq inlines into
+    // dist2's expanded form and that form inlines into score's callers.
+    // Correctness first: the flattened native loop must match the
+    // interpreter exactly, guard edges included.
+    assert_jit_transparent(
+        "fn sq(x) = x * x\n\
+         fn dist2(a, b) = sq(b - a) + 1\n\
+         fn score(a, b, c) = dist2(a, b) + dist2(b, c)\n\
+         fn run(n) = {\n\
+             let mut acc = 0\n\
+             let mut i = 0\n\
+             while i < n { acc = (acc + score(i, i + 3, i + 5)) % 1000000007 i = i + 1 }\n\
+             acc\n\
+         }\n\
+         run(20000)",
+    );
+}
+
+#[test]
+fn a_recursive_helper_stays_a_call_and_agrees() {
+    // fact calls itself: its expansion bottoms out with the recursive
+    // call still present, so the inliner must leave it as a call — and
+    // the answer must not drift either way.
+    assert_jit_transparent(
+        "fn fact(n) = if n <= 1 => 1 else => n * fact(n - 1)\n\
+         fn run(n) = {\n\
+             let mut acc = 0\n\
+             let mut i = 0\n\
+             while i < n { acc = (acc + fact(10)) % 1000000007 i = i + 1 }\n\
+             acc\n\
+         }\n\
+         run(5000)",
+    );
+}
