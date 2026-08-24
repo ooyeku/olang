@@ -68,7 +68,25 @@ pub fn call_meta_function(
 fn meta_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let source = match args.first() {
         Some(Value::String(s)) => s.as_str().to_string(),
-        _ => return Err("meta.parse: expected a source string".into()),
+        // The overwhelmingly common miss: the string is still inside the
+        // Result a file read returned. Name the fix, not just the rule —
+        // and head off the to_string(f) "conversion", which stringifies
+        // the Ok(...) wrapper into unparseable pseudo-source.
+        Some(Value::Ok(inner)) if matches!(inner.as_ref(), Value::String(_)) => {
+            return Err(
+                "meta.parse: expected a source string, got Ok(String) — unwrap the read first: meta.parse(unwrap(f))"
+                    .into(),
+            );
+        }
+        other => {
+            return Err(format!(
+                "meta.parse: expected a source string, got {}",
+                other
+                    .map(|v| v.type_name())
+                    .unwrap_or_else(|| "no argument".to_string())
+            )
+            .into());
+        }
     };
     match crate::parser::Parser::new().parse_raw(&source) {
         Ok(program) => {
@@ -620,6 +638,12 @@ fn call_target(callee: &Expr) -> String {
 fn meta_eval(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let source = match args.first() {
         Some(Value::String(text)) => text.as_str().to_string(),
+        Some(Value::Ok(inner)) if matches!(inner.as_ref(), Value::String(_)) => {
+            return Err(
+                "meta.eval: expected a source string, got Ok(String) — unwrap the read first: meta.eval(unwrap(f))"
+                    .into(),
+            );
+        }
         other => {
             return Err(format!(
                 "meta.eval: expected a source string, got {}",

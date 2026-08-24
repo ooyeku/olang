@@ -3523,6 +3523,8 @@ impl ErrorSuggestionEngine {
         // Analyze the pest error for common patterns
         let error_msg = format!("{}", pest_error);
 
+        Self::suggest_let_mut_typo(pest_error.line(), &mut suggestions);
+
         // Check for common syntax issues
         if error_msg.contains("expected") {
             if error_msg.contains("expected `)`") {
@@ -3601,6 +3603,39 @@ impl ErrorSuggestionEngine {
         suggestions
     }
 
+    /// `let m f = ...` — a mistyped `mut` reads as a binding name
+    /// followed by a stray identifier, and the generic "expected the end
+    /// of the file" points at the wrong problem. Recognize the shape on
+    /// the offending line and name the likely fix.
+    fn suggest_let_mut_typo(line: &str, suggestions: &mut Vec<ErrorSuggestion>) {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("let ") {
+            let mut words = rest.split_whitespace();
+            if let (Some(first), Some(second)) = (words.next(), words.next())
+                && first != "mut"
+                && second != "="
+                && !second.starts_with('=')
+                && second
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphabetic() || c == '_')
+            {
+                suggestions.push(ErrorSuggestion {
+                    message: format!(
+                        "`let {} {}` binds `{}` and then trips on `{}`",
+                        first, second, first, second
+                    ),
+                    fix: Some(format!("Did you mean `let mut {}`?", second)),
+                    help: Some(
+                        "A binding takes one name; `let mut name = ...` declares it reassignable"
+                            .to_string(),
+                    ),
+                    severity: SuggestionSeverity::Error,
+                });
+            }
+        }
+    }
+
     fn suggest_for_invalid_syntax(
         &self,
         message: &str,
@@ -3617,6 +3652,8 @@ impl ErrorSuggestionEngine {
         } else {
             ""
         };
+
+        Self::suggest_let_mut_typo(line_content, &mut suggestions);
 
         // Check for common typos and mistakes
         if message.contains("integer") {
