@@ -52,7 +52,9 @@ lib/router.ol     :param routing, 405/404, auth, the JSON error envelope
 lib/store.ol      SQLite migrations + CRUD (integer cents; FK pragma on)
 lib/validate.ol   Ok(fields) | Err([{field, message}]) validators
 lib/format.ol     money()/to_cents()/month helpers, with test blocks
-static/ledger.ol  the frontend: dom events, ods Frames, viz charts
+static/ledger.ol  the frontend: dom events, ods Frames, viz charts,
+                  budget progress bars, the category manager, toasts,
+                  and two-click deletes
 static/index.html the page; static/olang-dom.js the generic wasm shim
 seed.ol           seeded three-month demo data
 ```
@@ -67,5 +69,6 @@ seed.ol           seeded three-month demo data
   date can be one day ahead of local time in the evening; adjust in the
   picker. (A stdlib timezone story is a recorded gap.)
 - Transaction date and category edits are delete-and-re-add; note and
-  amount edit inline.
+  amount edit inline. Deletes are two-click ("×" then "sure?") — there
+  is no undo.
 - Single user, localhost only (`http.serve` binds 127.0.0.1 by design).

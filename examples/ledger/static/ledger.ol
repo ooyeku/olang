@@ -117,21 +117,57 @@ fn txs() = { let v = dom.state_get("txs"); if typeof(v) == "Unit" => [] else => 
 fn budgets() = { let v = dom.state_get("budgets"); if typeof(v) == "Unit" => [] else => v }
 fn cats() = { let v = dom.state_get("cats"); if typeof(v) == "Unit" => [] else => v }
 
-fn flash(msg) = dom.set_text(dom.query("#flash"), msg)
+// ── toasts ─────────────────────────────────────────────────────────────
+// A fresh element each time restarts the CSS fade; tone picks the accent:
+// "ok" (mint), "err" (red), "hint" (quiet, longer-lived).
+
+fn toast(msg, tone) =
+    dom.set_html(dom.query("#flash"),
+        if msg == "" => ""
+        else => "<div class=\"toast " + tone + "\">" + esc(msg) + "</div>")
+
+// The server's error envelope, made readable: prefer the field-level
+// details ("date: must be YYYY-MM-DD"), fall back to the message. Parsed
+// JSON objects arrive as JsonObject structs, not Maps; a bare string here
+// is the shim's network-failure report.
+fn err_text(envelope) = {
+    if typeof(envelope) != "Map" && typeof(envelope) != "JsonObject" => "server unreachable"
+    else => {
+        if map_has_key(envelope, "details") => {
+            let ds = map_get(envelope, "details")
+            if typeof(ds) == "List" && len(ds) > 0 =>
+                ds |> map((d) => show(map_get(d, "field")) + ": " + show(map_get(d, "message")))
+                   |> join(" · ")
+            else => show(map_get(envelope, "message"))
+        }
+        else => { if map_has_key(envelope, "message") => show(map_get(envelope, "message"))
+                  else => "server unreachable" }
+    }
+}
+
+fn toast_error(prefix, resp) =
+    toast(prefix + ": " + err_text(if map_has_key(resp, "error") => map_get(resp, "error") else => resp), "err")
 
 // ── rendering: transactions ────────────────────────────────────────────
+
+// The id of a row whose delete button is one click from firing; delete is
+// two-click ("×" then "sure?") so a stray tap never destroys data.
+fn armed() = { let v = dom.state_get("armed"); if typeof(v) == "Unit" => "" else => v }
 
 fn row_html(t) = {
     let id = show(map_get(t, "id"))
     let cents = map_get(t, "amount_cents")
     let tone = if cents < 0 => "neg" else => "pos"
+    let del = if armed() == id
+        => "<button class=\"sure\" id=\"del-" + id + "\" title=\"click again to delete\">sure?</button>"
+        else => "<button class=\"del\" id=\"del-" + id + "\" title=\"delete\">×</button>"
     "<tr>"
         + "<td class=\"date\">" + esc(map_get(t, "date")) + "</td>"
         + "<td class=\"cat\">" + esc(map_get(t, "category")) + "</td>"
         + "<td><input class=\"cell\" id=\"note-" + id + "\" value=\"" + esc(map_get(t, "note")) + "\"></td>"
         + "<td class=\"amt " + tone + "\"><input class=\"cell\" style=\"width:7rem;text-align:right\" id=\"amt-"
         + id + "\" value=\"" + dollars(cents) + "\"></td>"
-        + "<td class=\"act\"><button class=\"del\" id=\"del-" + id + "\" title=\"delete\">×</button></td>"
+        + "<td class=\"act\">" + del + "</td>"
         + "</tr>"
 }
 
@@ -146,11 +182,12 @@ fn render_rows() = {
         |> map((t) => map_get(t, "amount_cents")) |> sum()
     let spent = rows |> filter((t) => map_get(t, "amount_cents") < 0)
         |> map((t) => 0 - map_get(t, "amount_cents")) |> sum()
+    let net = income - spent
     dom.set_html(dom.query("#summary"),
-        "<span>in <b class=\"pos\">" + money(income) + "</b></span>"
-        + "<span>out <b>" + money(spent) + "</b></span>"
-        + "<span>net <b class=\"" + (if income >= spent => "pos" else => "neg") + "\">"
-        + money(income - spent) + "</b></span>")
+        "<div class=\"stat\"><small>in</small><b class=\"pos\">" + money(income) + "</b></div>"
+        + "<div class=\"stat\"><small>out</small><b>" + money(spent) + "</b></div>"
+        + "<div class=\"stat\"><small>net</small><b class=\"" + (if net >= 0 => "pos" else => "neg") + "\">"
+        + money(net) + "</b></div>")
 }
 
 // ── rendering: budgets ─────────────────────────────────────────────────
@@ -181,16 +218,23 @@ fn budget_row_html(c, spent_map) = {
     let planned = budget_for(cid)
     let key = show(cid)
     let spent = if map_has_key(spent_map, key) => map_get(spent_map, key) else => 0
+    let over = planned > 0 && spent > planned
     let status = if planned == 0 => "<span class=\"spent\">" + money(spent) + " spent</span>"
         else => {
-            let tone = if spent > planned => "over" else => "under"
+            let tone = if over => "over" else => "under"
             "<span class=\"spent " + tone + "\">" + money(spent) + " of " + money(planned) + "</span>"
         }
+    // The fill fraction, clamped to [0, 100]; no budget → a sliver of
+    // neutral bar so the row still reads as a gauge.
+    let pct = if planned == 0 => (if spent > 0 => 100 else => 0)
+        else => { let p = spent * 100 / planned; if p > 100 => 100 else => p }
+    let bar_tone = if planned == 0 => "none" else => { if over => "over" else => "" }
     "<div class=\"budget-row\">"
         + "<span class=\"name\">" + esc(map_get(c, "name")) + "</span>"
         + status
         + "<input id=\"bud-" + key + "\" placeholder=\"0.00\" inputmode=\"decimal\" value=\""
         + (if planned == 0 => "" else => dollars(planned)) + "\">"
+        + "<div class=\"bar\"><i class=\"" + bar_tone + "\" style=\"width:" + show(pct) + "%\"></i></div>"
         + "</div>"
 }
 
@@ -202,6 +246,33 @@ fn render_budgets() = {
         else => expense_cats |> map((c) => budget_row_html(c, spent_map)) |> join(""))
 }
 
+// ── rendering: category manager ────────────────────────────────────────
+// Rename inline (change on the name input), delete with the same
+// two-click arm as transactions; the server's 409 keeps a category with
+// transactions alive, and its message lands in the toast.
+
+fn armed_cat() = { let v = dom.state_get("armed_cat"); if typeof(v) == "Unit" => "" else => v }
+
+fn cat_row_html(c) = {
+    let id = show(map_get(c, "id"))
+    let kind = map_get(c, "kind")
+    let n = if map_has_key(c, "tx_count") => map_get(c, "tx_count") else => 0
+    let del = if armed_cat() == id
+        => "<button class=\"sure\" id=\"cdel-" + id + "\" title=\"click again to delete\">sure?</button>"
+        else => "<button class=\"del\" id=\"cdel-" + id + "\" title=\"delete\">×</button>"
+    "<div class=\"cat-row\">"
+        + "<input class=\"cell\" id=\"cname-" + id + "\" value=\"" + esc(map_get(c, "name")) + "\">"
+        + "<span class=\"kind " + (if kind == "income" => "income" else => "") + "\">" + esc(kind) + "</span>"
+        + "<span class=\"count\" title=\"transactions\">" + show(n) + "</span>"
+        + del
+        + "</div>"
+}
+
+fn render_cats_manager() =
+    dom.set_html(dom.query("#cats"),
+        if len(cats()) == 0 => "<div class=\"empty\">no categories</div>"
+        else => cats() |> map(cat_row_html) |> join(""))
+
 // ── rendering: charts (ods + viz, in the browser) ──────────────────────
 
 fn themed(s, w, h) =
@@ -210,6 +281,12 @@ fn themed(s, w, h) =
         "width", w), "height", h)
 
 fn cents_to_f(cents) = to_float(cents) / 100.0
+
+// One palette across all three charts: mint = money in / on plan,
+// blue = plan, red = money out.
+let PAL_IN = "#3ddc97"
+let PAL_PLAN = "#5aa9e6"
+let PAL_OUT = "#ef6b73"
 
 // This month's expenses by category, summed on an ods Frame.
 fn render_cats_chart() = {
@@ -226,7 +303,7 @@ fn render_cats_chart() = {
         dom.set_html(dom.query("#chart-cats"), viz.chart(themed(#{
             "data": ods.to_records(by_cat),
             "mark": "bar", "x": "category", "y": "dollars", "vary": true
-        }, 1140, 300)))
+        }, 1140, 260)))
     }
 }
 
@@ -249,10 +326,10 @@ fn render_budget_chart() = {
         }
     }
     if len(recs) == 0 => dom.set_html(dom.query("#chart-budget"),
-        "<div class=\"empty\">no budgets set — type amounts below</div>")
+        "<div class=\"empty\">no budgets set — type amounts in the budgets card</div>")
     else => dom.set_html(dom.query("#chart-budget"), viz.chart(themed(#{
         "data": recs, "mark": "bar", "x": "category", "y": "dollars",
-        "color": "kind", "colors": ["#5aa9e6", "#3ddc97"]
+        "color": "kind", "colors": [PAL_PLAN, PAL_IN]
     }, 560, 300)))
 }
 
@@ -270,10 +347,16 @@ fn render_trend_chart() = {
         let by_month = ods.frame_from_records(recs)
             |> ods.group_by(["month", "kind"], [["dollars", "sum", "dollars"]])
             |> ods.sort_by("month", false)
+        // viz assigns series colors in first-seen order, and the grouped
+        // rows arrive in data order — put "in" rows first so mint is
+        // always money in and red always money out.
+        let rows = ods.to_records(by_month)
+        let ordered = (rows |> filter((r) => map_get(r, "kind") == "in"))
+            + (rows |> filter((r) => map_get(r, "kind") == "out"))
         dom.set_html(dom.query("#chart-trend"), viz.chart(themed(#{
-            "data": ods.to_records(by_month),
+            "data": ordered,
             "mark": "bar", "x": "month", "y": "dollars",
-            "color": "kind", "colors": ["#3ddc97", "#ef6b73"]
+            "color": "kind", "colors": [PAL_IN, PAL_OUT]
         }, 560, 300)))
     }
 }
@@ -288,6 +371,7 @@ fn render_all() = {
     render_category_select()
     render_rows()
     render_budgets()
+    render_cats_manager()
     render_cats_chart()
     render_budget_chart()
     render_trend_chart()
@@ -310,24 +394,39 @@ fn selected_kind() = {
     if len(hit) == 0 => "expense" else => map_get(hit[0], "kind")
 }
 
-fn update_kind_tag() = dom.set_text(dom.query("#kind-tag"), selected_kind())
+fn update_kind_tag() = {
+    let kind = selected_kind()
+    let el = dom.query("#kind-tag")
+    dom.set_text(el, kind)
+    dom.set_class(el, if kind == "income" => "kind-tag income" else => "kind-tag")
+}
 
 // ── data flow ──────────────────────────────────────────────────────────
+// The window needs two fetches; rendering waits for both, so a reload
+// paints once instead of twice. A failed fetch (network down, server
+// gone) surfaces in the toast instead of dying silently.
+
+fn arrived() = {
+    let left = dom.state_get("pending") - 1
+    dom.state_set("pending", left)
+    if left <= 0 => render_all()
+}
 
 fn reload() = {
+    dom.state_set("armed", "")
+    dom.state_set("armed_cat", "")
+    dom.state_set("pending", 2)
     let to = cur_month()
     let from = month_add(to, -5)
     dom.fetch_json("GET", "/api/transactions?from=" + from + "&to=" + to, "", (resp) => {
-        if map_has_key(resp, "items") => {
-            dom.state_set("txs", map_get(resp, "items"))
-            render_all()
-        }
+        if map_has_key(resp, "items") => dom.state_set("txs", map_get(resp, "items"))
+        else => toast_error("load", resp)
+        arrived()
     })
     dom.fetch_json("GET", "/api/budgets?from=" + from + "&to=" + to, "", (resp) => {
-        if map_has_key(resp, "items") => {
-            dom.state_set("budgets", map_get(resp, "items"))
-            render_all()
-        }
+        if map_has_key(resp, "items") => dom.state_set("budgets", map_get(resp, "items"))
+        else => toast_error("load", resp)
+        arrived()
     })
 }
 
@@ -339,53 +438,62 @@ fn load_categories() =
             dom.state_set("cats", resp)
             render_all()
         }
+        else => toast_error("load", resp)
     })
 
-// ── mutations ──────────────────────────────────────────────────────────
+// ── mutations: transactions ────────────────────────────────────────────
 
 fn add_transaction() = {
+    let date = dom.value(dom.query("#new-date"))
     let raw = str.trim(dom.value(dom.query("#new-amount")))
-    if raw != "" => match to_cents(raw) {
-        Err(msg) => flash("amount: " + msg),
+    if date == "" => toast("pick a date first", "err")
+    else => { if raw == "" => toast("amount: enter one, like 12.50", "err")
+    else => match to_cents(raw) {
+        Err(msg) => toast("amount: " + msg, "err"),
         Ok(entered) => {
-            if entered == 0 => flash("amount: must not be zero")
+            if entered == 0 => toast("amount: must not be zero", "err")
             else => {
                 // The category's kind sets the sign; the field takes a
                 // positive number either way.
                 let a = if entered < 0 => 0 - entered else => entered
                 let cents = if selected_kind() == "expense" => 0 - a else => a
                 let cid = unwrap_or(str.parse_int(dom.value(dom.query("#new-category"))), 0)
-                let body = "{\"date\": \"" + dom.value(dom.query("#new-date")) + "\""
+                let body = "{\"date\": \"" + date + "\""
                     + ", \"amount_cents\": " + show(cents)
                     + ", \"category_id\": " + show(cid)
                     + ", \"note\": \"" + json_esc(str.trim(dom.value(dom.query("#new-note")))) + "\"}"
                 dom.fetch_json("POST", "/api/transactions", body, (resp) => {
-                    if map_has_key(resp, "error") =>
-                        flash("add failed: " + unwrap(json.stringify(map_get(resp, "error"))))
+                    if map_has_key(resp, "error") => toast_error("add failed", resp)
                     else => {
                         dom.set_value(dom.query("#new-amount"), "")
                         dom.set_value(dom.query("#new-note"), "")
                         dom.focus(dom.query("#new-amount"))
-                        flash("")
+                        toast("added " + money(cents), "ok")
                         reload()
                     }
                 })
             }
         }
-    }
+    }}
 }
 
 fn patch_tx(id, body) =
     dom.fetch_json("PATCH", "/api/transactions/" + id, body, (resp) => {
-        if map_has_key(resp, "error") =>
-            flash("edit failed: " + unwrap(json.stringify(map_get(resp, "error"))))
-        else => { flash("") reload() }
+        if map_has_key(resp, "error") => toast_error("edit failed", resp)
+        else => { toast("saved", "ok") reload() }
     })
 
 fn on_rows_click(tid) = {
     if starts_with(tid, "del-") => {
         let id = str.substring(tid, 4, len(tid))
-        dom.fetch_json("DELETE", "/api/transactions/" + id, "", (resp) => { reload() })
+        if armed() == id => {
+            dom.fetch_json("DELETE", "/api/transactions/" + id, "", (resp) => {
+                if map_has_key(resp, "error") => toast_error("delete failed", resp)
+                else => toast("deleted", "ok")
+                reload()
+            })
+        }
+        else => { dom.state_set("armed", id) render_rows() }
     }
 }
 
@@ -395,8 +503,8 @@ fn on_rows_change(e) = {
     if starts_with(tid, "amt-") => {
         let id = str.substring(tid, 4, len(tid))
         match to_cents(value) {
-            Err(msg) => { flash("amount: " + msg) reload() },
-            Ok(cents) => if cents == 0 => { flash("amount: must not be zero") reload() }
+            Err(msg) => { toast("amount: " + msg, "err") reload() },
+            Ok(cents) => if cents == 0 => { toast("amount: must not be zero", "err") reload() }
                 else => patch_tx(id, "{\"amount_cents\": " + show(cents) + "}")
         }
     }
@@ -406,6 +514,8 @@ fn on_rows_change(e) = {
     }}
 }
 
+// ── mutations: budgets ─────────────────────────────────────────────────
+
 fn on_budget_change(e) = {
     let tid = map_get(e, "id")
     if starts_with(tid, "bud-") => {
@@ -413,19 +523,65 @@ fn on_budget_change(e) = {
         let raw = str.trim(map_get(e, "value"))
         let cents = if raw == "" => Ok(0) else => to_cents(raw)
         match cents {
-            Err(msg) => { flash("budget: " + msg) reload() },
-            Ok(c) => if c < 0 => { flash("budget: must not be negative") reload() }
+            Err(msg) => { toast("budget: " + msg, "err") reload() },
+            Ok(c) => if c < 0 => { toast("budget: must not be negative", "err") reload() }
                 else => {
                     let body = "{\"category_id\": " + show(cid)
                         + ", \"month\": \"" + cur_month() + "\""
                         + ", \"amount_cents\": " + show(c) + "}"
                     dom.fetch_json("PUT", "/api/budgets", body, (resp) => {
-                        if map_has_key(resp, "error") =>
-                            flash("budget failed: " + unwrap(json.stringify(map_get(resp, "error"))))
-                        else => { flash("") reload() }
+                        if map_has_key(resp, "error") => toast_error("budget failed", resp)
+                        else => { toast(if c == 0 => "budget cleared" else => "budget set", "ok") reload() }
                     })
                 }
         }
+    }
+}
+
+// ── mutations: categories ──────────────────────────────────────────────
+
+fn add_category() = {
+    let name = str.trim(dom.value(dom.query("#cat-name")))
+    if name == "" => toast("category: name it first", "err")
+    else => {
+        let body = "{\"name\": \"" + json_esc(name)
+            + "\", \"kind\": \"" + dom.value(dom.query("#cat-kind")) + "\"}"
+        dom.fetch_json("POST", "/api/categories", body, (resp) => {
+            if map_has_key(resp, "error") => toast_error("category", resp)
+            else => {
+                dom.set_value(dom.query("#cat-name"), "")
+                toast("category added", "ok")
+                load_categories()
+            }
+        })
+    }
+}
+
+fn on_cats_click(tid) = {
+    if starts_with(tid, "cdel-") => {
+        let id = str.substring(tid, 5, len(tid))
+        if armed_cat() == id => {
+            dom.fetch_json("DELETE", "/api/categories/" + id, "", (resp) => {
+                dom.state_set("armed_cat", "")
+                if map_has_key(resp, "error") => { toast_error("category", resp) render_cats_manager() }
+                else => { toast("category deleted", "ok") load_categories() }
+            })
+        }
+        else => { dom.state_set("armed_cat", id) render_cats_manager() }
+    }
+}
+
+fn on_cats_change(e) = {
+    let tid = map_get(e, "id")
+    if starts_with(tid, "cname-") => {
+        let id = str.substring(tid, 6, len(tid))
+        let name = str.trim(map_get(e, "value"))
+        if name == "" => { toast("category: name must not be empty", "err") render_cats_manager() }
+        else => dom.fetch_json("PATCH", "/api/categories/" + id,
+            "{\"name\": \"" + json_esc(name) + "\"}", (resp) => {
+                if map_has_key(resp, "error") => { toast_error("rename", resp) render_cats_manager() }
+                else => { toast("renamed", "ok") load_categories() }
+            })
     }
 }
 
@@ -433,6 +589,7 @@ fn on_budget_change(e) = {
 
 dom.on(dom.query("#month-prev"), "click", (e) => { goto_month(month_add(cur_month(), -1)) })
 dom.on(dom.query("#month-next"), "click", (e) => { goto_month(month_add(cur_month(), 1)) })
+dom.on(dom.query("#month-today"), "click", (e) => { goto_month(this_month()) })
 dom.on(dom.query("#add-btn"), "click", (e) => { add_transaction() })
 dom.on(dom.query("#new-amount"), "enter", (e) => { add_transaction() })
 dom.on(dom.query("#new-note"), "enter", (e) => { add_transaction() })
@@ -440,12 +597,16 @@ dom.on(dom.query("#new-category"), "change", (e) => { update_kind_tag() })
 dom.on(dom.query("#rows"), "click", (e) => { on_rows_click(map_get(e, "id")) })
 dom.on(dom.query("#rows"), "change", (e) => { on_rows_change(e) })
 dom.on(dom.query("#budgets"), "change", (e) => { on_budget_change(e) })
+dom.on(dom.query("#cats"), "click", (e) => { on_cats_click(map_get(e, "id")) })
+dom.on(dom.query("#cats"), "change", (e) => { on_cats_change(e) })
+dom.on(dom.query("#cat-add-btn"), "click", (e) => { add_category() })
+dom.on(dom.query("#cat-name"), "enter", (e) => { add_category() })
 dom.on_route((r) => { reload() })
 
 // One delegated tooltip covers every chart rendered into the grid.
 viz.tooltip(dom.query("#charts"))
 
 dom.set_value(dom.query("#new-date"), dates.today())
-flash("frontend: olang (wasm) · charts: ods + viz, in the browser")
+toast("frontend: olang (wasm) · charts: ods + viz, in the browser", "hint")
 load_categories()
 reload()

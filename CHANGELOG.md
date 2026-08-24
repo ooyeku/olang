@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **examples/ledger: robustness and visual pass.** The frontend gains a
+  category manager (add, inline rename, delete — the API existed, the UI
+  didn't), budget progress bars, summary stat cards, toast notifications
+  that surface the server's real error messages (field-level 422 details
+  included), two-click delete confirmation on transactions and
+  categories, a "today" month-nav button, coalesced reloads (one paint
+  per refresh instead of two), and a deterministic trend-chart palette
+  (mint is always money in, red always money out).
+
 ### Added
 
 - **The tier boundary, lane T2: arguments convert proportional to use
