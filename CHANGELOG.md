@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **REPL: rich color.** Input lines syntax-highlight live as you type —
+  keywords magenta, strings and templates green, numbers and booleans
+  yellow, calls and `:commands` cyan, comments dimmed, and the `|>`/`=>`
+  arrows blue. Results print in the same palette (map keys and struct
+  fields cyan, type names blue, `Ok` green / `Err` red, `()` dimmed),
+  the prompt is bold green with a dimmed continuation, `:set show_types`
+  output and the `:time` line are tinted to stay out of the way. Colors
+  engage only on a terminal — piped output remains plain text.
+
 - **examples/ledger: robustness and visual pass.** The frontend gains a
   category manager (add, inline rename, delete — the API existed, the UI
   didn't), budget progress bars, summary stat cards, toast notifications

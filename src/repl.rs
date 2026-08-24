@@ -6,7 +6,7 @@ use crate::version::VERSION;
 use colored::*;
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::highlight::Highlighter;
+use rustyline::highlight::{CmdKind, Highlighter};
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Config, Context, Editor, Helper, history::DefaultHistory};
@@ -383,7 +383,37 @@ impl Hinter for ReplHelper {
     type Hint = String;
 }
 
-impl Highlighter for ReplHelper {}
+/// Live syntax color for the input line: keywords, literals, comments,
+/// and the pipeline arrows, re-rendered as the user types. The rendered
+/// string must keep the original's display width, so colors only wrap
+/// the original characters — nothing is inserted or dropped.
+impl Highlighter for ReplHelper {
+    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> std::borrow::Cow<'l, str> {
+        if !colored::control::SHOULD_COLORIZE.should_colorize() {
+            return std::borrow::Cow::Borrowed(line);
+        }
+        std::borrow::Cow::Owned(highlight_source(line))
+    }
+
+    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
+        &'s self,
+        prompt: &'p str,
+        _default: bool,
+    ) -> std::borrow::Cow<'b, str> {
+        if !colored::control::SHOULD_COLORIZE.should_colorize() {
+            return std::borrow::Cow::Borrowed(prompt);
+        }
+        if prompt.trim_start().starts_with("...") {
+            std::borrow::Cow::Owned(prompt.dimmed().to_string())
+        } else {
+            std::borrow::Cow::Owned(prompt.green().bold().to_string())
+        }
+    }
+
+    fn highlight_char(&self, _line: &str, _pos: usize, kind: CmdKind) -> bool {
+        !matches!(kind, CmdKind::MoveCursor)
+    }
+}
 impl Validator for ReplHelper {}
 impl Helper for ReplHelper {}
 
@@ -697,18 +727,28 @@ impl Repl {
                         if value != Value::Unit {
                             if self.config.show_types {
                                 println!(
-                                    "{} : {}",
-                                    repl_format(&value),
-                                    Self::get_type_name(&value)
+                                    "{} {} {}",
+                                    color_value(&value),
+                                    ":".dimmed(),
+                                    Self::get_type_name(&value).cyan().dimmed()
                                 );
                             } else {
                                 repl_print(&value);
                             }
                         }
-                        println!("Execution time: {:.2}ms", duration.as_secs_f64() * 1000.0);
+                        println!(
+                            "{}",
+                            format!("Execution time: {:.2}ms", duration.as_secs_f64() * 1000.0)
+                                .dimmed()
+                        );
                     } else if value != Value::Unit {
                         if self.config.show_types {
-                            println!("{} : {}", repl_format(&value), Self::get_type_name(&value));
+                            println!(
+                                "{} {} {}",
+                                color_value(&value),
+                                ":".dimmed(),
+                                Self::get_type_name(&value).cyan().dimmed()
+                            );
                         } else {
                             repl_print(&value);
                         }
@@ -3376,7 +3416,212 @@ fn repl_format(value: &Value) -> String {
 }
 
 fn repl_print(value: &Value) {
-    println!("{}", repl_format(value));
+    if colored::control::SHOULD_COLORIZE.should_colorize() {
+        // A top-level string prints bare (repl_format's contract), so it
+        // colors as content, not as a quoted literal.
+        if let Value::String(s) = value {
+            println!("{}", s.as_str().green());
+        } else {
+            println!("{}", color_value(value));
+        }
+    } else {
+        println!("{}", repl_format(value));
+    }
+}
+
+/// The words the grammar reserves, colored as keywords by the input
+/// highlighter. Kept in sync with grammar.pest by eye — a missed keyword
+/// colors as plain text, nothing worse.
+const KEYWORDS: &[&str] = &[
+    "break", "continue", "else", "enum", "error", "fn", "for", "if", "impl", "in", "let", "match",
+    "meta", "mut", "return", "share", "spawn", "struct", "test", "trait", "type", "use", "while",
+];
+
+/// Syntax-color one input line: comments dim, strings and templates
+/// green, numbers yellow, keywords magenta, `true`/`false` yellow,
+/// `:commands` cyan, and the arrows (`|>`, `=>`) blue. Character-level
+/// and single-pass — this runs on every keystroke.
+fn highlight_source(line: &str) -> String {
+    let mut out = String::with_capacity(line.len() + 16);
+    let chars: Vec<char> = line.chars().collect();
+    let n = chars.len();
+
+    // A leading `:name` is a REPL command; color the command word and
+    // leave its arguments to the normal rules.
+    let mut i = 0;
+    if line.trim_start().starts_with(':') {
+        let indent = n - line.trim_start().chars().count();
+        let mut end = indent + 1;
+        while end < n && (chars[end].is_alphanumeric() || chars[end] == '_' || chars[end] == '!') {
+            end += 1;
+        }
+        let word: String = chars[..end].iter().collect();
+        out.push_str(&word.cyan().to_string());
+        i = end;
+    }
+
+    while i < n {
+        let c = chars[i];
+        // Comment: the rest of the line, dimmed.
+        if c == '/' && i + 1 < n && chars[i + 1] == '/' {
+            let rest: String = chars[i..].iter().collect();
+            out.push_str(&rest.dimmed().to_string());
+            break;
+        }
+        // Strings and templates, escapes honored; an unterminated
+        // literal colors to end of line, which reads as intended while
+        // still typing it.
+        if c == '"' || c == '`' {
+            let quote = c;
+            let mut end = i + 1;
+            while end < n {
+                if chars[end] == '\\' {
+                    end += 2;
+                    continue;
+                }
+                if chars[end] == quote {
+                    end += 1;
+                    break;
+                }
+                end += 1;
+            }
+            let end = end.min(n);
+            let lit: String = chars[i..end].iter().collect();
+            out.push_str(&lit.green().to_string());
+            i = end;
+            continue;
+        }
+        // Numbers: digit-led runs, dots and underscores included.
+        if c.is_ascii_digit() {
+            let mut end = i;
+            while end < n
+                && (chars[end].is_ascii_digit()
+                    || chars[end] == '_'
+                    || (chars[end] == '.' && end + 1 < n && chars[end + 1].is_ascii_digit()))
+            {
+                end += 1;
+            }
+            let num: String = chars[i..end].iter().collect();
+            out.push_str(&num.yellow().to_string());
+            i = end;
+            continue;
+        }
+        // Identifiers and keywords.
+        if c.is_alphabetic() || c == '_' {
+            let mut end = i;
+            while end < n && (chars[end].is_alphanumeric() || chars[end] == '_') {
+                end += 1;
+            }
+            let word: String = chars[i..end].iter().collect();
+            if word == "true" || word == "false" {
+                out.push_str(&word.yellow().to_string());
+            } else if KEYWORDS.contains(&word.as_str()) {
+                out.push_str(&word.magenta().to_string());
+            } else if end < n && chars[end] == '(' {
+                out.push_str(&word.cyan().to_string());
+            } else {
+                out.push_str(&word);
+            }
+            i = end;
+            continue;
+        }
+        // The two arrows that give olang its shape.
+        if (c == '|' || c == '=') && i + 1 < n && chars[i + 1] == '>' {
+            out.push_str(&format!("{}>", c).blue().to_string());
+            i += 2;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// A value, colored the way the input highlighter colors source:
+/// numbers yellow, strings green, booleans yellow, keys and callables
+/// cyan, type names blue, `Ok` green / `Err` red, structure dim. The
+/// text is exactly `Display`'s — only the colors are added.
+fn color_value(value: &Value) -> String {
+    match value {
+        Value::Integer(n) => n.to_string().yellow().to_string(),
+        Value::Float(x) => crate::ast::format_float(*x).yellow().to_string(),
+        Value::String(s) => format!("\"{}\"", s).green().to_string(),
+        Value::Boolean(b) => b.to_string().yellow().to_string(),
+        Value::Unit => "()".dimmed().to_string(),
+        Value::List(items) => {
+            let inner: Vec<String> = items.iter().map(color_value).collect();
+            format!("[{}]", inner.join(", "))
+        }
+        Value::Tuple(items) => {
+            let inner: Vec<String> = items.iter().map(color_value).collect();
+            format!("({})", inner.join(", "))
+        }
+        Value::Map(map) => {
+            let inner: Vec<String> = map
+                .iter()
+                .map(|(k, v)| format!("{}: {}", format!("\"{}\"", k).cyan(), color_value(v)))
+                .collect();
+            format!("#{{{}}}", inner.join(", "))
+        }
+        Value::Struct { type_name, fields } => {
+            let inner: Vec<String> = fields
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k.cyan(), color_value(v)))
+                .collect();
+            format!(
+                "{}{{{}}}",
+                format!("<struct: {}>", type_name).blue(),
+                inner.join(", ")
+            )
+        }
+        Value::Ok(inner) => format!("{}({})", "Ok".green().bold(), color_value(inner)),
+        Value::Err(inner) => format!("{}({})", "Err".red().bold(), color_value(inner)),
+        Value::Range {
+            start,
+            end,
+            inclusive,
+        } => format!(
+            "{}{}{}",
+            start.to_string().yellow(),
+            if *inclusive { "..=" } else { ".." },
+            end.to_string().yellow()
+        ),
+        Value::Function(f) => match &f.name {
+            Some(name) => format!("<function: {}>", name).cyan().to_string(),
+            None => "<function>".cyan().to_string(),
+        },
+        Value::Builtin(b) => format!("<builtin: {}>", b.name).cyan().to_string(),
+        Value::Enum {
+            type_name,
+            variant_name,
+            variant_data,
+        } => {
+            let head = format!("{}.{}", type_name.blue(), variant_name.cyan());
+            match variant_data {
+                crate::ast::EnumVariantData::Unit => head,
+                crate::ast::EnumVariantData::Tuple(values) => {
+                    let inner: Vec<String> = values.iter().map(color_value).collect();
+                    format!("{}({})", head, inner.join(", "))
+                }
+                crate::ast::EnumVariantData::Struct(fields) => {
+                    let inner: Vec<String> = fields
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", k.cyan(), color_value(v)))
+                        .collect();
+                    format!("{} {{ {} }}", head, inner.join(", "))
+                }
+            }
+        }
+        Value::EnumConstructor {
+            type_name,
+            variant_name,
+            ..
+        } => format!("{}.{}", type_name.blue(), variant_name.cyan()),
+        Value::TypeInfo { name, .. } => format!("<type: {}>", name).blue().to_string(),
+        // Native handles format themselves (ods tables and friends);
+        // recoloring their internals isn't this function's business.
+        Value::Native(_) => format!("{}", value).cyan().to_string(),
+    }
 }
 
 #[cfg(test)]
