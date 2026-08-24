@@ -1399,6 +1399,23 @@ impl JitCache {
     /// True when the function's first native call hasn't happened yet —
     /// callers use it to know whether shape specs must be gathered.
     #[inline]
+    /// True when `func_id` compiled and its return can be unmarshalled
+    /// faithfully at the raw entry: tuple returns carry only scalar
+    /// element kinds (the raw unmarshal reinterprets heap-kind tuple
+    /// slots as numbers). OSR checks this once after specializing a
+    /// region before trusting its live-out tuple.
+    pub fn ready_tuple_ret_scalar(&self, func_id: FunctionId) -> bool {
+        match self.table.get(func_id.index()).and_then(|s| s.as_ref()) {
+            Some(Slot::Ready(j)) => match &j.ret_tuple {
+                Some(ks) => ks
+                    .iter()
+                    .all(|k| matches!(k, Kind::Int | Kind::Bool | Kind::Float)),
+                None => true,
+            },
+            _ => false,
+        }
+    }
+
     pub fn is_pending(&self, func_id: FunctionId) -> bool {
         matches!(self.table.get(func_id.index()), Some(Some(Slot::Pending)))
     }
@@ -2622,14 +2639,14 @@ struct Inference {
 
 /// Apply `f` to every register an instruction touches. Returns false
 /// for an unmodeled instruction — callers must abort their transform.
-fn for_each_reg(
+pub(crate) fn for_each_reg(
     inst: &mut Instruction,
     mut f: impl FnMut(&mut crate::ovm::bytecode::Register),
 ) -> bool {
     use Instruction as I;
     match inst {
         I::LoadConst { dst, .. } => f(dst),
-        I::Move { dst, src } => {
+        I::Move { dst, src } | I::TakeMove { dst, src } => {
             f(dst);
             f(src);
         }
@@ -2724,7 +2741,7 @@ fn for_each_reg(
 }
 
 /// Shift every jump target through `map` (absolute old pc -> new pc).
-fn remap_targets(inst: &mut Instruction, map: &dyn Fn(u32) -> u32) {
+pub(crate) fn remap_targets(inst: &mut Instruction, map: &dyn Fn(u32) -> u32) {
     match inst {
         Instruction::Jump { target } => target.0 = map(target.0),
         Instruction::JumpIfTrue { target, .. } | Instruction::JumpIfFalse { target, .. } => {
@@ -3158,6 +3175,13 @@ fn inst_uses_defs(inst: &Instruction, uses: &mut Vec<u32>, defs: &mut Vec<u32>) 
             uses.push(src.0);
             defs.push(dst.0);
         }
+        I::TakeMove { dst, src } => {
+            uses.push(src.0);
+            defs.push(dst.0);
+            // The source is Unit afterward — a definition, exactly as
+            // the optimizer models it.
+            defs.push(src.0);
+        }
         I::TailCallSelf { args } => {
             for (i, a) in args.iter().enumerate() {
                 uses.push(a.0);
@@ -3262,14 +3286,14 @@ fn inst_uses_defs(inst: &Instruction, uses: &mut Vec<u32>, defs: &mut Vec<u32>) 
 /// governs. `heads > 1` (nesting or sequential loops) disables the
 /// watermark — allocation the old rules forbade then refuses at
 /// finalize, and everything else compiles exactly as before.
-struct LoopShape {
+pub(crate) struct LoopShape {
     /// Some((head, last back-edge pc)) when exactly one head exists;
     /// None for straight-line code and for several heads alike (the
     /// watermark only handles the single-loop shape either way).
-    region: Option<(usize, usize)>,
+    pub(crate) region: Option<(usize, usize)>,
 }
 
-fn loop_shape(bytecode: &CompiledBytecode) -> LoopShape {
+pub(crate) fn loop_shape(bytecode: &CompiledBytecode) -> LoopShape {
     let mut heads: Vec<usize> = Vec::new();
     let mut last_edge: usize = 0;
     for (pc, inst) in bytecode.instructions.iter().enumerate() {
@@ -3302,7 +3326,7 @@ fn loop_shape(bytecode: &CompiledBytecode) -> LoopShape {
 /// One bit per register; an unmodeled instruction makes every register
 /// live (the conservative direction for this analysis, whose consumers
 /// only act on proven-dead).
-fn live_in_at(bytecode: &CompiledBytecode, nregs: usize, at: usize) -> Vec<bool> {
+pub(crate) fn live_in_at(bytecode: &CompiledBytecode, nregs: usize, at: usize) -> Vec<bool> {
     let n = bytecode.instructions.len();
     let mut live_in: Vec<Vec<bool>> = vec![vec![false; nregs]; n];
     let mut uses: Vec<u32> = Vec::new();

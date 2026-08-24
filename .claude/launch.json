@@ -39,6 +39,15 @@
         "cd examples/app && exec ../../target/release/olang main.ol 7461"
       ],
       "port": 7461
+    },
+    {
+      "name": "ledger",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd examples/ledger && exec ../../target/release/olang main.ol 7412 /private/tmp/claude-501/-Users-olayeku-Code-olang/be4d40c6-47c1-4251-af56-f8a90b73cd26/scratchpad/ledger_dev.db"
+      ],
+      "port": 7412
     }
   ]
 }

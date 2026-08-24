@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The tier boundary, lane T3: on-stack replacement (Campaign 7).** A
+  hot loop inside a function the whole-function JIT refuses — a
+  `println` in the prologue, string formatting after the loop — no
+  longer spins on the VM. After 8192 back-edges in one frame, the loop
+  region alone is synthesized into a standalone function (the registers
+  the loop reads become parameters; the ones it writes and something
+  later still reads come back as the return, a tuple when there are
+  several) and compiled through the ordinary JIT pipeline; the dispatch
+  loop enters it mid-frame and resumes at the loop's exit with the
+  returned state. Every instruction a region may contain is pure with
+  respect to caller-visible state, so any native failure — refusal,
+  deopt, runtime error — simply resumes the VM at the loop head with
+  its registers untouched, and real errors re-raise with the original
+  spans. Lists that crossed the boundary by move (T2's `AstList`)
+  materialize once at entry and iterate natively. 7× on the
+  arithmetic-loop repro (1098ms → 159ms at 50M iterations);
+  `OLANG_OSR_OFF=1` disables it, `OLANG_OSR_DEBUG=1` traces region
+  synthesis and entries.
+
 ### Changed
 
 - **REPL: rich color.** Input lines syntax-highlight live as you type —

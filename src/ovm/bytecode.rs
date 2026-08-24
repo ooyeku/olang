@@ -25,6 +25,14 @@ use thiserror::Error;
 #[cfg(feature = "native")]
 const JIT_NATIVE_DEPTH_BUDGET: u32 = 1000;
 
+/// Back-edges a single frame spends on the VM before its loop is
+/// offered to on-stack replacement. High enough that short loops never
+/// pay the synthesis + compile cost; against a loop hot enough to
+/// matter (hundreds of thousands of iterations), the ~8k VM iterations
+/// spent warming up are noise.
+#[cfg(feature = "native")]
+const OSR_BACK_EDGE_THRESHOLD: u64 = 8192;
+
 /// Register-based bytecode virtual machine
 pub struct BytecodeVm {
     // Bytecode compiler
@@ -90,6 +98,12 @@ pub struct BytecodeVm {
     /// (all-Integer arguments) holds. See src/ovm/jit.rs.
     #[cfg(feature = "native")]
     jit: crate::ovm::jit::JitCache,
+    /// On-stack replacement table: per original function, the compiled
+    /// hot-loop region (None = analyzed and refused, never retried).
+    /// Filled lazily, the first time a frame's back-edge counter crosses
+    /// OSR_BACK_EDGE_THRESHOLD.
+    #[cfg(feature = "native")]
+    osr_regions: HashMap<FunctionId, Option<std::sync::Arc<crate::ovm::osr::OsrRegion>>>,
     /// Trace of the error currently unwinding: the innermost located
     /// statement's span, and function names innermost-first. Frames
     /// deeper than the first span-owning frame are dropped — exactly the
@@ -843,6 +857,8 @@ pub struct VmStatistics {
     pub optimization_time: std::time::Duration,
     pub memory_allocations: u64,
     pub gc_triggers: u64,
+    /// Loops entered natively mid-frame (Campaign 7, T3).
+    pub osr_entries: u64,
 }
 
 /// Register allocator for bytecode generation
@@ -1136,6 +1152,8 @@ impl BytecodeVm {
             max_call_depth: crate::interpreter::DEFAULT_MAX_CALL_DEPTH as u32,
             #[cfg(feature = "native")]
             jit: crate::ovm::jit::JitCache::new(),
+            #[cfg(feature = "native")]
+            osr_regions: HashMap::new(),
             error_trace_span: None,
             error_trace_frames: Vec::new(),
             error_trace_leak: None,
@@ -1826,6 +1844,277 @@ impl BytecodeVm {
     /// execute(), but the arguments come straight from the caller's
     /// registers into the callee's window — the CallFn/CallValue hot path,
     /// with no argument buffer in between.
+    /// On-stack replacement (Campaign 7, T3): the current frame's hot
+    /// loop, entered natively mid-frame. Called from the dispatch loop
+    /// when a back-edge to `head` crosses the threshold. On success the
+    /// loop has run to completion natively — the surviving registers are
+    /// written back and the returned pc (the loop's exit) is where the
+    /// VM resumes. On any failure the VM simply resumes at the head with
+    /// its registers untouched: every instruction a region may contain
+    /// is pure with respect to caller-visible state, so the failed
+    /// attempt never happened, and a real runtime error re-raises on the
+    /// VM with proper spans.
+    #[cfg(feature = "native")]
+    fn try_osr(&mut self, bytecode: &CompiledBytecode, head: usize) -> Option<usize> {
+        use crate::ovm::jit::Kind as JitKind;
+        if std::env::var_os("OLANG_OSR_OFF").is_some() {
+            return None;
+        }
+        let fid = bytecode.function_id;
+        if !self.osr_regions.contains_key(&fid) {
+            let region = crate::ovm::osr::synthesize(bytecode, head).map(std::sync::Arc::new);
+            if let Some(r) = &region {
+                self.jit.try_compile(r.region_id, &r.synth);
+            }
+            self.osr_regions.insert(fid, region);
+        }
+        let region = self.osr_regions.get(&fid)?.clone()?;
+        let osr_debug = std::env::var_os("OLANG_OSR_DEBUG").is_some();
+        if region.head != head || region.live_in.len() > 16 {
+            if osr_debug {
+                eprintln!(
+                    "[osr] fn#{}: hot head {} is not the region head {}",
+                    fid.index(),
+                    head,
+                    region.head
+                );
+            }
+            return None;
+        }
+
+        // Marshal the live-in registers exactly the way the call-boundary
+        // raw entry marshals arguments (that block is the reference; the
+        // kinds it cannot carry refuse here the same way).
+        let mut bits = [0i64; 16];
+        let mut kinds = [JitKind::Int; 16];
+        let mut any_ref = false;
+        // T2's by-move representation: a large list arrives as an AstList
+        // handle, which native list ops don't read. Materialize the
+        // OvmValue form once — the loop is about to iterate it natively
+        // thousands of times — and keep the conversion alive alongside
+        // the other retained list arguments for the duration of the call.
+        let mut converted_lists: Vec<std::sync::Arc<Vec<crate::ovm::value::OvmValue>>> = Vec::new();
+        for (i, reg) in region.live_in.iter().enumerate() {
+            match self.execution_state.register_ref(*reg).map(|v| &v.data) {
+                Ok(crate::ovm::value::ValueData::Integer(v)) => {
+                    bits[i] = *v;
+                    kinds[i] = JitKind::Int;
+                }
+                Ok(crate::ovm::value::ValueData::Boolean(b)) => {
+                    bits[i] = *b as i64;
+                    kinds[i] = JitKind::Bool;
+                }
+                Ok(crate::ovm::value::ValueData::AstList(items)) => {
+                    let conv: std::sync::Arc<Vec<crate::ovm::value::OvmValue>> =
+                        std::sync::Arc::new(
+                            items
+                                .iter()
+                                .map(|v| crate::ovm::value::OvmValue::from_ast(v.clone()))
+                                .collect(),
+                        );
+                    match crate::ovm::jit::classify_list(&conv) {
+                        Some(k) => {
+                            bits[i] = std::sync::Arc::as_ptr(&conv) as i64;
+                            kinds[i] = k;
+                            converted_lists.push(conv);
+                            any_ref = true;
+                        }
+                        None => {
+                            if osr_debug {
+                                eprintln!(
+                                    "[osr] fn#{}: live-in r{} is a list the JIT cannot classify",
+                                    fid.index(),
+                                    reg.0
+                                );
+                            }
+                            return None;
+                        }
+                    }
+                }
+                Ok(crate::ovm::value::ValueData::Float(f)) => {
+                    bits[i] = f.to_bits() as i64;
+                    kinds[i] = JitKind::Float;
+                }
+                Ok(crate::ovm::value::ValueData::Struct(obj)) => {
+                    bits[i] = std::sync::Arc::as_ptr(obj) as i64;
+                    kinds[i] = JitKind::Struct(obj.shape.id);
+                    any_ref = true;
+                }
+                Ok(crate::ovm::value::ValueData::String(st)) => {
+                    bits[i] = std::sync::Arc::as_ptr(st) as i64;
+                    kinds[i] = JitKind::Str;
+                    any_ref = true;
+                }
+                Ok(crate::ovm::value::ValueData::List(items)) => {
+                    match crate::ovm::jit::classify_list(items) {
+                        Some(k) => {
+                            bits[i] = std::sync::Arc::as_ptr(items) as i64;
+                            kinds[i] = k;
+                            any_ref = true;
+                        }
+                        None => return None,
+                    }
+                }
+                Ok(crate::ovm::value::ValueData::Result(r)) => {
+                    match crate::ovm::jit::classify_result(r) {
+                        Some(k) => {
+                            bits[i] = std::sync::Arc::as_ptr(r) as i64;
+                            kinds[i] = k;
+                            any_ref = true;
+                        }
+                        None => return None,
+                    }
+                }
+                Ok(crate::ovm::value::ValueData::Map(m)) => {
+                    match crate::ovm::jit::classify_map(m) {
+                        Some(k) => {
+                            bits[i] = std::sync::Arc::as_ptr(m) as i64;
+                            kinds[i] = k;
+                            any_ref = true;
+                        }
+                        None => return None,
+                    }
+                }
+                other => {
+                    if osr_debug {
+                        eprintln!(
+                            "[osr] fn#{}: live-in r{} holds {}; cannot marshal",
+                            fid.index(),
+                            reg.0,
+                            match other {
+                                Ok(d) => format!("{:?}", std::mem::discriminant(d)),
+                                Err(_) => "an invalid register".to_string(),
+                            }
+                        );
+                    }
+                    return None;
+                }
+            }
+        }
+
+        // This frame is already counted in call_depth; native code
+        // continues it rather than entering a new one, so no extra entry
+        // charge here — the budget covers the region's own callees.
+        let remaining = self
+            .max_call_depth
+            .saturating_sub(self.call_depth)
+            .min(JIT_NATIVE_DEPTH_BUDGET);
+        let mut shapes = std::collections::HashMap::new();
+        if self.jit.is_pending(region.region_id) {
+            for reg in &region.live_in {
+                let Ok(v) = self.execution_state.register_ref(*reg) else {
+                    continue;
+                };
+                crate::ovm::jit::note_shapes(v, &mut shapes);
+            }
+        }
+        let hot = &self.bytecode_hot;
+        let cache = &self.bytecode_cache;
+        let lookup = |id: FunctionId| -> Option<Arc<CompiledBytecode>> {
+            hot.get(id.index())
+                .and_then(|s| s.clone())
+                .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
+        };
+        let mut struct_args: Vec<std::sync::Arc<crate::ovm::value::StructObject>> = Vec::new();
+        let mut str_args: Vec<std::sync::Arc<String>> = Vec::new();
+        let mut result_args: Vec<std::sync::Arc<crate::ovm::value::ResultObject>> = Vec::new();
+        let mut list_args: Vec<std::sync::Arc<Vec<crate::ovm::value::OvmValue>>> = Vec::new();
+        let mut map_args: Vec<
+            std::sync::Arc<std::collections::HashMap<String, crate::ovm::value::OvmValue>>,
+        > = Vec::new();
+        list_args.extend(converted_lists.iter().cloned());
+        if any_ref {
+            for reg in &region.live_in {
+                if let Ok(v) = self.execution_state.register_ref(*reg) {
+                    if let crate::ovm::value::ValueData::Struct(obj) = &v.data {
+                        struct_args.push(obj.clone());
+                    }
+                    if let crate::ovm::value::ValueData::String(st) = &v.data {
+                        str_args.push(st.clone());
+                    }
+                    if let crate::ovm::value::ValueData::Result(r) = &v.data {
+                        result_args.push(r.clone());
+                    }
+                    if let crate::ovm::value::ValueData::List(l) = &v.data {
+                        list_args.push(l.clone());
+                    }
+                    if let crate::ovm::value::ValueData::Map(m) = &v.data {
+                        map_args.push(m.clone());
+                    }
+                }
+            }
+        }
+        let k = region.live_in.len();
+        let result = self.jit.try_call_raw_with_shapes(
+            region.region_id,
+            &region.synth,
+            &bits[..k],
+            &kinds[..k],
+            remaining,
+            &lookup,
+            &shapes,
+            &struct_args,
+            &str_args,
+            &result_args,
+            &list_args,
+            &map_args,
+        );
+        let Some(result) = result else {
+            // Refused, deopted, or errored: the loop stays on the VM for
+            // good (a real error is about to re-raise there anyway).
+            if osr_debug {
+                eprintln!(
+                    "[osr] fn#{} region fn#{} declined at entry; loop stays on the VM",
+                    fid.index(),
+                    region.region_id.index()
+                );
+            }
+            self.osr_regions.insert(fid, None);
+            return None;
+        };
+        // A tuple of live-outs must unmarshal faithfully — heap kinds in
+        // tuple slots come back as reinterpreted numbers, so such a
+        // region's (pure, unobserved) result is discarded once and the
+        // loop stays on the VM.
+        if region.live_out.len() > 1 && !self.jit.ready_tuple_ret_scalar(region.region_id) {
+            if osr_debug {
+                eprintln!(
+                    "[osr] fn#{} region fn#{} returns heap kinds in a tuple; discarded",
+                    fid.index(),
+                    region.region_id.index()
+                );
+            }
+            self.osr_regions.insert(fid, None);
+            return None;
+        }
+        if region.live_out.len() == 1 {
+            self.execution_state
+                .set_register(region.live_out[0], result)
+                .ok()?;
+        } else {
+            let crate::ovm::value::ValueData::Tuple(elems) = &result.data else {
+                self.osr_regions.insert(fid, None);
+                return None;
+            };
+            if elems.len() != region.live_out.len() {
+                self.osr_regions.insert(fid, None);
+                return None;
+            }
+            for (reg, v) in region.live_out.iter().zip(elems.iter()) {
+                self.execution_state.set_register(*reg, v.clone()).ok()?;
+            }
+        }
+        self.stats.osr_entries += 1;
+        if osr_debug {
+            eprintln!(
+                "[osr] fn#{} loop entered natively; resuming at pc {}",
+                fid.index(),
+                region.exit_pc
+            );
+        }
+        Some(region.exit_pc)
+    }
+
     fn execute_from_regs(
         &mut self,
         func_id: FunctionId,
@@ -2191,6 +2480,10 @@ impl BytecodeVm {
         err_pc: &mut usize,
     ) -> Result<OvmValue, BytecodeError> {
         let mut pc = bytecode.entry_point;
+        // Backward jumps taken by THIS frame; at OSR_BACK_EDGE_THRESHOLD
+        // the loop being spun is offered to on-stack replacement, once.
+        #[cfg(feature = "native")]
+        let mut back_edges: u64 = 0;
 
         while pc < bytecode.instructions.len() {
             let instruction = &bytecode.instructions[pc];
@@ -2661,20 +2954,53 @@ impl BytecodeVm {
 
                 // Control flow
                 Instruction::Jump { target } => {
-                    pc = target.0 as usize;
+                    let t = target.0 as usize;
+                    #[cfg(feature = "native")]
+                    if t <= pc {
+                        back_edges += 1;
+                        if back_edges == OSR_BACK_EDGE_THRESHOLD
+                            && let Some(resume) = self.try_osr(bytecode, t)
+                        {
+                            pc = resume;
+                            continue;
+                        }
+                    }
+                    pc = t;
                     continue;
                 }
 
                 Instruction::JumpIfTrue { condition, target } => {
                     if self.is_truthy(self.execution_state.register_ref(*condition)?) {
-                        pc = target.0 as usize;
+                        let t = target.0 as usize;
+                        #[cfg(feature = "native")]
+                        if t <= pc {
+                            back_edges += 1;
+                            if back_edges == OSR_BACK_EDGE_THRESHOLD
+                                && let Some(resume) = self.try_osr(bytecode, t)
+                            {
+                                pc = resume;
+                                continue;
+                            }
+                        }
+                        pc = t;
                         continue;
                     }
                 }
 
                 Instruction::JumpIfFalse { condition, target } => {
                     if !self.is_truthy(self.execution_state.register_ref(*condition)?) {
-                        pc = target.0 as usize;
+                        let t = target.0 as usize;
+                        #[cfg(feature = "native")]
+                        if t <= pc {
+                            back_edges += 1;
+                            if back_edges == OSR_BACK_EDGE_THRESHOLD
+                                && let Some(resume) = self.try_osr(bytecode, t)
+                            {
+                                pc = resume;
+                                continue;
+                            }
+                        }
+                        pc = t;
                         continue;
                     }
                 }
@@ -8315,7 +8641,7 @@ impl BytecodeOptimizer {
     /// Registers an instruction reads and writes, or None when this model
     /// does not describe it (treated as a full barrier by the liveness).
     #[allow(clippy::type_complexity)]
-    fn uses_defs(inst: &Instruction) -> Option<(Vec<u32>, Vec<u32>)> {
+    pub(crate) fn uses_defs(inst: &Instruction) -> Option<(Vec<u32>, Vec<u32>)> {
         use Instruction as I;
         let mut uses = Vec::new();
         let mut defs = Vec::new();
