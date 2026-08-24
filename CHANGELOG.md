@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`olang check` flags unrebound collection writes.** The bundled
+  collections are values: `heap.push(h, x)` computes a new heap and
+  returns it, so a bare call in statement position is a silent no-op
+  that reads like a mutation. The checker now warns with the rebind
+  spelled out (`h = heap.push(h, ...)`), covering both the short form
+  and the fully qualified `collections.heap.push`. Rebound writes,
+  discarded reads, and tail positions — where the handle is the
+  block's value — stay silent.
+
 ### Fixed
 
 - **Templated-string appends are O(1) again.** The accumulation shape

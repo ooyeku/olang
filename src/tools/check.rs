@@ -1198,6 +1198,66 @@ impl Checker {
         );
     }
 
+    /// A bundled-collection *write* in statement position throws away
+    /// the handle it returns. The collections are values, not objects:
+    /// `heap.push(h, x)` computes a new heap and discards it, leaving
+    /// `h` exactly as it was — a silent no-op that reads like a
+    /// mutation. The rebind (`h = heap.push(h, x)`) is the convention,
+    /// and the REPL already hints it; this is the same guidance for
+    /// code that never passes through a prompt.
+    fn warn_unrebound_collection_write(&mut self, expr: &Expr, span: (u32, u32)) {
+        if self.in_tail_position {
+            // The handle is the block's value — returned, not dropped.
+            return;
+        }
+        let Expr::Call { callee, .. } = expr else {
+            return;
+        };
+        let Expr::FieldAccess { object, field } = callee.as_ref() else {
+            return;
+        };
+        // `heap.push(...)` after `use collections { heap }`, and the
+        // fully qualified `collections.heap.push(...)`.
+        let submodule = match object.as_ref() {
+            Expr::Identifier(name) => name.as_str(),
+            Expr::FieldAccess {
+                object: outer,
+                field: sub,
+            } if matches!(outer.as_ref(), Expr::Identifier(n) if n == "collections") => {
+                sub.as_str()
+            }
+            _ => return,
+        };
+        if !Self::is_collection_write(submodule, field) {
+            return;
+        }
+        self.warn(
+            span,
+            format!(
+                "{submodule}.{field} returns the updated collection rather than mutating in place, so this call has no effect. Rebind the handle: `h = {submodule}.{field}(h, ...)`"
+            ),
+        );
+    }
+
+    /// The write half of each bundled collection's surface. Reads are
+    /// absent on purpose: discarding a read is pointless but harmless,
+    /// and warning on it would be noise.
+    fn is_collection_write(module: &str, op: &str) -> bool {
+        const WRITERS: &[(&str, &[&str])] = &[
+            ("heap", &["push", "pop"]),
+            (
+                "deque",
+                &["push_back", "push_front", "pop_back", "pop_front"],
+            ),
+            ("table", &["put", "remove"]),
+            ("dsu", &["union"]),
+            ("bitset", &["add", "remove"]),
+        ];
+        WRITERS
+            .iter()
+            .any(|(m, ops)| *m == module && ops.contains(&op))
+    }
+
     fn warn(&mut self, span: (u32, u32), message: String) {
         self.out.push(CheckDiagnostic {
             line: span.0,
@@ -1485,6 +1545,7 @@ impl Checker {
             }
             Statement::Expression(e) => {
                 self.warn_discarded_result(e, span);
+                self.warn_unrebound_collection_write(e, span);
                 // Nested constructs start fresh: an expression *inside*
                 // this one is not in the enclosing block's tail slot.
                 let tail = std::mem::replace(&mut self.in_tail_position, false);
@@ -1830,6 +1891,48 @@ mod tests {
 
     fn check(src: &str) -> Vec<CheckDiagnostic> {
         check_program(&Parser::new().parse(src).expect("parses"))
+    }
+
+    #[test]
+    fn an_unrebound_collection_write_warns() {
+        // The handle is the value; a bare write computes a new
+        // collection and drops it, leaving the binding untouched.
+        let d = check(
+            "use collections { heap }\nlet mut h = heap.new()\nheap.push(h, 3, \"x\")\nprintln(heap.size(h))\n",
+        );
+        assert_eq!(d.len(), 1, "{:?}", d);
+        assert!(d[0].warning, "the program still runs — advisory");
+        assert!(d[0].message.contains("has no effect"), "{}", d[0].message);
+        assert!(
+            d[0].message.contains("h = heap.push(h, ...)"),
+            "the fix must be spelled out: {}",
+            d[0].message
+        );
+    }
+
+    #[test]
+    fn the_fully_qualified_write_warns_too() {
+        let d = check(
+            "let mut t = collections.table.new()\ncollections.table.put(t, \"k\", 1)\nprintln(collections.table.size(t))\n",
+        );
+        assert_eq!(d.len(), 1, "{:?}", d);
+        assert!(d[0].message.contains("table.put"), "{}", d[0].message);
+    }
+
+    #[test]
+    fn rebound_writes_reads_and_tail_positions_stay_silent() {
+        // Rebound: the convention, and the whole point.
+        assert!(
+            check("use collections { heap }\nlet mut h = heap.new()\nh = heap.push(h, 1, \"a\")\nprintln(heap.size(h))\n").is_empty()
+        );
+        // A read discarded is pointless but harmless — not this rule's business.
+        assert!(check("use collections { heap }\nlet h = heap.new()\nheap.size(h)\n").is_empty());
+        // Tail position: the new handle *is* the function's value.
+        assert!(
+            check("use collections { heap }\nfn seeded() = {\n    let h = heap.new()\n    heap.push(h, 1, \"a\")\n}\nprintln(heap.size(seeded()))\n").is_empty()
+        );
+        // A same-named user function is not the bundled module.
+        assert!(check("fn put(a, b) = a + b\nlet table = 1\nput(table, 2)\n").is_empty());
     }
 
     #[test]
