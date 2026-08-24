@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Templated-string appends are O(1) again.** The accumulation shape
+  every report and CSV builder uses — `xs = xs + [`row-${i}`]` — ran
+  quadratically on the VM: `assignment_free` had no arm for template
+  strings, so the append fusion refused the pattern and every
+  iteration copied the whole list (40k appends took ~1.8s; fused they
+  take ~10ms). `MakeTemplate` also joined the optimizer's and JIT's
+  register models, so a template string in a function no longer
+  disables the dead-move pass, inlining, or OSR renumbering around it.
+
 ### Added
 
 - **The pipeline benchmark (DP4).** The last open lane of the

@@ -30,24 +30,24 @@ for d in range(0, 730) {
     days = days + [unwrap(dates.format_date(unwrap(dates.add_days("2025-01-01", d)), "%Y-%m-%d"))]
 }
 
-// One row per index through `map` — a single-pass list build, no
-// repeated appends. Draws stay deterministic: map is sequential and the
-// draws per row are a fixed count.
-fn row(i, days, regions, categories) = {
-    let date = days[random.randint(0, 729)]
-    let region = regions[random.randint(0, 7)]
-    let category = categories[random.randint(0, 23)]
-    let units = random.randint(1, 20)
-    // Two-decimal price; every 50th row leaves the cell empty (null).
-    let price = if i % 50 == 49 => ""
-        else => {
-            let cents = random.randint(99, 49999)
-            `${cents / 100}.${str.pad_start(to_string(cents % 100), 2, "0")}`
-        }
-    `${i},${date},${region},${category},${units},${price}`
+fn build_rows(n, days, regions, categories) = {
+    let mut lines = ["id,date,region,category,units,price"]
+    for i in range(0, n) {
+        let date = days[random.randint(0, 729)]
+        let region = regions[random.randint(0, 7)]
+        let category = categories[random.randint(0, 23)]
+        let units = random.randint(1, 20)
+        // Two-decimal price; every 50th row leaves the cell empty (null).
+        let price = if i % 50 == 49 => ""
+            else => {
+                let cents = random.randint(99, 49999)
+                `${cents / 100}.${str.pad_start(to_string(cents % 100), 2, "0")}`
+            }
+        lines = lines + [`${i},${date},${region},${category},${units},${price}`]
+    }
+    lines
 }
-let lines = ["id,date,region,category,units,price"]
-    + map(range(0, n), (i) => row(i, days, regions, categories))
+let lines = build_rows(n, days, regions, categories)
 unwrap(fs.write_file("benchmarks/data/sales.csv", str.join(lines, "\n") + "\n"))
 
 let mut dim = ["region,manager"]

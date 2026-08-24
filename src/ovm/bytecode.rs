@@ -8033,6 +8033,14 @@ impl BytecodeCompiler {
             }
             E::List(items) => items.iter().all(Self::assignment_free),
             E::Tuple(items) => items.iter().all(Self::assignment_free),
+            // A template string is its interpolations; the missing arm
+            // here silently disabled the append fusion for the extremely
+            // common `xs = xs + [`...${i}...`]` accumulation shape,
+            // which then copied the whole list per iteration.
+            E::TemplateString { parts } => parts.iter().all(|p| match p {
+                crate::ast::TemplatePart::Literal(_) => true,
+                crate::ast::TemplatePart::Interpolation(e) => Self::assignment_free(e),
+            }),
             _ => false,
         }
     }
@@ -8740,6 +8748,14 @@ impl BytecodeOptimizer {
             I::IterGet { dst, src, idx } => {
                 uses.push(src.0);
                 uses.push(idx.0);
+                defs.push(dst.0);
+            }
+            I::MakeTemplate { dst, parts } => {
+                for p in parts {
+                    if let crate::ovm::bytecode::TplPart::Reg(r) = p {
+                        uses.push(r.0);
+                    }
+                }
                 defs.push(dst.0);
             }
             I::MakeList { dst, elements } | I::MakeTuple { dst, elements } => {

@@ -116,3 +116,59 @@ len(out)
     );
     assert_eq!(r, Ok(Value::Integer(2)));
 }
+
+/// Tiered — the VM's AddAssign fusion is what runs.
+fn eval_tiered(source: &str) -> Result<Value, String> {
+    let source = source.to_string();
+    with_big_stack(move || {
+        let parser = Parser::new();
+        let program = parser.parse(&source).map_err(|e| e.to_string())?;
+        let mut interpreter = Interpreter::new();
+        interpreter.enable_bytecode_tier(1, false);
+        interpreter.eval_program(program).map_err(|e| e.to_string())
+    })
+}
+
+#[test]
+fn template_string_appends_stay_linear_on_the_vm() {
+    // `xs = xs + [`${i}`]` — the accumulation shape every CSV/report
+    // builder uses. A missing TemplateString arm in assignment_free
+    // once refused the AddAssign fusion for exactly this shape, so each
+    // append copied the whole list: 40k rows took ~1.8s. Fused, the
+    // same loop is ~10ms; the bound is two orders of magnitude above
+    // the fused time and an order below the quadratic one.
+    let src = "fn build(n) = {\n\
+         let mut xs = []\n\
+         for i in range(0, n) { xs = xs + [`row-${i}`] }\n\
+         xs\n\
+     }\n\
+     len(build(40000))";
+    let start = std::time::Instant::now();
+    let got = eval_tiered(src).expect("eval");
+    assert_eq!(got, Value::Integer(40000));
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "templated append fell back to copy-per-iteration: {:?}",
+        start.elapsed()
+    );
+    // And the answer itself must match the interpreter.
+    let interp = eval(
+        "fn build(n) = {\n\
+         let mut xs = []\n\
+         for i in range(0, n) { xs = xs + [`row-${i}`] }\n\
+         xs\n\
+     }\n\
+     to_string(build(3))",
+    )
+    .expect("interp");
+    let tiered = eval_tiered(
+        "fn build(n) = {\n\
+         let mut xs = []\n\
+         for i in range(0, n) { xs = xs + [`row-${i}`] }\n\
+         xs\n\
+     }\n\
+     to_string(build(3))",
+    )
+    .expect("tiered");
+    assert_eq!(interp, tiered);
+}

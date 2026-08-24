@@ -2698,6 +2698,14 @@ pub(crate) fn for_each_reg(
             f(dst);
             field_regs.iter_mut().for_each(&mut f);
         }
+        I::MakeTemplate { dst, parts } => {
+            f(dst);
+            for p in parts {
+                if let crate::ovm::bytecode::TplPart::Reg(r) = p {
+                    f(r);
+                }
+            }
+        }
         I::MakeList { dst, elements } | I::MakeTuple { dst, elements } => {
             f(dst);
             elements.iter_mut().for_each(&mut f);
@@ -3290,6 +3298,14 @@ fn inst_uses_defs(inst: &Instruction, uses: &mut Vec<u32>, defs: &mut Vec<u32>) 
         }
         I::MakeList { dst, elements } | I::MakeTuple { dst, elements } => {
             uses.extend(elements.iter().map(|r| r.0));
+            defs.push(dst.0);
+        }
+        I::MakeTemplate { dst, parts } => {
+            for p in parts {
+                if let crate::ovm::bytecode::TplPart::Reg(r) = p {
+                    uses.push(r.0);
+                }
+            }
             defs.push(dst.0);
         }
         I::MakeMap { dst, entries } => {
