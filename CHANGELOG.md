@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.71.0] - 2026-08-24
+
 ### Fixed
+
+- **The call-depth cap gates the JIT attempt.** All three VM entry
+  points tried native code before the depth check, so a base-case frame
+  arriving exactly at the cap ran natively to completion without ever
+  meeting the check — recursion at exactly the 100,000-frame limit
+  returned a value on the tiered path where the interpreter raised.
+  The cap now gates the attempt itself; both tiers refuse frame
+  100,001 identically.
 
 - **Identifiers may start with keywords.** Every reserved and
   contextual keyword could swallow the head of an identifier —
@@ -5491,7 +5501,9 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.67.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.71.0...HEAD
+[0.71.0]: https://github.com/ooyeku/olang/compare/v0.70.0...v0.71.0
+[0.70.0]: https://github.com/ooyeku/olang/compare/v0.67.0...v0.70.0
 [0.67.0]: https://github.com/ooyeku/olang/compare/v0.66.0...v0.67.0
 [0.66.0]: https://github.com/ooyeku/olang/compare/v0.65.0...v0.66.0
 [0.65.0]: https://github.com/ooyeku/olang/compare/v0.64.0...v0.65.0

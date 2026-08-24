@@ -460,7 +460,7 @@ impl Parser {
         }
     }
 
-    fn build_error_type_decl(&self, mut pairs: Pairs<Rule>) -> Result<ErrorTypeDecl, ParseError> {
+    fn build_error_type_decl(&self, pairs: Pairs<Rule>) -> Result<ErrorTypeDecl, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         let name = pairs
@@ -555,7 +555,7 @@ impl Parser {
         )
     }
 
-    fn build_let_decl(&self, mut pairs: Pairs<Rule>) -> Result<LetDecl, ParseError> {
+    fn build_let_decl(&self, pairs: Pairs<Rule>) -> Result<LetDecl, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         let mut pattern_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -1525,7 +1525,7 @@ impl Parser {
         }
     }
 
-    fn build_match_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+    fn build_match_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         let value = if let Some(pair) = pairs.next() {
@@ -1555,7 +1555,7 @@ impl Parser {
         })
     }
 
-    fn build_match_arm(&self, mut pairs: Pairs<Rule>) -> Result<MatchArm, ParseError> {
+    fn build_match_arm(&self, pairs: Pairs<Rule>) -> Result<MatchArm, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         let pattern = if let Some(pair) = pairs.next() {
@@ -2457,7 +2457,7 @@ impl Parser {
         Ok(Expr::Block(statements))
     }
 
-    fn build_if_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+    fn build_if_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         let condition_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -2501,10 +2501,7 @@ impl Parser {
         })
     }
 
-    fn build_trait_decl(
-        &self,
-        mut pairs: Pairs<Rule>,
-    ) -> Result<crate::ast::TraitDecl, ParseError> {
+    fn build_trait_decl(&self, pairs: Pairs<Rule>) -> Result<crate::ast::TraitDecl, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         let name = pairs
@@ -2526,7 +2523,7 @@ impl Parser {
 
     fn build_trait_method(
         &self,
-        mut pairs: Pairs<Rule>,
+        pairs: Pairs<Rule>,
     ) -> Result<crate::ast::TraitMethod, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
@@ -2555,7 +2552,7 @@ impl Parser {
         })
     }
 
-    fn build_impl_decl(&self, mut pairs: Pairs<Rule>) -> Result<crate::ast::ImplDecl, ParseError> {
+    fn build_impl_decl(&self, pairs: Pairs<Rule>) -> Result<crate::ast::ImplDecl, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         let trait_name = pairs
@@ -2610,7 +2607,7 @@ impl Parser {
         (names, bounds)
     }
 
-    fn build_function_decl(&self, mut pairs: Pairs<Rule>) -> Result<FunctionDecl, ParseError> {
+    fn build_function_decl(&self, pairs: Pairs<Rule>) -> Result<FunctionDecl, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -2661,7 +2658,7 @@ impl Parser {
         })
     }
 
-    fn build_type_decl(&self, mut pairs: Pairs<Rule>) -> Result<TypeDecl, ParseError> {
+    fn build_type_decl(&self, pairs: Pairs<Rule>) -> Result<TypeDecl, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -2915,7 +2912,7 @@ impl Parser {
         })
     }
 
-    fn build_for_loop(&self, mut pairs: Pairs<Rule>, parallel: bool) -> Result<Expr, ParseError> {
+    fn build_for_loop(&self, pairs: Pairs<Rule>, parallel: bool) -> Result<Expr, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         // Expected order: binding (identifier or tuple of identifiers),
@@ -3000,7 +2997,7 @@ impl Parser {
         })
     }
 
-    fn build_while_loop(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+    fn build_while_loop(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         // Expected order: expr (condition), block (body)
@@ -3028,7 +3025,7 @@ impl Parser {
         })
     }
 
-    fn build_loop_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+    fn build_loop_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         // Expected: single block
@@ -3340,7 +3337,7 @@ impl Parser {
         Ok(result)
     }
 
-    fn build_share_decl(&self, mut pairs: Pairs<Rule>) -> Result<ShareDecl, ParseError> {
+    fn build_share_decl(&self, pairs: Pairs<Rule>) -> Result<ShareDecl, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         let inner_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -3372,7 +3369,7 @@ impl Parser {
         }
     }
 
-    fn build_use_decl(&self, mut pairs: Pairs<Rule>) -> Result<UseDecl, ParseError> {
+    fn build_use_decl(&self, pairs: Pairs<Rule>) -> Result<UseDecl, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         let path_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
@@ -3419,7 +3416,7 @@ impl Parser {
         Ok(UseDecl { path, items })
     }
 
-    fn build_test_decl(&self, mut pairs: Pairs<Rule>) -> Result<TestDecl, ParseError> {
+    fn build_test_decl(&self, pairs: Pairs<Rule>) -> Result<TestDecl, ParseError> {
         let mut pairs = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).peekable();
 
         // Get test name from string literal

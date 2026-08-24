@@ -1844,20 +1844,11 @@ impl BuiltinFunctions {
                     }
                 };
 
-                // For small ranges, generate eagerly
-                if end <= 100 {
-                    let mut result = Vec::new();
-                    for i in 0..end {
-                        result.push(Value::Integer(i));
-                    }
-                    Ok(Value::List(result.into()))
-                } else {
-                    let mut result = Vec::new();
-                    for i in 0..end {
-                        result.push(Value::Integer(i));
-                    }
-                    Ok(Value::List(result.into()))
+                let mut result = Vec::with_capacity(end.max(0) as usize);
+                for i in 0..end {
+                    result.push(Value::Integer(i));
                 }
+                Ok(Value::List(result.into()))
             }
             2 => {
                 // range(start, end) -> [start, start+1, ..., end-1]

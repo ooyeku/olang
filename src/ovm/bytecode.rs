@@ -1658,6 +1658,16 @@ impl BytecodeVm {
             }
         }
 
+        // The cap gates the JIT attempt too: a base-case frame exactly at
+        // the limit would otherwise run natively to completion without
+        // ever meeting the depth check below, letting recursion finish
+        // one frame past the cap on the native path alone.
+        if self.call_depth >= self.max_call_depth {
+            return Err(BytecodeError::RuntimeError(format!(
+                "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
+                self.max_call_depth
+            )));
+        }
         // Native tier: if a JIT body exists (or can be specialized on this
         // call's argument kinds), run it. None means it declined (or
         // deopted) — the bytecode path below is the unchanged fallback.
@@ -1815,6 +1825,16 @@ impl BytecodeVm {
                 }
             }
         }
+        // The cap gates the JIT attempt too: a base-case frame exactly at
+        // the limit would otherwise run natively to completion without
+        // ever meeting the depth check below, letting recursion finish
+        // one frame past the cap on the native path alone.
+        if self.call_depth >= self.max_call_depth {
+            return Err(BytecodeError::RuntimeError(format!(
+                "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
+                self.max_call_depth
+            )));
+        }
         #[cfg(feature = "native")]
         if self.jit.has(func_id) {
             // The JIT spends this as frames *beyond* its entry frame, so
@@ -1946,34 +1966,22 @@ impl BytecodeVm {
                     any_ref = true;
                 }
                 Ok(crate::ovm::value::ValueData::List(items)) => {
-                    match crate::ovm::jit::classify_list(items) {
-                        Some(k) => {
-                            bits[i] = std::sync::Arc::as_ptr(items) as i64;
-                            kinds[i] = k;
-                            any_ref = true;
-                        }
-                        None => return None,
-                    }
+                    let k = crate::ovm::jit::classify_list(items)?;
+                    bits[i] = std::sync::Arc::as_ptr(items) as i64;
+                    kinds[i] = k;
+                    any_ref = true;
                 }
                 Ok(crate::ovm::value::ValueData::Result(r)) => {
-                    match crate::ovm::jit::classify_result(r) {
-                        Some(k) => {
-                            bits[i] = std::sync::Arc::as_ptr(r) as i64;
-                            kinds[i] = k;
-                            any_ref = true;
-                        }
-                        None => return None,
-                    }
+                    let k = crate::ovm::jit::classify_result(r)?;
+                    bits[i] = std::sync::Arc::as_ptr(r) as i64;
+                    kinds[i] = k;
+                    any_ref = true;
                 }
                 Ok(crate::ovm::value::ValueData::Map(m)) => {
-                    match crate::ovm::jit::classify_map(m) {
-                        Some(k) => {
-                            bits[i] = std::sync::Arc::as_ptr(m) as i64;
-                            kinds[i] = k;
-                            any_ref = true;
-                        }
-                        None => return None,
-                    }
+                    let k = crate::ovm::jit::classify_map(m)?;
+                    bits[i] = std::sync::Arc::as_ptr(m) as i64;
+                    kinds[i] = k;
+                    any_ref = true;
                 }
                 other => {
                     if osr_debug {
@@ -2191,6 +2199,14 @@ impl BytecodeVm {
         // the JIT body. None → the unchanged bytecode path below.
         #[cfg(feature = "native")]
         if self.jit.has(func_id) && arg_regs.len() <= 16 {
+            // Same cap gate as execute/execute_prologue: never attempt
+            // native for a frame the depth check would refuse.
+            if self.call_depth >= self.max_call_depth {
+                return Err(BytecodeError::RuntimeError(format!(
+                    "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
+                    self.max_call_depth
+                )));
+            }
             use crate::ovm::jit::Kind as JitKind;
             let mut bits = [0i64; 16];
             let mut kinds = [JitKind::Int; 16];
@@ -5083,17 +5099,12 @@ impl BytecodeVm {
     fn iter_get(source: &OvmValue, idx: i64) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
         match &source.data {
-            ValueData::AstList(items) => {
-                return items
-                    .get(idx as usize)
-                    .map(|v| OvmValue::from_ast(v.clone()))
-                    .ok_or_else(|| {
-                        BytecodeError::RuntimeError(format!(
-                            "Iteration index {} out of bounds",
-                            idx
-                        ))
-                    });
-            }
+            ValueData::AstList(items) => items
+                .get(idx as usize)
+                .map(|v| OvmValue::from_ast(v.clone()))
+                .ok_or_else(|| {
+                    BytecodeError::RuntimeError(format!("Iteration index {} out of bounds", idx))
+                }),
             ValueData::List(items) => {
                 items
                     .get(idx as usize)
@@ -5755,16 +5766,16 @@ impl BytecodeCompiler {
 
         // OLANG_DUMP_FN=<name> prints the final instruction stream for one
         // function — the register-level view the JIT debug summary elides.
-        if let Some(want) = std::env::var_os("OLANG_DUMP_FN") {
-            if *want == *func.name.as_str() {
-                eprintln!(
-                    "[dump] fn '{}' ({} params):",
-                    func.name,
-                    func.parameters.len()
-                );
-                for (pc, inst) in instructions.iter().enumerate() {
-                    eprintln!("  {:4}: {:?}", pc, inst);
-                }
+        if let Some(want) = std::env::var_os("OLANG_DUMP_FN")
+            && *want == *func.name.as_str()
+        {
+            eprintln!(
+                "[dump] fn '{}' ({} params):",
+                func.name,
+                func.parameters.len()
+            );
+            for (pc, inst) in instructions.iter().enumerate() {
+                eprintln!("  {:4}: {:?}", pc, inst);
             }
         }
 
@@ -8594,18 +8605,18 @@ impl BytecodeOptimizer {
                 }
                 *arg_moves = mask;
             }
-            if std::env::var_os("OLANG_DEBUG_LIVENESS").is_some() {
-                if let I::Move { dst, src } = &instructions[pc] {
-                    let la = |r: u32| pc + 1 < n && live_in[pc + 1][r as usize];
-                    eprintln!(
-                        "[live] pc={} Move dst=r{}(live_after={}) src=r{}(live_after={})",
-                        pc,
-                        dst.0,
-                        la(dst.0),
-                        src.0,
-                        la(src.0)
-                    );
-                }
+            if std::env::var_os("OLANG_DEBUG_LIVENESS").is_some()
+                && let I::Move { dst, src } = &instructions[pc]
+            {
+                let la = |r: u32| pc + 1 < n && live_in[pc + 1][r as usize];
+                eprintln!(
+                    "[live] pc={} Move dst=r{}(live_after={}) src=r{}(live_after={})",
+                    pc,
+                    dst.0,
+                    la(dst.0),
+                    src.0,
+                    la(src.0)
+                );
             }
             let rewrite = match &instructions[pc] {
                 I::Move { dst, src } if dst != src => {
