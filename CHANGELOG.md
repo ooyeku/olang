@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The tier boundary, lane T2: arguments convert proportional to use
+  (Campaign 7).** Large lists now cross the interpreter⇄VM boundary in
+  O(1), wrapped as `AstList` handles and converted by move instead of
+  element-by-element copy. Inside the VM, calls consume argument
+  registers the optimizer proves dead by move (a per-call `arg_moves`
+  mask), a `TakeMove` instruction replaces dead register copies, and the
+  dead-move pass runs to a fixpoint so chains collapse. The bundled
+  collections are VM-resident by default as a result — 2–8× faster
+  across the board (table put/probe: 4.7s → 0.6s at 100k; the growth
+  curve that was quadratic is linear: 207s → 0.18s at n=40k).
+  `OLANG_COLLECTIONS_ON_INTERP=1` restores the old placement for A/B.
+  Also fixed along the way: the tier boundary charged one stack frame
+  twice, so recursion one frame under the depth cap died early on
+  non-JIT paths, and the JIT's native budget allowed one frame past the
+  cap.
+
 - **Collections, in olang (Campaign 6).** One `collections` module of
   six submodules — `collections.heap`, `.deque`, `.table`
   (open-addressing hash), `.dsu` (union–find), `.bitset`, and `.alg`

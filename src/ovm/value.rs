@@ -67,6 +67,12 @@ pub enum TypeTag {
     Native = 60,
 }
 
+/// Lists at or under this length convert eagerly at the tier boundary;
+/// longer ones wrap as `AstList`. Small enough that ordinary code keeps
+/// the native fast paths; large enough that a collections handle (or any
+/// big data list) never pays a whole-list conversion per call.
+pub const AST_LIST_EAGER: usize = 64;
+
 /// Value data variants
 #[derive(Debug)]
 pub enum ValueData {
@@ -81,6 +87,19 @@ pub enum ValueData {
     // dealloc anywhere) and required unsafe derefs at every use site.
     String(Arc<String>),
     List(Arc<Vec<OvmValue>>),
+    /// An interpreter list held verbatim — the AstFunction idea applied
+    /// to data (Campaign 7, T2). Crossing the tier boundary with a large
+    /// list used to convert every element, both directions, per call:
+    /// O(n) tax on O(log n) operations, and the reason the bundled
+    /// collections were pinned to the interpreter. Wrapped, the boundary
+    /// is O(1) each way; the fast list instructions (length, index, the
+    /// in-place writes, iteration) read and write through the wrapper
+    /// with per-element conversion, and any operation that wants the
+    /// native layout materializes it once — a cost no larger than the
+    /// O(n) work such an operation was about to do anyway. Small lists
+    /// (at or under AST_LIST_EAGER) still convert eagerly at the
+    /// boundary, so ordinary code never meets this variant.
+    AstList(Arc<Vec<crate::ast::Value>>),
     Tuple(Arc<Vec<OvmValue>>),
     Function(Arc<FunctionObject>),
     /// An interpreter function held verbatim, so it converts back losslessly.
@@ -483,6 +502,16 @@ impl PartialEq for OvmValue {
             (ValueData::String(a), ValueData::String(b)) => a == b,
 
             (ValueData::List(a), ValueData::List(b)) => a == b,
+            (ValueData::AstList(a), ValueData::AstList(b)) => a == b,
+            // Mixed representations compare element-wise through a
+            // conversion — an O(n) comparison was O(n) already.
+            (ValueData::List(a), ValueData::AstList(b))
+            | (ValueData::AstList(b), ValueData::List(a)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| *x == OvmValue::from_ast(y.clone()))
+            }
 
             (ValueData::Tuple(a), ValueData::Tuple(b)) => a == b,
 
@@ -527,7 +556,7 @@ impl OvmValue {
             ValueData::Float(_) => "Float",
             ValueData::Boolean(_) => "Bool",
             ValueData::String(_) => "String",
-            ValueData::List(_) => "List",
+            ValueData::List(_) | ValueData::AstList(_) => "List",
             ValueData::Map(_) => "Map",
             ValueData::Tuple(_) => "Tuple",
             ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
@@ -622,6 +651,7 @@ impl OvmValue {
             ValueData::String(p) => ValueData::String(p.clone()),
             ValueData::Native(p) => ValueData::Native(p.clone()),
             ValueData::List(p) => ValueData::List(p.clone()),
+            ValueData::AstList(p) => ValueData::AstList(p.clone()),
             ValueData::Tuple(p) => ValueData::Tuple(p.clone()),
             ValueData::Function(p) => ValueData::Function(p.clone()),
             ValueData::AstFunction(p) => ValueData::AstFunction(p.clone()),
@@ -646,7 +676,7 @@ impl OvmValue {
             ValueData::Boolean(_) => TypeTag::Boolean,
             ValueData::Unit => TypeTag::Unit,
             ValueData::String(_) => TypeTag::String,
-            ValueData::List(_) => TypeTag::List,
+            ValueData::List(_) | ValueData::AstList(_) => TypeTag::List,
             ValueData::Tuple(_) => TypeTag::Tuple,
             ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
                 TypeTag::Function
@@ -747,11 +777,17 @@ impl OvmValue {
             Value::Unit => Self::new_unit(),
 
             Value::List(items) => {
-                let ovm_items: Vec<Self> = items
-                    .iter()
-                    .map(|item| Self::from_ast(item.clone()))
-                    .collect();
-                Self::new_list(ovm_items)
+                if items.len() <= AST_LIST_EAGER {
+                    let ovm_items: Vec<Self> = items
+                        .iter()
+                        .map(|item| Self::from_ast(item.clone()))
+                        .collect();
+                    Self::new_list(ovm_items)
+                } else {
+                    OvmValue {
+                        data: ValueData::AstList(items),
+                    }
+                }
             }
 
             Value::Tuple(items) => {
@@ -891,6 +927,7 @@ impl OvmValue {
             + match &ovm_value.data {
                 ValueData::String(s) => s.len(),
                 ValueData::List(gc_ptr) => gc_ptr.len() * std::mem::size_of::<OvmValue>(),
+                ValueData::AstList(items) => items.len() * std::mem::size_of::<crate::ast::Value>(),
                 ValueData::Tuple(gc_ptr) => gc_ptr.len() * std::mem::size_of::<OvmValue>(),
                 ValueData::Function(_) => std::mem::size_of::<FunctionObject>(),
                 ValueData::AstFunction(_) => std::mem::size_of::<crate::ast::Function>(),
@@ -981,6 +1018,8 @@ impl OvmValue {
                 }
                 Ok(Value::List(ast_values.into()))
             }
+            // The whole point: the boundary out is a pointer move.
+            ValueData::AstList(items) => Ok(Value::List(items.clone())),
             ValueData::Tuple(gc_ptr) => {
                 let mut ast_values = Vec::with_capacity(gc_ptr.len());
                 for ovm_val in gc_ptr.iter() {
@@ -1102,6 +1141,16 @@ impl fmt::Display for OvmValue {
             ValueData::Unit => write!(f, "()"),
             ValueData::Native(handle) => write!(f, "{}", handle.0.display()),
             ValueData::String(gc_ptr) => write!(f, "\"{}\"", gc_ptr),
+            ValueData::AstList(items) => {
+                write!(f, "[")?;
+                for (i, val) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", OvmValue::from_ast(val.clone()))?;
+                }
+                write!(f, "]")
+            }
             ValueData::List(gc_ptr) => {
                 write!(f, "[")?;
                 for (i, val) in gc_ptr.iter().enumerate() {

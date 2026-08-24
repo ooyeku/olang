@@ -293,18 +293,33 @@ impl Environment {
     /// slot is written again by the assignment that follows; a raised
     /// error aborts the program before anything can observe the Unit.
     pub fn take_for_move(&mut self, name: &str) -> Option<Value> {
+        let dbg = std::env::var_os("OLANG_DEBUG_ASTLIST").is_some();
         if let Some((_, val)) = self.locals.iter_mut().rev().find(|(n, _)| n == name) {
+            if dbg {
+                eprintln!("[take] locals");
+            }
             return Some(std::mem::replace(val, Value::Unit));
         }
         if self.variables.contains_key(name) {
+            if dbg {
+                eprintln!(
+                    "[take] variables map_rc={}",
+                    Arc::strong_count(&self.variables)
+                );
+            }
             return Arc::make_mut(&mut self.variables)
                 .get_mut(name)
                 .map(|val| std::mem::replace(val, Value::Unit));
         }
-        if let Some(parent) = self.parent.as_mut()
-            && let Some(p) = Arc::get_mut(parent)
-        {
-            return p.take_for_move(name);
+        if let Some(parent) = self.parent.as_mut() {
+            if let Some(p) = Arc::get_mut(parent) {
+                if dbg {
+                    eprintln!("[take] parent recurse");
+                }
+                return p.take_for_move(name);
+            } else if dbg {
+                eprintln!("[take] parent shared rc={}", Arc::strong_count(parent));
+            }
         }
         None
     }

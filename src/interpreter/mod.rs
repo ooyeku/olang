@@ -2078,7 +2078,19 @@ impl Interpreter {
             }
         }
         let moved = match self.environment.take_for_move(target) {
-            Some(v) => v,
+            Some(v) => {
+                if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some()
+                    && let Value::List(items) = &v
+                    && items.len() > 64
+                {
+                    eprintln!(
+                        "[astlist] taken rc={} len={}",
+                        std::sync::Arc::strong_count(items),
+                        items.len()
+                    );
+                }
+                v
+            }
             None => match self.environment.get(target) {
                 Some(v) => v,
                 None => {
@@ -2169,7 +2181,7 @@ impl Interpreter {
     fn call_user_function_inner(
         &mut self,
         func: &Function,
-        arguments: Vec<Value>,
+        mut arguments: Vec<Value>,
     ) -> Result<Value, InterpreterError> {
         {
             // Increment call depth for user functions
@@ -2188,7 +2200,7 @@ impl Interpreter {
                 let depth = self.call_depth as u32;
                 let outcome = tier
                     .as_mut()
-                    .map(|t| t.try_call_at_depth(func, &arguments, depth))
+                    .map(|t| t.try_call_at_depth(func, &mut arguments, depth))
                     .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
                 self.bytecode_tier = tier;
 
@@ -2254,7 +2266,6 @@ impl Interpreter {
             // *and* O(1) logical depth — the recursion-depth cap measures
             // frames that are genuinely live. Each elided frame re-runs
             // the same boundary checks a real frame would.
-            let mut arguments = arguments;
             let mut tail_frames_elided = false;
             let result = loop {
                 // Create new environment with current environment as parent

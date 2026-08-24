@@ -2290,6 +2290,7 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
             )
         ),
         Instruction::Move { .. }
+        | Instruction::TakeMove { .. }
         | Instruction::Add { .. }
         | Instruction::AddAssign { .. }
         | Instruction::Sub { .. }
@@ -2320,6 +2321,10 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::ExtractElement { .. }
         | Instruction::PatternTestResult { .. }
         | Instruction::ExtractResult { .. }
+        // arg_moves is an optimization hint, not a semantic contract: a
+        // masked register is dead after the call (the liveness pass
+        // proved it), so native code cloning it instead of moving is
+        // unobservable. The JIT ignores the mask.
         | Instruction::CallFn { .. } => true,
         // A tail self-call is a backward jump to the entry with a
         // parameter rebind — a native loop once compiled.
@@ -2400,6 +2405,7 @@ fn boundary_unprofitable(bytecode: &CompiledBytecode) -> bool {
             // on either tier. MakeTuple is not an allocation (tuples
             // return through out slots) but it is not compute either.
             Instruction::Move { .. }
+            | Instruction::TakeMove { .. }
             | Instruction::LoadConst { .. }
             | Instruction::Return { .. }
             | Instruction::MakeTuple { .. } => {}
@@ -2772,7 +2778,10 @@ fn inline_leaves(b: &mut CompiledBytecode, self_id: FunctionId, lookup: &Bytecod
     let mut budget = INLINE_BUDGET;
     'rescan: loop {
         for pc in 0..b.instructions.len() {
-            let Instruction::CallFn { dst, func_id, args } = &b.instructions[pc] else {
+            let Instruction::CallFn {
+                dst, func_id, args, ..
+            } = &b.instructions[pc]
+            else {
                 continue;
             };
             let (dst, func_id, args) = (*dst, *func_id, args.clone());
@@ -3365,23 +3374,35 @@ impl PlanFn {
         lookup: &BytecodeLookup,
     ) -> Self {
         // Canonicalize: AddAssign{t, r} is semantically Add{dst: t, lhs: t,
-        // rhs: r}; rewriting up front means inference and codegen handle one
-        // shape. 1:1, so jump targets are untouched. The rewritten copy is
-        // what the JittedFn keeps alive (its instructions carry the baked
-        // shape Arcs).
-        let bytecode = if bytecode
-            .instructions
-            .iter()
-            .any(|i| matches!(i, Instruction::AddAssign { .. }))
-        {
+        // rhs: r}, and TakeMove is Move whose source the optimizer proved
+        // dead afterward — native code keeping the source value alive is
+        // unobservable. Rewriting both up front means inference and
+        // codegen handle one shape each. 1:1, so jump targets are
+        // untouched. The rewritten copy is what the JittedFn keeps alive
+        // (its instructions carry the baked shape Arcs).
+        let bytecode = if bytecode.instructions.iter().any(|i| {
+            matches!(
+                i,
+                Instruction::AddAssign { .. } | Instruction::TakeMove { .. }
+            )
+        }) {
             let mut b = (*bytecode).clone();
             for inst in &mut b.instructions {
-                if let Instruction::AddAssign { target, rhs } = inst {
-                    *inst = Instruction::Add {
-                        dst: *target,
-                        lhs: *target,
-                        rhs: *rhs,
-                    };
+                match inst {
+                    Instruction::AddAssign { target, rhs } => {
+                        *inst = Instruction::Add {
+                            dst: *target,
+                            lhs: *target,
+                            rhs: *rhs,
+                        };
+                    }
+                    Instruction::TakeMove { dst, src } => {
+                        *inst = Instruction::Move {
+                            dst: *dst,
+                            src: *src,
+                        };
+                    }
+                    _ => {}
                 }
             }
             Arc::new(b)
@@ -4175,7 +4196,9 @@ impl PlanFn {
                 | Instruction::JumpIfFalse { condition, .. } => {
                     narrow!(condition.0, K_BOOL);
                 }
-                Instruction::CallFn { dst, func_id, args } => {
+                Instruction::CallFn {
+                    dst, func_id, args, ..
+                } => {
                     if let Some((
                         param_kinds,
                         ret_mask,
@@ -4560,6 +4583,7 @@ fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::LoadLocal { .. } => "LoadLocal",
         Instruction::StoreLocal { .. } => "StoreLocal",
         Instruction::Move { .. } => "Move",
+        Instruction::TakeMove { .. } => "TakeMove",
         Instruction::Add { .. } => "Add",
         Instruction::AddAssign { .. } => "AddAssign",
         Instruction::Sub { .. } => "Sub",
@@ -5692,7 +5716,9 @@ fn translate_body(
                 builder.ins().brif(cond, then_block, &[], else_block, &[]);
                 terminated = true;
             }
-            Instruction::CallFn { dst, func_id, args } => {
+            Instruction::CallFn {
+                dst, func_id, args, ..
+            } => {
                 // A native-to-native call (group member or previously
                 // compiled function): spend a unit of depth budget, deopt
                 // when exhausted.

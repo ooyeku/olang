@@ -36,7 +36,6 @@ use crate::ovm::{FunctionId, OvmValue};
 /// differs per payload. A value whose contents could change behind the
 /// pointer must never be listed here; every variant below is immutable.
 enum CachedOwner {
-    List(Weak<Vec<Value>>),
     Tuple(Weak<Vec<Value>>),
     Map(Weak<std::collections::HashMap<String, Value>>),
     Struct(Weak<std::collections::HashMap<String, Value>>),
@@ -48,10 +47,10 @@ impl CachedOwner {
     /// entry would cost more than it saves.
     fn of(value: &Value) -> Option<(usize, CachedOwner)> {
         match value {
-            Value::List(items) => Some((
-                Arc::as_ptr(items) as *const u8 as usize,
-                CachedOwner::List(Arc::downgrade(items)),
-            )),
+            // Lists are deliberately absent: they convert in O(1) (the
+            // AstList wrap) and they are the one value the in-place
+            // fusions mutate under a stable address — uncacheable by
+            // this scheme.
             Value::Tuple(items) => Some((
                 Arc::as_ptr(items) as *const u8 as usize,
                 CachedOwner::Tuple(Arc::downgrade(items)),
@@ -74,8 +73,7 @@ impl CachedOwner {
     /// happens to sit where it used to.
     fn still_is(&self, value: &Value) -> bool {
         match (self, value) {
-            (CachedOwner::List(w), Value::List(items))
-            | (CachedOwner::Tuple(w), Value::Tuple(items)) => {
+            (CachedOwner::Tuple(w), Value::Tuple(items)) => {
                 w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, items))
             }
             (CachedOwner::Map(w), Value::Map(fields))
@@ -314,20 +312,22 @@ impl BytecodeTier {
     pub fn try_call_at_depth(
         &mut self,
         func: &Function,
-        args: &[Value],
+        args: &mut [Value],
         depth_base: u32,
     ) -> TierOutcome {
-        self.vm.set_depth_base(depth_base);
+        // The caller passes its depth *including* the frame it counted
+        // for this very call — the frame the VM is about to push and
+        // count again. Seed one less, or the boundary frame is charged
+        // twice and a recursion exactly at the cap dies one frame early.
+        self.vm.set_depth_base(depth_base.saturating_sub(1));
         self.try_call(func, args)
     }
 
-    /// The embedded collection modules stay interpreter-resident: their
-    /// operations do O(log n) work against O(n)-sized handles, and the
-    /// tier boundary converts every list argument in full — so promotion
-    /// would replace a handful of memory-fused writes with a whole-list
-    /// conversion per call. The interpreter's sole-owner fusions
-    /// (`col.set`, the move call) are exactly what these modules are
-    /// written against. Everything else promotes as before.
+    /// Modules pinned to the tree-walking interpreter. Collections lived
+    /// here until the T2 argument-conversion lane made the VM the faster
+    /// home (2–7× across the bundled benchmarks); the list survives as an
+    /// escape hatch — OLANG_COLLECTIONS_ON_INTERP=1 restores the old
+    /// placement for A/B measurement.
     const INTERPRETER_RESIDENT: &'static [&'static str] = &[
         "__embedded__/heap",
         "__embedded__/deque",
@@ -338,8 +338,9 @@ impl BytecodeTier {
     ];
 
     /// Try to execute `func(args)` on the bytecode VM.
-    pub fn try_call(&mut self, func: &Function, args: &[Value]) -> TierOutcome {
-        if let Some(def_file) = func.def_file.as_deref()
+    pub fn try_call(&mut self, func: &Function, args: &mut [Value]) -> TierOutcome {
+        if std::env::var_os("OLANG_COLLECTIONS_ON_INTERP").is_some()
+            && let Some(def_file) = func.def_file.as_deref()
             && Self::INTERPRETER_RESIDENT.contains(&def_file)
         {
             return TierOutcome::Fallback;
@@ -432,21 +433,37 @@ impl BytecodeTier {
     fn run_on_vm(
         &mut self,
         func_id: FunctionId,
-        args: &[Value],
+        args: &mut [Value],
         reject_name: Option<&str>,
     ) -> TierOutcome {
-        // Arguments must round-trip through the OVM value model
+        // Arguments must round-trip through the OVM value model. Lists
+        // move: the slot is taken (left Unit) so the wrapped Arc crosses
+        // solely owned and the VM's in-place writes stay in place — the
+        // boundary twin of the interpreter's by-move argument binding.
+        // On a conversion refusal the taken lists are restored (an O(1)
+        // unwrap each), so the interpreter's fallback sees its arguments
+        // intact.
         let mut ovm_args = Vec::with_capacity(args.len());
-        for arg in args {
-            match self.convert_arg(arg) {
+        for i in 0..args.len() {
+            match self.convert_arg(&mut args[i]) {
                 Some(v) => ovm_args.push(v),
-                None => return TierOutcome::Fallback,
+                None => {
+                    for (slot, converted) in args.iter_mut().zip(ovm_args.iter()) {
+                        if matches!(slot, Value::Unit)
+                            && let Ok(back) = converted.to_ast()
+                            && !matches!(back, Value::Unit)
+                        {
+                            *slot = back;
+                        }
+                    }
+                    return TierOutcome::Fallback;
+                }
             }
         }
 
         self.stats.bytecode_calls += 1;
         self.vm.clear_error_trace();
-        match self.vm.execute(func_id, &ovm_args) {
+        match self.vm.execute_taking(func_id, &mut ovm_args) {
             Ok(value) => match value.to_ast() {
                 Ok(ast) => TierOutcome::Ran(Ok(ast)),
                 // A result we can't convert would be observable as a wrong
@@ -652,7 +669,31 @@ impl BytecodeTier {
     /// hit is guaranteed by the Weak upgrade — if the original allocation
     /// died, the upgrade fails and the entry is replaced; if it is alive,
     /// the address identifies exactly that value.
-    fn convert_arg(&mut self, arg: &Value) -> Option<OvmValue> {
+    fn convert_arg(&mut self, arg: &mut Value) -> Option<OvmValue> {
+        // Lists convert in O(1) — small ones copy a handful of elements,
+        // large ones wrap as AstList sharing the interpreter's Arc — and
+        // they convert *by move*: the caller's slot is taken, so nothing
+        // on the interpreter side pins the Arc and the VM's sole-owner
+        // writes actually run in place. They also skip both the
+        // representability scan (the wrap is total; elements convert as
+        // they are touched) and the identity cache — skipping the cache
+        // is a soundness fix, since the in-place fusions mutate a list
+        // under an unchanged address, exactly what an address-keyed
+        // cache of conversions cannot detect.
+        if matches!(arg, Value::List(_)) {
+            let owned = std::mem::replace(arg, Value::Unit);
+            if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some()
+                && let Value::List(items) = &owned
+                && items.len() > 64
+            {
+                eprintln!(
+                    "[astlist] boundary rc={} len={}",
+                    std::sync::Arc::strong_count(items),
+                    items.len()
+                );
+            }
+            return Some(OvmValue::from_ast(owned));
+        }
         if let Some((key, owner)) = CachedOwner::of(arg) {
             if let Some((cached_owner, cached)) = self.arg_cache.get(&key)
                 && cached_owner.still_is(arg)
@@ -687,14 +728,23 @@ mod tests {
     /// pin the two ways it could go wrong.
     #[test]
     fn a_cached_owner_recognises_its_own_value() {
-        let list = Value::List(Arc::new(vec![Value::Integer(1)]));
-        let (_, owner) = CachedOwner::of(&list).expect("lists are cached");
-        assert!(owner.still_is(&list));
+        // Tuples stand in for the cached compound values; lists are
+        // deliberately uncacheable (they convert in O(1) and the
+        // in-place fusions mutate them under a stable address).
+        let tuple = Value::Tuple(Arc::new(vec![Value::Integer(1)]));
+        let (_, owner) = CachedOwner::of(&tuple).expect("tuples are cached");
+        assert!(owner.still_is(&tuple));
 
-        let other = Value::List(Arc::new(vec![Value::Integer(1)]));
+        let other = Value::Tuple(Arc::new(vec![Value::Integer(1)]));
         assert!(
             !owner.still_is(&other),
             "an equal-but-distinct allocation must not hit"
+        );
+
+        let list = Value::List(Arc::new(vec![Value::Integer(1)]));
+        assert!(
+            CachedOwner::of(&list).is_none(),
+            "lists must never enter the conversion cache"
         );
     }
 
@@ -723,10 +773,10 @@ mod tests {
     #[test]
     fn a_cached_owner_goes_stale_when_its_value_dies() {
         let owner = {
-            let list = Value::List(Arc::new(vec![Value::Integer(1)]));
-            CachedOwner::of(&list).expect("cached").1
+            let tuple = Value::Tuple(Arc::new(vec![Value::Integer(1)]));
+            CachedOwner::of(&tuple).expect("cached").1
         };
-        let fresh = Value::List(Arc::new(vec![Value::Integer(1)]));
+        let fresh = Value::Tuple(Arc::new(vec![Value::Integer(1)]));
         assert!(
             !owner.still_is(&fresh),
             "a dead allocation must never produce a hit"
@@ -816,13 +866,13 @@ let t2 = time.monotonic_ms()
 
         for _ in 0..2 {
             assert!(matches!(
-                tier.try_call(&func, &[Value::Integer(5)]),
+                tier.try_call(&func, &mut [Value::Integer(5)]),
                 TierOutcome::Fallback
             ));
         }
         assert_eq!(tier.stats().promoted, 0);
 
-        match tier.try_call(&func, &[Value::Integer(5)]) {
+        match tier.try_call(&func, &mut [Value::Integer(5)]) {
             TierOutcome::Ran(Ok(Value::Integer(10))) => {}
             other => panic!(
                 "expected bytecode result 10, got {:?}",
@@ -861,11 +911,11 @@ let t2 = time.monotonic_ms()
 
         // double(5) = 10, triple(5) = 15 — the right body each time.
         assert!(matches!(
-            tier.try_call(&double, &[Value::Integer(5)]),
+            tier.try_call(&double, &mut [Value::Integer(5)]),
             TierOutcome::Ran(Ok(Value::Integer(10)))
         ));
         assert!(matches!(
-            tier.try_call(&triple, &[Value::Integer(5)]),
+            tier.try_call(&triple, &mut [Value::Integer(5)]),
             TierOutcome::Ran(Ok(Value::Integer(15)))
         ));
     }
@@ -879,7 +929,7 @@ let t2 = time.monotonic_ms()
         tier.note_function("double".to_string(), func.clone());
         tier.note_function("double".to_string(), func.clone());
 
-        match tier.try_call(&func, &[Value::Integer(5)]) {
+        match tier.try_call(&func, &mut [Value::Integer(5)]) {
             TierOutcome::Ran(Ok(Value::Integer(10))) => {}
             other => panic!(
                 "same-body re-note must still tier; fell back: {}",
@@ -900,7 +950,7 @@ let t2 = time.monotonic_ms()
             ..double_fn()
         };
 
-        match tier.try_call(&func, &[Value::Integer(5)]) {
+        match tier.try_call(&func, &mut [Value::Integer(5)]) {
             TierOutcome::Ran(Ok(Value::Integer(10))) => {}
             _ => panic!("self-contained function should be promoted"),
         }
@@ -930,7 +980,7 @@ let t2 = time.monotonic_ms()
             def_file: None,
         };
 
-        match tier.try_call(&func, &[Value::Integer(5)]) {
+        match tier.try_call(&func, &mut [Value::Integer(5)]) {
             TierOutcome::Ran(Ok(Value::Integer(6))) => {}
             TierOutcome::Ran(other) => panic!("expected Ok(6), got {:?}", other),
             TierOutcome::Fallback => panic!("expected the capture to compile, got Fallback"),
@@ -952,7 +1002,7 @@ let t2 = time.monotonic_ms()
             name: None,
             ..double_fn()
         };
-        match tier.try_call(&func, &[Value::Integer(5)]) {
+        match tier.try_call(&func, &mut [Value::Integer(5)]) {
             TierOutcome::Ran(Ok(v)) => assert_eq!(v, Value::Integer(10)),
             TierOutcome::Ran(Err(e)) => panic!("lambda errored on the tier: {e}"),
             TierOutcome::Fallback => panic!("lambda must run on the tier, not fall back"),
@@ -976,7 +1026,7 @@ let t2 = time.monotonic_ms()
 
         for _ in 0..5 {
             assert!(matches!(
-                tier.try_call(&func, &[Value::Integer(1)]),
+                tier.try_call(&func, &mut [Value::Integer(1)]),
                 TierOutcome::Fallback
             ));
         }
@@ -1000,7 +1050,7 @@ let t2 = time.monotonic_ms()
         );
         let map_arg = Value::Map(std::sync::Arc::new(bad));
         assert!(matches!(
-            tier.try_call(&func, &[map_arg]),
+            tier.try_call(&func, &mut [map_arg]),
             TierOutcome::Fallback
         ));
     }
@@ -1012,7 +1062,7 @@ let t2 = time.monotonic_ms()
         // by 2 is a type error there exactly as it is interpreted.
         let mut tier = BytecodeTier::new(1);
         let func = double_fn();
-        match tier.try_call(&func, &[Value::Function(double_fn())]) {
+        match tier.try_call(&func, &mut [Value::Function(double_fn())]) {
             TierOutcome::Ran(Err(_)) => {}
             TierOutcome::Ran(Ok(v)) => panic!("expected a type error, got {:?}", v),
             TierOutcome::Fallback => panic!("function arguments should cross the boundary"),
@@ -1037,7 +1087,7 @@ let t2 = time.monotonic_ms()
             def_file: None,
         };
 
-        match tier.try_call(&func, &[Value::Integer(1), Value::Integer(0)]) {
+        match tier.try_call(&func, &mut [Value::Integer(1), Value::Integer(0)]) {
             TierOutcome::Ran(Err(_)) => {}
             _ => panic!("division by zero should surface as an error"),
         }

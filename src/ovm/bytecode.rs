@@ -627,6 +627,13 @@ pub enum Instruction {
         dst: Register,
         func_id: FunctionId,
         args: Vec<Register>,
+        /// Bitmask (by argument position) of argument registers the call
+        /// consumes by *move* rather than clone — set by the optimizer's
+        /// liveness pass for registers dead after the call, so a handle
+        /// passed into a callee is not also pinned in the caller's frame
+        /// for the callee's whole run (Campaign 7, T2). Bit i covers
+        /// args[i]; only single-occurrence registers are ever marked.
+        arg_moves: u64,
     },
     CallBuiltin {
         dst: Register,
@@ -640,6 +647,17 @@ pub enum Instruction {
     },
     Return {
         value: Option<Register>,
+    },
+    /// Move a value between registers, leaving Unit behind (Campaign 7,
+    /// T2): the compiled form of passing a handle *by move* into a call
+    /// that rebinds it — `t = grow_if_crowded(t)` — so the caller's
+    /// register does not pin the Arc for the callee's whole run. The
+    /// source register is rewritten by the assignment when the call
+    /// returns; an error aborts the program before anything can read
+    /// the Unit.
+    TakeMove {
+        dst: Register,
+        src: Register,
     },
     /// A self-call in tail position (Campaign 5, R4b): rebind the
     /// parameter registers and jump to the entry point instead of
@@ -1249,7 +1267,7 @@ impl BytecodeVm {
             ValueData::Float(_) => "Float",
             ValueData::String(_) => "String",
             ValueData::Boolean(_) => "Bool",
-            ValueData::List(_) => "List",
+            ValueData::List(_) | ValueData::AstList(_) => "List",
             ValueData::Tuple(_) => "Tuple",
             ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
                 "Function"
@@ -1627,9 +1645,12 @@ impl BytecodeVm {
         // deopted) — the bytecode path below is the unchanged fallback.
         #[cfg(feature = "native")]
         if self.jit.has(func_id) {
+            // The JIT spends this as frames *beyond* its entry frame, so
+            // the entry itself is charged here — without the +1 a
+            // recursion one past the cap completes instead of erroring.
             let remaining = self
                 .max_call_depth
-                .saturating_sub(self.call_depth)
+                .saturating_sub(self.call_depth + 1)
                 .min(JIT_NATIVE_DEPTH_BUDGET);
             // Disjoint field borrows: the JIT plans call graphs through
             // this lookup while it holds &mut self.jit.
@@ -1676,6 +1697,132 @@ impl BytecodeVm {
         result
     }
 
+    /// execute(), but the argument buffer is consumed: each value moves
+    /// into the callee's frame, leaving Unit behind. This is the tier
+    /// boundary's entry — a by-move list argument must arrive in its
+    /// register *solely owned*, and the copy `execute` takes from its
+    /// borrowed slice would pin the Arc for the whole call, turning
+    /// every in-place write into a whole-list copy. The prologue
+    /// (arity, annotations, the JIT attempt) reads by reference and is
+    /// shared with `execute` verbatim.
+    pub fn execute_taking(
+        &mut self,
+        func_id: FunctionId,
+        args: &mut [OvmValue],
+    ) -> Result<OvmValue, BytecodeError> {
+        let bytecode = match self.execute_prologue(func_id, args)? {
+            Ok(b) => b,
+            Err(jit_result) => return Ok(jit_result),
+        };
+        if self.call_depth >= self.max_call_depth {
+            return Err(BytecodeError::RuntimeError(format!(
+                "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
+                self.max_call_depth
+            )));
+        }
+        self.call_depth += 1;
+        let saved = self
+            .execution_state
+            .push_frame_taking(bytecode.register_count as usize, args);
+        if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some() {
+            for r in 0..bytecode.param_count {
+                if let Ok(v) = self.execution_state.register_ref(Register(r as u32))
+                    && let crate::ovm::value::ValueData::AstList(items) = &v.data
+                {
+                    eprintln!(
+                        "[astlist] frame-entry reg{} rc={} len={}",
+                        r,
+                        std::sync::Arc::strong_count(items),
+                        items.len()
+                    );
+                }
+            }
+        }
+        self.stats.bytecode_cache_hits += 1;
+        self.stats.function_calls += 1;
+        self.push_caps_frame(&bytecode);
+        let result = self.execute_bytecode(&bytecode);
+        self.pop_caps_frame();
+        self.execution_state.pop_frame(saved);
+        self.call_depth -= 1;
+        result
+    }
+
+    /// The shared front half of `execute`/`execute_taking`: bytecode
+    /// fetch, arity and annotation checks, and the JIT attempt — all by
+    /// reference. `Err(value)` in the inner Result is a JIT result.
+    #[allow(clippy::type_complexity)]
+    fn execute_prologue(
+        &mut self,
+        func_id: FunctionId,
+        args: &[OvmValue],
+    ) -> Result<Result<Arc<CompiledBytecode>, OvmValue>, BytecodeError> {
+        let bytecode = self.get_bytecode(func_id)?;
+        if args.len() != bytecode.param_count {
+            return Err(BytecodeError::RuntimeError(
+                if args.len() < bytecode.param_count {
+                    format!(
+                        "Missing required argument: {}",
+                        bytecode.param_names[args.len()]
+                    )
+                } else {
+                    format!(
+                        "Arity mismatch: expected {}, got {}",
+                        bytecode.param_count,
+                        args.len()
+                    )
+                },
+            ));
+        }
+        if !bytecode.param_checks.is_empty() {
+            for (i, check) in bytecode.param_checks.iter().enumerate() {
+                if let (Some(check), Some(arg)) = (check, args.get(i)) {
+                    let (actual, payload, fn_arity, scalar) = ovm_value_view(arg);
+                    if let Some((expected, got)) =
+                        check.check_value(actual, payload, fn_arity, scalar)
+                    {
+                        let fn_name = bytecode
+                            .debug_info
+                            .function_name
+                            .as_deref()
+                            .unwrap_or("<fn>");
+                        self.error_trace_leak = bytecode.debug_info.function_name.clone();
+                        return Err(BytecodeError::TypeError(self.annotation_error(
+                            &format!("parameter '{}' of {}", bytecode.param_names[i], fn_name),
+                            check,
+                            &expected,
+                            &got,
+                        )));
+                    }
+                }
+            }
+        }
+        #[cfg(feature = "native")]
+        if self.jit.has(func_id) {
+            // The JIT spends this as frames *beyond* its entry frame, so
+            // the entry itself is charged here — without the +1 a
+            // recursion one past the cap completes instead of erroring.
+            let remaining = self
+                .max_call_depth
+                .saturating_sub(self.call_depth + 1)
+                .min(JIT_NATIVE_DEPTH_BUDGET);
+            let hot = &self.bytecode_hot;
+            let cache = &self.bytecode_cache;
+            let lookup = |id: FunctionId| -> Option<Arc<CompiledBytecode>> {
+                hot.get(id.index())
+                    .and_then(|s| s.clone())
+                    .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
+            };
+            if let Some(result) = self
+                .jit
+                .try_call(func_id, &bytecode, args, remaining, &lookup)
+            {
+                return Ok(Err(result));
+            }
+        }
+        Ok(Ok(bytecode))
+    }
+
     /// execute(), but the arguments come straight from the caller's
     /// registers into the callee's window — the CallFn/CallValue hot path,
     /// with no argument buffer in between.
@@ -1683,6 +1830,7 @@ impl BytecodeVm {
         &mut self,
         func_id: FunctionId,
         arg_regs: &[Register],
+        arg_moves: u64,
     ) -> Result<OvmValue, BytecodeError> {
         let idx = func_id.index();
         let bytecode = match self.bytecode_hot.get(idx).and_then(|slot| slot.as_ref()) {
@@ -1825,9 +1973,10 @@ impl BytecodeVm {
                 }
             }
             if extractable {
+                // Entry frame charged here too — see the note above.
                 let remaining = self
                     .max_call_depth
-                    .saturating_sub(self.call_depth)
+                    .saturating_sub(self.call_depth + 1)
                     .min(JIT_NATIVE_DEPTH_BUDGET);
                 // Shape specs are only needed to specialize (first call).
                 let mut shapes = std::collections::HashMap::new();
@@ -1907,10 +2056,11 @@ impl BytecodeVm {
         }
         self.call_depth += 1;
 
-        let saved = match self
-            .execution_state
-            .push_frame_from_regs(bytecode.register_count as usize, arg_regs)
-        {
+        let saved = match self.execution_state.push_frame_from_regs(
+            bytecode.register_count as usize,
+            arg_regs,
+            arg_moves,
+        ) {
             Ok(saved) => saved,
             Err(e) => {
                 self.call_depth -= 1;
@@ -2065,6 +2215,10 @@ impl BytecodeVm {
                     ));
                 }
 
+                Instruction::TakeMove { dst, src } => {
+                    let v = self.execution_state.take_register(*src)?;
+                    self.execution_state.set_register(*dst, v)?;
+                }
                 Instruction::Move { dst, src } => {
                     let value = self.execution_state.get_register(*src)?;
                     self.execution_state.set_register(*dst, value)?;
@@ -2103,6 +2257,55 @@ impl BytecodeVm {
                     // recognizable; aliased lists copy, exactly like the
                     // interpreter's fusion and AddAssign's extend.
                     let target_val = self.execution_state.take_register(*target)?;
+                    // A wrapped interpreter list writes in place too:
+                    // one element converts, the arc stays shared with
+                    // the interpreter side — the boundary-free write the
+                    // collections' handles ride on.
+                    if let ValueData::AstList(mut arc) = target_val.data {
+                        if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some()
+                            && std::sync::Arc::strong_count(&arc) > 1
+                        {
+                            let mut holders = Vec::new();
+                            for r in 0..64u32 {
+                                if let Ok(v) = self.execution_state.register_ref(Register(r))
+                                    && let ValueData::AstList(other) = &v.data
+                                    && std::sync::Arc::ptr_eq(other, &arc)
+                                {
+                                    holders.push(r);
+                                }
+                            }
+                            eprintln!(
+                                "[astlist] set copy in {:?}: rc={} len={} frame_holders={:?} stack_holders={:?} base={}",
+                                bytecode.debug_info.function_name.as_deref().unwrap_or("?"),
+                                std::sync::Arc::strong_count(&arc),
+                                arc.len(),
+                                holders,
+                                self.execution_state.debug_slots_holding(&arc),
+                                self.execution_state.debug_base()
+                            );
+                        }
+                        let at = crate::stdlib::collections::resolve_index("set", idx, arc.len())
+                            .map_err(BytecodeError::RuntimeError)?;
+                        let ast_v = v
+                            .to_ast()
+                            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+                        match std::sync::Arc::get_mut(&mut arc) {
+                            Some(items) => items[at] = ast_v,
+                            None => {
+                                let mut items = (*arc).clone();
+                                items[at] = ast_v;
+                                arc = std::sync::Arc::new(items);
+                            }
+                        }
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::AstList(arc),
+                            },
+                        )?;
+                        pc += 1;
+                        continue;
+                    }
                     if !matches!(target_val.data, ValueData::List(_)) {
                         let msg = format!(
                             "col.set: argument 1 must be a list, got {}",
@@ -2146,6 +2349,40 @@ impl BytecodeVm {
                     let ia = read_idx(self, *i)?;
                     let ib = read_idx(self, *j)?;
                     let target_val = self.execution_state.take_register(*target)?;
+                    if let ValueData::AstList(mut arc) = target_val.data {
+                        if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some()
+                            && std::sync::Arc::strong_count(&arc) > 1
+                        {
+                            let holders = self.execution_state.debug_slots_holding(&arc);
+                            eprintln!(
+                                "[astlist] swap rc={} len={} slab_holders={:?} base={}",
+                                std::sync::Arc::strong_count(&arc),
+                                arc.len(),
+                                holders,
+                                self.execution_state.debug_base()
+                            );
+                        }
+                        let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
+                            .map_err(BytecodeError::RuntimeError)?;
+                        let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
+                            .map_err(BytecodeError::RuntimeError)?;
+                        match std::sync::Arc::get_mut(&mut arc) {
+                            Some(items) => items.swap(a, b),
+                            None => {
+                                let mut items = (*arc).clone();
+                                items.swap(a, b);
+                                arc = std::sync::Arc::new(items);
+                            }
+                        }
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::AstList(arc),
+                            },
+                        )?;
+                        pc += 1;
+                        continue;
+                    }
                     if !matches!(target_val.data, ValueData::List(_)) {
                         let msg = format!(
                             "col.swap: argument 1 must be a list, got {}",
@@ -2202,6 +2439,43 @@ impl BytecodeVm {
                             *target,
                             OvmValue {
                                 data: ValueData::String(arc),
+                            },
+                        )?;
+                    } else if let (ValueData::AstList(_), ValueData::List(b)) =
+                        (&target_val.data, &rhs_val.data)
+                    {
+                        // Extend the wrapped interpreter list in place:
+                        // each appended element converts once.
+                        let b = b.clone();
+                        let ValueData::AstList(mut arc) = target_val.data else {
+                            unreachable!("matched above");
+                        };
+                        let mut appended = Vec::with_capacity(b.len());
+                        for v in b.iter() {
+                            appended
+                                .push(v.to_ast().map_err(|e| {
+                                    BytecodeError::RuntimeError(format!("{:?}", e))
+                                })?);
+                        }
+                        match std::sync::Arc::get_mut(&mut arc) {
+                            Some(items) => items.extend(appended),
+                            None => {
+                                if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some() {
+                                    eprintln!(
+                                        "[astlist] extend copy rc={} len={}",
+                                        std::sync::Arc::strong_count(&arc),
+                                        arc.len()
+                                    );
+                                }
+                                let mut items = (*arc).clone();
+                                items.extend(appended);
+                                arc = std::sync::Arc::new(items);
+                            }
+                        }
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::AstList(arc),
                             },
                         )?;
                     } else if let (ValueData::List(_), ValueData::List(b)) =
@@ -2840,8 +3114,13 @@ impl BytecodeVm {
                         .set_register(*dst, OvmValue::new_closure(Arc::new(closure)))?;
                 }
 
-                Instruction::CallFn { dst, func_id, args } => {
-                    let result = self.execute_from_regs(*func_id, args)?;
+                Instruction::CallFn {
+                    dst,
+                    func_id,
+                    args,
+                    arg_moves,
+                } => {
+                    let result = self.execute_from_regs(*func_id, args, *arg_moves)?;
                     self.execution_state.set_register(*dst, result)?;
                 }
 
@@ -3029,6 +3308,13 @@ impl BytecodeVm {
                 } => {
                     use crate::ovm::value::ValueData;
                     let matches = match &self.execution_state.register_ref(*value)?.data {
+                        ValueData::AstList(items) => {
+                            if *exact {
+                                items.len() == *min_len
+                            } else {
+                                items.len() >= *min_len
+                            }
+                        }
                         ValueData::List(items) => {
                             if *exact {
                                 items.len() == *min_len
@@ -3058,6 +3344,9 @@ impl BytecodeVm {
                         ValueData::List(items) | ValueData::Tuple(items) => {
                             items.get(*index).cloned()
                         }
+                        ValueData::AstList(items) => {
+                            items.get(*index).map(|v| OvmValue::from_ast(v.clone()))
+                        }
                         _ => None,
                     };
                     match element {
@@ -3076,6 +3365,13 @@ impl BytecodeVm {
                         ValueData::List(items) => {
                             Some(items.iter().skip(*from).cloned().collect::<Vec<_>>())
                         }
+                        ValueData::AstList(items) => Some(
+                            items
+                                .iter()
+                                .skip(*from)
+                                .map(|v| OvmValue::from_ast(v.clone()))
+                                .collect::<Vec<_>>(),
+                        ),
                         _ => None,
                     };
                     match rest {
@@ -3393,6 +3689,65 @@ impl BytecodeVm {
                 }
                 // Deep structural equality, mirroring the interpreter's
                 // List/List arms (Value's derived PartialEq).
+                BinaryOp::Equal => OvmValue::new_boolean(Self::pattern_eq(left, right)),
+                BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
+                    )));
+                }
+            },
+            // A wrapped list on either side: concatenation and equality
+            // are O(n) operations, so a per-element view costs nothing
+            // extra. Concatenation of two wrapped lists stays wrapped —
+            // Value elements clone by Arc bump — and a mixed pair
+            // converts the smaller representation into the other.
+            (ValueData::AstList(a), ValueData::AstList(b)) => match op {
+                BinaryOp::Add => {
+                    let mut items = Vec::with_capacity(a.len() + b.len());
+                    items.extend(a.iter().cloned());
+                    items.extend(b.iter().cloned());
+                    OvmValue {
+                        data: ValueData::AstList(std::sync::Arc::new(items)),
+                    }
+                }
+                BinaryOp::Equal => OvmValue::new_boolean(Self::pattern_eq(left, right)),
+                BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
+                    )));
+                }
+            },
+            (ValueData::AstList(_), ValueData::List(_))
+            | (ValueData::List(_), ValueData::AstList(_)) => match op {
+                BinaryOp::Add => {
+                    let to_items = |v: &OvmValue| -> Result<Vec<crate::ast::Value>, BytecodeError> {
+                        match &v.data {
+                            ValueData::AstList(items) => Ok((**items).clone()),
+                            ValueData::List(items) => items
+                                .iter()
+                                .map(|x| {
+                                    x.to_ast().map_err(|e| {
+                                        BytecodeError::RuntimeError(format!("{:?}", e))
+                                    })
+                                })
+                                .collect(),
+                            _ => unreachable!("matched above"),
+                        }
+                    };
+                    let mut items = to_items(left)?;
+                    items.extend(to_items(right)?);
+                    OvmValue {
+                        data: ValueData::AstList(std::sync::Arc::new(items)),
+                    }
+                }
                 BinaryOp::Equal => OvmValue::new_boolean(Self::pattern_eq(left, right)),
                 BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
                 _ => {
@@ -3900,6 +4255,16 @@ impl BytecodeVm {
         args: &[OvmValue],
     ) -> Option<Result<OvmValue, BytecodeError>> {
         use crate::ovm::value::ValueData;
+        // A wrapped interpreter list routes to the bridge — where it
+        // arrives O(1) and the interpreter (with its own tier, its
+        // fusions, and auto-parallel machinery) is the semantic
+        // authority — except for the O(1) probes below, which answer
+        // through the wrapper without conversion.
+        if args.iter().any(|a| matches!(a.data, ValueData::AstList(_)))
+            && !matches!(name, "len" | "head")
+        {
+            return None;
+        }
         match name {
             "map" | "filter" if args.len() == 2 => {
                 let items = match &args[0].data {
@@ -4013,6 +4378,7 @@ impl BytecodeVm {
             // bridge, which stays the authority.
             "len" if args.len() == 1 => Some(match &args[0].data {
                 ValueData::List(items) => Ok(OvmValue::new_integer(items.len() as i64)),
+                ValueData::AstList(items) => Ok(OvmValue::new_integer(items.len() as i64)),
                 ValueData::Tuple(items) => Ok(OvmValue::new_integer(items.len() as i64)),
                 ValueData::String(st) => Ok(OvmValue::new_integer(st.chars().count() as i64)),
                 // Mirrors the interpreter: a native that declares a length
@@ -4027,6 +4393,12 @@ impl BytecodeVm {
             "head" if args.len() == 1 => Some(match &args[0].data {
                 ValueData::List(items) => match items.first() {
                     Some(v) => Ok(v.clone()),
+                    None => Err(BytecodeError::RuntimeError(
+                        "head: cannot get head of empty list".to_string(),
+                    )),
+                },
+                ValueData::AstList(items) => match items.first() {
+                    Some(v) => Ok(OvmValue::from_ast(v.clone())),
                     None => Err(BytecodeError::RuntimeError(
                         "head: cannot get head of empty list".to_string(),
                     )),
@@ -4354,6 +4726,7 @@ impl BytecodeVm {
         use crate::ovm::value::ValueData;
         match &source.data {
             ValueData::List(items) => Ok(items.len() as i64),
+            ValueData::AstList(items) => Ok(items.len() as i64),
             ValueData::Range(range) => {
                 let span = if range.inclusive {
                     (range.end as i128) - (range.start as i128) + 1
@@ -4384,6 +4757,17 @@ impl BytecodeVm {
     fn iter_get(source: &OvmValue, idx: i64) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
         match &source.data {
+            ValueData::AstList(items) => {
+                return items
+                    .get(idx as usize)
+                    .map(|v| OvmValue::from_ast(v.clone()))
+                    .ok_or_else(|| {
+                        BytecodeError::RuntimeError(format!(
+                            "Iteration index {} out of bounds",
+                            idx
+                        ))
+                    });
+            }
             ValueData::List(items) => {
                 items
                     .get(idx as usize)
@@ -4448,6 +4832,9 @@ impl BytecodeVm {
             | (ValueData::Struct(_), ValueData::Struct(_))
             | (ValueData::Map(_), ValueData::Map(_))
             | (ValueData::List(_), ValueData::List(_))
+            | (ValueData::AstList(_), ValueData::AstList(_))
+            | (ValueData::AstList(_), ValueData::List(_))
+            | (ValueData::List(_), ValueData::AstList(_))
             | (ValueData::Tuple(_), ValueData::Tuple(_)) => match (a.to_ast(), b.to_ast()) {
                 (Ok(x), Ok(y)) => x == y,
                 _ => false,
@@ -4519,6 +4906,7 @@ impl BytecodeVm {
             ValueData::Float(f) => *f != 0.0,
             ValueData::String(s) => !s.is_empty(),
             ValueData::List(items) => !items.is_empty(),
+            ValueData::AstList(items) => !items.is_empty(),
             ValueData::Tuple(items) => !items.is_empty(),
             ValueData::Range(r) => {
                 if r.inclusive {
@@ -4684,6 +5072,17 @@ impl BytecodeVm {
                     ))
                 })
             }
+            // A wrapped interpreter list reads element-wise: one
+            // conversion per access, never a whole-list one.
+            ValueData::AstList(items) => resolve(items.len())
+                .map(|i| OvmValue::from_ast(items[i].clone()))
+                .ok_or_else(|| {
+                    BytecodeError::RuntimeError(format!(
+                        "Index {} out of bounds for list of length {}",
+                        idx,
+                        items.len()
+                    ))
+                }),
             ValueData::Tuple(tuple) => {
                 resolve(tuple.len())
                     .map(|i| tuple[i].clone())
@@ -4734,6 +5133,32 @@ impl ExecutionState {
     /// reset to Unit with the drop-skip for immediates. Returns the caller's
     /// (base, top) for pop_frame.
     #[inline]
+    /// push_frame, consuming the argument buffer: each value moves into
+    /// its register (the buffer slot is left Unit), so an Arc-backed
+    /// argument arrives solely owned and in-place writes stay in place.
+    pub fn push_frame_taking(
+        &mut self,
+        register_count: usize,
+        args: &mut [OvmValue],
+    ) -> (usize, usize) {
+        let saved = (self.base, self.top);
+        let new_base = self.top;
+        let new_top = new_base + register_count;
+        if self.stack.len() < new_top {
+            self.stack.resize(new_top, OvmValue::new_unit());
+        }
+        let window = &mut self.stack[new_base..new_top];
+        for (i, slot) in window.iter_mut().enumerate() {
+            match args.get_mut(i) {
+                Some(arg) => Self::write_slot(slot, std::mem::replace(arg, OvmValue::new_unit())),
+                None => Self::reset_slot(slot),
+            }
+        }
+        self.base = new_base;
+        self.top = new_top;
+        saved
+    }
+
     pub fn push_frame(&mut self, register_count: usize, args: &[OvmValue]) -> (usize, usize) {
         let saved = (self.base, self.top);
         let new_base = self.top;
@@ -4761,6 +5186,7 @@ impl ExecutionState {
         &mut self,
         register_count: usize,
         arg_regs: &[Register],
+        arg_moves: u64,
     ) -> Result<(usize, usize), BytecodeError> {
         let saved = (self.base, self.top);
         let new_base = self.top;
@@ -4773,7 +5199,14 @@ impl ExecutionState {
             if src >= self.top {
                 return Err(BytecodeError::InvalidRegister(*reg));
             }
-            let value = self.stack[src].clone();
+            // A masked argument is dead in the caller after this call:
+            // take it instead of cloning, releasing the caller's hold on
+            // whatever the register carried (the T2 handle-pin fix).
+            let value = if i < 64 && arg_moves & (1 << i) != 0 {
+                std::mem::replace(&mut self.stack[src], OvmValue::new_unit())
+            } else {
+                self.stack[src].clone()
+            };
             if new_base + i < new_top {
                 Self::write_slot(&mut self.stack[new_base + i], value);
             }
@@ -4789,7 +5222,35 @@ impl ExecutionState {
     /// Return to the caller's window. The callee's values stay on the slab
     /// above the logical top and are recycled by the next push_frame.
     #[inline]
+    /// Debug: absolute slab indices whose slot holds this AstList arc.
+    pub fn debug_slots_holding(&self, arc: &Arc<Vec<crate::ast::Value>>) -> Vec<usize> {
+        let mut out = Vec::new();
+        for (i, slot) in self.stack.iter().enumerate() {
+            if let crate::ovm::value::ValueData::AstList(other) = &slot.data
+                && Arc::ptr_eq(other, arc)
+            {
+                out.push(i);
+            }
+        }
+        out
+    }
+
+    /// Debug: the current frame base.
+    pub fn debug_base(&self) -> usize {
+        self.base
+    }
+
     pub fn pop_frame(&mut self, saved: (usize, usize)) {
+        // Release the popped window's values, not just the window: a
+        // stale slot would pin every Arc it held until some future frame
+        // happened to overwrite it — and because the in-place fusions
+        // mutate a list under the SAME Arc across calls, one stale slot
+        // pinned a collections handle forever, turning every subsequent
+        // sole-owner write into a whole-list copy. Slot reuse keeps the
+        // recycle-in-place cheapness (reset_slot leaves the allocation).
+        for slot in &mut self.stack[self.base..self.top] {
+            Self::reset_slot(slot);
+        }
         self.base = saved.0;
         self.top = saved.1;
     }
@@ -4966,6 +5427,21 @@ impl BytecodeCompiler {
         // Return is a frame that never needs to exist.
         Self::eliminate_self_tail_calls(func_id, &mut instructions);
 
+        // OLANG_DUMP_FN=<name> prints the final instruction stream for one
+        // function — the register-level view the JIT debug summary elides.
+        if let Some(want) = std::env::var_os("OLANG_DUMP_FN") {
+            if *want == *func.name.as_str() {
+                eprintln!(
+                    "[dump] fn '{}' ({} params):",
+                    func.name,
+                    func.parameters.len()
+                );
+                for (pc, inst) in instructions.iter().enumerate() {
+                    eprintln!("  {:4}: {:?}", pc, inst);
+                }
+            }
+        }
+
         Ok(CompiledBytecode {
             function_id: func_id,
             instructions,
@@ -5009,6 +5485,7 @@ impl BytecodeCompiler {
                 dst,
                 func_id: target,
                 args,
+                ..
             } = inst
                 && *target == func_id
                 && Self::result_flows_to_return(instructions, i + 1, *dst)
@@ -5048,11 +5525,14 @@ impl BytecodeCompiler {
                     break;
                 }
                 match &instructions[pc] {
-                    Instruction::Move { dst, src } if *src == cur => {
+                    Instruction::Move { dst, src } | Instruction::TakeMove { dst, src }
+                        if *src == cur =>
+                    {
                         cur = *dst;
                         instructions[pc] = Instruction::Nop;
                         pc += 1;
                     }
+                    Instruction::Nop => pc += 1,
                     Instruction::Jump { target } => {
                         let t = target.0 as usize;
                         instructions[pc] = Instruction::Nop;
@@ -5083,10 +5563,13 @@ impl BytecodeCompiler {
                 return false;
             }
             match &instructions[pc] {
-                Instruction::Move { dst, src } if *src == cur => {
+                Instruction::Move { dst, src } | Instruction::TakeMove { dst, src }
+                    if *src == cur =>
+                {
                     cur = *dst;
                     pc += 1;
                 }
+                Instruction::Nop => pc += 1,
                 Instruction::Jump { target } => pc = target.0 as usize,
                 Instruction::Return { value: Some(r) } => return *r == cur,
                 _ => return false,
@@ -5559,6 +6042,7 @@ impl BytecodeCompiler {
                         dst: dst_reg,
                         func_id: *self_id,
                         args: full_args,
+                        arg_moves: 0,
                     });
                     return Ok(dst_reg);
                 }
@@ -5588,6 +6072,7 @@ impl BytecodeCompiler {
                         dst: dst_reg,
                         func_id,
                         args: arg_regs,
+                        arg_moves: 0,
                     });
                     return Ok(dst_reg);
                 }
@@ -6091,8 +6576,10 @@ impl BytecodeCompiler {
                     op: crate::ast::BinaryOp::Add,
                     right,
                 } = value.as_ref()
-                    && matches!(left.as_ref(),
+                    && (matches!(left.as_ref(),
                         Expr::Identifier(n) if n == target)
+                        || matches!(left.as_ref(),
+                            Expr::LocalRef { name, .. } if name == target))
                     && Self::assignment_free(right)
                 {
                     let rhs_reg = self.compile_expression(right)?;
@@ -6101,6 +6588,63 @@ impl BytecodeCompiler {
                         rhs: rhs_reg,
                     });
                     return Ok(target_reg);
+                }
+                // `x = f(x, ...)`: pass x by move — TakeMove into a temp
+                // that becomes argument 0, so the callee's frame holds
+                // the only reference and its in-place writes stay in
+                // place. Mirrors the interpreter's move-call fusion; the
+                // remaining arguments must be assignment-free for the
+                // same evaluation-order reason.
+                if let Expr::Call { callee, arguments } = value.as_ref()
+                    && matches!(callee.as_ref(), Expr::Identifier(_) | Expr::LocalRef { .. })
+                    && !arguments.is_empty()
+                {
+                    if std::env::var_os("OLANG_DEBUG_TAKEMOVE").is_some() {
+                        eprintln!("[takemove] candidate: {} = call", target);
+                    }
+                    let mut exprs = Vec::with_capacity(arguments.len());
+                    for a in arguments {
+                        match a {
+                            crate::ast::Argument::Positional(e) => exprs.push(e),
+                            crate::ast::Argument::Named { .. } => {
+                                exprs.clear();
+                                break;
+                            }
+                        }
+                    }
+                    let names_target = !exprs.is_empty()
+                        && (matches!(exprs[0], Expr::Identifier(n) if n == target)
+                            || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target));
+                    if names_target
+                        && exprs[1..].iter().all(|e| Self::assignment_free(e))
+                        && !self.local_variables.contains_key("__moved_arg0__")
+                    {
+                        if std::env::var_os("OLANG_DEBUG_TAKEMOVE").is_some() {
+                            eprintln!("[takemove] FIRES for {}", target);
+                        }
+                        let tmp = self.register_allocator.allocate_register();
+                        self.emitter.instructions.push(Instruction::TakeMove {
+                            dst: tmp,
+                            src: target_reg,
+                        });
+                        self.local_variables
+                            .insert("__moved_arg0__".to_string(), tmp);
+                        let mut moved_args = arguments.clone();
+                        moved_args[0] = crate::ast::Argument::Positional(Expr::Identifier(
+                            "__moved_arg0__".to_string(),
+                        ));
+                        let rewritten = Expr::Call {
+                            callee: callee.clone(),
+                            arguments: moved_args,
+                        };
+                        let value_reg = self.compile_expression(&rewritten);
+                        self.local_variables.remove("__moved_arg0__");
+                        let value_reg = value_reg?;
+                        if value_reg != target_reg {
+                            self.emitter.emit_move(target_reg, value_reg);
+                        }
+                        return Ok(target_reg);
+                    }
                 }
                 let value_reg = self.compile_expression(value)?;
                 if value_reg != target_reg {
@@ -7605,7 +8149,311 @@ impl BytecodeOptimizer {
         &mut self,
         instructions: Vec<Instruction>,
     ) -> Result<Vec<Instruction>, BytecodeError> {
-        Ok(instructions)
+        Ok(Self::eliminate_dead_moves(instructions))
+    }
+
+    /// Replace `Move`s whose destination is never read again with `Nop`.
+    ///
+    /// The motivating case is the merge of an `if` used as a statement:
+    /// each branch ends `Move phi ← result; Jump end`, and when nothing
+    /// reads the phi, that Move still *copies the value* — for an Arc-
+    /// backed list it plants a second reference in a register that stays
+    /// live until some future instruction happens to overwrite it, which
+    /// turns every subsequent sole-owner in-place write into a whole-
+    /// list copy. Liveness is a backward fixpoint over the resolved
+    /// control flow; any instruction the model does not know is treated
+    /// as reading every register, so unknown territory disables the
+    /// optimization rather than miscompiling it.
+    fn eliminate_dead_moves(mut instructions: Vec<Instruction>) -> Vec<Instruction> {
+        // Killing one Move can strand the Move feeding it (`Move b←a;
+        // Move c←b` where only the first survives a single sweep), so the
+        // pass runs to its own fixpoint. Chains are short; the bound is a
+        // backstop, not a budget.
+        for _ in 0..8 {
+            let (next, changed) = Self::eliminate_dead_moves_once(instructions);
+            instructions = next;
+            if !changed {
+                break;
+            }
+        }
+        instructions
+    }
+
+    fn eliminate_dead_moves_once(mut instructions: Vec<Instruction>) -> (Vec<Instruction>, bool) {
+        use Instruction as I;
+        let mut any_rewrite = false;
+        let n = instructions.len();
+        if n == 0 {
+            return (instructions, false);
+        }
+        let mut nregs = 0usize;
+        {
+            let mut track = |r: &Register| nregs = nregs.max(r.0 as usize + 1);
+            for inst in &instructions {
+                Self::visit_registers(inst, &mut track);
+            }
+        }
+        // live[pc] = registers possibly read at or after pc along some path.
+        let mut live_in: Vec<Vec<bool>> = vec![vec![false; nregs]; n];
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for pc in (0..n).rev() {
+                let mut out = vec![false; nregs];
+                let mut succ = |t: usize| {
+                    if t < n {
+                        for (i, b) in live_in[t].iter().enumerate() {
+                            if *b {
+                                out[i] = true;
+                            }
+                        }
+                    }
+                };
+                match &instructions[pc] {
+                    I::Jump { target } => succ(target.0 as usize),
+                    I::JumpIfTrue { target, .. } | I::JumpIfFalse { target, .. } => {
+                        succ(target.0 as usize);
+                        succ(pc + 1);
+                    }
+                    I::TailCallSelf { .. } => succ(0),
+                    I::Return { .. } | I::MatchFail => {}
+                    _ => succ(pc + 1),
+                }
+                let mut new_in = out;
+                match Self::uses_defs(&instructions[pc]) {
+                    Some((uses, defs)) => {
+                        for d in defs {
+                            if (d as usize) < nregs {
+                                new_in[d as usize] = false;
+                            }
+                        }
+                        for u in uses {
+                            if (u as usize) < nregs {
+                                new_in[u as usize] = true;
+                            }
+                        }
+                    }
+                    // Unmodeled: assume it reads everything and defines
+                    // nothing — the conservative direction.
+                    None => {
+                        for b in new_in.iter_mut() {
+                            *b = true;
+                        }
+                    }
+                }
+                if new_in != live_in[pc] {
+                    live_in[pc] = new_in;
+                    changed = true;
+                }
+            }
+        }
+        for pc in 0..n {
+            // Calls consume dead-after argument registers by move: filling
+            // the mask here (rather than cloning at frame push) is what
+            // keeps a handle passed into a callee from staying pinned in
+            // the caller's frame for the callee's whole run. Only
+            // registers appearing once in the argument list qualify — a
+            // duplicated register must still be cloned for its second use.
+            if let I::CallFn {
+                args, arg_moves, ..
+            } = &mut instructions[pc]
+            {
+                let mut mask = 0u64;
+                for (i, r) in args.iter().enumerate().take(64) {
+                    let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
+                    let dead = !(pc + 1 < n && live_in[pc + 1][r.0 as usize]);
+                    if unique && dead {
+                        mask |= 1 << i;
+                    }
+                }
+                *arg_moves = mask;
+            }
+            if std::env::var_os("OLANG_DEBUG_LIVENESS").is_some() {
+                if let I::Move { dst, src } = &instructions[pc] {
+                    let la = |r: u32| pc + 1 < n && live_in[pc + 1][r as usize];
+                    eprintln!(
+                        "[live] pc={} Move dst=r{}(live_after={}) src=r{}(live_after={})",
+                        pc,
+                        dst.0,
+                        la(dst.0),
+                        src.0,
+                        la(src.0)
+                    );
+                }
+            }
+            let rewrite = match &instructions[pc] {
+                I::Move { dst, src } if dst != src => {
+                    let live_after = |r: u32| pc + 1 < n && live_in[pc + 1][r as usize];
+                    if !live_after(dst.0) {
+                        // Nobody reads the destination: the Move (and the
+                        // reference it would plant) can vanish entirely.
+                        Some(I::Nop)
+                    } else if !live_after(src.0) {
+                        // The destination lives but the source is dead —
+                        // the call-result pattern (`CallFn dst; Move x ←
+                        // dst`): move the value instead of cloning it, so
+                        // the dead register does not pin an Arc until
+                        // something happens to overwrite it.
+                        Some(I::TakeMove {
+                            dst: *dst,
+                            src: *src,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(inst) = rewrite {
+                instructions[pc] = inst;
+                any_rewrite = true;
+            }
+        }
+        (instructions, any_rewrite)
+    }
+
+    /// Registers an instruction reads and writes, or None when this model
+    /// does not describe it (treated as a full barrier by the liveness).
+    #[allow(clippy::type_complexity)]
+    fn uses_defs(inst: &Instruction) -> Option<(Vec<u32>, Vec<u32>)> {
+        use Instruction as I;
+        let mut uses = Vec::new();
+        let mut defs = Vec::new();
+        match inst {
+            I::LoadConst { dst, .. } => defs.push(dst.0),
+            I::Move { dst, src } => {
+                uses.push(src.0);
+                defs.push(dst.0);
+            }
+            I::TakeMove { dst, src } => {
+                uses.push(src.0);
+                defs.push(dst.0);
+                defs.push(src.0);
+            }
+            I::Nop | I::MatchFail => {}
+            I::Jump { .. } => {}
+            I::JumpIfTrue { condition, .. } | I::JumpIfFalse { condition, .. } => {
+                uses.push(condition.0)
+            }
+            I::Return { value } => {
+                if let Some(r) = value {
+                    uses.push(r.0);
+                }
+            }
+            I::Add { dst, lhs, rhs }
+            | I::Sub { dst, lhs, rhs }
+            | I::Mul { dst, lhs, rhs }
+            | I::Div { dst, lhs, rhs }
+            | I::Mod { dst, lhs, rhs }
+            | I::Eq { dst, lhs, rhs }
+            | I::Ne { dst, lhs, rhs }
+            | I::Lt { dst, lhs, rhs }
+            | I::Le { dst, lhs, rhs }
+            | I::Gt { dst, lhs, rhs }
+            | I::Ge { dst, lhs, rhs }
+            | I::And { dst, lhs, rhs }
+            | I::Or { dst, lhs, rhs } => {
+                uses.push(lhs.0);
+                uses.push(rhs.0);
+                defs.push(dst.0);
+            }
+            I::PatternEq { dst, value, other } => {
+                uses.push(value.0);
+                uses.push(other.0);
+                defs.push(dst.0);
+            }
+            I::Not { dst, src } | I::Neg { dst, src } => {
+                uses.push(src.0);
+                defs.push(dst.0);
+            }
+            I::BinImm { dst, lhs, .. } => {
+                uses.push(lhs.0);
+                defs.push(dst.0);
+            }
+            I::AddAssign { target, rhs } => {
+                uses.push(target.0);
+                uses.push(rhs.0);
+                defs.push(target.0);
+            }
+            I::ListSetAssign {
+                target,
+                index,
+                value,
+            } => {
+                uses.push(target.0);
+                uses.push(index.0);
+                uses.push(value.0);
+                defs.push(target.0);
+            }
+            I::ListSwapAssign { target, i, j } => {
+                uses.push(target.0);
+                uses.push(i.0);
+                uses.push(j.0);
+                defs.push(target.0);
+            }
+            I::IndexGet { dst, object, index } => {
+                uses.push(object.0);
+                uses.push(index.0);
+                defs.push(dst.0);
+            }
+            I::IterLen { dst, src } => {
+                uses.push(src.0);
+                defs.push(dst.0);
+            }
+            I::IterGet { dst, src, idx } => {
+                uses.push(src.0);
+                uses.push(idx.0);
+                defs.push(dst.0);
+            }
+            I::MakeList { dst, elements } | I::MakeTuple { dst, elements } => {
+                for e in elements {
+                    uses.push(e.0);
+                }
+                defs.push(dst.0);
+            }
+            I::CallFn { dst, args, .. } => {
+                for a in args {
+                    uses.push(a.0);
+                }
+                defs.push(dst.0);
+            }
+            I::CallNamed { dst, args, .. } => {
+                for a in args {
+                    uses.push(a.0);
+                }
+                defs.push(dst.0);
+            }
+            I::CallBuiltin { dst, args, .. } => {
+                for a in args {
+                    uses.push(a.0);
+                }
+                defs.push(dst.0);
+            }
+            I::CallValue { dst, callee, args } => {
+                uses.push(callee.0);
+                for a in args {
+                    uses.push(a.0);
+                }
+                defs.push(dst.0);
+            }
+            I::TailCallSelf { args } => {
+                for (i, a) in args.iter().enumerate() {
+                    uses.push(a.0);
+                    defs.push(i as u32);
+                }
+            }
+            _ => return None,
+        }
+        Some((uses, defs))
+    }
+
+    /// Visit every register an instruction mentions (for sizing).
+    fn visit_registers(inst: &Instruction, f: &mut impl FnMut(&Register)) {
+        if let Some((uses, defs)) = Self::uses_defs(inst) {
+            for u in uses.iter().chain(defs.iter()) {
+                f(&Register(*u));
+            }
+        }
     }
 }
 

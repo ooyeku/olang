@@ -871,7 +871,7 @@ on one core.
 | Lane | Work | Status |
 |---|---|---|
 | T1 — the bridge gets a tier | The bridge interpreter (declined function values, bridged builtins) carries its own compiled tier, the run's capability grant re-seeded per dispatch (and forwarded into that tier), and the live call depth — closing a caps bypass and a fresh-budget hole along the way. | **shipped** — 2317ms → 5ms on the callback repro; four regression tests pin speed class, tier agreement, the shared depth budget, and the capability gate |
-| T2 — the argument conversion | Whole-list Value⇄OvmValue conversion at the boundary becomes proportional to use, unlocking compiled-tier collections and the JIT IndexSet lane. | planned |
+| T2 — the argument conversion | Whole-list Value⇄OvmValue conversion at the boundary becomes proportional to use, unlocking compiled-tier collections and the JIT IndexSet lane. | **shipped** — lists cross the boundary O(1) by move (`AstList`); calls consume dead argument registers by move (per-call masks from a fixpoint liveness pass); collections now VM-resident by default at 2–8× (table put/probe curve linearized: 207s → 0.18s at n=40k) |
 | T3 — on-stack replacement | A hot loop compiles at its back-edge, so a once-called function's big loop doesn't live on the VM. | planned |
 | T4 — JIT call inlining | Small callees inline into their JIT callers; the loop-calling-a-function shape stops paying a boundary per iteration. | planned |
 
