@@ -1,6 +1,4 @@
-pub mod check;
-pub mod deps;
+pub mod lib;
 pub mod new;
-pub mod ovm;
-pub mod pkg;
-pub mod unused;
+pub mod project;
+pub mod web;

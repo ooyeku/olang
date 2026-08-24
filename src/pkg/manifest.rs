@@ -59,6 +59,11 @@ pub enum Dependency {
         #[serde(default)]
         registry: Option<String>,
     },
+    /// `dep = { shelf = "my-lib" }` — a library registered on the user's
+    /// local shelf (`otc lib add`). The manifest records only the name,
+    /// which keeps it free of machine-specific paths; the shelf supplies
+    /// the directory at install time and the lockfile pins what resolved.
+    Shelf { shelf: String },
 }
 
 impl Dependency {
@@ -160,6 +165,7 @@ description = "a test app"
 [dependencies]
 alpha = "1.4.0"
 beta = { path = "../beta" }
+epsilon = { shelf = "epsilon" }
 gamma = { git = "https://example.com/gamma", tag = "v2.0.0" }
 delta = { git = "https://example.com/delta", rev = "abc123" }
 "#;
@@ -168,6 +174,10 @@ delta = { git = "https://example.com/delta", rev = "abc123" }
         assert_eq!(m.package.version, Version::new(0, 2, 0));
         assert_eq!(m.dependencies["alpha"].version_req(), Some("1.4.0"));
         assert!(matches!(m.dependencies["beta"], Dependency::Path { .. }));
+        assert!(matches!(
+            m.dependencies["epsilon"],
+            Dependency::Shelf { .. }
+        ));
         assert!(matches!(
             m.dependencies["gamma"],
             Dependency::Git { tag: Some(_), .. }

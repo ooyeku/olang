@@ -20,11 +20,16 @@ use semver::Version;
 use std::fs;
 use std::path::Path;
 
-pub fn execute(name: String, lib: bool, verbose: bool) -> Result<()> {
+pub fn execute(name: String, lib: bool, web: bool, verbose: bool) -> Result<()> {
     if name.is_empty() || name.contains(['/', '\\']) {
         return Err(anyhow::anyhow!(
             "Project name must be a plain directory name, got '{}'",
             name
+        ));
+    }
+    if lib && web {
+        return Err(anyhow::anyhow!(
+            "--lib and --web are different shapes; pick one"
         ));
     }
     let root = Path::new(&name);
@@ -48,6 +53,10 @@ pub fn execute(name: String, lib: bool, verbose: bool) -> Result<()> {
     manifest
         .save(root)
         .map_err(|e| anyhow::anyhow!("Failed to write olang.toml: {}", e))?;
+
+    if web {
+        return scaffold_web(root, &name, verbose);
+    }
 
     let sources: Vec<(&str, String)> = if lib {
         fs::create_dir(root.join("lib")).context("Failed to create lib directory")?;
@@ -98,10 +107,64 @@ pub fn execute(name: String, lib: bool, verbose: bool) -> Result<()> {
         println!("   olang test           # run the library's tests");
         println!();
         println!("Use it from another package:");
-        println!("   otc pkg add {} --path ../{}", name, name);
+        println!(
+            "   otc add ../{}  # or: otc lib add ../{} then otc add by name",
+            name, name
+        );
     } else {
         println!("   olang src/main.ol");
     }
+    Ok(())
+}
+
+/// The `--web` shape: the full-stack starter (see `super::web`). Every
+/// generated `.ol` file is parse-checked before writing, same promise
+/// as the other shapes.
+fn scaffold_web(root: &Path, name: &str, verbose: bool) -> Result<()> {
+    for (rel, contents) in super::web::files(name) {
+        let path = root.join(&rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create {}", parent.display()))?;
+        }
+        if super::web::parse_checked(&rel) {
+            olang::parser::Parser::new()
+                .parse(&contents)
+                .map_err(|e| anyhow::anyhow!("Generated {} does not parse: {}", rel, e))?;
+        }
+        fs::write(&path, contents).with_context(|| format!("Failed to write {}", rel))?;
+        if verbose {
+            println!("  wrote {}", rel);
+        }
+    }
+    fs::write(
+        root.join(".gitignore"),
+        "# OS noise
+.DS_Store
+# runtime artifacts
+*.db
+static/olang_playground.wasm
+",
+    )
+    .context("Failed to write .gitignore")?;
+
+    let wasm_note = match super::web::wasm_runtime() {
+        Some(found) => {
+            fs::copy(&found, root.join("static/olang_playground.wasm"))
+                .with_context(|| format!("Failed to copy {}", found.display()))?;
+            format!("   (wasm runtime copied from {})", found.display())
+        }
+        None => "   NOTE: no olang_playground.wasm found on this machine — the API works,
+   the browser frontend needs it. README.md says how to supply one."
+            .to_string(),
+    };
+
+    println!("Created new olang web app: {}", name);
+    println!();
+    println!("Get started:");
+    println!("   cd {}", name);
+    println!("   olang main.ol        # http://127.0.0.1:7500");
+    println!("{}", wasm_note);
     Ok(())
 }
 
@@ -165,9 +228,9 @@ olang fmt              # format the source
 ## Dependencies
 
 ```bash
-otc pkg add somelib --path ../somelib          # local path
-otc pkg add somelib --git URL --tag v1.0.0     # git
-otc pkg install                                # fetch, honoring olang.lock
+otc add ../somelib        # by path
+otc lib add ~/code/somelib   # register once on your shelf, then anywhere:
+otc add somelib           # by name
 ```
 
 Then in your code:
@@ -205,8 +268,9 @@ olang fmt              # format the source
 From the depending package:
 
 ```bash
-otc pkg add {name} --path ../{name}     # or --git URL --tag v1.0.0
-otc pkg install
+otc add ../{name}       # by path — or register it once:
+otc lib add ../{name}
+otc add {name}          # then by name, from any project
 ```
 
 ```olang

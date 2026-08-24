@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **otc, reimagined as the project tool.** The division of labor is one
+  sentence: everything that touches a *file* lives in `olang`;
+  everything that touches a *project* lives in `otc`. The surface is
+  now seven top-level verbs — `new`, `add`, `remove`, `list`,
+  `install`, `lib`, and (coming) `bench` — with `otc pkg ...`
+  flattened away. Gone with it: `otc check` (a stale analyzer wrapper
+  that reported "no issues" on files `olang check` flags), `otc ovm`
+  (ran code, violating otc's own charter), `otc deps`/`unused`
+  (deferred with the analysis work), and the registry/publish surface
+  (dormant until distribution matters; `OLANG_REGISTRY` still works
+  underneath).
+
+### Added
+
+- **The library shelf: local dependencies by name.** `otc lib add
+  ~/code/my-lib` registers a library once, per user; from then on any
+  project says `otc add my-lib` — no paths, no registry. The manifest
+  records only the name (`my-lib = { shelf = "my-lib" }`), so
+  `olang.toml` stays free of machine-specific paths; the lockfile pins
+  the resolved directory and checksum, so a moved or edited library is
+  noticed rather than silently drifted past. `otc add ../my-lib`
+  records a path dependency (relative to the project root, whatever
+  directory the command ran from), and `otc add` in a directory with
+  no manifest creates one instead of demanding an init step. Every
+  mutation ends by resolving, so the lock is never behind the
+  manifest.
+
+- **`otc new --web`: the full-stack starter.** One olang process
+  serving a SQLite-backed JSON API, the page, and the frontend's own
+  olang source, run in the browser through the wasm runtime — the
+  architecture the tracker and ledger examples proved, trimmed to a
+  working notes app where every seam a real app grows along appears
+  exactly once. The scaffold copies in an `olang_playground.wasm` when
+  it can find one (`$OLANG_WASM`, next to the executable, or
+  `~/.olang/`) and says exactly how to supply it when it cannot; the
+  API works either way. Generated `.ol` files are parse-checked before
+  writing, the same promise the other shapes make.
+
+### Changed
+
 - **The pipeline benchmark's two worst in-memory stages, closed.**
   `drop_null` consulted a materialized value per cell — six million
   `Scalar` constructions on a 1M-row frame, cloning every string it

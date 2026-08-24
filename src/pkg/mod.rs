@@ -12,6 +12,7 @@ pub mod lock;
 pub mod manifest;
 pub mod registry;
 pub mod resolver;
+pub mod shelf;
 
 use lock::{LockedPackage, LockedSource, Lockfile};
 use manifest::{Dependency, Manifest};
@@ -213,6 +214,39 @@ fn resolve_dependency(
                 },
             ))
         }
+        Dependency::Shelf { shelf: shelf_name } => {
+            let shelf =
+                shelf::Shelf::load().map_err(|e| PkgError::Resolve(format!("shelf: {}", e)))?;
+            let dir = shelf.resolve(shelf_name).cloned().ok_or_else(|| {
+                PkgError::Resolve(format!(
+                    "dependency '{}' names shelf library '{}', which is not on your shelf                      (register it: `otc lib add <path>`, or use a path: `otc add <path>`)",
+                    name, shelf_name
+                ))
+            })?;
+            if !dir.exists() {
+                return Err(PkgError::Resolve(format!(
+                    "shelf library '{}' points at '{}', which no longer exists                      (re-register it: `otc lib add <path>`)",
+                    shelf_name,
+                    dir.display()
+                )));
+            }
+            let checksum = cache::checksum_dir(&dir).ok();
+            Ok((
+                dir.clone(),
+                LockedPackage {
+                    version: None,
+                    // Locked as the resolved absolute path: replay can
+                    // then work from the lock alone, and `verify` treats
+                    // it with the path-dep leniency (editing your own
+                    // library is development, not tampering).
+                    source: LockedSource::Path {
+                        path: dir.display().to_string(),
+                    },
+                    checksum,
+                    dependencies: sub_dependency_names(&dir),
+                },
+            ))
+        }
         Dependency::Registry(_) | Dependency::RegistryExplicit { .. } => {
             let version = resolution.get(name).ok_or_else(|| {
                 PkgError::Resolve(format!("registry dependency '{}' was not resolved", name))
@@ -281,6 +315,13 @@ fn replay_lock(
         let covered = match (dep, &locked.source) {
             (Dependency::Path { path }, LockedSource::Path { path: locked_path }) => {
                 path == locked_path
+            }
+            (Dependency::Shelf { shelf: sname }, LockedSource::Path { path: locked_path }) => {
+                shelf::Shelf::load()
+                    .ok()
+                    .and_then(|s| s.resolve(sname).cloned())
+                    .map(|dir| dir == Path::new(locked_path))
+                    .unwrap_or(false)
             }
             (
                 Dependency::Git {
