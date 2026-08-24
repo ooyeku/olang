@@ -4,7 +4,7 @@
 # Kept as its own crate so native builds of olang never pay for a cdylib.
 [package]
 name = "olang-playground"
-version = "0.70.0"
+version = "0.71.0"
 edition = "2024"
 publish = false
 
