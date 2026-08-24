@@ -3199,23 +3199,16 @@ impl Interpreter {
         });
     }
 
-    /// Check if a variable is a standard library module (static version)
-    fn is_stdlib_module_static(name: &str, value: &Value) -> bool {
-        // Check if it's a known stdlib module name with Module type
-        matches!(
-            name,
-            "dates"
-                | "math"
-                | "http"
-                | "fs"
-                | "random"
-                | "json"
-                | "csv"
-                | "base64"
-                | "os"
-                | "crypto"
-                | "meta"
-        ) && matches!(value, Value::Struct { type_name, .. } if type_name == "Module")
+    /// Check if a variable is a module binding worth keeping across a
+    /// `:run` cleanup. Any Module-typed value qualifies: the old
+    /// hardcoded name list silently dropped `str` and `time` (among
+    /// others), so the script after the first one found its ambient
+    /// modules wiped while the load tracking still called them loaded —
+    /// "Undefined variable: str" on the second `:run`. Modules are
+    /// namespaces of functions, not state; retaining them all is the
+    /// same persistence `use` already has at the prompt.
+    fn is_stdlib_module_static(_name: &str, value: &Value) -> bool {
+        matches!(value, Value::Struct { type_name, .. } if type_name == "Module")
     }
 
     /// Define a variable in the current environment (for REPL use)

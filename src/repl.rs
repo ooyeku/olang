@@ -1381,6 +1381,14 @@ impl Repl {
                                 std::env::current_dir().unwrap_or_default().join(file_path)
                             };
                             self.interpreter.set_current_file(&absolute_path);
+                            // The file's own argv, exactly as `olang run`
+                            // would install it: argv[0] is the script path
+                            // (run_all.ol resolves its whole target set
+                            // from it). Restored below so prompt-level
+                            // os.args() keeps its previous meaning.
+                            let prior_args = crate::stdlib::os::set_script_args(vec![
+                                absolute_path.to_string_lossy().into_owned(),
+                            ]);
 
                             match self.eval_line(&content) {
                                 Ok(value) => {
@@ -1396,6 +1404,7 @@ impl Repl {
 
                             // Clear file context after execution
                             self.interpreter.clear_current_file();
+                            crate::stdlib::os::restore_script_args(prior_args);
 
                             // Aggressive cleanup after script execution
                             // 1. Clear user environment to free variables

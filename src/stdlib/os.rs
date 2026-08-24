@@ -356,13 +356,28 @@ fn os_pid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Get command line arguments
 /// Usage: os.args() -> Result<[String], Error>
 /// The program's own arguments (argv[0] is the script path, the rest are the
-/// arguments after it). Set by the CLI before execution; when unset (e.g. in
-/// the REPL) `os.args()` falls back to the process arguments.
-static SCRIPT_ARGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+/// arguments after it). Set by the CLI before execution; when unset (e.g. at
+/// the REPL prompt) `os.args()` falls back to the process arguments. A
+/// RwLock rather than a OnceLock so the REPL's `:run` can install the
+/// file's argv for the duration of that run and restore the previous
+/// value after — a script that keys off `os.args()[0]` (run_all.ol
+/// resolves its whole example set from it) behaves the same under
+/// `:run` as under `olang run`.
+static SCRIPT_ARGS: std::sync::RwLock<Option<Vec<String>>> = std::sync::RwLock::new(None);
 
-/// Install the program's argument vector. Called once by the CLI.
-pub fn set_script_args(args: Vec<String>) {
-    let _ = SCRIPT_ARGS.set(args);
+/// Install the program's argument vector, returning what it replaced.
+pub fn set_script_args(args: Vec<String>) -> Option<Vec<String>> {
+    match SCRIPT_ARGS.write() {
+        Ok(mut slot) => slot.replace(args),
+        Err(_) => None,
+    }
+}
+
+/// Restore a previously replaced argument vector (None clears).
+pub fn restore_script_args(previous: Option<Vec<String>>) {
+    if let Ok(mut slot) = SCRIPT_ARGS.write() {
+        *slot = previous;
+    }
 }
 
 fn os_args(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -371,7 +386,8 @@ fn os_args(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
 
     // The script's own argv when the CLI set it, otherwise the process args.
-    let args: Vec<Value> = match SCRIPT_ARGS.get() {
+    let script_args = SCRIPT_ARGS.read().ok().and_then(|slot| slot.clone());
+    let args: Vec<Value> = match script_args {
         Some(script_args) => script_args
             .iter()
             .map(|arg| Value::String(Arc::new(arg.clone())))
