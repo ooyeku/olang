@@ -628,19 +628,40 @@ fn call_target(callee: &Expr) -> String {
     }
 }
 
-/// `meta.eval(source)` — evaluate olang source in a fresh, pure
-/// interpreter and return the program's final value. The evaluation
-/// runs in meta mode: no filesystem, network, processes, clock, or
-/// randomness — the same sandbox meta fns themselves run in, so a value
-/// computed here is a deterministic function of the source. Parse and
-/// runtime failures come back as `Err(message)`, since malformed source
-/// is a condition the caller can handle.
+/// `meta.eval(source)` — the expansion-time form: evaluate olang source
+/// in a fresh, pure interpreter and return the program's final value.
+/// The evaluation runs in meta mode: no filesystem, network, processes,
+/// clock, or randomness — the same sandbox meta fns themselves run in,
+/// so a value computed here is a deterministic function of the source.
+/// Parse and runtime failures come back as `Err(message)`, since
+/// malformed source is a condition the caller can handle.
+///
+/// Outside macro expansion, builtin dispatch routes string arguments to
+/// `Interpreter::eval_source_at_runtime` instead — real evaluation with
+/// effects, judged by the run's own capability table. This function
+/// still validates every call's argument shape: non-string arguments
+/// fall through to the error arms below on both paths.
 fn meta_eval(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let source = match args.first() {
         Some(Value::String(text)) => text.as_str().to_string(),
         Some(Value::Ok(inner)) if matches!(inner.as_ref(), Value::String(_)) => {
             return Err(
                 "meta.eval: expected a source string, got Ok(String) — unwrap the read first: meta.eval(unwrap(f))"
+                    .into(),
+            );
+        }
+        // The other common miss: feeding meta.parse output back in.
+        // Nodes are the analysis format — patterns and types are
+        // summarized, so they cannot be turned back into a program.
+        Some(Value::List(_)) => {
+            return Err(
+                "meta.eval: expected a source string, got a list of parse nodes — meta.parse output is for analysis and cannot be evaluated. Keep the source text and eval that: meta.eval(src)"
+                    .into(),
+            );
+        }
+        Some(Value::Ok(inner)) if matches!(inner.as_ref(), Value::List(_)) => {
+            return Err(
+                "meta.eval: expected a source string, got meta.parse output — parse nodes are for analysis and cannot be evaluated. Eval the source text itself: meta.eval(src)"
                     .into(),
             );
         }

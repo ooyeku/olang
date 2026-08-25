@@ -1021,9 +1021,15 @@ reconstruct one. See
 counts bare `unwrap()` calls per function.
 
 Three functions serve [the macro system](macros.md) and stand on their
-own: `meta.eval(source)` evaluates source in a fresh, pure interpreter
-(no filesystem, network, processes, clock, or randomness) and returns
-`Result` — a deterministic, sandboxed eval; `meta.lit(value)` renders a
+own: `meta.eval(source)` evaluates source text in a child interpreter
+and returns `Result`. At ordinary runtime effects are allowed — the
+child inherits the run's capability table, so evaluated code is judged
+by the same grants, and modules resolve from the current file. Inside a
+meta fn the same call runs in the pure expansion sandbox (no
+filesystem, network, processes, clock, or randomness), keeping macro
+expansion deterministic. It takes source text, not `meta.parse` nodes —
+nodes summarize patterns and types and cannot be turned back into a
+program. `meta.lit(value)` renders a
 value as source text that evaluates back to it, with strings escaped and
 map keys sorted so the output is reproducible; and `meta.fresh(prefix)`
 yields a name no program writes by hand, for generated temporaries.

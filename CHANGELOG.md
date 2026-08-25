@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`meta.eval` at runtime is real evaluation.** The expansion-time
+  purity sandbox (no filesystem, network, clock, randomness) applied to
+  every `meta.eval` call, so evaluating an ordinary program's source at
+  runtime refused at its first effect. The sandbox now belongs to
+  expansion time alone: called outside a meta fn, `meta.eval` runs the
+  source in a child interpreter that inherits the run's capability
+  table (no escalation — evaluated code is judged by the same grants),
+  its `--trace-caps` set, and the current file for module resolution.
+  Inside a meta fn nothing changes: expansion stays a deterministic
+  function of the source. Feeding `meta.parse` output back into
+  `meta.eval` now gets a teaching error — nodes are the analysis
+  format, summarized by design, and cannot be turned back into a
+  program.
+
 ### Fixed
 
 - **Tail-recursive functions reach native code.** Tail-call

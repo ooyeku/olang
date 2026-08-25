@@ -746,3 +746,45 @@ fn a_string_inspecting_macro_receives_macro_free_source() {
     .expect("inspecting macro");
     assert_eq!(out, Value::Integer(1));
 }
+
+// ── meta.eval: runtime vs expansion time ──────────────────────────────
+
+#[test]
+fn meta_eval_at_runtime_allows_effects() {
+    // Outside expansion, meta.eval is real evaluation: the child inherits
+    // the run's capability table, and effectful modules run instead of
+    // refusing. The pure sandbox belongs to expansion time alone.
+    let out = eval(
+        "let r = unwrap(meta.eval(\"random.seed(7)\\nrandom.randint(0, 100)\"))\n\
+         r >= 0 && r <= 100\n",
+    )
+    .expect("runtime eval with effects");
+    assert_eq!(out, Value::Boolean(true));
+}
+
+#[test]
+fn meta_eval_inside_a_meta_fn_stays_pure() {
+    // The same call from a meta fn body keeps the expansion sandbox:
+    // determinism of expansion is the contract, and runtime leniency
+    // must not leak into it.
+    let err = eval(
+        "meta fn evil(x) = { let v = unwrap(meta.eval(\"random.randint(0, 3)\")); `1` }\n\
+         let y = @evil(0)\n",
+    )
+    .expect_err("purity through meta.eval");
+    assert!(
+        err.contains("not available at expansion time"),
+        "expansion-time meta.eval must stay sandboxed: {err}"
+    );
+}
+
+#[test]
+fn meta_eval_refuses_parse_nodes_and_names_the_fix() {
+    // meta.parse output is the analysis format — summarized, not
+    // reconstructable. Feeding it back must teach, not just refuse.
+    let err = eval("meta.eval(unwrap(meta.parse(\"1 + 1\")))\n").expect_err("nodes are not source");
+    assert!(
+        err.contains("cannot be evaluated"),
+        "the error must explain nodes are not source: {err}"
+    );
+}

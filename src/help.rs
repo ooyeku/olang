@@ -1524,13 +1524,14 @@ impl HelpSystem {
     fn add_meta_functions(&mut self) {
         self.add_function(FunctionDoc {
             name: "meta.eval".to_string(),
-            description: "Evaluate olang source in a fresh, pure interpreter and return the program's final value. Runs in meta mode — no filesystem, network, processes, clock, or randomness — so the result is a deterministic function of the source. This is the compute half of compile-time evaluation: a meta fn calls it on an argument's source and splices the result with meta.lit (docs/macros.md).".to_string(),
+            description: "Evaluate olang source and return the program's final value. At ordinary runtime the source runs in a child interpreter with effects allowed, judged by the run's own capability table and resolving modules from the current file. Inside a meta fn the same call runs in the pure expansion sandbox — no filesystem, network, processes, clock, or randomness — so macro expansion stays a deterministic function of the source; there it is the compute half of compile-time evaluation, paired with meta.lit (docs/macros.md). Takes source text, not meta.parse nodes: nodes are the analysis format and cannot be turned back into a program.".to_string(),
             syntax: "meta.eval(source)".to_string(),
             parameters: vec!["source: String - olang source text to evaluate".to_string()],
             return_type: "Result<value, Error>".to_string(),
             examples: vec![
                 r#"unwrap(meta.eval("2 + 3"))  // 5"#.to_string(),
-                r#"meta.eval("fs.read_file(...)")  // Err: not available at expansion time"#.to_string(),
+                r#"meta.eval(unwrap(fs.read_file("script.ol")))  // run a file's source"#.to_string(),
+                r#"meta fn bake(e) = meta.lit(unwrap(meta.eval(e)))  // pure at expansion time"#.to_string(),
             ],
             category: "Meta".to_string(),
             see_also: vec!["meta.lit".to_string(), "meta.parse".to_string()],

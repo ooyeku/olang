@@ -94,8 +94,11 @@ To *inspect* an argument rather than splice it, parse it: `meta.parse`
 returns [the Open AST](stdlib.md#meta--the-program-as-data-the-open-ast)
 as ordinary maps, and a macro walks them with the same `map`/`filter`
 as any other data. To *compute* with an argument, evaluate it:
-`meta.eval` runs source in the same pure sandbox the meta fn itself
-occupies. And `meta.lit` renders a value back into source — together
+`meta.eval` called from a meta fn runs source in the same pure sandbox
+the meta fn itself occupies. (Called at ordinary runtime, outside
+expansion, `meta.eval` is real evaluation — effects allowed, under the
+run's own capability grants.) And `meta.lit` renders a value back into
+source — together
 they are compile-time computation in userland:
 
 ```olang

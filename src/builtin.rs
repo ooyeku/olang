@@ -765,6 +765,18 @@ impl BuiltinFunctions {
 
         // Handle meta (Open AST) functions
         if let Some(meta_function) = name.strip_prefix("meta.") {
+            // `meta.eval` at plain runtime is real evaluation: the child
+            // inherits this run's capability table and module context, and
+            // effects are allowed. The pure sandbox in the stdlib path
+            // applies only during macro expansion (and to non-string
+            // arguments, which fall through for its error messages).
+            if meta_function == "eval"
+                && !interpreter.in_meta_mode()
+                && let Some(Value::String(src)) = arguments.first()
+            {
+                let src = src.clone();
+                return Ok(interpreter.eval_source_at_runtime(&src));
+            }
             return crate::stdlib::meta::call_meta_function(meta_function, arguments).map_err(
                 |e| InterpreterError::RuntimeError {
                     message: e.to_string(),

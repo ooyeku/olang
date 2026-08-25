@@ -3931,6 +3931,39 @@ impl Interpreter {
         self.meta_mode
     }
 
+    /// `meta.eval` outside macro expansion: evaluate source in a child
+    /// interpreter that inherits this run's authority — the capability
+    /// table (evaluated code is judged by the same grants, so eval is
+    /// not an escalation), the `--trace-caps` set, the dependency map,
+    /// and the current file for module resolution. Effects are allowed;
+    /// the pure sandbox applies only at expansion time, where it is
+    /// what makes expansion deterministic. Parse and runtime failures
+    /// come back as `Err(message)` values, matching the sandboxed form.
+    ///
+    /// A run being recorded or replayed does not extend into the child:
+    /// the timeline covers the main program's own dispatch only.
+    pub fn eval_source_at_runtime(&self, source: &str) -> Value {
+        let err = |m: String| Value::Err(Box::new(Value::String(std::sync::Arc::new(m))));
+        let program = match crate::parser::Parser::new().parse(source) {
+            Ok(p) => p,
+            Err(e) => return err(format!("{}", e)),
+        };
+        let mut child = Interpreter::new();
+        child.caps = self.caps.clone();
+        child.caps_trace = self.caps_trace.clone();
+        child.dependency_map = self.dependency_map.clone();
+        // Re-seed through the setter, not the field: module discovery
+        // reads the path back out of the module cache, which the setter
+        // populates.
+        if let Some(path) = self.current_module_path.as_ref() {
+            child.set_current_file(std::path::Path::new(path));
+        }
+        match child.eval_program(program) {
+            Ok(v) => Value::Ok(Box::new(v)),
+            Err(e) => err(format!("{}", e)),
+        }
+    }
+
     /// Is line coverage being collected? Auto-parallel checks this too:
     /// worker clones do not record coverage, so fanning out would
     /// silently drop the kernel's lines from the report.
