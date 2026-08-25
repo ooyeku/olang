@@ -1160,6 +1160,15 @@ struct BundleMeta {
     /// (`std::env::consts::ARCH`, e.g. "aarch64", "x86_64").
     #[serde(default)]
     built_arch: String,
+    /// The tier profile (`ovm::warm` TOML) the build machine's sidecar
+    /// held for this source, when one existed — a run of the source
+    /// before building leaves it. The built binary installs it at
+    /// startup, so its first run on any machine pre-compiles and
+    /// pre-specializes the proven-hot functions. A hint like every warm
+    /// profile: it can never change a result, so it is provenance, not
+    /// integrity — and deliberately outside the digest, like `built_os`.
+    #[serde(default)]
+    warm: Option<String>,
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -1407,6 +1416,14 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
             source,
             ..
         } => {
+            // Install the build-time tier profile before execution; a
+            // sidecar left by a previous run here still wins inside
+            // warm::load.
+            if let Some(text) = meta.as_ref().and_then(|m| m.warm.as_deref())
+                && let Ok(profile) = toml::from_str::<olang::ovm::warm::WarmProfile>(text)
+            {
+                olang::ovm::warm::set_embedded(profile);
+            }
             let manifest_caps = meta
                 .as_ref()
                 .and_then(|m| m.manifest.as_deref())
@@ -1930,6 +1947,11 @@ fn build_executable(
         // OS/arch, so `olang inspect` can flag one that wandered off-platform.
         built_os: std::env::consts::OS.to_string(),
         built_arch: std::env::consts::ARCH.to_string(),
+        // Ship the tier knowledge a prior run of this source left on the
+        // build machine (run once, then build = a PGO artifact).
+        warm: olang::ovm::warm::load(&src)
+            .filter(|p| !p.functions.is_empty())
+            .and_then(|p| toml::to_string(&p).ok()),
     };
     let meta_json =
         serde_json::to_vec(&meta).map_err(|e| anyhow::anyhow!("serialize meta: {}", e))?;

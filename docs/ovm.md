@@ -492,7 +492,12 @@ compiles and specializes those functions at declaration time instead
 of at first call. Profiles are hints: the tier's qualification and
 specialization run exactly as they would have, just earlier, so a
 stale or corrupted profile can cost a wasted attempt and nothing else.
-`OLANG_WARM=0` disables it for measurement.
+`OLANG_WARM=0` disables it for measurement. `olang build` embeds the
+build machine's profile for the source into the artifact (run once,
+then build), and the built binary installs it at startup — so its
+first run on a machine that has never seen the program is already
+warm. A sidecar profile on the running machine wins over the embedded
+one: a real run there is fresher evidence.
 
 **Tier counters.** `OLANG_TIER_STATS=1` prints the run's tier counters
 to stderr after a successful `olang run`: one aggregate line

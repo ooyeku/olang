@@ -79,14 +79,35 @@ fn key_for(source: &str) -> String {
         .collect()
 }
 
-/// The profile a previous run of byte-identical source left, if any.
+/// The profile `olang build` embedded in the running binary, when this
+/// process is a built artifact that carried one. A sidecar profile for
+/// the same source wins over it — a real run on this machine is fresher
+/// evidence than build-time knowledge — so this is `load`'s fallback,
+/// which is exactly what gives a built binary a warm first run on a
+/// machine that has never seen it.
+static EMBEDDED: std::sync::OnceLock<WarmProfile> = std::sync::OnceLock::new();
+
+/// Install the profile a built binary carries (called once at startup by
+/// the embedded runner; a second call is ignored).
+pub fn set_embedded(profile: WarmProfile) {
+    let _ = EMBEDDED.set(profile);
+}
+
+/// The profile a previous run of byte-identical source left, if any —
+/// falling back to the one embedded at build time.
 pub fn load(source: &str) -> Option<WarmProfile> {
     if disabled() {
         return None;
     }
-    let path = warm_dir()?.join(format!("{}.toml", key_for(source)));
-    let text = std::fs::read_to_string(path).ok()?;
-    toml::from_str(&text).ok()
+    if let Some(dir) = warm_dir() {
+        let path = dir.join(format!("{}.toml", key_for(source)));
+        if let Ok(text) = std::fs::read_to_string(path)
+            && let Ok(profile) = toml::from_str(&text)
+        {
+            return Some(profile);
+        }
+    }
+    EMBEDDED.get().cloned()
 }
 
 /// Persist what this run learned. Failures are swallowed: a read-only

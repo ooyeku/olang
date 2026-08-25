@@ -99,3 +99,72 @@ fn a_run_leaves_a_profile_and_the_next_replays_it() {
 
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn a_built_binary_carries_and_replays_its_warm_profile() {
+    // Run once (leaving a sidecar), build (embedding it), then run the
+    // built binary against a fresh warm directory — the "new machine"
+    // case the embedding exists for. The profile must travel in the
+    // bundle meta and the output must be byte-identical.
+    let base = std::env::temp_dir().join(format!("olang_warm_build_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let warm_dir = base.join("warm");
+    let script = base.join("hot.ol");
+    std::fs::write(
+        &script,
+        "fn hot(a, b) = {\n\
+             let mut acc = 0\n\
+             let mut i = 0\n\
+             while i < 50000 { acc = (acc + a * i + b) % 1000003 i = i + 1 }\n\
+             acc\n\
+         }\n\
+         let mut total = 0\n\
+         for r in range(0, 40) { total = (total + hot(r, r + 1)) % 1000003 }\n\
+         println(total)\n",
+    )
+    .unwrap();
+
+    let sidecar_run = run(&script, &warm_dir);
+
+    let bin = base.join("hotbin");
+    let out = Command::new(olang())
+        .arg("build")
+        .arg(&script)
+        .arg("-o")
+        .arg(&bin)
+        .env("OLANG_WARM_DIR", &warm_dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let bytes = std::fs::read(&bin).unwrap();
+    let hay = String::from_utf8_lossy(&bytes);
+    assert!(
+        hay.contains("name = \\\"hot\\\"") || hay.contains("name = \"hot\""),
+        "the bundle meta must carry the warm profile"
+    );
+
+    // A machine that has never run this source: fresh warm dir.
+    let fresh = base.join("fresh");
+    let out = Command::new(&bin)
+        .env("OLANG_WARM_DIR", &fresh)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "built binary failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        sidecar_run,
+        "the embedded profile must never change a result"
+    );
+
+    let _ = std::fs::remove_dir_all(&base);
+}
