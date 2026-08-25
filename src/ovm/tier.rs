@@ -424,6 +424,55 @@ impl BytecodeTier {
         self.run_on_vm(func_id, args, Some(name))
     }
 
+    /// Run a whole `map`/`filter` on the VM: the list converts once, the
+    /// native loop runs (kernel compiled by identity, JIT included), and
+    /// the result converts once. Returns None when the VM declines —
+    /// the caller's per-element path is the unchanged fallback. This is
+    /// what keeps a top-level `xs |> map((n) => ...)` off the
+    /// per-element boundary: the interpreter used to cross into the
+    /// tier once per item, and the crossing cost more than the kernel.
+    pub fn try_hof(
+        &mut self,
+        name: &str,
+        kernel: &crate::ast::Function,
+        items: &[Value],
+        init: Option<&Value>,
+    ) -> Option<Result<Value, String>> {
+        let mut ovm_items = Vec::with_capacity(items.len());
+        for v in items {
+            ovm_items.push(crate::ovm::value::OvmValue::from_ast(v.clone()));
+        }
+        let mut args = vec![crate::ovm::value::OvmValue::new_list(ovm_items)];
+        if let Some(v) = init {
+            args.push(crate::ovm::value::OvmValue::from_ast(v.clone()));
+        }
+        args.push(crate::ovm::value::OvmValue::from_ast(Value::Function(
+            kernel.clone(),
+        )));
+        let out = self.vm.native_hof(name, &args);
+        if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
+            eprintln!(
+                "[hof] tier {} n={} -> {}",
+                name,
+                items.len(),
+                match &out {
+                    None => "declined",
+                    Some(Ok(_)) => "ran",
+                    Some(Err(_)) => "error",
+                }
+            );
+        }
+        let out = out?;
+        self.stats.bytecode_calls += 1;
+        Some(match out {
+            Ok(value) => match value.to_ast() {
+                Ok(ast) => Ok(ast),
+                Err(_) => return None,
+            },
+            Err(e) => Err(format!("{}", e)),
+        })
+    }
+
     /// Convert the arguments, run the compiled body on the VM, and convert
     /// the result back — the shared tail of every tiered call, whether the
     /// callee was resolved by name or (for an ambiguous name) by identity.

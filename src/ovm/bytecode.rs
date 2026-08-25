@@ -4664,6 +4664,18 @@ impl BytecodeVm {
     /// which remains the semantic authority for everything declined here.
     /// Never falls back mid-loop: once the loop starts, an element error is
     /// the call's error, exactly as the interpreter propagates it.
+    /// The tier-facing door to the native higher-order loops: the
+    /// interpreter's builtin `map`/`filter` convert their list once,
+    /// call this, and convert the result once — where the per-element
+    /// route paid a full interpreter→tier boundary per item.
+    pub(crate) fn native_hof(
+        &mut self,
+        name: &str,
+        args: &[OvmValue],
+    ) -> Option<Result<OvmValue, BytecodeError>> {
+        self.try_native_higher_order(name, args)
+    }
+
     fn try_native_higher_order(
         &mut self,
         name: &str,
@@ -4780,6 +4792,78 @@ impl BytecodeVm {
                         }
                     }
                     Ok(OvmValue::new_list(out))
+                };
+                Some(run())
+            }
+            "fold" | "reduce" if args.len() == 3 => {
+                let items = match &args[0].data {
+                    ValueData::List(items) => items.clone(),
+                    _ => return None,
+                };
+                let (func_id, captures) = match &args[2].data {
+                    ValueData::AstFunction(f) => {
+                        let f = f.clone();
+                        (self.hof_function_id(&f, 2)?, Vec::new())
+                    }
+                    ValueData::Closure(c) if c.template.parameters.len() == 2 => {
+                        (c.func_id, c.captured.clone())
+                    }
+                    _ => return None,
+                };
+                let mut acc = args[1].clone();
+                // Same two-lane structure as map: a fused loop when the
+                // body is pure bytecode with no checks, the JIT-aware
+                // `execute` otherwise. The accumulator threads through
+                // slot 0; the element takes slot 1.
+                let fused_ok = {
+                    if let Ok(bytecode) = self.get_bytecode(func_id) {
+                        let jit_owned = {
+                            #[cfg(feature = "native")]
+                            {
+                                self.jit.has(func_id) || self.jit.is_pending(func_id)
+                            }
+                            #[cfg(not(feature = "native"))]
+                            {
+                                false
+                            }
+                        };
+                        if !jit_owned
+                            && bytecode.param_checks.is_empty()
+                            && bytecode.param_count == 2 + captures.len()
+                        {
+                            Some(bytecode)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+                if let Some(bytecode) = fused_ok {
+                    let mut call_args = Vec::with_capacity(2 + captures.len());
+                    call_args.push(OvmValue::new_unit());
+                    call_args.push(OvmValue::new_unit());
+                    call_args.extend(captures.iter().cloned());
+                    for item in items.iter() {
+                        call_args[0] = acc;
+                        call_args[1] = item.clone();
+                        acc = match self.execute_prepared(&bytecode, &call_args) {
+                            Ok(r) => r,
+                            Err(e) => return Some(Err(e)),
+                        };
+                    }
+                    return Some(Ok(acc));
+                }
+                let mut call_args = Vec::with_capacity(2 + captures.len());
+                let mut run = || -> Result<OvmValue, BytecodeError> {
+                    for item in items.iter() {
+                        call_args.clear();
+                        call_args.push(acc.clone());
+                        call_args.push(item.clone());
+                        call_args.extend(captures.iter().cloned());
+                        acc = self.execute(func_id, &call_args)?;
+                    }
+                    Ok(acc.clone())
                 };
                 Some(run())
             }

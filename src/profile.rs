@@ -54,10 +54,14 @@ pub enum Tier {
 /// qualifies an anonymous frame, where the useful answer is the user
 /// function further up.
 const BUILTIN_BIT: u8 = 0x80;
+/// Marks a frame as anonymous (its display name is qualified by a
+/// parent). Rides the tier byte like BUILTIN_BIT so the parent walk in
+/// `named_parent` reads bits instead of interned names.
+const ANON_BIT: u8 = 0x40;
 
 impl Tier {
     fn from_u8(v: u8) -> Tier {
-        match v & !BUILTIN_BIT {
+        match v & !(BUILTIN_BIT | ANON_BIT) {
             1 => Tier::Vm,
             2 => Tier::Native,
             _ => Tier::Interpreter,
@@ -81,7 +85,6 @@ struct ThreadStack {
     depth: AtomicUsize,
     frames: [AtomicU32; MAX_FRAMES],
     tiers: [AtomicU8; MAX_FRAMES],
-    live: AtomicBool,
     /// False for the first thread to run olang code, true for the
     /// parallel workers that register later. Worth distinguishing: work
     /// handed to `par_map` (or to the automatic parallelism a large
@@ -96,7 +99,6 @@ impl ThreadStack {
             depth: AtomicUsize::new(0),
             frames: std::array::from_fn(|_| AtomicU32::new(0)),
             tiers: std::array::from_fn(|_| AtomicU8::new(0)),
-            live: AtomicBool::new(true),
             worker,
         }
     }
@@ -181,29 +183,31 @@ fn is_anonymous(name: &str) -> bool {
         || name.starts_with("<lambda in")
 }
 
-/// An anonymous frame named by the nearest ancestor that *has* a name:
-/// `<lambda in bench>` locates a lambda the way a reader would describe
-/// it, where a bare `<lambda>` at the top of a profile says only that
-/// the program uses lambdas.
-fn qualified(name: &str) -> String {
-    if !is_anonymous(name) {
-        return name.to_string();
-    }
-    LOCAL.with(|stack| {
-        let depth = stack.depth.load(Ordering::Relaxed).min(MAX_FRAMES);
-        for i in (0..depth).rev() {
-            if stack.tiers[i].load(Ordering::Relaxed) & BUILTIN_BIT != 0 {
-                // `map` is where the lambda runs, not where a reader
-                // would look for it.
-                continue;
-            }
-            let parent = name_of(stack.frames[i].load(Ordering::Relaxed));
-            if !is_anonymous(&parent) {
-                return format!("<lambda in {}>", parent);
-            }
+thread_local! {
+    /// Per-thread memo of resolved frame names: (name ptr, name len,
+    /// parent frame id) → interned id. The steady state of a profiled
+    /// program is the same functions pushed millions of times; this is
+    /// what keeps those pushes off the global intern lock, which
+    /// otherwise serializes every thread of a parallel program into a
+    /// crawl.
+    static NAME_MEMO: std::cell::RefCell<HashMap<(usize, usize, u32), u32>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// The nearest named, non-builtin ancestor's frame id on this thread's
+/// stack — the qualifier for an anonymous frame (`<lambda in bench>`
+/// locates a lambda the way a reader would describe it). Reads only
+/// this thread's atomics: builtin and anonymous frames are recognized
+/// by bits, never by interned names, so no lock is taken.
+fn named_parent(stack: &ThreadStack) -> u32 {
+    let depth = stack.depth.load(Ordering::Relaxed).min(MAX_FRAMES);
+    for i in (0..depth).rev() {
+        let bits = stack.tiers[i].load(Ordering::Relaxed);
+        if bits & (BUILTIN_BIT | ANON_BIT) == 0 {
+            return stack.frames[i].load(Ordering::Relaxed);
         }
-        "<lambda>".to_string()
-    })
+    }
+    u32::MAX
 }
 
 #[inline]
@@ -211,15 +215,44 @@ pub fn push(name: &str, tier: Tier) -> bool {
     if !enabled() {
         return false;
     }
-    // Normalizing before interning is what lets the sampler's
-    // adjacent-duplicate collapse fold a promoted call's interpreter,
-    // VM, and native frames into the single function they describe.
-    let id = intern(&qualified(name));
+    let anon = is_anonymous(name);
     LOCAL.with(|stack| {
+        // Resolve the display name through the per-thread memo; the
+        // global intern lock is touched once per new (name, parent)
+        // pair per thread, not per call. Normalizing the anonymous
+        // spellings before interning is what lets the sampler's
+        // adjacent-duplicate collapse fold a promoted call's
+        // interpreter, VM, and native frames into one function.
+        let parent = if anon { named_parent(stack) } else { u32::MAX };
+        let key = (name.as_ptr() as usize, name.len(), parent);
+        let id = match NAME_MEMO.with(|m| m.borrow().get(&key).copied()) {
+            Some(hit) => hit,
+            None => {
+                let resolved = if anon {
+                    if parent == u32::MAX {
+                        "<lambda>".to_string()
+                    } else {
+                        format!("<lambda in {}>", name_of(parent))
+                    }
+                } else {
+                    name.to_string()
+                };
+                let id = intern(&resolved);
+                NAME_MEMO.with(|m| {
+                    let mut m = m.borrow_mut();
+                    if m.len() >= 4096 {
+                        m.clear();
+                    }
+                    m.insert(key, id);
+                });
+                id
+            }
+        };
+        let bits = tier as u8 | if anon { ANON_BIT } else { 0 };
         let depth = stack.depth.load(Ordering::Relaxed);
         if depth < MAX_FRAMES {
             stack.frames[depth].store(id, Ordering::Relaxed);
-            stack.tiers[depth].store(tier as u8, Ordering::Relaxed);
+            stack.tiers[depth].store(bits, Ordering::Relaxed);
         }
         // Depth counts past the array so pops stay balanced; frames
         // beyond MAX_FRAMES simply are not recorded.
@@ -307,15 +340,19 @@ pub fn start(interval_us: u64) -> Session {
 }
 
 fn sample_once(out: &mut Collected) {
-    let Ok(stacks) = registry().stacks.lock() else {
+    let Ok(mut stacks) = registry().stacks.lock() else {
         return;
     };
+    // Prune threads that have exited: their thread-local clone dropped,
+    // leaving the registry's Arc as the only owner. Without this a
+    // spawn-heavy program (an http server, a task fan-out) grows the
+    // list without bound, every tick scans all of it under the same
+    // lock new threads need to register — and thread creation and the
+    // sampler livelock each other.
+    stacks.retain(|s| std::sync::Arc::strong_count(s) > 1);
     out.total += 1;
     let mut saw_any = false;
     for stack in stacks.iter() {
-        if !stack.live.load(Ordering::Relaxed) {
-            continue;
-        }
         let depth = stack.depth.load(Ordering::Relaxed).min(MAX_FRAMES);
         if depth == 0 {
             continue;
@@ -336,7 +373,7 @@ fn sample_once(out: &mut Collected) {
         // The builtin bit rides along: a builtin's time is Rust, and
         // counting it as interpreter time would misattribute exactly
         // the thing this profiler exists to report honestly.
-        let leaf_tier = stack.tiers[depth - 1].load(Ordering::Relaxed);
+        let leaf_tier = stack.tiers[depth - 1].load(Ordering::Relaxed) & !ANON_BIT;
         let leaf = stack.frames[depth - 1].load(Ordering::Relaxed);
         if stack.worker {
             out.worker_samples += 1;

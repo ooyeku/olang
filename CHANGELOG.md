@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`map`, `filter`, and `fold` run their whole loop on the compiled
+  tiers.** A kernel passed to these builtins used to pay a full
+  interpreter→tier boundary crossing per element — the kernel itself
+  ran native in nanoseconds while the per-element dispatch around it
+  cost fifty times more, which is why profiles of idiomatic pipelines
+  read "mostly interpreter". The builtins now hand the entire loop to
+  the VM: one list conversion in, one native loop (JIT included), one
+  conversion out; parallel chunks do the same per chunk, so automatic
+  parallelism and `par_map` compose with native execution. Kernels the
+  tier declines (defaults, bounds, uncompilable bodies) fall back to
+  the unchanged per-element path. Measured with identical results: a
+  2M-element map·filter pipeline 904 ms → 153 ms, a 2M fold 449 ms →
+  81 ms, examples/benchmark.ol 1001 ms → 350 ms with its tier profile
+  going from 91% interpreted to ~0%.
+
+### Fixed
+
+- **The profiler no longer slows or stalls threaded programs.** Two
+  defects: exited threads never left the sampler's registry, so a
+  spawn-heavy program grew the scan list without bound while thread
+  creation and the sampler contended on the same lock (the observed
+  `--profile` hang); and every frame push took the global intern lock,
+  serializing all threads of a parallel program into a crawl. Dead
+  stacks are now pruned each tick, and pushes resolve names through a
+  per-thread memo — the steady state takes no lock at all.
+
+### Changed
+
 - **otc, reimagined as the project tool.** The division of labor is one
   sentence: everything that touches a *file* lives in `olang`;
   everything that touches a *project* lives in `otc`. The surface is

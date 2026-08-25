@@ -1091,6 +1091,13 @@ impl BuiltinFunctions {
             return Ok(Value::List(results.into()));
         }
 
+        // The whole loop on the compiled tier when it will take it: one
+        // list conversion in, one native loop, one conversion out — where
+        // the per-element route pays a full boundary per item.
+        if let Some(result) = interpreter.tier_hof("map", function, list_ref) {
+            return result;
+        }
+
         let mut result = Vec::with_capacity(list_ref.len());
         for item in list_ref.iter() {
             let value = interpreter.call_function_optimized(function, vec![item.clone()])?;
@@ -1108,6 +1115,9 @@ impl BuiltinFunctions {
         if Self::auto_parallel_eligible(range_vec.len(), function, interpreter) {
             let results = Self::parallel_apply(&range_vec, function, interpreter)?;
             return Ok(Value::List(results.into()));
+        }
+        if let Some(result) = interpreter.tier_hof("map", function, &range_vec) {
+            return result;
         }
         let mut result = Vec::with_capacity(range_vec.len());
         for item in range_vec.iter() {
@@ -1203,6 +1213,10 @@ impl BuiltinFunctions {
                 .filter_map(|(item, v)| matches!(v, Value::Boolean(true)).then(|| item.clone()))
                 .collect();
             return Ok(Value::List(kept.into()));
+        }
+
+        if let Some(result) = interpreter.tier_hof("filter", function, list_ref) {
+            return result;
         }
 
         let mut result = Vec::with_capacity(list_ref.len());
@@ -1533,6 +1547,12 @@ impl BuiltinFunctions {
                             .enumerate()
                             .map(|(chunk_idx, chunk)| {
                                 let mut worker = interpreter.thread_safe_clone();
+                                if std::env::var("OLANG_DEBUG_AUTOPAR").is_ok() && chunk_idx == 0 {
+                                    eprintln!(
+                                        "worker tier present: {}",
+                                        worker.bytecode_tier_present()
+                                    );
+                                }
                                 // A per-worker copy of the kernel with fresh
                                 // body/closure Arcs: every call verifies the
                                 // HOF cache through those Arcs' weak counts,
@@ -1545,6 +1565,18 @@ impl BuiltinFunctions {
                                     other => other.clone(),
                                 };
                                 scope.spawn(move || {
+                                    // Whole-chunk native first: one boundary
+                                    // per chunk instead of one per element.
+                                    // parallel_apply is always map-shaped
+                                    // (filter zips verdicts afterwards), so
+                                    // "map" is the right kernel either way.
+                                    if let Some(result) = worker.tier_hof("map", &function, chunk) {
+                                        return match result {
+                                            Ok(Value::List(items)) => Ok(items.as_ref().clone()),
+                                            Ok(other) => Ok(vec![other]),
+                                            Err(e) => Err((chunk_idx * chunk_size, e)),
+                                        };
+                                    }
                                     let mut out = Vec::with_capacity(chunk.len());
                                     for (i, item) in chunk.iter().enumerate() {
                                         match worker
@@ -1553,6 +1585,14 @@ impl BuiltinFunctions {
                                             Ok(v) => out.push(v),
                                             Err(e) => return Err((chunk_idx * chunk_size + i, e)),
                                         }
+                                    }
+                                    if std::env::var("OLANG_DEBUG_AUTOPAR").is_ok()
+                                        && chunk_idx == 0
+                                    {
+                                        eprintln!(
+                                            "worker tier stats: {:?}",
+                                            worker.bytecode_tier_stats()
+                                        );
                                     }
                                     Ok(out)
                                 })
@@ -1661,6 +1701,12 @@ impl BuiltinFunctions {
             }
         };
         let list = list_rc.as_ref();
+        // The whole fold on the compiled tier when it will take it —
+        // the accumulator threads natively instead of crossing the
+        // boundary twice per element.
+        if let Some(result) = interpreter.tier_hof_with("fold", &args[2], list, Some(&args[1])) {
+            return result;
+        }
         let mut acc = args[1].clone();
         let function = &args[2];
         for item in list.iter() {

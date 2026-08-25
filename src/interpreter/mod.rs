@@ -491,6 +491,51 @@ impl Interpreter {
 
     /// The bytecode tier, when one is enabled — the VM's bridge seeds
     /// its registry through this.
+    /// Whether this interpreter carries a bytecode tier (diagnostics).
+    pub fn bytecode_tier_present(&self) -> bool {
+        self.bytecode_tier.is_some()
+    }
+
+    /// Run a whole `map`/`filter` over `items` on the compiled tier, or
+    /// None when the tier declines and the caller's per-element loop
+    /// should run instead. Kernels with defaults or bounds stay on the
+    /// interpreter, where those features live.
+    pub fn tier_hof(
+        &mut self,
+        name: &str,
+        function: &Value,
+        items: &[Value],
+    ) -> Option<Result<Value, InterpreterError>> {
+        self.tier_hof_with(name, function, items, None)
+    }
+
+    /// The fold shape: same door, with the initial accumulator.
+    pub fn tier_hof_with(
+        &mut self,
+        name: &str,
+        function: &Value,
+        items: &[Value],
+        init: Option<&Value>,
+    ) -> Option<Result<Value, InterpreterError>> {
+        let Value::Function(f) = function else {
+            return None;
+        };
+        let arity = if init.is_some() { 2 } else { 1 };
+        if f.parameters.len() != arity
+            || f.parameters.iter().any(|p| p.default_value.is_some())
+            || !f.param_bounds.is_empty()
+        {
+            return None;
+        }
+        let mut tier = self.bytecode_tier.take()?;
+        let out = tier.try_hof(name, f, items, init);
+        self.bytecode_tier = Some(tier);
+        match out? {
+            Ok(v) => Some(Ok(v)),
+            Err(message) => Some(Err(Self::map_tier_error_message(message))),
+        }
+    }
+
     pub fn bytecode_tier_mut(&mut self) -> Option<&mut crate::ovm::tier::BytecodeTier> {
         self.bytecode_tier.as_deref_mut()
     }
