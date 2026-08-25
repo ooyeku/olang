@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Capability-specialized compilation, on by default.** Under a static
+  manifest (`--deny`, or an `[capabilities]` block), the bytecode
+  compiler knows the whole run's grant and each function's provenance —
+  so `caps.allowed("net")` compiles to a constant, the branch it guards
+  folds, and the denied side is swept to dead code. Sandboxed code gets
+  faster, not slower: the degradation branch a program writes for the
+  denied case no longer taxes the granted path, and code that can never
+  run stops counting against JIT qualification. Calls the manifest
+  provably grants skip the runtime gate's per-call table walk (denied
+  calls keep the full gate — the error message is its job), and
+  `--trace-caps` recording and the argument-dependent `fs` sub-gate are
+  untouched. Two new optimizer passes carry it: constant-branch folding
+  and an unreachable-code sweep, both general (a literal `while true`
+  benefits the same way).
+
 ## [0.72.0] - 2026-08-24
 
 ### Changed

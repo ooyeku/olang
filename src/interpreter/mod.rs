@@ -252,6 +252,9 @@ pub struct Interpreter {
     /// Canonicalized-path memo for capability attribution (def_file
     /// strings -> real paths), so the gate never repeats a syscall.
     caps_path_cache: HashMap<String, std::path::PathBuf>,
+    /// One-shot pre-grant from the bytecode compiler (see
+    /// `set_cap_pregranted`); consumed by the next `capability_denial`.
+    cap_pregranted: bool,
 
     /// Declared struct types: name -> field names. Construction of a
     /// declared struct validates its field set; an undeclared struct-literal
@@ -323,6 +326,7 @@ impl Interpreter {
             meta_mode: false,
             caps_trace: None,
             caps_path_cache: HashMap::new(),
+            cap_pregranted: false,
             timeline: None,
             struct_defs: HashMap::new(),
             struct_field_checks: HashMap::new(),
@@ -2610,6 +2614,7 @@ impl Interpreter {
             // per-program.
             caps_trace: self.caps_trace.clone(),
             caps_path_cache: HashMap::new(),
+            cap_pregranted: false,
             // The timeline does not span worker threads (v1 records a
             // single thread of effects); workers run live. That silently
             // breaks the "clean replay is proof" property, so crossing a
@@ -4035,7 +4040,20 @@ impl Interpreter {
     /// The capability gate, called from builtin dispatch. None = allowed.
     /// Some(message) = denied, with the message naming the capability,
     /// the call, and the package whose grant refused it.
+    /// Arm the compile-time capability pre-grant for the next builtin
+    /// dispatch: the bytecode compiler proved the static manifest grants
+    /// that call, so `capability_denial` skips its table walk once.
+    /// One-shot by design — consumed by the very next check, which is
+    /// the first thing `call_internal` does.
+    pub fn set_cap_pregranted(&mut self) {
+        self.cap_pregranted = true;
+    }
+
     pub fn capability_denial(&mut self, full_name: &str) -> Option<String> {
+        if self.cap_pregranted {
+            self.cap_pregranted = false;
+            return None;
+        }
         let (caps, package) = self.current_caps()?;
         let denied = crate::caps::check(&caps, full_name)?;
         Some(match package {

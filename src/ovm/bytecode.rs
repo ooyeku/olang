@@ -198,6 +198,12 @@ pub struct BytecodeVm {
 
 /// Bytecode compiler that transforms AST to bytecode
 pub struct BytecodeCompiler {
+    /// The run's capability table, when one is installed — the source of
+    /// compile-time verdicts. Kept in sync by `set_capabilities`.
+    static_caps: Option<Arc<crate::caps::CapTable>>,
+    /// Canonicalized provenance of the function being compiled; grants
+    /// attenuate by dependency directory, so the verdict needs it.
+    current_def_file: Option<std::path::PathBuf>,
     /// Checks for the function currently being compiled, handed in by the
     /// tier (precomputed at declaration; generic params already erased).
     pub pending_param_checks: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]>,
@@ -658,6 +664,13 @@ pub enum Instruction {
         dst: Register,
         function_name: String,
         args: Vec<Register>,
+        /// Compile-time capability verdict (Campaign: caps-specialized
+        /// compilation): true when the static manifest fully grants this
+        /// call for the enclosing function's provenance, so the runtime
+        /// gate's per-call table walk is skipped. Denied and unknown
+        /// verdicts stay false — the runtime gate is the authority for
+        /// them, message and all.
+        pregranted: bool,
     },
     Return {
         value: Option<Register>,
@@ -1421,7 +1434,10 @@ impl BytecodeVm {
     }
 
     pub fn set_capabilities(&mut self, caps: Option<Arc<crate::caps::CapTable>>) {
-        self.caps = caps;
+        self.caps = caps.clone();
+        // The compiler folds capability queries and pre-grants gated
+        // calls against this same table, so it must see every change.
+        self.compiler.static_caps = caps;
         // The bridge caches its state; drop it so the next dispatch
         // rebuilds one that carries the table.
         self.builtin_interpreter = None;
@@ -3225,7 +3241,7 @@ impl BytecodeVm {
                         for arg_reg in args {
                             arg_values.push(self.execution_state.get_register(*arg_reg)?);
                         }
-                        self.execute_builtin_call(name, &arg_values)?
+                        self.execute_builtin_call(name, &arg_values, false)?
                     };
                     self.execution_state.set_register(*dst, result)?;
                 }
@@ -3543,6 +3559,7 @@ impl BytecodeVm {
                     dst,
                     function_name,
                     args,
+                    pregranted,
                 } => {
                     // Pool the argument buffer: a hot loop calling a builtin
                     // per element (`map(recs, r => map_get(r, k))`) would
@@ -3567,7 +3584,7 @@ impl BytecodeVm {
                         // at compile time against the module's own field set;
                         // the bridge dispatches them by prefix exactly as the
                         // interpreter does.
-                        self.execute_builtin_call(function_name, &arg_values)
+                        self.execute_builtin_call(function_name, &arg_values, *pregranted)
                     } else {
                         Err(BytecodeError::NamedFunctionNotFound(function_name.clone()))
                     };
@@ -5168,6 +5185,7 @@ impl BytecodeVm {
         &mut self,
         name: &str,
         args: &[OvmValue],
+        pregranted: bool,
     ) -> Result<OvmValue, BytecodeError> {
         // Higher-order builtins loop natively when the function argument
         // compiles — otherwise everything below bridges to the interpreter.
@@ -5202,6 +5220,13 @@ impl BytecodeVm {
         let interpreter = self.builtin_interpreter.as_mut().expect("just ensured");
         interpreter.seed_bridge_caps(caps, trace, attributed_to);
         interpreter.set_call_depth_base(depth);
+        if pregranted {
+            // The compiler proved the static manifest grants this call
+            // for this provenance; the gate's per-call table walk is
+            // skipped. --trace-caps recording and the argument-dependent
+            // fs sub-gate still run — only the yes/no lookup is elided.
+            interpreter.set_cap_pregranted();
+        }
 
         let result = BuiltinFunctions::call(&self.builtins, name, ast_args, interpreter)
             .map_err(|e| BytecodeError::RuntimeError(e.to_string()))?;
@@ -5853,6 +5878,8 @@ impl Default for BytecodeCompiler {
 impl BytecodeCompiler {
     pub fn new() -> Self {
         Self {
+            static_caps: None,
+            current_def_file: None,
             pending_param_checks: std::sync::Arc::from(Vec::new()),
             pending_return_check: None,
             pending_def_file: None,
@@ -5876,11 +5903,50 @@ impl BytecodeCompiler {
         }
     }
 
+    /// The grant governing the function being compiled, when a static
+    /// table is installed. None = no manifest, no folding.
+    fn static_grant(&self) -> Option<crate::caps::Caps> {
+        let table = self.static_caps.as_ref()?;
+        let (caps, _) = table.caps_for(self.current_def_file.as_deref());
+        Some(*caps)
+    }
+
+    /// Compile-time answer to `caps.allowed(name)`: Some(verdict) when a
+    /// static manifest is installed and the name is a known capability.
+    /// The table is fixed for the run and grants attenuate by
+    /// provenance, both known here — so the runtime answer cannot
+    /// differ.
+    fn fold_cap_allowed(&self, cap: &str) -> Option<bool> {
+        let caps = self.static_grant()?;
+        crate::stdlib::caps_mod::holds(&caps, cap)
+    }
+
+    /// True when the static manifest fully grants `builtin` for this
+    /// function's provenance — the pre-grant that lets the runtime skip
+    /// its per-call gate walk. False for denied (the runtime gate owns
+    /// the error), for ungated builtins (nothing to skip), and when no
+    /// manifest is installed (the gate is already one branch).
+    fn pregrant(&self, builtin: &str) -> bool {
+        if crate::caps::required(builtin).is_none() {
+            return false;
+        }
+        match self.static_grant() {
+            Some(caps) => crate::caps::check(&caps, builtin).is_none(),
+            None => false,
+        }
+    }
+
     pub fn compile_function(
         &mut self,
         func_id: FunctionId,
         func: &FunctionDecl,
     ) -> Result<CompiledBytecode, BytecodeError> {
+        // The provenance the capability table attenuates by; resolved
+        // once per compile so per-callsite verdicts are map lookups.
+        self.current_def_file = self
+            .pending_def_file
+            .as_deref()
+            .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| std::path::PathBuf::from(f)));
         // Reset state
         self.register_allocator.reset();
         self.emitter.reset();
@@ -5914,7 +5980,9 @@ impl BytecodeCompiler {
         let mut instructions = self.emitter.take_instructions();
         let constants = self.emitter.take_constants();
 
-        instructions = self.optimizer.optimize_instructions(instructions)?;
+        instructions = self
+            .optimizer
+            .optimize_instructions(instructions, &constants)?;
 
         // Tail-call elimination: a CallFn back to this very function
         // whose result flows untouched (through Moves and Jumps) to a
@@ -6467,12 +6535,34 @@ impl BytecodeCompiler {
                                 },
                                 _ => unreachable!("guard checked the module"),
                             };
+                            // caps.allowed("x") under a static manifest is
+                            // a constant here too (see the fold below for
+                            // the reasoning); this arm is the one a normal
+                            // `caps.allowed(...)` call actually reaches.
+                            if builtin_name == "caps.allowed"
+                                && arguments.len() == 1
+                                && let crate::ast::Argument::Positional(arg) = &arguments[0]
+                                && let Expr::String(cap_name) = arg
+                                && let Some(verdict) = self.fold_cap_allowed(cap_name)
+                            {
+                                let dst_reg = self.register_allocator.allocate_register();
+                                let idx = self
+                                    .emitter
+                                    .add_constant(OvmValue::new_boolean(verdict));
+                                self.emitter.instructions.push(Instruction::LoadConst {
+                                    dst: dst_reg,
+                                    const_idx: idx,
+                                });
+                                return Ok(dst_reg);
+                            }
                             let arg_regs = self.compile_call_args(arguments)?;
                             let dst_reg = self.register_allocator.allocate_register();
+                            let pregranted = self.pregrant(&builtin_name);
                             self.emitter.instructions.push(Instruction::CallNamed {
                                 dst: dst_reg,
                                 function_name: builtin_name,
                                 args: arg_regs,
+                                pregranted,
                             });
                             return Ok(dst_reg);
                         }
@@ -6520,6 +6610,28 @@ impl BytecodeCompiler {
                     },
                     _ => unreachable!("non-name callees take the value path"),
                 };
+
+                // caps.allowed("x") under a static manifest is a constant:
+                // the table is fixed for the run and grants attenuate by
+                // this function's provenance, both known right here. The
+                // branch it guards then folds, the denied side goes dead,
+                // and the JIT stops refusing functions for code that can
+                // never run. Unknown capability names keep the runtime
+                // call — and its error — untouched.
+                if function_name == "caps.allowed"
+                    && arguments.len() == 1
+                    && let crate::ast::Argument::Positional(arg) = &arguments[0]
+                    && let Expr::String(cap_name) = arg
+                    && let Some(verdict) = self.fold_cap_allowed(cap_name)
+                {
+                    let dst_reg = self.register_allocator.allocate_register();
+                    let idx = self.emitter.add_constant(OvmValue::new_boolean(verdict));
+                    self.emitter.instructions.push(Instruction::LoadConst {
+                        dst: dst_reg,
+                        const_idx: idx,
+                    });
+                    return Ok(dst_reg);
+                }
 
                 let dst_reg = self.register_allocator.allocate_register();
                 // A nested fn calling ITSELF: CallFn to its own id, with the
@@ -6580,10 +6692,12 @@ impl BytecodeCompiler {
                             args: arg_regs,
                         });
                     } else {
+                        let pregranted = self.pregrant(&function_name);
                         self.emitter.instructions.push(Instruction::CallNamed {
                             dst: dst_reg,
                             function_name,
                             args: arg_regs,
+                            pregranted,
                         });
                     }
                     return Ok(dst_reg);
@@ -8650,8 +8764,89 @@ impl BytecodeOptimizer {
     pub fn optimize_instructions(
         &mut self,
         instructions: Vec<Instruction>,
+        constants: &[OvmValue],
     ) -> Result<Vec<Instruction>, BytecodeError> {
+        let instructions = Self::fold_constant_branches(instructions, constants);
+        let instructions = Self::sweep_unreachable(instructions);
         Ok(Self::eliminate_dead_moves(instructions))
+    }
+
+    /// A conditional jump whose condition register was just loaded with a
+    /// Boolean constant is not a decision: it becomes a plain Jump (or
+    /// nothing). Folded constants come from real code — a `caps.allowed`
+    /// query folded under a static manifest, a literal `while true` — and
+    /// folding here is what lets `sweep_unreachable` retire the branch
+    /// that can never run.
+    fn fold_constant_branches(
+        mut instructions: Vec<Instruction>,
+        constants: &[OvmValue],
+    ) -> Vec<Instruction> {
+        use Instruction as I;
+        for pc in 1..instructions.len() {
+            let (cond, target, jump_on) = match &instructions[pc] {
+                I::JumpIfTrue { condition, target } => (*condition, *target, true),
+                I::JumpIfFalse { condition, target } => (*condition, *target, false),
+                _ => continue,
+            };
+            // Only the immediately preceding instruction: farther-away
+            // defs would need a dominance argument this pass does not
+            // make. The compiler emits exactly this adjacent shape for
+            // folded queries and literal conditions.
+            let I::LoadConst { dst, const_idx } = &instructions[pc - 1] else {
+                continue;
+            };
+            if *dst != cond {
+                continue;
+            }
+            let Some(crate::ovm::value::ValueData::Boolean(b)) =
+                constants.get(*const_idx as usize).map(|c| &c.data)
+            else {
+                continue;
+            };
+            instructions[pc] = if *b == jump_on {
+                I::Jump { target }
+            } else {
+                I::Nop
+            };
+        }
+        instructions
+    }
+
+    /// Replace instructions no path from the entry can reach with Nop.
+    /// Dead branches stop counting against the JIT's qualification scan,
+    /// so a function whose denied capability branch contains an
+    /// uncompilable call still compiles — the code that cannot run no
+    /// longer taxes the code that does.
+    fn sweep_unreachable(mut instructions: Vec<Instruction>) -> Vec<Instruction> {
+        use Instruction as I;
+        let n = instructions.len();
+        if n == 0 {
+            return instructions;
+        }
+        let mut reachable = vec![false; n];
+        let mut work = vec![0usize];
+        while let Some(pc) = work.pop() {
+            if pc >= n || reachable[pc] {
+                continue;
+            }
+            reachable[pc] = true;
+            match &instructions[pc] {
+                I::Jump { target } => work.push(target.0 as usize),
+                I::JumpIfTrue { target, .. } | I::JumpIfFalse { target, .. } => {
+                    work.push(target.0 as usize);
+                    work.push(pc + 1);
+                }
+                I::TailCallSelf { .. } => work.push(0),
+                I::Return { .. } | I::MatchFail => {}
+                _ => work.push(pc + 1),
+            }
+        }
+        for (pc, inst) in instructions.iter_mut().enumerate() {
+            if !reachable[pc] {
+                *inst = I::Nop;
+            }
+        }
+        instructions
     }
 
     /// Replace `Move`s whose destination is never read again with `Nop`.
@@ -9189,7 +9384,7 @@ mod tests {
             vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)].into(),
         ));
 
-        let result = vm.execute_builtin_call("len", &[list_arg]);
+        let result = vm.execute_builtin_call("len", &[list_arg], false);
         assert!(result.is_ok());
         match result.unwrap().to_ast() {
             Ok(Value::Integer(n)) => assert_eq!(n, 3, "List length should be 3"),
@@ -9197,7 +9392,7 @@ mod tests {
         }
 
         let int_arg = OvmValue::from_ast(Value::Integer(42));
-        let result = vm.execute_builtin_call("to_string", &[int_arg]);
+        let result = vm.execute_builtin_call("to_string", &[int_arg], false);
         assert!(result.is_ok());
         match result.unwrap().to_ast() {
             Ok(Value::String(s)) => assert_eq!(*s, "42", "Should convert to string"),

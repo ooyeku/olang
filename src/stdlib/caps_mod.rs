@@ -67,7 +67,10 @@ fn fs_level(caps: &Caps) -> &'static str {
 /// Is `name` held at all? For `fs` this is true at read level or above —
 /// a program asking "may I touch the filesystem" is asking the coarse
 /// question, and `caps.level("fs")` answers the fine one.
-fn holds(caps: &Caps, name: &str) -> Option<bool> {
+/// Whether `caps` holds the named capability; None for an unknown name.
+/// pub(crate): the bytecode compiler asks the same question at compile
+/// time to constant-fold `caps.allowed("...")` under a static manifest.
+pub(crate) fn holds(caps: &Caps, name: &str) -> Option<bool> {
     Some(match name {
         "fs" => caps.fs != FsCap::None,
         "net" => caps.net,

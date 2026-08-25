@@ -890,3 +890,71 @@ fn a_manifest_does_not_cost_a_worker_its_tier() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── capability-specialized compilation ──────────────────────────────
+
+/// Under a static manifest, `caps.allowed("x")` is a compile-time
+/// constant on the bytecode tier, the branch it guards folds, and the
+/// denied side goes dead — while the denied side still errors when it
+/// is the one that runs, and no-manifest runs stay fully dynamic.
+#[test]
+fn caps_allowed_folds_and_the_dead_branch_vanishes() {
+    let dir = std::env::temp_dir().join(format!("olang_capsfold_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("plan.ol");
+    std::fs::write(
+        &script,
+        "fn plan() =\n\
+             if caps.allowed(\"net\") => \"online\"\n\
+             else => \"cached\"\n\
+         println(plan())\n",
+    )
+    .unwrap();
+
+    // Denied: the else branch is the answer.
+    let denied = std::process::Command::new(olang())
+        .args(["--deny", "net", "run"])
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&denied.stdout).contains("cached"),
+        "denied manifest must take the cached branch"
+    );
+    // Granted (no manifest): the online branch is the answer.
+    let open = std::process::Command::new(olang())
+        .arg("run")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&open.stdout).contains("online"),
+        "no manifest means every capability is held"
+    );
+
+    // The gate itself must still fire for a denied call that runs: the
+    // pre-grant is for granted calls only.
+    let gate = dir.join("gate.ol");
+    std::fs::write(
+        &gate,
+        "fn go() = unwrap(fs.read_file(\"/etc/hosts\"))\nprintln(len(go()))\n",
+    )
+    .unwrap();
+    let blocked = std::process::Command::new(olang())
+        .args(["--deny", "fs", "run"])
+        .arg(&gate)
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&blocked.stdout),
+        String::from_utf8_lossy(&blocked.stderr)
+    );
+    assert!(
+        text.contains("capability 'fs' denied"),
+        "the denied gate must keep firing: {text}"
+    );
+    assert!(!blocked.status.success());
+    let _ = std::fs::remove_dir_all(&dir);
+}

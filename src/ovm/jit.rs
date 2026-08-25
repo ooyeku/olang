@@ -4097,6 +4097,7 @@ impl PlanFn {
                     dst,
                     function_name,
                     args,
+                    ..
                 } => {
                     // Whitelisted map natives only — and only while no
                     // user definition shadows the name (a later shadow
@@ -5448,6 +5449,7 @@ fn translate_body(
                 dst,
                 function_name,
                 args,
+                ..
             } => match function_name.as_str() {
                 "map_get" => {
                     let Kind::Map(p) = r#gen.kind(args[0].0)? else {
