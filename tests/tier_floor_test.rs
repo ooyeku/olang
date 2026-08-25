@@ -174,3 +174,87 @@ fn a_once_called_big_loop_does_not_live_on_the_vm_dispatch() {
         "the function must enter native code, got native_calls={native}"
     );
 }
+
+#[test]
+fn bool_arguments_do_not_keep_a_function_off_native() {
+    // The call boundary never marshaled Boolean arguments, so any
+    // function taking a Bool silently stayed off native — no refusal
+    // logged, nothing red. Calibrated: 200 native calls, kinds
+    // Int,Bool, 0 VM instructions.
+    let r = run("fn step(n, up) = if up => n + 1 else => n - 1\n\
+         let mut acc = 0\n\
+         for i in range(0, 200) { acc = acc + step(i, i % 2 == 0) }\n\
+         println(acc)\n");
+    let own = r.per_fn.get("step").copied().unwrap_or(0);
+    assert!(
+        own >= 50,
+        "a Bool-taking function must serve native calls (calibrated 200), got {own}"
+    );
+}
+
+#[test]
+fn a_nested_loop_enters_native_through_osr() {
+    // The println keeps the whole function off the JIT, so the nest
+    // must enter through on-stack replacement — which once refused any
+    // function with more than one loop head. The region is the
+    // outermost enclosing loop; the dispatch enters it at the outer
+    // head even though the inner back edge is what got hot.
+    // Calibrated: 81k VM instructions (the pre-threshold warmup);
+    // without OSR the nest executes 81M.
+    let r = run("fn grid() = {\n\
+             println(\"start\")\n\
+             let mut acc = 0\n\
+             let mut i = 0\n\
+             while i < 3000 {\n\
+                 let mut j = 0\n\
+                 while j < 3000 { acc = (acc + i * j) % 1000003 j = j + 1 }\n\
+                 i = i + 1\n\
+             }\n\
+             acc\n\
+         }\n\
+         println(grid())\n");
+    let instructions = r.aggregate["instructions"];
+    assert!(
+        instructions <= 2_000_000,
+        "the nest must not spin on VM dispatch (calibrated 81k instructions), got {instructions}"
+    );
+    assert!(
+        r.aggregate["native_calls"] >= 1,
+        "the region must enter native"
+    );
+}
+
+#[test]
+fn a_loop_with_wide_live_out_state_enters_native_through_osr() {
+    // Six live-ins, five live-outs — past the old 4-slot tuple cap, so
+    // the region refused with "live state past the marshal caps".
+    // Calibrated: 164k VM instructions; without OSR, 4M.
+    let r = run("fn spread() = {\n\
+             println(\"start\")\n\
+             let mut a = 0\n\
+             let mut b = 1\n\
+             let mut c = 2\n\
+             let mut d = 3\n\
+             let mut e = 4\n\
+             let mut i = 0\n\
+             while i < 200000 {\n\
+                 a = (a + i) % 1000003\n\
+                 b = (b + a) % 1000003\n\
+                 c = (c + b) % 1000003\n\
+                 d = (d + c) % 1000003\n\
+                 e = (e + d) % 1000003\n\
+                 i = i + 1\n\
+             }\n\
+             a + b + c + d + e\n\
+         }\n\
+         println(spread())\n");
+    let instructions = r.aggregate["instructions"];
+    assert!(
+        instructions <= 1_000_000,
+        "wide loop state must not stay on VM dispatch (calibrated 164k instructions), got {instructions}"
+    );
+    assert!(
+        r.aggregate["native_calls"] >= 1,
+        "the region must enter native"
+    );
+}

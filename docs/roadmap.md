@@ -22,6 +22,7 @@ and landed items name the release in which they shipped.
 - [Campaign 2 — data-pipeline completion](#campaign-2--data-pipeline-completion)
 - [Campaign 3 — capabilities on every tier](#campaign-3--capabilities-on-every-tier)
 - [Campaign 4 — 1.0 readiness](#campaign-4--10-readiness)
+- [Campaign 8 — the final engine additions](#campaign-8--the-final-engine-additions)
 - [Frozen until 1.0](#frozen-until-10)
 - [Post-1.0 candidates](#post-10-candidates)
 - [Process](#process)
@@ -884,6 +885,23 @@ on one core.
 | R2 — the 1.0 contract | [Stability and compatibility](stability.md) is rewritten as the 1.0 compatibility contract: what is frozen, what semver means from here, and the support expectations for each surface. | **done** — the chapter now opens as the contract, states MAJOR/MINOR/PATCH precisely (a breaking change is a failing `doc_examples_test`, so it is a fact not a judgment), defines breaking and deprecation, and adds a per-surface guarantee table |
 | R3 — release | The 1.0 release itself: final gates, the CHANGELOG's 1.0 entry, and version 1.0.0. | **held — soaking 0.68.0, the macro release, before the contract freezes** |
 
+## Campaign 8 — the final engine additions
+
+The JIT-breadth freeze is lifted for exactly these lanes; they are the
+last engine additions before 1.0. Each exploits machinery that already
+exists — the specialization group compiler, the OSR synthesizer, the
+warm-profile format, the data stack's kernel layer — rather than
+opening new ground, and each lands behind the tier-agreement and
+tier-floor gates that now guard both correctness and engagement.
+
+| Lane | Work | Status |
+|---|---|---|
+| E1 — polymorphic specialization | A function is no longer one kind-vector specialization forever: a call with new argument kinds compiles an additional variant (capped per function), so mixed-type call sites stay native instead of falling off after the first shape. | planned |
+| E2 — OSR tails | The refusal tails the OSR lane logged: nested-loop regions (only single loops synthesize today), Bool live-ins, and live-out state past the 4-slot tuple cap. | **shipped** — regions merge transitively overlapping back-edge intervals, so a hot nested loop synthesizes its outermost enclosing loop and the dispatch re-offers entry at that head (nested repro: 81M → 81k VM instructions); the tuple cap is 8 (wide-state repro: 4M → 164k); and the call boundary marshals Boolean arguments, which had silently kept every Bool-taking function off native. Three tier-floor tests pin the shapes |
+| E3 — JIT strings | String operations in native code beyond compare/concat — the template-building shape (report and CSV builders) stops being an automatic refusal. | planned |
+| E5 — build-embedded warm profiles | `olang build` embeds the source's warm profile into the artifact, so a built program starts with its tier knowledge in hand — no sidecar directory, no cold first run. The sidecar path (shipped) stays for `olang run`. | planned |
+| E7 — data-stack fusion | Elementwise Series chains (`f["a"] * f["b"] + 1.0`) evaluate as one fused loop instead of materializing per verb — closing the remaining engine-side gap to the columnar competition. | planned |
+
 ## The post-1.0 flagship: macros — prototyped
 
 The direction settled during the soak: "open language" completes as
@@ -918,11 +936,6 @@ must track the new semantics), but no new features until 1.0 ships:
 
 - **The browser stack** — `dom`, `ui`, `viz`, `dash`, the playground, and
   the website.
-- **JIT breadth and the adaptive engine** — the JIT's positioning is
-  settled: the interpreter defines semantics, the Rust kernels of the data
-  stack carry the performance identity, and the JIT accelerates numeric
-  code within its tested whitelist. Extending the whitelist resumes, if at
-  all, after 1.0.
 - **The language server and editor extensions** — feature growth pauses;
   diagnostics track Campaign 1.
 - **The registry and package ecosystem** — the mechanism is complete;

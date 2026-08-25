@@ -2632,8 +2632,14 @@ impl BytecodeVm {
         let mut pc = bytecode.entry_point;
         // Backward jumps taken by THIS frame; at OSR_BACK_EDGE_THRESHOLD
         // the loop being spun is offered to on-stack replacement, once.
+        // When the synthesized region anchors at an enclosing loop's
+        // head (a nested loop got hot), `osr_wait` holds that head and
+        // the next back edge to it re-offers entry there — still one
+        // real attempt.
         #[cfg(feature = "native")]
         let mut back_edges: u64 = 0;
+        #[cfg(feature = "native")]
+        let mut osr_wait: Option<usize> = None;
 
         while pc < bytecode.instructions.len() {
             let instruction = &bytecode.instructions[pc];
@@ -3108,11 +3114,22 @@ impl BytecodeVm {
                     #[cfg(feature = "native")]
                     if t <= pc {
                         back_edges += 1;
-                        if back_edges == OSR_BACK_EDGE_THRESHOLD
+                        if (back_edges == OSR_BACK_EDGE_THRESHOLD || osr_wait == Some(t))
                             && let Some(resume) = self.try_osr(bytecode, t)
                         {
+                            osr_wait = None;
                             pc = resume;
                             continue;
+                        }
+                        if back_edges == OSR_BACK_EDGE_THRESHOLD {
+                            osr_wait = self
+                                .osr_regions
+                                .get(&bytecode.function_id)
+                                .and_then(|r| r.as_deref())
+                                .map(|r| r.head)
+                                .filter(|h| *h != t);
+                        } else if osr_wait == Some(t) {
+                            osr_wait = None;
                         }
                     }
                     pc = t;
@@ -3125,11 +3142,22 @@ impl BytecodeVm {
                         #[cfg(feature = "native")]
                         if t <= pc {
                             back_edges += 1;
-                            if back_edges == OSR_BACK_EDGE_THRESHOLD
+                            if (back_edges == OSR_BACK_EDGE_THRESHOLD || osr_wait == Some(t))
                                 && let Some(resume) = self.try_osr(bytecode, t)
                             {
+                                osr_wait = None;
                                 pc = resume;
                                 continue;
+                            }
+                            if back_edges == OSR_BACK_EDGE_THRESHOLD {
+                                osr_wait = self
+                                    .osr_regions
+                                    .get(&bytecode.function_id)
+                                    .and_then(|r| r.as_deref())
+                                    .map(|r| r.head)
+                                    .filter(|h| *h != t);
+                            } else if osr_wait == Some(t) {
+                                osr_wait = None;
                             }
                         }
                         pc = t;
@@ -3143,11 +3171,22 @@ impl BytecodeVm {
                         #[cfg(feature = "native")]
                         if t <= pc {
                             back_edges += 1;
-                            if back_edges == OSR_BACK_EDGE_THRESHOLD
+                            if (back_edges == OSR_BACK_EDGE_THRESHOLD || osr_wait == Some(t))
                                 && let Some(resume) = self.try_osr(bytecode, t)
                             {
+                                osr_wait = None;
                                 pc = resume;
                                 continue;
+                            }
+                            if back_edges == OSR_BACK_EDGE_THRESHOLD {
+                                osr_wait = self
+                                    .osr_regions
+                                    .get(&bytecode.function_id)
+                                    .and_then(|r| r.as_deref())
+                                    .map(|r| r.head)
+                                    .filter(|h| *h != t);
+                            } else if osr_wait == Some(t) {
+                                osr_wait = None;
                             }
                         }
                         pc = t;

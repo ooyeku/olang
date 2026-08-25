@@ -1308,6 +1308,10 @@ impl JitCache {
                     bits[i] = *v;
                     kinds[i] = Kind::Int;
                 }
+                ValueData::Boolean(b) => {
+                    bits[i] = *b as i64;
+                    kinds[i] = Kind::Bool;
+                }
                 ValueData::Float(f) => {
                     bits[i] = f.to_bits() as i64;
                     kinds[i] = Kind::Float;
@@ -2515,7 +2519,7 @@ const K_RESULT: u16 = 256;
 /// Maps ride borrowed `Arc<HashMap<String, OvmValue>>` pointers.
 const K_MAP: u16 = 512;
 /// Largest tuple the JIT returns natively (multi-value return slots).
-const MAX_TUPLE: usize = 4;
+const MAX_TUPLE: usize = 8;
 const K_NUM: u16 = K_INT | K_FLOAT;
 const K_ANY: u16 =
     K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT | K_LIST | K_TUPLE | K_STR | K_RESULT | K_MAP;

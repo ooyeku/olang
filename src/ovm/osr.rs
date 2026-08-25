@@ -44,23 +44,24 @@ pub struct OsrRegion {
 }
 
 /// The raw entry marshals at most 16 arguments; tuple returns carry at
-/// most `MAX_TUPLE` (4) elements. Loop state beyond that stays on the VM.
+/// most `MAX_TUPLE` (8) elements. Loop state beyond that stays on the VM.
 const MAX_LIVE_IN: usize = 16;
-const MAX_LIVE_OUT: usize = 4;
+const MAX_LIVE_OUT: usize = 8;
 
 fn osr_debug() -> bool {
     std::env::var_os("OLANG_OSR_DEBUG").is_some()
 }
 
-/// Build the standalone loop function for the single hot loop of
-/// `bytecode`, or None when the shape is unsupported: several loop
-/// heads, jumps into the loop's interior, more than one exit target,
-/// frame-semantic instructions inside, or live state past the marshal
-/// caps. The JIT's own qualification runs later, on the synthesized
-/// function — a region it refuses costs one attempt, ever.
+/// Build the standalone loop function for the maximal loop region
+/// containing the hot back edge — for a nested loop, the outermost
+/// enclosing loop, so the whole nest runs native. None when the shape
+/// is unsupported: jumps into the region's interior, more than one
+/// exit target, frame-semantic instructions inside, or live state past
+/// the marshal caps. The JIT's own qualification runs later, on the
+/// synthesized function — a region it refuses costs one attempt, ever.
 pub fn synthesize(bytecode: &CompiledBytecode, head: usize) -> Option<OsrRegion> {
-    let (h, e) = jit::loop_shape(bytecode).region?;
-    if h != head || e < h {
+    let (h, e) = enclosing_loop_region(bytecode, head)?;
+    if e < h {
         return None;
     }
     let insts = &bytecode.instructions;
@@ -265,6 +266,43 @@ pub fn synthesize(bytecode: &CompiledBytecode, head: usize) -> Option<OsrRegion>
         live_in,
         live_out,
     })
+}
+
+/// The maximal loop region containing `head`. Every backward jump is an
+/// interval `[target, pc]`; transitively merging the intervals that
+/// overlap dissolves nesting — an inner loop's interval merges into its
+/// enclosing loop's — while sequential loops stay separate regions. The
+/// merged interval containing the hot head is the region worth
+/// synthesizing: for a nested loop that is the *outermost* enclosing
+/// loop, so the whole nest runs native, and its head (not the hot inner
+/// head) is where the dispatch loop must enter — `OsrRegion::head`
+/// records it, and the dispatch re-offers entry when execution next
+/// takes a back edge to it.
+fn enclosing_loop_region(bytecode: &CompiledBytecode, head: usize) -> Option<(usize, usize)> {
+    let mut intervals: Vec<(usize, usize)> = Vec::new();
+    for (pc, inst) in bytecode.instructions.iter().enumerate() {
+        let target = match inst {
+            Instruction::Jump { target }
+            | Instruction::JumpIfTrue { target, .. }
+            | Instruction::JumpIfFalse { target, .. } => Some(target.0 as usize),
+            Instruction::TailCallSelf { .. } => Some(bytecode.entry_point),
+            _ => None,
+        };
+        if let Some(t) = target
+            && t <= pc
+        {
+            intervals.push((t, pc));
+        }
+    }
+    intervals.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in intervals {
+        match merged.last_mut() {
+            Some((_, me)) if s <= *me => *me = (*me).max(e),
+            _ => merged.push((s, e)),
+        }
+    }
+    merged.into_iter().find(|(s, e)| (*s..=*e).contains(&head))
 }
 
 fn refuse(bytecode: &CompiledBytecode, why: &str) {
