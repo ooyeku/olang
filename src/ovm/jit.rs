@@ -13,8 +13,10 @@
 //! converges), and compiles the whole group with direct native-to-native
 //! calls — helpers, chains, and mutual recursion all stay native. Each
 //! compiled function guards its entry on the exact argument kinds it was
-//! specialized for (one specialization per function); any other shape
-//! runs on bytecode as before.
+//! specialized for; a shape the primary does not serve compiles a
+//! polymorphic variant beside it (up to MAX_VARIANTS per function), so
+//! mixed-kind call sites stay native. Shapes past the cap, or whose
+//! variant compile fails, run on bytecode as before.
 //!
 //! Pure is the load-bearing word: a qualifying group has no side
 //! effects, so *any* guard failure (argument-kind mismatch, integer
@@ -254,6 +256,11 @@ const STATUS_OK: i64 = 0;
 const MAX_PARAMS: usize = 16;
 /// Sanity bound on how many functions one group may pull in.
 const MAX_GROUP: usize = 32;
+/// Polymorphic specializations per function beyond the primary. Enough
+/// for the Int/Float/mixed shapes real call sites produce; past it, the
+/// overflow shapes run on bytecode exactly as every shape after the
+/// first did before variants existed.
+const MAX_VARIANTS: usize = 3;
 
 /// What one side of an observed Result holds. `Absent` means the side
 /// was never seen at specialization time — reads of it are guarded and
@@ -367,9 +374,31 @@ pub struct JitCache {
     /// sharing the ctx it was handed), so a single buffer is safe — and
     /// its vecs keep their capacity between calls.
     scratch: ScratchCtx,
+    /// Specializations beyond a function's first, keyed by function
+    /// index and matched by exact kind vector — the polymorphic path.
+    /// A mixed-type call site no longer falls off native after the
+    /// first shape: a new shape compiles its own variant, up to
+    /// `MAX_VARIANTS` per function.
+    poly: HashMap<usize, Vec<PolyVariant>>,
+    /// Kind vectors whose variant compile failed — never retried.
+    poly_refused: HashMap<usize, Vec<Vec<Kind>>>,
+    /// Monotone tag making every group compile's symbol names unique,
+    /// so a variant of an already-compiled function never collides in
+    /// the module's namespace.
+    spec_seq: u64,
     pub compiled: u64,
     pub native_calls: u64,
 }
+
+/// One additional specialization of a function (see `JitCache::poly`).
+struct PolyVariant {
+    kinds: Vec<Kind>,
+    jitted: JittedFn,
+}
+
+/// A variant adopted for direct native-to-native calls during one group
+/// compile: (clif_id, param_kinds, ret_kind, ret_tuple).
+type AdoptedVariant = (cranelift_module::FuncId, Vec<Kind>, Kind, Option<Vec<Kind>>);
 
 // SAFETY: the module's executable memory is immutable after
 // finalize_definitions; mutation only happens through &mut self on the
@@ -1160,6 +1189,9 @@ impl JitCache {
             scratch: ScratchCtx::default(),
             compiled: 0,
             native_calls: 0,
+            poly: HashMap::new(),
+            poly_refused: HashMap::new(),
+            spec_seq: 0,
             per_fn_calls: Vec::new(),
         }
     }
@@ -1348,7 +1380,14 @@ impl JitCache {
         // calls skip the allocation entirely. Per-read helper guards keep
         // same-shape/different-kind instances safe either way.
         let mut shapes: HashMap<u32, ShapeSpec> = HashMap::new();
-        if matches!(self.table.get(func_id.index()), Some(Some(Slot::Pending))) {
+        let needs_shapes = match self.table.get(func_id.index()).and_then(|s| s.as_ref()) {
+            Some(Slot::Pending) => true,
+            // A Ready function whose primary does not serve these kinds
+            // is about to compile a variant, which observes shapes too.
+            Some(Slot::Ready(j)) => j.param_kinds.as_slice() != &kinds[..args.len()],
+            _ => false,
+        };
+        if needs_shapes {
             for arg in args {
                 if let ValueData::Struct(obj) = &arg.data {
                     let (_, spec) = observe_struct(obj)?;
@@ -1529,12 +1568,22 @@ impl JitCache {
             _ => return None,
         }
 
-        let Some(Slot::Ready(jitted)) = self.table.get(idx)?.as_ref() else {
-            return None;
+        // Resolve the specialization serving these exact kinds: the
+        // primary, or a polymorphic variant (compiled on demand).
+        let primary = {
+            let Some(Slot::Ready(jitted)) = self.table.get(idx)?.as_ref() else {
+                return None;
+            };
+            if kinds == jitted.param_kinds.as_slice() {
+                Some((jitted.entry, jitted.ret_kind, jitted.ret_tuple.clone()))
+            } else {
+                None
+            }
         };
-        if kinds != jitted.param_kinds.as_slice() {
-            return None;
-        }
+        let (entry_fn, ret_kind, ret_tuple) = match primary {
+            Some(t) => t,
+            None => self.variant(func_id, bytecode, kinds, lookup, shapes)?,
+        };
         let mut out = [0i64; MAX_TUPLE];
         let ctx = &mut self.scratch;
         ctx.clear();
@@ -1555,7 +1604,7 @@ impl JitCache {
         }
         let ctx_ptr: *mut ScratchCtx = ctx;
         let status = unsafe {
-            (jitted.entry)(
+            (entry_fn)(
                 bits.as_ptr(),
                 remaining_depth as i64,
                 ctx_ptr,
@@ -1567,7 +1616,7 @@ impl JitCache {
         // drops now, not at some later boundary call.
         let result = if status != STATUS_OK {
             None
-        } else if let Some(tk) = &jitted.ret_tuple {
+        } else if let Some(tk) = &ret_tuple {
             let elems: Vec<OvmValue> = tk
                 .iter()
                 .zip(out.iter())
@@ -1579,7 +1628,7 @@ impl JitCache {
                 .collect();
             Some(OvmValue::new_tuple(elems))
         } else {
-            match jitted.ret_kind {
+            match ret_kind {
                 Kind::Int => Some(OvmValue::new_integer(out[0])),
                 Kind::Bool => Some(OvmValue::new_boolean(out[0] != 0)),
                 Kind::Float => Some(OvmValue::new_float(f64::from_bits(out[0] as u64))),
@@ -1611,8 +1660,65 @@ impl JitCache {
         result
     }
 
+    /// The polymorphic path: a Ready function called with argument
+    /// kinds its primary specialization does not serve. Reuses an
+    /// existing variant, or compiles one — a full group compile whose
+    /// entry installs beside the primary rather than replacing it. At
+    /// most `MAX_VARIANTS` variants per function; a shape that failed
+    /// once never retries.
+    fn variant(
+        &mut self,
+        func_id: FunctionId,
+        bytecode: &Arc<CompiledBytecode>,
+        kinds: &[Kind],
+        lookup: &BytecodeLookup,
+        shapes: &HashMap<u32, ShapeSpec>,
+    ) -> Option<(NativeEntry, Kind, Option<Vec<Kind>>)> {
+        let idx = func_id.index();
+        let have = |poly: &HashMap<usize, Vec<PolyVariant>>| {
+            poly.get(&idx)
+                .and_then(|vs| vs.iter().find(|v| v.kinds == kinds))
+                .map(|v| {
+                    (
+                        v.jitted.entry,
+                        v.jitted.ret_kind,
+                        v.jitted.ret_tuple.clone(),
+                    )
+                })
+        };
+        if let Some(found) = have(&self.poly) {
+            return Some(found);
+        }
+        if self
+            .poly_refused
+            .get(&idx)
+            .is_some_and(|ks| ks.iter().any(|k| k == kinds))
+        {
+            return None;
+        }
+        if self.poly.get(&idx).map(|vs| vs.len()).unwrap_or(0) >= MAX_VARIANTS {
+            return None;
+        }
+        if self
+            .specialize_group(func_id, bytecode, kinds, lookup, shapes)
+            .is_none()
+        {
+            if jit_debug() {
+                eprintln!("[jit] fn#{} variant for {:?} refused", idx, kinds);
+            }
+            self.poly_refused
+                .entry(idx)
+                .or_default()
+                .push(kinds.to_vec());
+            return None;
+        }
+        have(&self.poly)
+    }
+
     /// Plan, infer, and compile the call graph reachable from `entry_id`.
-    /// On success every group member becomes Ready. On failure the entry
+    /// On success every group member becomes Ready — or, when a member
+    /// is already Ready on different kinds, its fresh compile installs
+    /// as a polymorphic variant beside the primary. On failure the entry
     /// alone becomes Refused (a helper may still compile later from its
     /// own first call, with its own kinds).
     fn specialize_group(
@@ -1642,6 +1748,12 @@ impl JitCache {
             group_shapes.insert(*k, v.clone());
         }
 
+        // Polymorphic variants adopted for direct calls from this group:
+        // a requested callee that is Ready on *different* kinds but has
+        // a compiled variant matching the requested ones. idx ->
+        // (clif_id, param_kinds, ret_kind, ret_tuple).
+        let mut adopted: HashMap<usize, AdoptedVariant> = HashMap::new();
+
         loop {
             let mut changed = false;
 
@@ -1661,34 +1773,44 @@ impl JitCache {
                     ),
                 );
             }
+            let compiled_sig =
+                |param_kinds: &Vec<Kind>, ret_kind: Kind, ret_tuple: &Option<Vec<Kind>>| {
+                    (
+                        param_kinds.clone(),
+                        match ret_tuple {
+                            Some(_) => K_TUPLE,
+                            None => kind_mask(ret_kind),
+                        },
+                        ret_tuple.clone(),
+                        match ret_kind {
+                            Kind::Struct(sid) => Some(sid),
+                            _ => None,
+                        },
+                        match ret_kind {
+                            k @ (Kind::Result(..) | Kind::Map(_)) => Some(k),
+                            _ => None,
+                        },
+                        match ret_kind {
+                            k @ (Kind::ListInt
+                            | Kind::ListFloat
+                            | Kind::ListStruct(_)
+                            | Kind::ListStr) => Some(k),
+                            _ => None,
+                        },
+                    )
+                };
+            // Plans (inserted above) take precedence; adopted variants
+            // next; primaries fill in last — a planned or adopted idx
+            // must not have its signature shadowed by the primary the
+            // group is diverging from.
+            for (idx, (_, param_kinds, ret_kind, ret_tuple)) in &adopted {
+                sigs.entry(*idx)
+                    .or_insert_with(|| compiled_sig(param_kinds, *ret_kind, ret_tuple));
+            }
             for (i, slot) in self.table.iter().enumerate() {
                 if let Some(Slot::Ready(j)) = slot {
-                    sigs.insert(
-                        i,
-                        (
-                            j.param_kinds.clone(),
-                            match &j.ret_tuple {
-                                Some(_) => K_TUPLE,
-                                None => kind_mask(j.ret_kind),
-                            },
-                            j.ret_tuple.clone(),
-                            match j.ret_kind {
-                                Kind::Struct(sid) => Some(sid),
-                                _ => None,
-                            },
-                            match j.ret_kind {
-                                k @ (Kind::Result(..) | Kind::Map(_)) => Some(k),
-                                _ => None,
-                            },
-                            match j.ret_kind {
-                                k @ (Kind::ListInt
-                                | Kind::ListFloat
-                                | Kind::ListStruct(_)
-                                | Kind::ListStr) => Some(k),
-                                _ => None,
-                            },
-                        ),
-                    );
+                    sigs.entry(i)
+                        .or_insert_with(|| compiled_sig(&j.param_kinds, j.ret_kind, &j.ret_tuple));
                 }
             }
 
@@ -1728,16 +1850,41 @@ impl JitCache {
                 let idx = fid.index();
                 if let Some(pos) = plan_pos.get(&idx) {
                     if plans[*pos].param_kinds != kinds {
-                        return None; // one specialization per function
+                        return None; // one shape per function per group
+                    }
+                    continue;
+                }
+                if let Some((_, adopted_kinds, ..)) = adopted.get(&idx) {
+                    if *adopted_kinds != kinds {
+                        return None;
                     }
                     continue;
                 }
                 match self.table.get(idx) {
                     Some(Some(Slot::Ready(j))) => {
-                        if j.param_kinds != kinds {
-                            return None;
+                        if j.param_kinds == kinds {
+                            continue; // already native; sigs covers it
                         }
-                        continue; // already native; sigs covers it
+                        // The primary serves different kinds. Adopt a
+                        // compiled variant matching these, or fall
+                        // through and plan a fresh one for this group.
+                        if let Some(v) = self
+                            .poly
+                            .get(&idx)
+                            .and_then(|vs| vs.iter().find(|v| v.kinds == kinds))
+                        {
+                            adopted.insert(
+                                idx,
+                                (
+                                    v.jitted.clif_id,
+                                    v.kinds.clone(),
+                                    v.jitted.ret_kind,
+                                    v.jitted.ret_tuple.clone(),
+                                ),
+                            );
+                            changed = true;
+                            continue;
+                        }
                     }
                     Some(Some(Slot::Refused)) => return None,
                     _ => {}
@@ -1835,8 +1982,15 @@ impl JitCache {
                         baked.insert(function_name.clone());
                     }
                     Instruction::CallFn { func_id, .. } => {
+                        // The adopted variant and the primary compile the
+                        // same body, so either baked set is the body's.
                         if let Some(Some(Slot::Ready(j))) = self.table.get(func_id.index()) {
                             baked.extend(j.baked_builtins.iter().cloned());
+                        }
+                        if let Some(vs) = self.poly.get(&func_id.index()) {
+                            for v in vs {
+                                baked.extend(v.jitted.baked_builtins.iter().cloned());
+                            }
                         }
                     }
                     _ => {}
@@ -1852,6 +2006,15 @@ impl JitCache {
                 targets.insert(i, (j.clif_id, j.ret_kind, j.ret_tuple.clone()));
             }
         }
+        // Adopted variants override the primaries they diverge from.
+        for (idx, (clif_id, _, ret_kind, ret_tuple)) in &adopted {
+            targets.insert(*idx, (*clif_id, *ret_kind, ret_tuple.clone()));
+        }
+        // Every group compile names its symbols with a fresh tag, so a
+        // variant of an already-compiled function (same function index,
+        // new kinds) never collides in the module namespace.
+        self.spec_seq += 1;
+        let seq = self.spec_seq;
         let module = self.module()?;
         // The imported field helper, declared once per group.
         let field_helper = {
@@ -2106,7 +2269,7 @@ impl JitCache {
                 None => sig.returns.push(AbiParam::new(inf.ret_kind.clif_type())),
             }
             sig.returns.push(AbiParam::new(types::I64));
-            let name = format!("olang_jit_{}", plan.func_id.index());
+            let name = format!("olang_jit_{}_g{}", plan.func_id.index(), seq);
             let id = module.declare_function(&name, Linkage::Local, &sig).ok()?;
             clif_ids.push(id);
         }
@@ -2206,7 +2369,7 @@ impl JitCache {
                 entry_sig.params.push(AbiParam::new(types::I64));
             }
             entry_sig.returns.push(AbiParam::new(types::I64));
-            let entry_name = format!("olang_jit_{}_entry", plan.func_id.index());
+            let entry_name = format!("olang_jit_{}_g{}_entry", plan.func_id.index(), seq);
             let entry_fid = module
                 .declare_function(&entry_name, Linkage::Export, &entry_sig)
                 .ok()?;
@@ -2316,7 +2479,7 @@ impl JitCache {
                     idx, plan.param_kinds
                 );
             }
-            self.table[idx] = Some(Slot::Ready(JittedFn {
+            let jf = JittedFn {
                 entry,
                 clif_id: *clif_id,
                 param_kinds: plan.param_kinds.clone(),
@@ -2324,7 +2487,27 @@ impl JitCache {
                 ret_tuple: inf.ret_tuple.clone(),
                 baked_builtins: baked.clone(),
                 _bytecode: Arc::clone(&plan.bytecode),
-            }));
+            };
+            match self.table.get(idx).and_then(|s| s.as_ref()) {
+                // Already Ready on different kinds: this member is a
+                // polymorphic variant — install beside the primary.
+                Some(Slot::Ready(exist)) if exist.param_kinds != plan.param_kinds => {
+                    let vs = self.poly.entry(idx).or_default();
+                    if !vs.iter().any(|v| v.kinds == plan.param_kinds) {
+                        vs.push(PolyVariant {
+                            kinds: plan.param_kinds.clone(),
+                            jitted: jf,
+                        });
+                    }
+                }
+                // Same kinds already installed: keep the existing entry
+                // (callers may hold its pointer); the duplicate is dead
+                // code in the module.
+                Some(Slot::Ready(_)) => {}
+                _ => {
+                    self.table[idx] = Some(Slot::Ready(jf));
+                }
+            }
             self.compiled += 1;
         }
         Some(())

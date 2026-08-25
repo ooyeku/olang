@@ -258,3 +258,26 @@ fn a_loop_with_wide_live_out_state_enters_native_through_osr() {
         "the region must enter native"
     );
 }
+
+#[test]
+fn a_mixed_kind_call_site_keeps_both_shapes_native() {
+    // Polymorphic specialization: the first shape used to be the only
+    // one — a call with new argument kinds fell off native forever.
+    // Now it compiles a variant. Calibrated: 200k native calls (100k
+    // Int + 100k Float), 0 VM instructions; before variants, the
+    // Float half executed 300k VM instructions.
+    let r = run("fn scale(x, k) = x * k + 1\n\
+         let mut int_sum = 0\n\
+         let mut float_sum = 0.0\n\
+         for i in range(0, 100000) {\n\
+             int_sum = (int_sum + scale(i, 3)) % 1000003\n\
+             float_sum = float_sum + scale(i * 1.0, 0.5)\n\
+         }\n\
+         println(int_sum)\n\
+         println(float_sum)\n");
+    let own = r.per_fn.get("scale").copied().unwrap_or(0);
+    assert!(
+        own >= 150_000,
+        "both shapes must serve native calls (calibrated 200k), got {own}"
+    );
+}

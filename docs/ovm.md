@@ -360,8 +360,12 @@ return kinds feed caller registers; masks only grow, so it converges),
 and compiles the whole group with direct native-to-native calls —
 helpers, chains, and mutual recursion all stay native. Each compiled
 function guards its entry on the exact Int/Float argument kinds it was
-specialized for (one specialization per function); any other shape runs
-on bytecode. Register kinds are proven by the same fixpoint inference
+specialized for. A shape the primary specialization does not serve is
+not the end of native execution: it compiles a *polymorphic variant* —
+its own full group compile, installed beside the primary — so a mixed
+Int/Float call site keeps every shape native. Up to three variants per
+function; shapes beyond that, and shapes whose variant compile fails,
+run on bytecode. Register kinds are proven by the same fixpoint inference
 (i64 or f64 per register; mixed int/float arithmetic promotes the
 integer side exactly as the VM does; a register may hold mixed kinds
 only if nothing ever reads it — the dead result slot of an `if`
