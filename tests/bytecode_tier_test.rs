@@ -1272,10 +1272,15 @@ fn square(n) = n * n
 fn squares(xs) = map(xs, (x) => square(x))
 sum(squares([1, 2, 3])) + sum(squares([4, 5]))
 "#;
-    // Only `squares` promotes: `square` is called solely from inside the
-    // lambda, which executes in the interpreter, so its own call counter
-    // never advances at bytecode level.
-    assert_eq!(promotion_count(src, 1), 1, "squares itself promotes");
+    // Both compile now: `squares` promotes by name, and `square` — called
+    // solely from inside the lambda — compiles through the hof dependency
+    // channel, so the lambda's calls to it are direct CallFn on the tier
+    // instead of bridged back to the interpreter.
+    assert_eq!(
+        promotion_count(src, 1),
+        2,
+        "squares and square both compile"
+    );
     assert_tier_transparent(src);
 }
 

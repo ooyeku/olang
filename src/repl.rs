@@ -1525,7 +1525,11 @@ impl Repl {
                     let expr = parts[1..].join(" ");
                     self.profile_expression(&expr)?;
                 } else {
-                    self.show_profiling_summary();
+                    println!(
+                        "Usage: :profile <code> — runs it under the sampling profiler
+                         (time by tier, per-function self/total, hottest call paths).
+                         Example: :profile fold(range(0, 5000000), 0, (a, x) => a + x)"
+                    );
                 }
             }
             ":config" => {
@@ -2510,73 +2514,31 @@ impl Repl {
         println!();
     }
 
+    /// `:profile <code>` — run the code once under the same sampling
+    /// profiler as `olang profile`, then print the value and the full
+    /// report: time by tier, per-function self/total, hottest call
+    /// paths, and the findings notes. A short snippet may land few
+    /// samples; the report says so rather than inventing precision.
     fn profile_expression(&mut self, expr: &str) -> Result<(), ReplError> {
-        println!("{}", format!("Profiling: {}", expr).bright_cyan().bold());
-
-        let iterations = 5;
-        let mut times = Vec::new();
-
-        for i in 1..=iterations {
-            let start = Instant::now();
-            match self.eval_line(expr) {
-                Ok(_) => {
-                    let duration = start.elapsed();
-                    let time_ms = duration.as_secs_f64() * 1000.0;
-                    times.push(time_ms);
-                    println!("  Run {}: {:.2}ms", i, time_ms);
-                }
-                Err(e) => {
-                    println!("  Run {} failed: {}", i, e);
-                    return Ok(());
+        // A finer interval than the CLI default: REPL snippets are
+        // usually shorter than whole programs.
+        let session = crate::profile::start(250);
+        let started = Instant::now();
+        let outcome = self.eval_line(expr);
+        let elapsed = started.elapsed();
+        let label: String = expr.chars().take(48).collect();
+        let report = session.finish(elapsed, 20, &label);
+        match outcome {
+            Ok(value) => {
+                self.after_eval(expr, &value);
+                if value != Value::Unit {
+                    repl_print(&value);
                 }
             }
+            Err(e) => self.show_enhanced_error(&e),
         }
-
-        if !times.is_empty() {
-            let sum: f64 = times.iter().sum();
-            let avg = sum / times.len() as f64;
-            let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
-            let max = times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-
-            println!("\n  {}:", "Profile Results".bright_green().bold());
-            println!("    Average: {:.2}ms", avg);
-            println!("    Min: {:.2}ms", min);
-            println!("    Max: {:.2}ms", max);
-            println!("    Total: {:.2}ms", sum);
-
-            // Record profiling data
-            for time in times {
-                self.debugger.record_profiling_data(expr.to_string(), time);
-            }
-        }
-
+        println!("{}", report);
         Ok(())
-    }
-
-    fn show_profiling_summary(&self) {
-        println!("\n{}", "=== Profiling Summary ===".bright_cyan().bold());
-
-        if self.debugger.profiling_data.is_empty() {
-            println!("  {}", "No profiling data available".bright_black());
-            println!("  Use :profile <expression> to collect performance data");
-        } else {
-            for (expr, times) in &self.debugger.profiling_data {
-                if !times.is_empty() {
-                    let sum: f64 = times.iter().sum();
-                    let avg = sum / times.len() as f64;
-                    let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
-                    let max = times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-
-                    println!("\n  {}: {}", "Expression".bright_blue(), expr);
-                    println!("    Runs: {}", times.len());
-                    println!("    Average: {:.2}ms", avg);
-                    println!("    Min: {:.2}ms", min);
-                    println!("    Max: {:.2}ms", max);
-                }
-            }
-        }
-
-        println!();
     }
 
     fn show_enhanced_error(&mut self, error: &ReplError) {

@@ -84,6 +84,8 @@ pub struct BytecodeVm {
     /// to the gate.
     caps: Option<Arc<crate::caps::CapTable>>,
     caps_trace: Option<Arc<std::sync::Mutex<std::collections::BTreeSet<crate::caps::CapUse>>>>,
+    /// Count of named functions compiled via the hof dependency channel.
+    hof_promotions: u32,
     /// Defining file of each compiled function currently executing,
     /// innermost last — the tier's mirror of the interpreter's
     /// `coverage_file_stack`. This is what attributes a gated builtin to
@@ -1146,6 +1148,7 @@ impl BytecodeVm {
             builtin_interpreter: None,
             caps: None,
             caps_trace: None,
+            hof_promotions: 0,
             caps_file_stack: Vec::new(),
             call_depth: 0,
             arg_pool: Vec::new(),
@@ -4440,16 +4443,35 @@ impl BytecodeVm {
             body: (*func.body).clone(),
         };
         let func_id = FunctionId::new();
-        let compiled = self.compile_function_with_closure(
-            func_id,
-            &decl,
-            func.closure.clone(),
-            func.param_checks.clone().into(),
-            func.return_check.clone(),
-            func.def_file.as_deref().map(Arc::from),
-        );
-
-        let result = compiled.ok().map(|_| func_id);
+        // The named tier path resolves unresolved callees (compile the
+        // dependency, retry the caller) — the lambda path gets the same
+        // loop here. This is what lets `map(xs, (n) => helper(n))`
+        // compile when `helper` is a recursive top-level function the
+        // registry has not seen yet: the callee compiles by name into
+        // the registry, and the retry's registry lookup emits a direct
+        // CallFn.
+        let mut result = None;
+        for _ in 0..8 {
+            match self.compile_function_with_closure(
+                func_id,
+                &decl,
+                func.closure.clone(),
+                func.param_checks.clone().into(),
+                func.return_check.clone(),
+                func.def_file.as_deref().map(Arc::from),
+            ) {
+                Ok(()) => {
+                    result = Some(func_id);
+                    break;
+                }
+                Err(BytecodeError::UnresolvedCallee(callee)) => {
+                    if !self.compile_hof_dependency(&callee, 0) {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
         if self.hof_cache.len() >= 512 {
             self.hof_cache.clear();
         }
@@ -4715,6 +4737,77 @@ impl BytecodeVm {
     /// which remains the semantic authority for everything declined here.
     /// Never falls back mid-loop: once the loop starts, an element error is
     /// the call's error, exactly as the interpreter propagates it.
+    /// Named functions compiled through the hof dependency channel — the
+    /// tier folds these into its `promoted` stat, since "compiled to the
+    /// tier by name" is what that number has always meant, whichever
+    /// channel did the compiling.
+    pub(crate) fn hof_promotions(&self) -> u32 {
+        self.hof_promotions
+    }
+
+    /// Compile a named callee a lambda body needs, from the VM's own
+    /// noted function values — the hof-path twin of the tier's
+    /// `compile_dependency`. Registered before compiling so self- and
+    /// mutual recursion resolve; a failure withdraws the registration
+    /// so nothing calls a name with no bytecode.
+    fn compile_hof_dependency(&mut self, name: &str, depth: usize) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        if self.compiler.function_registry.contains_key(name) {
+            return true;
+        }
+        if self.ambiguous_function_names.contains(name) {
+            return false;
+        }
+        let Some(func) = self.known_function_values.get(name).cloned() else {
+            return false;
+        };
+        if func.parameters.iter().any(|p| p.default_value.is_some())
+            || !func.param_bounds.is_empty()
+        {
+            return false;
+        }
+        let dep_id = FunctionId::new();
+        self.register_function(name.to_string(), dep_id);
+        let decl = FunctionDecl {
+            name_span: None,
+            name: name.to_string(),
+            type_params: Vec::new(),
+            type_param_bounds: Vec::new(),
+            parameters: func.parameters.clone(),
+            return_type: None,
+            body: (*func.body).clone(),
+        };
+        for _ in 0..8 {
+            match self.compile_function_with_closure(
+                dep_id,
+                &decl,
+                func.closure.clone(),
+                func.param_checks.clone().into(),
+                func.return_check.clone(),
+                func.def_file.as_deref().map(Arc::from),
+            ) {
+                Ok(()) => {
+                    self.hof_promotions += 1;
+                    return true;
+                }
+                Err(BytecodeError::UnresolvedCallee(inner)) => {
+                    if !self.compile_hof_dependency(&inner, depth + 1) {
+                        self.unregister_function(name);
+                        return false;
+                    }
+                }
+                Err(_) => {
+                    self.unregister_function(name);
+                    return false;
+                }
+            }
+        }
+        self.unregister_function(name);
+        false
+    }
+
     /// The tier-facing door to the native higher-order loops: the
     /// interpreter's builtin `map`/`filter` convert their list once,
     /// call this, and convert the result once — where the per-element
@@ -6022,6 +6115,13 @@ impl BytecodeCompiler {
         // whose result flows untouched (through Moves and Jumps) to a
         // Return is a frame that never needs to exist.
         Self::eliminate_self_tail_calls(func_id, &mut instructions);
+        // TCE strands the old call-result plumbing (a merge Move reading
+        // the register the eliminated CallFn used to write) as dead code
+        // past the new back-edge. The VM never executes it, but the JIT
+        // builds SSA for every instruction — and a read of a
+        // never-written register fails finalize, silently keeping every
+        // tail-recursive function off native. Sweep again, after TCE.
+        instructions = BytecodeOptimizer::sweep_unreachable(instructions);
 
         // OLANG_DUMP_FN=<name> prints the final instruction stream for one
         // function — the register-level view the JIT debug summary elides.
@@ -8851,7 +8951,7 @@ impl BytecodeOptimizer {
     /// so a function whose denied capability branch contains an
     /// uncompilable call still compiles — the code that cannot run no
     /// longer taxes the code that does.
-    fn sweep_unreachable(mut instructions: Vec<Instruction>) -> Vec<Instruction> {
+    pub(crate) fn sweep_unreachable(mut instructions: Vec<Instruction>) -> Vec<Instruction> {
         use Instruction as I;
         let n = instructions.len();
         if n == 0 {

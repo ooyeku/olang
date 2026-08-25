@@ -217,6 +217,10 @@ impl BytecodeTier {
         TierStats {
             instructions_executed: self.vm.instructions_executed(),
             jit_native_calls: self.vm.jit_native_calls(),
+            // "Promoted" = named functions compiled to the tier, whichever
+            // channel compiled them — direct promotion or a lambda's
+            // dependency resolution.
+            promoted: self.stats.promoted + self.vm.hof_promotions(),
             ..self.stats
         }
     }

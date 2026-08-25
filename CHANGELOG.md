@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tail-recursive functions reach native code.** Tail-call
+  elimination left the old call-result plumbing (a merge move reading
+  the register the eliminated call used to write) stranded as dead
+  code past the new back-edge; the VM never executed it, but the JIT
+  builds SSA for every instruction, and a read of a never-written
+  register failed finalize — silently keeping every self-tail-recursive
+  function off native since TCE shipped. The unreachable-code sweep
+  now runs again after TCE. The collatz kernel that exposed it: 200k
+  map elements 1202 ms → 73 ms (16.5×), VM instructions 193M → 400k.
+
+- **Lambdas calling not-yet-compiled named functions compile.** The
+  named tier path resolves unresolved callees (compile the dependency,
+  retry the caller); the lambda path now has the same loop, so
+  `map(xs, (n) => helper(n))` compiles even when `helper` is a
+  recursive top-level function the registry has not seen — the last
+  systematic "hot lambda stays interpreted" shape. crunch.ol's
+  interpreted share fell from 30.5% to 2.7%. The tier's `promoted`
+  stat now counts functions compiled through either channel.
+
+### Changed
+
+- **The REPL's `:profile` is the real profiler.** `:profile <code>`
+  used to be a five-run stopwatch; it now runs the code once under the
+  same sampler as `olang profile` — time by tier, per-function
+  self/total with sample counts, hottest call paths, and the findings
+  notes — at a finer 250µs interval suited to snippets, printing the
+  expression's value as a normal evaluation would.
+
 ## [0.73.0] - 2026-08-25
 
 ### Added
