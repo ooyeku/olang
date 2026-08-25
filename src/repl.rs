@@ -3095,8 +3095,9 @@ impl Repl {
             .cloned()
             .collect();
 
-        // Get last error from debug state if available
-        let last_error = None; // TODO: Implement error tracking
+        // The REPL does not retain past errors; context-sensitive help
+        // works from the command history alone.
+        let last_error = None;
 
         // Determine working category from recent commands
         let current_working_category = self.determine_working_category(&recent_commands);

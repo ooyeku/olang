@@ -1715,14 +1715,12 @@ impl TypeInferrer {
                 Ok(Some(format!("Tuple[{}]", types.join(", "))))
             }
             Expr::Identifier(name) => Ok(self.type_env.get(name).cloned()),
-            Expr::Call { .. } => {
-                // TODO: Implement function type inference
-                Ok(None)
-            }
-            Expr::Lambda { .. } => {
-                // TODO: Implement lambda type inference
-                Ok(None)
-            }
+            // A call's type would need the callee's return annotation
+            // resolved through scope; the checker verifies annotations at
+            // call boundaries instead of inferring expression types here.
+            // Lambdas likewise carry no inferred type: None means "not
+            // provable", never "wrong".
+            Expr::Call { .. } | Expr::Lambda { .. } => Ok(None),
             Expr::Range { .. } => {
                 // Ranges always produce List[Int]
                 Ok(Some("List[Int]".to_string()))

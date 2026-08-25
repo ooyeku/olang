@@ -292,15 +292,15 @@ type PendingLambda = (
     Option<(String, usize)>,
 );
 
-/// Bytecode optimization engine
+/// The bytecode optimizer: constant-branch folding, unreachable-code
+/// sweeping, and dead-move elimination, plus the uses/defs register
+/// model those passes share. An earlier pipeline was deleted rather
+/// than fixed (it removed live control flow and mis-renamed
+/// registers); today's passes returned one at a time, each validated
+/// against the differential suite before landing. All passes are
+/// associated functions — the struct itself is never instantiated,
+/// which is the only thing the allow acknowledges.
 #[allow(dead_code)]
-/// Placeholder for future optimization passes.
-///
-/// The previous pipeline (dead-code elimination, register renaming, peephole
-/// rewrites, control-flow "optimization") was deleted rather than fixed: it
-/// removed live control flow and stores, renamed registers for only a subset
-/// of opcodes, and treated label IDs as instruction addresses. Passes may
-/// return once they can be validated against the differential test suite.
 pub struct BytecodeOptimizer {}
 
 /// Compiled bytecode representation

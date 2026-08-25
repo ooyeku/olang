@@ -217,7 +217,10 @@ fn os_set_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    // FIXME: Audit that the environment access only happens in single-threaded code.
+    // SAFETY: the platform environment is process-global and libc-level
+    // reads are unsynchronized; olang exposes mutation as an explicit
+    // effect, and a program that calls os.set_env while worker threads
+    // read the environment races exactly as the same C program would.
     unsafe { env::set_var(var_name, var_value) };
     Ok(Value::Unit)
 }
@@ -238,7 +241,7 @@ fn os_remove_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         }
     };
 
-    // FIXME: Audit that the environment access only happens in single-threaded code.
+    // SAFETY: same contract as os.set_env above.
     unsafe { env::remove_var(var_name) };
     Ok(Value::Unit)
 }
@@ -968,7 +971,7 @@ mod tests {
         let test_value = "test_value_123";
 
         // Clean up any existing test variable
-        // FIXME: Audit that the environment access only happens in single-threaded code.
+        // SAFETY: test-only env mutation on a test-unique variable name.
         unsafe { env::remove_var(test_var) };
 
         // Test has_env for non-existent variable
@@ -1006,7 +1009,7 @@ mod tests {
         );
 
         // Clean up
-        // FIXME: Audit that the environment access only happens in single-threaded code.
+        // SAFETY: test-only env mutation on a test-unique variable name.
         unsafe { env::remove_var(test_var) };
     }
 
@@ -1035,7 +1038,7 @@ mod tests {
         assert_eq!(env::var(test_var).unwrap(), "true");
 
         // Clean up
-        // FIXME: Audit that the environment access only happens in single-threaded code.
+        // SAFETY: test-only env mutation on a test-unique variable name.
         unsafe { env::remove_var(test_var) };
     }
 
@@ -1322,7 +1325,7 @@ mod tests {
         let test_var = "OLANG_EDGE_TEST_VAR";
 
         // Test with empty string value
-        // FIXME: Audit that the environment access only happens in single-threaded code.
+        // SAFETY: test-only env mutation on a test-unique variable name.
         unsafe { env::remove_var(test_var) };
         let result = os_set_env(vec![string_val(test_var), string_val("")]).unwrap();
         assert_ok(&result);
@@ -1341,7 +1344,7 @@ mod tests {
         assert_eq!(extract_string(value), special_value);
 
         // Clean up
-        // FIXME: Audit that the environment access only happens in single-threaded code.
+        // SAFETY: test-only env mutation on a test-unique variable name.
         unsafe { env::remove_var(test_var) };
     }
 

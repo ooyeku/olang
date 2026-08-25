@@ -4,6 +4,7 @@ version = "0.73.0"
 edition = "2024"
 description = "ods — the numerical engine behind olang's data stack. Pure kernels, no olang dependency."
 license = "MIT"
+repository = "https://github.com/ooyeku/olang"
 
 [features]
 default = ["parallel", "stats"]

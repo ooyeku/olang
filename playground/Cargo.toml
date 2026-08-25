@@ -6,6 +6,9 @@
 name = "olang-playground"
 version = "0.73.0"
 edition = "2024"
+description = "olang compiled to WebAssembly for the browser playground"
+license = "MIT"
+repository = "https://github.com/ooyeku/olang"
 publish = false
 
 [lib]
