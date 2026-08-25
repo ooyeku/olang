@@ -1628,3 +1628,95 @@ fn rebuild_with_trailing_nulls<T: Default + Clone>(
         },
     }
 }
+
+// ---------------------------------------------------------------------
+// Fused elementwise evaluation
+// ---------------------------------------------------------------------
+
+/// A pending elementwise chain over F64 series, evaluated in one pass.
+///
+/// The host language builds these lazily from `a * b + 1.0`-style
+/// operator chains instead of materializing a full-length intermediate
+/// per operator; forcing evaluates the whole tree chunk by chunk, so
+/// intermediates live in cache instead of main memory. Deliberately
+/// narrow: Add/Sub/Mul only (infallible IEEE ops — `Div` pre-checks its
+/// divisors and must error at its own expression, so it is never
+/// deferred), null-free F64 leaves of equal length, and Float scalars.
+/// Within that shape the fused result is bit-identical to the eager
+/// kernels: each output element performs the same float operations in
+/// the same order.
+pub mod fuse {
+    use super::*;
+
+    /// Elements evaluated per tree walk — small enough that one buffer
+    /// per tree level stays in L1.
+    pub const CHUNK: usize = 1024;
+
+    #[derive(Clone, Debug)]
+    pub enum Expr {
+        /// A materialized, null-free F64 column.
+        Leaf(Arc<Vec<f64>>),
+        /// A broadcast scalar.
+        Const(f64),
+        /// An infallible elementwise operator (never `Div`).
+        Bin(ArithOp, Arc<Expr>, Arc<Expr>),
+    }
+
+    impl Expr {
+        fn eval_chunk(&self, start: usize, out: &mut [f64]) {
+            match self {
+                Expr::Leaf(v) => out.copy_from_slice(&v[start..start + out.len()]),
+                Expr::Const(c) => out.fill(*c),
+                Expr::Bin(op, a, b) => {
+                    a.eval_chunk(start, out);
+                    let mut buf = [0.0f64; CHUNK];
+                    let rhs = &mut buf[..out.len()];
+                    b.eval_chunk(start, rhs);
+                    match op {
+                        ArithOp::Add => {
+                            for (o, r) in out.iter_mut().zip(rhs.iter()) {
+                                *o += r;
+                            }
+                        }
+                        ArithOp::Sub => {
+                            for (o, r) in out.iter_mut().zip(rhs.iter()) {
+                                *o -= r;
+                            }
+                        }
+                        ArithOp::Mul => {
+                            for (o, r) in out.iter_mut().zip(rhs.iter()) {
+                                *o *= r;
+                            }
+                        }
+                        ArithOp::Div => unreachable!("Div is never fused"),
+                    }
+                }
+            }
+        }
+
+        /// Materialize the chain: one output allocation, one pass.
+        /// Chunks are independent, so the parallel build fans them out.
+        pub fn eval(&self, len: usize, par: bool) -> Series {
+            let mut values = vec![0.0f64; len];
+            #[cfg(feature = "parallel")]
+            if par {
+                values
+                    .par_chunks_mut(CHUNK)
+                    .enumerate()
+                    .for_each(|(ci, chunk)| self.eval_chunk(ci * CHUNK, chunk));
+                return Series::F64 {
+                    values: Arc::new(values),
+                    validity: None,
+                };
+            }
+            let _ = par;
+            for (ci, chunk) in values.chunks_mut(CHUNK).enumerate() {
+                self.eval_chunk(ci * CHUNK, chunk);
+            }
+            Series::F64 {
+                values: Arc::new(values),
+                validity: None,
+            }
+        }
+    }
+}

@@ -1345,7 +1345,7 @@ columns against NumPy and 10M-row tables against Polars, are as follows:
 |---|---|---|---|
 | `sum` / `mean` (10M floats) | 1.01 ms (0.41 ms parallel) | NumPy 1.12 ms | parity sequential, ~2.7× ahead parallel |
 | `std` | 2.06 ms | NumPy 5.11 ms | ~2.5× ahead |
-| `a * b + 1.0` elementwise | 2.42 ms parallel | NumPy 3.24 ms | ahead as executed; sequential trails (fusion deliberately deferred) |
+| `a * b + 1.0` elementwise | 2.42 ms parallel | NumPy 3.24 ms | ahead as executed; chains now fuse into one pass (E7, below) |
 | `sort` | 24.1 ms parallel | NumPy 324.3 ms | far ahead |
 | null-aware `mean` (10% nulls) | 4.71 ms | NumPy `nanmean` 7.84 ms | ~1.7× ahead |
 | OLS fit, 1M rows × 20 predictors | 36.4 ms parallel | NumPy `lstsq` 137.8 ms | ~3.8× ahead |
@@ -1607,8 +1607,28 @@ program, a user report, or a benchmark modeling one — spends more than
 sustained demand across many patterns justifies the peephole, and only
 optimizer-class wins would ever justify lazy frames.
 
-Until then: the eager engine is simple, measured, and ahead. Boring is
-a feature.
+**Amended — Campaign 8 (E7) ships a fourth option the list above did
+not enumerate: invisible chain fusion at the operator seam.** An
+operator chain like `a * b + 1.0` no longer materializes per operator;
+each `+`/`-`/`*` on fusable operands builds a small deferred
+expression, and the first observation of the result — an index, a
+reduction, a display, any verb — evaluates the whole chain in one
+chunked pass, intermediates living in cache instead of main memory.
+This is none of the rejected designs: there is no `lazy()`/`collect()`
+surface, no query plan, no second evaluation model — a user cannot
+tell it exists except by the clock. That invisibility is guaranteed by
+keeping the fused shape provably identical to the eager kernels:
+Add/Sub/Mul only (infallible IEEE ops, each output element computing
+the same operations in the same order — bit-identical), null-free
+Float leaves of equal length, Float scalars. Everything outside that
+shape — division (which must error at its own expression, and does),
+null-bearing series, mixed dtypes, Int scalars — takes the eager path
+unchanged, and chains deeper than 16 operators materialize as they
+grow. Measured on the flagship shape (a four-operator chain over 5M
+elements): 2.7× over the eager engine, identical checksum.
+
+For everything else, the record stands: the eager engine is simple,
+measured, and ahead. Boring is a feature.
 
 ## What ods is not
 
@@ -1621,10 +1641,11 @@ you when to reach for a different tool:
   learning) — out of scope entirely, as is GPU execution.
 - **Not a dtype zoo.** Int, Float, Bool, String. Dates, categoricals,
   and narrower floats wait for a concrete demand, not a checklist.
-- **Not lazy.** Every operation evaluates eagerly, so what a pipeline
-  does is what it says, in order. A lazy query optimizer is a second
-  evaluation model the language declines to carry on today's evidence;
-  the reasoning and the measured gate for revisiting are recorded in
+- **Not lazy.** No query optimizer, no `collect()`, no second
+  evaluation model. The one internal exception is invisible by
+  construction: elementwise operator chains defer just long enough to
+  evaluate in one fused pass, with results and errors identical to the
+  eager kernels — the reasoning and boundaries are recorded in
   [Why eager evaluation](#why-eager-evaluation) above.
 - **Not a plotting toolkit.** `plot` draws the statistical staples
   well, with strong defaults, as text. Interactive charts, animation,

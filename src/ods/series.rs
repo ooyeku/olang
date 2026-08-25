@@ -22,11 +22,47 @@ use olang_ods::{AggOp, ArithOp, CmpOp, DType, RankMethod, Scalar, Series};
 use std::any::Any;
 
 #[derive(Debug)]
-pub struct OdsSeries(pub Series);
+pub struct OdsSeries {
+    /// The materialized series. Empty only while a fused chain is
+    /// pending; every access goes through `series()`, which forces.
+    cell: std::sync::OnceLock<Series>,
+    /// The pending fused chain, when this value was built lazily from
+    /// an operator chain (see `binary_op`). `(expr, len, depth)`.
+    pending: Option<(olang_ods::fuse::Expr, usize, usize)>,
+}
 
 impl OdsSeries {
+    fn from_series(series: Series) -> Self {
+        let cell = std::sync::OnceLock::new();
+        let _ = cell.set(series);
+        OdsSeries {
+            cell,
+            pending: None,
+        }
+    }
+
+    fn from_expr(expr: olang_ods::fuse::Expr, len: usize, depth: usize) -> Self {
+        OdsSeries {
+            cell: std::sync::OnceLock::new(),
+            pending: Some((expr, len, depth)),
+        }
+    }
+
+    /// The materialized series, forcing a pending chain on first use.
+    /// The fused evaluation is bit-identical to the eager kernels the
+    /// chain replaced, so nothing observable depends on when this runs.
+    pub fn series(&self) -> &Series {
+        self.cell.get_or_init(|| {
+            let (expr, len, _) = self
+                .pending
+                .as_ref()
+                .expect("an unmaterialized OdsSeries always carries its chain");
+            expr.eval(*len, crate::parallel::should_parallelize(*len))
+        })
+    }
+
     pub fn into_value(series: Series) -> Value {
-        Value::Native(NativeHandle::new(OdsSeries(series)))
+        Value::Native(NativeHandle::new(OdsSeries::from_series(series)))
     }
 }
 
@@ -41,10 +77,10 @@ impl NativeObject for OdsSeries {
 
     fn display(&self) -> String {
         const SHOWN: usize = 8;
-        let n = self.0.len();
+        let n = self.series().len();
         let mut parts = Vec::with_capacity(SHOWN.min(n));
         for i in 0..n.min(SHOWN) {
-            parts.push(match self.0.scalar_at(i) {
+            parts.push(match self.series().scalar_at(i) {
                 Scalar::F64(x) => Value::Float(x).to_string(),
                 Scalar::I64(x) => x.to_string(),
                 Scalar::Bool(b) => b.to_string(),
@@ -55,7 +91,7 @@ impl NativeObject for OdsSeries {
         let ellipsis = if n > SHOWN { ", …" } else { "" };
         format!(
             "Series[{}; {}] [{}{}]",
-            self.0.dtype(),
+            self.series().dtype(),
             n,
             parts.join(", "),
             ellipsis
@@ -66,7 +102,7 @@ impl NativeObject for OdsSeries {
         other
             .as_any()
             .downcast_ref::<OdsSeries>()
-            .is_some_and(|o| self.0.series_eq(&o.0))
+            .is_some_and(|o| self.series().series_eq(o.series()))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -79,7 +115,7 @@ impl NativeObject for OdsSeries {
     fn index(&self, key: &Value) -> Option<Result<Value, String>> {
         Some(match key {
             Value::Integer(i) => {
-                let len = self.0.len() as i64;
+                let len = self.series().len() as i64;
                 let pos = if *i < 0 { len + *i } else { *i };
                 if pos < 0 || pos >= len {
                     Err(format!(
@@ -87,7 +123,7 @@ impl NativeObject for OdsSeries {
                         i, len
                     ))
                 } else {
-                    Ok(scalar_to_value(self.0.scalar_at(pos as usize)))
+                    Ok(scalar_to_value(self.series().scalar_at(pos as usize)))
                 }
             }
             Value::String(name) => Err(format!(
@@ -220,7 +256,7 @@ fn combine(all: bool, masks: &[&Series]) -> Result<Series, String> {
 
 pub fn series_of(value: &Value) -> Option<&Series> {
     match value {
-        Value::Native(h) => h.0.as_any().downcast_ref::<OdsSeries>().map(|s| &s.0),
+        Value::Native(h) => h.0.as_any().downcast_ref::<OdsSeries>().map(|s| s.series()),
         _ => None,
     }
 }
@@ -738,12 +774,80 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
 // Operators
 // ---------------------------------------------------------------------
 
+/// One side of a fusable operator chain: its expression, its length
+/// (None for a broadcast scalar), and its tree depth.
+fn fuse_side(v: &Value) -> Option<(olang_ods::fuse::Expr, Option<usize>, usize)> {
+    use olang_ods::fuse::Expr;
+    if let Value::Float(x) = v {
+        return Some((Expr::Const(*x), None, 0));
+    }
+    let Value::Native(h) = v else { return None };
+    let s = h.0.as_any().downcast_ref::<OdsSeries>()?;
+    // A still-pending chain extends without materializing; a forced or
+    // eagerly built series joins as a leaf when it is exactly the shape
+    // the fused evaluator is proven identical on: null-free F64.
+    if let Some(m) = s.cell.get() {
+        return match m {
+            Series::F64 {
+                values,
+                validity: None,
+            } => Some((Expr::Leaf(values.clone()), Some(values.len()), 0)),
+            _ => None,
+        };
+    }
+    let (expr, len, depth) = s.pending.as_ref()?;
+    Some((expr.clone(), Some(*len), *depth))
+}
+
+/// Chains deeper than this materialize instead of growing — a bound on
+/// the fused evaluator's recursion and per-level chunk buffers.
+const MAX_FUSED_DEPTH: usize = 16;
+
+/// Build a lazy fused series for `lhs op rhs`, when both sides fit the
+/// proven-identical shape (see `olang_ods::fuse`). None falls back to
+/// the eager kernels; `Div` never fuses because it pre-checks divisors
+/// and must error at its own expression, not at force time.
+fn try_fuse(op: ArithOp, lhs: &Value, rhs: &Value) -> Option<Value> {
+    use olang_ods::fuse::Expr;
+    if matches!(op, ArithOp::Div) {
+        return None;
+    }
+    let (a, alen, adepth) = fuse_side(lhs)?;
+    let (b, blen, bdepth) = fuse_side(rhs)?;
+    let len = match (alen, blen) {
+        (Some(x), Some(y)) if x == y => x,
+        (Some(x), None) | (None, Some(x)) => x,
+        // Two scalars never reach binary_op; a length mismatch takes
+        // the eager path, which raises the engine's own error.
+        _ => return None,
+    };
+    let depth = adepth.max(bdepth) + 1;
+    if depth > MAX_FUSED_DEPTH {
+        return None;
+    }
+    let expr = Expr::Bin(op, std::sync::Arc::new(a), std::sync::Arc::new(b));
+    Some(Value::Native(NativeHandle::new(OdsSeries::from_expr(
+        expr, len, depth,
+    ))))
+}
+
 pub fn binary_op(
     op: &crate::ast::BinaryOp,
     lhs: &Value,
     rhs: &Value,
 ) -> Option<Result<Value, String>> {
     use crate::ast::BinaryOp as B;
+    // Elementwise chains fuse lazily: `a * b + 1.0` materializes once,
+    // in one pass, instead of once per operator.
+    if let Some(fop) = match op {
+        B::Add => Some(ArithOp::Add),
+        B::Subtract => Some(ArithOp::Sub),
+        B::Multiply => Some(ArithOp::Mul),
+        _ => None,
+    } && let Some(v) = try_fuse(fop, lhs, rhs)
+    {
+        return Some(Ok(v));
+    }
     let arith = |o: ArithOp| -> Option<Result<Value, String>> {
         match (series_of(lhs), series_of(rhs)) {
             (Some(a), Some(b)) => Some(

@@ -385,3 +385,74 @@ ods.null_count(ods.map(ods.series([4.0, m, 9.0]), "sqrt"))
     let err = eval(r#"ods.map(ods.series([-1.0]), "sqrt")"#, None).unwrap_err();
     assert!(err.contains("square root"), "got: {}", err);
 }
+
+// ── fused elementwise chains (Campaign 8, E7) ─────────────────────────
+
+#[test]
+fn fused_chains_match_the_eager_kernels_exactly() {
+    // `a * b + 1.0 - a * 0.25` builds lazily and materializes in one
+    // pass; per element it performs the same float ops in the same
+    // order as the eager kernels, so the results are bit-identical.
+    let out = assert_tier_transparent(
+        "let a = ods.series([1.5, 2.5, 3.5, 4.5])\n\
+         let b = ods.series([2.0, 3.0, 4.0, 5.0])\n\
+         let c = a * b + 1.0 - a * 0.25\n\
+         [c[0], c[1], c[2], c[3], ods.sum(c)]\n",
+    )
+    .expect("fused chain evaluates");
+    let Value::List(items) = out else {
+        panic!("expected a list, got {:?}", out)
+    };
+    let expect = [3.625, 7.875, 14.125, 22.375];
+    for (i, e) in expect.iter().enumerate() {
+        assert_eq!(items[i], Value::Float(*e), "element {i}");
+    }
+    assert_eq!(items[4], Value::Float(48.0), "sum forces and agrees");
+}
+
+#[test]
+fn fusion_never_defers_division_or_nulls() {
+    // Division pre-checks its divisors and must error at its own
+    // expression — a chain containing one takes the eager path there.
+    let err = eval(
+        "let z = ods.series([1.0, 0.0])\n\
+         let n = ods.series([4.0, 4.0])\n\
+         let q = n * 2.0 / z\n\
+         q[0]\n",
+        None,
+    )
+    .expect_err("division by zero must error eagerly");
+    assert!(err.contains("Division by zero"), "{err}");
+
+    // A null-bearing series is outside the fused shape: the chain runs
+    // eagerly and nulls propagate exactly as before.
+    let out = eval(
+        "let a = ods.series([1.0, (), 3.0])\n\
+         let c = a * 2.0 + 1.0\n\
+         [ods.is_null(c)[1], c[0], c[2]]\n",
+        None,
+    )
+    .expect("null chain evaluates");
+    let Value::List(items) = out else {
+        panic!("expected a list, got {:?}", out)
+    };
+    assert_eq!(items[0], Value::Boolean(true), "null propagates");
+    assert_eq!(items[1], Value::Float(3.0));
+    assert_eq!(items[2], Value::Float(7.0));
+}
+
+#[test]
+fn a_chain_past_the_depth_cap_still_computes() {
+    let out = eval(
+        "let mut acc = ods.series([1.0, 2.0])\n\
+         for i in range(0, 40) { acc = acc + 1.0 }\n\
+         [acc[0], acc[1]]\n",
+        None,
+    )
+    .expect("deep chain evaluates");
+    let Value::List(items) = out else {
+        panic!("expected a list, got {:?}", out)
+    };
+    assert_eq!(items[0], Value::Float(41.0));
+    assert_eq!(items[1], Value::Float(42.0));
+}
