@@ -641,6 +641,30 @@ unsafe extern "C" fn olang_jit_str_concat(
     }
 }
 
+/// Stringify a scalar template part with the interpreter's exact rules:
+/// Int and Bool via to_string, Float via format_float. Allocates through
+/// the scratch context like concat; 0 signals the allocation cap (deopt).
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_str_of(ctx: *mut ScratchCtx, tag: i64, ival: i64, fval: f64) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if ctx.str_allocs.len() >= 1_000_000 {
+            return 0;
+        }
+        let s = match tag {
+            0 => ival.to_string(),
+            1 => crate::ast::format_float(fval),
+            _ => (ival != 0).to_string(),
+        };
+        let s = Arc::new(s);
+        let ptr = Arc::as_ptr(&s) as i64;
+        ctx.str_allocs.push(s);
+        ptr
+    }
+}
+
 /// String twin of olang_jit_retain: resolve a returned borrowed pointer
 /// to an owned Arc at the entry boundary.
 ///
@@ -1212,6 +1236,7 @@ impl JitCache {
             builder.symbol("olang_jit_retain", olang_jit_retain as *const u8);
             builder.symbol("olang_jit_str_cmp", olang_jit_str_cmp as *const u8);
             builder.symbol("olang_jit_str_concat", olang_jit_str_concat as *const u8);
+            builder.symbol("olang_jit_str_of", olang_jit_str_of as *const u8);
             builder.symbol("olang_jit_str_retain", olang_jit_str_retain as *const u8);
             builder.symbol("olang_jit_result_test", olang_jit_result_test as *const u8);
             builder.symbol(
@@ -2075,6 +2100,17 @@ impl JitCache {
                 .declare_function("olang_jit_str_concat", Linkage::Import, &sig)
                 .ok()?
         };
+        let str_of_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::F64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_str_of", Linkage::Import, &sig)
+                .ok()?
+        };
         let str_retain_helper = {
             let mut sig = module.make_signature();
             sig.params.push(AbiParam::new(types::I64));
@@ -2321,6 +2357,7 @@ impl JitCache {
                         make_struct: make_struct_helper,
                         str_cmp: str_cmp_helper,
                         str_concat: str_concat_helper,
+                        str_of: str_of_helper,
                         result_test: result_test_helper,
                         result_extract: result_extract_helper,
                         make_result: make_result_helper,
@@ -2586,6 +2623,7 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         Instruction::MakeStruct { field_regs, .. } => field_regs.len() <= 16,
         // Same allocation discipline as MakeStruct.
         Instruction::MakeResult { .. } => true,
+        Instruction::MakeTemplate { parts, .. } => !parts.is_empty() && parts.len() <= 64,
         Instruction::MakeList { elements, .. } => elements.len() <= 64,
         Instruction::MakeMap { entries, .. } => entries.len() <= 64,
         // Named map natives. Reads don't allocate, so they compile in
@@ -2646,6 +2684,7 @@ fn boundary_unprofitable(bytecode: &CompiledBytecode) -> bool {
             Instruction::MakeStruct { .. }
             | Instruction::MakeList { .. }
             | Instruction::MakeMap { .. }
+            | Instruction::MakeTemplate { .. }
             | Instruction::MakeResult { .. } => allocates = true,
             Instruction::CallNamed { function_name, .. } if function_name == "map_set" => {
                 allocates = true
@@ -4420,6 +4459,18 @@ impl PlanFn {
                         grow!(self.writes[dst.0 as usize], kind_mask(k));
                     }
                 }
+                Instruction::MakeTemplate { dst, parts } => {
+                    // Every interpolated register must be a stringifiable
+                    // scalar (Int/Float/Bool via the helper, Str as-is);
+                    // anything else keeps the function on bytecode, where
+                    // the Display fallback lives.
+                    for p in parts {
+                        if let crate::ovm::bytecode::TplPart::Reg(r) = p {
+                            narrow!(r.0, K_NUM | K_BOOL | K_STR);
+                        }
+                    }
+                    grow!(self.writes[dst.0 as usize], K_STR);
+                }
                 Instruction::MakeStruct {
                     dst,
                     shape,
@@ -4841,6 +4892,7 @@ impl PlanFn {
                 Instruction::MakeStruct { .. }
                 | Instruction::MakeList { .. }
                 | Instruction::MakeMap { .. }
+                | Instruction::MakeTemplate { .. }
                 | Instruction::MakeResult { .. } => true,
                 Instruction::Add { dst, .. } => is_heap(reg_kind[dst.0 as usize]),
                 Instruction::CallFn { dst, .. } => is_heap(reg_kind[dst.0 as usize]),
@@ -4959,6 +5011,7 @@ struct Helpers {
     make_struct: cranelift_module::FuncId,
     str_cmp: cranelift_module::FuncId,
     str_concat: cranelift_module::FuncId,
+    str_of: cranelift_module::FuncId,
     result_test: cranelift_module::FuncId,
     result_extract: cranelift_module::FuncId,
     make_result: cranelift_module::FuncId,
@@ -5025,6 +5078,7 @@ fn translate_body(
         make_struct: make_struct_helper,
         str_cmp: str_cmp_helper,
         str_concat: str_concat_helper,
+        str_of: str_of_helper,
         result_test: result_test_helper,
         result_extract: result_extract_helper,
         make_result: make_result_helper,
@@ -5299,6 +5353,71 @@ fn translate_body(
                 let op = arith_op(inst);
                 let val = emit_arith(builder, &r#gen, op, a, lk, b, rk)?;
                 r#gen.write(builder, dst.0, val);
+            }
+            Instruction::MakeTemplate { dst, parts } => {
+                // Fold the parts left to right through the concat helper.
+                // Literal parts are baked borrowed pointers into this
+                // instruction's own storage (the JittedFn owns the
+                // bytecode Arc, so they outlive the code); scalar parts
+                // stringify through the str_of helper with the
+                // interpreter's exact rules. Same output as the VM's
+                // single-buffer build: concatenation is associative.
+                let ctx = builder.use_var(ctx_var);
+                let mut acc: Option<ClifValue> = None;
+                for part in parts {
+                    let ptr = match part {
+                        crate::ovm::bytecode::TplPart::Literal(text) => builder
+                            .ins()
+                            .iconst(types::I64, text as *const String as i64),
+                        crate::ovm::bytecode::TplPart::Reg(r) => {
+                            let k = r#gen.kind(r.0)?;
+                            let v = builder.use_var(Variable::from_u32(r.0));
+                            match k {
+                                Kind::Str => v,
+                                Kind::Int | Kind::Bool | Kind::Float => {
+                                    let tag = builder.ins().iconst(
+                                        types::I64,
+                                        match k {
+                                            Kind::Int => 0,
+                                            Kind::Float => 1,
+                                            _ => 2,
+                                        },
+                                    );
+                                    let (ival, fval) = match k {
+                                        Kind::Float => (builder.ins().iconst(types::I64, 0), v),
+                                        _ => (v, builder.ins().f64const(0.0)),
+                                    };
+                                    let helper_ref =
+                                        module.declare_func_in_func(str_of_helper, builder.func);
+                                    let call =
+                                        builder.ins().call(helper_ref, &[ctx, tag, ival, fval]);
+                                    let ptr = builder.inst_results(call)[0];
+                                    let null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
+                                    let ok_block = builder.create_block();
+                                    builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
+                                    builder.switch_to_block(ok_block);
+                                    ptr
+                                }
+                                _ => return None,
+                            }
+                        }
+                    };
+                    acc = Some(match acc {
+                        None => ptr,
+                        Some(a) => {
+                            let helper_ref =
+                                module.declare_func_in_func(str_concat_helper, builder.func);
+                            let call = builder.ins().call(helper_ref, &[ctx, a, ptr]);
+                            let joined = builder.inst_results(call)[0];
+                            let null = builder.ins().icmp_imm_s(IntCC::Equal, joined, 0);
+                            let ok_block = builder.create_block();
+                            builder.ins().brif(null, deopt_block, &[], ok_block, &[]);
+                            builder.switch_to_block(ok_block);
+                            joined
+                        }
+                    });
+                }
+                r#gen.write(builder, dst.0, acc?);
             }
             Instruction::Neg { dst, src } => {
                 let sk = r#gen.kind(src.0)?;

@@ -281,3 +281,30 @@ fn a_mixed_kind_call_site_keeps_both_shapes_native() {
         "both shapes must serve native calls (calibrated 200k), got {own}"
     );
 }
+
+#[test]
+fn a_template_string_does_not_poison_its_function() {
+    // MakeTemplate was never whitelisted, so one template anywhere kept
+    // the whole function off native — the report/CSV-builder shape.
+    // Calibrated: 300 native calls, 0 VM instructions; before E3 the
+    // same program executed 13.5M VM instructions with 0 native calls.
+    let r = run("fn report(n, label) = {\n\
+             let mut acc = 0\n\
+             let mut i = 0\n\
+             while i < n { acc = (acc + i * i) % 1000003 i = i + 1 }\n\
+             `${label}: sum=${acc} over n=${n} (${acc * 1.0 / 1000.0})`\n\
+         }\n\
+         let mut rows = []\n\
+         for k in range(0, 300) { rows = rows + [report(5000, \"batch\" + to_string(k))] }\n\
+         println(rows[299])\n");
+    let own = r.per_fn.get("report").copied().unwrap_or(0);
+    let instructions = r.aggregate["instructions"];
+    assert!(
+        own >= 100,
+        "a template-bearing function must serve native calls (calibrated 300), got {own}"
+    );
+    assert!(
+        instructions <= 2_000_000,
+        "the loop must not fall to VM dispatch (calibrated 0), got {instructions}"
+    );
+}

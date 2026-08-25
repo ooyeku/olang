@@ -352,7 +352,10 @@ A function prequalifies at promotion time when every instruction falls
 in a **pure whitelist**: arithmetic, comparisons, logic, branches,
 calls to other olang functions, return, the float `math.*` builtins,
 struct field reads and construction, list indexing and `for` iteration,
-tuple returns, and strings. Compilation is
+tuple returns, and strings — including template strings, whose scalar
+interpolations stringify natively with the interpreter's exact rules
+(so a report or CSV builder that formats its result no longer keeps
+its whole function off native). Compilation is
 **type-specialized, lazy, and call-graph aware**: on a function's first
 call, the JIT plans every function reachable through its call sites,
 runs kind inference to a global fixpoint across the group (callee
